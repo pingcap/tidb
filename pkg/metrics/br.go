@@ -94,7 +94,7 @@ func InitBRMetrics() {
 			Subsystem: "br",
 			Name:      "meta_kv_batch_files",
 			Help:      "The number of meta KV files in the batch",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 11), // 1 ~ 1024
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 12), // 1 ~ 2048
 		}, []string{"cf"})
 	MetaKVBatchFilteredKeys = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -102,7 +102,7 @@ func InitBRMetrics() {
 			Subsystem: "br",
 			Name:      "meta_kv_batch_filtered_keys",
 			Help:      "The number of filtered meta KV entries from the batch",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1 ~ 32Ki
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 18), // 1 ~ 128Ki
 		}, []string{"cf"})
 	MetaKVBatchKeys = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -110,7 +110,7 @@ func InitBRMetrics() {
 			Subsystem: "br",
 			Name:      "meta_kv_batch_keys",
 			Help:      "The number of meta KV entries in the batch",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1 ~ 32Ki
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 18), // 1 ~ 128Ki
 		}, []string{"cf"})
 	MetaKVBatchSize = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -118,7 +118,7 @@ func InitBRMetrics() {
 			Subsystem: "br",
 			Name:      "meta_kv_batch_size",
 			Help:      "The total size of meta KV entries in the batch",
-			Buckets:   prometheus.ExponentialBuckets(256, 2, 19), // 256 ~ 64Mi
+			Buckets:   prometheus.ExponentialBuckets(256, 2, 20), // 256 ~ 128Mi
 		}, []string{"cf"})
 
 	KVApplyBatchDuration = prometheus.NewHistogram(
@@ -127,7 +127,7 @@ func InitBRMetrics() {
 			Subsystem: "br",
 			Name:      "kv_apply_batch_duration_seconds",
 			Help:      "The duration to apply the batch of KV files",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 25), // 1ms ~ 2hrs
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 21), // 1ms ~ 15min
 		})
 	KVApplyBatchFiles = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -143,7 +143,7 @@ func InitBRMetrics() {
 			Subsystem: "br",
 			Name:      "kv_apply_batch_regions",
 			Help:      "The number of regions in the range of entries in the batch of KV files",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 11), // 1 ~ 1024
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 12), // 1 ~ 2048
 		})
 	KVApplyBatchSize = prometheus.NewHistogram(
 		prometheus.HistogramOpts{

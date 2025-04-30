@@ -30,7 +30,7 @@ func InitRawKVMetrics() {
 		Subsystem: "rawkv",
 		Name:      "rawkv_batch_put_duration_seconds",
 		Help:      "The time cost batch put kvs",
-		Buckets:   prometheus.ExponentialBuckets(0.001, 2, 23), // 1ms ~ 1hr
+		Buckets:   prometheus.ExponentialBuckets(0.001, 2, 17), // 1ms ~ 1min
 	}, []string{"cf"})
 
 	RawKVBatchPutBatchSize = prometheus.NewHistogramVec(prometheus.HistogramOpts{

@@ -147,7 +147,7 @@ func (importer *LogFileImporter) ImportKVFiles(
 		if errFilter != nil {
 			return RPCResultFromError(errFilter)
 		}
-		metrics.KVApplyBatchRegions.Observe(float64(len(subfiles)))
+		metrics.KVApplyRegionFiles.Observe(float64(len(subfiles)))
 		if len(subfiles) == 0 {
 			return RPCResultOK()
 		}
