@@ -52,13 +52,27 @@ func (llm *llmAccessorImpl) AlterPlatform(sctx sessionctx.Context, platform stri
 		return err
 	}
 
-	fmt.Println(">>>>>> ", values)
-
 	kv := make([]string, 0, len(options))
 	for i := range options {
+		v := values[i]
 		switch strings.ToUpper(options[i]) {
-		case "KEY", "STATUS":
+		case "KEY":
+			if _, ok := v.(string); !ok {
+				return fmt.Errorf("invalid value for %s: %v", options[i], v)
+			}
+		case "STATUS":
+			str, ok := v.(string)
+			if !ok {
+				return fmt.Errorf("invalid value for %s: %v", options[i], v)
+			}
+			str = strings.ToUpper(str)
+			if str != "ENABLED" && str != "DISABLED" {
+				return fmt.Errorf("invalid value for %s: %v", options[i], v)
+			}
 		case "MAX_TOKENS":
+			if _, ok := v.(int64); !ok {
+				return fmt.Errorf("invalid value for %s: %v", options[i], v)
+			}
 		default:
 			return fmt.Errorf("unsupported option: %s", options[i])
 		}
@@ -67,14 +81,12 @@ func (llm *llmAccessorImpl) AlterPlatform(sctx sessionctx.Context, platform stri
 	}
 
 	updateStmt := "update mysql.llm_platform set " + strings.Join(kv, ", ") + " where `name` = %?"
-	fmt.Println(">>>>>> ", updateStmt)
 	return callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
 		args := append(values, platform)
 		_, err := exec(tmpCtx, updateStmt, args...)
 		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
 		return err
 	})
-	return nil
 }
 
 // ChatCompletion calls the specified LLM to complete the chat based on input prompt.
