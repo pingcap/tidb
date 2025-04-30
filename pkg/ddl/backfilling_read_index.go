@@ -97,7 +97,7 @@ func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 	cfg := config.GetGlobalConfig()
 	if cfg.Store == config.StoreTypeTiKV {
 		if !r.isGlobalSort() {
-			r.m = metrics.RegisteredLightningCommonMetricsForDDL(r.job.ID)
+			r.m = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
 			ctx = lightningmetric.WithCommonMetric(ctx, r.m)
 		}
 		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, false, 0)
@@ -184,7 +184,7 @@ func (r *readIndexStepExecutor) Cleanup(ctx context.Context) error {
 		r.backend.Close()
 	}
 	if !r.isGlobalSort() {
-		metrics.UnregisteredLightningCommonMetricsForDDL(r.job.ID, r.m)
+		metrics.UnregisterLightningCommonMetricsForDDL(r.job.ID, r.m)
 	}
 	return nil
 }

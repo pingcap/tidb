@@ -279,8 +279,8 @@ func GetBackfillProgressByLabel(label, schemaName, tableName, optionalColOrIdxNa
 	return BackfillProgressGauge.WithLabelValues(generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName))
 }
 
-// RegisteredLightningCommonMetricsForDDL returns the registered common metrics.
-func RegisteredLightningCommonMetricsForDDL(jobID int64) *metric.Common {
+// RegisterLightningCommonMetricsForDDL returns the registered common metrics.
+func RegisterLightningCommonMetricsForDDL(jobID int64) *metric.Common {
 	mu.Lock()
 	defer mu.Unlock()
 	if m, ok := registeredJob[jobID]; ok {
@@ -294,8 +294,8 @@ func RegisteredLightningCommonMetricsForDDL(jobID int64) *metric.Common {
 	return metrics
 }
 
-// UnregisteredLightningCommonMetricsForDDL unregisters the registered common metrics.
-func UnregisteredLightningCommonMetricsForDDL(jobID int64, metrics *metric.Common) {
+// UnregisterLightningCommonMetricsForDDL unregisters the registered common metrics.
+func UnregisterLightningCommonMetricsForDDL(jobID int64, metrics *metric.Common) {
 	mu.Lock()
 	defer mu.Unlock()
 	metrics.UnregisterFrom(prometheus.DefaultRegisterer)

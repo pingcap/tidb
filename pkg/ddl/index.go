@@ -2495,10 +2495,10 @@ func (w *worker) addPhysicalTableIndex(
 		return w.writePhysicalTableRecord(ctx, w.sessPool, t, typeAddIndexMergeTmpWorker, reorgInfo)
 	}
 	logutil.DDLLogger().Info("start to add table index", zap.Stringer("job", reorgInfo.Job), zap.Stringer("reorgInfo", reorgInfo))
-	m := metrics.RegisteredLightningCommonMetricsForDDL(reorgInfo.ID)
+	m := metrics.RegisterLightningCommonMetricsForDDL(reorgInfo.ID)
 	ctx = lightningmetric.WithCommonMetric(ctx, m)
 	defer func() {
-		metrics.UnregisteredLightningCommonMetricsForDDL(reorgInfo.ID, m)
+		metrics.UnregisterLightningCommonMetricsForDDL(reorgInfo.ID, m)
 	}()
 	return w.writePhysicalTableRecord(ctx, w.sessPool, t, typeAddIndexWorker, reorgInfo)
 }
