@@ -279,7 +279,7 @@ type LLMDDLPlan struct {
 	Model        bool
 	Name         string
 	OptionNames  []string
-	OptionValues []expression.Expression
+	OptionValues []any
 }
 
 // RecommendIndexPlan represents a plan for recommend index stmt.

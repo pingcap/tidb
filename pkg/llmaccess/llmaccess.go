@@ -35,7 +35,7 @@ type LLMAccessor interface {
 	// ChatCompletion calls the specified LLM to complete the chat based on input prompt.
 	ChatCompletion(platform, model, prompt string) (response string, err error)
 
-	AlterPlatform(sctx sessionctx.Context, platform string, options []string) error
+	AlterPlatform(sctx sessionctx.Context, platform string, options []string, values []any) error
 }
 
 type llmAccessorImpl struct {
@@ -46,27 +46,35 @@ func NewLLMAccessor(sPool util.DestroyableSessionPool) LLMAccessor {
 	return &llmAccessorImpl{sPool: sPool}
 }
 
-func (llm *llmAccessorImpl) AlterPlatform(sctx sessionctx.Context, platform string, options []string) error {
+func (llm *llmAccessorImpl) AlterPlatform(sctx sessionctx.Context, platform string, options []string, values []any) error {
 	platform, err := formatPlatform(platform)
 	if err != nil {
 		return err
 	}
 
-	if len(options) == 1 {
+	fmt.Println(">>>>>> ", values)
 
+	kv := make([]string, 0, len(options))
+	for i := range options {
+		switch strings.ToUpper(options[i]) {
+		case "KEY", "STATUS":
+		case "MAX_TOKENS":
+		default:
+			return fmt.Errorf("unsupported option: %s", options[i])
+		}
+		kv = append(kv, "`"+options[i]+"` = %?")
+		options[i] = "`" + options[i] + "`"
 	}
 
-	switch strings.ToUpper(key) {
-	case "KEY", "STATUS", "MAX_TOKENS", "TIMEOUT", "EXTRAS":
-	default:
-		return fmt.Errorf("unsupported key: %s", key)
-	}
-	updateStmt := "update mysql.llm_platform set `" + key + "` = %? where `name` = %?"
+	updateStmt := "update mysql.llm_platform set " + strings.Join(kv, ", ") + " where `name` = %?"
+	fmt.Println(">>>>>> ", updateStmt)
 	return callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
-		_, err := exec(tmpCtx, updateStmt, val, platform)
+		args := append(values, platform)
+		_, err := exec(tmpCtx, updateStmt, args...)
 		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
 		return err
 	})
+	return nil
 }
 
 // ChatCompletion calls the specified LLM to complete the chat based on input prompt.

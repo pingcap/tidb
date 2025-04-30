@@ -6021,7 +6021,31 @@ func (b *PlanBuilder) buildAlterLLM(ctx context.Context, v *ast.LLMDDLStmt) (bas
 		if err != nil {
 			return nil, err
 		}
-		p.OptionValues = append(p.OptionValues, expr)
+		constVal, ok := expr.(*expression.Constant)
+		if !ok {
+			return nil, fmt.Errorf("option value %s should be a constant", opt.Name)
+		}
+		evalCtx := b.ctx.GetExprCtx().GetEvalCtx()
+		var val any
+		var isNil bool
+		switch constVal.GetType(evalCtx).EvalType() {
+		case types.ETReal:
+			val, isNil, err = constVal.EvalReal(evalCtx, chunk.Row{})
+		case types.ETString:
+			val, isNil, err = constVal.EvalString(evalCtx, chunk.Row{})
+		case types.ETInt:
+			val, isNil, err = constVal.EvalInt(evalCtx, chunk.Row{})
+		default:
+			return nil, fmt.Errorf("invalid value of %s", opt.Name)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if isNil {
+			return nil, fmt.Errorf("option value %s should not be NULL", opt.Name)
+		}
+		p.OptionValues = append(p.OptionValues, val)
+
 	}
 	return p, nil
 }
