@@ -296,6 +296,7 @@ func handleKVGroupConflicts(
 	pairCh := make(chan *external.KVPair)
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 	eg.Go(func() error {
+		defer close(pairCh)
 		for _, file := range ci.Files {
 			if err = readOneFile(egCtx, store, file, pairCh); err != nil {
 				return errors.Trace(err)
