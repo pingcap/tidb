@@ -31,10 +31,10 @@ import (
 )
 
 func TestJsonByteSlice(t *testing.T) {
-	slice := jsonByteSlice("\x03\x02\x00\x02")
+	slice := jsonByteSlice("\x03\x02\x00\x02\xff")
 	data, err := json.Marshal(slice)
 	require.NoError(t, err)
-	require.Equal(t, `[3,2,0,2]`, string(data))
+	require.Equal(t, `[3,2,0,2,255]`, string(data))
 }
 
 func TestWriteClientWriteChunk(t *testing.T) {

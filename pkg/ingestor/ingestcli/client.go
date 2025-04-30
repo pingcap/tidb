@@ -22,8 +22,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -45,16 +43,11 @@ func (s jsonByteSlice) MarshalJSON() ([]byte, error) {
 	if s == nil {
 		return []byte("null"), nil
 	}
-	var b strings.Builder
-	b.WriteString("[")
-	for i, v := range s {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteString(strconv.Itoa(int(v)))
+	tmp := make([]int, 0, len(s))
+	for _, b := range s {
+		tmp = append(tmp, int(b))
 	}
-	b.WriteString("]")
-	return []byte(b.String()), nil
+	return json.Marshal(tmp)
 }
 
 type nextGenResp struct {
