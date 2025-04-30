@@ -1,0 +1,163 @@
+syntax = "proto3";
+
+package indexer;
+
+option go_package = "github.com/tici/proto/indexer";
+
+// IndexerService provides index creation and deletion functionality
+service IndexerService {
+  // CreateIndex creates a new index
+  rpc CreateIndex(CreateIndexRequest) returns (CreateIndexResponse);
+  
+  // DropIndex removes an existing index
+  rpc DropIndex(DropIndexRequest) returns (DropIndexResponse);
+  
+  // GetIndexProgress retrieves the current progress of an index build
+  rpc GetIndexProgress(GetIndexProgressRequest) returns (GetIndexProgressResponse);
+}
+
+// IndexType represents the type of index
+enum IndexType {
+  // Default value must be 0 in proto3
+  UNKNOWN = 0;
+  // Full-text index type
+  FULL_TEXT = 1;
+  // Custom index type
+  CUSTOM = 2;
+}
+
+// ParserType represents the type of parser
+enum ParserType {
+  // Default value must be 0 in proto3
+  UNKNOWN_PARSER = 0;
+  // Default parser
+  DEFAULT_PARSER = 1;
+  // Other parser types
+  OTHER_PARSER = 2;
+}
+
+// CreateIndexRequest is a request to create an index
+message CreateIndexRequest {
+  // Index information
+  IndexInfo index_info = 1;
+  // Table information
+  TableInfo table_info = 2;
+}
+
+// CreateIndexResponse is a response to the index creation request
+message CreateIndexResponse {
+  // Operation result status code, 0 means success
+  int32 status = 1;
+  // Error message, only valid when status is non-zero
+  string error_message = 2;
+  // Created index ID
+  string index_id = 3;
+}
+
+// DropIndexRequest is a request to drop an index
+message DropIndexRequest {
+  // Index ID
+  string index_id = 1;
+}
+
+// DropIndexResponse is a response to the index drop request
+message DropIndexResponse {
+  // Operation result status code, 0 means success
+  int32 status = 1;
+  // Error message, only valid when status is non-zero
+  string error_message = 2;
+}
+
+// TableInfo represents table information
+message TableInfo {
+  // Table ID
+  int64 table_id = 1;
+  // Table name
+  string table_name = 2;
+  // Database name
+  string database_name = 3;
+  // Table version
+  int64 version = 4;
+  // Column information
+  repeated ColumnInfo columns = 5;
+}
+
+// ColumnInfo represents column information
+message ColumnInfo {
+  // Column ID
+  int64 column_id = 1;
+  // Column name
+  string column_name = 2;
+  // MySQL type
+  int32 type = 3;
+  // Collation
+  int32 collation = 4;
+  // Column length
+  int32 column_length = 5;
+  // Decimal places
+  int32 decimal = 6;
+  // Flags
+  int32 flag = 7;
+  // Enum elements
+  repeated string elems = 8;
+  // Default value
+  bytes default_val = 9;
+  // Whether it's a primary key
+  bool is_primary_key = 10;
+  // Whether it's an array
+  bool is_array = 11;
+}
+
+// IndexInfo represents index information
+message IndexInfo {
+  // Table ID
+  int64 table_id = 1;
+  // Index ID
+  int64 index_id = 2;
+  // Index name
+  string index_name = 3;
+  // Index type (fulltext, custom)
+  IndexType index_type = 4;
+  // Index columns
+  repeated ColumnInfo columns = 5;
+  // Whether the index is unique
+  bool is_unique = 6;
+  // Parser information
+  ParserInfo parser_info = 7;
+  // Other index parameters
+  map<string, string> other_params = 8;
+}
+
+// ParserInfo represents parser information
+message ParserInfo {
+  // Parser type
+  ParserType parser_type = 1;
+  // Parser parameters
+  map<string, string> parser_params = 2;
+}
+
+// GetIndexProgressRequest is a request to get the progress of an index build
+message GetIndexProgressRequest {
+  // Table ID
+  int64 table_id = 1;
+  // Index ID
+  int64 index_id = 2;
+}
+
+// GetIndexProgressResponse is a response containing index build progress
+message GetIndexProgressResponse {
+  // Operation result status code, 0 means success
+  int32 status = 1;
+  // Error message, only valid when status is non-zero
+  string error_message = 2;
+  // Number of documents indexed so far
+  uint64 document_count = 3;
+  // Build task state (PENDING, RUNNING, COMPLETED, FAILED)
+  string state = 4;
+  // Whether index has been uploaded to S3
+  bool is_uploaded = 5;
+  // Last S3 upload time in RFC3339 format
+  string last_upload_time = 6;
+  // S3 path where the index is stored
+  string s3_path = 7;
+} 
