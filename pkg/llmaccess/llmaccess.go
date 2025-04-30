@@ -65,10 +65,17 @@ func (llm *llmAccessorImpl) CreateModel(sctx sessionctx.Context, name string, op
 		}
 	}
 
-	columnNames := append(options, "name")
-	columnValues := append(values, name)
+	var userName string
+	if sctx.GetSessionVars().User != nil { // might be nil if in test
+		userName = sctx.GetSessionVars().User.AuthUsername
+	}
+	columnNames := append(options, "name", "user")
+	columnValues := append(values, name, userName)
+	n := len(columnNames)
+
 	createStmt := "insert into mysql.llm_model (" + strings.Join(columnNames, ",") +
-		") values (" + strings.Repeat("%?", len(columnValues)) + ")"
+		") values (" + strings.Repeat("%?,", n-1) + "%?)"
+
 	return callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
 		_, err := exec(tmpCtx, createStmt, columnValues...)
 		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
