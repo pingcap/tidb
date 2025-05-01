@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -35,6 +36,10 @@ type LLMAccessor interface {
 	// ChatCompletion calls the specified LLM to complete the chat based on input prompt.
 	ChatCompletion(platform, model, prompt string) (response string, err error)
 
+	LoadLLMPlatform() error
+
+	LoadLLMModel() error
+
 	AlterPlatform(sctx sessionctx.Context, platform string, options []string, values []any) error
 
 	AlterModel(sctx sessionctx.Context, name string, options []string, values []any) error
@@ -46,6 +51,9 @@ type LLMAccessor interface {
 
 type llmAccessorImpl struct {
 	sPool util.DestroyableSessionPool
+
+	platforms atomic.Value
+	models    atomic.Value
 }
 
 func NewLLMAccessor(sPool util.DestroyableSessionPool) LLMAccessor {
@@ -225,6 +233,66 @@ func (*llmAccessorImpl) chatCompletionOpenAI(model, prompt, key string) (respons
 		return "", err
 	}
 	return chatCompletion.Choices[0].Message.Content, nil
+}
+
+func (llm *llmAccessorImpl) LoadLLMPlatform() error {
+	//stmt := `select name, base_url, host, auth, source, description, key`
+	/*
+		name varchar(64) NOT NULL,
+		base_url varchar(255) NOT NULL,
+		host varchar(255) NOT NULL,
+		auth varchar(255) NOT NULL,
+		source varchar(64) NOT NULL,
+		description text NULL DEFAULT NULL,` +
+		"`key` varchar(255) NULL DEFAULT NULL," +
+		`default_model varchar(255) NULL DEFAULT NULL,
+		max_tokens bigint(20) NULL DEFAULT NULL,
+		timeout decimal(10, 2) NULL DEFAULT NULL,
+		status varchar(64) NOT NULL,
+		extras json NULL DEFAULT NULL,
+		unique key(name));`
+	 */
+	return nil
+}
+
+func (llm *llmAccessorImpl) platforms() {
+}
+
+func (llm *llmAccessorImpl) LoadLLMModel() error {
+	return nil
+}
+
+/*
+	CreateTiDBLLMPlatformTable = `create table if not exists mysql.llm_platform (
+
+	CreateTiDBLLMModelTable = `create table if not exists mysql.llm_model (
+		user varchar(255) not null,
+		name varchar(64) not null,
+		platform varchar(255) not null,
+		api_version varchar(64) default null,
+		model varchar(255) not null,
+		region varchar(255) default null,
+		max_tokens bigint default null,
+		status varchar(64) not null,
+		extras json default null,
+		comment text default null)`
+ */
+
+type platform struct {
+	Name string
+	BaseURL string
+	Host string
+	Auth string
+	Source string
+	Desc string
+	Key string
+	DefaultModel string
+	MaxTokens int64
+	Status string
+	Extras string // JSON
+}
+
+type model struct {
 }
 
 func formatPlatform(platform string) (string, error) {
