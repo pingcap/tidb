@@ -3036,3 +3036,42 @@ func (e *SimpleExec) executeAlterRange(s *ast.AlterRangeStmt) error {
 
 	return infosync.PutRuleBundlesWithDefaultRetry(context.Background(), []*placement.Bundle{bundle})
 }
+
+type LLMDDLExec struct {
+	LLMDDLPlan *core.LLMDDLPlan
+	exec.BaseExecutor
+}
+
+var _ exec.Executor = &LLMDDLExec{}
+
+// Next implements the Executor Next interface.
+func (e *LLMDDLExec) Next(_ context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	llmAccessor := domain.GetDomain(e.Ctx()).LLMAccessor()
+
+	if e.LLMDDLPlan.Platform {
+		return llmAccessor.AlterPlatform(e.Ctx(),
+			e.LLMDDLPlan.Name,
+			e.LLMDDLPlan.OptionNames,
+			e.LLMDDLPlan.OptionValues)
+	} else {
+		switch strings.ToLower(e.LLMDDLPlan.Operation) {
+		case "create":
+			return llmAccessor.CreateModel(e.Ctx(),
+				e.LLMDDLPlan.Name,
+				e.LLMDDLPlan.OptionNames,
+				e.LLMDDLPlan.OptionValues)
+		case "alter":
+			return llmAccessor.AlterModel(e.Ctx(),
+				e.LLMDDLPlan.Name,
+				e.LLMDDLPlan.OptionNames,
+				e.LLMDDLPlan.OptionValues)
+		case "drop":
+			return llmAccessor.DropModel(e.Ctx(), e.LLMDDLPlan.Name)
+		default:
+			return errors.New("unsupported operation")
+		}
+	}
+
+	return nil
+}

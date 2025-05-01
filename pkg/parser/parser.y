@@ -484,6 +484,7 @@ import (
 	location              "LOCATION"
 	locked                "LOCKED"
 	logs                  "LOGS"
+	llm                   "LLM"
 	master                "MASTER"
 	maxConnectionsPerHour "MAX_CONNECTIONS_PER_HOUR"
 	max_idxnum            "MAX_IDXNUM"
@@ -503,6 +504,7 @@ import (
 	mode                  "MODE"
 	modify                "MODIFY"
 	month                 "MONTH"
+	model                 "MODEL"
 	names                 "NAMES"
 	national              "NATIONAL"
 	ncharType             "NCHAR"
@@ -546,6 +548,7 @@ import (
 	plugins               "PLUGINS"
 	point                 "POINT"
 	policy                "POLICY"
+	platform              "PLATFORM"
 	preceding             "PRECEDING"
 	prepare               "PREPARE"
 	preserve              "PRESERVE"
@@ -1034,6 +1037,7 @@ import (
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockStatsStmt              "Lock statistic statement"
+	LLMDDLStmt                 "LLM DDL statement"
 	UnlockStatsStmt            "Unlock statistic statement"
 	LockTablesStmt             "Lock tables statement"
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
@@ -1245,6 +1249,7 @@ import (
 	LockClause                             "Alter table lock clause"
 	LogTypeOpt                             "Optional log type used in FLUSH statements"
 	LowPriorityOpt                         "LOAD DATA low priority option"
+	LLMDDLOptionList                       "LLM DDL option list"
 	MaxValPartOpt                          "MAXVALUE partition option"
 	NullPartOpt                            "NULL Partition option"
 	NumLiteral                             "Num/Int/Float/Decimal Literal"
@@ -6912,6 +6917,7 @@ UnReservedKeyword:
 |	"STATUS"
 |	"OPEN"
 |	"POINT"
+|	"PLATFORM"
 |	"SUBPARTITIONS"
 |	"SUBPARTITION"
 |	"TABLES"
@@ -6993,6 +6999,7 @@ UnReservedKeyword:
 |	"ROW_COUNT"
 |	"COALESCE"
 |	"MONTH"
+|	"MODEL"
 |	"PROCESS"
 |	"PROFILE"
 |	"PROFILES"
@@ -7191,6 +7198,7 @@ UnReservedKeyword:
 |	"COMPRESSION_TYPE"
 |	"ENCRYPTION_METHOD"
 |	"ENCRYPTION_KEYFILE"
+|	"LLM"
 
 TiDBKeyword:
 	"ADMIN"
@@ -12374,6 +12382,7 @@ Statement:
 |	LoadDataStmt
 |	LoadStatsStmt
 |	LockStatsStmt
+|	LLMDDLStmt
 |	UnlockStatsStmt
 |	PlanReplayerStmt
 |	PreparedStmt
@@ -16685,6 +16694,55 @@ CalibrateResourceWorkloadOption:
 |	"WORKLOAD" "TPCH_10"
 	{
 		$$ = ast.TPCH10
+	}
+
+LLMDDLStmt:
+	"ALTER" "LLM" "PLATFORM" Identifier LLMDDLOptionList
+	{
+		$$ = &ast.LLMDDLStmt{
+			Operation:  "ALTER",
+			Platform:   true,
+			Name:       $4,
+			OptionList: $5.([]ast.LLMDDLOption),
+		}
+	}
+|	"CREATE" "LLM" "MODEL" Identifier LLMDDLOptionList
+	{
+		$$ = &ast.LLMDDLStmt{
+			Operation:  "CREATE",
+			Model:      true,
+			Name:       $4,
+			OptionList: $5.([]ast.LLMDDLOption),
+		}
+	}
+|	"ALTER" "LLM" "MODEL" Identifier LLMDDLOptionList
+	{
+		$$ = &ast.LLMDDLStmt{
+			Operation:  "ALTER",
+			Model:      true,
+			Name:       $4,
+			OptionList: $5.([]ast.LLMDDLOption),
+		}
+	}
+|	"DROP" "LLM" "MODEL" Identifier
+	{
+		$$ = &ast.LLMDDLStmt{
+			Operation: "DROP",
+			Model:     true,
+			Name:      $4,
+		}
+	}
+
+LLMDDLOptionList:
+	Identifier Expression
+	{
+		opt := ast.LLMDDLOption{$1, $2}
+		$$ = []ast.LLMDDLOption{opt}
+	}
+|	LLMDDLOptionList Identifier Expression
+	{
+		opt := ast.LLMDDLOption{$2, $3}
+		$$ = append($1.([]ast.LLMDDLOption), opt)
 	}
 
 /********************************************************************

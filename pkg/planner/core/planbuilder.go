@@ -579,6 +579,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildCompactTable(x)
 	case *ast.RecommendIndexStmt:
 		return b.buildRecommendIndex(x)
+	case *ast.LLMDDLStmt:
+		return b.buildAlterLLM(ctx, x)
 	}
 	return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported type %T", node.Node)
 }
@@ -6002,6 +6004,55 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (base.Plan, 
 		ReplicaKind:    node.ReplicaKind,
 		TableInfo:      tblInfo,
 		PartitionNames: node.PartitionNames,
+	}
+	return p, nil
+}
+
+func (b *PlanBuilder) buildAlterLLM(ctx context.Context, v *ast.LLMDDLStmt) (base.Plan, error) {
+	p := &LLMDDLPlan{
+		Model:     v.Model,
+		Platform:  v.Platform,
+		Name:      v.Name,
+		Operation: v.Operation,
+	}
+	for _, opt := range v.OptionList {
+		mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+		p.OptionNames = append(p.OptionNames, opt.Name)
+		expr, _, err := b.rewrite(ctx, opt.Value, mockTablePlan, nil, true)
+		if err != nil {
+			return nil, err
+		}
+		constVal, ok := expr.(*expression.Constant)
+		if !ok {
+			return nil, fmt.Errorf("option value %s should be a constant", opt.Name)
+		}
+		evalCtx := b.ctx.GetExprCtx().GetEvalCtx()
+		var val any
+		var isNil bool
+		switch constVal.GetType(evalCtx).EvalType() {
+		case types.ETReal:
+			val, isNil, err = constVal.EvalReal(evalCtx, chunk.Row{})
+		case types.ETString:
+			val, isNil, err = constVal.EvalString(evalCtx, chunk.Row{})
+		case types.ETInt:
+			val, isNil, err = constVal.EvalInt(evalCtx, chunk.Row{})
+		case types.ETDecimal:
+			var d *types.MyDecimal
+			d, isNil, err = constVal.EvalDecimal(evalCtx, chunk.Row{})
+			if !isNil && err == nil && d != nil {
+				val, err = d.ToFloat64()
+			}
+		default:
+			return nil, fmt.Errorf("invalid value of %s", opt.Name)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if isNil {
+			return nil, fmt.Errorf("option value %s should not be NULL", opt.Name)
+		}
+		p.OptionValues = append(p.OptionValues, val)
+
 	}
 	return p, nil
 }

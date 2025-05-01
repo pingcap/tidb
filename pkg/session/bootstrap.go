@@ -788,6 +788,41 @@ const (
 		value json NOT NULL,
 		index idx_version_category_type (version, category, type),
 		index idx_table_id (table_id));`
+
+	// CreateTiDBLLMPlatformTable is a table to store LLM platform information.
+	CreateTiDBLLMPlatformTable = `create table if not exists mysql.llm_platform (
+		name varchar(64) NOT NULL,
+		base_url varchar(255) NOT NULL,
+		host varchar(255) NOT NULL,
+		auth varchar(255) NOT NULL,
+		source varchar(64) NOT NULL,
+		description text NULL DEFAULT NULL,
+		api_key varchar(255) NULL DEFAULT NULL,
+		default_model varchar(255) NULL DEFAULT NULL,
+		max_tokens bigint(20) NULL DEFAULT NULL,
+		timeout decimal(10, 2) NULL DEFAULT NULL,
+		status varchar(64) NOT NULL,
+		extras json NULL DEFAULT NULL,
+		unique key(name));`
+	// TODO: unique key on name?
+	// TODO: can we remove host? host and name are similar?
+	InsertOpenAIPlatform = `insert into mysql.llm_platform
+		(name, base_url, host, auth, source, status) values (
+		"openai", "https://api.openai.com/v1", "openai", "apikey", "system", "DISABLED")`
+	InsertBedrockPlatform = `insert into mysql.llm_platform
+		(name, base_url, host, auth, source, status) values (
+		"bedrock_runtime", "", "AWS", "platform", "system", "DISABLED")`
+	CreateTiDBLLMModelTable = `create table if not exists mysql.llm_model (
+		user varchar(255) not null,
+		access_point_name varchar(64) not null,
+		platform varchar(255) not null,
+		api_version varchar(64) default null,
+		model varchar(255) not null,
+		region varchar(255) default null,
+		max_tokens bigint default null,
+		status varchar(64) not null,
+		extras json default null,
+		comment text default null)`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -1284,6 +1319,9 @@ const (
 	// version 247
 	// Add last_stats_histograms_version to mysql.stats_meta.
 	version247 = 247
+
+	// version 248
+	version248 = 248
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -1471,6 +1509,7 @@ var (
 		upgradeToVer245,
 		upgradeToVer246,
 		upgradeToVer247,
+		upgradeToVer248,
 	}
 )
 
@@ -3477,6 +3516,16 @@ func upgradeToVer247(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer248(s sessiontypes.Session, ver int64) {
+	if ver >= version248 {
+		return
+	}
+	doReentrantDDL(s, CreateTiDBLLMPlatformTable, infoschema.ErrTableExists)
+	doReentrantDDL(s, InsertOpenAIPlatform)
+	doReentrantDDL(s, InsertBedrockPlatform)
+	doReentrantDDL(s, CreateTiDBLLMModelTable)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3633,6 +3682,11 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateKernelOptionsTable)
 	// create mysql.tidb_workload_values
 	mustExecute(s, CreateTiDBWorkloadValuesTable)
+	// create mysql.llm_platform
+	mustExecute(s, CreateTiDBLLMPlatformTable)
+	mustExecute(s, InsertOpenAIPlatform)
+	mustExecute(s, InsertBedrockPlatform)
+	mustExecute(s, CreateTiDBLLMModelTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

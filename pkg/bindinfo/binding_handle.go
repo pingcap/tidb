@@ -15,6 +15,7 @@
 package bindinfo
 
 import (
+	"github.com/pingcap/tidb/pkg/llmaccess"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -64,10 +65,11 @@ type bindingHandle struct {
 }
 
 // NewBindingHandle creates a new BindingHandle.
-func NewBindingHandle(sPool util.DestroyableSessionPool) BindingHandle {
+func NewBindingHandle(sPool util.DestroyableSessionPool,
+	llmAccessor llmaccess.LLMAccessor) BindingHandle {
 	cache := NewBindingCacheUpdater(sPool)
 	op := newBindingOperator(sPool, cache)
-	auto := newBindingAuto(sPool)
+	auto := newBindingAuto(sPool, llmAccessor)
 	h := &bindingHandle{BindingOperator: op, BindingCacheUpdater: cache, BindingPlanEvolution: auto}
 	variable.RegisterStatistics(h)
 	return h

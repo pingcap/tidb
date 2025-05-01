@@ -16,6 +16,7 @@ package bindinfo
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/llmaccess"
 	"slices"
 	"strings"
 
@@ -67,12 +68,12 @@ type bindingAuto struct {
 	llmPredictor       PlanPerfPredictor
 }
 
-func newBindingAuto(sPool util.DestroyableSessionPool) BindingPlanEvolution {
+func newBindingAuto(sPool util.DestroyableSessionPool, llmAccessor llmaccess.LLMAccessor) BindingPlanEvolution {
 	return &bindingAuto{
 		sPool:              sPool,
-		planGenerator:      new(knobBasedPlanGenerator),
+		planGenerator:      &knobBasedPlanGenerator{sPool: sPool},
 		ruleBasedPredictor: new(ruleBasedPlanPerfPredictor),
-		llmPredictor:       new(llmBasedPlanPerfPredictor),
+		llmPredictor:       &llmBasedPlanPerfPredictor{llmAccessor},
 	}
 }
 
@@ -169,6 +170,9 @@ func (*bindingAuto) fillRecommendation(plans []*BindingPlanInfo, predictor PlanP
 	scores, explanations, err := predictor.PerfPredicate(plans)
 	if err != nil {
 		return false, err
+	}
+	if len(scores) == 0 {
+		return false, nil
 	}
 	maxScore := slices.Max(scores)
 	if maxScore == 0 {

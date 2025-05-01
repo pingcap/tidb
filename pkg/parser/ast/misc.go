@@ -4273,6 +4273,57 @@ func (n *DropQueryWatchStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+type LLMDDLOption struct {
+	Name  string
+	Value ExprNode
+}
+
+type LLMDDLStmt struct {
+	stmtNode
+	Operation  string
+	Platform   bool
+	Model      bool
+	Name       string
+	OptionList []LLMDDLOption
+}
+
+func (n *LLMDDLStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord(n.Operation)
+	ctx.WriteKeyWord(" LLM")
+	if n.Platform {
+		ctx.WriteKeyWord(" PLATFORM ")
+	} else if n.Model {
+		ctx.WriteKeyWord(" MODEL ")
+	}
+	ctx.WritePlain(n.Name)
+
+	for _, option := range n.OptionList {
+		ctx.WritePlain(" ")
+		ctx.WritePlain(option.Name)
+		ctx.WritePlain(" ")
+		if err := option.Value.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing LLMDDLOption: [%v]", option)
+		}
+	}
+	return nil
+}
+
+func (n *LLMDDLStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*LLMDDLStmt)
+	for _, option := range n.OptionList {
+		node, ok := option.Value.Accept(v)
+		if !ok {
+			return n, false
+		}
+		option.Value = node.(ExprNode)
+	}
+	return v.Leave(n)
+}
+
 // AddQueryWatchStmt is a statement to add a runaway watch item.
 type AddQueryWatchStmt struct {
 	stmtNode

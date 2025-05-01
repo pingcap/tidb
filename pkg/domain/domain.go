@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/llmaccess"
 	"math"
 	"math/rand"
 	"sort"
@@ -155,6 +156,7 @@ type Domain struct {
 	infoCache       *infoschema.InfoCache
 	privHandle      *privileges.Handle
 	bindHandle      atomic.Value
+	llmAccessor     atomic.Value
 	statsHandle     atomic.Pointer[handle.Handle]
 	statsLease      time.Duration
 	ddl             ddl.DDL
@@ -2199,6 +2201,48 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
 }
 
+func (do *Domain) InitLLMAccessor() {
+	do.llmAccessor.Store(llmaccess.NewLLMAccessor(do.sysSessionPool))
+	if err := do.LLMAccessor().LoadLLMPlatform(); err != nil {
+		logutil.BgLogger().Error("load llm platform failed", zap.Error(err))
+	}
+	if err := do.LLMAccessor().LoadLLMModel(); err != nil {
+		logutil.BgLogger().Error("load llm model failed", zap.Error(err))
+	}
+	do.wg.Run(func() {
+		defer func() {
+			logutil.BgLogger().Info("LLMAccessor exited.")
+		}()
+		defer util.Recover(metrics.LabelDomain, "LLMAccessor", nil, false)
+
+		ticker := time.NewTicker(time.Second * 10)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-do.exit:
+				// TODO: close llmAccessor?
+				return
+			case <-ticker.C:
+				if err := do.LLMAccessor().LoadLLMPlatform(); err != nil {
+					logutil.BgLogger().Error("load llm platform failed", zap.Error(err))
+				}
+				if err := do.LLMAccessor().LoadLLMModel(); err != nil {
+					logutil.BgLogger().Error("load llm model failed", zap.Error(err))
+				}
+			}
+		}
+
+	}, "LLMAccessor")
+}
+
+func (do *Domain) LLMAccessor() llmaccess.LLMAccessor {
+	v := do.llmAccessor.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(llmaccess.LLMAccessor)
+}
+
 // BindingHandle returns domain's bindHandle.
 func (do *Domain) BindingHandle() bindinfo.BindingHandle {
 	v := do.bindHandle.Load()
@@ -2211,7 +2255,7 @@ func (do *Domain) BindingHandle() bindinfo.BindingHandle {
 // InitBindingHandle create a goroutine loads BindInfo in a loop, it should
 // be called only once in BootstrapSession.
 func (do *Domain) InitBindingHandle() error {
-	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool))
+	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool, do.LLMAccessor()))
 	err := do.BindingHandle().LoadFromStorageToCache(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
