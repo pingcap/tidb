@@ -34,7 +34,7 @@ const (
 
 type LLMAccessor interface {
 	// ChatCompletion calls the specified LLM to complete the chat based on input prompt.
-	ChatCompletion(platform, model, prompt string) (response string, err error)
+	ChatCompletion(accessPointName, prompt string) (response string, err error)
 
 	LoadLLMPlatform() error
 
@@ -211,15 +211,15 @@ func (llm *llmAccessorImpl) validatePlatformOptions(options []string, values []a
 }
 
 // ChatCompletion calls the specified LLM to complete the chat based on input prompt.
-func (llm *llmAccessorImpl) ChatCompletion(platform, model, prompt string) (response string, err error) {
-	platform, err = formatPlatform(platform)
+func (llm *llmAccessorImpl) ChatCompletion(accessPointName, prompt string) (response string, err error) {
+	platform, model, err := llm.findPlatformModelByAccessPointName(accessPointName)
 	if err != nil {
 		return "", err
 	}
 
-	switch platform {
+	switch platform.Name {
 	case OpenAI:
-		return llm.chatCompletionOpenAI(model, prompt, "")
+		return llm.chatCompletionOpenAI(model.Model, prompt, "")
 	default:
 		return "", fmt.Errorf("unsupported platform: %d", platform)
 	}
@@ -277,7 +277,7 @@ func (llm *llmAccessorImpl) LoadLLMPlatform() error {
 }
 
 func (llm *llmAccessorImpl) LoadLLMModel() error {
-	stmt := `select user, name, platform, api_version, model, region,
+	stmt := `select user, access_point_name, platform, api_version, model, region,
 		max_tokens, status, extras, comment from mysql.llm_model`
 
 	return callWithSCtx(llm.sPool, false, func(sctx sessionctx.Context) error {
@@ -288,21 +288,37 @@ func (llm *llmAccessorImpl) LoadLLMModel() error {
 		models := make([]*model, 0, len(rows))
 		for _, row := range rows {
 			m := &model{
-				User:       row.GetString(0),
-				Name:       row.GetString(1),
-				Platform:   row.GetString(2),
-				APIVersion: row.GetString(3),
-				Model:      row.GetString(4),
-				Region:     row.GetString(5),
-				MaxTokens:  row.GetInt64(6),
-				Status:     row.GetString(7),
-				Comment:    row.GetString(9),
+				User:            row.GetString(0),
+				AccessPointName: row.GetString(1),
+				Platform:        row.GetString(2),
+				APIVersion:      row.GetString(3),
+				Model:           row.GetString(4),
+				Region:          row.GetString(5),
+				MaxTokens:       row.GetInt64(6),
+				Status:          row.GetString(7),
+				Comment:         row.GetString(9),
 			}
 			models = append(models, m)
 		}
 		llm.models.Store(models)
 		return nil
 	})
+}
+
+func (llm *llmAccessorImpl) findPlatformModelByAccessPointName(accessPointName string) (*platform, *model, error) {
+	platforms := llm.platforms.Load().([]*platform)
+	models := llm.models.Load().([]*model)
+	for _, m := range models {
+		if m.AccessPointName == accessPointName {
+			for _, p := range platforms {
+				if p.Name == m.Platform {
+					return p, m, nil
+				}
+			}
+			return nil, m, fmt.Errorf("platform %s not found for access point %s", m.Platform, accessPointName)
+		}
+	}
+	return nil, nil, fmt.Errorf("model not found for access point %s", accessPointName)
 }
 
 type platform struct {
@@ -320,15 +336,15 @@ type platform struct {
 }
 
 type model struct {
-	User       string
-	Name       string
-	Platform   string
-	APIVersion string
-	Model      string
-	Region     string
-	MaxTokens  int64
-	Status     string
-	Comment    string
+	User            string
+	AccessPointName string
+	Platform        string
+	APIVersion      string
+	Model           string
+	Region          string
+	MaxTokens       int64
+	Status          string
+	Comment         string
 }
 
 func formatPlatform(platform string) (string, error) {
