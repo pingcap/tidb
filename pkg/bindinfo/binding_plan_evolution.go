@@ -211,6 +211,7 @@ type ruleBasedPlanPerfPredictor struct {
 func (*ruleBasedPlanPerfPredictor) PerfPredicate(plans []*BindingPlanInfo) (scores []float64, explanations []string, err error) {
 	scores = make([]float64, len(plans))
 	explanations = make([]string, len(plans))
+	return
 
 	if len(plans) == 0 {
 		return

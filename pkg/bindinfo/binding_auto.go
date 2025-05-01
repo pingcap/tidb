@@ -251,6 +251,7 @@ func (ba *bindingAuto) getBindingPlanInfo(currentDB, sqlOrDigest, charset, colla
 				autoBinding.ScanRowsPerReturnRow = autoBinding.AvgScanRows / autoBinding.AvgReturnedRows
 			}
 		}
+		autoBinding.Source = "from history"
 		bindingPlans = append(bindingPlans, autoBinding)
 	}
 	return bindingPlans, nil
