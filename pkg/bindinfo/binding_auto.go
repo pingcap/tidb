@@ -102,8 +102,27 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 		}
 	}
 
-	planCandidates := append(bindingPlans, historicalPlans...)
-	planCandidates = append(planCandidates, generatedPlans...)
+	planCandidates := make([]*BindingPlanInfo, 0, 4)
+	planDigests := make(map[string]bool)
+	for _, plan := range bindingPlans {
+		planDigests[plan.PlanDigest] = true
+		planCandidates = append(planCandidates, plan)
+	}
+	for _, plan := range historicalPlans {
+		if planDigests[plan.PlanDigest] {
+			continue
+		}
+		planDigests[plan.PlanDigest] = true
+		planCandidates = append(planCandidates, plan)
+	}
+	for _, plan := range generatedPlans {
+		if planDigests[plan.PlanDigest] {
+			continue
+		}
+		planDigests[plan.PlanDigest] = true
+		planCandidates = append(planCandidates, plan)
+	}
+
 	ok, err := ba.fillRecommendation(planCandidates, ba.ruleBasedPredictor, "rule-based")
 	if err != nil || ok { // error or hit any rule
 		return planCandidates, err
@@ -130,6 +149,7 @@ func (ba *bindingAuto) getHistoricalPlanInfo(defaultSchema, sql string) (plans [
 				return err
 			}
 			plan.Source = "from history"
+			plan.PlanDigest = planDigests[i]
 
 			pInfo, err := ba.getPlanExecInfo(planDigests[i])
 			if err != nil {
