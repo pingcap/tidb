@@ -1809,6 +1809,7 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memDelta := chk.MemoryUsage()
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
+		chunkRowOffset = 0
 		for range chk.NumRows() {
 			if w.pushedLimit != nil {
 				w.scannedKeys++
