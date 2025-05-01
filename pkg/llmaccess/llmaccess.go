@@ -36,6 +36,8 @@ type LLMAccessor interface {
 	// ChatCompletion calls the specified LLM to complete the chat based on input prompt.
 	ChatCompletion(accessPointName, prompt string) (response string, err error)
 
+	IsAccessPointAvailable(accessPointName string) bool
+
 	LoadLLMPlatform() error
 
 	LoadLLMModel() error
@@ -303,6 +305,11 @@ func (llm *llmAccessorImpl) LoadLLMModel() error {
 		llm.models.Store(models)
 		return nil
 	})
+}
+
+func (llm *llmAccessorImpl) IsAccessPointAvailable(accessPointName string) bool {
+	platform, model, err := llm.findPlatformModelByAccessPointName(accessPointName)
+	return err == nil && platform != nil && model != nil
 }
 
 func (llm *llmAccessorImpl) findPlatformModelByAccessPointName(accessPointName string) (*platform, *model, error) {
