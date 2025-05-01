@@ -84,6 +84,7 @@ func (g *knobBasedPlanGenerator) Generate(defaultSchema string, sql string) (pla
 				if err != nil {
 					return err
 				}
+				bindingPlan.Source = "from plan generation"
 				planHint, err := bindingPlan.Hint.Restore()
 				if err != nil {
 					return err

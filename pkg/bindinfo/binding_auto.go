@@ -129,6 +129,7 @@ func (ba *bindingAuto) getHistoricalPlanInfo(defaultSchema, sql string) (plans [
 			if err != nil {
 				return err
 			}
+			plan.Source = "from history"
 
 			pInfo, err := ba.getPlanExecInfo(planDigests[i])
 			if err != nil {
