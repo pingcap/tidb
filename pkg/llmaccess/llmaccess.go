@@ -89,11 +89,14 @@ func (llm *llmAccessorImpl) CreateModel(sctx sessionctx.Context, name string, op
 	createStmt := "insert into mysql.llm_model (" + strings.Join(columnNames, ",") +
 		") values (" + strings.Repeat("%?,", n-1) + "%?)"
 
-	return callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
+	if err := callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
 		_, err := exec(tmpCtx, createStmt, columnValues...)
 		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
 		return err
-	})
+	}); err != nil {
+		return err
+	}
+	return llm.LoadLLMModel()
 }
 
 func (llm *llmAccessorImpl) AlterModel(sctx sessionctx.Context, name string, options []string, values []any) error {
@@ -105,21 +108,27 @@ func (llm *llmAccessorImpl) AlterModel(sctx sessionctx.Context, name string, opt
 		columnSet = append(columnSet, "`"+options[i]+"` = %?")
 	}
 	updateStmt := "update mysql.llm_model set " + strings.Join(columnSet, ", ") + " where `name` = %?"
-	return callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
+	if err := callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
 		args := append(values, name)
 		_, err := exec(tmpCtx, updateStmt, args...)
 		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
 		return err
-	})
+	}); err != nil {
+		return err
+	}
+	return llm.LoadLLMModel()
 }
 
 func (llm *llmAccessorImpl) DropModel(sctx sessionctx.Context, name string) error {
 	deleteStmt := "delete from mysql.llm_model where `name` = %?"
-	return callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
+	if err := callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
 		_, err := exec(tmpCtx, deleteStmt, name)
 		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
 		return err
-	})
+	}); err != nil {
+		return err
+	}
+	return llm.LoadLLMModel()
 }
 
 func (llm *llmAccessorImpl) validateModelOptions(options []string, values []any) error {
@@ -163,19 +172,22 @@ func (llm *llmAccessorImpl) AlterPlatform(sctx sessionctx.Context, platform stri
 		columnSet = append(columnSet, "`"+options[i]+"` = %?")
 	}
 	updateStmt := "update mysql.llm_platform set " + strings.Join(columnSet, ", ") + " where `name` = %?"
-	return callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
+	if err := callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
 		args := append(values, platform)
 		_, err := exec(tmpCtx, updateStmt, args...)
 		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
 		return err
-	})
+	}); err != nil {
+		return err
+	}
+	return llm.LoadLLMPlatform()
 }
 
 func (llm *llmAccessorImpl) validatePlatformOptions(options []string, values []any) error {
 	for i := range options {
 		v := values[i]
 		switch strings.ToUpper(options[i]) {
-		case "KEY":
+		case "API_KEY":
 			if !isStr(v) {
 				return fmt.Errorf("invalid value for %s: %v", options[i], v)
 			}
@@ -236,63 +248,87 @@ func (*llmAccessorImpl) chatCompletionOpenAI(model, prompt, key string) (respons
 }
 
 func (llm *llmAccessorImpl) LoadLLMPlatform() error {
-	//stmt := `select name, base_url, host, auth, source, description, key`
-	/*
-		name varchar(64) NOT NULL,
-		base_url varchar(255) NOT NULL,
-		host varchar(255) NOT NULL,
-		auth varchar(255) NOT NULL,
-		source varchar(64) NOT NULL,
-		description text NULL DEFAULT NULL,` +
-		"`key` varchar(255) NULL DEFAULT NULL," +
-		`default_model varchar(255) NULL DEFAULT NULL,
-		max_tokens bigint(20) NULL DEFAULT NULL,
-		timeout decimal(10, 2) NULL DEFAULT NULL,
-		status varchar(64) NOT NULL,
-		extras json NULL DEFAULT NULL,
-		unique key(name));`
-	 */
-	return nil
-}
-
-func (llm *llmAccessorImpl) platforms() {
+	stmt := `select name, base_url, host, auth, source, description, api_key,
+		default_model, max_tokens, timeout, status from mysql.llm_platform`
+	return callWithSCtx(llm.sPool, false, func(sctx sessionctx.Context) error {
+		rows, _, err := execRows(sctx, stmt)
+		if err != nil {
+			return err
+		}
+		platforms := make([]*platform, 0, len(rows))
+		for _, row := range rows {
+			p := &platform{
+				Name:         row.GetString(0),
+				BaseURL:      row.GetString(1),
+				Host:         row.GetString(2),
+				Auth:         row.GetString(3),
+				Source:       row.GetString(4),
+				Desc:         row.GetString(5),
+				APIKey:       row.GetString(6),
+				DefaultModel: row.GetString(7),
+				MaxTokens:    row.GetInt64(8),
+				Status:       row.GetString(9),
+			}
+			platforms = append(platforms, p)
+		}
+		llm.platforms.Store(platforms)
+		return nil
+	})
 }
 
 func (llm *llmAccessorImpl) LoadLLMModel() error {
-	return nil
+	stmt := `select user, name, platform, api_version, model, region,
+		max_tokens, status, extras, comment from mysql.llm_model`
+
+	return callWithSCtx(llm.sPool, false, func(sctx sessionctx.Context) error {
+		rows, _, err := execRows(sctx, stmt)
+		if err != nil {
+			return err
+		}
+		models := make([]*model, 0, len(rows))
+		for _, row := range rows {
+			m := &model{
+				User:       row.GetString(0),
+				Name:       row.GetString(1),
+				Platform:   row.GetString(2),
+				APIVersion: row.GetString(3),
+				Model:      row.GetString(4),
+				Region:     row.GetString(5),
+				MaxTokens:  row.GetInt64(6),
+				Status:     row.GetString(7),
+				Comment:    row.GetString(9),
+			}
+			models = append(models, m)
+		}
+		llm.models.Store(models)
+		return nil
+	})
 }
 
-/*
-	CreateTiDBLLMPlatformTable = `create table if not exists mysql.llm_platform (
-
-	CreateTiDBLLMModelTable = `create table if not exists mysql.llm_model (
-		user varchar(255) not null,
-		name varchar(64) not null,
-		platform varchar(255) not null,
-		api_version varchar(64) default null,
-		model varchar(255) not null,
-		region varchar(255) default null,
-		max_tokens bigint default null,
-		status varchar(64) not null,
-		extras json default null,
-		comment text default null)`
- */
-
 type platform struct {
-	Name string
-	BaseURL string
-	Host string
-	Auth string
-	Source string
-	Desc string
-	Key string
+	Name         string
+	BaseURL      string
+	Host         string
+	Auth         string
+	Source       string
+	Desc         string
+	APIKey       string
 	DefaultModel string
-	MaxTokens int64
-	Status string
-	Extras string // JSON
+	MaxTokens    int64
+	Status       string
+	Extras       string // JSON
 }
 
 type model struct {
+	User       string
+	Name       string
+	Platform   string
+	APIVersion string
+	Model      string
+	Region     string
+	MaxTokens  int64
+	Status     string
+	Comment    string
 }
 
 func formatPlatform(platform string) (string, error) {

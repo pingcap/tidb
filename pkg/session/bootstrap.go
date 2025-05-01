@@ -796,9 +796,9 @@ const (
 		host varchar(255) NOT NULL,
 		auth varchar(255) NOT NULL,
 		source varchar(64) NOT NULL,
-		description text NULL DEFAULT NULL,` +
-		"`key` varchar(255) NULL DEFAULT NULL," +
-		`default_model varchar(255) NULL DEFAULT NULL,
+		description text NULL DEFAULT NULL,
+		api_key varchar(255) NULL DEFAULT NULL,
+		default_model varchar(255) NULL DEFAULT NULL,
 		max_tokens bigint(20) NULL DEFAULT NULL,
 		timeout decimal(10, 2) NULL DEFAULT NULL,
 		status varchar(64) NOT NULL,
