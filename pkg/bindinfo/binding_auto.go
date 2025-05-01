@@ -89,6 +89,11 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 		return nil, err
 	}
 
+	historicalPlans, err := ba.getHistoricalPlanInfo(sqlOrDigest)
+	if err != nil {
+		return nil, err
+	}
+
 	var generatedPlans []*BindingPlanInfo
 	if ba.llmAccessor != nil && ba.llmAccessor.IsAccessPointAvailable("tidb_spm") {
 		generatedPlans, err = ba.planGenerator.Generate(currentDB, sqlOrDigest)
@@ -97,13 +102,74 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 		}
 	}
 
-	planCandidates := append(bindingPlans, generatedPlans...)
+	planCandidates := append(bindingPlans, historicalPlans...)
+	planCandidates = append(planCandidates, generatedPlans...)
 	ok, err := ba.fillRecommendation(planCandidates, ba.ruleBasedPredictor, "rule-based")
 	if err != nil || ok { // error or hit any rule
 		return planCandidates, err
 	}
 	_, err = ba.fillRecommendation(planCandidates, ba.llmPredictor, "LLM")
 	return planCandidates, err
+}
+
+func (ba *bindingAuto) getHistoricalPlanInfo(sql string) (plans []*BindingPlanInfo, err error) {
+	_, digest := parser.NormalizeDigest(sql)
+	planDigests, planHints, err := ba.getPlanDigestsForSQL(digest.String())
+	if err != nil {
+		return nil, err
+	}
+
+	sql = strings.TrimSpace(sql)
+	err = callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
+		prefix := "select"
+		for i := range planHints {
+			hintedSQL := sql[0:len(prefix)] + " /*+ " + planHints[i] + " */ " + sql[len(prefix):]
+			plan, err := generateBindingPlan(sctx, hintedSQL)
+			if err != nil {
+				return err
+			}
+
+			pInfo, err := ba.getPlanExecInfo(planDigests[i])
+			if err != nil {
+				bindingLogger().Error("get plan execution info failed", zap.String("plan_digest", plan.PlanDigest), zap.Error(err))
+				continue
+			}
+			if pInfo != nil && pInfo.ExecCount > 0 { // pInfo could be nil when stmt_stats' data is incomplete.
+				plan.Plan = pInfo.Plan
+				plan.ExecTimes = pInfo.ExecCount
+				plan.AvgLatency = float64(pInfo.TotalTime) / float64(pInfo.ExecCount)
+				plan.AvgScanRows = float64(pInfo.ProcessedKeys) / float64(pInfo.ExecCount)
+				plan.AvgReturnedRows = float64(pInfo.ResultRows) / float64(pInfo.ExecCount)
+				if plan.AvgReturnedRows > 0 {
+					plan.LatencyPerReturnRow = plan.AvgLatency / plan.AvgReturnedRows
+					plan.ScanRowsPerReturnRow = plan.AvgScanRows / plan.AvgReturnedRows
+				}
+			}
+
+			plans = append(plans, plan)
+		}
+		return nil
+	})
+	return
+}
+
+func (ba *bindingAuto) getPlanDigestsForSQL(sqlDigest string) (planDigests, planHints []string, err error) {
+	stmtStatsTable := "information_schema.tidb_statements_stats"
+	stmtQuery := fmt.Sprintf(`select plan_digest, plan_hints from %v where sql_digest = '%v'`, stmtStatsTable, sqlDigest)
+	var rows []chunk.Row
+	err = callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
+		rows, _, err = execRows(sctx, stmtQuery)
+		return err
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	planDigests = make([]string, 0, len(rows))
+	for _, row := range rows {
+		planDigests = append(planDigests, row.GetString(0))
+		planHints = append(planHints, row.GetString(1))
+	}
+	return
 }
 
 func (ba *bindingAuto) getBindingPlanInfo(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
