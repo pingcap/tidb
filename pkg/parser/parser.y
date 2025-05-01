@@ -12786,7 +12786,6 @@ TableOption:
 |	"SECONDARY_ENGINE" EqOpt "NULL"
 	{
 		// Parse it but will ignore it
-		// See https://github.com/mysql/mysql-server/blob/8.0/sql/sql_yacc.yy#L5977-L5984
 		$$ = &ast.TableOption{Tp: ast.TableOptionSecondaryEngineNull}
 		yylex.AppendError(yylex.Errorf("The SECONDARY_ENGINE clause is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
@@ -12794,7 +12793,6 @@ TableOption:
 |	"SECONDARY_ENGINE" EqOpt StringName
 	{
 		// Parse it but will ignore it
-		// See https://github.com/mysql/mysql-server/blob/8.0/sql/sql_yacc.yy#L5977-L5984
 		$$ = &ast.TableOption{Tp: ast.TableOptionSecondaryEngine, StrValue: $3}
 		yylex.AppendError(yylex.Errorf("The SECONDARY_ENGINE clause is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
