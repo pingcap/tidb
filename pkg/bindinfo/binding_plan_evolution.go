@@ -15,8 +15,9 @@
 package bindinfo
 
 import (
+	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/llmaccess"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"math/rand"
@@ -273,17 +274,77 @@ func (*ruleBasedPlanPerfPredictor) PerfPredicate(plans []*BindingPlanInfo) (scor
 
 // llmBasedPlanPerfPredictor leverages LLM to score plans.
 type llmBasedPlanPerfPredictor struct {
-	llmAccessor llmaccess.LLMAccessor
+	sPool util.DestroyableSessionPool
 }
 
 func (p *llmBasedPlanPerfPredictor) PerfPredicate(plans []*BindingPlanInfo) (scores []float64, explanations []string, err error) {
 	scores = make([]float64, len(plans))
 	explanations = make([]string, len(plans))
-	// TODO: implement this
 
-	if p.llmAccessor == nil || !p.llmAccessor.IsAccessPointAvailable("tidb_spm") {
-		return
+	err = callWithSCtx(p.sPool, false, func(sctx sessionctx.Context) error {
+		llmaccessor := domain.GetDomain(sctx).LLMAccessor()
+		if llmaccessor == nil || llmaccessor.IsAccessPointAvailable("tidb_spm") {
+			return nil
+		}
+
+		prompt := p.prompt(plans)
+		llmResp, err := llmaccessor.ChatCompletion("tidb_spm", prompt)
+		if err != nil {
+			return err
+		}
+
+		scores, explanations, err = p.parseLLMResp(llmResp, plans)
+		return err
+	})
+	return
+}
+
+func (p *llmBasedPlanPerfPredictor) prompt(plans []*BindingPlanInfo) string {
+	promptPattern := `You are a TiDB expert.
+You are going to help me decide which hint should be used for a specified SQL.
+Be careful with the escape characters.
+Be careful that estRows might not be accurate.
+You can take at most 20 seconds to think of this.
+The SQL is "%v".
+Here are these hinted SQLs and their plans:
+%v
+Please tell me which one is the best, and the reason.
+The reason should be concise, not more than 200 words.
+Please return a valid JSON object with the key "number" and "reason".
+IMPORTANT: Don't put anything else in the response and return the raw json data directly, remove "` + "```" + `json".
+Here is an example of output JSON:
+    {"number": 2, "reason": "xxxxxxxxxxxxxxxxxxx"}`
+	bindingPlanText := make([]string, 0, len(plans))
+	for i, p := range plans {
+		bindingPlanText = append(bindingPlanText, fmt.Sprintf("%d. %v\n%v\n", i, p.BindSQL, p.Plan))
+	}
+	prompt := fmt.Sprintf(promptPattern, plans[0].OriginalSQL, strings.Join(bindingPlanText, "\n"))
+	return prompt
+}
+
+func (p *llmBasedPlanPerfPredictor) parseLLMResp(llmResp string, plans []*BindingPlanInfo) (scores []float64, explanations []string, err error) {
+	if strings.HasPrefix(llmResp, "```json") {
+		llmResp = strings.TrimPrefix(llmResp, "```json")
+		llmResp = strings.TrimSuffix(llmResp, "```")
 	}
 
+	r := new(LLMRecommendation)
+	err = json.Unmarshal([]byte(llmResp), r)
+	if err != nil {
+		return nil, nil, nil
+	}
+
+	if r.Number < 0 || r.Number >= len(plans) {
+		return nil, nil, fmt.Errorf("invalid result number: %d, should be in [0, %d)", r.Number, len(plans))
+	}
+	scores = make([]float64, len(plans))
+	scores[r.Number] = 1
+	explanations = make([]string, len(plans))
+	explanations[r.Number] = r.Reason
 	return
+}
+
+type LLMRecommendation struct {
+	Number int    `json:"number"`
+	Reason string `json:"reason"`
 }

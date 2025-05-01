@@ -72,7 +72,7 @@ func newBindingAuto(sPool util.DestroyableSessionPool) BindingPlanEvolution {
 		sPool:              sPool,
 		planGenerator:      &knobBasedPlanGenerator{sPool: sPool},
 		ruleBasedPredictor: new(ruleBasedPlanPerfPredictor),
-		llmPredictor:       new(llmBasedPlanPerfPredictor),
+		llmPredictor:       &llmBasedPlanPerfPredictor{sPool: sPool},
 	}
 }
 
