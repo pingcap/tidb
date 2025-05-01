@@ -814,7 +814,7 @@ const (
 		"bedrock_runtime", "", "AWS", "platform", "system", "DISABLED")`
 	CreateTiDBLLMModelTable = `create table if not exists mysql.llm_model (
 		user varchar(255) not null,
-		name varchar(64) not null,
+		access_point_name varchar(64) not null,
 		platform varchar(255) not null,
 		api_version varchar(64) default null,
 		model varchar(255) not null,

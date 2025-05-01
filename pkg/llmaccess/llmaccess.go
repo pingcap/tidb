@@ -60,7 +60,7 @@ func NewLLMAccessor(sPool util.DestroyableSessionPool) LLMAccessor {
 	return &llmAccessorImpl{sPool: sPool}
 }
 
-func (llm *llmAccessorImpl) CreateModel(sctx sessionctx.Context, name string, options []string, values []any) error {
+func (llm *llmAccessorImpl) CreateModel(sctx sessionctx.Context, accessPointName string, options []string, values []any) error {
 	requiredOptions := []string{"PLATFORM", "MODEL", "STATUS"}
 	for _, opt := range requiredOptions {
 		ok := false
@@ -82,8 +82,8 @@ func (llm *llmAccessorImpl) CreateModel(sctx sessionctx.Context, name string, op
 	if sctx.GetSessionVars().User != nil { // might be nil if in test
 		userName = sctx.GetSessionVars().User.AuthUsername
 	}
-	columnNames := append(options, "name", "user")
-	columnValues := append(values, name, userName)
+	columnNames := append(options, "access_point_name", "user")
+	columnValues := append(values, accessPointName, userName)
 	n := len(columnNames)
 
 	createStmt := "insert into mysql.llm_model (" + strings.Join(columnNames, ",") +
@@ -99,7 +99,7 @@ func (llm *llmAccessorImpl) CreateModel(sctx sessionctx.Context, name string, op
 	return llm.LoadLLMModel()
 }
 
-func (llm *llmAccessorImpl) AlterModel(sctx sessionctx.Context, name string, options []string, values []any) error {
+func (llm *llmAccessorImpl) AlterModel(sctx sessionctx.Context, accessPointName string, options []string, values []any) error {
 	if err := llm.validateModelOptions(options, values); err != nil {
 		return err
 	}
@@ -107,9 +107,9 @@ func (llm *llmAccessorImpl) AlterModel(sctx sessionctx.Context, name string, opt
 	for i := range options {
 		columnSet = append(columnSet, "`"+options[i]+"` = %?")
 	}
-	updateStmt := "update mysql.llm_model set " + strings.Join(columnSet, ", ") + " where `name` = %?"
+	updateStmt := "update mysql.llm_model set " + strings.Join(columnSet, ", ") + " where access_point_name = %?"
 	if err := callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
-		args := append(values, name)
+		args := append(values, accessPointName)
 		_, err := exec(tmpCtx, updateStmt, args...)
 		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
 		return err
@@ -119,10 +119,10 @@ func (llm *llmAccessorImpl) AlterModel(sctx sessionctx.Context, name string, opt
 	return llm.LoadLLMModel()
 }
 
-func (llm *llmAccessorImpl) DropModel(sctx sessionctx.Context, name string) error {
-	deleteStmt := "delete from mysql.llm_model where `name` = %?"
+func (llm *llmAccessorImpl) DropModel(sctx sessionctx.Context, accessPointName string) error {
+	deleteStmt := "delete from mysql.llm_model where access_point_name = %?"
 	if err := callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
-		_, err := exec(tmpCtx, deleteStmt, name)
+		_, err := exec(tmpCtx, deleteStmt, accessPointName)
 		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
 		return err
 	}); err != nil {
