@@ -84,7 +84,7 @@ func newBindingAuto(sPool util.DestroyableSessionPool, llmAccessor llmaccess.LLM
 // 2. generate new plan candidates.
 // 3. score all historical and newly-generated plan candidates and recommend the best one.
 func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
-	historicalPlans, err := ba.getBindingPlanInfo(currentDB, sqlOrDigest, charset, collation)
+	bindingPlans, err := ba.getBindingPlanInfo(currentDB, sqlOrDigest, charset, collation)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 		}
 	}
 
-	planCandidates := append(historicalPlans, generatedPlans...)
+	planCandidates := append(bindingPlans, generatedPlans...)
 	ok, err := ba.fillRecommendation(planCandidates, ba.ruleBasedPredictor, "rule-based")
 	if err != nil || ok { // error or hit any rule
 		return planCandidates, err
