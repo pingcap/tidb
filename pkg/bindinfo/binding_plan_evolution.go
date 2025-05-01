@@ -287,6 +287,9 @@ func (p *llmBasedPlanPerfPredictor) PerfPredicate(plans []*BindingPlanInfo) (sco
 
 	prompt := p.prompt(plans)
 	llmResp, err := p.llmAccessor.ChatCompletion("tidb_spm", prompt)
+
+	fmt.Println("???>>>>>> ", llmResp, err)
+
 	if err != nil {
 		return nil, nil, err
 	}

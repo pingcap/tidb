@@ -315,18 +315,30 @@ func (llm *llmAccessorImpl) IsAccessPointAvailable(accessPointName string) bool 
 
 func (llm *llmAccessorImpl) findPlatformModelByAccessPointName(accessPointName string) (*platform, *model, error) {
 	platforms := llm.platforms.Load().([]*platform)
-	models := llm.models.Load().([]*model)
-	for _, m := range models {
+
+	var matchedModel *model
+	for _, m := range llm.models.Load().([]*model) {
 		if m.AccessPointName == accessPointName {
-			for _, p := range platforms {
-				if p.Name == m.Platform {
-					return p, m, nil
-				}
-			}
-			return nil, m, fmt.Errorf("platform %s not found for access point %s", m.Platform, accessPointName)
+			matchedModel = m
+			break
 		}
 	}
-	return nil, nil, fmt.Errorf("model not found for access point %s", accessPointName)
+	if matchedModel == nil {
+		return nil, nil, fmt.Errorf("model not found for access point %s", accessPointName)
+	}
+
+	var matchedPlatform *platform
+	for _, p := range platforms {
+		if p.Name == matchedModel.Platform {
+			matchedPlatform = p
+			break
+		}
+	}
+	if matchedPlatform == nil {
+		return nil, nil, fmt.Errorf("platform %s not found for access point %s", matchedModel.Platform, accessPointName)
+	}
+
+	return matchedPlatform, matchedModel, nil
 }
 
 type platform struct {
