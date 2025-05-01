@@ -7987,6 +7987,27 @@ func TestSecondaryEngineAttribute(t *testing.T) {
 			false,
 			"",
 		},
+
+		// CREATE INDEX syntax for SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE INDEX i ON t (a) SECONDARY_ENGINE_ATTRIBUTE = '{}'",
+			true,
+			"CREATE INDEX `i` ON `t` (`a`) SECONDARY_ENGINE_ATTRIBUTE = '{}'",
+		},
+
+		// CREATE INDEX syntax for SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE INDEX i ON t (a) SECONDARY_ENGINE_ATTRIBUTE '{}'",
+			true,
+			"CREATE INDEX `i` ON `t` (`a`) SECONDARY_ENGINE_ATTRIBUTE = '{}'",
+		},
+
+		// Invalid CREATE INDEX syntax for SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE INDEX i ON t (a) SECONDARY_ENGINE_ATTRIBUTE",
+			false,
+			"",
+		},
 	}
 
 	RunTest(t, table, false)

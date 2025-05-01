@@ -757,7 +757,8 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Comment != "" ||
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
-		n.SplitOpt != nil {
+		n.SplitOpt != nil ||
+		len(n.SecondaryEngineAttr) > 0 {
 		return false
 	}
 	return true
