@@ -854,6 +854,7 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		if err != nil {
 			return err
 		}
+		hasPrevOption = true
 	}
 
 	if n.SecondaryEngineAttr != "" {
