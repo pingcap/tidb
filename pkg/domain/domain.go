@@ -2203,6 +2203,12 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 
 func (do *Domain) InitLLMAccessor() {
 	do.llmAccessor.Store(llmaccess.NewLLMAccessor(do.sysSessionPool))
+	if err := do.LLMAccessor().LoadLLMPlatform(); err != nil {
+		logutil.BgLogger().Error("load llm platform failed", zap.Error(err))
+	}
+	if err := do.LLMAccessor().LoadLLMModel(); err != nil {
+		logutil.BgLogger().Error("load llm model failed", zap.Error(err))
+	}
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Info("LLMAccessor exited.")

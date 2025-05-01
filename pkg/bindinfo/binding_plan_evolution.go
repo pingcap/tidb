@@ -326,7 +326,7 @@ func (p *llmBasedPlanPerfPredictor) parseLLMResp(llmResp string, plans []*Bindin
 	r := new(LLMRecommendation)
 	err = json.Unmarshal([]byte(llmResp), r)
 	if err != nil {
-		return nil, nil, nil
+		return nil, nil, err
 	}
 
 	if r.Number < 0 || r.Number >= len(plans) {
