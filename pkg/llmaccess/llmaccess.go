@@ -314,8 +314,6 @@ func (llm *llmAccessorImpl) IsAccessPointAvailable(accessPointName string) bool 
 }
 
 func (llm *llmAccessorImpl) findPlatformModelByAccessPointName(accessPointName string) (*platform, *model, error) {
-	platforms := llm.platforms.Load().([]*platform)
-
 	var matchedModel *model
 	for _, m := range llm.models.Load().([]*model) {
 		if m.AccessPointName == accessPointName {
@@ -328,7 +326,7 @@ func (llm *llmAccessorImpl) findPlatformModelByAccessPointName(accessPointName s
 	}
 
 	var matchedPlatform *platform
-	for _, p := range platforms {
+	for _, p := range llm.platforms.Load().([]*platform) {
 		if p.Name == matchedModel.Platform {
 			matchedPlatform = p
 			break
