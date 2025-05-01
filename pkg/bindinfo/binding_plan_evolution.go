@@ -149,7 +149,6 @@ func generateBindingPlan(sctx sessionctx.Context, sql string) (*BindingPlanInfo,
 		OriginalSQL: sql, // TODO: normalize
 		BindSQL:     bindingSQL,
 		Db:          sctx.GetSessionVars().CurrentDB,
-		Source:      "new-generated",
 	}
 	if err = prepareHints(sctx, binding); err != nil {
 		return nil, err

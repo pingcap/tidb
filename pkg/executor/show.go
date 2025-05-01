@@ -400,6 +400,7 @@ func (e *ShowExec) fetchPlanForSQL() error {
 			hintStr,
 			p.Plan,
 			p.PlanDigest,
+			p.Source,
 			p.AvgLatency,
 			float64(p.ExecTimes),
 			p.AvgScanRows,
