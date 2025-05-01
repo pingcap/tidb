@@ -7902,7 +7902,7 @@ func TestSecondaryEngineAttribute(t *testing.T) {
 			"CREATE TABLE `t` (`id` INT SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}')",
 		},
 
-		// Valid: Tablespaces SECONDARY_ENGINE_ATTRIBUTE
+		// Valid: Table-level with tablespace option SECONDARY_ENGINE_ATTRIBUTE
 		{
 			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'",
 			true,
@@ -7938,7 +7938,7 @@ func TestSecondaryEngineAttribute(t *testing.T) {
 			"",
 		},
 
-		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Tablespaces-level
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE in Table-level with tablespace option
 		{
 			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE=",
 			false,
@@ -7974,7 +7974,7 @@ func TestSecondaryEngineAttribute(t *testing.T) {
 			"",
 		},
 
-		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE for Tablespaces-level
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE in Table-level with tablespace option
 		{
 			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE",
 			false,
