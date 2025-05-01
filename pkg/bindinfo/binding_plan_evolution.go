@@ -65,6 +65,7 @@ func (g *knobBasedPlanGenerator) Generate(defaultSchema string, sql string) (pla
 		}
 		defaultPlan.Source = "from plan generation"
 		relatedCostFactors := collectRelatedCostFactors(sctx, defaultPlan.Plan)
+		fmt.Println(">>>>>> factors >> ", len(relatedCostFactors))
 		planHint, err := defaultPlan.Hint.Restore()
 		if err != nil {
 			return err
@@ -74,11 +75,16 @@ func (g *knobBasedPlanGenerator) Generate(defaultSchema string, sql string) (pla
 
 		// change these related cost factors randomly to walk in the plan space and sample some plans
 		if len(relatedCostFactors) > 0 {
-			for walkStep := 0; walkStep < 500; walkStep++ {
+			for walkStep := 0; walkStep < 5000; walkStep++ {
 				// each step, randomly change one cost factor
 				idx := rand.Intn(len(relatedCostFactors))
-				randomFactorValues := []float64{0.01, 0.1, 10, 100, 1000, 10000, 100000}
+				randomFactorValues := []float64{1, 10, 100, 10000, 1000000}
+				if *relatedCostFactors[idx] >= 1e7 {
+					continue
+				}
 				*relatedCostFactors[idx] = randomFactorValues[rand.Intn(len(randomFactorValues))]
+
+				fmt.Println(">>>>>>>>>> hs factor >> ", sctx.GetSessionVars().HashJoinCostFactor)
 
 				// generate a new plan based on the modified cost factors
 				bindingPlan, err := generateBindingPlan(sctx, sql)
