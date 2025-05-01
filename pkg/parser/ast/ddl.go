@@ -864,7 +864,8 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE")
 		ctx.WritePlain(" = ")
 		ctx.WriteString(n.SecondaryEngineAttr)
-		hasPrevOption = true
+		// If a new option is added after, please also uncomment:
+		//hasPrevOption = true
 	}
 
 	return nil
