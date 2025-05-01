@@ -63,6 +63,7 @@ func (g *knobBasedPlanGenerator) Generate(defaultSchema string, sql string) (pla
 		if err != nil {
 			return err
 		}
+		defaultPlan.Source = "from plan generation"
 		relatedCostFactors := collectRelatedCostFactors(sctx, defaultPlan.Plan)
 		planHint, err := defaultPlan.Hint.Restore()
 		if err != nil {
