@@ -16,6 +16,7 @@ package bindinfo
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/llmaccess"
 	"slices"
 	"strings"
 
@@ -67,12 +68,12 @@ type bindingAuto struct {
 	llmPredictor       PlanPerfPredictor
 }
 
-func newBindingAuto(sPool util.DestroyableSessionPool) BindingPlanEvolution {
+func newBindingAuto(sPool util.DestroyableSessionPool, llmAccessor llmaccess.LLMAccessor) BindingPlanEvolution {
 	return &bindingAuto{
 		sPool:              sPool,
 		planGenerator:      &knobBasedPlanGenerator{sPool: sPool},
 		ruleBasedPredictor: new(ruleBasedPlanPerfPredictor),
-		llmPredictor:       &llmBasedPlanPerfPredictor{sPool: sPool},
+		llmPredictor:       &llmBasedPlanPerfPredictor{llmAccessor},
 	}
 }
 

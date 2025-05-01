@@ -17,7 +17,7 @@ package bindinfo
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/llmaccess"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"math/rand"
@@ -274,29 +274,24 @@ func (*ruleBasedPlanPerfPredictor) PerfPredicate(plans []*BindingPlanInfo) (scor
 
 // llmBasedPlanPerfPredictor leverages LLM to score plans.
 type llmBasedPlanPerfPredictor struct {
-	sPool util.DestroyableSessionPool
+	llmAccessor llmaccess.LLMAccessor
 }
 
 func (p *llmBasedPlanPerfPredictor) PerfPredicate(plans []*BindingPlanInfo) (scores []float64, explanations []string, err error) {
 	scores = make([]float64, len(plans))
 	explanations = make([]string, len(plans))
 
-	err = callWithSCtx(p.sPool, false, func(sctx sessionctx.Context) error {
-		llmaccessor := domain.GetDomain(sctx).LLMAccessor()
-		if llmaccessor == nil || llmaccessor.IsAccessPointAvailable("tidb_spm") {
-			return nil
-		}
+	if p.llmAccessor == nil || p.llmAccessor.IsAccessPointAvailable("tidb_spm") {
+		return nil, nil, nil
+	}
 
-		prompt := p.prompt(plans)
-		llmResp, err := llmaccessor.ChatCompletion("tidb_spm", prompt)
-		if err != nil {
-			return err
-		}
+	prompt := p.prompt(plans)
+	llmResp, err := p.llmAccessor.ChatCompletion("tidb_spm", prompt)
+	if err != nil {
+		return nil, nil, err
+	}
 
-		scores, explanations, err = p.parseLLMResp(llmResp, plans)
-		return err
-	})
-	return
+	return p.parseLLMResp(llmResp, plans)
 }
 
 func (p *llmBasedPlanPerfPredictor) prompt(plans []*BindingPlanInfo) string {
