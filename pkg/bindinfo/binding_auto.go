@@ -66,6 +66,7 @@ type bindingAuto struct {
 	planGenerator      PlanGenerator
 	ruleBasedPredictor PlanPerfPredictor
 	llmPredictor       PlanPerfPredictor
+	llmAccessor        llmaccess.LLMAccessor
 }
 
 func newBindingAuto(sPool util.DestroyableSessionPool, llmAccessor llmaccess.LLMAccessor) BindingPlanEvolution {
@@ -74,6 +75,7 @@ func newBindingAuto(sPool util.DestroyableSessionPool, llmAccessor llmaccess.LLM
 		planGenerator:      &knobBasedPlanGenerator{sPool: sPool},
 		ruleBasedPredictor: new(ruleBasedPlanPerfPredictor),
 		llmPredictor:       &llmBasedPlanPerfPredictor{llmAccessor},
+		llmAccessor:        llmAccessor,
 	}
 }
 
@@ -87,9 +89,12 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 		return nil, err
 	}
 
-	generatedPlans, err := ba.planGenerator.Generate(currentDB, sqlOrDigest)
-	if err != nil {
-		return nil, err
+	var generatedPlans []*BindingPlanInfo
+	if ba.llmAccessor != nil && ba.llmAccessor.IsAccessPointAvailable("tidb_spm") {
+		generatedPlans, err = ba.planGenerator.Generate(currentDB, sqlOrDigest)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	planCandidates := append(historicalPlans, generatedPlans...)
