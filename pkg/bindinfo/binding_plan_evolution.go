@@ -281,14 +281,12 @@ func (p *llmBasedPlanPerfPredictor) PerfPredicate(plans []*BindingPlanInfo) (sco
 	scores = make([]float64, len(plans))
 	explanations = make([]string, len(plans))
 
-	if p.llmAccessor == nil || p.llmAccessor.IsAccessPointAvailable("tidb_spm") {
+	if p.llmAccessor == nil || !p.llmAccessor.IsAccessPointAvailable("tidb_spm") {
 		return nil, nil, nil
 	}
 
 	prompt := p.prompt(plans)
 	llmResp, err := p.llmAccessor.ChatCompletion("tidb_spm", prompt)
-
-	fmt.Println("???>>>>>> ", llmResp, err)
 
 	if err != nil {
 		return nil, nil, err
