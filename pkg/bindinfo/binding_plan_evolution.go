@@ -65,7 +65,6 @@ func (g *knobBasedPlanGenerator) Generate(defaultSchema string, sql string) (pla
 		}
 		defaultPlan.Source = "from plan generation"
 		relatedCostFactors := collectRelatedCostFactors(sctx, defaultPlan.Plan)
-		fmt.Println(">>>>>> factors >> ", len(relatedCostFactors))
 		planHint, err := defaultPlan.Hint.Restore()
 		if err != nil {
 			return err
@@ -73,9 +72,25 @@ func (g *knobBasedPlanGenerator) Generate(defaultSchema string, sql string) (pla
 		memorizedPlan[planHint] = struct{}{}
 		plans = append(plans, defaultPlan)
 
+		//sctx.GetSessionVars().HashJoinCostFactor = 10000
+		//bindingPlan, err := generateBindingPlan(sctx, sql)
+		//if err != nil {
+		//	fmt.Println("????????>>>>>> ", err)
+		//}
+		//
+		//fmt.Println("------------ default -----------------")
+		//fmt.Println(defaultPlan.Plan)
+		//h1, err := defaultPlan.Hint.Restore()
+		//fmt.Println(h1, err)
+		//fmt.Println("------------- bindingPlan -----------------")
+		//fmt.Println(bindingPlan.Plan)
+		//h2, err := bindingPlan.Hint.Restore()
+		//fmt.Println(h2, err)
+		//return nil
+
 		// change these related cost factors randomly to walk in the plan space and sample some plans
 		if len(relatedCostFactors) > 0 {
-			for walkStep := 0; walkStep < 5000; walkStep++ {
+			for walkStep := 0; walkStep < 500; walkStep++ {
 				// each step, randomly change one cost factor
 				idx := rand.Intn(len(relatedCostFactors))
 				randomFactorValues := []float64{1, 10, 100, 10000, 1000000}
@@ -83,8 +98,6 @@ func (g *knobBasedPlanGenerator) Generate(defaultSchema string, sql string) (pla
 					continue
 				}
 				*relatedCostFactors[idx] = randomFactorValues[rand.Intn(len(randomFactorValues))]
-
-				fmt.Println(">>>>>>>>>> hs factor >> ", sctx.GetSessionVars().HashJoinCostFactor)
 
 				// generate a new plan based on the modified cost factors
 				bindingPlan, err := generateBindingPlan(sctx, sql)
@@ -146,7 +159,7 @@ func collectRelatedCostFactors(sctx sessionctx.Context, plan string) []*float64 
 }
 
 func generateBindingPlan(sctx sessionctx.Context, sql string) (*BindingPlanInfo, error) {
-	plan, hint, err := explainPlan(sctx, sql)
+	plan, planDigest, hint, err := explainPlan(sctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -155,6 +168,7 @@ func generateBindingPlan(sctx sessionctx.Context, sql string) (*BindingPlanInfo,
 	binding := &Binding{
 		OriginalSQL: sql, // TODO: normalize
 		BindSQL:     bindingSQL,
+		PlanDigest:  planDigest,
 		Db:          sctx.GetSessionVars().CurrentDB,
 	}
 	if err = prepareHints(sctx, binding); err != nil {
@@ -167,11 +181,14 @@ func generateBindingPlan(sctx sessionctx.Context, sql string) (*BindingPlanInfo,
 	}, nil
 }
 
-func explainPlan(sctx sessionctx.Context, sql string) (plan, hint string, err error) {
+func explainPlan(sctx sessionctx.Context, sql string) (plan, planDigest, hint string, err error) {
 	rows, _, err := execRows(sctx, "EXPLAIN "+sql)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
+
+	_, pd := sctx.GetSessionVars().StmtCtx.GetPlanDigest()
+	planDigest = pd.String()
 
 	/*
 		+----------------------------+----------+-----------+---------------------+---------------------------------+
@@ -194,7 +211,7 @@ func explainPlan(sctx sessionctx.Context, sql string) (plan, hint string, err er
 
 	rows, _, err = execRows(sctx, "EXPLAIN FORMAT='hint' "+sql)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	hint = rows[0].GetString(0)
 	return
