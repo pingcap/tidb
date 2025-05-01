@@ -89,7 +89,7 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 		return nil, err
 	}
 
-	historicalPlans, err := ba.getHistoricalPlanInfo(sqlOrDigest)
+	historicalPlans, err := ba.getHistoricalPlanInfo(currentDB, sqlOrDigest)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 	return planCandidates, err
 }
 
-func (ba *bindingAuto) getHistoricalPlanInfo(sql string) (plans []*BindingPlanInfo, err error) {
+func (ba *bindingAuto) getHistoricalPlanInfo(defaultSchema, sql string) (plans []*BindingPlanInfo, err error) {
 	_, digest := parser.NormalizeDigest(sql)
 	planDigests, planHints, err := ba.getPlanDigestsForSQL(digest.String())
 	if err != nil {
@@ -121,6 +121,7 @@ func (ba *bindingAuto) getHistoricalPlanInfo(sql string) (plans []*BindingPlanIn
 
 	sql = strings.TrimSpace(sql)
 	err = callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
+		sctx.GetSessionVars().CurrentDB = defaultSchema
 		prefix := "select"
 		for i := range planHints {
 			hintedSQL := sql[0:len(prefix)] + " /*+ " + planHints[i] + " */ " + sql[len(prefix):]
@@ -155,7 +156,7 @@ func (ba *bindingAuto) getHistoricalPlanInfo(sql string) (plans []*BindingPlanIn
 
 func (ba *bindingAuto) getPlanDigestsForSQL(sqlDigest string) (planDigests, planHints []string, err error) {
 	stmtStatsTable := "information_schema.tidb_statements_stats"
-	stmtQuery := fmt.Sprintf(`select plan_digest, plan_hints from %v where sql_digest = '%v'`, stmtStatsTable, sqlDigest)
+	stmtQuery := fmt.Sprintf(`select plan_digest, plan_hint from %v where digest = '%v'`, stmtStatsTable, sqlDigest)
 	var rows []chunk.Row
 	err = callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
 		rows, _, err = execRows(sctx, stmtQuery)
