@@ -17,7 +17,6 @@ package llmaccess
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync/atomic"
 
@@ -222,18 +221,15 @@ func (llm *llmAccessorImpl) ChatCompletion(accessPointName, prompt string) (resp
 
 	switch platform.Name {
 	case OpenAI:
-		return llm.chatCompletionOpenAI(model.Model, prompt, "")
+		return llm.chatCompletionOpenAI(model.Model, prompt, platform.APIKey)
 	default:
 		return "", fmt.Errorf("unsupported platform: %d", platform)
 	}
 }
 
-func (*llmAccessorImpl) chatCompletionOpenAI(model, prompt, key string) (response string, err error) {
-	if key == "" {
-		key, _ = os.LookupEnv("OPENAI_API_KEY")
-	}
+func (*llmAccessorImpl) chatCompletionOpenAI(model, prompt, apiKey string) (response string, err error) {
 	client := openai.NewClient(
-		option.WithAPIKey(key), // defaults to os.LookupEnv("OPENAI_API_KEY")
+		option.WithAPIKey(apiKey), // defaults to os.LookupEnv("OPENAI_API_KEY")
 	)
 	chatCompletion, err := client.Chat.Completions.New(context.TODO(), openai.ChatCompletionNewParams{
 		Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
