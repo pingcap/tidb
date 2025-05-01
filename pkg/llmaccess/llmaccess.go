@@ -42,11 +42,11 @@ type LLMAccessor interface {
 
 	AlterPlatform(sctx sessionctx.Context, platform string, options []string, values []any) error
 
-	AlterModel(sctx sessionctx.Context, name string, options []string, values []any) error
+	AlterModel(sctx sessionctx.Context, accessPointName string, options []string, values []any) error
 
-	CreateModel(sctx sessionctx.Context, name string, options []string, values []any) error
+	CreateModel(sctx sessionctx.Context, accessPointName string, options []string, values []any) error
 
-	DropModel(sctx sessionctx.Context, name string) error
+	DropModel(sctx sessionctx.Context, accessPointName string) error
 }
 
 type llmAccessorImpl struct {
