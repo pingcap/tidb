@@ -171,6 +171,9 @@ func (*bindingAuto) fillRecommendation(plans []*BindingPlanInfo, predictor PlanP
 	if err != nil {
 		return false, err
 	}
+	if len(scores) == 0 {
+		return false, nil
+	}
 	maxScore := slices.Max(scores)
 	if maxScore == 0 {
 		return false, nil

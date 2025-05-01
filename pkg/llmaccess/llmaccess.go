@@ -201,6 +201,7 @@ func (llm *llmAccessorImpl) validatePlatformOptions(options []string, values []a
 			if str != "ENABLED" && str != "DISABLED" {
 				return fmt.Errorf("invalid value for %s: %v", options[i], v)
 			}
+			values[i] = str
 		case "MAX_TOKENS":
 			if !isInt(v) {
 				return fmt.Errorf("invalid value for %s: %v", options[i], v)
@@ -251,7 +252,7 @@ func (*llmAccessorImpl) chatCompletionOpenAI(model, prompt, key string) (respons
 
 func (llm *llmAccessorImpl) LoadLLMPlatform() error {
 	stmt := `select name, base_url, host, auth, source, description, api_key,
-		default_model, max_tokens, timeout, status from mysql.llm_platform`
+		default_model, max_tokens, status from mysql.llm_platform`
 	return callWithSCtx(llm.sPool, false, func(sctx sessionctx.Context) error {
 		rows, _, err := execRows(sctx, stmt)
 		if err != nil {
