@@ -744,7 +744,6 @@ type IndexOption struct {
 	PrimaryKeyTp        PrimaryKeyType
 	Global              bool
 	SplitOpt            *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
-	IndexOptionComment  string
 	SecondaryEngineAttr string
 }
 
