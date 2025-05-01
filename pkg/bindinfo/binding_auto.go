@@ -70,7 +70,7 @@ type bindingAuto struct {
 func newBindingAuto(sPool util.DestroyableSessionPool) BindingPlanEvolution {
 	return &bindingAuto{
 		sPool:              sPool,
-		planGenerator:      new(knobBasedPlanGenerator),
+		planGenerator:      &knobBasedPlanGenerator{sPool: sPool},
 		ruleBasedPredictor: new(ruleBasedPlanPerfPredictor),
 		llmPredictor:       new(llmBasedPlanPerfPredictor),
 	}

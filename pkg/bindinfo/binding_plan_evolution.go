@@ -16,6 +16,7 @@ package bindinfo
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/llmaccess"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"math/rand"
@@ -272,11 +273,17 @@ func (*ruleBasedPlanPerfPredictor) PerfPredicate(plans []*BindingPlanInfo) (scor
 
 // llmBasedPlanPerfPredictor leverages LLM to score plans.
 type llmBasedPlanPerfPredictor struct {
+	llmAccessor llmaccess.LLMAccessor
 }
 
-func (*llmBasedPlanPerfPredictor) PerfPredicate(plans []*BindingPlanInfo) (scores []float64, explanations []string, err error) {
+func (p *llmBasedPlanPerfPredictor) PerfPredicate(plans []*BindingPlanInfo) (scores []float64, explanations []string, err error) {
 	scores = make([]float64, len(plans))
 	explanations = make([]string, len(plans))
 	// TODO: implement this
+
+	if p.llmAccessor == nil || !p.llmAccessor.IsAccessPointAvailable("tidb_spm") {
+		return
+	}
+
 	return
 }
