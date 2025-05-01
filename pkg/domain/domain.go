@@ -2203,6 +2203,30 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 
 func (do *Domain) InitLLMAccessor() {
 	do.llmAccessor.Store(llmaccess.NewLLMAccessor(do.sysSessionPool))
+	do.wg.Run(func() {
+		defer func() {
+			logutil.BgLogger().Info("LLMAccessor exited.")
+		}()
+		defer util.Recover(metrics.LabelDomain, "LLMAccessor", nil, false)
+
+		ticker := time.NewTicker(time.Second * 10)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-do.exit:
+				// TODO: close llmAccessor?
+				return
+			case <-ticker.C:
+				if err := do.LLMAccessor().LoadLLMPlatform(); err != nil {
+					logutil.BgLogger().Error("load llm platform failed", zap.Error(err))
+				}
+				if err := do.LLMAccessor().LoadLLMModel(); err != nil {
+					logutil.BgLogger().Error("load llm model failed", zap.Error(err))
+				}
+			}
+		}
+
+	}, "LLMAccessor")
 }
 
 func (do *Domain) LLMAccessor() llmaccess.LLMAccessor {
