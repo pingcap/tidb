@@ -638,12 +638,12 @@ func (w *commitWorker) commitOneTask(ctx context.Context, task commitTask) error
 }
 
 func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]types.Datum, cnt uint64) error {
-	if w.stats != nil && w.stats.BasicRuntimeStats != nil {
+	if w.RuntimeStats() != nil {
 		// Since this method will not call by executor Next,
 		// so we need record the basic executor runtime stats by ourselves.
 		start := time.Now()
 		defer func() {
-			w.stats.BasicRuntimeStats.Record(time.Since(start), 0)
+			w.RuntimeStats().Record(time.Since(start), 0)
 		}()
 	}
 	var err error

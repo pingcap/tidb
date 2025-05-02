@@ -479,7 +479,7 @@ func (cli *TestServerClient) RunTestLoadDataForSlowLog(t *testing.T) {
 
 		// Test for record slow log for load data statement.
 		rows := dbt.MustQuery("select plan from information_schema.slow_query where query like 'load data local infile % into table t_slow with thread=1;' order by time desc limit 1")
-		expectedPlan := ".*LoadData.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.* commit_txn.*"
+		expectedPlan := ".*LoadData.* time.* loops.* check_insert.* mem_insert_time:.* prefetch.* rpc.* commit_txn.*"
 		checkPlan(rows, expectedPlan)
 		require.NoError(t, rows.Close())
 		// Test for record statements_summary for load data statement.
@@ -488,7 +488,7 @@ func (cli *TestServerClient) RunTestLoadDataForSlowLog(t *testing.T) {
 		require.NoError(t, rows.Close())
 		// Test log normal statement after executing load date.
 		rows = dbt.MustQuery("select plan from information_schema.slow_query where query = 'insert ignore into t_slow values (1,1);' order by time desc limit 1")
-		expectedPlan = ".*Insert.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.*"
+		expectedPlan = ".*Insert.* time.* loops.* check_insert.* mem_insert_time:.* prefetch.* rpc.*"
 		checkPlan(rows, expectedPlan)
 		require.NoError(t, rows.Close())
 	})
