@@ -265,7 +265,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	// try to get Plan from the NonPrepared Plan Cache
 	if sessVars.EnableNonPreparedPlanCache &&
 		isStmtNode &&
-		!useBinding && // TODO: support binding
 		!skipNonPreparedCache {
 		cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, stmtNode, is)
 		if err != nil {
