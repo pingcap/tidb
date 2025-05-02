@@ -359,6 +359,7 @@
       "pkg/autoid_service/": "autoid_service code",
       "//cmd/": "cmd code",
       "pkg/bindinfo/": "bindinfo code",
+      "pkg/distsql/": "distsql code",
       "pkg/extension/": "extension code",
       "pkg/infoschema/": "infoschema code",
       "pkg/kv/": "kv code",
