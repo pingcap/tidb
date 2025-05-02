@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1022,7 +1023,7 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	// we need to create a temporary table and insert the data from the select statement
 	// and then rename the temporary table to the original table
 	if s.Select != nil {
-		tempTableName = s.Table.Name.L + "_nonpublic_" + strconv.Itoa(time.Now().Nanosecond())
+		tempTableName = s.Table.Name.L + "_nonpublic_" + strconv.Itoa(time.Now().Nanosecond()) + "_" + strconv.FormatInt(rand.Int63(), 10)
 		s.Table.Name = ast.NewCIStr(tempTableName)
 	}
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}

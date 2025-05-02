@@ -5446,19 +5446,29 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 	return p, nil
 }
 
-// buildColsFromPlan builds the columns of the table from the logical plan
-// used in create table as select statement
+// buildColsFromPlan builds the columns of the table from the logical plan for CREATE TABLE AS SELECT statement.
+// It handles two scenarios to compatible with MySQL behavior.
+// 1. When no columns are specified in CREATE TABLE (v.Cols == nil):
+//   - Uses the columns from SELECT statement directly
+//   - Column order matches the SELECT statement
+//
+// 2. When columns are specified in CREATE TABLE:
+//   - Columns that exist only in CREATE TABLE (not in SELECT) are placed first
+//   - Columns from SELECT statement follow in their original order
+//   - For columns that exist in both, uses the definition from CREATE TABLE (including options)
+//   - Checks NOT NULL constraints for columns that only exist in CREATE TABLE
 func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) error {
 	schema := logicalPlan.Schema()
 	names := logicalPlan.OutputNames()
 
-	// fill select columns,used in build sql when insert into table(v.SelectColumns...)  select ...
+	// Store column names from SELECT statement for later use in INSERT
 	for _, name := range names {
 		v.SelectColumns = append(v.SelectColumns, &name.ColName)
 	}
 
 	if v.Cols == nil {
-		// Order of columns is the same as the order of [cols from select stmt]
+		// Case 1: No columns specified in CREATE TABLE
+		// Use columns directly from SELECT statement
 		v.Cols = make([]*ast.ColumnDef, len(schema.Columns))
 		for i, name := range names {
 			tp := convertRetType(schema.Columns[i].RetType)
@@ -5471,15 +5481,15 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 		return nil
 	}
 
-	// Compatible with MySQL order of columns
-	// First: build column map and check NOT NULL constraints
-	// Build column map for quick lookup
+	// Case 2: Columns specified in CREATE TABLE
+	// Build a map for quick lookup of column definitions from CREATE TABLE
 	colMap := make(map[string]*ast.ColumnDef)
 	for _, col := range v.Cols {
 		colMap[col.Name.Name.L] = col
 	}
 
-	// First pass: collect columns that only exist in CREATE TABLE
+	// First pass: Collect columns that only exist in CREATE TABLE
+	// These columns will be placed at the beginning of the final column list
 	newCols := make([]*ast.ColumnDef, 0, len(schema.Columns))
 	for _, col := range v.Cols {
 		found := false
@@ -5490,7 +5500,7 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 			}
 		}
 		if !found {
-			// Check NOT NULL constraint
+			// Check NOT NULL constraint for columns that only exist in CREATE TABLE
 			for _, opt := range col.Options {
 				if opt.Tp == ast.ColumnOptionNotNull {
 					return table.ErrNoDefaultValue.GenWithStackByArgs(col.Name.Name.L)
@@ -5500,12 +5510,14 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 		}
 	}
 
-	// Second pass: add columns from SELECT in their original order
+	// Second pass: Add columns from SELECT statement in their original order
+	// For columns that exist in both CREATE TABLE and SELECT, use the definition from CREATE TABLE
 	for i, name := range names {
 		if col, exists := colMap[name.ColName.L]; exists {
-			// Use the column definition from CREATE TABLE if it exists
+			// Use the column definition from CREATE TABLE (including options)
 			newCols = append(newCols, col)
 		} else {
+			// Create new column definition for columns that only exist in SELECT
 			tp := convertRetType(schema.Columns[i].RetType)
 			newCols = append(newCols, &ast.ColumnDef{
 				Name:    &ast.ColumnName{Name: name.ColName},
