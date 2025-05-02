@@ -542,6 +542,7 @@ var Keywords = []KeywordsType{
 	{"SECOND", false, "unreserved"},
 	{"SECONDARY", false, "unreserved"},
 	{"SECONDARY_ENGINE", false, "unreserved"},
+	{"SECONDARY_ENGINE_ATTRIBUTE", false, "unreserved"},
 	{"SECONDARY_LOAD", false, "unreserved"},
 	{"SECONDARY_UNLOAD", false, "unreserved"},
 	{"SECURITY", false, "unreserved"},

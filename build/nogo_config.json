@@ -360,6 +360,7 @@
       "//cmd/": "cmd code",
       "lightning/": "lightning code",
       "pkg/bindinfo/": "bindinfo code",
+      "pkg/distsql/": "distsql code",
       "pkg/disttask": "disttask code",
       "pkg/lightning/": "lightning code",
       "pkg/infoschema/": "infoschema code",
