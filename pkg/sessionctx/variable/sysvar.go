@@ -2138,7 +2138,7 @@ var defaultSysVars = []*SysVar{
 				s.JoinOrderCostFactors = nil
 				return nil
 			}
-			var joinOrderCostFactor map[string]float64
+			var joinOrderCostFactor map[string]any
 			if err := json.Unmarshal([]byte(val), &joinOrderCostFactor); err != nil {
 				return err
 			}
@@ -2148,7 +2148,12 @@ var defaultSysVars = []*SysVar{
 				if !strings.Contains(tableName, ".") {
 					tableName = fmt.Sprintf("%s.%s", s.CurrentDB, tableName)
 				}
-				s.JoinOrderCostFactors[tableName] = v
+				vStr := fmt.Sprintf("%v", v)
+				vFloat, err := strconv.ParseFloat(vStr, 64)
+				if err != nil {
+					return err
+				}
+				s.JoinOrderCostFactors[tableName] = vFloat
 			}
 			return nil
 		},
