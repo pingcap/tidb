@@ -145,11 +145,6 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 	return err
 }
 
-type OfflineQOKnobs struct {
-	CostFactors     []CostFactor `json:"cost_factors"`
-	JoinOrderTables []string     `json:"join_order_tables"`
-}
-
 type CostFactor struct {
 	Var string  `json:"var"`
 	Min float64 `json:"min"`
@@ -166,21 +161,24 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 			maxRowCount = max(maxRowCount, statsRecord.GetUsedInfo(k).RealtimeCount)
 		}
 
-		knobs := new(OfflineQOKnobs)
+		knobs := make([]CostFactor, 0, 16)
 		for name := range relevantKnobs {
-			knobs.CostFactors = append(knobs.CostFactors, CostFactor{
+			knobs = append(knobs, CostFactor{
 				Var: name,
 				Min: float64(0),
 				Max: float64(maxRowCount),
 			})
 		}
 		for name := range e.Ctx().GetSessionVars().StmtCtx.RelevantJoinOrderTables {
-			knobs.JoinOrderTables = append(knobs.JoinOrderTables, name)
+			knobs = append(knobs, CostFactor{
+				Var: "tidb_join_order_cost_factor:" + name,
+				Min: float64(0),
+				Max: float64(maxRowCount),
+			})
 		}
-		sort.Slice(knobs.CostFactors, func(i, j int) bool {
-			return knobs.CostFactors[i].Var < knobs.CostFactors[j].Var
+		sort.Slice(knobs, func(i, j int) bool {
+			return knobs[i].Var < knobs[j].Var
 		})
-		sort.Strings(knobs.JoinOrderTables)
 		data, jerr := json.Marshal(knobs)
 		if jerr != nil {
 			return nil, jerr
