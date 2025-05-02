@@ -224,7 +224,7 @@ func (s *PartitionProcessor) getUsedHashPartitions(ctx base.PlanContext,
 
 				// if range is less than the number of partitions, there will be unused partitions we can prune out.
 				if rangeScalar < uint64(numPartitions) && !highIsNull && !lowIsNull {
-					for i := range rangeScalar {
+					for i := range rangeScalar+1 {
 						idx := mathutil.Abs((posLow + int64(i)) % int64(numPartitions))
 						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
 							continue
