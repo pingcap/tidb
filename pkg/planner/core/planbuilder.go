@@ -1284,7 +1284,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			}
 			continue
 		}
-		// It is syntactically valid to omit index_list for USE INDEX, which means “use no indexes”.
+		// It is syntactically valid to omit index_list for USE INDEX, which means "use no indexes".
 		// Omitting index_list for FORCE INDEX or IGNORE INDEX is a syntax error.
 		// See https://dev.mysql.com/doc/refman/8.0/en/index-hints.html.
 		if hint.IndexNames == nil && hint.HintType != ast.HintIgnore {
@@ -5456,66 +5456,73 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 	for _, name := range names {
 		v.SelectColumns = append(v.SelectColumns, &name.ColName)
 	}
+
 	if v.Cols == nil {
 		// Order of columns is the same as the order of [cols from select stmt]
 		v.Cols = make([]*ast.ColumnDef, len(schema.Columns))
 		for i, name := range names {
-			checkRetType(schema.Columns[i].RetType)
+			convertRetType(schema.Columns[i].RetType)
 			v.Cols[i] = &ast.ColumnDef{
-				Name: &ast.ColumnName{
-					Name: name.ColName,
-				},
+				Name:    &ast.ColumnName{Name: name.ColName},
 				Tp:      schema.Columns[i].RetType,
 				Options: []*ast.ColumnOption{},
 			}
 		}
-	} else {
-		// Compatible with MySQL order of columns
-		// colName -> (namesIndex,ColsIndex)
-		// if IndexArr[1] != -1,it means the column is explicitly specified when creating the table, then the column is used.
-		colMap := make(map[string][2]int)
-		for i, name := range names {
-			colMap[name.ColName.L] = [2]int{i, -1}
-		}
-		// First: check col which is explicitly specified and not in the [cols from select stmt],add it to the newCols
-		newCols := make([]*ast.ColumnDef, 0, len(schema.Columns))
-		for i, col := range v.Cols {
-			if arr, exists := colMap[col.Name.Name.L]; !exists {
-				// if NOT NULL is set,throw error
-				for _, opt := range col.Options {
-					if opt.Tp == ast.ColumnOptionNotNull {
-						return table.ErrNoDefaultValue.GenWithStackByArgs(col.Name.Name.L)
-					}
-				}
-				newCols = append(newCols, col)
-			} else {
-				// The type which is explicitly specified is used as the basis
-				arr[1] = i
-				colMap[col.Name.Name.L] = arr
-			}
-		}
-		// Second: add the remaining cols to the newCols
-		for i, name := range names {
-			// If the column is explicitly specified when creating the table
-			if colMap[name.ColName.L][1] != -1 {
-				newCols = append(newCols, v.Cols[colMap[name.ColName.L][1]])
-			} else {
-				checkRetType(schema.Columns[i].RetType)
-				newCols = append(newCols, &ast.ColumnDef{
-					Name: &ast.ColumnName{
-						Name: name.ColName,
-					},
-					Tp: schema.Columns[i].RetType,
-				})
-			}
-		}
-		v.Cols = newCols
+		return nil
 	}
+
+	// Compatible with MySQL order of columns
+	// First: build column map and check NOT NULL constraints
+	// Build column map for quick lookup
+	colMap := make(map[string]*ast.ColumnDef)
+	for _, col := range v.Cols {
+		colMap[col.Name.Name.L] = col
+	}
+
+	// First pass: collect columns that only exist in CREATE TABLE
+	newCols := make([]*ast.ColumnDef, 0, len(schema.Columns))
+	for _, col := range v.Cols {
+		found := false
+		for _, name := range names {
+			if name.ColName.L == col.Name.Name.L {
+				found = true
+				break
+			}
+		}
+		if !found {
+			// Check NOT NULL constraint
+			for _, opt := range col.Options {
+				if opt.Tp == ast.ColumnOptionNotNull {
+					return table.ErrNoDefaultValue.GenWithStackByArgs(col.Name.Name.L)
+				}
+			}
+			newCols = append(newCols, col)
+		}
+	}
+
+	// Second pass: add columns from SELECT in their original order
+	for i, name := range names {
+		if col, exists := colMap[name.ColName.L]; exists {
+			// Use the column definition from CREATE TABLE if it exists
+			newCols = append(newCols, col)
+		} else {
+			convertRetType(schema.Columns[i].RetType)
+			newCols = append(newCols, &ast.ColumnDef{
+				Name:    &ast.ColumnName{Name: name.ColName},
+				Tp:      schema.Columns[i].RetType,
+				Options: []*ast.ColumnOption{},
+			})
+		}
+	}
+
+	v.Cols = newCols
 	return nil
 }
 
-// checkRetType checks the type of the column and changes it (eg. VarString -> Varchar)
-func checkRetType(fieldType *types.FieldType) {
+// convertRetType checks the type of the column and changes it (eg. VarString -> Varchar)
+// it's used in create table as select statement to show the correct type, such as using `show create table`
+// for now, we only support convert VarString to Varchar
+func convertRetType(fieldType *types.FieldType) {
 	if fieldType.GetType() == mysql.TypeVarString {
 		// change VarString to Varchar
 		// charset and collate are set behind the scenes
