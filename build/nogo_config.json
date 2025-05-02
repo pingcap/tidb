@@ -360,6 +360,7 @@
       "pkg/ddl/": "ddl code",
       "pkg/autoid_service/": "autoid_service code",
       "pkg/bindinfo/": "bindinfo code",
+      "pkg/distsql/": "distsql code",
       "pkg/infoschema/": "infoschema code",
       "pkg/owner/": "owner code",
       "pkg/util/": "util code",
