@@ -145,7 +145,12 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 	return err
 }
 
-type OQOKnob struct {
+type OfflineQOKnobs struct {
+	CostFactors     []CostFactor `json:"cost_factors"`
+	JoinOrderTables []string     `json:"join_order_tables"`
+}
+
+type CostFactor struct {
 	Var string  `json:"var"`
 	Min float64 `json:"min"`
 	Max float64 `json:"max"`
@@ -161,17 +166,21 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 			maxRowCount = max(maxRowCount, statsRecord.GetUsedInfo(k).RealtimeCount)
 		}
 
-		knobs := make([]OQOKnob, 0, len(relevantKnobs))
+		knobs := new(OfflineQOKnobs)
 		for name := range relevantKnobs {
-			knobs = append(knobs, OQOKnob{
+			knobs.CostFactors = append(knobs.CostFactors, CostFactor{
 				Var: name,
 				Min: float64(0),
 				Max: float64(maxRowCount),
 			})
 		}
-		sort.Slice(knobs, func(i, j int) bool {
-			return knobs[i].Var < knobs[j].Var
+		for name := range e.Ctx().GetSessionVars().StmtCtx.RelevantJoinOrderTables {
+			knobs.JoinOrderTables = append(knobs.JoinOrderTables, name)
+		}
+		sort.Slice(knobs.CostFactors, func(i, j int) bool {
+			return knobs.CostFactors[i].Var < knobs.CostFactors[j].Var
 		})
+		sort.Strings(knobs.JoinOrderTables)
 		data, jerr := json.Marshal(knobs)
 		if jerr != nil {
 			return nil, jerr

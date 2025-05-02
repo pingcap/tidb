@@ -480,12 +480,12 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 }
 
 func nodeJoinOrderCostFactor(v *variable.SessionVars, p base.LogicalPlan) float64 {
-	if v.JoinOrderCostFactors == nil {
-		return 1
-	}
 	h := util.ExtractTableAlias(p, p.QueryBlockOffset())
 	key := fmt.Sprintf("%v.%v", h.DBName.L, h.TblName.L)
 	v.StmtCtx.RelevantJoinOrderTables[key] = true
+	if v.JoinOrderCostFactors == nil {
+		return 1
+	}
 	c, ok := v.JoinOrderCostFactors[key]
 	if !ok {
 		c = 1
