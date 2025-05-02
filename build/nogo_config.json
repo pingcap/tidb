@@ -356,7 +356,10 @@
       "/cgo/": "no need to vet cgo code"
     },
     "only_files": {
+      "pkg/autoid_service/": "autoid_service code",
+      "//cmd/": "cmd code",
       "pkg/bindinfo/": "bindinfo code",
+      "pkg/distsql/": "distsql code",
       "pkg/infoschema/": "infoschema code",
       "pkg/owner/": "owner code",
       "pkg/planner/cardinality": "pkg/planner/cardinality code",
@@ -366,6 +369,7 @@
       "pkg/planner/funcdep": "pkg/planner/funcdep code",
       "pkg/server/": "server code",
       "pkg/statistics": "pkg/statistics code",
+      "pkg/store/": "store code",
       "//pkg/util": "pkg/util code",
       "pkg/workloadlearning": "workloadlearning code"
     }
