@@ -214,9 +214,14 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			}
 		}
 	}()
+
+	// The SkipPlanCache function doesn't work until EnablePlanCache() is called in GetPlanFromPlanCache.
+	skip_non_prepared_cache := false
+
 	// Disable the plan cache to prevent running the code above twice.
 	if sessVars.StmtCtx.StmtHints.HasResourceGroup {
 		sessVars.StmtCtx.SetSkipPlanCache("resource_group is used in the SQL")
+		skip_non_prepared_cache = true
 	}
 
 	warns = warns[:0]
@@ -230,6 +235,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	// Disable the plan cache to prevent running the code above twice.
 	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
 		sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
+		skip_non_prepared_cache = true
 	}
 
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
@@ -259,7 +265,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	// try to get Plan from the NonPrepared Plan Cache
 	if sessVars.EnableNonPreparedPlanCache &&
 		isStmtNode &&
-		!useBinding { // TODO: support binding
+		!useBinding && // TODO: support binding
+		!skip_non_prepared_cache {
 		cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, stmtNode, is)
 		if err != nil {
 			return nil, nil, err
