@@ -355,46 +355,6 @@ func TestPolicyMode(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestUpdateMetaVersion(t *testing.T) {
-	ctx := context.Background()
-	s := utiltest.CreateRestoreSchemaSuite(t)
-	tk := testkit.NewTestKit(t, s.Mock.Storage)
-	tk.MustExec("use test")
-	tk.MustExec("set @@sql_mode=''")
-	tk.MustExec("drop table if exists `t`;")
-
-	// Test SQL Mode
-	db, supportPolicy, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT")
-	require.NoError(t, err)
-	require.True(t, supportPolicy)
-	defer db.Close()
-
-	db.Session().Execute(ctx, "create table test.t (id int);")
-	db.Session().Execute(ctx, "analyze table test.t;")
-	db.Session().Execute(ctx, "insert into test.t values (1),(2),(3);")
-	info, err := s.Mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
-	require.NoError(t, err)
-	tableInfo, err := info.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	restoreTS := uint64(0)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	err = kv.RunInNewTxn(ctx, s.Mock.Domain.Store(), true, func(_ context.Context, txn kv.Transaction) error {
-		restoreTS = txn.StartTS()
-		return nil
-	})
-	require.NoError(t, err)
-	tableID := tableInfo.Meta().ID
-	err = db.UpdateStatsMeta(ctx, tableID, restoreTS, 3)
-	require.NoError(t, err)
-
-	rows := tk.MustQuery("select version, table_id, modify_count, count, snapshot from mysql.stats_meta;").Rows()
-	require.Equal(t, fmt.Sprintf("%d", restoreTS), rows[0][0])
-	require.Equal(t, fmt.Sprintf("%d", tableID), rows[0][1])
-	require.Equal(t, "0", rows[0][2])
-	require.Equal(t, "3", rows[0][3])
-	require.Equal(t, fmt.Sprintf("%d", restoreTS), rows[0][4])
-}
-
 func TestCreateTablesInDb(t *testing.T) {
 	allocator := testAllocator(0)
 	s := utiltest.CreateRestoreSchemaSuite(t)

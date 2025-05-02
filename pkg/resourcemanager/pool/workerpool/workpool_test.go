@@ -133,6 +133,15 @@ func TestTunePoolSize(t *testing.T) {
 		pool.Wait()
 	})
 
+	t.Run("change pool size before start", func(t *testing.T) {
+		pool := NewWorkerPool[int64Task]("test", util.UNKNOWN, 10, createMyWorker)
+		pool.Tune(5, true)
+		pool.Start(context.Background())
+		pool.Release()
+		pool.Wait()
+		require.EqualValues(t, 5, pool.Cap())
+	})
+
 	t.Run("context done when reduce pool size and wait", func(t *testing.T) {
 		pool := NewWorkerPool[int64Task]("test", util.UNKNOWN, 10, createMyWorker)
 		pool.Start(context.Background())
