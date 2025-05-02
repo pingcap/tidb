@@ -153,7 +153,7 @@ type OQOKnob struct {
 
 func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
 	if e.explain.Format == types.ExplainFormatRelevantKnobs {
-		relevantKnobs := e.Ctx().GetSessionVars().StmtCtx.RelevantKnobs
+		relevantKnobs := e.Ctx().GetSessionVars().StmtCtx.RelevantCostFactors
 
 		statsRecord := e.Ctx().GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
 		maxRowCount := int64(1)

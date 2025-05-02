@@ -325,7 +325,8 @@ type StatementContext struct {
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
 
-	RelevantKnobs map[string]bool // [knob]min:max
+	RelevantCostFactors     map[string]bool
+	RelevantJoinOrderTables map[string]bool
 
 	// The several fields below are mainly for some diagnostic features, like stmt summary and slow query.
 	// We cache the values here to avoid calculating them multiple times.

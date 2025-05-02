@@ -485,6 +485,7 @@ func nodeJoinOrderCostFactor(v *variable.SessionVars, p base.LogicalPlan) float6
 	}
 	h := util.ExtractTableAlias(p, p.QueryBlockOffset())
 	key := fmt.Sprintf("%v.%v", h.DBName.L, h.TblName.L)
+	v.StmtCtx.RelevantJoinOrderTables[key] = true
 	c, ok := v.JoinOrderCostFactors[key]
 	if !ok {
 		c = 1

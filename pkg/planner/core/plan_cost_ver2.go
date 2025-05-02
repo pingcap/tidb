@@ -1191,7 +1191,7 @@ func cols2Exprs(cols []*expression.Column) []expression.Expression {
 }
 
 func recordCostFactor(sctx planctx.PlanContext, factor string) {
-	sctx.GetSessionVars().StmtCtx.RelevantKnobs[factor] = true
+	sctx.GetSessionVars().StmtCtx.RelevantCostFactors[factor] = true
 	for _, group := range factorGroups {
 		hitGroup := false
 		for _, f := range group {
@@ -1202,7 +1202,7 @@ func recordCostFactor(sctx planctx.PlanContext, factor string) {
 		}
 		if hitGroup {
 			for _, f := range group {
-				sctx.GetSessionVars().StmtCtx.RelevantKnobs[f] = true
+				sctx.GetSessionVars().StmtCtx.RelevantCostFactors[f] = true
 			}
 		}
 	}
