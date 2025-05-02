@@ -325,17 +325,16 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		} else if hasTempKey {
 			// For temp index keys, we can't get the temp value from memory buffer, even if the lazy check is enabled.
 			// Otherwise, it may cause the temp index value to be overwritten, leading to data inconsistency.
-			var foundKey bool
 			var dupHandle kv.Handle
 			if keyIsTempIdxKey {
-				foundKey, dupHandle, value, err = FetchDuplicatedHandleForTempIndexKey(ctx, key, distinct, txn)
+				dupHandle, value, err = FetchDuplicatedHandleForTempIndexKey(ctx, key, txn)
 			} else if len(tempKey) > 0 {
-				foundKey, dupHandle, value, err = FetchDuplicatedHandleForTempIndexKey(ctx, tempKey, distinct, txn)
+				dupHandle, value, err = FetchDuplicatedHandleForTempIndexKey(ctx, tempKey, txn)
 			}
 			if err != nil {
 				return nil, err
 			}
-			if foundKey && dupHandle != nil && !dupHandle.Equal(h) {
+			if dupHandle != nil {
 				return dupHandle, kv.ErrKeyExists
 			}
 			if len(value) > 0 {
@@ -542,18 +541,41 @@ func (c *index) Exist(ec errctx.Context, loc *time.Location, txn kv.Transaction,
 		if err != nil {
 			return false, nil, err
 		}
+
 		// If index current is in creating status and using ingest mode, we need first
 		// check key exist status in temp index.
 		key, tempKey, _ := GenTempIdxKeyByState(c.idxInfo, key)
 		if len(tempKey) > 0 {
 			key = tempKey
 		}
-		foundKey, dupHandle, err := FetchDuplicatedHandle(context.TODO(), key, distinct, txn)
-		if err != nil || !foundKey {
+
+		if distinct {
+			dupHandle, err := FetchDuplicatedHandle(context.Background(), key, txn)
+			if err != nil {
+				return false, nil, err
+			}
+			if dupHandle == nil || !dupHandle.Equal(h) {
+				return false, nil, nil
+			}
+			continue
+		}
+
+		val, err := getKeyInTxn(context.Background(), txn, key)
+		if err != nil {
 			return false, nil, err
 		}
-		if dupHandle != nil && !dupHandle.Equal(h) {
-			return false, nil, err
+		if len(tempKey) > 0 {
+			tempVal, err := tablecodec.DecodeTempIndexValue(val)
+			if err != nil {
+				return false, nil, err
+			}
+			if tempVal.IsEmpty() || tempVal.Current().Delete {
+				return false, nil, nil
+			}
+			continue
+		}
+		if len(val) == 0 {
+			return false, nil, nil
 		}
 		continue
 	}
@@ -561,52 +583,45 @@ func (c *index) Exist(ec errctx.Context, loc *time.Location, txn kv.Transaction,
 }
 
 // FetchDuplicatedHandle is used to find the duplicated row's handle for a given unique index key.
-func FetchDuplicatedHandle(ctx context.Context, key kv.Key, distinct bool,
-	txn kv.Transaction) (foundKey bool, dupHandle kv.Handle, err error) {
+func FetchDuplicatedHandle(ctx context.Context, key kv.Key,
+	txn kv.Transaction) (dupHandle kv.Handle, err error) {
 	if tablecodec.IsTempIndexKey(key) {
-		foundKey, dupHandle, _, err := FetchDuplicatedHandleForTempIndexKey(ctx, key, distinct, txn)
-		return foundKey, dupHandle, err
+		dupHandle, _, err := FetchDuplicatedHandleForTempIndexKey(ctx, key, txn)
+		return dupHandle, err
 	}
 	// The index key is not from temp index.
 	val, err := getKeyInTxn(ctx, txn, key)
 	if err != nil || len(val) == 0 {
-		return false, nil, err
+		return nil, err
 	}
-	if distinct {
-		h, err := tablecodec.DecodeHandleInIndexValue(val)
-		return true, h, err
-	}
-	return true, nil, nil
+	return tablecodec.DecodeHandleInIndexValue(val)
 }
 
 // FetchDuplicatedHandleForTempIndexKey is used to find the duplicated row's handle for a given unique index key.
 // It is used when the index key is from temp index.
 // The function will check the temp index key first, if not found, it will check the origin index key.
-func FetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, distinct bool,
-	txn kv.Transaction) (foundKey bool, dupHandle kv.Handle, oldVal []byte, err error) {
+func FetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key,
+	txn kv.Transaction) (dupHandle kv.Handle, oldVal []byte, err error) {
 	tempRawVal, err := getKeyInTxn(ctx, txn, tempKey)
 	if err != nil {
-		return false, nil, tempRawVal, err
+		return nil, tempRawVal, err
 	}
 	if tempRawVal == nil {
 		originKey := tempKey.Clone()
 		tablecodec.TempIndexKey2IndexKey(originKey)
 		originVal, err := getKeyInTxn(ctx, txn, originKey)
 		if err != nil || originVal == nil {
-			return false, nil, nil, err
+			return nil, nil, err
 		}
-		if distinct {
-			originHandle, err := tablecodec.DecodeHandleInIndexValue(originVal)
-			if err != nil {
-				return false, nil, nil, err
-			}
-			return true, originHandle, nil, err
+		originHandle, err := tablecodec.DecodeHandleInIndexValue(originVal)
+		if err != nil {
+			return nil, nil, err
 		}
-		return false, nil, nil, nil
+		return originHandle, nil, err
 	}
 	tempVal, err := tablecodec.DecodeTempIndexValue(tempRawVal)
 	if err != nil {
-		return false, nil, tempRawVal, err
+		return nil, tempRawVal, err
 	}
 	curElem := tempVal.Current()
 	if curElem.Delete {
@@ -614,37 +629,31 @@ func FetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, d
 		tablecodec.TempIndexKey2IndexKey(originKey)
 		originVal, err := getKeyInTxn(ctx, txn, originKey)
 		if err != nil || originVal == nil {
-			return false, nil, tempRawVal, err
+			return nil, tempRawVal, err
 		}
-		if distinct {
-			originHandle, err := tablecodec.DecodeHandleInIndexValue(originVal)
-			if err != nil {
-				return false, nil, tempRawVal, err
-			}
-			if originHandle.Equal(curElem.Handle) {
-				// The key has been deleted. This is not a duplicated key.
-				return false, nil, tempRawVal, nil
-			}
-			// The inequality means multiple modifications happened in the same key.
-			// We use the handle in origin index value to check if the row exists.
-			tableID := tablecodec.DecodeTableID(tempKey)
-			recPrefix := tablecodec.GenTableRecordPrefix(tableID)
-			rowKey := tablecodec.EncodeRecordKey(recPrefix, originHandle)
-			rowVal, err := getKeyInTxn(ctx, txn, rowKey)
-			if err != nil || rowVal == nil {
-				return false, nil, tempRawVal, err
-			}
-			// The row exists. This is the duplicated key.
-			return true, originHandle, tempRawVal, nil
+		originHandle, err := tablecodec.DecodeHandleInIndexValue(originVal)
+		if err != nil {
+			return nil, tempRawVal, err
 		}
-		return false, nil, tempRawVal, nil
+		if originHandle.Equal(curElem.Handle) {
+			// The key has been deleted. This is not a duplicated key.
+			return nil, tempRawVal, nil
+		}
+		// The inequality means multiple modifications happened in the same key.
+		// We use the handle in origin index value to check if the row exists.
+		tableID := tablecodec.DecodeTableID(tempKey)
+		recPrefix := tablecodec.GenTableRecordPrefix(tableID)
+		rowKey := tablecodec.EncodeRecordKey(recPrefix, originHandle)
+		rowVal, err := getKeyInTxn(ctx, txn, rowKey)
+		if err != nil || rowVal == nil {
+			return nil, tempRawVal, err
+		}
+		// The row exists. This is the duplicated key.
+		return originHandle, tempRawVal, nil
 	}
 	// The value in temp index is not the delete marker.
-	if distinct {
-		h, err := tablecodec.DecodeHandleInIndexValue(curElem.Value)
-		return true, h, tempRawVal, err
-	}
-	return true, nil, tempRawVal, nil
+	h, err := tablecodec.DecodeHandleInIndexValue(curElem.Value)
+	return h, tempRawVal, err
 }
 
 // getKeyInTxn gets the value of the key in the transaction, and ignore the ErrNotExist error.

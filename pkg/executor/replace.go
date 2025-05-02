@@ -121,7 +121,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow, dupKeyCh
 //  3. error: the error.
 func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (rowUnchanged, foundDupKey bool, err error) {
 	for _, uk := range r.uniqueKeys {
-		_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn)
+		handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, txn)
 		if err != nil {
 			return false, false, err
 		}
