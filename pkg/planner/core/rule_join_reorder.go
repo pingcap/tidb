@@ -18,17 +18,17 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"slices"
-
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"slices"
 )
 
 // extractJoinGroup extracts all the join nodes connected with continuous
@@ -479,6 +479,19 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 	return true, leftJoinGroup
 }
 
+func nodeJoinOrderCostFactor(v *variable.SessionVars, p base.LogicalPlan) float64 {
+	if v.JoinOrderCostFactors == nil {
+		return 1
+	}
+	h := util.ExtractTableAlias(p, p.QueryBlockOffset())
+	key := fmt.Sprintf("%v.%v", h.DBName.L, h.TblName.L)
+	c, ok := v.JoinOrderCostFactors[key]
+	if !ok {
+		c = 1
+	}
+	return c
+}
+
 // generateJoinOrderNode used to derive the stats for the joinNodePlans and generate the jrNode groups based on the cost.
 func (s *baseSingleGroupJoinOrderSolver) generateJoinOrderNode(joinNodePlans []base.LogicalPlan, tracer *joinReorderTrace) ([]*jrNode, error) {
 	joinGroup := make([]*jrNode, 0, len(joinNodePlans))
@@ -488,6 +501,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateJoinOrderNode(joinNodePlans []b
 			return nil, err
 		}
 		cost := s.baseNodeCumCost(node)
+		cost *= nodeJoinOrderCostFactor(s.ctx.GetSessionVars(), node)
 		joinGroup = append(joinGroup, &jrNode{
 			p:       node,
 			cumCost: cost,

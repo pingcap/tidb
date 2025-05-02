@@ -2144,7 +2144,7 @@ var defaultSysVars = []*SysVar{
 			}
 			s.JoinOrderCostFactors = make(map[string]float64, len(joinOrderCostFactor))
 			for tableName, v := range joinOrderCostFactor {
-				tableName = strings.TrimSpace(tableName)
+				tableName = strings.ToLower(strings.TrimSpace(tableName))
 				if !strings.Contains(tableName, ".") {
 					tableName = fmt.Sprintf("%s.%s", s.CurrentDB, tableName)
 				}

@@ -114,6 +114,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 			whateverValidOneIdx = i
 			remainOthersOfWhateverValidOne = remainOthers
 			curCost := s.calcJoinCumCost(newJoin, curJoinTree, node)
+			curCost *= nodeJoinOrderCostFactor(s.ctx.GetSessionVars(), node.p)
 			tracer.appendLogicalJoinCost(newJoin, curCost)
 			if bestCost > curCost {
 				bestCost = curCost
