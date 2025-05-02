@@ -5461,10 +5461,10 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 		// Order of columns is the same as the order of [cols from select stmt]
 		v.Cols = make([]*ast.ColumnDef, len(schema.Columns))
 		for i, name := range names {
-			convertRetType(schema.Columns[i].RetType)
+			tp := convertRetType(schema.Columns[i].RetType)
 			v.Cols[i] = &ast.ColumnDef{
 				Name:    &ast.ColumnName{Name: name.ColName},
-				Tp:      schema.Columns[i].RetType,
+				Tp:      tp,
 				Options: []*ast.ColumnOption{},
 			}
 		}
@@ -5506,10 +5506,10 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 			// Use the column definition from CREATE TABLE if it exists
 			newCols = append(newCols, col)
 		} else {
-			convertRetType(schema.Columns[i].RetType)
+			tp := convertRetType(schema.Columns[i].RetType)
 			newCols = append(newCols, &ast.ColumnDef{
 				Name:    &ast.ColumnName{Name: name.ColName},
-				Tp:      schema.Columns[i].RetType,
+				Tp:      tp,
 				Options: []*ast.ColumnOption{},
 			})
 		}
@@ -5522,15 +5522,14 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 // convertRetType checks the type of the column and changes it (eg. VarString -> Varchar)
 // it's used in create table as select statement to show the correct type, such as using `show create table`
 // for now, we only support convert VarString to Varchar
-func convertRetType(fieldType *types.FieldType) {
+func convertRetType(fieldType *types.FieldType) *types.FieldType {
+	var tp *types.FieldType = fieldType.Clone()
 	if fieldType.GetType() == mysql.TypeVarString {
 		// change VarString to Varchar
 		// charset and collate are set behind the scenes
-		fieldType.SetType(mysql.TypeVarchar)
-		fieldType.SetCharset("")
-		fieldType.SetCollate("")
+		tp.SetType(mysql.TypeVarchar)
 	}
-
+	return tp
 }
 
 // checkCreateTableAsSelect checks the create table as select statement
