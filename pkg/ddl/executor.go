@@ -23,7 +23,7 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"runtime/debug"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -72,6 +72,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/oracle"
@@ -981,6 +983,38 @@ func checkGlobalIndexes(ec errctx.Context, tblInfo *model.TableInfo) error {
 	return nil
 }
 
+func (e *executor) handleCreateTableSelect(schema *model.DBInfo, s *ast.CreateTableStmt, tempTableName string, originTableName string) error {
+	intest.Assert(s.Select != nil, "s.Select must be not nil")
+	sctx, err := e.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer e.sessPool.Put(sctx)
+
+	// if isTikvStore is true, use import into instead of insert into
+	isTikvStore := e.store.Name() == kv.TiKV.Name()
+	insertSql, err := buildInsertSql(schema.Name.L, tempTableName, s, isTikvStore)
+	if err != nil {
+		return err
+	}
+	// insert data into temporary table
+	if _, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, insertSql); err != nil {
+		// if insert data into temporary table failed, drop the temporary table (like rollback)
+		dropSql := buildDropSql(schema.Name.L, tempTableName)
+		if _, dropErr := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, dropSql); dropErr != nil {
+			return errors.Trace(dropErr)
+		}
+		return errors.Trace(err)
+	}
+
+	// rename the temporary table to the original table
+	renameSql := buildRenameSql(schema.Name.L, tempTableName, originTableName)
+	if _, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, renameSql); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
 	var tempTableName string
 	var originTableName = s.Table.Name.L
@@ -989,8 +1023,7 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	// we need to create a temporary table and insert the data from the select statement
 	// and then rename the temporary table to the original table
 	if s.Select != nil {
-		originTableName = s.Table.Name.L
-		tempTableName = s.Table.Name.L + "_nonpublic_" + strconv.Itoa(time.Now().Nanosecond())
+		tempTableName = s.Table.Name.L + "_nonpublic_" + strconv.Itoa(time.Now().Nanosecond()) + "_" + strconv.FormatInt(rand.Int63(), 10)
 		s.Table.Name = ast.NewCIStr(tempTableName)
 	}
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
@@ -1052,119 +1085,55 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 		return err
 	}
 
+	// if the TiDB node crash after running here, the DDL framekwork will think the CREATE TABLE job is finished
+	// the new insert and rename stuff will not be fallover to another node.
 	if s.Select != nil {
-		sctx, err := e.sessPool.Get()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer e.sessPool.Put(sctx)
-
-		// if isTikvStore is true, use import into instead of insert into
-		isTikvStore := e.store.Name() == kv.TiKV.Name()
-		insertSql, err := buildInsertSql(schema.Name.L, tempTableName, s, isTikvStore)
-		if err != nil {
+		if err = e.handleCreateTableSelect(schema, s, tempTableName, originTableName); err != nil {
 			return err
-		}
-
-		// insert data into temporary table
-		if _, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, insertSql); err != nil {
-			// if insert data into temporary table failed, drop the temporary table (like rollback)
-			dropSql := buildDropSql(schema.Name.L, tempTableName)
-			if _, dropErr := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, dropSql); dropErr != nil {
-				return errors.Trace(dropErr)
-			}
-			return errors.Trace(err)
-		}
-
-		// rename the temporary table to the original table
-		renameSql := buildRenameSql(schema.Name.L, tempTableName, originTableName)
-		if _, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, renameSql); err != nil {
-			return errors.Trace(err)
 		}
 	}
 	return nil
 }
 
 func buildDropSql(dbName, tempTableName string) string {
-	var sqlBuilder strings.Builder
-	sqlBuilder.Grow(len(dbName)*2 + len(tempTableName) + 50)
-
-	sqlBuilder.WriteString("DROP TABLE ")
-	sqlBuilder.WriteByte('`')
-	sqlBuilder.WriteString(dbName)
-	sqlBuilder.WriteByte('`')
-	sqlBuilder.WriteByte('.')
-	sqlBuilder.WriteByte('`')
-	sqlBuilder.WriteString(tempTableName)
-	sqlBuilder.WriteByte('`')
-	sqlBuilder.WriteByte(';')
-
-	return sqlBuilder.String()
+	sql, err := sqlescape.EscapeSQL("DROP TABLE %n.%n", dbName, tempTableName)
+	if err != nil {
+		// This should never happen as we control the input
+		panic(err)
+	}
+	return sql
 }
 
 func buildRenameSql(dbName string, tempTableName string, originTableName string) string {
-	var sqlBuilder strings.Builder
-	// Grow the capacity of the builder to reduce reallocations
-	sqlBuilder.Grow(len(dbName)*2 + len(tempTableName) + len(originTableName) + 50)
-
-	sqlBuilder.WriteString("RENAME TABLE ")
-	sqlBuilder.WriteByte('`')
-	sqlBuilder.WriteString(dbName)
-	sqlBuilder.WriteByte('`')
-	sqlBuilder.WriteByte('.')
-	sqlBuilder.WriteByte('`')
-	sqlBuilder.WriteString(tempTableName)
-	sqlBuilder.WriteByte('`')
-	sqlBuilder.WriteString(" TO ")
-	sqlBuilder.WriteByte('`')
-	sqlBuilder.WriteString(dbName)
-	sqlBuilder.WriteByte('`')
-	sqlBuilder.WriteByte('.')
-	sqlBuilder.WriteByte('`')
-	sqlBuilder.WriteString(originTableName)
-	sqlBuilder.WriteByte('`')
-	sqlBuilder.WriteByte(';')
-
-	return sqlBuilder.String()
+	sql, err := sqlescape.EscapeSQL("RENAME TABLE %n.%n TO %n.%n", dbName, tempTableName, dbName, originTableName)
+	if err != nil {
+		// This should never happen as we control the input
+		panic(err)
+	}
+	return sql
 }
 
-func buildInsertSql(dbName, tableName string, s *ast.CreateTableStmt, isTikvStore bool) (sql string, err error) {
+func buildInsertSql(dbName, tableName string, s *ast.CreateTableStmt, isTikvStore bool) (string, error) {
+	if s.Select == nil {
+		return "", nil
+	}
+
 	var res strings.Builder
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &res)
 	if err := s.Select.Restore(restoreCtx); err != nil {
 		return "", err
 	}
-
-	var sqlBuilder strings.Builder
-	// Grow the capacity of the builder to reduce reallocation
-	sqlBuilder.Grow(len(dbName) + len(tableName) + res.Len())
-
-	if isTikvStore {
-		sqlBuilder.WriteString("import into ")
-	} else {
-		sqlBuilder.WriteString("insert into ")
-	}
-	sqlBuilder.WriteString(dbName)
-	sqlBuilder.WriteByte('.')
-	sqlBuilder.WriteString(tableName)
-	sqlBuilder.WriteByte('(')
-
-	for i, col := range s.SelectColumns {
-		if i > 0 {
-			sqlBuilder.WriteByte(',')
-		}
-		sqlBuilder.WriteByte('`')
-		sqlBuilder.WriteString(col.L)
-		sqlBuilder.WriteByte('`')
+	selectStmt := res.String()
+	var selectedColName []string
+	for _, col := range s.SelectColumns {
+		selectedColName = append(selectedColName, sqlescape.MustEscapeSQL("%n", col.L))
 	}
 
-	sqlBuilder.WriteString(") ")
-	if isTikvStore {
-		sqlBuilder.WriteString("from ")
+	if !isTikvStore {
+		// example: "INSERT INTO `test`.`t13_nonpublic_xxxxxxxx`(`id`,`b`) SELECT `id`,`b` FROM `test`.`t1`"
+		return sqlescape.MustEscapeSQL("INSERT INTO %n.%n(", dbName, tableName) + strings.Join(selectedColName, ",") + ") " + selectStmt, nil
 	}
-	sqlBuilder.WriteString(res.String())
-
-	return sqlBuilder.String(), nil
+	return sqlescape.MustEscapeSQL("IMPORT INTO %n.%n(", dbName, tableName) + strings.Join(selectedColName, ",") + ") FROM " + selectStmt, nil
 }
 
 // createTableWithInfoJob returns the table creation job.
@@ -4577,10 +4546,6 @@ func ExtractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		}
 		return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
-	logutil.DDLLogger().Info("ExtractTblInfos", zap.Any("is", is))
-	if is == nil {
-		debug.PrintStack()
-	}
 	if !tableExists(is, oldIdent, tables) {
 		if isAlterTable {
 			return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
@@ -5823,6 +5788,7 @@ func (e *executor) UnlockTables(ctx sessionctx.Context, unlockTables []model.Tab
 			ServerID:  e.uuid,
 			SessionID: ctx.GetSessionVars().ConnectionID,
 		},
+		IsCleanup: true,
 	}
 
 	involveSchemaInfo := make([]model.InvolvingSchemaInfo, 0, len(unlockTables))
