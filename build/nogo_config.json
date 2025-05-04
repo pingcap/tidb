@@ -362,7 +362,9 @@
       "pkg/planner/core/operator/logicalop": "pkg/planner/core/operator/logicalop code",
       "pkg/planner/core/casetest/tpch": "pkg/planner/core/casetest/tpch code",
       "pkg/planner/cardinality": "pkg/planner/cardinality code",
-      "pkg/planner/funcdep": "pkg/planner/funcdep code"
+      "pkg/planner/funcdep": "pkg/planner/funcdep code",
+      "pkg/table": "pkg/table code",
+      "pkg/tablecodec": "pkg/tablecodec code"
     }
   },
   "inspect": {
