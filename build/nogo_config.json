@@ -364,6 +364,9 @@
       "pkg/planner/core/casetest/tpch": "pkg/planner/core/casetest/tpch code",
       "pkg/planner/cardinality": "pkg/planner/cardinality code",
       "pkg/planner/funcdep": "pkg/planner/funcdep code",
+      "pkg/session": "pkg/session code",
+      "pkg/sessionctx": "pkg/sessionctx code",
+      "pkg/sessiontxn": "pkg/sessiontxn code",
       "pkg/statistics": "pkg/statistics code"
     }
   },
