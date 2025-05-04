@@ -214,3 +214,11 @@ create table tb (pk int not null, ex int not null, primary key (pk, ex) clustere
 --error 1736
 alter table ta exchange partition p1 with table tb;
 
+# TestIssue60838
+drop table if exists t;
+create table t(a varbinary(255)) partition by list columns (a) (partition p0 values in (''));
+show create table t;
+drop table t;
+create table t(a varbinary(255)) partition by range columns (a) (partition p0 values less than (''));
+show create table t;
+

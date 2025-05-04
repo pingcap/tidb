@@ -20,6 +20,7 @@ import (
 	"hash/fnv"
 	"io"
 	"math"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -152,7 +153,7 @@ func (e *tableScanExec) Process(key, value []byte) error {
 	e.rowCnt++
 
 	if e.chk.IsFull() {
-		lastProcessed := kv.Key(append([]byte{}, key...)) // make a copy to avoid data race
+		lastProcessed := kv.Key(slices.Clone(key)) // make a copy to avoid data race
 		select {
 		case e.result <- scanResult{chk: e.chk, lastProcessedKey: lastProcessed, err: nil}:
 			e.chk = chunk.NewChunkWithCapacity(e.fieldTypes, DefaultBatchSize)
@@ -284,7 +285,7 @@ type indexScanExec struct {
 func (e *indexScanExec) SkipValue() bool { return false }
 
 func (e *indexScanExec) isNewVals(values [][]byte) bool {
-	for i := 0; i < e.numIdxCols; i++ {
+	for i := range e.numIdxCols {
 		if !bytes.Equal(e.prevVals[i], values[i]) {
 			return true
 		}
@@ -300,7 +301,7 @@ func (e *indexScanExec) Process(key, value []byte) error {
 	e.rowCnt++
 	if len(e.counts) > 0 && (len(e.prevVals[0]) == 0 || e.isNewVals(values)) {
 		e.ndvCnt++
-		for i := 0; i < e.numIdxCols; i++ {
+		for i := range e.numIdxCols {
 			e.prevVals[i] = append(e.prevVals[i][:0], values[i]...)
 		}
 	}
@@ -323,7 +324,7 @@ func (e *indexScanExec) Process(key, value []byte) error {
 	if e.chk.IsFull() {
 		e.chunks = append(e.chunks, e.chk)
 		if e.paging != nil {
-			lastProcessed := kv.Key(append([]byte{}, key...)) // need a deep copy to store the key
+			lastProcessed := kv.Key(slices.Clone(key)) // need a deep copy to store the key
 			e.chunkLastProcessedKeys = append(e.chunkLastProcessedKeys, lastProcessed)
 		}
 		e.chk = chunk.NewChunkWithCapacity(e.fieldTypes, DefaultBatchSize)
@@ -491,7 +492,7 @@ func (e *expandExec) next() (*chunk.Chunk, error) {
 			row := e.lastChunk.GetRow(i)
 			e.lastNum++
 			// for every grouping set, expand the base row N times.
-			for g := 0; g < numGroupingOffset; g++ {
+			for g := range numGroupingOffset {
 				repeatRow := chunk.MutRowFromTypes(e.fieldTypes)
 				// for every targeted grouping set:
 				// 1: for every column in this grouping set, setting them as it was.
@@ -550,7 +551,7 @@ func (e *topNExec) open() error {
 	}
 	evaluatorSuite := expression.NewEvaluatorSuite(e.conds, true)
 	fieldTypes := make([]*types.FieldType, 0, len(e.conds))
-	for i := 0; i < len(e.conds); i++ {
+	for i := range e.conds {
 		fieldTypes = append(fieldTypes, e.conds[i].GetType(e.sctx.GetExprCtx().GetEvalCtx()))
 	}
 	evalChk := chunk.NewEmptyChunk(fieldTypes)
@@ -570,10 +571,10 @@ func (e *topNExec) open() error {
 			return err
 		}
 
-		for i := 0; i < numRows; i++ {
+		for i := range numRows {
 			row := evalChk.GetRow(i)
 			tmpDatums := row.GetDatumRow(fieldTypes)
-			for j := 0; j < len(tmpDatums); j++ {
+			for j := range tmpDatums {
 				tmpDatums[j].Copy(&e.row.key[j])
 			}
 			if e.heap.tryToAddRow(e.row) {
@@ -624,7 +625,7 @@ func (e *exchSenderExec) toTiPBChunk(chk *chunk.Chunk) ([]tipb.Chunk, error) {
 	var oldRow []types.Datum
 	oldChunks := make([]tipb.Chunk, 0)
 	sc := e.sctx.GetSessionVars().StmtCtx
-	for i := 0; i < chk.NumRows(); i++ {
+	for i := range chk.NumRows() {
 		oldRow = oldRow[:0]
 		for _, outputOff := range e.outputOffsets {
 			d := chk.GetRow(i).GetDatum(int(outputOff), e.fieldTypes[outputOff])
@@ -670,12 +671,12 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 		if e.exchangeTp == tipb.ExchangeType_Hash {
 			rows := chk.NumRows()
 			targetChunks := make([]*chunk.Chunk, 0, len(e.tunnels))
-			for i := 0; i < len(e.tunnels); i++ {
+			for range e.tunnels {
 				targetChunks = append(targetChunks, chunk.NewChunkWithCapacity(e.fieldTypes, rows))
 			}
 			hashVals := fnv.New64()
 			payload := make([]byte, 1)
-			for i := 0; i < rows; i++ {
+			for i := range rows {
 				row := chk.GetRow(i)
 				hashVals.Reset()
 				// use hash values to get unique uint64 to mod.
@@ -891,7 +892,7 @@ func (e *joinExec) buildHashTable() error {
 			return nil
 		}
 		rows := chk.NumRows()
-		for i := 0; i < rows; i++ {
+		for i := range rows {
 			row := chk.GetRow(i)
 			keyCol := row.GetDatum(e.buildKey.Index, e.buildChild.getFieldTypes()[e.buildKey.Index])
 			key, err := e.getHashKey(keyCol)
@@ -919,7 +920,7 @@ func (e *joinExec) fetchRows() (bool, error) {
 	e.idx = 0
 	e.reservedRows = make([]chunk.Row, 0)
 	chkSize := chk.NumRows()
-	for i := 0; i < chkSize; i++ {
+	for i := range chkSize {
 		row := chk.GetRow(i)
 		keyCol := row.GetDatum(e.probeKey.Index, e.probeChild.getFieldTypes()[e.probeKey.Index])
 		key, err := e.getHashKey(keyCol)
@@ -1066,7 +1067,7 @@ func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 			break
 		}
 		rows := chk.NumRows()
-		for i := 0; i < rows; i++ {
+		for i := range rows {
 			row := chk.GetRow(i)
 			gbyRow, gk, err := e.getGroupKey(row)
 			if err != nil {
@@ -1148,7 +1149,7 @@ func (e *selExec) next() (*chunk.Chunk, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		for i := 0; i < len(selected); i++ {
+		for i := range selected {
 			if selected[i] {
 				ret.AppendRow(chk.GetRow(i))
 				e.execSummary.updateOnlyRows(1)
@@ -1178,7 +1179,7 @@ func (e *projExec) next() (*chunk.Chunk, error) {
 	}
 	e.baseMPPExec.execSummary.updateOnlyRows(chk.NumRows())
 	newChunk := chunk.NewChunkWithCapacity(e.fieldTypes, 10)
-	for i := 0; i < chk.NumRows(); i++ {
+	for i := range chk.NumRows() {
 		row := chk.GetRow(i)
 		newRow := chunk.MutRowFromTypes(e.fieldTypes)
 		for i, expr := range e.exprs {
