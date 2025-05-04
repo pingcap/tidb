@@ -954,8 +954,14 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 				}
 				// If there is condition which is always false, return dual plan directly.
 				dual := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-				dual.SetOutputNames(p.OutputNames())
-				dual.SetSchema(p.Schema())
+				if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+					dual.SetOutputNames(join.FullNames)
+					dual.SetSchema(join.FullSchema)
+				} else {
+					dual.SetOutputNames(p.OutputNames())
+					dual.SetSchema(p.Schema())
+				}
+
 				return dual, nil
 			}
 			cnfExpres = append(cnfExpres, item)
@@ -3474,11 +3480,17 @@ func allColFromExprNode(p base.LogicalPlan, n ast.Node, names map[*types.FieldNa
 func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p base.LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (base.LogicalPlan, []expression.Expression, bool, error) {
 	b.curClause = groupByClause
 	exprs := make([]expression.Expression, 0, len(gby.Items))
+	schema := p.Schema()
+	names := p.OutputNames()
+	if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+		schema = join.FullSchema
+		names = join.FullNames
+	}
 	resolver := &gbyResolver{
 		ctx:        b.ctx,
 		fields:     fields,
-		schema:     p.Schema(),
-		names:      p.OutputNames(),
+		schema:     schema,
+		names:      names,
 		skipAggMap: b.correlatedAggMapper,
 	}
 	for _, item := range gby.Items {
@@ -3837,11 +3849,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	if l != nil && l.LockType != ast.SelectLockNone {
 		var tableList []*ast.TableName
 		var isExplicitSetTablesNames bool
-		if len(l.Tables) == 0 {
+		if len(l.Tables) == 0 && sel.From != nil {
 			// It's for stmt like `select xxx from table t, t1 where t.a = t1.a for update`
 			nodeW := resolve.NewNodeWWithCtx(sel.From, b.resolveCtx)
 			tableList = ExtractTableList(nodeW, false)
-		} else {
+		} else if len(l.Tables) != 0 {
 			// It's for stmt like `select xxx from table t, t1 where t.a = t1.a for update of t`
 			isExplicitSetTablesNames = true
 			tableList = l.Tables

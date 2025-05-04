@@ -13,6 +13,8 @@
 
 package mysql
 
+import "slices"
+
 // AllPrivilegeLiteral is the string literal for All Privilege.
 const AllPrivilegeLiteral = "ALL PRIVILEGES"
 
@@ -305,12 +307,7 @@ type Privileges []PrivilegeType
 
 // Has checks whether PrivilegeType has the privilege.
 func (privs Privileges) Has(p PrivilegeType) bool {
-	for _, cp := range privs {
-		if cp == p {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(privs, p)
 }
 
 // AllGlobalPrivs is all the privileges in global scope.
