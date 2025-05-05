@@ -356,8 +356,9 @@
       "/cgo/": "no need to vet cgo code"
     },
     "only_files": {
-      "pkg/autoid_service/": "autoid_service code",
       "//cmd/": "cmd code",
+      "//dumpling": "dumpling code",
+      "pkg/autoid_service/": "autoid_service code",
       "pkg/bindinfo/": "bindinfo code",
       "pkg/distsql/": "distsql code",
       "pkg/infoschema/": "infoschema code",
