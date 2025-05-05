@@ -296,12 +296,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			sessVars.StmtCtx.StmtHints = curStmtHints
 
 			if sessVars.StmtCtx.StmtHints.HasResourceGroup {
-				sessVars.StmtCtx.SetSkipPlanCache("resource_group is used in the SQL")
+				sessVars.StmtCtx.SetSkipPlanCache("resource_group is used in the SQL binding")
 			}
 
 			// update session var by hint /set_var/
 			if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
-				sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
+				sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL binding")
 			}
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
 				oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
