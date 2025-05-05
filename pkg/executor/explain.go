@@ -23,6 +23,7 @@ import (
 	rpprof "runtime/pprof"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -188,18 +189,23 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 		return
 	}
 
+	timeout := false
 	if e.explain.Analyze {
 		if err = e.executeAnalyzeExec(ctx); err != nil {
-			return nil, err
+			if strings.Contains(err.Error(), "maximum statement execution time exceeded") {
+				e.Ctx().GetSessionVars().SQLKiller.Reset()
+				timeout = true
+			} else {
+				return nil, err
+			}
 		}
 	}
 	if err = e.explain.RenderResult(); err != nil {
 		return nil, err
 	}
 
-	if len(e.explain.Rows) > 0 && len(e.explain.Rows[0]) > 0 {
-		_, planDigest := GetPlanDigest(e.Ctx().GetSessionVars().StmtCtx)
-		e.explain.Rows[0][0] += ":" + planDigest.String()
+	if timeout && len(e.explain.Rows) > 0 && len(e.explain.Rows[0]) > 0 {
+		e.explain.Rows[0][0] += ":TIMEOUT"
 	}
 
 	return e.explain.Rows, nil
