@@ -852,17 +852,17 @@ func testRandomPlanCacheCases(t *testing.T,
 	tk := testkit.NewTestKit(t, store)
 	prepFunc(tk)
 
-	// non prepared plan cache
+	// nonprepared plan cache
 	for _, q := range queryFunc(true) {
 		tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
 		result1 := tk.MustQuery(q).Sort()
 		tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
 
-		// this first execution caches the plan
+		// the first execution caches the plan
 		result2 := tk.MustQuery(q).Sort()
 		require.True(t, result1.Equal(result2.Rows()))
 
-		// this second execution uses the caches
+		// the second execution uses the cache
 		result2 = tk.MustQuery(q).Sort()
 		require.True(t, result1.Equal(result2.Rows()))
 	}
