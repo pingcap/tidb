@@ -148,7 +148,7 @@ func (p *PhysicalUnionScan) Attach2Task(tasks ...base.Task) base.Task {
 	p.SetStats(task.Plan().StatsInfo())
 	// once task is copTask type here, it may be converted proj + tablePlan here.
 	// then when it's connected with union-scan here, we may get as: union-scan + proj + tablePlan
-	// while proj is not allowed to be built under uinon-scan in execution layer currently.
+	// while proj is not allowed to be built under union-scan in execution layer currently.
 	return p.BasePhysicalPlan.Attach2Task(task)
 }
 
