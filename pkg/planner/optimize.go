@@ -294,6 +294,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 				setVarHintChecker, hypoIndexChecker(ctx, is),
 				sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
+
+			if sessVars.StmtCtx.StmtHints.HasResourceGroup {
+				sessVars.StmtCtx.SetSkipPlanCache("resource_group is used in the SQL")
+			}
+
 			// update session var by hint /set_var/
 			if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
 				sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
@@ -305,6 +310,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 				}
 				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 			}
+
 			plan, curNames, _, err := optimize(ctx, pctx, node, is)
 			if err != nil {
 				sessVars.StmtCtx.AppendWarning(errors.Errorf("binding %s failed: %v", binding.BindSQL, err))
