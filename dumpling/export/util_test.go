@@ -33,11 +33,11 @@ func TestRepeatableRead(t *testing.T) {
 func TestInfiniteChan(t *testing.T) {
 	in, out := infiniteChan[int]()
 	go func() {
-		for i := 0; i < 10000; i++ {
+		for i := range 10000 {
 			in <- i
 		}
 	}()
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		j := <-out
 		require.Equal(t, i, j)
 	}
