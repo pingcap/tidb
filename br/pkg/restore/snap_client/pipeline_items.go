@@ -415,16 +415,22 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 			// Not need to return err when failed because of update analysis-meta
 			log.Info("start update metas", zap.Stringer("table", oldTable.Info.Name), zap.Stringer("db", oldTable.DB.Name))
 			// get the the number of rows of each partition
+			physicalTotalKvMap := make(map[int64]uint64)
+			totalKvs := uint64(0)
+			for physicalID, files := range tbl.OldTable.FilesOfPhysicals {
+				physicalTotalKvs := uint64(0)
+				for _, file := range files {
+					physicalTotalKvs += file.TotalKvs
+					totalKvs += file.TotalKvs
+				}
+				physicalTotalKvMap[physicalID] = physicalTotalKvs
+			}
 			if tbl.OldTable.Info.Partition != nil {
 				for _, oldDef := range tbl.OldTable.Info.Partition.Definitions {
-					files := tbl.OldTable.FilesOfPhysicals[oldDef.ID]
-					if len(files) > 0 {
-						totalKvs := uint64(0)
-						for _, file := range files {
-							totalKvs += file.TotalKvs
-						}
+					physicalTotalKvs := physicalTotalKvMap[oldDef.ID]
+					if physicalTotalKvs > 0 {
 						// the total kvs contains the index kvs, but the stats meta needs the count of rows
-						count := int64(totalKvs / uint64(len(oldTable.Info.Indices)+1))
+						count := int64(physicalTotalKvs / uint64(len(oldTable.Info.Indices)+1))
 						newDefID, err := utils.GetPartitionByName(tbl.Table, oldDef.Name)
 						if err != nil {
 							log.Error("failed to get the partition by name",
@@ -444,7 +450,7 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 				}
 			}
 			// the total kvs contains the index kvs, but the stats meta needs the count of rows
-			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
+			count := int64(totalKvs / uint64(len(oldTable.Info.Indices)+1))
 			if statsErr = buffer.TryUpdateMetas(c, statsHandler, tbl.Table.ID, count); statsErr != nil {
 				log.Error("update stats meta failed", zap.Error(statsErr))
 				return statsErr
