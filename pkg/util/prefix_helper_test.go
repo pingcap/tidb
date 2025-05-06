@@ -137,5 +137,5 @@ func (c *mockContext) CommitTxn() error {
 }
 
 func encodeInt(n int) []byte {
-	return []byte(fmt.Sprintf("%d", n))
+	return fmt.Appendf(nil, "%d", n)
 }
