@@ -66,6 +66,12 @@ func (s *mockGCSSuite) SetupSuite() {
 	s.tk = testkit.NewTestKit(s.T(), s.store)
 }
 
+func (s *mockGCSSuite) BeforeTest(_, _ string) {
+	// some test will set session variable, and might not reset it, so we recreate
+	// the testkit on each test.
+	s.tk = testkit.NewTestKit(s.T(), s.store)
+}
+
 func (s *mockGCSSuite) TearDownSuite() {
 	s.server.Stop()
 }

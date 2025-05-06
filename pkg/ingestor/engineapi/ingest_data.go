@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package common
+package engineapi
 
 import (
 	"context"
@@ -48,7 +48,7 @@ type IngestData interface {
 	Finish(totalBytes, totalCount int64)
 }
 
-// ForwardIter describes a iterator that can only move forward.
+// ForwardIter describes an iterator that can only move forward.
 type ForwardIter interface {
 	// First moves this iter to the first key.
 	First() bool
@@ -71,11 +71,4 @@ type ForwardIter interface {
 	// values. These previously returned keys and values should not be accessed
 	// again.
 	ReleaseBuf()
-}
-
-// DataAndRanges is a pair of IngestData and list of Range. Each Range will
-// become a regionJob, and the regionJob will read data from Data field.
-type DataAndRanges struct {
-	Data         IngestData
-	SortedRanges []Range
 }

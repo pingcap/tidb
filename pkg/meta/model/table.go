@@ -88,6 +88,11 @@ var ExtraHandleName = ast.NewCIStr("_tidb_rowid")
 // ExtraPhysTblIDName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIDName = ast.NewCIStr("_tidb_tid")
 
+// VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
+// When read column by vector index, sometimes there is no need to read vector column just need distance,
+// so a distance column will be added to table_scan. this field is used in the action.
+const VirtualColVecSearchDistanceID int64 = -2000
+
 // Deprecated: Use ExtraPhysTblIDName instead.
 // var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
 

@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -84,6 +85,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/tikv/pd/client/errs"
 	pdHttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
@@ -116,8 +118,9 @@ type ShowExec struct {
 	GlobalScope bool // GlobalScope is used by show variables
 	Extended    bool // Used for `show extended columns from ...`
 
-	ImportJobID *int64
-	SQLOrDigest string // Used for SHOW PLAN FOR <SQL or Digest>
+	ImportJobID       *int64
+	DistributionJobID *int64
+	SQLOrDigest       string // Used for SHOW PLAN FOR <SQL or Digest>
 }
 
 type showTableRegionRowItem struct {
@@ -289,6 +292,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowSessionStates(ctx)
 	case ast.ShowImportJobs:
 		return e.fetchShowImportJobs(ctx)
+	case ast.ShowDistributionJobs:
+		return e.fetchShowDistributionJobs(ctx)
 	}
 	return nil
 }
@@ -1253,8 +1258,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			fmt.Fprintf(buf, "  UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.VectorInfo != nil {
 			fmt.Fprintf(buf, "  VECTOR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+		} else if idxInfo.FullTextInfo != nil {
+			fmt.Fprintf(buf, "  FULLTEXT INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.InvertedInfo != nil {
-			fmt.Fprintf(buf, "  INVERTED INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+			fmt.Fprintf(buf, "  COLUMNAR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else {
 			fmt.Fprintf(buf, "  KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		}
@@ -1277,6 +1284,13 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			fmt.Fprintf(buf, "((%s(%s)))", strings.ToUpper(funcName), strings.Join(cols, ","))
 		} else {
 			fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
+		}
+
+		if idxInfo.InvertedInfo != nil {
+			fmt.Fprintf(buf, " USING INVERTED")
+		}
+		if idxInfo.FullTextInfo != nil {
+			fmt.Fprintf(buf, " WITH PARSER %s", idxInfo.FullTextInfo.ParserType.SQLName())
 		}
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
@@ -2123,6 +2137,7 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	physicalIDs := []int64{}
+	partitonNames := make([]string, 0)
 	if pi := tb.Meta().GetPartitionInfo(); pi != nil {
 		for _, name := range e.Table.PartitionNames {
 			pid, err := tables.FindPartitionByName(tb.Meta(), name.L)
@@ -2130,10 +2145,12 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 				return err
 			}
 			physicalIDs = append(physicalIDs, pid)
+			partitonNames = append(partitonNames, name.L)
 		}
 		if len(physicalIDs) == 0 {
 			for _, p := range pi.Definitions {
 				physicalIDs = append(physicalIDs, p.ID)
+				partitonNames = append(partitonNames, p.Name.L)
 			}
 		}
 	} else {
@@ -2141,6 +2158,7 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 			return plannererrors.ErrPartitionClauseOnNonpartitioned
 		}
 		physicalIDs = append(physicalIDs, tb.Meta().ID)
+		partitonNames = append(partitonNames, tb.Meta().Name.L)
 	}
 	distributions := make([]*pdHttp.RegionDistribution, 0)
 	var resp *pdHttp.RegionDistributions
@@ -2154,7 +2172,7 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 		}
 		distributions = append(distributions, resp.RegionDistributions...)
 	}
-	e.fillDistributionsToChunk(distributions)
+	e.fillDistributionsToChunk(partitonNames, distributions)
 	return nil
 }
 
@@ -2315,21 +2333,22 @@ func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvS
 	return regions, nil
 }
 
-func (e *ShowExec) fillDistributionsToChunk(distributions []*pdHttp.RegionDistribution) {
-	for _, dis := range distributions {
-		e.result.AppendUint64(0, dis.StoreID)
-		e.result.AppendString(1, dis.EngineType)
-		e.result.AppendInt64(2, int64(dis.RegionLeaderCount))
-		e.result.AppendInt64(3, int64(dis.RegionPeerCount))
-		e.result.AppendUint64(4, dis.RegionWriteBytes)
-		e.result.AppendUint64(5, dis.RegionWriteKeys)
-		e.result.AppendUint64(6, dis.RegionWriteQuery)
-		e.result.AppendUint64(7, dis.RegionLeaderReadBytes)
-		e.result.AppendUint64(8, dis.RegionLeaderReadKeys)
-		e.result.AppendUint64(9, dis.RegionLeaderReadQuery)
-		e.result.AppendUint64(10, dis.RegionPeerReadBytes)
-		e.result.AppendUint64(11, dis.RegionPeerReadKeys)
-		e.result.AppendUint64(12, dis.RegionPeerReadQuery)
+func (e *ShowExec) fillDistributionsToChunk(partitionNams []string, distributions []*pdHttp.RegionDistribution) {
+	for idx, dis := range distributions {
+		e.result.AppendString(0, partitionNams[idx])
+		e.result.AppendUint64(1, dis.StoreID)
+		e.result.AppendString(2, dis.EngineType)
+		e.result.AppendInt64(3, int64(dis.RegionLeaderCount))
+		e.result.AppendInt64(4, int64(dis.RegionPeerCount))
+		e.result.AppendUint64(5, dis.RegionWriteBytes)
+		e.result.AppendUint64(6, dis.RegionWriteKeys)
+		e.result.AppendUint64(7, dis.RegionWriteQuery)
+		e.result.AppendUint64(8, dis.RegionLeaderReadBytes)
+		e.result.AppendUint64(9, dis.RegionLeaderReadKeys)
+		e.result.AppendUint64(10, dis.RegionLeaderReadQuery)
+		e.result.AppendUint64(11, dis.RegionPeerReadBytes)
+		e.result.AppendUint64(12, dis.RegionPeerReadKeys)
+		e.result.AppendUint64(13, dis.RegionPeerReadQuery)
 	}
 }
 
@@ -2461,6 +2480,98 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 		}
 	}
 	FillOneImportJobInfo(result, info, importedRowCount)
+	return nil
+}
+
+const balanceRangeScheduler = "balance-range-scheduler"
+
+func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
+	config, err := infosync.GetSchedulerConfig(ctx, balanceRangeScheduler)
+	if err != nil {
+		return err
+	}
+	configs, ok := config.([]any)
+	if !ok {
+		// it means that no any jobs
+		return nil
+	}
+	jobs := make([]map[string]any, 0, len(configs))
+	for _, cfg := range configs {
+		job, ok := cfg.(map[string]any)
+		if !ok {
+			return errs.ErrClientProtoUnmarshal.FastGenByArgs(cfg)
+		}
+		jobs = append(jobs, job)
+	}
+	if e.DistributionJobID != nil {
+		for _, job := range jobs {
+			jobID, ok := job["job-id"].(float64)
+			if ok && *e.DistributionJobID == int64(jobID) {
+				if err := fillDistributionJobToChunk(ctx, job, e.result); err != nil {
+					return err
+				}
+				break
+			}
+		}
+	} else {
+		for _, job := range jobs {
+			if err := fillDistributionJobToChunk(ctx, job, e.result); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// fillDistributionJobToChunk fills the distribution job to the chunk
+func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result *chunk.Chunk) error {
+	// alias is {db_name}.{table_name}.{partition_name}
+	alias := strings.Split(job["alias"].(string), ".")
+	logutil.Logger(ctx).Info("fillDistributionJobToChunk", zap.String("alias", job["alias"].(string)))
+	if len(alias) != 3 {
+		return errs.ErrClientProtoUnmarshal.FastGenByArgs(fmt.Sprintf("alias:%s is invalid", job["alias"].(string)))
+	}
+	result.AppendUint64(0, uint64(job["job-id"].(float64)))
+	result.AppendString(1, alias[0])
+	result.AppendString(2, alias[1])
+	// partition name maybe empty when the table is not partitioned
+	if alias[2] == "" {
+		result.AppendNull(3)
+	} else {
+		result.AppendString(3, alias[2])
+	}
+	result.AppendString(4, job["engine"].(string))
+	result.AppendString(5, job["rule"].(string))
+	result.AppendString(6, job["status"].(string))
+	layout := "2006-01-02T15:04:05.999999-07:00" // RFC3339 with microseconds
+	if create, ok := job["create"]; ok {
+		logutil.Logger(ctx).Info("fillDistributionJobToChunk", zap.String("create", create.(string)))
+		creatTime, err := time.Parse(layout, create.(string))
+		if err != nil {
+			return err
+		}
+		result.AppendTime(7, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
+	} else {
+		result.AppendNull(7)
+	}
+	if start, ok := job["start"]; ok {
+		creatTime, err := time.Parse(layout, start.(string))
+		if err != nil {
+			return err
+		}
+		result.AppendTime(8, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
+	} else {
+		result.AppendNull(8)
+	}
+	if finish, ok := job["finish"]; ok {
+		creatTime, err := time.Parse(layout, finish.(string))
+		if err != nil {
+			return err
+		}
+		result.AppendTime(9, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
+	} else {
+		result.AppendNull(9)
+	}
 	return nil
 }
 

@@ -910,3 +910,40 @@ IndexLookUp	1.00	root
 └─Selection(Probe)	1.00	cop[tikv]		eq(test_59427.t.a, 1)
   └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 drop database if exists test_59427;
+drop table if exists t1,t2,t3,t4,t5;
+create table t1(a int, b int, c int, d int, e int);
+create table t2(a int, b int, c int, d int, e int);
+create table t3(a int, b int, c int, d int, e int);
+create table t4(a int, b int, c int, d int, e int);
+create table t5(a int, b int, c int, d int, e int);
+explain format = brief select tmp4.b
+from t1 join t2 on t1.a = t2.b
+join t3 on t1.b = t3.b
+left join
+(select a, b, c, (row_number() over (partition by b order by e asc)) from t4) tmp4 on tmp4.b = t2.c and tmp4.c = t3.c
+join t5 on t5.a = t1.e;
+id	estRows	task	access object	operator info
+HashJoin	19472.71	root		inner join, equal:[eq(test.t5.a, test.t1.e)]
+├─TableReader(Build)	9990.00	root		data:Selection
+│ └─Selection	9990.00	cop[tikv]		not(isnull(test.t5.a))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t5	keep order:false, stats:pseudo
+└─HashJoin(Probe)	15578.17	root		left outer join, left side:HashJoin, equal:[eq(test.t2.c, test.t4.b) eq(test.t3.c, test.t4.c)]
+  ├─Selection(Build)	7992.00	root		not(isnull(test.t4.c))
+  │ └─Shuffle	9990.00	root		execution info: concurrency:100, data sources:[TableReader]
+  │   └─Window	9990.00	root		row_number()->Column#26 over(partition by test.t4.b order by test.t4.e rows between current row and current row)
+  │     └─Sort	9990.00	root		test.t4.b, test.t4.e
+  │       └─ShuffleReceiver	9990.00	root		
+  │         └─TableReader	9990.00	root		data:Selection
+  │           └─Selection	9990.00	cop[tikv]		not(isnull(test.t4.b))
+  │             └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	15578.17	root		inner join, equal:[eq(test.t1.b, test.t3.b)]
+    ├─HashJoin(Build)	12462.54	root		inner join, equal:[eq(test.t1.a, test.t2.b)]
+    │ ├─TableReader(Build)	9990.00	root		data:Selection
+    │ │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t2.b))
+    │ │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    │ └─TableReader(Probe)	9970.03	root		data:Selection
+    │   └─Selection	9970.03	cop[tikv]		not(isnull(test.t1.a)), not(isnull(test.t1.b)), not(isnull(test.t1.e))
+    │     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─TableReader(Probe)	9990.00	root		data:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(test.t3.b))
+        └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo

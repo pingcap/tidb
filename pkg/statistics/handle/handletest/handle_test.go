@@ -213,7 +213,7 @@ func TestLoadHist(t *testing.T) {
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	rowCount := 10
-	for i := 0; i < rowCount; i++ {
+	for range rowCount {
 		testKit.MustExec("insert into t values('a','ddd')")
 	}
 	testKit.MustExec("analyze table t")
@@ -222,7 +222,7 @@ func TestLoadHist(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	oldStatsTbl := h.GetTableStats(tableInfo)
-	for i := 0; i < rowCount; i++ {
+	for range rowCount {
 		testKit.MustExec("insert into t values('bb','sdfga')")
 	}
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
