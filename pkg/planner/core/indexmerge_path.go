@@ -344,15 +344,16 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 		notCoveredConds := make([]expression.Expression, 0, len(path.IndexFilters)+len(path.TableFilters))
 		// AccessConds can be covered by partial path.
 		coveredConds = append(coveredConds, path.AccessConds...)
-		for i, cond := range path.IndexFilters {
+		path.IndexFilters = slices.DeleteFunc(path.IndexFilters, func(cond expression.Expression) bool {
 			// IndexFilters can be covered by partial path if it can be pushed down to TiKV.
 			if !expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cond}, kv.TiKV) {
-				path.IndexFilters = slices.Delete(path.IndexFilters, i, i+1)
 				notCoveredConds = append(notCoveredConds, cond)
+				return true
 			} else {
 				coveredConds = append(coveredConds, cond)
+				return false
 			}
-		}
+		})
 		// TableFilters can't be covered by partial path.
 		notCoveredConds = append(notCoveredConds, path.TableFilters...)
 
