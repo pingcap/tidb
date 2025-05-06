@@ -250,9 +250,7 @@ func (t *TargetInfo) FetchRemoteTableModels(
 // GetTargetSysVariablesForImport gets some important systam variables for importing on the target.
 // It implements the TargetInfoGetter interface.
 func (t *TargetInfo) GetTargetSysVariablesForImport(_ context.Context, _ ...ropts.GetPreInfoOption) map[string]string {
-	result := make(map[string]string)
-	maps.Copy(result, t.sysVarMap)
-	return result
+	return maps.Clone(t.sysVarMap)
 }
 
 // GetMaxReplica implements the TargetInfoGetter interface.
