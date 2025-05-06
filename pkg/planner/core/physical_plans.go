@@ -1307,12 +1307,9 @@ func (la *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (la *PhysicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := la.PhysicalHashJoin.ExtractCorrelatedCols()
-	for i := len(corCols) - 1; i >= 0; i-- {
-		if la.Children()[0].Schema().Contains(&corCols[i].Column) {
-			corCols = slices.Delete(corCols, i, i+1)
-		}
-	}
-	return corCols
+	return slices.DeleteFunc(corCols, func(col *expression.CorrelatedColumn) bool {
+		return la.Children()[0].Schema().Contains(&col.Column)
+	})
 }
 
 // MemoryUsage return the memory usage of PhysicalApply
