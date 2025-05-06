@@ -1533,7 +1533,7 @@ func updateServiceSafePoint(tctx *tcontext.Context, pdClient pd.Client, ttl int6
 		tctx.L().Debug("update PD safePoint limit with ttl",
 			zap.Uint64("safePoint", snapshotTS),
 			zap.Int64("ttl", ttl))
-		for retryCnt := 0; retryCnt <= 10; retryCnt++ {
+		for retryCnt := range 11 {
 			_, err := pdClient.UpdateServiceGCSafePoint(tctx, dumplingServiceSafePointID, ttl, snapshotTS)
 			if err == nil {
 				break

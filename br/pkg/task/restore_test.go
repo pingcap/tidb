@@ -26,11 +26,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -860,6 +863,108 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				require.Len(t, files, 1)
 				require.Len(t, files2, 1)
 				require.Equal(t, files[0].Name, files2[0].Name)
+			}
+		})
+	}
+}
+
+func TestSortKeyRanges(t *testing.T) {
+	makeKeyRange := func(start, end int64) [2]kv.Key {
+		return [2]kv.Key{
+			codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(start)),
+			codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(end)),
+		}
+	}
+	testCases := []struct {
+		name       string
+		ids        []int64
+		preAlloced [2]int64
+		expected   [][2]kv.Key
+	}{
+		{
+			name:       "empty_ids",
+			ids:        []int64{},
+			preAlloced: [2]int64{100, 200},
+			expected:   nil,
+		},
+		{
+			name:       "single_id",
+			ids:        []int64{5},
+			preAlloced: [2]int64{0, 0},
+			expected:   [][2]kv.Key{makeKeyRange(5, 6)},
+		},
+		{
+			name:       "prealloc_non_overlap",
+			ids:        []int64{50, 51, 52, 53},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(50, 54)},
+		},
+		{
+			name:       "prealloc_partial_overlap",
+			ids:        []int64{95, 96, 97, 98, 99, 100, 101, 102, 170, 171, 172},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(95, 200)},
+		},
+		{
+			name:       "prealloc_contains_all",
+			ids:        []int64{120, 121, 122, 123, 150, 180},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(100, 200)},
+		},
+		{
+			name:       "prealloc_left_adjacent",
+			ids:        []int64{99, 100},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(99, 200)},
+		},
+		{
+			name:       "prealloc_left_not_adjacent",
+			ids:        []int64{99},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(99, 100)},
+		},
+		{
+			name:       "prealloc_right_adjacent",
+			ids:        []int64{200},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(200, 201)},
+		},
+		{
+			name:       "prealloc_not_adjacent",
+			ids:        []int64{201},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(201, 202)},
+		},
+		{
+			name:       "multiple_merge",
+			ids:        []int64{10, 11, 15, 16, 20},
+			preAlloced: [2]int64{12, 18},
+			expected: [][2]kv.Key{
+				makeKeyRange(10, 18),
+				makeKeyRange(20, 21),
+			},
+		},
+		{
+			name:       "full_merge",
+			ids:        []int64{5, 6, 7},
+			preAlloced: [2]int64{4, 8},
+			expected:   [][2]kv.Key{makeKeyRange(4, 8)},
+		},
+		{
+			name:       "min_boundary",
+			ids:        []int64{0},
+			preAlloced: [2]int64{0, 1},
+			expected:   [][2]kv.Key{makeKeyRange(0, 1)},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := task.SortKeyRanges(tc.ids, tc.preAlloced)
+			require.Equal(t, len(tc.expected), len(result))
+
+			for i := range result {
+				require.Equal(t, tc.expected[i][0], result[i][0], "StartKey mismatch at index %d", i)
+				require.Equal(t, tc.expected[i][1], result[i][1], "EndKey mismatch at index %d", i)
 			}
 		})
 	}
