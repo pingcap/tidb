@@ -1083,6 +1083,26 @@ func GetLockTablesArgs(job *Job) (*LockTablesArgs, error) {
 	return getOrDecodeArgs[*LockTablesArgs](&LockTablesArgs{}, job)
 }
 
+// AlterTableModeArgs is the argument for AlterTableMode.
+type AlterTableModeArgs struct {
+	TableMode TableMode `json:"table_mode,omitempty"`
+	SchemaID  int64     `json:"schema_id,omitempty"`
+	TableID   int64     `json:"table_id,omitempty"`
+}
+
+func (a *AlterTableModeArgs) getArgsV1(*Job) []any {
+	return []any{a}
+}
+
+func (a *AlterTableModeArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(a))
+}
+
+// GetAlterTableModeArgs get the AlterTableModeArgs argument.
+func GetAlterTableModeArgs(job *Job) (*AlterTableModeArgs, error) {
+	return getOrDecodeArgs[*AlterTableModeArgs](&AlterTableModeArgs{}, job)
+}
+
 // RepairTableArgs is the argument for repair table
 type RepairTableArgs struct {
 	TableInfo *TableInfo `json:"table_info"`
@@ -1332,7 +1352,6 @@ type IndexArg struct {
 	IsColumnar bool `json:"is_vector,omitempty"`
 
 	// ColumnarIndexType is used to distinguish different columnar index types.
-	// Only used for job args v2.
 	// Note: 1. when you want to read it, always calling `GetColumnarIndexType`` rather than using it directly.
 	//       2. when you set it, make sure IsColumnar = ColumnarIndexType != ColumnarIndexTypeNA.
 	ColumnarIndexType ColumnarIndexType `json:"columnar_index_type,omitempty"`
@@ -1409,7 +1428,7 @@ func (a *ModifyIndexArgs) getArgsV1(job *Job) []any {
 	// Add columnar index
 	if job.Type == ActionAddColumnarIndex {
 		arg := a.IndexArgs[0]
-		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption, arg.FuncExpr}
+		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption, arg.FuncExpr, arg.ColumnarIndexType}
 	}
 
 	// Add primary key
@@ -1547,10 +1566,11 @@ func (a *ModifyIndexArgs) decodeAddColumnarIndexV1(job *Job) error {
 		indexPartSpecification *ast.IndexPartSpecification
 		indexOption            *ast.IndexOption
 		funcExpr               string
+		columnarIndexType      ColumnarIndexType
 	)
 
 	if err := job.decodeArgs(
-		&indexName, &indexPartSpecification, &indexOption, &funcExpr); err != nil {
+		&indexName, &indexPartSpecification, &indexOption, &funcExpr, &columnarIndexType); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1560,6 +1580,7 @@ func (a *ModifyIndexArgs) decodeAddColumnarIndexV1(job *Job) error {
 		IndexOption:             indexOption,
 		FuncExpr:                funcExpr,
 		IsColumnar:              true,
+		ColumnarIndexType:       columnarIndexType,
 	}}
 	return nil
 }

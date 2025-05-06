@@ -2308,7 +2308,7 @@ func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, use
 }
 
 func (e *SimpleExec) executeDropQueryWatch(s *ast.DropQueryWatchStmt) error {
-	return querywatch.ExecDropQueryWatch(e.Ctx(), s.IntValue)
+	return querywatch.ExecDropQueryWatch(e.Ctx(), s)
 }
 
 func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) error {

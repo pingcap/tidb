@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"unsafe"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -33,12 +34,12 @@ type DBUserMeta []byte
 func DecodeLock(data []byte) (l Lock) {
 	l.LockHdr = *(*LockHdr)(unsafe.Pointer(&data[0]))
 	cursor := mvccLockHdrSize
-	lockBuf := append([]byte{}, data[cursor:]...)
+	lockBuf := slices.Clone(data[cursor:])
 	l.Primary = lockBuf[:l.PrimaryLen]
 	cursor = int(l.PrimaryLen)
 	if l.LockHdr.SecondaryNum > 0 {
 		l.Secondaries = make([][]byte, l.LockHdr.SecondaryNum)
-		for i := uint32(0); i < l.LockHdr.SecondaryNum; i++ {
+		for i := range l.LockHdr.SecondaryNum {
 			keyLen := binary.LittleEndian.Uint16(lockBuf[cursor:])
 			cursor += 2
 			l.Secondaries[i] = lockBuf[cursor : cursor+int(keyLen)]
@@ -170,7 +171,7 @@ func (m DBUserMeta) StartTS() uint64 {
 // EncodeExtraTxnStatusKey encodes a extra transaction status key.
 // It is only used for Rollback and Op_Lock.
 func EncodeExtraTxnStatusKey(key []byte, startTS uint64) []byte {
-	b := append([]byte{}, key...)
+	b := slices.Clone(key)
 	ret := codec.EncodeUintDesc(b, startTS)
 	ret[0]++
 	return ret
@@ -181,7 +182,7 @@ func DecodeExtraTxnStatusKey(extraKey []byte) (key []byte) {
 	if len(extraKey) <= 9 {
 		return nil
 	}
-	key = append([]byte{}, extraKey[:len(extraKey)-8]...)
+	key = slices.Clone(extraKey[:len(extraKey)-8])
 	key[0]--
 	return
 }

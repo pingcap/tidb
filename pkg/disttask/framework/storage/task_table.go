@@ -153,6 +153,9 @@ func SetTaskManager(is *TaskManager) {
 
 // WithNewSession executes the function with a new session.
 func (mgr *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePerThousand(); err != nil {
+		return err
+	}
 	v, err := mgr.sePool.Get()
 	if err != nil {
 		return err
@@ -308,6 +311,9 @@ func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Tas
 // GetTaskExecInfoByExecID implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID string) ([]*TaskExecInfo, error) {
 	var res []*TaskExecInfo
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
 	err := mgr.WithNewSession(func(se sessionctx.Context) error {
 		// as the task will not go into next step when there are subtasks in those
 		// states, so their steps will be current step of their corresponding task,
@@ -435,6 +441,9 @@ func (mgr *TaskManager) GetTaskByIDWithHistory(ctx context.Context, taskID int64
 
 // GetTaskBaseByIDWithHistory gets the task by the task ID from both tidb_global_task and tidb_global_task_history.
 func (mgr *TaskManager) GetTaskBaseByIDWithHistory(ctx context.Context, taskID int64) (task *proto.TaskBase, err error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+basicTaskColumns+" from mysql.tidb_global_task t where id = %? "+
 		"union select "+basicTaskColumns+" from mysql.tidb_global_task_history t where id = %?", taskID, taskID)
 	if err != nil {
@@ -490,6 +499,9 @@ func (mgr *TaskManager) GetTaskBaseByKeyWithHistory(ctx context.Context, key str
 
 // GetSubtasksByExecIDAndStepAndStates gets all subtasks by given states on one node.
 func (mgr *TaskManager) GetSubtasksByExecIDAndStepAndStates(ctx context.Context, execID string, taskID int64, step proto.Step, states ...proto.SubtaskState) ([]*proto.Subtask, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
 	args := []any{execID, taskID, step}
 	for _, state := range states {
 		args = append(args, state)
@@ -510,6 +522,9 @@ func (mgr *TaskManager) GetSubtasksByExecIDAndStepAndStates(ctx context.Context,
 
 // GetFirstSubtaskInStates gets the first subtask by given states.
 func (mgr *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (*proto.Subtask, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
 	args := []any{tidbID, taskID, step}
 	for _, state := range states {
 		args = append(args, state)
@@ -569,6 +584,9 @@ func (mgr *TaskManager) GetAllSubtasksByStepAndState(ctx context.Context, taskID
 
 // GetSubtaskRowCount gets the subtask row count.
 func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, step proto.Step) (int64, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return 0, err
+	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select
     	cast(sum(json_extract(summary, '$.row_count')) as signed) as row_count
 		from (
@@ -588,6 +606,9 @@ func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, st
 
 // UpdateSubtaskRowCount updates the subtask row count.
 func (mgr *TaskManager) UpdateSubtaskRowCount(ctx context.Context, subtaskID int64, rowCount int64) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_background_subtask
 		set summary = json_set(summary, '$.row_count', %?) where id = %?`,
@@ -717,6 +738,9 @@ func (mgr *TaskManager) SwitchTaskStep(
 
 func (*TaskManager) updateTaskStateStep(ctx context.Context, se sessionctx.Context,
 	task *proto.Task, nextState proto.TaskState, nextStep proto.Step) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	var extraUpdateStr string
 	if task.State == proto.TaskStatePending {
 		extraUpdateStr = `start_time = CURRENT_TIMESTAMP(),`
@@ -745,6 +769,9 @@ func (*TaskManager) insertSubtasks(ctx context.Context, se sessionctx.Context, s
 		<-TestChannel
 		<-TestChannel
 	})
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	var (
 		sb         strings.Builder
 		markerList = make([]string, 0, len(subtasks))
@@ -839,6 +866,9 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 		rs  []chunk.Row
 		err error
 	)
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
 	err = mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
 			`select `+SubtaskColumns+` from mysql.tidb_background_subtask where task_key = %? and step = %?`,
@@ -877,6 +907,9 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 
 // GetAllTasks gets all tasks with basic columns.
 func (mgr *TaskManager) GetAllTasks(ctx context.Context) ([]*proto.TaskBase, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+basicTaskColumns+` from mysql.tidb_global_task t`)
 	if err != nil {
 		return nil, err
@@ -917,6 +950,9 @@ func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBas
 // For details, see https://github.com/pingcap/tidb/issues/50894.
 // For the following versions, there is a check when submitting a new task. This function should be a no-op.
 func (mgr *TaskManager) AdjustTaskOverflowConcurrency(ctx context.Context, se sessionctx.Context) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	cpuCount, err := mgr.getCPUCountOfNode(ctx, se)
 	if err != nil {
 		return err

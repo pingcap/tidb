@@ -111,8 +111,9 @@ const (
 	cloudStorageURIOption       = "cloud_storage_uri"
 	disablePrecheckOption       = "disable_precheck"
 	// used for test
-	maxEngineSizeOption = "__max_engine_size"
-	forceMergeStep      = "__force_merge_step"
+	maxEngineSizeOption  = "__max_engine_size"
+	forceMergeStep       = "__force_merge_step"
+	manualRecoveryOption = "__manual_recovery"
 )
 
 var (
@@ -136,6 +137,7 @@ var (
 		disableTiKVImportModeOption: false,
 		maxEngineSizeOption:         true,
 		forceMergeStep:              false,
+		manualRecoveryOption:        false,
 		cloudStorageURIOption:       true,
 		disablePrecheckOption:       false,
 	}
@@ -268,6 +270,8 @@ type Plan struct {
 	TotalFileSize int64
 	// used in tests to force enable merge-step when using global sort.
 	ForceMergeStep bool
+	// see ManualRecovery in proto.ExtraParams
+	ManualRecovery bool
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -763,6 +767,9 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	if _, ok := specifiedOptions[forceMergeStep]; ok {
 		p.ForceMergeStep = true
 	}
+	if _, ok := specifiedOptions[manualRecoveryOption]; ok {
+		p.ManualRecovery = true
+	}
 
 	if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
 		p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
@@ -1028,6 +1035,16 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 	return nil
 }
 
+// Close closes all the resources.
+func (e *LoadDataController) Close() {
+	if e.dataStore != nil {
+		e.dataStore.Close()
+	}
+	if e.GlobalSortStore != nil {
+		e.GlobalSortStore.Close()
+	}
+}
+
 func (*LoadDataController) initExternalStore(ctx context.Context, u *url.URL, target string) (storage.ExternalStorage, error) {
 	b, err2 := storage.ParseBackendFromURL(u, nil)
 	if err2 != nil {
@@ -1116,7 +1133,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			Compression: compressTp,
 			Type:        sourceType,
 		}
-		fileMeta.RealSize = e.getFileRealSize(ctx, fileMeta, s)
+		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
 		dataFiles = append(dataFiles, &fileMeta)
 		totalSize = size
 	} else {
@@ -1130,7 +1147,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// access, else walkDir will fail
 		// we only support '*', in order to reuse glob library manually escape the path
 		escapedPath := stringutil.EscapeGlobQuestionMark(fileNameKey)
-		err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
+
+		allFiles := make([]mydump.RawFile, 0, 16)
+		if err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
 				// we have checked in LoadDataExec.Next
 				//nolint: errcheck
@@ -1138,39 +1157,34 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				if !match {
 					return nil
 				}
-				compressTp := mydump.ParseCompressionOnFileExtension(remotePath)
+				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
+				totalSize += size
+				return nil
+			}); err != nil {
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err), "failed to walk dir")
+		}
+
+		var err error
+		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
+			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
+				path, size := f.Path, f.Size
+				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
-					Path:        remotePath,
+					Path:        path,
 					FileSize:    size,
 					Compression: compressTp,
 					Type:        sourceType,
 				}
-				fileMeta.RealSize = e.getFileRealSize(ctx, fileMeta, s)
-				dataFiles = append(dataFiles, &fileMeta)
-				totalSize += size
-				return nil
-			})
-		if err != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err), "failed to walk dir")
+				fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
+				return &fileMeta, nil
+			}); err != nil {
+			return err
 		}
 	}
 
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 	return nil
-}
-
-func (e *LoadDataController) getFileRealSize(ctx context.Context,
-	fileMeta mydump.SourceFileMeta, store storage.ExternalStorage) int64 {
-	if fileMeta.Compression == mydump.CompressionNone {
-		return fileMeta.FileSize
-	}
-	compressRatio, err := mydump.SampleFileCompressRatio(ctx, fileMeta, store)
-	if err != nil {
-		e.logger.Warn("failed to get compress ratio", zap.String("file", fileMeta.Path), zap.Error(err))
-		return fileMeta.FileSize
-	}
-	return int64(compressRatio * float64(fileMeta.FileSize))
 }
 
 func (e *LoadDataController) getSourceType() mydump.SourceType {
@@ -1385,6 +1399,7 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		ShouldCheckTiKV:             true,
 		DupeDetectEnabled:           false,
 		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: false},
+		TiKVWorkerURL:               tidb.GetGlobalConfig().TiKVWorkerURL,
 		StoreWriteBWLimit:           int(e.MaxWriteSpeed),
 		MaxOpenFiles:                int(tidbutil.GenRLimit("table_import")),
 		KeyspaceName:                tidb.GetGlobalKeyspaceName(),

@@ -85,7 +85,7 @@ func TestReadAllOneFile(t *testing.T) {
 		SetMemorySizeLimit(uint64(memSizeLimit)).
 		BuildOneFile(memStore, "/test", "0")
 
-	require.NoError(t, w.Init(ctx, int64(5*size.MB)))
+	w.InitPartSizeAndLogger(ctx, int64(5*size.MB))
 
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
@@ -123,7 +123,7 @@ func TestReadLargeFile(t *testing.T) {
 		SetPropKeysDistance(1000).
 		BuildOneFile(memStore, "/test", "0")
 
-	require.NoError(t, w.Init(ctx, int64(5*size.MB)))
+	w.InitPartSizeAndLogger(ctx, int64(5*size.MB))
 
 	val := make([]byte, 10000)
 	for i := 0; i < 10000; i++ {
@@ -154,6 +154,6 @@ func TestReadLargeFile(t *testing.T) {
 	err = readAllData(ctx, memStore, datas, stats, startKey, endKey, smallBlockBufPool, largeBlockBufPool, output)
 	require.NoError(t, err)
 	output.build(ctx)
-	require.Equal(t, startKey, output.keys[0])
-	require.Equal(t, maxKey, output.keys[len(output.keys)-1])
+	require.Equal(t, startKey, output.kvs[0].key)
+	require.Equal(t, maxKey, output.kvs[len(output.kvs)-1].key)
 }

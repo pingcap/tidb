@@ -60,6 +60,7 @@ func (*ImportCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 		logger.Warn("failed to build controller", zap.Error(err))
 		return err
 	}
+	defer controller.Close()
 	if err = controller.InitDataStore(ctx); err != nil {
 		logger.Warn("failed to init data store", zap.Error(err))
 		return err

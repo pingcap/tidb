@@ -1391,7 +1391,7 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 	defer tracing.StartRegion(ctx, "ParseSQL").End()
 	p := parserutil.GetParser()
 	defer func() {
-		parserutil.DestoryParser(p)
+		parserutil.DestroyParser(p)
 	}()
 
 	sqlMode := s.sessionVars.SQLMode

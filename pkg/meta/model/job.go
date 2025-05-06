@@ -113,6 +113,7 @@ const (
 	ActionRemovePartitioning     ActionType = 72
 	ActionAddColumnarIndex       ActionType = 73
 	ActionModifyEngineAttribute  ActionType = 74
+	ActionAlterTableMode         ActionType = 75
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -186,6 +187,7 @@ var ActionMap = map[ActionType]string{
 	ActionRemovePartitioning:            "alter table remove partitioning",
 	ActionAddColumnarIndex:              "add columnar index",
 	ActionModifyEngineAttribute:         "modify engine attribute",
+	ActionAlterTableMode:                "alter table mode",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -644,7 +646,7 @@ func (job *Job) IsPausable() bool {
 // IsAlterable checks whether the job type can be altered.
 func (job *Job) IsAlterable() bool {
 	// Currently, only non-distributed add index reorg task can be altered
-	return job.Type == ActionAddIndex && !job.ReorgMeta.UseCloudStorage ||
+	return job.Type == ActionAddIndex ||
 		job.Type == ActionModifyColumn ||
 		job.Type == ActionReorganizePartition
 }

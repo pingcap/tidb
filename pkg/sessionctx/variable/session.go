@@ -1017,6 +1017,9 @@ type SessionVars struct {
 	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
 	CorrelationExpFactor int
 
+	// RiskEqSkewRatio is used to control the ratio of skew that is applied to equal predicates not found in TopN/buckets.
+	RiskEqSkewRatio float64
+
 	// cpuFactor is the CPU cost of processing one expression for one row.
 	cpuFactor float64
 	// copCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
@@ -1035,6 +1038,25 @@ type SessionVars struct {
 	diskFactor float64
 	// concurrencyFactor is the CPU cost of additional one goroutine.
 	concurrencyFactor float64
+
+	// Optimizer cost model factors for each physical operator
+	IndexScanCostFactor        float64
+	IndexReaderCostFactor      float64
+	TableReaderCostFactor      float64
+	TableFullScanCostFactor    float64
+	TableRangeScanCostFactor   float64
+	TableRowIDScanCostFactor   float64
+	TableTiFlashScanCostFactor float64
+	IndexLookupCostFactor      float64
+	IndexMergeCostFactor       float64
+	SortCostFactor             float64
+	TopNCostFactor             float64
+	LimitCostFactor            float64
+	StreamAggCostFactor        float64
+	HashAggCostFactor          float64
+	MergeJoinCostFactor        float64
+	HashJoinCostFactor         float64
+	IndexJoinCostFactor        float64
 
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
 	enableForceInlineCTE bool
@@ -2133,6 +2155,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		LimitPushDownThreshold:        vardef.DefOptLimitPushDownThreshold,
 		CorrelationThreshold:          vardef.DefOptCorrelationThreshold,
 		CorrelationExpFactor:          vardef.DefOptCorrelationExpFactor,
+		RiskEqSkewRatio:               vardef.DefOptRiskEqSkewRatio,
 		cpuFactor:                     vardef.DefOptCPUFactor,
 		copCPUFactor:                  vardef.DefOptCopCPUFactor,
 		CopTiFlashConcurrencyFactor:   vardef.DefOptTiFlashConcurrencyFactor,
@@ -2143,6 +2166,23 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		memoryFactor:                  vardef.DefOptMemoryFactor,
 		diskFactor:                    vardef.DefOptDiskFactor,
 		concurrencyFactor:             vardef.DefOptConcurrencyFactor,
+		IndexScanCostFactor:           vardef.DefOptIndexScanCostFactor,
+		IndexReaderCostFactor:         vardef.DefOptIndexReaderCostFactor,
+		TableReaderCostFactor:         vardef.DefOptTableReaderCostFactor,
+		TableFullScanCostFactor:       vardef.DefOptTableFullScanCostFactor,
+		TableRangeScanCostFactor:      vardef.DefOptTableRangeScanCostFactor,
+		TableRowIDScanCostFactor:      vardef.DefOptTableRowIDScanCostFactor,
+		TableTiFlashScanCostFactor:    vardef.DefOptTableTiFlashScanCostFactor,
+		IndexLookupCostFactor:         vardef.DefOptIndexLookupCostFactor,
+		IndexMergeCostFactor:          vardef.DefOptIndexMergeCostFactor,
+		SortCostFactor:                vardef.DefOptSortCostFactor,
+		TopNCostFactor:                vardef.DefOptTopNCostFactor,
+		LimitCostFactor:               vardef.DefOptLimitCostFactor,
+		StreamAggCostFactor:           vardef.DefOptStreamAggCostFactor,
+		HashAggCostFactor:             vardef.DefOptHashAggCostFactor,
+		MergeJoinCostFactor:           vardef.DefOptMergeJoinCostFactor,
+		HashJoinCostFactor:            vardef.DefOptHashJoinCostFactor,
+		IndexJoinCostFactor:           vardef.DefOptIndexJoinCostFactor,
 		enableForceInlineCTE:          vardef.DefOptForceInlineCTE,
 		EnableVectorizedExpression:    vardef.DefEnableVectorizedExpression,
 		CommandValue:                  uint32(mysql.ComSleep),

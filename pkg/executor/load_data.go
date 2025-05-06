@@ -90,6 +90,9 @@ func (e *LoadDataExec) Open(_ context.Context) error {
 
 // Close implements the Executor interface.
 func (e *LoadDataExec) Close() error {
+	if e.loadDataWorker != nil {
+		e.loadDataWorker.Close()
+	}
 	return e.closeLocalReader(nil)
 }
 
@@ -285,6 +288,13 @@ func (e *LoadDataWorker) setResult(colAssignExprWarnings []contextutil.SQLWarn) 
 
 	stmtCtx.SetMessage(msg)
 	stmtCtx.SetWarnings(warns)
+}
+
+// Close closes the LoadDataWorker and releases resources.
+func (e *LoadDataWorker) Close() {
+	if e.controller != nil {
+		e.controller.Close()
+	}
 }
 
 func initEncodeCommitWorkers(e *LoadDataWorker) (*encodeWorker, *commitWorker, error) {

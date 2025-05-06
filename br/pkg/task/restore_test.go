@@ -26,11 +26,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -503,18 +506,18 @@ func TestTikvUsage(t *testing.T) {
 	for _, f := range files {
 		total += f.GetSize_()
 	}
-	ret := task.EstimateTikvUsage(files, replica, storeCnt)
-	require.Equal(t, total*replica/storeCnt, ret)
+	ret := task.EstimateTikvUsage(total, replica, storeCnt)
+	require.Equal(t, 15*pb*3/6, ret)
 }
 
 func TestTiflashUsage(t *testing.T) {
 	tables := []*metautil.Table{
 		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 0}},
-			Files: []*backuppb.File{{Size_: 1 * pb}}},
+			FilesOfPhysicals: map[int64][]*backuppb.File{1: {{Size_: 1 * pb}}}},
 		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1}},
-			Files: []*backuppb.File{{Size_: 2 * pb}}},
+			FilesOfPhysicals: map[int64][]*backuppb.File{2: {{Size_: 2 * pb}}}},
 		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 2}},
-			Files: []*backuppb.File{{Size_: 3 * pb}}},
+			FilesOfPhysicals: map[int64][]*backuppb.File{3: {{Size_: 3 * pb}}}},
 	}
 
 	var storeCnt uint64 = 3
@@ -538,7 +541,6 @@ type testCase struct {
 	dbIDToName       map[int64]string
 	snapshotDBMap    map[int64]*metautil.Database
 	snapshotTableMap map[int64]*metautil.Table
-	snapshotFileMap  map[int64][]*backuppb.File
 	expectedTableIDs map[int64][]int64 // dbID -> []tableID
 	expectedDBs      []int64
 	expectedTables   []int64
@@ -571,8 +573,8 @@ func generateTableMap(snapshotDBMap map[int64]*metautil.Database) map[int64]*met
 			m[tableInfo.Info.ID] = &metautil.Table{
 				DB:   tableInfo.DB.Clone(),
 				Info: tableInfo.Info.Clone(),
-				Files: []*backuppb.File{
-					{Name: tableInfo.Info.Name.O},
+				FilesOfPhysicals: map[int64][]*backuppb.File{
+					tableInfo.Info.ID: {{Name: tableInfo.Info.Name.O}},
 				},
 			}
 		}
@@ -580,13 +582,11 @@ func generateTableMap(snapshotDBMap map[int64]*metautil.Database) map[int64]*met
 	return m
 }
 
-func generateFiles(snapshotDBMap map[int64]*metautil.Database) map[int64][]*backuppb.File {
+func generateFiles(tableMap map[int64]*metautil.Table) map[int64][]*backuppb.File {
 	m := make(map[int64][]*backuppb.File)
-	for _, dbinfo := range snapshotDBMap {
-		for _, tableInfo := range dbinfo.Tables {
-			m[tableInfo.Info.ID] = []*backuppb.File{
-				{Name: tableInfo.Info.Name.O},
-			}
+	for _, tableInfo := range tableMap {
+		m[tableInfo.Info.ID] = []*backuppb.File{
+			{Name: tableInfo.Info.Name.O},
 		}
 	}
 	return m
@@ -622,8 +622,8 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 						ID:   11,
 						Name: ast.NewCIStr("test_table_11"),
 					},
-					Files: []*backuppb.File{
-						{Name: "test_table_11"},
+					FilesOfPhysicals: map[int64][]*backuppb.File{
+						11: {{Name: "test_table_11"}},
 					},
 				},
 				{
@@ -632,8 +632,8 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 						ID:   12,
 						Name: ast.NewCIStr("test_table_12"),
 					},
-					Files: []*backuppb.File{
-						{Name: "test_table_12"},
+					FilesOfPhysicals: map[int64][]*backuppb.File{
+						12: {{Name: "test_table_12"}},
 					},
 				},
 			},
@@ -647,8 +647,8 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 						ID:   21,
 						Name: ast.NewCIStr("test_table_21"),
 					},
-					Files: []*backuppb.File{
-						{Name: "test_table_21"},
+					FilesOfPhysicals: map[int64][]*backuppb.File{
+						21: {{Name: "test_table_21"}},
 					},
 				},
 			},
@@ -670,7 +670,6 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			},
 			snapshotDBMap:    generateDBMap(snapshotDBMap),
 			snapshotTableMap: generateTableMap(snapshotDBMap),
-			snapshotFileMap:  generateFiles(snapshotDBMap),
 			expectedTableIDs: map[int64][]int64{
 				1: {11, 12},
 				2: {21},
@@ -711,7 +710,6 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			},
 			snapshotDBMap:    generateDBMap(snapshotDBMap),
 			snapshotTableMap: generateTableMap(snapshotDBMap),
-			snapshotFileMap:  generateFiles(snapshotDBMap),
 			expectedTableIDs: map[int64][]int64{
 				1: {11, 12, 13},
 				2: {21},
@@ -735,7 +733,6 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			},
 			snapshotDBMap:    generateDBMap(map[int64]*metautil.Database{2: snapshotDBMap[2]}),
 			snapshotTableMap: generateTableMap(map[int64]*metautil.Database{2: snapshotDBMap[2]}),
-			snapshotFileMap:  generateFiles(map[int64]*metautil.Database{2: snapshotDBMap[2]}),
 			expectedTableIDs: map[int64][]int64{
 				2: {11, 21},
 			},
@@ -758,7 +755,6 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			},
 			snapshotDBMap:    generateDBMap(map[int64]*metautil.Database{1: snapshotDBMap[1]}),
 			snapshotTableMap: generateTableMap(map[int64]*metautil.Database{1: snapshotDBMap[1]}),
-			snapshotFileMap:  generateFiles(map[int64]*metautil.Database{1: snapshotDBMap[1]}),
 			expectedTableIDs: map[int64][]int64{
 				1: {12},
 			},
@@ -813,7 +809,6 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				localSnapshotDBMap = map[int64]*metautil.Database{}
 			}
 
-			fileMap := tc.snapshotFileMap
 			tableMap := tc.snapshotTableMap
 			dbMap := tc.snapshotDBMap
 			logBackupTableHistory := stream.NewTableHistoryManager()
@@ -839,7 +834,6 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				logBackupTableHistory,
 				cfg,
 				localSnapshotDBMap,
-				fileMap,
 				tableMap,
 				dbMap,
 			)
@@ -861,6 +855,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				require.NotNil(t, tableMap[tableID])
 			}
 
+			fileMap := generateFiles(tableMap)
 			require.Len(t, fileMap, len(tc.expectedFileMap))
 			for tableID, files := range tc.expectedFileMap {
 				files2, exists := fileMap[tableID]
@@ -868,6 +863,108 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				require.Len(t, files, 1)
 				require.Len(t, files2, 1)
 				require.Equal(t, files[0].Name, files2[0].Name)
+			}
+		})
+	}
+}
+
+func TestSortKeyRanges(t *testing.T) {
+	makeKeyRange := func(start, end int64) [2]kv.Key {
+		return [2]kv.Key{
+			codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(start)),
+			codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(end)),
+		}
+	}
+	testCases := []struct {
+		name       string
+		ids        []int64
+		preAlloced [2]int64
+		expected   [][2]kv.Key
+	}{
+		{
+			name:       "empty_ids",
+			ids:        []int64{},
+			preAlloced: [2]int64{100, 200},
+			expected:   nil,
+		},
+		{
+			name:       "single_id",
+			ids:        []int64{5},
+			preAlloced: [2]int64{0, 0},
+			expected:   [][2]kv.Key{makeKeyRange(5, 6)},
+		},
+		{
+			name:       "prealloc_non_overlap",
+			ids:        []int64{50, 51, 52, 53},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(50, 54)},
+		},
+		{
+			name:       "prealloc_partial_overlap",
+			ids:        []int64{95, 96, 97, 98, 99, 100, 101, 102, 170, 171, 172},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(95, 200)},
+		},
+		{
+			name:       "prealloc_contains_all",
+			ids:        []int64{120, 121, 122, 123, 150, 180},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(100, 200)},
+		},
+		{
+			name:       "prealloc_left_adjacent",
+			ids:        []int64{99, 100},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(99, 200)},
+		},
+		{
+			name:       "prealloc_left_not_adjacent",
+			ids:        []int64{99},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(99, 100)},
+		},
+		{
+			name:       "prealloc_right_adjacent",
+			ids:        []int64{200},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(200, 201)},
+		},
+		{
+			name:       "prealloc_not_adjacent",
+			ids:        []int64{201},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(201, 202)},
+		},
+		{
+			name:       "multiple_merge",
+			ids:        []int64{10, 11, 15, 16, 20},
+			preAlloced: [2]int64{12, 18},
+			expected: [][2]kv.Key{
+				makeKeyRange(10, 18),
+				makeKeyRange(20, 21),
+			},
+		},
+		{
+			name:       "full_merge",
+			ids:        []int64{5, 6, 7},
+			preAlloced: [2]int64{4, 8},
+			expected:   [][2]kv.Key{makeKeyRange(4, 8)},
+		},
+		{
+			name:       "min_boundary",
+			ids:        []int64{0},
+			preAlloced: [2]int64{0, 1},
+			expected:   [][2]kv.Key{makeKeyRange(0, 1)},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := task.SortKeyRanges(tc.ids, tc.preAlloced)
+			require.Equal(t, len(tc.expected), len(result))
+
+			for i := range result {
+				require.Equal(t, tc.expected[i][0], result[i][0], "StartKey mismatch at index %d", i)
+				require.Equal(t, tc.expected[i][1], result[i][1], "EndKey mismatch at index %d", i)
 			}
 		})
 	}
