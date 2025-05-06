@@ -848,6 +848,7 @@ type Explain struct {
 
 	Rows        [][]string
 	ExplainRows [][]string
+	ExplainIDs  []string
 }
 
 // GetExplainRowsForPlan get explain rows for plan.
@@ -1160,7 +1161,7 @@ func (e *Explain) prepareOperatorInfo(p base.Plan, taskType, id string) {
 		return
 	}
 
-	estRows, estCost, costFormula, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	id, estRows, estCost, costFormula, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 
 	var row []string
 	if e.Analyze || e.RuntimeStatsColl != nil {
@@ -1192,7 +1193,7 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id str
 		return nil
 	}
 
-	estRows, _, _, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	id, estRows, _, _, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 	jsonRow := &ExplainInfoForEncode{
 		ID:           explainID,
 		EstRows:      estRows,
@@ -1208,14 +1209,104 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id str
 	return jsonRow
 }
 
-func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
+// since operatorInfo main contain table name and database name which _num is valid part of them, simply
+// trimming may lead wrong msg showing.
+// tidb> explain select /*+ tidb_inlj(bb) */ aa.* from (select * from t1) as aa left join (select t2.a, t2.a*2 as a2 from t2) as bb on aa.a=bb.a;
+// +-----------------------------+----------+-----------+----------------------+------------------------------------------------------------------------------------------------------------------------------------------------+
+// | id                          | estRows  | task      | access object        | operator info                                                                                                                                  |
+// +-----------------------------+----------+-----------+----------------------+------------------------------------------------------------------------------------------------------------------------------------------------+
+// | IndexJoin_13                | 12487.50 | root      |                      | left outer join, inner:IndexReader_12, left side:IndexReader_24, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a) |
+// | ├─IndexReader_24(Build)     | 10000.00 | root      |                      | index:IndexFullScan_23                                                                                                                         |
+// | │ └─IndexFullScan_23        | 10000.00 | cop[tikv] | table:t1, index:a(a) | keep order:false, stats:pseudo                                                                                                                 |
+// | └─IndexReader_12(Probe)     | 12487.50 | root      |                      | index:Selection_11                                                                                                                             |
+// |   └─Selection_11            | 12487.50 | cop[tikv] |                      | not(isnull(test.t2.a))                                                                                                                         |
+// |     └─IndexRangeScan_10     | 12500.00 | cop[tikv] | table:t2, index:a(a) | range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo                                                                   |
+// +-----------------------------+----------+-----------+----------------------+------------------------------------------------------------------------------------------------------------------------------------------------+
+// the case briefly shows that, those target in the operator info that we wanna trim, must a child item in the explain id. we can list the all the
+// explain id without prefix and suffix, and then trim the operator info with the same suffix.
+func getOperatorInfoIDs(ExplainRows [][]string) []string {
+	if len(ExplainRows) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(ExplainRows))
+	// we can only trim the explain id which is a child of the current explain id.
+	for _, row := range ExplainRows {
+		if len(row) < 5 {
+			panic("should never happen")
+		}
+		// trim suffix
+		id := trimExplainIDSuffix(row[0])
+		// trim prefix
+		idx := strings.IndexFunc(id, func(r rune) bool {
+			// r is a eng char
+			return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z'
+		})
+		ids = append(ids, id[idx:])
+	}
+	return ids
+}
+
+// for operatorInfo if here is some sub-str inside the explain id, we should trim them out.
+func trimOperatorInfoID(ids []string, id string) string {
+	if len(ids) == 0 {
+		return id
+	}
+	// for simplicity
+	// for any operator info string, once there is some id string side, just substitute them with brief one.
+	for _, one := range ids {
+		id = strings.Replace(id, one, strings.Split(one, "_")[0], -1)
+	}
+	return id
+}
+
+// since explain id is quite simple as physicalOp name + _num +(xxx), we can directly do the (xxx) trimming.
+func trimExplainIDSuffix(id string) string {
+	// since point_get_12 will have to underscore, we need do the last one.
+	idx := strings.LastIndexFunc(id, func(r rune) bool {
+		return r == '_'
+	})
+	if idx == -1 {
+		return id
+	}
+	for i := idx + 1; i < len(id); i++ {
+		if id[i] >= '0' && id[i] <= '9' {
+			// valid
+			continue
+		}
+		return id[:i]
+	}
+	return id
+}
+
+func trimExplainIDNum(id string) string {
+	idx := strings.LastIndexFunc(id, func(r rune) bool {
+		return r == '_'
+	})
+	if idx == -1 {
+		return id
+	}
+	// split the _num in the string out. like abc_12cc we should return abccc
+	for i := idx + 1; i < len(id); i++ {
+		if id[i] < '0' || id[i] > '9' {
+			return id[:idx] + id[i:]
+		}
+	}
+	return id[:idx]
+}
+
+func (e *Explain) getOperatorInfo(p base.Plan, id string) (_, estRows, estCost, costFormula, accessObject, operatorInfo string) {
 	// For `explain for connection` statement, `e.ExplainRows` will be set.
 	for _, row := range e.ExplainRows {
 		if len(row) < 5 {
 			panic("should never happen")
 		}
 		if row[0] == id {
-			return row[1], "N/A", "N/A", row[3], row[4]
+			// since IndexReader_12 and IndexReader_13 will be mismatched when there is no id suffix, so here
+			// we still need the rowFormat to locate the exact row information, then we do the trimming.
+			if e.Format == types.ExplainFormatBrief {
+				return trimExplainIDNum(id), row[1], "N/A", "N/A", row[3], trimOperatorInfoID(e.ExplainIDs, row[4])
+			}
+			return id, row[1], "N/A", "N/A", row[3], row[4]
 		}
 	}
 
@@ -1248,7 +1339,7 @@ func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, cos
 		}
 		operatorInfo = p.ExplainInfo()
 	}
-	return estRows, estCost, costFormula, accessObject, operatorInfo
+	return id, estRows, estCost, costFormula, accessObject, operatorInfo
 }
 
 // BinaryPlanStrFromFlatPlan generates the compressed and encoded binary plan from a FlatPhysicalPlan.
