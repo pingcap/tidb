@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -800,6 +802,9 @@ func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, keyPre
 		upperBound = keyPrefix.PrefixNext()
 	} else {
 		upperBound = endKey.PrefixNext()
+		intest.AssertFunc(func() bool {
+			return !bytes.HasSuffix(upperBound, []byte{1})
+		})
 	}
 
 	ver := kv.Version{Ver: version}
