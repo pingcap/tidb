@@ -117,7 +117,11 @@ func isValidToAnalyze(
 	lastFailedAnalysisDuration, err :=
 		GetLastFailedAnalysisDuration(sctx, schema, table, partitionNames...)
 	if err != nil {
+<<<<<<< HEAD
 		logutil.SingletonStatsSamplerLogger().Warn(
+=======
+		logutil.StatsErrVerboseSampleLogger().Warn(
+>>>>>>> 5577bf8443c (statistics: update logging in auto-analyze components to use the error verbose logger (#60845))
 			"Fail to get last failed analysis duration",
 			zap.String("schema", schema),
 			zap.String("table", table),
@@ -130,7 +134,11 @@ func isValidToAnalyze(
 	averageAnalysisDuration, err :=
 		GetAverageAnalysisDuration(sctx, schema, table, partitionNames...)
 	if err != nil {
+<<<<<<< HEAD
 		logutil.SingletonStatsSamplerLogger().Warn(
+=======
+		logutil.StatsErrVerboseSampleLogger().Warn(
+>>>>>>> 5577bf8443c (statistics: update logging in auto-analyze components to use the error verbose logger (#60845))
 			"Fail to get average analysis duration",
 			zap.String("schema", schema),
 			zap.String("table", table),
