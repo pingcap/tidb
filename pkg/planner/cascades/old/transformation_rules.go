@@ -1313,13 +1313,13 @@ func (*PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	}
 
 	// remove meaningless constant sort items.
-	for i := len(newTopN.ByItems) - 1; i >= 0; i-- {
-		switch newTopN.ByItems[i].Expr.(type) {
+	newTopN.ByItems = slices.DeleteFunc(newTopN.ByItems, func(item *util.ByItems) bool {
+		switch item.Expr.(type) {
 		case *expression.Constant, *expression.CorrelatedColumn:
-			// TODO: investigate why we cannot use: topN.ByItems = slices.Delete(newTopN.ByItems, i, i+1)
-			topN.ByItems = append(newTopN.ByItems[:i], newTopN.ByItems[i+1:]...)
+			return true
 		}
-	}
+		return false
+	})
 	projExpr := memo.NewGroupExpr(proj)
 	topNExpr := memo.NewGroupExpr(newTopN)
 	topNExpr.SetChildren(childGroup)
