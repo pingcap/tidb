@@ -92,6 +92,15 @@ go_library(
         "//pkg/expression",
         "//pkg/infoschema",
         "//pkg/kv",
+<<<<<<< HEAD
+=======
+        "//pkg/lightning/backend",
+        "//pkg/lightning/backend/external",
+        "//pkg/lightning/backend/local",
+        "//pkg/lightning/common",
+        "//pkg/lightning/config",
+        "//pkg/lightning/metric",
+>>>>>>> e217a01f117 (addindex: add import speed metric (#60904))
         "//pkg/meta",
         "//pkg/meta/autoid",
         "//pkg/metrics",

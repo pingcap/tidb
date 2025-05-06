@@ -29,6 +29,13 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/meta/model"
+>>>>>>> e217a01f117 (addindex: add import speed metric (#60904))
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -50,6 +57,15 @@ type readIndexExecutor struct {
 	summary *execute.Summary
 
 	subtaskSummary sync.Map // subtaskID => readIndexSummary
+<<<<<<< HEAD
+=======
+	backendCfg     *local.BackendConfig
+	backend        *local.Backend
+	// pipeline of current running subtask, it's nil when no subtask is running.
+	currPipe atomic.Pointer[operator.AsyncPipeline]
+
+	metric *lightningmetric.Common
+>>>>>>> e217a01f117 (addindex: add import speed metric (#60904))
 }
 
 type readIndexSummary struct {
@@ -82,9 +98,27 @@ func newReadIndexExecutor(
 	}
 }
 
+<<<<<<< HEAD
 func (*readIndexExecutor) Init(_ context.Context) error {
 	logutil.BgLogger().Info("read index executor init subtask exec env",
 		zap.String("category", "ddl"))
+=======
+func (r *readIndexStepExecutor) Init(ctx context.Context) error {
+	logutil.DDLLogger().Info("read index executor init subtask exec env")
+	cfg := config.GetGlobalConfig()
+	if cfg.Store == config.StoreTypeTiKV {
+		if !r.isGlobalSort() {
+			r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
+			ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
+		}
+		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, false, 0)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		r.backendCfg = cfg
+		r.backend = bd
+	}
+>>>>>>> e217a01f117 (addindex: add import speed metric (#60904))
 	return nil
 }
 
@@ -162,7 +196,87 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 			MockDMLExecutionAddIndexSubTaskFinish()
 		}
 	})
+<<<<<<< HEAD
 	if len(r.cloudStorageURI) == 0 {
+=======
+
+	sm, err := decodeBackfillSubTaskMeta(ctx, r.cloudStorageURI, subtask.Meta)
+	if err != nil {
+		return err
+	}
+
+	opCtx, cancel := NewDistTaskOperatorCtx(ctx, subtask.TaskID, subtask.ID)
+	defer cancel()
+	r.curRowCount.Store(0)
+
+	concurrency := int(r.GetResource().CPU.Capacity())
+	if r.isGlobalSort() {
+		return r.runGlobalPipeline(ctx, opCtx, subtask, sm, concurrency)
+	}
+	return r.runLocalPipeline(ctx, opCtx, subtask, sm, concurrency)
+}
+
+func (r *readIndexStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	return &execute.SubtaskSummary{
+		RowCount: r.curRowCount.Load(),
+	}
+}
+
+func (r *readIndexStepExecutor) Cleanup(ctx context.Context) error {
+	tidblogutil.Logger(ctx).Info("read index executor cleanup subtask exec env")
+	if r.backend != nil {
+		r.backend.Close()
+	}
+	if !r.isGlobalSort() {
+		metrics.UnregisterLightningCommonMetricsForDDL(r.job.ID, r.metric)
+	}
+	return nil
+}
+
+func (r *readIndexStepExecutor) TaskMetaModified(_ context.Context, newMeta []byte) error {
+	newTaskMeta := &BackfillTaskMeta{}
+	if err := json.Unmarshal(newMeta, newTaskMeta); err != nil {
+		return errors.Trace(err)
+	}
+	newBatchSize := newTaskMeta.Job.ReorgMeta.GetBatchSize()
+	if newBatchSize != r.job.ReorgMeta.GetBatchSize() {
+		r.job.ReorgMeta.SetBatchSize(newBatchSize)
+	}
+	// Only local sort need modify write speed in this step.
+	if !r.isGlobalSort() {
+		newMaxWriteSpeed := newTaskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
+		if newMaxWriteSpeed != r.job.ReorgMeta.GetMaxWriteSpeed() {
+			r.job.ReorgMeta.SetMaxWriteSpeed(newMaxWriteSpeed)
+			if r.backend != nil {
+				r.backend.UpdateWriteSpeedLimit(newMaxWriteSpeed)
+			}
+		}
+	}
+	return nil
+}
+
+func (r *readIndexStepExecutor) ResourceModified(_ context.Context, newResource *proto.StepResource) error {
+	pipe := r.currPipe.Load()
+	if pipe == nil {
+		// let framework retry
+		return goerrors.New("no subtask running")
+	}
+	reader, writer := pipe.GetReaderAndWriter()
+	targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(int(newResource.CPU.Capacity()), r.avgRowSize)
+	currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
+	if int32(targetReaderCnt) != currentReaderCnt {
+		reader.TuneWorkerPoolSize(int32(targetReaderCnt), true)
+	}
+	if int32(targetWriterCnt) != currentWriterCnt {
+		writer.TuneWorkerPoolSize(int32(targetWriterCnt), true)
+	}
+	return nil
+}
+
+func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
+	failpoint.InjectCall("mockDMLExecutionAddIndexSubTaskFinish", r.backend)
+	if !r.isGlobalSort() {
+>>>>>>> e217a01f117 (addindex: add import speed metric (#60904))
 		return nil
 	}
 	// Rewrite the subtask meta to record statistics.
