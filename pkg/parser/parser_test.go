@@ -7865,3 +7865,150 @@ func TestVector(t *testing.T) {
 
 	RunTest(t, table, false)
 }
+
+func TestSecondaryEngineAttribute(t *testing.T) {
+	table := []testCase{
+		// Valid Partition-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'," +
+				"PARTITION p1 VALUES LESS THAN (20) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value2\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT) PARTITION BY RANGE (`id`) (" +
+				"PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}'," +
+				"PARTITION `p1` VALUES LESS THAN (20) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value2\"}')",
+		},
+
+		// Valid Table-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'",
+			true,
+			"CREATE TABLE `t` (`id` INT) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}'",
+		},
+
+		// Valid Table-level and Partition-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}' PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"partition_value\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}' PARTITION BY RANGE (`id`) (" +
+				"PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"partition_value\"}')",
+		},
+
+		// Valid Column-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}')",
+		},
+
+		// Valid: Table-level with tablespace option SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'",
+			true,
+			"CREATE TABLE `t` (`id` INT) TABLESPACE = `ts1` SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}'",
+		},
+
+		// Valid: Index SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT,INDEX idx (id) INVISIBLE SECONDARY_ENGINE_ATTRIBUTE='{\"key1\":\"value1\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT,INDEX `idx`(`id`) INVISIBLE SECONDARY_ENGINE_ATTRIBUTE = '{\"key1\":\"value1\"}')",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Partition-level
+		{
+			"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE=)",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Table-level
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE=",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Column-level
+		{
+			"CREATE TABLE t (id INT SECONDARY_ENGINE_ATTRIBUTE=)",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE in Table-level with tablespace option
+		{
+			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE=",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Index-level
+		{
+			"CREATE TABLE t (id INT, INDEX idx (id) SECONDARY_ENGINE_ATTRIBUTE=)",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE at Partition-level
+		{
+			"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE)",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE at Table-level
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE at Column-level
+		{
+			"CREATE TABLE t (id INT SECONDARY_ENGINE_ATTRIBUTE)",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE in Table-level with tablespace option
+		{
+			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE in Index-level
+		{
+			"CREATE TABLE t (id INT, INDEX idx (id) SECONDARY_ENGINE_ATTRIBUTE)",
+			false,
+			"",
+		},
+
+		// CREATE INDEX syntax for SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE INDEX i ON t (a) SECONDARY_ENGINE_ATTRIBUTE = '{}'",
+			true,
+			"CREATE INDEX `i` ON `t` (`a`) SECONDARY_ENGINE_ATTRIBUTE = '{}'",
+		},
+
+		// CREATE INDEX syntax for SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE INDEX i ON t (a) SECONDARY_ENGINE_ATTRIBUTE '{}'",
+			true,
+			"CREATE INDEX `i` ON `t` (`a`) SECONDARY_ENGINE_ATTRIBUTE = '{}'",
+		},
+
+		// Invalid CREATE INDEX syntax for SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE INDEX i ON t (a) SECONDARY_ENGINE_ATTRIBUTE",
+			false,
+			"",
+		},
+	}
+
+	RunTest(t, table, false)
+}

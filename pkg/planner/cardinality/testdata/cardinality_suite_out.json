@@ -24,7 +24,7 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 767.004166655054
+        "Count": 782.754166655054
       },
       {
         "Start": 900,
@@ -79,7 +79,7 @@
       {
         "Start": 800,
         "End": 1000,
-        "Count": 1225.196869573942
+        "Count": 1240.946869573942
       },
       {
         "Start": 900,
@@ -104,7 +104,7 @@
       {
         "Start": 200,
         "End": 400,
-        "Count": 1231.5288209899081
+        "Count": 1182.0288209899081
       },
       {
         "Start": 200,
@@ -3963,25 +3963,25 @@
                       {
                         "github.com/pingcap/tidb/pkg/statistics.(*Histogram).OutOfRangeRowCount": [
                           {
-                            "lDatum": "KindBytes \\x01",
+                            "lDatum": "KindMinNotNull <nil>",
                             "modifyCount": 100,
-                            "rDatum": "KindBytes \\x03\\x7f\\xff\\xff\\xff\\xff\\xff\\xfa$",
+                            "rDatum": "KindInt64 -1500",
                             "realtimeRowCount": 3080
                           },
                           {
                             "commonPrefix": 0,
-                            "lScalar": 72057594037927940,
-                            "rScalar": 252201579132747780,
+                            "lScalar": -1.7976931348623157e+308,
+                            "rScalar": -1500,
                             "unsigned": false
                           },
                           {
-                            "boundL": 252201579132747780,
-                            "boundR": 252201579132747780,
-                            "histL": 252201579132747780,
-                            "histR": 252201579132747780,
-                            "lPercent": 0,
+                            "boundL": -2997,
+                            "boundR": 2997,
+                            "histL": -999,
+                            "histR": 999,
+                            "lPercent": 0.5613744375005636,
                             "rPercent": 0,
-                            "rowCount": 392.8571428571429
+                            "rowCount": 555.760693125558
                           },
                           {
                             "Result": 100

@@ -11,7 +11,7 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
-        "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/disttask/framework/testutil",
         "//pkg/domain",
         "//pkg/executor/importer",
@@ -23,6 +23,7 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//pkg/util/dbterror/plannererrors",
         "//tests/realtikvtest",
+        "//tests/realtikvtest/testutils",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_stretchr_testify//suite",
     ],

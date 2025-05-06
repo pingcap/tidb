@@ -71,6 +71,13 @@ func (s *KeyValueStore) addEncodedData(data []byte) error {
 	return nil
 }
 
+func (s *KeyValueStore) addRawKV(key, val []byte) error {
+	length := len(key) + len(val) + lengthBytes*2
+	buf := make([]byte, length)
+	encodeToBuf(buf, key, val)
+	return s.addEncodedData(buf[:length])
+}
+
 // finish closes the KeyValueStore and append the last range property.
 func (s *KeyValueStore) finish() {
 	if s.rc != nil {
