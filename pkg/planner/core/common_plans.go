@@ -1253,8 +1253,13 @@ func trimOperatorInfoID(ids []string, id string) string {
 	}
 	// for simplicity
 	// for any operator info string, once there is some id string side, just substitute them with brief one.
+	// inner:Point_Get_10
 	for _, one := range ids {
-		id = strings.Replace(id, one, strings.Split(one, "_")[0], -1)
+		// find the last index of '_'
+		idx := strings.LastIndexFunc(one, func(r rune) bool {
+			return r == '_'
+		})
+		id = strings.ReplaceAll(id, one, one[:idx])
 	}
 	return id
 }
