@@ -255,14 +255,26 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 				tk.MustExec("alter table " + tn + " drop index idx_1, drop index idx_2;")
 			}
 
-			tk.MustContainErrMsg(
-				"alter table t_dup add index idx(a), add unique index idx2(b);",
-				"Duplicate entry '2' for key 't_dup.idx2'",
-			)
-			tk.MustContainErrMsg(
-				"alter table t_dup_2 add unique index idx2(b);",
-				"Duplicate entry '2' for key 't_dup_2.idx2'",
-			)
+			// FIXME: unify error message
+			if tc.cloudStorageURI == "" {
+				tk.MustContainErrMsg(
+					"alter table t_dup add index idx(a), add unique index idx2(b);",
+					"Duplicate entry '2' for key 't_dup.idx2'",
+				)
+				tk.MustContainErrMsg(
+					"alter table t_dup_2 add unique index idx2(b);",
+					"Duplicate entry '2' for key 't_dup_2.idx2'",
+				)
+			} else {
+				tk.MustContainErrMsg(
+					"alter table t_dup add index idx(a), add unique index idx2(b);",
+					"found index conflict records in table t_dup, index name is 't_dup.idx2'",
+				)
+				tk.MustContainErrMsg(
+					"alter table t_dup_2 add unique index idx2(b);",
+					"found index conflict records in table t_dup_2, index name is 't_dup_2.idx2'",
+				)
+			}
 		})
 	}
 
@@ -315,48 +327,56 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		vardef.CloudStorageURI.Store("")
 	})
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/collectTaskError", "return(true)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/collectTaskError"))
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/collectTaskError", "return(true)")
 
 	testcases := []struct {
 		name            string
 		createTableSQL  string
 		initDataSQL     string
 		addUniqueKeySQL string
+		errMsg          string
 	}{
 		{
 			"int",
 			"create table t (a int, b int, c int);",
 			"insert into t values (1, 1, 1), (2, 1, 2);",
 			"alter table t add unique index idx(b);",
+			"found index conflict records in table t, index name is 't.idx', unique key is '[1]', primary key is '2'",
 		},
 		{
 			"varchar",
 			"create table t (id int, data varchar(255));",
 			"insert into t values (1, '1'), (2, '1');",
 			"alter table t add unique index i(data);",
+			"found index conflict records in table t, index name is 't.i', unique key is '[1]', primary key is '2'",
 		},
 		{
 			"combined",
 			"create table t (id int, data varchar(255));",
 			"insert into t values (1, '1'), (1, '1');",
 			"alter table t add unique index i(id, data);",
+			"found index conflict records in table t, index name is 't.i', unique key is '[1 1]', primary key is '2'",
 		},
 		{
 			"MVI",
 			"create table t (id int, data json);",
 			`insert into t values (1, '{"code":[1,1]}'), (2, '{"code":[1,1]}');`,
 			"alter table t add unique index zips( (CAST(data->'$.code' AS UNSIGNED ARRAY)));",
+			"found index conflict records in table t, index name is 't.zips', unique key is '[1]', primary key is '2'",
 		},
 		{
 			"global",
 			"create table t (id int, k int) partition by list (k) (partition odd values in (1,3,5,7,9), partition even values in (2,4,6,8,10));",
 			"insert into t values (1, 1), (2, 1)",
 			"alter table t add unique index i(k) global",
+			"found index conflict records in table t, index name is 't.i', unique key is '[1]', primary key is '2'",
 		},
+	}
+
+	checkSubtaskErr := func(t *testing.T, errStep proto.Step) {
+		errorSubtask := taskexecutor.GetErrorSubtask4Test.Swap(nil)
+		require.NotEmpty(t, errorSubtask)
+		require.Equal(t, errStep, errorSubtask.Step)
 	}
 
 	for _, tc := range testcases {
@@ -366,26 +386,20 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			tk.MustExec(tc.initDataSQL)
 
 			// 1. read index
-			tk.MustContainErrMsg(tc.addUniqueKeySQL, "found index conflict records in table t")
-			errorSubtask := taskexecutor.GetErrorSubtask4Test.Load()
-			taskexecutor.GetErrorSubtask4Test.Store(nil)
-			require.Equal(t, proto.BackfillStepReadIndex, errorSubtask.Step)
+			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
+			checkSubtaskErr(t, proto.BackfillStepReadIndex)
 
 			// 2. merge sort
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ignoreReadIndexDupKey", "return(true)"))
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()"))
-			tk.MustContainErrMsg(tc.addUniqueKeySQL, "found index conflict records in table t")
-			errorSubtask = taskexecutor.GetErrorSubtask4Test.Load()
-			taskexecutor.GetErrorSubtask4Test.Store(nil)
-			require.Equal(t, proto.BackfillStepMergeSort, errorSubtask.Step)
+			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
+			checkSubtaskErr(t, proto.BackfillStepMergeSort)
 
 			// 3. cloud import
 			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
-			tk.MustContainErrMsg(tc.addUniqueKeySQL, "found index conflict records in table t")
+			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
 			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ignoreReadIndexDupKey"))
-			errorSubtask = taskexecutor.GetErrorSubtask4Test.Load()
-			taskexecutor.GetErrorSubtask4Test.Store(nil)
-			require.Equal(t, proto.BackfillStepWriteAndIngest, errorSubtask.Step)
+			checkSubtaskErr(t, proto.BackfillStepWriteAndIngest)
 
 			tk.MustExec("drop table t")
 		})

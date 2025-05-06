@@ -27,6 +27,6 @@ run_sql 'DROP VIEW IF EXISTS lightning_task_info.conflict_view'
 ! run_lightning --backend local --config "${mydir}/config.toml"
 [ $? -eq 0 ]
 
-tail -n 10 $TEST_DIR/lightning.log | grep "ERROR" | tail -n 1 | grep -Fq "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, index name is 'a.key_bd', unique key is '[101 9]', primary key is '1'"
+tail -n 10 $TEST_DIR/lightning.log | grep "ERROR" | tail -n 1 | grep -Fq "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, index name is 'a.key_bd', unique key is '[101 9]', primary key is '6'"
 
 check_not_contains "the whole procedure completed" $TEST_DIR/lightning.log

@@ -152,7 +152,7 @@ func TestAddUKWithSmallIntHandles(t *testing.T) {
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
 	tk.MustExec("create table t (a bigint, b int, primary key (a) clustered)")
 	tk.MustExec("insert into t values (-9223372036854775808, 1),(-9223372036854775807, 1)")
-	tk.MustContainErrMsg("alter table t add unique index uk(b)", "found index conflict records in table t, index name is 't.uk', unique key is '[1]'")
+	tk.MustContainErrMsg("alter table t add unique index uk(b)", "Duplicate entry '1' for key 't.uk'")
 }
 
 func TestAddUniqueDuplicateIndexes(t *testing.T) {

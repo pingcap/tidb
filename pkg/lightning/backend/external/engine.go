@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -26,6 +27,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
@@ -361,9 +363,10 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 	// of OnDuplicateKeyError, but to make keep compatible with the old code, we
 	// keep this behavior.
 	// TODO: remove this when we have have fully integrated the OnDuplicateKey.
-	if k, v := dupKey.Load(), dupVal.Load(); k != nil && v != nil &&
-		(e.onDup == engineapi.OnDuplicateKeyIgnore || e.onDup == engineapi.OnDuplicateKeyError) {
-		return common.ErrFoundDuplicateKeys.FastGenByArgs(*k, *v)
+	// For OnDuplicateKeyError, which is used by adding unique index, we don't return the 'duplicate key error' here.
+	// Instead, we return the error in memoryDataDupDetectIter when writing to tikv
+	if k, v := dupKey.Load(), dupVal.Load(); k != nil && v != nil && e.onDup == engineapi.OnDuplicateKeyIgnore {
+		return errors.Errorf("duplicate key found: %s", hex.EncodeToString(*k))
 	}
 	readAndSortSecond := time.Since(readStart).Seconds()
 	readAndSortDurHist.Observe(readAndSortSecond)

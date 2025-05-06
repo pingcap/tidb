@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -132,6 +133,10 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if jobKeys == nil {
 		jobKeys = sm.RangeSplitKeys
 	}
+	onDup := engineapi.OnDuplicateKeyIgnore
+	if currentIdx != nil && currentIdx.Unique {
+		onDup = engineapi.OnDuplicateKeyError
+	}
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:    e.cloudStoreURI,
@@ -145,6 +150,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			TotalKVCount:  0,
 			CheckHotspot:  true,
 			MemCapacity:   e.GetResource().Mem.Capacity(),
+			OnDup:         onDup,
 		},
 		TS: sm.TS,
 	}, engineUUID)
