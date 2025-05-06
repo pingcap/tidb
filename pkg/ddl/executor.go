@@ -32,6 +32,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -994,6 +995,7 @@ func (e *executor) handleCreateTableSelect(schema *model.DBInfo, s *ast.CreateTa
 	// if isTikvStore is true, use import into instead of insert into
 	isTikvStore := e.store.Name() == kv.TiKV.Name()
 	insertSql, err := buildInsertSql(schema.Name.L, tempTableName, s, isTikvStore)
+	log.Info("insertSql", zap.String("insertSql", insertSql), zap.Any("e.store.Name()", e.store.Name()))
 	if err != nil {
 		return err
 	}

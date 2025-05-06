@@ -1028,3 +1028,75 @@ func TestCreateTableAsSelect(t *testing.T) {
 	// 	"  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP\n" +
 	// 	") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
+
+func TestCreateTableAsSelectPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop database if exists otherdb")
+	tk.MustExec("create database otherdb")
+	tk.MustExec("create user 'u1'@'%' identified by '';")
+
+	// Create source tables
+	tk.MustExec("create table t1 (id int primary key, b int);")
+	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3);")
+	tk.MustExec("use otherdb")
+	tk.MustExec("create table t1 (id int primary key, b int);")
+	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3);")
+	tk.MustExec("use test")
+
+	// Part 1: Test regular CREATE TABLE AS SELECT privilege requirements
+
+	// Create connection for u1
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
+
+	// Without any privileges
+	err := tk2.ExecToErr("create table test.t2 as select * from test.t1;")
+	require.Error(t, err)
+	require.Equal(t, "[planner:1142]CREATE command denied to user 'u1'@'%' for table 't2'", err.Error())
+
+	// GRANT CREATE
+	tk.MustExec("grant create on test.* to 'u1'@'%';")
+	err = tk2.ExecToErr("create table test.t2 as select * from test.t1;")
+	require.Error(t, err)
+	require.Equal(t, "[planner:1142]INSERT command denied to user 'u1'@'%' for table 't2'", err.Error())
+
+	// GRANT INSERT
+	tk.MustExec("grant insert on test.* to 'u1'@'%';")
+	err = tk2.ExecToErr("create table test.t2 as select * from test.t1;")
+	require.Error(t, err)
+	require.Equal(t, "[planner:1142]SELECT command denied to user 'u1'@'%' for table 't1'", err.Error())
+
+	// GRANT SELECT
+	tk.MustExec("grant select on test.* to 'u1'@'%';")
+	tk2.MustExec("create table test.t2 as select * from test.t1;")
+	tk2.MustQuery("select * from test.t2").Check(testkit.Rows("1 1", "2 2", "3 3"))
+
+	// Part 2: Test cross-database CREATE TABLE AS SELECT privilege requirements
+
+	// Clean up previous test tables
+	tk.MustExec("drop table if exists test.t2")
+
+	// Test cross-database CREATE TABLE AS SELECT
+	// User needs: CREATE privilege on test database, INSERT privilege on the target table,
+	// and SELECT privilege on otherdb.t1
+
+	// Without any additional privileges
+	err = tk2.ExecToErr("create table test.t3 as select * from otherdb.t1;")
+	require.Error(t, err)
+	// Already has CREATE and INSERT on test database, but needs SELECT on otherdb.t1
+	require.Equal(t, "[planner:1142]SELECT command denied to user 'u1'@'%' for table 't1'", err.Error())
+
+	// Grant SELECT on otherdb.t1
+	tk.MustExec("grant select on otherdb.t1 to 'u1'@'%';")
+	tk2.MustExec("create table test.t3 as select * from otherdb.t1;")
+
+	// Test querying from the created table
+	tk2.MustQuery("select * from test.t3;").Check(testkit.Rows("1 1", "2 2", "3 3"))
+
+	// Clean up
+	tk.MustExec("drop database if exists otherdb")
+	tk.MustExec("drop table if exists test.t2, test.t3")
+	tk.MustExec("drop user 'u1'@'%';")
+}

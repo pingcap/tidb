@@ -5222,7 +5222,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		}
 
 		if v.Select != nil {
-			if err := checkCreateTableAsSelect(v); err != nil {
+			if err := b.checkCreateTableAsSelect(v); err != nil {
 				return nil, err
 			}
 			switch selectStmt := v.Select.(type) {
@@ -5544,15 +5544,85 @@ func convertRetType(fieldType *types.FieldType) *types.FieldType {
 	return tp
 }
 
-// checkCreateTableAsSelect checks the create table as select statement
-func checkCreateTableAsSelect(v *ast.CreateTableStmt) error {
+// checkCreateTableAsSelect checks the create table as select statement and adds necessary privileges
+func (b *PlanBuilder) checkCreateTableAsSelect(v *ast.CreateTableStmt) error {
+	// Check INSERT privileges on the table being created
+	if b.ctx.GetSessionVars().User != nil {
+		insertErr := plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
+			b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, v.Table.Schema.L,
+			v.Table.Name.L, "", insertErr)
+	}
+
+	// For SELECT statement, we need to check SELECT privilege on all involved tables
+	switch sel := v.Select.(type) {
+	case *ast.SelectStmt:
+		// Check all table references in the simple SELECT statement
+		b.checkSelectTablesPriv(sel)
+	case *ast.SetOprStmt:
+		// Handle UNION/INTERSECT/EXCEPT operations
+		for _, selectStmt := range sel.SelectList.Selects {
+			if ss, ok := selectStmt.(*ast.SelectStmt); ok {
+				b.checkSelectTablesPriv(ss)
+			}
+		}
+	}
+
 	// check foreign key
 	for _, constraint := range v.Constraints {
 		if constraint.Tp == ast.ConstraintForeignKey {
 			return plannererrors.ErrForeignKeyWithAtomicCreateSelect
 		}
 	}
+
 	return nil
+}
+
+// checkSelectTablesPriv collects all tables referenced in a SELECT statement and adds SELECT privilege check
+func (b *PlanBuilder) checkSelectTablesPriv(sel *ast.SelectStmt) {
+	if sel.From == nil {
+		return
+	}
+
+	// Recursive function to find all table references
+	var visitTableRefs func(node ast.ResultSetNode)
+	visitTableRefs = func(node ast.ResultSetNode) {
+		if node == nil {
+			return
+		}
+
+		switch ref := node.(type) {
+		case *ast.TableSource:
+			switch source := ref.Source.(type) {
+			case *ast.TableName:
+				// Add SELECT privilege for this table
+				if b.ctx.GetSessionVars().User != nil {
+					selectErr := plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", b.ctx.GetSessionVars().User.AuthUsername,
+						b.ctx.GetSessionVars().User.AuthHostname, source.Name.L)
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, source.Schema.L,
+						source.Name.L, "", selectErr)
+				}
+			case *ast.SelectStmt:
+				// Recursively check subquery
+				b.checkSelectTablesPriv(source)
+			case *ast.SetOprStmt:
+				// Handle UNION/INTERSECT/EXCEPT subqueries
+				for _, subSel := range source.SelectList.Selects {
+					if ss, ok := subSel.(*ast.SelectStmt); ok {
+						b.checkSelectTablesPriv(ss)
+					}
+				}
+			}
+		case *ast.Join:
+			// Check both sides of the join
+			visitTableRefs(ref.Left)
+			visitTableRefs(ref.Right)
+		}
+	}
+
+	if sel.From.TableRefs != nil {
+		visitTableRefs(sel.From.TableRefs)
+	}
 }
 
 const (
