@@ -15,6 +15,7 @@
 package domainutil
 
 import (
+	"slices"
 	"strings"
 	"sync"
 
@@ -119,7 +120,7 @@ func (r *repairInfo) RemoveFromRepairInfo(schemaLowerName, tableLowerName string
 	defer r.Unlock()
 	for i, rt := range r.repairTableList {
 		if strings.ToLower(rt) == repairedLowerName {
-			r.repairTableList = append(r.repairTableList[:i], r.repairTableList[i+1:]...)
+			r.repairTableList = slices.Delete(r.repairTableList, i, i+1)
 			break
 		}
 	}
@@ -129,7 +130,7 @@ func (r *repairInfo) RemoveFromRepairInfo(schemaLowerName, tableLowerName string
 			tables := db.Deprecated.Tables
 			for j, t := range tables {
 				if t.Name.L == tableLowerName {
-					tables = append(tables[:j], tables[j+1:]...)
+					tables = slices.Delete(tables, j, j+1)
 					break
 				}
 			}
