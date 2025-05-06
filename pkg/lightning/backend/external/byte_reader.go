@@ -277,8 +277,8 @@ func (r *byteReader) next(n int) (int, [][]byte) {
 func (r *byteReader) reload() error {
 	startTime := time.Now()
 	defer func() {
-		readDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("global_sort_read")
-		readRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("global_sort_read")
+		readDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("merge_sort_read")
+		readRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("merge_sort_read")
 
 		readSecond := time.Since(startTime).Seconds()
 		readDurHist.Observe(readSecond)
