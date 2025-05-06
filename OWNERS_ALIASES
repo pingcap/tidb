@@ -1,5 +1,6 @@
-# Sort the member alphabetically.
-aliases:
+# See the OWNERS docs at https://www.kubernetes.dev/docs/guide/owners/#owners_aliases
+# The members of 'sig-community-*' are synced from memberships defined in repository: https://github.com/pingcap/community.
+alias:
   sig-critical-approvers-tidb-server:
     - yudongusa
     - BenMeadowcroft
@@ -9,99 +10,99 @@ aliases:
   sig-critical-approvers-parser:
     - yudongusa
     - BenMeadowcroft
-  sig-approvers-autoid-service: # approvers for auto-id service
+  sig-approvers-autoid-service:
     - bb7133
     - tiancaiamao
-  sig-approvers-br: # approvers for br module
+  sig-approvers-br:
     - BornChanger
     - 3pointer
     - YuJuncen
     - Leavrth
-  sig-approvers-distsql: # approvers for distsql pkg
+  sig-approvers-distsql:
     - windtalker
     - XuHuaiyu
     - zanmato1984
     - cfzjywxk
     - Benjamin2037
-  sig-approvers-executor: # approvers for executor pkg
+  sig-approvers-executor:
     - windtalker
     - XuHuaiyu
     - zanmato1984
-  sig-approvers-executor-import: # approvers for importer part of executor pkg.
+  sig-approvers-executor-import:
     - D3Hunter
     - gmhdbjd
     - Benjamin2037
-  sig-approvers-expression: # approvers for expression pkg
+  sig-approvers-expression:
     - windtalker
     - XuHuaiyu
     - zanmato1984
-  sig-approvers-lightning: # approvers for lightning module
+  sig-approvers-lightning:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
-  sig-approvers-domain: # approvers for domain pkg
-    - D3Hunter
-    - gmhdbjd
-    - tangenta
-    - wjhuang2016
-  sig-approvers-ddl: # approvers for ddl pkg
-    - Benjamin2037
-    - tangenta
-    - wjhuang2016
-    - D3Hunter
-    - gmhdbjd
-  sig-approvers-disttask: # approvers for disttask pkg
-    - Benjamin2037
+  sig-approvers-domain:
     - D3Hunter
     - gmhdbjd
     - tangenta
     - wjhuang2016
-  sig-approvers-dumpling: # approvers for dumpling module
+  sig-approvers-ddl:
+    - Benjamin2037
+    - tangenta
+    - wjhuang2016
+    - D3Hunter
+    - gmhdbjd
+  sig-approvers-disttask:
+    - Benjamin2037
+    - D3Hunter
+    - gmhdbjd
+    - tangenta
+    - wjhuang2016
+  sig-approvers-dumpling:
     - Benjamin2037
     - gmhdbjd
     - tangenta
-  sig-approvers-infoschema: # approvers for infoschema pkg
+  sig-approvers-infoschema:
     - wjhuang2016
     - tangenta
     - D3Hunter
     - Benjamin2037
     - gmhdbjd
-  sig-approvers-meta: # approvers for meta pkg
+  sig-approvers-meta:
     - Benjamin2037
     - gmhdbjd
     - tangenta
     - wjhuang2016
     - D3Hunter
-  sig-approvers-owner: # approvers for `owner` pkg
+  sig-approvers-owner:
     - Benjamin2037
     - tangenta
     - wjhuang2016
     - D3Hunter
-  sig-approvers-parser: # approvers for `parser` module.
+  sig-approvers-parser:
     - bb7133
     - BornChanger
     - D3Hunter
     - tangenta
-  sig-approvers-resourcemanager: # approvers for resourcemanager pkg
+  sig-approvers-resourcemanager:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
     - tangenta
     - wjhuang2016
-  sig-approvers-table: # approvers for table packages.
+  sig-approvers-table:
     - Benjamin2037
     - cfzjywxk
     - gmhdbjd
     - tangenta
     - wjhuang2016
-  sig-approvers-lock: # approvers for lock pkg
+  sig-approvers-lock:
     - Benjamin2037
     - tangenta
     - wjhuang2016
-  sig-approvers-tidb-binlog: # approvers for tidb-binlog module
+  sig-approvers-tidb-binlog:
     - Benjamin2037
     - gmhdbjd
-  sig-approvers-planner: # approvers for planner module
+  sig-approvers-planner:
     - AilinKid
     - Rustin170506
     - elsa0520
