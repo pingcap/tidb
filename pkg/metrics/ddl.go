@@ -27,7 +27,7 @@ import (
 
 var (
 	mu                   sync.Mutex
-	registeredJobMetrics map[int64]*metric.Common
+	registeredJobMetrics = make(map[int64]*metric.Common, 64)
 )
 
 // Metrics for the DDL package.
@@ -95,10 +95,6 @@ var (
 	DDLRunningJobCount    *prometheus.GaugeVec
 	AddIndexScanRate      *prometheus.HistogramVec
 )
-
-func init() {
-	registeredJobMetrics = make(map[int64]*metric.Common, 64)
-}
 
 // InitDDLMetrics initializes defines DDL metrics.
 func InitDDLMetrics() {
