@@ -31,6 +31,12 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/meta/model"
+>>>>>>> e217a01f117 (addindex: add import speed metric (#60904))
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -54,6 +60,15 @@ type readIndexExecutor struct {
 	curRowCount *atomic.Int64
 
 	subtaskSummary sync.Map // subtaskID => readIndexSummary
+<<<<<<< HEAD
+=======
+	backendCfg     *local.BackendConfig
+	backend        *local.Backend
+	// pipeline of current running subtask, it's nil when no subtask is running.
+	currPipe atomic.Pointer[operator.AsyncPipeline]
+
+	metric *lightningmetric.Common
+>>>>>>> e217a01f117 (addindex: add import speed metric (#60904))
 }
 
 type readIndexSummary struct {
@@ -90,6 +105,22 @@ func newReadIndexExecutor(
 
 func (*readIndexExecutor) Init(_ context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
+<<<<<<< HEAD
+=======
+	cfg := config.GetGlobalConfig()
+	if cfg.Store == config.StoreTypeTiKV {
+		if !r.isGlobalSort() {
+			r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
+			ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
+		}
+		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, false, 0)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		r.backendCfg = cfg
+		r.backend = bd
+	}
+>>>>>>> e217a01f117 (addindex: add import speed metric (#60904))
 	return nil
 }
 
@@ -150,8 +181,17 @@ func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
 
 func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	tidblogutil.Logger(ctx).Info("read index executor cleanup subtask exec env")
+<<<<<<< HEAD
 	// cleanup backend context
 	ingest.LitBackCtxMgr.Unregister(r.job.ID)
+=======
+	if r.backend != nil {
+		r.backend.Close()
+	}
+	if !r.isGlobalSort() {
+		metrics.UnregisterLightningCommonMetricsForDDL(r.job.ID, r.metric)
+	}
+>>>>>>> e217a01f117 (addindex: add import speed metric (#60904))
 	return nil
 }
 

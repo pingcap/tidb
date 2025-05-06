@@ -19,7 +19,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/kv"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/sessionctx"
+=======
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
+>>>>>>> e217a01f117 (addindex: add import speed metric (#60904))
 	"github.com/pingcap/tidb/pkg/testkit"
 )
 
@@ -41,3 +46,27 @@ func InjectMockBackendMgr(t *testing.T, store kv.Storage) (restore func()) {
 		ingest.LitInitialized = oldInitialized
 	}
 }
+<<<<<<< HEAD
+=======
+
+// CheckIngestLeakageForTest is only used in test.
+func CheckIngestLeakageForTest(exitCode int) {
+	if exitCode == 0 {
+		leakObj := ""
+		if ingest.TrackerCountForTest.Load() != 0 {
+			leakObj = "disk usage tracker"
+		} else if ingest.BackendCounterForTest.Load() != 0 {
+			leakObj = "backend context"
+		}
+		if len(leakObj) > 0 {
+			fmt.Fprintf(os.Stderr, "add index leakage check failed: %s leak\n", leakObj)
+			os.Exit(1)
+		}
+		if registeredJob := metrics.GetRegisteredJob(); len(registeredJob) > 0 {
+			fmt.Fprintf(os.Stderr, "add index metrics leakage: %v\n", registeredJob)
+			os.Exit(1)
+		}
+	}
+	os.Exit(exitCode)
+}
+>>>>>>> e217a01f117 (addindex: add import speed metric (#60904))
