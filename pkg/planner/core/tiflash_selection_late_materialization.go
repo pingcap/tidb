@@ -218,7 +218,8 @@ func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, expr
 	conditions := physicalSelection.Conditions
 	for i := len(conditions) - 1; i >= 0; i-- {
 		if expression.Contains(physicalSelection.SCtx().GetExprCtx().GetEvalCtx(), exprs, conditions[i]) {
-			conditions = slices.Delete(conditions, i, i+1)
+			// TODO: Investigate why we cannot replace this with slices.Delete(conditions, i, i+1)
+			conditions = append(conditions[:i], conditions[i+1:]...)
 		}
 	}
 	physicalSelection.Conditions = conditions
