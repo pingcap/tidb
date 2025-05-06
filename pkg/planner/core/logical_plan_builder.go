@@ -6147,19 +6147,14 @@ func (p *Delete) cleanTblID2HandleMap(
 			delete(tblID2Handle, id)
 			continue
 		}
-		for i := len(cols) - 1; i >= 0; i-- {
-			hCols := cols[i]
-			var hasMatch bool
+		slices.DeleteFunc(cols, func(hCols util.HandleCols) bool {
 			for col := range hCols.IterColumns() {
 				if p.matchingDeletingTable(names, outputNames[col.Index]) {
-					hasMatch = true
-					break
+					return false
 				}
 			}
-			if !hasMatch {
-				cols = slices.Delete(cols, i, i+1)
-			}
-		}
+			return true
+		})
 		if len(cols) == 0 {
 			delete(tblID2Handle, id)
 			continue
