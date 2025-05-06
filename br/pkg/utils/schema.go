@@ -57,7 +57,7 @@ func StripTempDBPrefixIfNeeded(tempDB string) (string, bool) {
 
 // IsSysOrTempSysDB tests whether the database is system DB or prefixed with temp.
 func IsSysOrTempSysDB(db string) bool {
-	if name, ok := StripTempDBPrefixIfNeeded(db); IsSysDB(name) && ok {
+	if name, ok := StripTempDBPrefixIfNeeded(db); ok || IsSysDB(name) {
 		return true
 	}
 	return false

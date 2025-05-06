@@ -145,6 +145,35 @@ func isUnrecoverableTable(schemaName string, tableName string) bool {
 	return ok
 }
 
+func IsStatsTemporaryTable(tempSchemaName, tableName string) bool {
+	_, ok := GetDBNameIfStatsTemporaryTable(tempSchemaName, tableName)
+	return ok
+}
+
+func GetDBNameIfStatsTemporaryTable(tempSchemaName, tableName string) (string, bool) {
+	if name, ok := utils.StripTempDBPrefixIfNeeded(tempSchemaName); ok && isStatsTable(name, tableName) {
+		return name, true
+	}
+	return "", false
+}
+
+func GenerateMoveStatsTableSQLPair(statisticTables map[string][]string) (renameSQL, dropSQL string) {
+	renameBuffer := make([]string, 0, 32)
+	dropBuffer := make([]string, 0, 16)
+	for dbName, tableNames := range statisticTables {
+		for _, tableName := range tableNames {
+			renameToTemp := fmt.Sprintf("%s.%s TO %s.%s_deleted", dbName, tableName, utils.TemporaryDBName(dbName), tableName)
+			renameFromTemp := fmt.Sprintf("%s.%s TO %s.%s", utils.TemporaryDBName(dbName), tableName, dbName, tableName)
+			drop := fmt.Sprintf("%s.%s_deleted", utils.TemporaryDBName(dbName), tableName)
+			renameBuffer = append(renameBuffer, renameToTemp, renameFromTemp)
+			dropBuffer = append(dropBuffer, drop)
+		}
+	}
+	renameSQL = fmt.Sprintf("RENAME TABLE %s", strings.Join(renameBuffer, ","))
+	dropSQL = fmt.Sprintf("DROP TABLE %s", strings.Join(dropBuffer, ","))
+	return renameSQL, dropSQL
+}
+
 func isStatsTable(schemaName string, tableName string) bool {
 	tableMap, ok := statsTables[schemaName]
 	if !ok {

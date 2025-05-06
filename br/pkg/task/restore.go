@@ -58,6 +58,7 @@ const (
 	flagOnline                   = "online"
 	flagNoSchema                 = "no-schema"
 	flagLoadStats                = "load-stats"
+	flagLoadStatsPhysical        = "load-stats-physical"
 	flagGranularity              = "granularity"
 	flagConcurrencyPerStore      = "tikv-max-restore-concurrency"
 	flagAllowPITRFromIncremental = "allow-pitr-from-incremental"
@@ -238,6 +239,7 @@ type RestoreConfig struct {
 
 	NoSchema           bool          `json:"no-schema" toml:"no-schema"`
 	LoadStats          bool          `json:"load-stats" toml:"load-stats"`
+	LoadStatsPhysical  bool          `json:"load-stats-physical" toml:"load-stats-physical"`
 	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
 	StatsConcurrency   uint          `json:"stats-concurrency" toml:"stats-concurrency"`
 	AutoAnalyze        bool          `json:"auto-analyze" toml:"auto-analyze"`
@@ -296,6 +298,7 @@ func (cfg *RestoreConfig) LocalEncryptionEnabled() bool {
 func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagNoSchema, false, "skip creating schemas and tables, reuse existing empty ones")
 	flags.Bool(flagLoadStats, true, "Run load stats at end of snapshot restore task")
+	flags.Bool(flagLoadStatsPhysical, false, "load stats by rename the temporary stats table")
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
@@ -374,6 +377,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 		return errors.Trace(err)
 	}
 	cfg.LoadStats, err = flags.GetBool(flagLoadStats)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.LoadStatsPhysical, err = flags.GetBool(flagLoadStatsPhysical)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -940,7 +947,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	defer client.Close()
 
 	metaReader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.LoadSchemaIfNeededAndInitClient(ctx, backupMeta, u, metaReader, cfg.LoadStats, nil, nil); err != nil {
+	if err = client.LoadSchemaIfNeededAndInitClient(ctx, backupMeta, u, metaReader, cfg.LoadStats && !cfg.LoadStatsPhysical, nil, nil); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -971,6 +978,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 	if err = VerifyDBAndTableInBackup(client.GetDatabases(), cfg.RestoreConfig); err != nil {
 		return err
+	}
+	if cfg.LoadStatsPhysical && checkpointFirstRun && (client.IsIncremental() || cfg.ExplicitFilter) {
+		return errors.Errorf("cannot set --load-stats-physical when it is not full restore. " +
+			"Please unset --load-stats-physical or try to full restore.")
 	}
 
 	// filters out db/table/files using filter
@@ -1073,7 +1084,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
-	if err = client.AllocTableIDs(ctx, tables); err != nil {
+	if err := client.AllocTableIDs(ctx, tables, cfg.LoadStatsPhysical && checkpointFirstRun); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1213,6 +1224,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// TODO: after ID preallocation supports checkpoint, we can remove this check
+	if cfg.LoadStatsPhysical && !checkpointFirstRun {
+		if err := checkAllUserTableIDsReused(createdTables); err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	anyFileKey := getAnyFileKeyFromTables(tables)
 	if len(anyFileKey) == 0 {
@@ -1284,9 +1301,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	plCtx := snapclient.PipelineContext{
 		// pipeline checksum only when enabled and is not incremental snapshot repair mode cuz incremental doesn't have
 		// enough information in backup meta to validate checksum
-		Checksum:         cfg.Checksum && !client.IsIncremental(),
-		LoadStats:        cfg.LoadStats,
-		WaitTiflashReady: cfg.WaitTiflashReady,
+		Checksum:          cfg.Checksum && !client.IsIncremental(),
+		LoadStats:         cfg.LoadStats,
+		LoadStatsPhysical: cfg.LoadStatsPhysical,
+		WaitTiflashReady:  cfg.WaitTiflashReady,
 
 		LogProgress:         cfg.LogProgress,
 		ChecksumConcurrency: cfg.ChecksumConcurrency,
@@ -1471,6 +1489,38 @@ func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.
 	return nil
 }
 
+func checkAllUserTableIDsReused(createdTables []*snapclient.CreatedTable) error {
+	for _, createdTable := range createdTables {
+		if createdTable.OldTable.Info.ID != createdTable.Table.ID {
+			return errors.Errorf("cannot load stats physically because not all table ids are reused, "+
+				"upstream table ID is %d and downstream table ID is %d",
+				createdTable.OldTable.Info.ID,
+				createdTable.Table.ID,
+			)
+		}
+		if createdTable.OldTable.Info.Partition != nil && createdTable.OldTable.Info.Partition.Definitions != nil {
+			if createdTable.Table.Partition == nil || createdTable.Table.Partition.Definitions == nil {
+				return errors.Errorf("the created table has partitions but the origin table does not, "+
+					"table ID is %d", createdTable.Table.ID,
+				)
+			}
+			downstreamTableIDSet := make(map[int64]struct{})
+			for _, def := range createdTable.Table.Partition.Definitions {
+				downstreamTableIDSet[def.ID] = struct{}{}
+			}
+			for _, def := range createdTable.OldTable.Info.Partition.Definitions {
+				if _, exists := downstreamTableIDSet[def.ID]; !exists {
+					return errors.Errorf("the origin table has the partition but the created table does not, "+
+						"table ID is %d and upstream partition ID is %d",
+						createdTable.Table.ID, def.ID,
+					)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func getAnyFileKeyFromTables(tables []*metautil.Table) []byte {
 	for _, table := range tables {
 		for _, files := range table.FilesOfPhysicals {
@@ -1502,8 +1552,13 @@ func filterRestoreFiles(
 		}
 		dbMap[db.Info.ID] = db
 		for _, table := range db.Tables {
-			if table.Info == nil || !utils.MatchTable(cfg.TableFilter, dbName, table.Info.Name.O, cfg.WithSysTable) {
+			if table.Info == nil {
 				continue
+			}
+			if !(cfg.WithSysTable && cfg.LoadStatsPhysical && snapclient.IsStatsTemporaryTable(dbName, table.Info.Name.O)) {
+				if !utils.MatchTable(cfg.TableFilter, dbName, table.Info.Name.O, cfg.WithSysTable) {
+					continue
+				}
 			}
 
 			// Add table to tableMap using table ID as key

@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -293,9 +294,28 @@ func (rc *SnapClient) SetPlacementPolicyMode(withPlacementPolicy string) {
 	log.Info("set placement policy mode", zap.String("mode", rc.policyMode))
 }
 
+func getMinUserTableID(tables []*metautil.Table) int64 {
+	minUserTableID := int64(math.MaxInt64)
+	for _, table := range tables {
+		if !utils.IsSysOrTempSysDB(table.DB.Name.O) {
+			if table.Info.ID < minUserTableID {
+				minUserTableID = table.Info.ID
+			}
+			if table.Info.Partition != nil && table.Info.Partition.Definitions != nil {
+				for _, part := range table.Info.Partition.Definitions {
+					if part.ID < minUserTableID {
+						minUserTableID = part.ID
+					}
+				}
+			}
+		}
+	}
+	return minUserTableID
+}
+
 // AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
 // the download stage.
-func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table) error {
+func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table, mustUserTableIDReused bool) error {
 	preallocedTableIDs := tidalloc.New(tables)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
@@ -303,6 +323,13 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 	})
 	if err != nil {
 		return err
+	}
+	if mustUserTableIDReused {
+		minUserTableID := getMinUserTableID(tables)
+		start, _ := preallocedTableIDs.GetIDRange()
+		if minUserTableID < start {
+			return errors.Errorf("cannot load stats physically because not all table ids are reused")
+		}
 	}
 
 	log.Info("registering the table IDs", zap.Stringer("ids", preallocedTableIDs))

@@ -40,6 +40,7 @@ var (
 	GetKeyRangeByMode       = getKeyRangeByMode
 	GetFileRangeKey         = getFileRangeKey
 	GetSortedPhysicalTables = getSortedPhysicalTables
+	GetMinUserTableID       = getMinUserTableID
 )
 
 // MockClient create a fake Client used to test.
@@ -85,7 +86,7 @@ func (rc *SnapClient) CreateTablesTest(
 	for i, t := range tables {
 		tbMapping[t.Info.Name.String()] = i
 	}
-	rc.AllocTableIDs(context.Background(), tables)
+	rc.AllocTableIDs(context.Background(), tables, false)
 	createdTables, err := rc.CreateTables(context.TODO(), tables, newTS)
 	if err != nil {
 		return nil, nil, err

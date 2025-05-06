@@ -370,11 +370,13 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			cfg.FilterStr = append(cfg.FilterStr, table.String())
 		}
 		cfg.TableFilter = filter.NewTablesFilter(tables...)
+		cfg.ExplicitFilter = true
 	case len(s.Schemas) != 0:
 		cfg.TableFilter = filter.NewSchemasFilter(s.Schemas...)
 		for _, schema := range s.Schemas {
 			cfg.FilterStr = append(cfg.FilterStr, fmt.Sprintf("`%s`.*", schema))
 		}
+		cfg.ExplicitFilter = true
 	default:
 		cfg.TableFilter = filter.All()
 	}
