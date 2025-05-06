@@ -32,8 +32,8 @@ type chunkInfo struct {
 	checksum uint32
 }
 
-// chunksStore is a simple store to put/get chunks.
-type chunksStore struct {
+// chunkStore is a simple store to put/get chunks.
+type chunkStore struct {
 	chunks  map[uint64]chunkInfo // chunkID -> chunkInfo
 	baseDir string
 	// If `useMemory` is true, chunkData will be stored in memory.
@@ -44,10 +44,10 @@ type chunksStore struct {
 	useMemory bool
 }
 
-// newChunksStore creates a new chunksStore.
-func newChunksStore(loadDataTaskID string, writerID uint64, basePath string) (*chunksStore, error) {
+// newChunkStore creates a new chunksStore.
+func newChunkStore(loadDataTaskID string, writerID uint64, basePath string) (*chunkStore, error) {
 	if len(basePath) == 0 {
-		return &chunksStore{
+		return &chunkStore{
 			chunks:    map[uint64]chunkInfo{},
 			useMemory: true,
 		}, nil
@@ -64,14 +64,14 @@ func newChunksStore(loadDataTaskID string, writerID uint64, basePath string) (*c
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &chunksStore{
+	return &chunkStore{
 		chunks:  map[uint64]chunkInfo{},
 		baseDir: baseDir,
 	}, nil
 }
 
 // get retrieves the chunk data for the given chunkID.
-func (c *chunksStore) get(chunkID uint64) ([]byte, error) {
+func (c *chunkStore) get(chunkID uint64) ([]byte, error) {
 	meta, ok := c.chunks[chunkID]
 	if !ok {
 		return nil, errors.Errorf("chunk-%d not found", chunkID)
@@ -99,7 +99,7 @@ func (c *chunksStore) get(chunkID uint64) ([]byte, error) {
 }
 
 // put stores the chunk data for the given chunkID.
-func (c *chunksStore) put(chunkID uint64, buf []byte) error {
+func (c *chunkStore) put(chunkID uint64, buf []byte) error {
 	if c.useMemory {
 		c.chunks[chunkID] = chunkInfo{data: buf}
 		return nil
@@ -113,7 +113,7 @@ func (c *chunksStore) put(chunkID uint64, buf []byte) error {
 }
 
 // clean removes the chunk data for the given chunkID.
-func (c *chunksStore) clean(chunkID uint64) error {
+func (c *chunkStore) clean(chunkID uint64) error {
 	delete(c.chunks, chunkID)
 	if c.useMemory {
 		return nil
@@ -124,7 +124,7 @@ func (c *chunksStore) clean(chunkID uint64) error {
 }
 
 // close cleans up the chunks.
-func (c *chunksStore) close() error {
+func (c *chunkStore) close() error {
 	c.chunks = nil
 	if c.useMemory {
 		return nil
@@ -134,6 +134,6 @@ func (c *chunksStore) close() error {
 }
 
 // getChunkFilePath returns the file path for the given chunkID.
-func (c *chunksStore) getChunkFilePath(chunkID uint64) string {
+func (c *chunkStore) getChunkFilePath(chunkID uint64) string {
 	return filepath.Join(c.baseDir, fmt.Sprintf("chunk-%d", chunkID))
 }
