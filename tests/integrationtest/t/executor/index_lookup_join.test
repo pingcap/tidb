@@ -72,7 +72,7 @@ show warnings;
 drop table if exists t1, t2;
 create table t1 (a int, key(a));
 create table t2 (a int, key(a));
-explain select /*+ tidb_inlj(bb) */ aa.* from (select * from t1) as aa left join
+explain format='brief' select /*+ tidb_inlj(bb) */ aa.* from (select * from t1) as aa left join
     (select t2.a, t2.a*2 as a2 from t2) as bb on aa.a=bb.a;
 
 # TestIndexJoinOverflow

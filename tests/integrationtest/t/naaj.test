@@ -199,16 +199,16 @@ select (a,b) not in (select a, b from naaj_B) from naaj_A;
 select * from naaj_A where (a,b) not in (select a, b from naaj_B);
 
 # assert 2: should inject the projection under join.
-explain select (a+1,b*2) not in (select a, b from naaj_B) from naaj_A;
+explain format='brief' select (a+1,b*2) not in (select a, b from naaj_B) from naaj_A;
 select (a+1,b*2) not in (select a, b from naaj_B) from naaj_A;
 insert into naaj_B values(2,2,2);
 select (a+1,b*2) not in (select a, b from naaj_B) from naaj_A;
 
-explain select * from naaj_A where (a+1,b*2) not in (select a+1, b-1 from naaj_B);
+explain format='brief' select * from naaj_A where (a+1,b*2) not in (select a+1, b-1 from naaj_B);
 select * from naaj_A where (a+1,b*2) not in (select a, b from naaj_B);
 
 # assert 3: NA-EQ and EQ can't co-exist at the same time.
-explain select (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a) from naaj_A;
-explain select /*+ set_var(tidb_hash_join_version=legacy) */ * from naaj_A where (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a);
-explain select /*+ set_var(tidb_hash_join_version=optimized) */ * from naaj_A where (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a);
+explain format='brief' select (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a) from naaj_A;
+explain format='brief' select /*+ set_var(tidb_hash_join_version=legacy) */ * from naaj_A where (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a);
+explain format='brief' select /*+ set_var(tidb_hash_join_version=optimized) */ * from naaj_A where (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a);
 set @@session.tidb_enable_null_aware_anti_join=0;
