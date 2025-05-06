@@ -357,6 +357,7 @@
     },
     "only_files": {
       "//cmd/": "cmd code",
+      "//dumpling": "dumpling code",
       "pkg/autoid_service/": "autoid_service code",
       "pkg/bindinfo/": "bindinfo code",
       "pkg/distsql/": "distsql code",
@@ -364,9 +365,9 @@
       "pkg/owner/": "owner code",
       "pkg/planner/": "pkg/planner code",
       "pkg/server/": "server code",
-      "pkg/store/": "store code",
       "pkg/statistics": "pkg/statistics code",
-      "pkg/util/": "util code",
+      "pkg/store/": "store code",
+      "//pkg/util": "pkg/util code",
       "pkg/workloadlearning": "workloadlearning code"
     }
   },
