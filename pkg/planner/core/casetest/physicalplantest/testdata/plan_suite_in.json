@@ -616,8 +616,8 @@
     "name": "TestAlwaysTruePredicateWithSubquery",
     "cases" : [
       "SHOW ERRORS WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
-      "explain select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
-      "explain select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;"
+      "explain format='brief' select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
+      "explain format='brief' select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;"
     ]
   },
   {
