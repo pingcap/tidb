@@ -409,11 +409,7 @@ func (r *ReaderWithCache) ReadAt(p []byte, off int64) (readCnt int, err error) {
 	// When got here, user input is not filled fully, so we need read data from cache.
 	err = nil
 	p = p[readCnt:]
-	beg := off - r.cacheOff
-	if beg < 0 {
-		// This happens when only partial data of user requested resides in r.cache.
-		beg = 0
-	}
+	beg := max(off-r.cacheOff, 0)
 	end := int(beg) + len(p)
 	if end > len(r.cache) {
 		err = io.EOF
