@@ -421,8 +421,8 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 				physicalTotalKvs := uint64(0)
 				for _, file := range files {
 					physicalTotalKvs += file.TotalKvs
-					totalKvs += file.TotalKvs
 				}
+				totalKvs += physicalTotalKvs
 				physicalTotalKvMap[physicalID] = physicalTotalKvs
 			}
 			if tbl.OldTable.Info.Partition != nil {
