@@ -2799,7 +2799,7 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY LIST COLUMNS(`a`)\n" +
 		"(PARTITION `p0` VALUES IN (10,11,45),\n" +
 		" PARTITION `p1` VALUES IN (20,1,23,56),\n" +
@@ -2835,7 +2835,7 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`),\n" +
 		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY LIST COLUMNS(`a`)\n" +
 		"(PARTITION `p0` VALUES IN (10,11,45),\n" +
 		" PARTITION `p1` VALUES IN (34,2,23),\n" +

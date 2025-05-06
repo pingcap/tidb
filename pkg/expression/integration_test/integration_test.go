@@ -152,7 +152,7 @@ func TestFTSParser(t *testing.T) {
 		"tx CREATE TABLE `tx` (\n" +
 			"  `a` text DEFAULT NULL,\n" +
 			"  FULLTEXT INDEX `a`(`a`) WITH PARSER STANDARD\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec("drop table tx")
 
@@ -161,7 +161,7 @@ func TestFTSParser(t *testing.T) {
 		"tx CREATE TABLE `tx` (\n" +
 			"  `a` text DEFAULT NULL,\n" +
 			"  FULLTEXT INDEX `a`(`a`) WITH PARSER STANDARD\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec("drop table tx")
 
@@ -170,7 +170,7 @@ func TestFTSParser(t *testing.T) {
 		"tx CREATE TABLE `tx` (\n" +
 			"  `a` text DEFAULT NULL,\n" +
 			"  FULLTEXT INDEX `a`(`a`) WITH PARSER MULTILINGUAL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec("drop table tx")
 
@@ -239,24 +239,24 @@ func TestFTSIndexSyntax(t *testing.T) {
 	tk.MustContainErrMsg("create table t1(title TEXT, body TEXT, FULLTEXT KEY (title) WITH PARSER ngramx)", `Unsupported parser`)
 
 	tk.MustExec("create table t1(title TEXT, body TEXT, FULLTEXT KEY (title))")
-	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `title`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `title`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("create table t2(title TEXT, body TEXT, FULLTEXT (title))")
-	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `title`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `title`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("create table t3(title TEXT, body TEXT, FULLTEXT KEY `idx` (title))")
-	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("create table t4(title TEXT, body TEXT, FULLTEXT KEY `idx` (`title`))")
-	tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("create table t5(title TEXT, body TEXT, FULLTEXT KEY `idx` (title ASC))")
-	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 CREATE TABLE `t5` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 CREATE TABLE `t5` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("create table t6(title TEXT, body TEXT, FULLTEXT KEY `idx` (title ASC) WITH PARSER standard)")
-	tk.MustQuery("show create table t6").Check(testkit.Rows("t6 CREATE TABLE `t6` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t6").Check(testkit.Rows("t6 CREATE TABLE `t6` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	tk.MustExec("drop table t1, t2, t3, t4, t5, t6")
 	tk.MustExec("create table t1(title TEXT, body TEXT)")
 	tk.MustContainErrMsg("alter table t1 add FULLTEXT INDEX (body)", "columnar replica must exist to create")
 	tk.MustExec("alter table t1 set tiflash replica 1")
 	tk.MustExec("alter table t1 add FULLTEXT INDEX (body)")
-	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `body`(`body`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `body`(`body`) WITH PARSER STANDARD\n) ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("alter table t1 drop index body")
 }
 

@@ -21,6 +21,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -1014,7 +1015,7 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if s.ReferTable != nil {
 		tbInfo, err = BuildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = BuildTableInfoWithStmt(metaBuildCtx, s, schema.Charset, schema.Collate, schema.PlacementPolicyRef)
+		tbInfo, err = BuildTableInfoWithStmt(metaBuildCtx, s, ctx.GetStore(), schema.Name, schema.Charset, schema.Collate, schema.PlacementPolicyRef)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -1094,7 +1095,7 @@ func (e *executor) createTableWithInfoJob(
 		}
 	}
 
-	if err := checkTableInfoValidExtra(ctx.GetSessionVars().StmtCtx.ErrCtx(), ctx.GetStore(), dbName, tbInfo); err != nil {
+	if err := checkTableInfoValidExtra(ctx.GetSessionVars().StmtCtx.ErrCtx(), tbInfo); err != nil {
 		return nil, err
 	}
 
@@ -1889,7 +1890,20 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					}
 				case ast.TableOptionEngine:
 				case ast.TableOptionEngineAttribute:
-					err = dbterror.ErrUnsupportedEngineAttribute
+					decoder := json.NewDecoder(strings.NewReader(opt.StrValue))
+					decoder.DisallowUnknownFields()
+					var engineAttributes engineAttributes
+					if err := decoder.Decode(&engineAttributes); err != nil {
+						return errors.Trace(dbterror.ErrEngineAttributeInvalidFormat.GenWithStackByArgs(opt.StrValue))
+					}
+					count, newErr := engineAttributes.getTiFlashReplicaCount()
+					if newErr != nil {
+						return newErr
+					}
+					tiFlashReplicaSpec := ast.TiFlashReplicaSpec{
+						Count: count,
+					}
+					err = e.AlterTableSetTiFlashReplica(sctx, ident, &tiFlashReplicaSpec)
 				case ast.TableOptionRowFormat:
 				case ast.TableOptionTTL, ast.TableOptionTTLEnable, ast.TableOptionTTLJobInterval:
 					var ttlInfo *model.TTLInfo
@@ -5565,10 +5579,10 @@ func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo,
 		}
 	case ast.PartitionTypeHash, ast.PartitionTypeKey:
 		switch spec.Tp {
-		case ast.AlterTableRemovePartitioning:
-			numParts = 1
 		default:
 			return nil, errors.Trace(dbterror.ErrUnsupportedAddPartition)
+		case ast.AlterTableRemovePartitioning:
+			numParts = 1
 		case ast.AlterTableCoalescePartitions:
 			if int(spec.Num) >= len(meta.Partition.Definitions) {
 				return nil, dbterror.ErrDropLastPartition
@@ -5855,7 +5869,7 @@ func (e *executor) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTab
 	}
 
 	// It is necessary to specify the table.ID and partition.ID manually.
-	newTableInfo, err := buildTableInfoWithCheck(NewMetaBuildContextWithSctx(ctx), ctx.GetStore(), createStmt,
+	newTableInfo, err := buildTableInfoWithCheck(NewMetaBuildContextWithSctx(ctx), ctx.GetStore(), createStmt, oldTableInfo.Name,
 		oldTableInfo.Charset, oldTableInfo.Collate, oldTableInfo.PlacementPolicyRef)
 	if err != nil {
 		return errors.Trace(err)
@@ -6931,15 +6945,6 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		}
 		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
 	}
-}
-
-func getRenameTableUniqueIDs(jobW *JobWrapper, schema bool) []int64 {
-	if !schema {
-		return []int64{jobW.TableID}
-	}
-
-	oldSchemaID := jobW.JobArgs.(*model.RenameTableArgs).OldSchemaID
-	return []int64{oldSchemaID, jobW.SchemaID}
 }
 
 // HandleLockTablesOnSuccessSubmit handles the table lock for the job which is submitted

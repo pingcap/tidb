@@ -358,6 +358,7 @@ func TestCreateTableWithEngineAttribute(t *testing.T) {
 	tk.MustExecToErr("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"key\": \"value\"}';")                                            // invalid key
 	tk.MustExecToErr("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"tiflash-replica\": \"2\"}';")                                    // invalid value
 	tk.MustExecToErr("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 13}';")                                       // invalid value
+	tk.MustExecToErr("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 2, \"columnar-replica\": 2}';")               // duplicate key
 	tk.MustExecToErr("CREATE TEMPORARY TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 2}';")                              // not support temporary table
 	tk.MustExecToErr("CREATE GLOBAL TEMPORARY TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ON COMMIT DELETE ROWS ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 2}';") // not support temporary table
 

@@ -417,14 +417,14 @@ func findTableIDFromStore(t *meta.Mutator, schemaID int64, tableName string) (in
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionID are left as uninitialized value.
 func BuildTableInfoFromAST(ctx *metabuild.Context, s *ast.CreateTableStmt) (*model.TableInfo, error) {
-	// TODO: Support the vector index for this function.
-	return buildTableInfoWithCheck(ctx, nil, s, mysql.DefaultCharset, "", nil)
+	// TODO: Support the columnar index for this function.
+	return buildTableInfoWithCheck(ctx, nil, s, ast.NewCIStr(""), mysql.DefaultCharset, "", nil)
 }
 
 // buildTableInfoWithCheck builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionIDs are left as uninitialized value.
-func buildTableInfoWithCheck(ctx *metabuild.Context, store kv.Storage, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
-	tbInfo, err := BuildTableInfoWithStmt(ctx, s, dbCharset, dbCollate, placementPolicyRef)
+func buildTableInfoWithCheck(ctx *metabuild.Context, store kv.Storage, s *ast.CreateTableStmt, dbName ast.CIStr, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
+	tbInfo, err := BuildTableInfoWithStmt(ctx, s, store, dbName, dbCharset, dbCollate, placementPolicyRef)
 	if err != nil {
 		return nil, err
 	}
@@ -434,7 +434,7 @@ func buildTableInfoWithCheck(ctx *metabuild.Context, store kv.Storage, s *ast.Cr
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidExtra(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), store, s.Table.Schema, tbInfo); err != nil {
+	if err = checkTableInfoValidExtra(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), tbInfo); err != nil {
 		return nil, err
 	}
 	return tbInfo, nil
@@ -535,7 +535,7 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 	return nil
 }
 
-func checkColumnarIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, tblInfo *model.TableInfo) error {
+func buildTiFlashReplicaIfHaveColumnarIndex(store kv.Storage, dbName ast.CIStr, tblInfo *model.TableInfo) error {
 	var hasColumnarIndex bool
 	for _, idx := range tblInfo.Indices {
 		if idx.IsColumnarIndex() {
@@ -578,7 +578,7 @@ func checkColumnarIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, 
 // name length and column count.
 // (checkTableInfoValid is also used in repairing objects which don't perform
 // these checks. Perhaps the two functions should be merged together regardless?)
-func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, dbName ast.CIStr, tbInfo *model.TableInfo) error {
+func checkTableInfoValidExtra(ec errctx.Context, tbInfo *model.TableInfo) error {
 	if err := checkTooLongTable(tbInfo.Name); err != nil {
 		return err
 	}
@@ -599,9 +599,6 @@ func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, dbName ast.CI
 		return errors.Trace(err)
 	}
 	if err := checkGlobalIndexes(ec, tbInfo); err != nil {
-		return errors.Trace(err)
-	}
-	if err := checkColumnarIndexIfNeedTiFlashReplica(store, dbName, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -688,7 +685,7 @@ func checkColumnAttributes(colName string, tp *types.FieldType) error {
 
 // BuildSessionTemporaryTableInfo builds model.TableInfo from a SQL statement.
 func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, store kv.Storage, is infoschema.InfoSchema, s *ast.CreateTableStmt,
-	dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
+	dbName ast.CIStr, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	//build tableInfo
 	var tbInfo *model.TableInfo
@@ -706,13 +703,13 @@ func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, store kv.Storage, is
 		}
 		tbInfo, err = BuildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = buildTableInfoWithCheck(ctx, store, s, dbCharset, dbCollate, placementPolicyRef)
+		tbInfo, err = buildTableInfoWithCheck(ctx, store, s, dbName, dbCharset, dbCollate, placementPolicyRef)
 	}
 	return tbInfo, err
 }
 
 // BuildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
-func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
+func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, store kv.Storage, dbName ast.CIStr, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
 	colDefs := s.Cols
 	tableCharset, tableCollate, err := GetCharsetAndCollateInTableOption(0, s.Options, ctx.GetDefaultCollationForUTF8MB4())
 	if err != nil {
@@ -769,8 +766,10 @@ func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCh
 	}
 
 	// After handleTableOptions, so the partitions can get defaults from Table level
-	err = buildTablePartitionInfo(ctx, s.Partition, tbInfo)
-	if err != nil {
+	if err = buildTablePartitionInfo(ctx, s.Partition, tbInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err = buildTiFlashReplicaIfHaveColumnarIndex(store, dbName, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -859,14 +858,17 @@ type engineAttributes struct {
 	ColumnarReplicaCount uint64 `json:"columnar-replica"` // alias of `TiFlashReplicaCount`
 }
 
-func (ea *engineAttributes) getTiFlashReplicaCount() uint64 {
+func (ea *engineAttributes) getTiFlashReplicaCount() (uint64, error) {
+	if ea.ColumnarReplicaCount > 0 && ea.TiFlashReplicaCount > 0 {
+		return 0, dbterror.ErrEngineAttributeInvalidFormat.GenWithStackByArgs("duplicate `tiflash-replica` and `columnar-replica`")
+	}
 	if ea.TiFlashReplicaCount > 0 {
-		return ea.TiFlashReplicaCount
+		return ea.TiFlashReplicaCount, nil
 	}
 	if ea.ColumnarReplicaCount > 0 {
-		return ea.ColumnarReplicaCount
+		return ea.ColumnarReplicaCount, nil
 	}
-	return 0
+	return 0, nil
 }
 
 // handleTableOptions updates tableInfo according to table options.
@@ -893,10 +895,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			if op.UintValue > 0 && tbInfo.HasClusteredIndex() {
 				return dbterror.ErrUnsupportedShardRowIDBits
 			}
-			tbInfo.ShardRowIDBits = op.UintValue
-			if tbInfo.ShardRowIDBits > vardef.MaxShardRowIDBits {
-				tbInfo.ShardRowIDBits = vardef.MaxShardRowIDBits
-			}
+			tbInfo.ShardRowIDBits = min(op.UintValue, vardef.MaxShardRowIDBits)
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		case ast.TableOptionPreSplitRegion:
 			if tbInfo.TempTableType != model.TempTableNone {
@@ -938,12 +937,16 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			if err := decoder.Decode(&engineAttributes); err != nil {
 				return errors.Trace(dbterror.ErrEngineAttributeInvalidFormat.GenWithStackByArgs(op.StrValue))
 			}
-			if engineAttributes.getTiFlashReplicaCount() > 0 {
+			count, err := engineAttributes.getTiFlashReplicaCount()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if count > 0 {
 				if tbInfo.TempTableType != model.TempTableNone {
 					return errors.Trace(dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("add TiFlash replica"))
 				}
 				tbInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-					Count: engineAttributes.getTiFlashReplicaCount(),
+					Count: count,
 				}
 			}
 		}

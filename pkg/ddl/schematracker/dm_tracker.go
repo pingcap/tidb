@@ -208,7 +208,7 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 	if s.ReferTable != nil {
 		tbInfo, err = ddl.BuildTableInfoWithLike(ident, referTbl, s)
 	} else {
-		tbInfo, err = ddl.BuildTableInfoWithStmt(metaBuildCtx, s, schema.Charset, schema.Collate, nil)
+		tbInfo, err = ddl.BuildTableInfoWithStmt(metaBuildCtx, s, ctx.GetStore(), schema.Name, schema.Charset, schema.Collate, nil)
 	}
 	if err != nil {
 		return errors.Trace(err)
