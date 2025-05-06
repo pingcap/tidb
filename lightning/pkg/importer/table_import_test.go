@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1265,7 +1264,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 
 	makeRegions := func(regionCnt int, storeID int64) []pdhttp.RegionInfo {
 		var regions []pdhttp.RegionInfo
-		for range regionCnt {
+		for i := 0; i < regionCnt; i++ {
 			regions = append(regions, pdhttp.RegionInfo{Peers: []pdhttp.RegionPeer{{StoreID: storeID}}})
 		}
 		return regions
@@ -1277,7 +1276,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				{Store: pdhttp.MetaStore{ID: 1}, Status: pdhttp.StoreStatus{RegionCount: 200}},
 			}},
 			emptyRegions: pdhttp.RegionsInfo{
-				Regions: slices.Clone(makeRegions(100, 1)),
+				Regions: append([]pdhttp.RegionInfo(nil), makeRegions(100, 1)...),
 			},
 			expectMsgs:     []string{".*Cluster doesn't have too many empty regions.*", ".*Cluster region distribution is balanced.*"},
 			expectErrorCnt: 0,
@@ -1289,7 +1288,10 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				{Store: pdhttp.MetaStore{ID: 3}, Status: pdhttp.StoreStatus{RegionCount: 2500}},
 			}},
 			emptyRegions: pdhttp.RegionsInfo{
-				Regions: slices.Concat(makeRegions(600, 1), makeRegions(300, 2), makeRegions(1200, 3)),
+				Regions: append(append(append([]pdhttp.RegionInfo(nil),
+					makeRegions(600, 1)...),
+					makeRegions(300, 2)...),
+					makeRegions(1200, 3)...),
 			},
 			expectMsgs: []string{
 				".*TiKV stores \\(3\\) contains more than 1000 empty regions respectively.*",

@@ -82,13 +82,13 @@ func (s *precheckImplSuite) generateMockData(
 	sizeAndDataAndSuffixFunc func(dbID int, tblID int, fileID int) ([]byte, int, string),
 ) map[string]*mock.DBSourceData {
 	result := make(map[string]*mock.DBSourceData)
-	for dbID := range dbCount {
+	for dbID := 0; dbID < dbCount; dbID++ {
 		dbName := fmt.Sprintf("db%d", dbID+1)
 		tables := make(map[string]*mock.TableSourceData)
-		for tblID := range eachDBTableCount {
+		for tblID := 0; tblID < eachDBTableCount; tblID++ {
 			tblName := fmt.Sprintf("tbl%d", tblID+1)
 			files := []*mock.SourceFile{}
-			for fileID := range eachTableFileCount {
+			for fileID := 0; fileID < eachTableFileCount; fileID++ {
 				fileData, totalSize, suffix := sizeAndDataAndSuffixFunc(dbID, tblID, fileID)
 				mockSrcFile := &mock.SourceFile{
 					FileName:  fmt.Sprintf("/%s/%s/data.%d.%s", dbName, tblName, fileID+1, suffix),

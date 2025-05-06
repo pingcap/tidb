@@ -1194,7 +1194,7 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 		paused    bool
 	)
 	// Try to get the minimum safe point across all services as our GC safe point.
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		if i > 0 {
 			time.Sleep(time.Second * 3)
 		}
@@ -1441,7 +1441,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
 
-	for range rc.cfg.App.IndexConcurrency {
+	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
 		go func() {
 			for task := range taskCh {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
@@ -1544,7 +1544,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	postProgress = func() error {
 		close(postProcessTaskChan)
 		// otherwise, we should run all tasks in the post-process task chan
-		for range rc.cfg.App.TableConcurrency {
+		for i := 0; i < rc.cfg.App.TableConcurrency; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()

@@ -316,7 +316,7 @@ FROM %s.%s WHERE table_id = ? FOR UPDATE`, m.schemaName, m.tableName),
 	// TODO: the retry logic is duplicate with code in local.writeAndIngestByRanges, should encapsulate it later.
 	// max retry backoff time: 2+4+8+16+30*26=810s
 	backOffTime := time.Second
-	for i := range maxRetryOnStatusConflict {
+	for i := 0; i < maxRetryOnStatusConflict; i++ {
 		err = doAllocTableRowIDsFn()
 		if err == nil || !strings.Contains(err.Error(), tableChecksumingMsg) {
 			break

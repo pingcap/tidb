@@ -20,7 +20,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
 
@@ -262,7 +261,7 @@ func generateParquetData(t *testing.T) []byte {
 	require.NoError(t, err)
 	pw, err := pqtwriter.NewParquetWriter(pf, new(parquetStruct), 4)
 	require.NoError(t, err)
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		require.NoError(t, pw.Write(parquetStruct{
 			ID:   int64(i + 1),
 			Name: fmt.Sprintf("name_%d", i+1),
@@ -272,7 +271,7 @@ func generateParquetData(t *testing.T) []byte {
 	require.NoError(t, pf.Close())
 	bf, ok := pf.(pqt_buf_src.BufferFile)
 	require.True(t, ok)
-	return slices.Clone(bf.Bytes())
+	return append([]byte(nil), bf.Bytes()...)
 }
 
 func TestGetPreInfoReadFirstRow(t *testing.T) {

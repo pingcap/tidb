@@ -1496,7 +1496,10 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	// Try to add all indexes in one statement.
 	err := tr.executeDDL(ctx, db, singleSQL, func(status *ddlStatus) {
 		if totalRows > 0 {
-			progress := min(float64(status.rowCount)/float64(totalRows*len(multiSQLs)), 1)
+			progress := float64(status.rowCount) / float64(totalRows*len(multiSQLs))
+			if progress > 1 {
+				progress = 1
+			}
 			web.BroadcastTableProgress(tableName, progressStep, progress)
 			logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
 		}

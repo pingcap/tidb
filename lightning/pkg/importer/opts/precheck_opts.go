@@ -16,8 +16,6 @@
 package opts
 
 import (
-	"slices"
-
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 )
 
@@ -36,7 +34,7 @@ type PrecheckItemBuilderOption func(c *PrecheckItemBuilderConfig)
 // to control the get pre info behaviors.
 func WithPreInfoGetterOptions(opts ...GetPreInfoOption) PrecheckItemBuilderOption {
 	return func(c *PrecheckItemBuilderConfig) {
-		c.PreInfoGetterOptions = slices.Clone(opts)
+		c.PreInfoGetterOptions = append([]GetPreInfoOption{}, opts...)
 	}
 }
 
@@ -44,6 +42,6 @@ func WithPreInfoGetterOptions(opts ...GetPreInfoOption) PrecheckItemBuilderOptio
 // to control the mydumper loader setup behaviors.
 func WithMDLoaderSetupOptions(opts ...mydump.MDLoaderSetupOption) PrecheckItemBuilderOption {
 	return func(c *PrecheckItemBuilderConfig) {
-		c.MDLoaderSetupOptions = slices.Clone(opts)
+		c.MDLoaderSetupOptions = append([]mydump.MDLoaderSetupOption{}, opts...)
 	}
 }

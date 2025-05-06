@@ -192,7 +192,10 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 func (lrw *loggingResponseWriter) Write(d []byte) (int, error) {
 	// keep first part of the response for logging, max 1K
 	if lrw.body == "" && len(d) > 0 {
-		length := min(len(d), 1024)
+		length := len(d)
+		if length > 1024 {
+			length = 1024
+		}
 		lrw.body = string(d[:length])
 	}
 	return lrw.ResponseWriter.Write(d)
