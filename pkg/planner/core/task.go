@@ -119,31 +119,37 @@ func (t *CopTask) getStoreType() kv.StoreType {
 
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalUnionScan) Attach2Task(tasks ...base.Task) base.Task {
+	// when it arrives here, physical union scan will absolutely require a root task type,
+	// so convert child to root task type first.
+	task := tasks[0].ConvertToRootTask(p.SCtx())
 	// We need to pull the projection under unionScan upon unionScan.
 	// Since the projection only prunes columns, it's ok the put it upon unionScan.
-	if sel, ok := tasks[0].Plan().(*PhysicalSelection); ok {
+	if sel, ok := task.Plan().(*PhysicalSelection); ok {
 		if pj, ok := sel.Children()[0].(*PhysicalProjection); ok {
 			// Convert unionScan->selection->projection to projection->unionScan->selection.
 			sel.SetChildren(pj.Children()...)
 			p.SetChildren(sel)
-			p.SetStats(tasks[0].Plan().StatsInfo())
-			rt, _ := tasks[0].(*RootTask)
+			p.SetStats(task.Plan().StatsInfo())
+			rt, _ := task.(*RootTask)
 			rt.SetPlan(p)
 			pj.SetChildren(p)
-			return pj.Attach2Task(tasks...)
+			return pj.Attach2Task(task)
 		}
 	}
-	if pj, ok := tasks[0].Plan().(*PhysicalProjection); ok {
+	if pj, ok := task.Plan().(*PhysicalProjection); ok {
 		// Convert unionScan->projection to projection->unionScan, because unionScan can't handle projection as its children.
 		p.SetChildren(pj.Children()...)
-		p.SetStats(tasks[0].Plan().StatsInfo())
-		rt, _ := tasks[0].(*RootTask)
+		p.SetStats(task.Plan().StatsInfo())
+		rt, _ := task.(*RootTask)
 		rt.SetPlan(pj.Children()[0])
 		pj.SetChildren(p)
-		return pj.Attach2Task(p.BasePhysicalPlan.Attach2Task(tasks...))
+		return pj.Attach2Task(p.BasePhysicalPlan.Attach2Task(task))
 	}
-	p.SetStats(tasks[0].Plan().StatsInfo())
-	return p.BasePhysicalPlan.Attach2Task(tasks...)
+	p.SetStats(task.Plan().StatsInfo())
+	// once task is copTask type here, it may be converted proj + tablePlan here.
+	// then when it's connected with union-scan here, we may get as: union-scan + proj + tablePlan
+	// while proj is not allowed to be built under union-scan in execution layer currently.
+	return p.BasePhysicalPlan.Attach2Task(task)
 }
 
 // Attach2Task implements PhysicalPlan interface.

@@ -1549,7 +1549,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 		// we expect the check failed.
 		{
 			nil,
-			"TiDB schema `db1`.`table1` has 2 columns,and data file has 1 columns, but column colb are missing(.*)",
+			"TiDB schema `db1`.`table1` has 2 columns, and data file has 1 columns, but column colb is missing(.*)",
 			1,
 			false,
 			map[string]*checkpoints.TidbDBInfo{

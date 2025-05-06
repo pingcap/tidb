@@ -13,107 +13,107 @@ create table tbl_0 ( col_0 decimal not null , col_1 blob(207) , col_2 text , col
 create table tbl_2 ( col_10 datetime default '1976-05-11' , col_11 datetime , col_12 float , col_13 double(56,29) default 18.0118 , col_14 char not null , primary key idx_8 ( col_14,col_13,col_10 ) nonclustered, key idx_9 ( col_11 ) )  ;
 load stats 's/wout_cluster_index_tbl_0.json';
 load stats 's/wout_cluster_index_tbl_2.json';
-explain select count(*) from with_cluster_index.tbl_0 where col_0 < 5429  ;
+explain format='brief' select count(*) from with_cluster_index.tbl_0 where col_0 < 5429  ;
 id	estRows	task	access object	operator info
-HashAgg_12	1.00	root		funcs:count(Column#7)->Column#6
-└─IndexReader_13	1.00	root		index:HashAgg_6
-  └─HashAgg_6	1.00	cop[tikv]		funcs:count(1)->Column#7
-    └─IndexRangeScan_11	798.87	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,5429), keep order:false
-explain select count(*) from wout_cluster_index.tbl_0 where col_0 < 5429  ;
+HashAgg	1.00	root		funcs:count(Column#7)->Column#6
+└─IndexReader	1.00	root		index:HashAgg
+  └─HashAgg	1.00	cop[tikv]		funcs:count(1)->Column#7
+    └─IndexRangeScan	798.87	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,5429), keep order:false
+explain format='brief' select count(*) from wout_cluster_index.tbl_0 where col_0 < 5429  ;
 id	estRows	task	access object	operator info
-HashAgg_12	1.00	root		funcs:count(Column#8)->Column#7
-└─IndexReader_13	1.00	root		index:HashAgg_6
-  └─HashAgg_6	1.00	cop[tikv]		funcs:count(1)->Column#8
-    └─IndexRangeScan_11	798.87	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,5429), keep order:false
-explain select count(*) from with_cluster_index.tbl_0 where col_0 < 41  ;
+HashAgg	1.00	root		funcs:count(Column#8)->Column#7
+└─IndexReader	1.00	root		index:HashAgg
+  └─HashAgg	1.00	cop[tikv]		funcs:count(1)->Column#8
+    └─IndexRangeScan	798.87	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,5429), keep order:false
+explain format='brief' select count(*) from with_cluster_index.tbl_0 where col_0 < 41  ;
 id	estRows	task	access object	operator info
-StreamAgg_17	1.00	root		funcs:count(Column#8)->Column#6
-└─IndexReader_18	1.00	root		index:StreamAgg_9
-  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#8
-    └─IndexRangeScan_16	41.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,41), keep order:false
-explain select count(*) from wout_cluster_index.tbl_0 where col_0 < 41  ;
+StreamAgg	1.00	root		funcs:count(Column#8)->Column#6
+└─IndexReader	1.00	root		index:StreamAgg
+  └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#8
+    └─IndexRangeScan	41.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,41), keep order:false
+explain format='brief' select count(*) from wout_cluster_index.tbl_0 where col_0 < 41  ;
 id	estRows	task	access object	operator info
-StreamAgg_17	1.00	root		funcs:count(Column#9)->Column#7
-└─IndexReader_18	1.00	root		index:StreamAgg_9
-  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#9
-    └─IndexRangeScan_16	41.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,41), keep order:false
-explain select col_14 from with_cluster_index.tbl_2 where col_11 <> '2013-11-01' ;
+StreamAgg	1.00	root		funcs:count(Column#9)->Column#7
+└─IndexReader	1.00	root		index:StreamAgg
+  └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#9
+    └─IndexRangeScan	41.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,41), keep order:false
+explain format='brief' select col_14 from with_cluster_index.tbl_2 where col_11 <> '2013-11-01' ;
 id	estRows	task	access object	operator info
-IndexReader_9	4509.00	root		index:Projection_5
-└─Projection_5	4509.00	cop[tikv]		with_cluster_index.tbl_2.col_14
-  └─IndexRangeScan_8	4509.00	cop[tikv]	table:tbl_2, index:idx_9(col_11)	range:[-inf,2013-11-01 00:00:00), (2013-11-01 00:00:00,+inf], keep order:false
-explain select col_14 from wout_cluster_index.tbl_2 where col_11 <> '2013-11-01' ;
+IndexReader	4509.00	root		index:Projection
+└─Projection	4509.00	cop[tikv]		with_cluster_index.tbl_2.col_14
+  └─IndexRangeScan	4509.00	cop[tikv]	table:tbl_2, index:idx_9(col_11)	range:[-inf,2013-11-01 00:00:00), (2013-11-01 00:00:00,+inf], keep order:false
+explain format='brief' select col_14 from wout_cluster_index.tbl_2 where col_11 <> '2013-11-01' ;
 id	estRows	task	access object	operator info
-TableReader_14	4509.00	root		data:Projection_5
-└─Projection_5	4509.00	cop[tikv]		wout_cluster_index.tbl_2.col_14
-  └─Selection_13	4509.00	cop[tikv]		ne(wout_cluster_index.tbl_2.col_11, 2013-11-01 00:00:00.000000)
-    └─TableFullScan_12	4673.00	cop[tikv]	table:tbl_2	keep order:false
-explain select sum( col_4 ) from with_cluster_index.tbl_0 where col_3 != '1993-12-02' ;
+TableReader	4509.00	root		data:Projection
+└─Projection	4509.00	cop[tikv]		wout_cluster_index.tbl_2.col_14
+  └─Selection	4509.00	cop[tikv]		ne(wout_cluster_index.tbl_2.col_11, 2013-11-01 00:00:00.000000)
+    └─TableFullScan	4673.00	cop[tikv]	table:tbl_2	keep order:false
+explain format='brief' select sum( col_4 ) from with_cluster_index.tbl_0 where col_3 != '1993-12-02' ;
 id	estRows	task	access object	operator info
-HashAgg_12	1.00	root		funcs:sum(Column#7)->Column#6
-└─TableReader_13	1.00	root		data:HashAgg_6
-  └─HashAgg_6	1.00	cop[tikv]		funcs:sum(with_cluster_index.tbl_0.col_4)->Column#7
-    └─TableRangeScan_11	2244.00	cop[tikv]	table:tbl_0	range:[-inf,1993-12-02 00:00:00), (1993-12-02 00:00:00,+inf], keep order:false
-explain select sum( col_4 ) from wout_cluster_index.tbl_0 where col_3 != '1993-12-02' ;
+HashAgg	1.00	root		funcs:sum(Column#7)->Column#6
+└─TableReader	1.00	root		data:HashAgg
+  └─HashAgg	1.00	cop[tikv]		funcs:sum(with_cluster_index.tbl_0.col_4)->Column#7
+    └─TableRangeScan	2244.00	cop[tikv]	table:tbl_0	range:[-inf,1993-12-02 00:00:00), (1993-12-02 00:00:00,+inf], keep order:false
+explain format='brief' select sum( col_4 ) from wout_cluster_index.tbl_0 where col_3 != '1993-12-02' ;
 id	estRows	task	access object	operator info
-HashAgg_13	1.00	root		funcs:sum(Column#8)->Column#7
-└─TableReader_14	1.00	root		data:HashAgg_6
-  └─HashAgg_6	1.00	cop[tikv]		funcs:sum(wout_cluster_index.tbl_0.col_4)->Column#8
-    └─Selection_12	2243.00	cop[tikv]		ne(wout_cluster_index.tbl_0.col_3, 1993-12-02 00:00:00.000000)
-      └─TableFullScan_11	2244.00	cop[tikv]	table:tbl_0	keep order:false
-explain select col_0 from with_cluster_index.tbl_0 where col_0 <= 0  ;
+HashAgg	1.00	root		funcs:sum(Column#8)->Column#7
+└─TableReader	1.00	root		data:HashAgg
+  └─HashAgg	1.00	cop[tikv]		funcs:sum(wout_cluster_index.tbl_0.col_4)->Column#8
+    └─Selection	2243.00	cop[tikv]		ne(wout_cluster_index.tbl_0.col_3, 1993-12-02 00:00:00.000000)
+      └─TableFullScan	2244.00	cop[tikv]	table:tbl_0	keep order:false
+explain format='brief' select col_0 from with_cluster_index.tbl_0 where col_0 <= 0  ;
 id	estRows	task	access object	operator info
-IndexReader_6	1.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
-explain select col_0 from wout_cluster_index.tbl_0 where col_0 <= 0  ;
+IndexReader	1.00	root		index:IndexRangeScan
+└─IndexRangeScan	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
+explain format='brief' select col_0 from wout_cluster_index.tbl_0 where col_0 <= 0  ;
 id	estRows	task	access object	operator info
-IndexReader_6	1.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
-explain select col_3 from with_cluster_index.tbl_0 where col_3 >= '1981-09-15'  ;
+IndexReader	1.00	root		index:IndexRangeScan
+└─IndexRangeScan	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
+explain format='brief' select col_3 from with_cluster_index.tbl_0 where col_3 >= '1981-09-15'  ;
 id	estRows	task	access object	operator info
-IndexReader_8	1860.39	root		index:IndexRangeScan_7
-└─IndexRangeScan_7	1860.39	cop[tikv]	table:tbl_0, index:idx_1(col_3)	range:[1981-09-15 00:00:00,+inf], keep order:false
-explain select col_3 from wout_cluster_index.tbl_0 where col_3 >= '1981-09-15'  ;
+IndexReader	1860.39	root		index:IndexRangeScan
+└─IndexRangeScan	1860.39	cop[tikv]	table:tbl_0, index:idx_1(col_3)	range:[1981-09-15 00:00:00,+inf], keep order:false
+explain format='brief' select col_3 from wout_cluster_index.tbl_0 where col_3 >= '1981-09-15'  ;
 id	estRows	task	access object	operator info
-IndexReader_8	1860.39	root		index:IndexRangeScan_7
-└─IndexRangeScan_7	1860.39	cop[tikv]	table:tbl_0, index:idx_1(col_3)	range:[1981-09-15 00:00:00,+inf], keep order:false
-explain select tbl_2.col_14 , tbl_0.col_1 from with_cluster_index.tbl_2 right join with_cluster_index.tbl_0 on col_3 = col_11 ;
+IndexReader	1860.39	root		index:IndexRangeScan
+└─IndexRangeScan	1860.39	cop[tikv]	table:tbl_0, index:idx_1(col_3)	range:[1981-09-15 00:00:00,+inf], keep order:false
+explain format='brief' select tbl_2.col_14 , tbl_0.col_1 from with_cluster_index.tbl_2 right join with_cluster_index.tbl_0 on col_3 = col_11 ;
 id	estRows	task	access object	operator info
-MergeJoin_7	2533.51	root		right outer join, left side:IndexReader_22, left key:with_cluster_index.tbl_2.col_11, right key:with_cluster_index.tbl_0.col_3
-├─IndexReader_22(Build)	4509.00	root		index:IndexFullScan_21
-│ └─IndexFullScan_21	4509.00	cop[tikv]	table:tbl_2, index:idx_9(col_11)	keep order:true
-└─TableReader_24(Probe)	2244.00	root		data:TableFullScan_23
-  └─TableFullScan_23	2244.00	cop[tikv]	table:tbl_0	keep order:true
-explain select tbl_2.col_14 , tbl_0.col_1 from wout_cluster_index.tbl_2 right join wout_cluster_index.tbl_0 on col_3 = col_11 ;
+MergeJoin	2533.51	root		right outer join, left side:IndexReader, left key:with_cluster_index.tbl_2.col_11, right key:with_cluster_index.tbl_0.col_3
+├─IndexReader(Build)	4509.00	root		index:IndexFullScan
+│ └─IndexFullScan	4509.00	cop[tikv]	table:tbl_2, index:idx_9(col_11)	keep order:true
+└─TableReader(Probe)	2244.00	root		data:TableFullScan
+  └─TableFullScan	2244.00	cop[tikv]	table:tbl_0	keep order:true
+explain format='brief' select tbl_2.col_14 , tbl_0.col_1 from wout_cluster_index.tbl_2 right join wout_cluster_index.tbl_0 on col_3 = col_11 ;
 id	estRows	task	access object	operator info
-HashJoin_22	2533.51	root		right outer join, left side:TableReader_44, equal:[eq(wout_cluster_index.tbl_2.col_11, wout_cluster_index.tbl_0.col_3)]
-├─TableReader_41(Build)	2244.00	root		data:TableFullScan_40
-│ └─TableFullScan_40	2244.00	cop[tikv]	table:tbl_0	keep order:false
-└─TableReader_44(Probe)	4509.00	root		data:Selection_43
-  └─Selection_43	4509.00	cop[tikv]		not(isnull(wout_cluster_index.tbl_2.col_11))
-    └─TableFullScan_42	4673.00	cop[tikv]	table:tbl_2	keep order:false
-explain select count(*) from with_cluster_index.tbl_0 where col_0 <= 0 ;
+HashJoin	2533.51	root		right outer join, left side:TableReader, equal:[eq(wout_cluster_index.tbl_2.col_11, wout_cluster_index.tbl_0.col_3)]
+├─TableReader(Build)	2244.00	root		data:TableFullScan
+│ └─TableFullScan	2244.00	cop[tikv]	table:tbl_0	keep order:false
+└─TableReader(Probe)	4509.00	root		data:Selection
+  └─Selection	4509.00	cop[tikv]		not(isnull(wout_cluster_index.tbl_2.col_11))
+    └─TableFullScan	4673.00	cop[tikv]	table:tbl_2	keep order:false
+explain format='brief' select count(*) from with_cluster_index.tbl_0 where col_0 <= 0 ;
 id	estRows	task	access object	operator info
-StreamAgg_16	1.00	root		funcs:count(Column#8)->Column#6
-└─IndexReader_17	1.00	root		index:StreamAgg_9
-  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#8
-    └─IndexRangeScan_11	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
-explain select count(*) from wout_cluster_index.tbl_0 where col_0 <= 0 ;
+StreamAgg	1.00	root		funcs:count(Column#8)->Column#6
+└─IndexReader	1.00	root		index:StreamAgg
+  └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#8
+    └─IndexRangeScan	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
+explain format='brief' select count(*) from wout_cluster_index.tbl_0 where col_0 <= 0 ;
 id	estRows	task	access object	operator info
-StreamAgg_16	1.00	root		funcs:count(Column#9)->Column#7
-└─IndexReader_17	1.00	root		index:StreamAgg_9
-  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#9
-    └─IndexRangeScan_11	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
-explain select count(*) from with_cluster_index.tbl_0 where col_0 >= 803163  ;
+StreamAgg	1.00	root		funcs:count(Column#9)->Column#7
+└─IndexReader	1.00	root		index:StreamAgg
+  └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#9
+    └─IndexRangeScan	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
+explain format='brief' select count(*) from with_cluster_index.tbl_0 where col_0 >= 803163  ;
 id	estRows	task	access object	operator info
-StreamAgg_17	1.00	root		funcs:count(Column#8)->Column#6
-└─IndexReader_18	1.00	root		index:StreamAgg_9
-  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#8
-    └─IndexRangeScan_16	107.12	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[803163,+inf], keep order:false
-explain select count(*) from wout_cluster_index.tbl_0 where col_0 >= 803163  ;
+StreamAgg	1.00	root		funcs:count(Column#8)->Column#6
+└─IndexReader	1.00	root		index:StreamAgg
+  └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#8
+    └─IndexRangeScan	107.12	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[803163,+inf], keep order:false
+explain format='brief' select count(*) from wout_cluster_index.tbl_0 where col_0 >= 803163  ;
 id	estRows	task	access object	operator info
-StreamAgg_17	1.00	root		funcs:count(Column#9)->Column#7
-└─IndexReader_18	1.00	root		index:StreamAgg_9
-  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#9
-    └─IndexRangeScan_16	107.12	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[803163,+inf], keep order:false
+StreamAgg	1.00	root		funcs:count(Column#9)->Column#7
+└─IndexReader	1.00	root		index:StreamAgg
+  └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#9
+    └─IndexRangeScan	107.12	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[803163,+inf], keep order:false
 set @@tidb_enable_outer_join_reorder=false;

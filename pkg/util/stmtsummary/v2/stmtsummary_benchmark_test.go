@@ -34,7 +34,7 @@ func BenchmarkStmtSummaryAddSingleWorkload(b *testing.B) {
 func BenchmarkStmtSummaryAddParallelSingleWorkload(b *testing.B) {
 	const infoCount = 1000
 	infos := make([]*stmtsummary.StmtExecInfo, infoCount)
-	for i := 0; i < infoCount; i++ {
+	for i := range infoCount {
 		infos[i] = GenerateStmtExecInfo4Test("digest_test")
 	}
 
@@ -51,7 +51,7 @@ func BenchmarkStmtSummaryAddParallelSingleWorkload(b *testing.B) {
 func BenchmarkStmtSummaryAddParallelMultiWorkload(b *testing.B) {
 	infoCount := 1000
 	infos := make([]*stmtsummary.StmtExecInfo, infoCount)
-	for i := 0; i < infoCount; i++ {
+	for i := range infoCount {
 		infos[i] = GenerateStmtExecInfo4Test(fmt.Sprintf("digest_test_%d", i))
 	}
 

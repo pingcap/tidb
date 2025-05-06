@@ -137,10 +137,10 @@
       "explain format = 'brief' select /*+ qb_name(qb, v2), leading(t1@qb), inl_join(t1@qb) */ * from v2",
 
       // CTE
-      "explain with tt as (select /*+ leading(t3), merge_join(t1) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
-      "explain with tt as (select /*+ leading(t2), inl_join(t2) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
-      "explain with tt as (select /*+ merge(), leading(t3), inl_join(t1) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
-      "explain with tt as (select /*+ leading(t2), merge_join(t2), merge() */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
+      "explain format = 'brief' with tt as (select /*+ leading(t3), merge_join(t1) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
+      "explain format = 'brief' with tt as (select /*+ leading(t2), inl_join(t2) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
+      "explain format = 'brief' with tt as (select /*+ merge(), leading(t3), inl_join(t1) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
+      "explain format = 'brief' with tt as (select /*+ leading(t2), merge_join(t2), merge() */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
 
       // Subquery
       "explain format = 'brief' SELECT /*+ leading(t2@sel_2), merge_join(t) */ * FROM t join t1 on t.a = t1.a WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.b = t1.b);",

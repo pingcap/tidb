@@ -217,9 +217,8 @@ func checkAfterSwitchStep(t *testing.T, startTime time.Time, task *proto.Task, s
 	sort.Slice(gotSubtasks, func(i, j int) bool {
 		return gotSubtasks[i].Ordinal < gotSubtasks[j].Ordinal
 	})
-	for i := 0; i < len(gotSubtasks); i++ {
-		subtask := gotSubtasks[i]
-		require.Equal(t, []byte(fmt.Sprintf("%d", i)), subtask.Meta)
+	for i, subtask := range gotSubtasks {
+		require.Equal(t, fmt.Appendf(nil, "%d", i), subtask.Meta)
 		require.Equal(t, i+1, subtask.Ordinal)
 		require.Equal(t, 11, subtask.Concurrency)
 		require.Equal(t, ":4000", subtask.ExecID)
@@ -239,9 +238,9 @@ func TestSwitchTaskStep(t *testing.T) {
 	require.NoError(t, err)
 	checkTaskStateStep(t, task, proto.TaskStatePending, proto.StepInit)
 	subtasksStepOne := make([]*proto.Subtask, 3)
-	for i := 0; i < len(subtasksStepOne); i++ {
+	for i := range subtasksStepOne {
 		subtasksStepOne[i] = proto.NewSubtask(proto.StepOne, taskID, proto.TaskTypeExample,
-			":4000", 11, []byte(fmt.Sprintf("%d", i)), i+1)
+			":4000", 11, fmt.Appendf(nil, "%d", i), i+1)
 	}
 	startTime := time.Unix(time.Now().Unix(), 0)
 	task.Meta = []byte("changed meta")
@@ -262,9 +261,9 @@ func TestSwitchTaskStep(t *testing.T) {
 	time.Sleep(time.Second)
 	taskStartTime := task.StartTime
 	subtasksStepTwo := make([]*proto.Subtask, 3)
-	for i := 0; i < len(subtasksStepTwo); i++ {
+	for i := range subtasksStepTwo {
 		subtasksStepTwo[i] = proto.NewSubtask(proto.StepTwo, taskID, proto.TaskTypeExample,
-			":4000", 11, []byte(fmt.Sprintf("%d", i)), i+1)
+			":4000", 11, fmt.Appendf(nil, "%d", i), i+1)
 	}
 	require.NoError(t, tk.Session().GetSessionVars().SetSystemVar(vardef.TiDBMemQuotaQuery, "1024"))
 	require.NoError(t, tm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepTwo, subtasksStepTwo))
@@ -291,9 +290,9 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 		require.NoError(t, err)
 		checkTaskStateStep(t, task, proto.TaskStatePending, proto.StepInit)
 		subtasks := make([]*proto.Subtask, 3)
-		for i := 0; i < len(subtasks); i++ {
+		for i := range subtasks {
 			subtasks[i] = proto.NewSubtask(proto.StepOne, taskID, proto.TaskTypeExample,
-				":4000", 11, []byte(fmt.Sprintf("%d", i)), i+1)
+				":4000", 11, fmt.Appendf(nil, "%d", i), i+1)
 		}
 		return task, subtasks
 	}
@@ -336,7 +335,7 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 
 	// mock subtasks unstable
 	task3, subtasks3 := prepare("key3")
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		subtask := subtasks3[i]
 		_, err = sqlexec.ExecSQL(ctx, tk.Session(), `
 			insert into mysql.tidb_background_subtask(
@@ -457,7 +456,7 @@ func TestGetActiveSubtasks(t *testing.T) {
 	require.NoError(t, err)
 
 	subtasks := make([]*proto.Subtask, 0, 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		subtasks = append(subtasks,
 			proto.NewSubtask(proto.StepOne, id, "test", fmt.Sprintf("tidb%d", i), 8, []byte("{}}"), i+1),
 		)
@@ -1194,7 +1193,7 @@ func TestTaskManagerEntrySize(t *testing.T) {
 	store, tm, ctx := testutil.InitTableTest(t)
 	getMeta := func(l int) []byte {
 		meta := make([]byte, l)
-		for i := 0; i < l; i++ {
+		for i := range l {
 			meta[i] = 'a'
 		}
 		return meta

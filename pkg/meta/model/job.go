@@ -646,7 +646,7 @@ func (job *Job) IsPausable() bool {
 // IsAlterable checks whether the job type can be altered.
 func (job *Job) IsAlterable() bool {
 	// Currently, only non-distributed add index reorg task can be altered
-	return job.Type == ActionAddIndex && !job.ReorgMeta.UseCloudStorage ||
+	return job.Type == ActionAddIndex ||
 		job.Type == ActionModifyColumn ||
 		job.Type == ActionReorganizePartition
 }

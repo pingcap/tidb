@@ -212,7 +212,7 @@ func blockingMergePartitionStats2GlobalStats(
 	allCms := make([][]*statistics.CMSketch, globalStats.Num)
 	allTopN := make([][]*statistics.TopN, globalStats.Num)
 	allFms := make([][]*statistics.FMSketch, globalStats.Num)
-	for i := 0; i < globalStats.Num; i++ {
+	for i := range globalStats.Num {
 		allHg[i] = make([]*statistics.Histogram, 0, partitionNum)
 		allCms[i] = make([]*statistics.CMSketch, 0, partitionNum)
 		allTopN[i] = make([]*statistics.TopN, 0, partitionNum)
@@ -252,7 +252,7 @@ func blockingMergePartitionStats2GlobalStats(
 			}
 		}
 
-		for i := 0; i < globalStats.Num; i++ {
+		for i := range globalStats.Num {
 			// GetStatsInfo will return the copy of the statsInfo, so we don't need to worry about the data race.
 			// partitionStats will be released after the for loop.
 			hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex, externalCache)
@@ -305,7 +305,7 @@ func blockingMergePartitionStats2GlobalStats(
 
 	// After collect all the statistics from the partition-level stats,
 	// we should merge them together.
-	for i := 0; i < globalStats.Num; i++ {
+	for i := range globalStats.Num {
 		if len(allHg[i]) == 0 {
 			// If all partitions have no stats, we skip merging global stats because it may not handle the case `len(allHg[i]) == 0`
 			// correctly. It can avoid unexpected behaviors such as nil pointer panic.
@@ -325,10 +325,7 @@ func blockingMergePartitionStats2GlobalStats(
 		}
 
 		// Update the global NDV.
-		globalStatsNDV := globalStats.Fms[i].NDV()
-		if globalStatsNDV > globalStats.Count {
-			globalStatsNDV = globalStats.Count
-		}
+		globalStatsNDV := min(globalStats.Fms[i].NDV(), globalStats.Count)
 		globalStats.Fms[i].DestroyAndPutToPool()
 
 		// Merge CMSketch.
@@ -373,7 +370,7 @@ func blockingMergePartitionStats2GlobalStats(
 // WriteGlobalStatsToStorage is to write global stats to storage
 func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *GlobalStats, info *statstypes.GlobalStatsInfo, gid int64) (err error) {
 	// Dump global-level stats to kv.
-	for i := 0; i < globalStats.Num; i++ {
+	for i := range globalStats.Num {
 		hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
 		if hg == nil {
 			// All partitions have no stats so global stats are not created.

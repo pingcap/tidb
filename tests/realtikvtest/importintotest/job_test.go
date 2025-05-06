@@ -458,11 +458,12 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/syncAfterJobStarted"))
 	wg := sync.WaitGroup{}
 	wg.Add(1)
+	tk2 := testkit.NewTestKit(s.T(), s.store)
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforePostProcess",
 		func(jobID int64) {
 			go func() {
 				defer wg.Done()
-				s.tk.MustExec(fmt.Sprintf("cancel import job %d", jobID))
+				tk2.MustExec(fmt.Sprintf("cancel import job %d", jobID))
 			}()
 			s.Require().Eventually(func() bool {
 				task := s.getTaskByJobID(ctx, jobID)
@@ -525,10 +526,10 @@ func (s *mockGCSSuite) TestCancelJob() {
 	wg.Add(1)
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeJobStarted",
 		func(jobID int64) {
-			s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+			s.NoError(tk2.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 			go func() {
 				defer wg.Done()
-				s.tk.MustExec(fmt.Sprintf("cancel import job %d", jobID))
+				tk2.MustExec(fmt.Sprintf("cancel import job %d", jobID))
 			}()
 			s.Require().Eventually(func() bool {
 				task := s.getTaskByJobID(ctx, jobID)

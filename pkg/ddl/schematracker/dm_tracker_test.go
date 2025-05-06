@@ -164,14 +164,6 @@ func TestDropColumn(t *testing.T) {
 	require.Equal(t, 1, len(tblInfo.Columns))
 }
 
-func TestFullTextIndex(t *testing.T) {
-	sql := "create table test.t (a text, fulltext key (a))"
-
-	tracker := schematracker.NewSchemaTracker(2)
-	tracker.CreateTestDB(nil)
-	execCreate(t, tracker, sql)
-}
-
 func checkShowCreateTable(t *testing.T, tblInfo *model.TableInfo, expected string) {
 	sctx := mock.NewContext()
 

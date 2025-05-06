@@ -282,7 +282,7 @@ func (c *concatFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
-	for i := 0; i < len(args); i++ {
+	for range args {
 		argTps = append(argTps, types.ETString)
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
@@ -349,7 +349,7 @@ func (c *concatWSFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
-	for i := 0; i < len(args); i++ {
+	for range args {
 		argTps = append(argTps, types.ETString)
 	}
 
@@ -2451,7 +2451,7 @@ func (c *charFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
-	for i := 0; i < len(args)-1; i++ {
+	for range len(args) - 1 {
 		argTps = append(argTps, types.ETInt)
 	}
 	argTps = append(argTps, types.ETString)
@@ -2521,7 +2521,7 @@ func (b *builtinCharSig) convertToBytes(ints []int64) []byte {
 func (b *builtinCharSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	bigints := make([]int64, 0, len(b.args)-1)
 
-	for i := 0; i < len(b.args)-1; i++ {
+	for i := range len(b.args) - 1 {
 		val, IsNull, err := b.args[i].EvalInt(ctx, row)
 		if err != nil {
 			return "", true, err
@@ -3287,10 +3287,7 @@ func (c *exportSetFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 	// Calculate the flen as MySQL does.
-	l := args[1].GetType(ctx.GetEvalCtx()).GetFlen()
-	if args[2].GetType(ctx.GetEvalCtx()).GetFlen() > l {
-		l = args[2].GetType(ctx.GetEvalCtx()).GetFlen()
-	}
+	l := max(args[2].GetType(ctx.GetEvalCtx()).GetFlen(), args[1].GetType(ctx.GetEvalCtx()).GetFlen())
 	sepL := 1
 	if len(args) > 3 {
 		sepL = args[3].GetType(ctx.GetEvalCtx()).GetFlen()
@@ -3314,13 +3311,13 @@ func (c *exportSetFunctionClass) getFunction(ctx BuildContext, args []Expression
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
 func exportSet(bits int64, on, off, separator string, numberOfBits int64) string {
 	result := ""
-	for i := uint64(0); i < uint64(numberOfBits); i++ {
+	for i := range numberOfBits {
 		if (bits & (1 << i)) > 0 {
 			result += on
 		} else {
 			result += off
 		}
-		if i < uint64(numberOfBits)-1 {
+		if i < numberOfBits-1 {
 			result += separator
 		}
 	}
@@ -4387,10 +4384,7 @@ func (b *builtinTranslateUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (d 
 func buildTranslateMap4UTF8(from, to []rune) map[rune]rune {
 	mp := make(map[rune]rune)
 	lenFrom, lenTo := len(from), len(to)
-	minLen := lenTo
-	if lenFrom < lenTo {
-		minLen = lenFrom
-	}
+	minLen := min(lenFrom, lenTo)
 	for idx := lenFrom - 1; idx >= lenTo; idx-- {
 		mp[from[idx]] = invalidRune
 	}
@@ -4403,10 +4397,7 @@ func buildTranslateMap4UTF8(from, to []rune) map[rune]rune {
 func buildTranslateMap4Binary(from, to []byte) map[byte]uint16 {
 	mp := make(map[byte]uint16)
 	lenFrom, lenTo := len(from), len(to)
-	minLen := lenTo
-	if lenFrom < lenTo {
-		minLen = lenFrom
-	}
+	minLen := min(lenFrom, lenTo)
 	for idx := lenFrom - 1; idx >= lenTo; idx-- {
 		mp[from[idx]] = invalidByte
 	}

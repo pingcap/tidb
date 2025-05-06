@@ -342,7 +342,7 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 	rebuildConnFn func(*sql.Conn, bool) (*sql.Conn, error)) ([]*Writer, func(), error) {
 	conf, pool := d.conf, d.dbHandle
 	writers := make([]*Writer, conf.Threads)
-	for i := 0; i < conf.Threads; i++ {
+	for i := range conf.Threads {
 		conn, err := createConnWithConsistency(tctx, pool, needRepeatableRead(conf.ServerInfo.ServerType, conf.Consistency))
 		if err != nil {
 			return nil, func() {}, err
@@ -1533,7 +1533,7 @@ func updateServiceSafePoint(tctx *tcontext.Context, pdClient pd.Client, ttl int6
 		tctx.L().Debug("update PD safePoint limit with ttl",
 			zap.Uint64("safePoint", snapshotTS),
 			zap.Int64("ttl", ttl))
-		for retryCnt := 0; retryCnt <= 10; retryCnt++ {
+		for retryCnt := range 11 {
 			_, err := pdClient.UpdateServiceGCSafePoint(tctx, dumplingServiceSafePointID, ttl, snapshotTS)
 			if err == nil {
 				break

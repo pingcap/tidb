@@ -33,7 +33,7 @@ func recordSetForWeightSamplingTest(size int) *recordSet {
 		data:  make([]types.Datum, 0, size),
 		count: size,
 	}
-	for i := 0; i < size; i++ {
+	for i := range size {
 		r.data = append(r.data, types.NewIntDatum(int64(i)))
 	}
 	r.setFields(mysql.TypeLonglong)
@@ -43,12 +43,12 @@ func recordSetForWeightSamplingTest(size int) *recordSet {
 func recordSetForDistributedSamplingTest(size, batch int) []*recordSet {
 	sets := make([]*recordSet, 0, batch)
 	batchSize := size / batch
-	for i := 0; i < batch; i++ {
+	for i := range batch {
 		r := &recordSet{
 			data:  make([]types.Datum, 0, batchSize),
 			count: batchSize,
 		}
-		for j := 0; j < size/batch; j++ {
+		for j := range size / batch {
 			r.data = append(r.data, types.NewIntDatum(int64(j+batchSize*i)))
 		}
 		r.setFields(mysql.TypeLonglong)
@@ -67,7 +67,7 @@ func TestWeightedSampling(t *testing.T) {
 	// This test can run 800 times in a row without any failure.
 	// for x := 0; x < 800; x++ {
 	itemCnt := make([]int, rowNum)
-	for loopI := 0; loopI < loopCnt; loopI++ {
+	for range loopCnt {
 		builder := &RowSampleBuilder{
 			Sc:              sc,
 			RecordSet:       rs,
@@ -80,7 +80,7 @@ func TestWeightedSampling(t *testing.T) {
 		}
 		collector, err := builder.Collect()
 		require.NoError(t, err)
-		for i := 0; i < int(sampleNum); i++ {
+		for i := range int(sampleNum) {
 			a := collector.Base().Samples[i].Columns[0].GetInt64()
 			itemCnt[a]++
 		}
@@ -109,7 +109,7 @@ func TestDistributedWeightedSampling(t *testing.T) {
 	for loopI := 1; loopI < loopCnt; loopI++ {
 		rootRowCollector := NewReservoirRowSampleCollector(int(sampleNum), 1)
 		rootRowCollector.FMSketches = append(rootRowCollector.FMSketches, NewFMSketch(1000))
-		for i := 0; i < batch; i++ {
+		for i := range batch {
 			builder := &RowSampleBuilder{
 				Sc:              sc,
 				RecordSet:       sets[i],

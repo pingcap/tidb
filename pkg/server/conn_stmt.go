@@ -95,7 +95,7 @@ func (cc *clientConn) HandleStmtPrepare(ctx context.Context, sql string) error {
 	cc.initResultEncoder(ctx)
 	defer cc.rsEncoder.Clean()
 	if len(params) > 0 {
-		for i := 0; i < len(params); i++ {
+		for i := range params {
 			data = data[0:4]
 			data = params[i].Dump(data, cc.rsEncoder)
 
@@ -113,7 +113,7 @@ func (cc *clientConn) HandleStmtPrepare(ctx context.Context, sql string) error {
 	}
 
 	if len(columns) > 0 {
-		for i := 0; i < len(columns); i++ {
+		for i := range columns {
 			data = data[0:4]
 			data = columns[i].Dump(data, cc.rsEncoder)
 

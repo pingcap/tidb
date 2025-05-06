@@ -112,6 +112,7 @@ go_library(
         "//pkg/lightning/backend/local",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
+        "//pkg/lightning/metric",
         "//pkg/meta",
         "//pkg/meta/autoid",
         "//pkg/meta/metabuild",

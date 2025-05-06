@@ -117,7 +117,7 @@ func isValidToAnalyze(
 	lastFailedAnalysisDuration, err :=
 		GetLastFailedAnalysisDuration(sctx, schema, table, partitionNames...)
 	if err != nil {
-		logutil.StatsSampleLogger().Warn(
+		logutil.StatsErrVerboseSampleLogger().Warn(
 			"Fail to get last failed analysis duration",
 			zap.String("schema", schema),
 			zap.String("table", table),
@@ -130,7 +130,7 @@ func isValidToAnalyze(
 	averageAnalysisDuration, err :=
 		GetAverageAnalysisDuration(sctx, schema, table, partitionNames...)
 	if err != nil {
-		logutil.StatsSampleLogger().Warn(
+		logutil.StatsErrVerboseSampleLogger().Warn(
 			"Fail to get average analysis duration",
 			zap.String("schema", schema),
 			zap.String("table", table),

@@ -229,27 +229,27 @@ insert into t1 values(2, 2);
 create table t2(c1 int, c2 int);
 insert into t2 values(1, 1);
 insert into t2 values(3, 2);
-explain select * from t1 where c1 > all(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
+explain format='brief' select * from t1 where c1 > all(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 select * from t1 where c1 > all(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 
 --echo // Test semi apply.
 insert into t1 values(2, 3);
-explain select /*+ set_var(tidb_hash_join_version=legacy) */ * from t1 where exists(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
-explain select /*+ set_var(tidb_hash_join_version=optimized) */ * from t1 where exists(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
+explain format='brief' select /*+ set_var(tidb_hash_join_version=legacy) */ * from t1 where exists(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
+explain format='brief' select /*+ set_var(tidb_hash_join_version=optimized) */ * from t1 where exists(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 select * from t1 where exists(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 
 --echo // Same as above, but test recursive cte.
-explain select * from t1 where c1 > all(with recursive cte1 as (select c1 from t2 where t2.c2 = t1.c2 union all select c1+1 as c1 from cte1 limit 1) select c1 from cte1);
+explain format='brief' select * from t1 where c1 > all(with recursive cte1 as (select c1 from t2 where t2.c2 = t1.c2 union all select c1+1 as c1 from cte1 limit 1) select c1 from cte1);
 select * from t1 where c1 > all(with recursive cte1 as (select c1 from t2 where t2.c2 = t1.c2 union all select c1+1 as c1 from cte1 limit 1) select c1 from cte1);
 
-explain select * from t1 where exists(with recursive cte1 as (select c1 from t2 where t2.c2 = t1.c2 union all select c1+1 as c1 from cte1 limit 10) select c1 from cte1);
+explain format='brief' select * from t1 where exists(with recursive cte1 as (select c1 from t2 where t2.c2 = t1.c2 union all select c1+1 as c1 from cte1 limit 10) select c1 from cte1);
 select * from t1 where exists(with recursive cte1 as (select c1 from t2 where t2.c2 = t1.c2 union all select c1+1 as c1 from cte1 limit 10) select c1 from cte1);
 
 --echo // Test correlated col is in recursive part.
-explain select * from t1 where c1 > all(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
+explain format='brief' select * from t1 where c1 > all(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
 select * from t1 where c1 > all(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
 
-explain select * from t1 where exists(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
+explain format='brief' select * from t1 where exists(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
 select * from t1 where exists(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
 # Some cases to Test Create View With CTE and checkout Database
 # With name is the same as the table name
@@ -346,12 +346,12 @@ insert into tt4 values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);
 insert into tt5 values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);
 
 ## sub case-1: CTE with Apply
-explain with recursive cte1 as (select c1 from tt union select c1 from cte1 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte1.c1)) select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) order by 1;
+explain format='brief' with recursive cte1 as (select c1 from tt union select c1 from cte1 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte1.c1)) select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) order by 1;
 
 with recursive cte1 as (select c1 from tt union select c1 from cte1 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte1.c1)) select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) order by 1;
 
 ## sub case-2: CTE with Apply and Union
-explain with recursive cte1 as (select c1 from tt union select c1 from cte1 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte1.c1)) 
+explain format='brief' with recursive cte1 as (select c1 from tt union select c1 from cte1 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte1.c1))
 select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) union select c1 from tt3 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt3.c1) union
 select c1 from tt4 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt4.c1) union select c1 from tt5 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt5.c1) order by 1;
 
@@ -360,7 +360,7 @@ select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 wher
 select c1 from tt4 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt4.c1) union select c1 from tt5 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt5.c1) order by 1;
 
 ## sub case-3: nested CTE with Apply and union
-explain with cte1 as (with recursive cte2 as (select c1 from tt union all select c1 from cte2 where exists(select /*+ no_decorrelate() */ c1 from tt1 where tt1.c1 = cte2.c1) limit 300)
+explain format='brief' with cte1 as (with recursive cte2 as (select c1 from tt union all select c1 from cte2 where exists(select /*+ no_decorrelate() */ c1 from tt1 where tt1.c1 = cte2.c1) limit 300)
 select c1 from tt union select c1 from cte2 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte2.c1)) 
 select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) union select c1 from tt3 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt3.c1) union
 select c1 from tt4 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt4.c1) union select c1 from tt5 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt5.c1) order by 1;

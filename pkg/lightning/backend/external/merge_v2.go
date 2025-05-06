@@ -104,11 +104,7 @@ func MergeOverlappingFilesV2(
 		}
 	}()
 
-	err = writer.Init(ctx, partSize)
-	if err != nil {
-		logutil.Logger(ctx).Warn("init writer failed", zap.Error(err))
-		return
-	}
+	writer.InitPartSizeAndLogger(ctx, partSize)
 
 	bufPool := membuf.NewPool()
 	loaded := &memKVsAndBuffers{}

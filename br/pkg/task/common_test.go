@@ -315,6 +315,7 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 		},
 		NoSchema:                 false,
 		LoadStats:                true,
+		AutoAnalyze:              true,
 		PDConcurrency:            0x1,
 		StatsConcurrency:         0xc,
 		BatchFlushInterval:       16000000000,

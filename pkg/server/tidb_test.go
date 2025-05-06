@@ -48,7 +48,7 @@ func TestRcReadCheckTSConflict(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
 	dml := "insert into t values"
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		dml += fmt.Sprintf("(%v, 0)", i)
 		if i != 49 {
 			dml += ","

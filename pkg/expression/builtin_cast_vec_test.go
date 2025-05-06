@@ -173,7 +173,7 @@ func TestVectorizedCastRealAsTime(t *testing.T) {
 	for _, input := range inputs {
 		result := chunk.NewColumn(types.NewFieldType(mysql.TypeDatetime), input.NumRows())
 		require.NoError(t, cast.vecEvalTime(ctx, input, result))
-		for i := 0; i < input.NumRows(); i++ {
+		for i := range input.NumRows() {
 			res, isNull, err := cast.evalTime(ctx, input.GetRow(i))
 			require.NoError(t, err)
 			if expect[i] == nil {
@@ -265,7 +265,7 @@ func TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(t *testing.T) {
 	for _, input := range inputs {
 		result := chunk.NewColumn(types.NewFieldType(mysql.TypeNewDecimal), input.NumRows())
 		require.NoError(t, cast.vecEvalDecimal(ctx, input, result))
-		for i := 0; i < input.NumRows(); i++ {
+		for i := range input.NumRows() {
 			res, isNull, err := cast.evalDecimal(ctx, input.GetRow(i))
 			require.False(t, isNull)
 			require.NoError(t, err)
@@ -283,7 +283,7 @@ func genCastStringAsDecimal(isNegative bool) *chunk.Chunk {
 	}
 
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 1024)
-	for i := 0; i < 1024; i++ {
+	for range 1024 {
 		d := new(types.MyDecimal)
 		f := sign * rand.Float64() * 100000
 		if err := d.FromFloat64(f); err != nil {

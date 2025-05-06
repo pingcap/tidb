@@ -2016,6 +2016,7 @@ func saveCheckpoint(rc *Controller, t *TableImporter, engineID int32, chunk *che
 			Key:               chunk.Key,
 			Checksum:          chunk.Checksum,
 			Pos:               chunk.Chunk.Offset,
+			RealPos:           chunk.Chunk.RealOffset,
 			RowID:             chunk.Chunk.PrevRowIDMax,
 			ColumnPermutation: chunk.ColumnPermutation,
 			EndOffset:         chunk.Chunk.EndOffset,

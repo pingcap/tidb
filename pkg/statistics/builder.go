@@ -155,10 +155,7 @@ func buildHist(
 	sampleFactor := float64(count) / float64(sampleNum)
 	// ndvFactor is a ratio that represents the average number of times each distinct value (NDV) should appear in the dataset.
 	// It is calculated as the total number of rows divided by the number of distinct values.
-	ndvFactor := float64(count) / float64(ndv)
-	if ndvFactor > sampleFactor {
-		ndvFactor = sampleFactor
-	}
+	ndvFactor := min(float64(count)/float64(ndv), sampleFactor)
 	// Since bucket count is increased by sampleFactor, so the actual max values per bucket are
 	// floor(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
 	// thus we need to add a sampleFactor to avoid building too many buckets.
@@ -338,7 +335,7 @@ func BuildHistAndTopN(
 	var corrXYSum float64
 
 	// Iterate through the samples
-	for i := int64(0); i < sampleNum; i++ {
+	for i := range sampleNum {
 		if isColumn {
 			corrXYSum += float64(i) * float64(samples[i].Ordinal)
 		}
@@ -431,7 +428,7 @@ func BuildHistAndTopN(
 				foundTwice      bool
 				firstTimeSample types.Datum
 			)
-			for j := 0; j < len(topNList); j++ {
+			for j := range topNList {
 				if bytes.Equal(sampleBytes, topNList[j].Encoded) {
 					// This should never happen, but we met this panic before, so we add this check here.
 					// See: https://github.com/pingcap/tidb/issues/35948
@@ -504,7 +501,7 @@ func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64
 	// Sum the occurrence except the least common one from the top-n list. To check whether the lest common one is worth
 	// storing later.
 	sumCount := uint64(0)
-	for i := 0; i < len(topns)-1; i++ {
+	for i := range len(topns) - 1 {
 		sumCount += topns[i].Count
 	}
 	topNNum := len(topns)

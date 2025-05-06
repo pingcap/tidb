@@ -31,6 +31,12 @@ type Operator interface {
 	String() string
 }
 
+// TunableOperator is the operator which supports modifying pool size.
+type TunableOperator interface {
+	TuneWorkerPoolSize(workerNum int32, wait bool)
+	GetWorkerPoolSize() int32
+}
+
 // AsyncOperator process the data in async way.
 //
 // Eg: The sink of AsyncOperator op1 and the source of op2

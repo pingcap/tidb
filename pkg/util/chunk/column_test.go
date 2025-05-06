@@ -332,7 +332,7 @@ func TestJSONColumn(t *testing.T) {
 	col := chk.Column(0)
 	for i := range 1024 {
 		j := new(types.BinaryJSON)
-		err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, i, i)))
+		err := j.UnmarshalJSON(fmt.Appendf(nil, `{"%v":%v}`, i, i))
 		require.NoError(t, err)
 		col.AppendJSON(*j)
 	}
@@ -669,10 +669,7 @@ func TestSetNulls(t *testing.T) {
 	for range 100 {
 		begin := rand.Intn(1024)
 		l := rand.Intn(37)
-		end := begin + l
-		if end > 1024 {
-			end = 1024
-		}
+		end := min(begin+l, 1024)
 		for i := begin; i < end; i++ {
 			nullMap[i] = struct{}{}
 		}
@@ -732,8 +729,8 @@ func TestGetRaw(t *testing.T) {
 	it = NewIterator4Chunk(chk)
 	i = 0
 	for row := it.Begin(); row != it.End(); row = it.Next() {
-		require.Equal(t, []byte(fmt.Sprint(i)), row.GetRaw(0))
-		require.Equal(t, []byte(fmt.Sprint(i)), col.GetRaw(i))
+		require.Equal(t, fmt.Append(nil, i), row.GetRaw(0))
+		require.Equal(t, fmt.Append(nil, i), col.GetRaw(i))
 		i++
 	}
 }

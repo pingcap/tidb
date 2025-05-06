@@ -16,7 +16,9 @@ package local
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
+	"net"
 	"sync"
 	"testing"
 	"time"
@@ -25,13 +27,15 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
-func TestIsIngestRetryable(t *testing.T) {
+func TestConvertPBError2Error(t *testing.T) {
 	region := &split.RegionInfo{
 		Leader: &metapb.Peer{Id: 1},
 		Region: &metapb.Region{
@@ -45,143 +49,161 @@ func TestIsIngestRetryable(t *testing.T) {
 		},
 	}
 	metas := []*sst.SSTMeta{
-		{
-			Range: &sst.Range{
-				Start: []byte{1},
-				End:   []byte{2},
-			},
-		},
-		{
-			Range: &sst.Range{
-				Start: []byte{1, 1},
-				End:   []byte{2},
-			},
-		},
+		{Range: &sst.Range{Start: []byte{1}, End: []byte{2}}},
+		{Range: &sst.Range{Start: []byte{1, 1}, End: []byte{2}}},
 	}
-	job := regionJob{
-		stage: wrote,
-		keyRange: engineapi.Range{
-			Start: []byte{1},
-			End:   []byte{3},
-		},
-		region: region,
+	job := &regionJob{
+		stage:    wrote,
+		keyRange: engineapi.Range{Start: []byte{1}, End: []byte{3}},
+		region:   region,
 		writeResult: &tikvWriteResult{
 			sstMeta: metas,
 		},
 	}
-	// NotLeader doesn't mean region peers are changed, so we can retry ingest.
 
-	resp := &sst.IngestResponse{
-		Error: &errorpb.Error{
-			NotLeader: &errorpb.NotLeader{
-				Leader: &metapb.Peer{Id: 2},
+	newRegion := &metapb.Region{
+		Id:       1,
+		StartKey: []byte{1},
+		EndKey:   []byte{3},
+		RegionEpoch: &metapb.RegionEpoch{
+			ConfVer: 1,
+			Version: 2,
+		},
+		Peers: []*metapb.Peer{{Id: 1}},
+	}
+
+	cases := []struct {
+		pbErr *errorpb.Error
+		res   *ingestAPIError
+	}{
+		// NotLeader doesn't mean region peers are changed, so we can retry ingest.
+		{pbErr: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}, res: &ingestAPIError{err: common.ErrKVNotLeader}},
+		// EpochNotMatch means region is changed, if the new region covers the old, we can restart the writing process.
+		// Otherwise, we should restart from region scanning.
+		{
+			pbErr: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{
+				CurrentRegions: []*metapb.Region{newRegion},
+			}},
+			res: &ingestAPIError{err: common.ErrKVEpochNotMatch, newRegion: &split.RegionInfo{
+				Region: newRegion,
+				Leader: &metapb.Peer{Id: 1},
+			}},
+		},
+		{
+			pbErr: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{CurrentRegions: []*metapb.Region{{
+				Id:          1,
+				StartKey:    []byte{1},
+				EndKey:      []byte{1, 2},
+				RegionEpoch: &metapb.RegionEpoch{ConfVer: 1, Version: 2},
+				Peers:       []*metapb.Peer{{Id: 1}},
+			}}}},
+			res: &ingestAPIError{err: common.ErrKVEpochNotMatch},
+		},
+		// TODO: in which case raft layer will drop message?
+		{pbErr: &errorpb.Error{Message: "raft: proposal dropped"}, res: &ingestAPIError{err: common.ErrKVRaftProposalDropped}},
+		{pbErr: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}, res: &ingestAPIError{err: common.ErrKVServerIsBusy}},
+		{pbErr: &errorpb.Error{RegionNotFound: &errorpb.RegionNotFound{}}, res: &ingestAPIError{err: common.ErrKVRegionNotFound}},
+		// ReadIndexNotReady means the region is changed, we need to restart from region scanning
+		{pbErr: &errorpb.Error{ReadIndexNotReady: &errorpb.ReadIndexNotReady{}}, res: &ingestAPIError{err: common.ErrKVReadIndexNotReady}},
+		// TiKV disk full is not retryable
+		{pbErr: &errorpb.Error{DiskFull: &errorpb.DiskFull{}}, res: &ingestAPIError{err: common.ErrKVDiskFull}},
+		// a general error is retryable from writing
+		{pbErr: &errorpb.Error{StaleCommand: &errorpb.StaleCommand{}}, res: &ingestAPIError{err: common.ErrKVIngestFailed}},
+	}
+
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("case %d", i), func(t *testing.T) {
+			err := convertPBError2Error(job, c.pbErr)
+			require.ErrorIs(t, err, c.res.err)
+			if c.res.newRegion == nil {
+				require.Nil(t, err.newRegion)
+			} else {
+				if kerneltype.IsNextGen() {
+					// it's always nil for nextgen
+					require.Nil(t, err.newRegion)
+				} else {
+					require.EqualValues(t, c.res.newRegion, err.newRegion)
+					require.EqualValues(t, 2, err.newRegion.Region.RegionEpoch.Version)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractRegionFromErrForNextGen(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("only run in next gen")
+	}
+	region := &split.RegionInfo{
+		Leader: &metapb.Peer{Id: 1},
+		Region: &metapb.Region{
+			Id:       1,
+			StartKey: []byte{1},
+			EndKey:   []byte{3},
+			RegionEpoch: &metapb.RegionEpoch{
+				ConfVer: 1,
+				Version: 1,
 			},
 		},
 	}
-
-	clone := job
-	canContinueIngest, err := (&clone).convertStageOnIngestError(resp)
-	require.NoError(t, err)
-	require.False(t, canContinueIngest)
-	require.Equal(t, needRescan, clone.stage)
-	require.Error(t, clone.lastRetryableErr)
-
-	// EpochNotMatch means region is changed, if the new region covers the old, we can restart the writing process.
-	// Otherwise, we should restart from region scanning.
-
-	resp.Error = &errorpb.Error{
-		EpochNotMatch: &errorpb.EpochNotMatch{
-			CurrentRegions: []*metapb.Region{
-				{
-					Id:       1,
-					StartKey: []byte{1},
-					EndKey:   []byte{3},
-					RegionEpoch: &metapb.RegionEpoch{
-						ConfVer: 1,
-						Version: 2,
-					},
-					Peers: []*metapb.Peer{{Id: 1}},
-				},
-			},
+	// we supply it to make sure that the correct SST metas are used when next gen,
+	// this meta is only used for classical kernel, and it resides in the newRegion.
+	metas := []*sst.SSTMeta{
+		{Range: &sst.Range{Start: []byte{1}, End: []byte{2}}},
+		{Range: &sst.Range{Start: []byte{1, 1}, End: []byte{2}}},
+	}
+	job := &regionJob{
+		stage:    wrote,
+		keyRange: engineapi.Range{Start: []byte{1}, End: []byte{3}},
+		region:   region,
+		writeResult: &tikvWriteResult{
+			sstMeta: metas,
 		},
 	}
-	clone = job
-	canContinueIngest, err = (&clone).convertStageOnIngestError(resp)
-	require.NoError(t, err)
-	require.False(t, canContinueIngest)
-	require.Equal(t, regionScanned, clone.stage)
-	require.Nil(t, clone.writeResult)
-	require.Equal(t, uint64(2), clone.region.Region.RegionEpoch.Version)
-	require.Error(t, clone.lastRetryableErr)
 
-	resp.Error = &errorpb.Error{
-		EpochNotMatch: &errorpb.EpochNotMatch{
-			CurrentRegions: []*metapb.Region{
-				{
-					Id:       1,
-					StartKey: []byte{1},
-					EndKey:   []byte{1, 2},
-					RegionEpoch: &metapb.RegionEpoch{
-						ConfVer: 1,
-						Version: 2,
-					},
-					Peers: []*metapb.Peer{{Id: 1}},
-				},
-			},
+	newRegion := &metapb.Region{
+		Id:       1,
+		StartKey: []byte{1},
+		EndKey:   []byte{3},
+		RegionEpoch: &metapb.RegionEpoch{
+			ConfVer: 1,
+			Version: 2,
 		},
+		Peers: []*metapb.Peer{{Id: 1}},
 	}
-	clone = job
-	canContinueIngest, err = (&clone).convertStageOnIngestError(resp)
-	require.NoError(t, err)
-	require.False(t, canContinueIngest)
-	require.Equal(t, needRescan, clone.stage)
-	require.Error(t, clone.lastRetryableErr)
+	require.Nil(t, extractRegionFromErr(job, []*metapb.Region{newRegion}))
+}
 
-	// TODO: in which case raft layer will drop message?
+func TestIngestAPIErrorRetryable(t *testing.T) {
+	require.True(t, common.IsRetryableError(&ingestAPIError{err: common.ErrKVIngestFailed}))
+	require.False(t, common.IsRetryableError(&ingestAPIError{err: common.ErrKVDiskFull}))
+}
 
-	resp.Error = &errorpb.Error{Message: "raft: proposal dropped"}
-	clone = job
-	canContinueIngest, err = (&clone).convertStageOnIngestError(resp)
-	require.NoError(t, err)
-	require.False(t, canContinueIngest)
-	require.Equal(t, needRescan, clone.stage)
-	require.Error(t, clone.lastRetryableErr)
-
-	// ReadIndexNotReady means the region is changed, we need to restart from region scanning
-
-	resp.Error = &errorpb.Error{
-		ReadIndexNotReady: &errorpb.ReadIndexNotReady{
-			Reason: "test",
-		},
+func TestGetNextStageOnIngestError(t *testing.T) {
+	cases := []struct {
+		err    error
+		region *split.RegionInfo
+		stage  jobStageTp
+	}{
+		{err: &net.DNSError{IsTimeout: true}, stage: wrote},
+		{err: &ingestAPIError{err: common.ErrKVNotLeader.GenWithStack("")}, stage: needRescan},
+		{err: &ingestAPIError{err: common.ErrKVEpochNotMatch.GenWithStack("")}, stage: needRescan},
+		{err: &ingestAPIError{err: common.ErrKVEpochNotMatch.GenWithStack(""), newRegion: &split.RegionInfo{}},
+			region: &split.RegionInfo{}, stage: regionScanned},
+		{err: &ingestAPIError{err: common.ErrKVRaftProposalDropped.GenWithStack("")}, stage: needRescan},
+		{err: &ingestAPIError{err: common.ErrKVServerIsBusy.GenWithStack("")}, stage: wrote},
+		{err: &ingestAPIError{err: common.ErrKVRegionNotFound.GenWithStack("")}, stage: needRescan},
+		{err: &ingestAPIError{err: common.ErrKVReadIndexNotReady.GenWithStack("")}, stage: needRescan},
+		// ErrKVDiskFull is not retryable, no need to test it
+		{err: &ingestAPIError{err: common.ErrKVIngestFailed.GenWithStack("")}, stage: regionScanned},
 	}
-	clone = job
-	canContinueIngest, err = (&clone).convertStageOnIngestError(resp)
-	require.NoError(t, err)
-	require.False(t, canContinueIngest)
-	require.Equal(t, needRescan, clone.stage)
-	require.Error(t, clone.lastRetryableErr)
-
-	// TiKV disk full is not retryable
-
-	resp.Error = &errorpb.Error{
-		DiskFull: &errorpb.DiskFull{},
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("case %d", i), func(t *testing.T) {
+			region, stage := getNextStageOnIngestError(c.err)
+			require.Equal(t, c.region, region)
+			require.Equal(t, c.stage, stage)
+		})
 	}
-	clone = job
-	_, err = (&clone).convertStageOnIngestError(resp)
-	require.ErrorContains(t, err, "DiskFull")
-
-	// a general error is retryable from writing
-
-	resp.Error = &errorpb.Error{
-		StaleCommand: &errorpb.StaleCommand{},
-	}
-	clone = job
-	canContinueIngest, err = (&clone).convertStageOnIngestError(resp)
-	require.NoError(t, err)
-	require.False(t, canContinueIngest)
-	require.Equal(t, regionScanned, clone.stage)
-	require.Nil(t, clone.writeResult)
-	require.Error(t, clone.lastRetryableErr)
 }
 
 func TestRegionJobRetryer(t *testing.T) {

@@ -4271,6 +4271,9 @@ commit;
 commit;
 Error 9007 (HY000): Write conflict, <detail> reason=Optimistic [try again later]
 set global tidb_txn_mode=pessimistic;
+select 1 for update;
+1
+1
 drop table if exists t, t1;
 create table t (i int);
 create table t1 (i int);

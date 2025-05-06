@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -142,7 +144,7 @@ func genPartTableStr() (tableDefs []string) {
 }
 
 func createTable(tk *testkit.TestKit) {
-	for i := 0; i < nonPartTabNum; i++ {
+	for i := range nonPartTabNum {
 		tableName := "t" + strconv.Itoa(i)
 		tableDef := genTableStr(tableName)
 		tk.MustExec(tableDef)
@@ -223,7 +225,7 @@ func insertRows(tk *testkit.TestKit) {
 			" (64, 4, 4, 4, 4, 4, 64, 4, 4.0, 4.0, 1114.1111, '2001-03-05', '11:11:14', '2001-01-04 11:11:14', '2001-01-04 11:11:12.123456', 2002, 'dddd', 'dddd', 'dddd', 'aana', 'dddd', 'dddd', 'dddd', 'dddd', 'dddd', 'dddd', 'dddd', 'dddd', '{\"name\": \"Beijing\", \"population\": 107}')",
 		}
 	)
-	for i := 0; i < tableNum; i++ {
+	for i := range tableNum {
 		insStr = "insert into addindex.t" + strconv.Itoa(i) + " (c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28) values"
 		for _, value := range values {
 			insStr := insStr + value
@@ -365,7 +367,7 @@ func checkTableResult(ctx *SuiteContext, tableName string, tkID int) {
 
 // TestOneColFrame test 1 col frame.
 func TestOneColFrame(ctx *SuiteContext, colIDs [][]int, f func(*SuiteContext, int, string, int) error) {
-	for tableID := 0; tableID < ctx.tableNum; tableID++ {
+	for tableID := range ctx.tableNum {
 		tableName := "addindex.t" + strconv.Itoa(tableID)
 		for _, i := range colIDs[tableID] {
 			if ctx.workload != nil {
@@ -399,7 +401,7 @@ func TestOneColFrame(ctx *SuiteContext, colIDs [][]int, f func(*SuiteContext, in
 
 // TestTwoColsFrame test 2 columns frame.
 func TestTwoColsFrame(ctx *SuiteContext, iIDs [][]int, jIDs [][]int, f func(*SuiteContext, int, string, int, int, int) error) {
-	for tableID := 0; tableID < ctx.tableNum; tableID++ {
+	for tableID := range ctx.tableNum {
 		tableName := "addindex.t" + strconv.Itoa(tableID)
 		indexID := 0
 		for _, i := range iIDs[tableID] {
@@ -434,7 +436,7 @@ func TestTwoColsFrame(ctx *SuiteContext, iIDs [][]int, jIDs [][]int, f func(*Sui
 
 // TestOneIndexFrame test 1 index frame.
 func TestOneIndexFrame(ctx *SuiteContext, colID int, f func(*SuiteContext, int, string, int) error) {
-	for tableID := 0; tableID < ctx.tableNum; tableID++ {
+	for tableID := range ctx.tableNum {
 		tableName := "addindex.t" + strconv.Itoa(tableID)
 		if ctx.workload != nil {
 			ctx.workload.start(ctx, tableID, colID)
@@ -567,7 +569,7 @@ func AssertExternalField(t *testing.T, subtaskMeta any) {
 		v = v.Elem()
 	}
 	typ := v.Type()
-	for i := 0; i < v.NumField(); i++ {
+	for i := range v.NumField() {
 		field := typ.Field(i)
 		if field.Tag.Get("external") == "true" {
 			fv := v.Field(i)
@@ -585,4 +587,15 @@ func AssertExternalField(t *testing.T, subtaskMeta any) {
 			}
 		}
 	}
+}
+
+// UpdateTiDBConfig updates the TiDB configuration for the real TiKV test.
+func UpdateTiDBConfig() {
+	// need a real PD
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Path = "127.0.0.1:2379"
+		if kerneltype.IsNextGen() {
+			conf.TiKVWorkerURL = "http://localhost:19000"
+		}
+	})
 }

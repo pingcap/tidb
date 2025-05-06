@@ -161,12 +161,12 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 
 func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 	var allData []string
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		var content []byte
 		keyCnt := 1000
-		for j := 0; j < keyCnt; j++ {
+		for j := range keyCnt {
 			idx := i*keyCnt + j
-			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", idx, idx))...)
+			content = append(content, fmt.Appendf(nil, "%d,test-%d\n", idx, idx)...)
 			allData = append(allData, fmt.Sprintf("%d test-%d", idx, idx))
 		}
 		s.server.CreateObject(fakestorage.Object{
@@ -188,12 +188,12 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 
 func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
 	var allData []string
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		var content []byte
 		keyCnt := 1000
-		for j := 0; j < keyCnt; j++ {
+		for j := range keyCnt {
 			idx := i*keyCnt + j
-			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", idx, idx))...)
+			content = append(content, fmt.Appendf(nil, "%d,test-%d\n", idx, idx)...)
 		}
 		if i == 9 {
 			// add a duplicate key "test-123"

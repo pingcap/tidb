@@ -244,20 +244,6 @@ func split[T any](in []T, groupNum int) [][]T {
 	return ret
 }
 
-func (e *Engine) getAdjustedConcurrency() int {
-	if e.checkHotspot {
-		// estimate we will open at most 8000 files, so if e.dataFiles is small we can
-		// try to concurrently process ranges.
-		adjusted := maxCloudStorageConnections / len(e.dataFiles)
-		if adjusted == 0 {
-			return 1
-		}
-		return min(adjusted, 8)
-	}
-	adjusted := min(e.workerConcurrency, maxCloudStorageConnections/len(e.dataFiles))
-	return max(adjusted, 1)
-}
-
 func getFilesReadConcurrency(
 	ctx context.Context,
 	storage storage.ExternalStorage,
@@ -516,7 +502,7 @@ func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
 // When duplicate detection feature is enabled, the **end key** comes from
 // DupDetectKeyAdapter.Encode or Key.Next(). We try to decode it and check the
 // error.
-func (e Engine) tryDecodeEndKey(key []byte) (decoded []byte, err error) {
+func (e *Engine) tryDecodeEndKey(key []byte) (decoded []byte, err error) {
 	decoded, err = e.keyAdapter.Decode(nil, key)
 	if err == nil {
 		return

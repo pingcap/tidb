@@ -394,7 +394,7 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 			if value.Version > lastFetchTimestamp {
 				err := pq.processTableStats(sctx, value, parameters, lockedTables)
 				if err != nil {
-					statslogutil.StatsLogger().Error(
+					statslogutil.StatsErrVerboseSampleLogger().Error(
 						"Failed to process table stats",
 						zap.Error(err),
 						zap.Int64("tableID", value.PhysicalID),
@@ -410,7 +410,7 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 		}
 		return nil
 	}, statsutil.FlagWrapTxn); err != nil {
-		statslogutil.StatsLogger().Error("Failed to process DML changes", zap.Error(err))
+		statslogutil.StatsErrVerboseSampleLogger().Error("Failed to process DML changes", zap.Error(err))
 	}
 }
 
@@ -454,7 +454,7 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 			// Clean up the job if the table is locked.
 			err := pq.syncFields.inner.delete(job)
 			if err != nil {
-				statslogutil.StatsLogger().Error(
+				statslogutil.StatsErrVerboseSampleLogger().Error(
 					"Failed to delete job from priority queue",
 					zap.Error(err),
 					zap.String("job", job.String()),
@@ -637,13 +637,13 @@ func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 			}
 			err := pq.recreateAndPushJobForTable(sctx, tblInfo.Meta())
 			if err != nil {
-				statslogutil.StatsLogger().Error("Failed to recreate and push job for table", zap.Error(err), zap.Int64("tableID", tableID))
+				statslogutil.StatsErrVerboseSampleLogger().Error("Failed to recreate and push job for table", zap.Error(err), zap.Int64("tableID", tableID))
 				continue
 			}
 		}
 		return nil
 	}, statsutil.FlagWrapTxn); err != nil {
-		statslogutil.StatsLogger().Error("Failed to requeue must retry jobs", zap.Error(err))
+		statslogutil.StatsErrVerboseSampleLogger().Error("Failed to requeue must retry jobs", zap.Error(err))
 	}
 }
 
@@ -680,7 +680,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 				// DDL events should have already cleaned up jobs for dropped tables.
 				err := pq.syncFields.inner.delete(job)
 				if err != nil {
-					statslogutil.StatsLogger().Error("Failed to delete job from priority queue",
+					statslogutil.StatsErrVerboseSampleLogger().Error("Failed to delete job from priority queue",
 						zap.Error(err),
 						zap.String("job", job.String()),
 					)
@@ -691,7 +691,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 			job.SetIndicators(indicators)
 			job.SetWeight(pq.calculator.CalculateWeight(job))
 			if err := pq.syncFields.inner.update(job); err != nil {
-				statslogutil.StatsLogger().Error("Failed to add job to priority queue",
+				statslogutil.StatsErrVerboseSampleLogger().Error("Failed to add job to priority queue",
 					zap.Error(err),
 					zap.String("job", job.String()),
 				)
@@ -699,7 +699,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 		}
 		return nil
 	}, statsutil.FlagWrapTxn); err != nil {
-		statslogutil.StatsLogger().Error("Failed to refresh last analysis duration", zap.Error(err))
+		statslogutil.StatsErrVerboseSampleLogger().Error("Failed to refresh last analysis duration", zap.Error(err))
 	}
 }
 

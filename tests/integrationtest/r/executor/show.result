@@ -669,6 +669,7 @@ found_rows
 from_base64
 from_days
 from_unixtime
+fts_match_word
 ge
 get_format
 get_lock

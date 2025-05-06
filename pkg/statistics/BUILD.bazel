@@ -84,7 +84,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":statistics"],
     flaky = True,
-    shard_count = 38,
+    shard_count = 39,
     deps = [
         "//pkg/config",
         "//pkg/meta/model",
@@ -94,6 +94,7 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics/handle/ddl/testutil",
+        "//pkg/statistics/handle/types",
         "//pkg/testkit",
         "//pkg/testkit/analyzehelper",
         "//pkg/testkit/testdata",

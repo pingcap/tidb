@@ -291,3 +291,36 @@ AAA	BBB	Aamt	Bamt	IFNULL(Tab_C.amt, 0)
 A01	B01	111.00	22.00	22.00
 A02	B02	111.00	NULL	0.00
 set @@sql_mode=default;
+use test;
+drop table if exists test;
+CREATE TABLE `test` (
+`ecif_party_no` varchar(20) DEFAULT NULL,
+`busi_cust_no` varchar(20) DEFAULT NULL,
+`busi_series_cd` varchar(2) DEFAULT NULL,
+`org_belong` varchar(15) DEFAULT NULL,
+`party_no` varchar(20) DEFAULT NULL,
+`rela_status_cd` varchar(2) DEFAULT NULL,
+`rela_status_desc` varchar(20) DEFAULT NULL,
+`created_by` varchar(100) DEFAULT 'ecifdata',
+`created_date` datetime DEFAULT CURRENT_TIMESTAMP,
+`updated_by` varchar(100) DEFAULT 'ecifdata',
+`updated_date` datetime DEFAULT CURRENT_TIMESTAMP,
+`id_tp00_cust_no_rela` varchar(40) NOT NULL DEFAULT uuid(),
+KEY `IX_CUST_RELA_DATE` (`updated_date`),
+KEY `IX_TPCNR_BCN` (`busi_cust_no`),
+KEY `IX_TPCNR_EPN` (`ecif_party_no`),
+KEY `IX_TPCNR_PAN` (`party_no`),
+PRIMARY KEY (`id_tp00_cust_no_rela`) /*T![clustered_index] NONCLUSTERED */
+);
+analyze table test all columns;
+load stats 's/issue_50080.json';
+explain format='brief' select * from test where updated_date > '2023-12-31 23:50:00' and updated_date < '2023-12-31 23:59:59';
+id	estRows	task	access object	operator info
+IndexLookUp	2230.84	root		
+├─IndexRangeScan(Build)	2230.84	cop[tikv]	table:test, index:IX_CUST_RELA_DATE(updated_date)	range:(2023-12-31 23:50:00,2023-12-31 23:59:59), keep order:false
+└─TableRowIDScan(Probe)	2230.84	cop[tikv]	table:test	keep order:false
+explain format='brief' select * from test where updated_date > '2023-12-31 23:50:00' and updated_date < '2024-01-01 00:00:00';
+id	estRows	task	access object	operator info
+IndexLookUp	2234.56	root		
+├─IndexRangeScan(Build)	2234.56	cop[tikv]	table:test, index:IX_CUST_RELA_DATE(updated_date)	range:(2023-12-31 23:50:00,2024-01-01 00:00:00), keep order:false
+└─TableRowIDScan(Probe)	2234.56	cop[tikv]	table:test	keep order:false

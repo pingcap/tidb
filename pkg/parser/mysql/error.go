@@ -38,7 +38,7 @@ func (e *SQLError) Error() string {
 }
 
 // NewErr generates a SQL error, with an error code and default format specifier defined in MySQLErrName.
-func NewErr(errCode uint16, args ...interface{}) *SQLError {
+func NewErr(errCode uint16, args ...any) *SQLError {
 	e := &SQLError{Code: errCode}
 
 	if s, ok := MySQLState[errCode]; ok {
@@ -58,7 +58,7 @@ func NewErr(errCode uint16, args ...interface{}) *SQLError {
 }
 
 // NewErrf creates a SQL error, with an error code and a format specifier.
-func NewErrf(errCode uint16, format string, redactArgPos []int, args ...interface{}) *SQLError {
+func NewErrf(errCode uint16, format string, redactArgPos []int, args ...any) *SQLError {
 	e := &SQLError{Code: errCode}
 
 	if s, ok := MySQLState[errCode]; ok {

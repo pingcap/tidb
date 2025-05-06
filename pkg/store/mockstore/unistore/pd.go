@@ -96,7 +96,7 @@ func (c *pdClient) WatchGlobalConfig(ctx context.Context, configPath string, rev
 				return
 			}
 		}()
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			for k, v := range c.globalConfig {
 				globalConfigWatcherCh <- []pd.GlobalConfigItem{{Name: k, Value: v}}
 			}

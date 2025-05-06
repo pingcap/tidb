@@ -252,26 +252,26 @@ drop table if exists t1;
 drop table if exists t2;
 create table t1(id int);
 create table t2(id int);
-explain SELECT * from t1,t2 where t1.id = t2.id;
+explain format='brief' SELECT * from t1,t2 where t1.id = t2.id;
 id	estRows	task	access object	operator info
-HashJoin_8	12487.50	root		inner join, equal:[eq(bindinfo__bind.t1.id, bindinfo__bind.t2.id)]
-├─TableReader_15(Build)	9990.00	root		data:Selection_14
-│ └─Selection_14	9990.00	cop[tikv]		not(isnull(bindinfo__bind.t2.id))
-│   └─TableFullScan_13	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader_12(Probe)	9990.00	root		data:Selection_11
-  └─Selection_11	9990.00	cop[tikv]		not(isnull(bindinfo__bind.t1.id))
-    └─TableFullScan_10	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-explain SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
+HashJoin	12487.50	root		inner join, equal:[eq(bindinfo__bind.t1.id, bindinfo__bind.t2.id)]
+├─TableReader(Build)	9990.00	root		data:Selection
+│ └─Selection	9990.00	cop[tikv]		not(isnull(bindinfo__bind.t2.id))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	9990.00	root		data:Selection
+  └─Selection	9990.00	cop[tikv]		not(isnull(bindinfo__bind.t1.id))
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='brief' SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
 id	estRows	task	access object	operator info
-MergeJoin_8	12487.50	root		inner join, left key:bindinfo__bind.t1.id, right key:bindinfo__bind.t2.id
-├─Sort_16(Build)	9990.00	root		bindinfo__bind.t2.id
-│ └─TableReader_15	9990.00	root		data:Selection_14
-│   └─Selection_14	9990.00	cop[tikv]		not(isnull(bindinfo__bind.t2.id))
-│     └─TableFullScan_13	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─Sort_12(Probe)	9990.00	root		bindinfo__bind.t1.id
-  └─TableReader_11	9990.00	root		data:Selection_10
-    └─Selection_10	9990.00	cop[tikv]		not(isnull(bindinfo__bind.t1.id))
-      └─TableFullScan_9	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+MergeJoin	12487.50	root		inner join, left key:bindinfo__bind.t1.id, right key:bindinfo__bind.t2.id
+├─Sort(Build)	9990.00	root		bindinfo__bind.t2.id
+│ └─TableReader	9990.00	root		data:Selection
+│   └─Selection	9990.00	cop[tikv]		not(isnull(bindinfo__bind.t2.id))
+│     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Sort(Probe)	9990.00	root		bindinfo__bind.t1.id
+  └─TableReader	9990.00	root		data:Selection
+    └─Selection	9990.00	cop[tikv]		not(isnull(bindinfo__bind.t1.id))
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 begin;
 SELECT * from t1,t2 where t1.id = t2.id;
 id	id

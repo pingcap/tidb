@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -34,7 +35,7 @@ const (
 // Formatter is an io.Writer extended formatter by a fmt.Printf like function Format.
 type Formatter interface {
 	io.Writer
-	Format(format string, args ...interface{}) (n int, errno error)
+	Format(format string, args ...any) (n int, errno error)
 }
 
 type indentFormatter struct {
@@ -82,9 +83,9 @@ func IndentFormatter(w io.Writer, indent string) Formatter {
 	return &indentFormatter{w, []byte(indent), 0, stBOL}
 }
 
-func (f *indentFormatter) format(flat bool, format string, args ...interface{}) (n int, errno error) {
+func (f *indentFormatter) format(flat bool, format string, args ...any) (n int, errno error) {
 	var buf = make([]byte, 0)
-	for i := 0; i < len(format); i++ {
+	for i := range len(format) {
 		c := format[i]
 		switch f.state {
 		case st0:
@@ -113,7 +114,7 @@ func (f *indentFormatter) format(flat bool, format string, args ...interface{}) 
 				f.state = stBOLPERC
 			default:
 				if !flat {
-					for i := 0; i < f.indentLevel; i++ {
+					for range f.indentLevel {
 						buf = append(buf, f.indent...)
 					}
 				}
@@ -130,7 +131,7 @@ func (f *indentFormatter) format(flat bool, format string, args ...interface{}) 
 				f.state = stBOL
 			default:
 				if !flat {
-					for i := 0; i < f.indentLevel; i++ {
+					for range f.indentLevel {
 						buf = append(buf, f.indent...)
 					}
 				}
@@ -161,7 +162,7 @@ func (f *indentFormatter) format(flat bool, format string, args ...interface{}) 
 }
 
 // Format implements Format interface.
-func (f *indentFormatter) Format(format string, args ...interface{}) (n int, errno error) {
+func (f *indentFormatter) Format(format string, args ...any) (n int, errno error) {
 	return f.format(false, format, args...)
 }
 
@@ -187,7 +188,7 @@ func FlatFormatter(w io.Writer) Formatter {
 }
 
 // Format implements Format interface.
-func (f *flatFormatter) Format(format string, args ...interface{}) (n int, errno error) {
+func (f *flatFormatter) Format(format string, args ...any) (n int, errno error) {
 	return (*indentFormatter)(f).format(true, format, args...)
 }
 
@@ -456,7 +457,7 @@ func (ctx *RestoreCtx) WritePlain(plainText string) {
 }
 
 // WritePlainf write the plain text into writer without any handling.
-func (ctx *RestoreCtx) WritePlainf(format string, a ...interface{}) {
+func (ctx *RestoreCtx) WritePlainf(format string, a ...any) {
 	fmt.Fprintf(ctx.In, format, a...)
 }
 
@@ -467,12 +468,7 @@ type CTERestorer struct {
 
 // IsCTETableName returns true if the given tableName comes from CTE.
 func (c *CTERestorer) IsCTETableName(nameL string) bool {
-	for _, n := range c.CTENames {
-		if n == nameL {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.CTENames, nameL)
 }
 
 // RecordCTEName records the CTE name.

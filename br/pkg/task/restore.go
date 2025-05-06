@@ -6,6 +6,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -16,7 +17,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
@@ -43,7 +44,9 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/spf13/cobra"
@@ -71,6 +74,8 @@ const (
 	FlagPDConcurrency = "pd-concurrency"
 	// FlagStatsConcurrency controls concurrency to restore statistic.
 	FlagStatsConcurrency = "stats-concurrency"
+	// FlagAutoAnalyze corresponds to the column `modify_count` of table `mysql.stats_meta`.
+	FlagAutoAnalyze = "auto-analyze"
 	// FlagBatchFlushInterval controls after how long the restore batch would be auto sended.
 	FlagBatchFlushInterval = "batch-flush-interval"
 	// FlagDdlBatchSize controls batch ddl size to create a batch of tables
@@ -169,6 +174,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"(deprecated) concurrency pd-relative operations like split & scatter.")
 	flags.Uint(FlagStatsConcurrency, defaultStatsConcurrency,
 		"concurrency to restore statistic")
+	flags.Bool(FlagAutoAnalyze, true, "trigger tidb analyze priority queue to analyze table")
 	flags.Duration(FlagBatchFlushInterval, defaultBatchFlushInterval,
 		"after how long a restore batch would be auto sent.")
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
@@ -238,6 +244,7 @@ type RestoreConfig struct {
 	LoadStats          bool          `json:"load-stats" toml:"load-stats"`
 	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
 	StatsConcurrency   uint          `json:"stats-concurrency" toml:"stats-concurrency"`
+	AutoAnalyze        bool          `json:"auto-analyze" toml:"auto-analyze"`
 	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
 	// DdlBatchSize use to define the size of batch ddl to create tables
 	DdlBatchSize uint `json:"ddl-batch-size" toml:"ddl-batch-size"`
@@ -401,6 +408,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	cfg.StatsConcurrency, err = flags.GetUint(FlagStatsConcurrency)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagStatsConcurrency)
+	}
+	cfg.AutoAnalyze, err = flags.GetBool(FlagAutoAnalyze)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagAutoAnalyze)
 	}
 	cfg.BatchFlushInterval, err = flags.GetDuration(FlagBatchFlushInterval)
 	if err != nil {
@@ -880,6 +891,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if backupMeta.IsRawKv || backupMeta.IsTxnKv {
+		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
+	}
 	if cfg.CheckRequirements {
 		log.Info("Checking incompatible TiCDC changefeeds before restoring.",
 			logutil.ShortError(err), zap.Uint64("restore-ts", backupMeta.EndVersion))
@@ -934,9 +948,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
-	if client.IsRawKvMode() {
-		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw kv data")
-	}
 	if client.IsIncremental() {
 		// don't support checkpoint for the ddl restore
 		log.Info("the incremental snapshot restore doesn't support checkpoint mode, disable checkpoint.")
@@ -967,12 +978,11 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// filters out db/table/files using filter
-	fileMap, tableMap, dbMap, err := filterRestoreFiles(client, cfg.RestoreConfig)
+	tableMap, dbMap, err := filterRestoreFiles(client, cfg.RestoreConfig)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Info("found items to restore after filtering",
-		zap.Int("files", len(fileMap)),
 		zap.Int("tables", len(tableMap)),
 		zap.Int("db", len(dbMap)))
 
@@ -984,7 +994,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			cfg.logTableHistoryManager,
 			cfg.RestoreConfig,
 			client.GetDatabaseMap(),
-			fileMap,
 			tableMap,
 			dbMap,
 		)
@@ -993,22 +1002,20 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 
 		log.Info("adjusted items to restore",
-			zap.Int("files", len(fileMap)),
 			zap.Int("tables", len(tableMap)),
 			zap.Int("db", len(dbMap)))
 	}
-	files := utils.FlattenValues(fileMap)
 	tables := utils.Values(tableMap)
 	dbs := utils.Values(dbMap)
 
+	archiveSize := metautil.ArchiveTablesSize(tables)
 	if cfg.CheckRequirements && checkpointFirstRun {
 		// after figuring out what files to restore, check if disk has enough space
-		if err := checkDiskSpace(ctx, mgr, files, tables); err != nil {
+		if err := checkDiskSpace(ctx, mgr, tables, archiveSize); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	archiveSize := metautil.ArchiveSize(files)
 	g.Record(summary.RestoreDataSize, archiveSize)
 	//restore from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
 	g.Record("Size", archiveSize)
@@ -1021,27 +1028,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if client.IsFull() && cfg.piTRTaskInfo != nil && cfg.piTRTaskInfo.FullRestoreCheckErr != nil {
 		return cfg.piTRTaskInfo.FullRestoreCheckErr
 	}
-
-	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
-	restoreSchedulersFunc, schedulersConfig, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// need to know whether restore has been completed so can restore schedulers
-	canRestoreSchedulers := false
-	defer func() {
-		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
-		if cfg.UseCheckpoint && !canRestoreSchedulers {
-			log.Info("skip removing pd scheduler for next retry")
-			return
-		}
-		log.Info("start to restore pd scheduler")
-		// run the post-work to avoid being stuck in the import
-		// mode or emptied schedulers.
-		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
-		log.Info("finish restoring pd scheduler")
-	}()
 
 	if isFullRestore(cmdName) {
 		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointFirstRun) {
@@ -1058,7 +1044,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	} else if client.IsFull() && checkpointFirstRun && cfg.CheckRequirements {
 		if err := checkTableExistence(ctx, mgr, tables); err != nil {
-			canRestoreSchedulers = true
 			return errors.Trace(err)
 		}
 	}
@@ -1072,31 +1057,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
 	if err = client.AllocTableIDs(ctx, tables); err != nil {
 		return errors.Trace(err)
-	}
-
-	// reload or register the checkpoint
-	var checkpointSetWithTableID map[int64]map[string]struct{}
-	if cfg.UseCheckpoint {
-		logRestoredTS := uint64(0)
-		if cfg.piTRTaskInfo != nil {
-			logRestoredTS = cfg.piTRTaskInfo.RestoreTS
-		}
-		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(
-			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, checkpointFirstRun)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if restoreSchedulersConfigFromCheckpoint != nil {
-			restoreSchedulersFunc = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
-		}
-		checkpointSetWithTableID = sets
-
-		defer func() {
-			// need to flush the whole checkpoint data so that br can quickly jump to
-			// the log kv restore step when the next retry.
-			log.Info("wait for flush checkpoint...")
-			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !canRestoreSchedulers)
-		}()
 	}
 
 	err = client.InstallPiTRSupport(ctx, snapclient.PiTRCollDep{
@@ -1211,13 +1171,14 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
-	codec := mgr.GetStorage().GetCodec()
-	if len(files) == 0 {
+	anyFileKey := getAnyFileKeyFromTables(tables)
+	if len(anyFileKey) == 0 {
 		log.Info("no files, empty databases and tables are restored")
 		summary.SetSuccessStatus(true)
 		// don't return immediately, wait all pipeline done.
 	} else {
-		oldKeyspace, _, err := tikv.DecodeKey(files[0].GetStartKey(), backupMeta.ApiVersion)
+		codec := mgr.GetStorage().GetCodec()
+		oldKeyspace, _, err := tikv.DecodeKey(anyFileKey, backupMeta.ApiVersion)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1241,6 +1202,100 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			}
 		}
 	}
+
+	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
+	var restoreSchedulersFunc pdutil.UndoFunc
+	var schedulersConfig *pdutil.ClusterConfig
+	if (isFullRestore(cmdName) && !cfg.ExplicitFilter) || client.IsIncremental() {
+		restoreSchedulersFunc, schedulersConfig, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
+	} else {
+		var preAllocRange [2]int64
+		preAllocRange, err = client.GetPreAllocedTableIDRange()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		var tableIDs []int64
+		for _, table := range createdTables {
+			tableIDs = append(tableIDs, table.Table.ID)
+			if table.Table.Partition != nil {
+				for _, p := range table.Table.Partition.Definitions {
+					tableIDs = append(tableIDs, p.ID)
+				}
+			}
+		}
+		keyRange := SortKeyRanges(tableIDs, preAllocRange)
+		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// need to know whether restore has been completed so can restore schedulers
+	canRestoreSchedulers := false
+	defer func() {
+		cancel()
+		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
+		if cfg.UseCheckpoint && !canRestoreSchedulers {
+			log.Info("skip removing pd scheduler for next retry")
+			return
+		}
+		log.Info("start to restore pd scheduler")
+		// run the post-work to avoid being stuck in the import
+		// mode or emptied schedulers.
+		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
+		log.Info("finish restoring pd scheduler")
+	}()
+
+	// reload or register the checkpoint
+	var checkpointSetWithTableID map[int64]map[string]struct{}
+	if cfg.UseCheckpoint {
+		logRestoredTS := uint64(0)
+		if cfg.piTRTaskInfo != nil {
+			logRestoredTS = cfg.piTRTaskInfo.RestoreTS
+		}
+		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(
+			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, checkpointFirstRun)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if restoreSchedulersConfigFromCheckpoint != nil {
+			// The last range rule will be dropped when the last restore quits.
+			restoreSchedulersConfigFromCheckpoint.RuleID = schedulersConfig.RuleID
+			restoreSchedulersFunc = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
+		}
+		checkpointSetWithTableID = sets
+
+		defer func() {
+			// need to flush the whole checkpoint data so that br can quickly jump to
+			// the log kv restore step when the next retry.
+			log.Info("wait for flush checkpoint...")
+			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !canRestoreSchedulers)
+		}()
+	}
+
+	failpoint.Inject("sleep_for_check_scheduler_status", func(val failpoint.Value) {
+		fileName, ok := val.(string)
+		func() {
+			if !ok {
+				return
+			}
+			_, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+			if osErr != nil {
+				log.Warn("failed to create file", zap.Error(osErr))
+				return
+			}
+		}()
+		for {
+			_, statErr := os.Stat(fileName)
+			if os.IsNotExist(statErr) {
+				break
+			} else if statErr != nil {
+				log.Warn("error checking file", zap.Error(statErr))
+				break
+			}
+			time.Sleep(1 * time.Second)
+		}
+	})
 
 	if cfg.tiflashRecorder != nil {
 		for _, createdTable := range createdTables {
@@ -1269,7 +1324,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		Online:       cfg.Online,
 
 		CreatedTables:            createdTables,
-		AllFiles:                 files,
 		CheckpointSetWithTableID: checkpointSetWithTableID,
 
 		Glue: g,
@@ -1288,6 +1342,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		LogProgress:         cfg.LogProgress,
 		ChecksumConcurrency: cfg.ChecksumConcurrency,
 		StatsConcurrency:    cfg.StatsConcurrency,
+		AutoAnalyze:         cfg.AutoAnalyze,
 
 		KvClient:   mgr.GetStorage().GetClient(),
 		ExtStorage: s,
@@ -1348,19 +1403,15 @@ func getStores(ctx context.Context, mgr *conn.Mgr) (stores *http.StoresInfo, err
 	return stores, nil
 }
 
-func EstimateTikvUsage(files []*backuppb.File, replicaCnt uint64, storeCnt uint64) uint64 {
+func EstimateTikvUsage(archiveSize uint64, replicaCnt uint64, storeCnt uint64) uint64 {
 	if storeCnt == 0 {
 		return 0
 	}
 	if replicaCnt > storeCnt {
 		replicaCnt = storeCnt
 	}
-	totalSize := uint64(0)
-	for _, file := range files {
-		totalSize += file.GetSize_()
-	}
-	log.Info("estimate tikv usage", zap.Uint64("total size", totalSize), zap.Uint64("replicaCnt", replicaCnt), zap.Uint64("store count", storeCnt))
-	return totalSize * replicaCnt / storeCnt
+	log.Info("estimate tikv usage", zap.Uint64("total size", archiveSize), zap.Uint64("replicaCnt", replicaCnt), zap.Uint64("store count", storeCnt))
+	return archiveSize * replicaCnt / storeCnt
 }
 
 func EstimateTiflashUsage(tables []*metautil.Table, storeCnt uint64) uint64 {
@@ -1372,10 +1423,7 @@ func EstimateTiflashUsage(tables []*metautil.Table, storeCnt uint64) uint64 {
 		if table.Info.TiFlashReplica == nil || table.Info.TiFlashReplica.Count <= 0 {
 			continue
 		}
-		tableBytes := uint64(0)
-		for _, file := range table.Files {
-			tableBytes += file.GetSize_()
-		}
+		tableBytes := metautil.ArchiveTableSize(table)
 		tiflashTotal += tableBytes * table.Info.TiFlashReplica.Count
 	}
 	log.Info("estimate tiflash usage", zap.Uint64("total size", tiflashTotal), zap.Uint64("store count", storeCnt))
@@ -1397,7 +1445,7 @@ func CheckStoreSpace(necessary uint64, store *http.StoreInfo) error {
 	return nil
 }
 
-func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, tables []*metautil.Table) error {
+func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, archiveSize uint64) error {
 	maxReplica, err := getMaxReplica(ctx, mgr)
 	if err != nil {
 		return errors.Trace(err)
@@ -1428,7 +1476,7 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 	// The preserve rate for tikv is quite accurate, while rate for tiflash is a
 	// number calculated from tpcc testing with variable data sizes.  1.4 is a
 	// relative conservative value.
-	tikvUsage := preserve(EstimateTikvUsage(files, maxReplica, tikvCnt), 1.1)
+	tikvUsage := preserve(EstimateTikvUsage(archiveSize, maxReplica, tikvCnt), 1.1)
 	tiflashUsage := preserve(EstimateTiflashUsage(tables, tiflashCnt), 1.4)
 	log.Info("preserved disk space", zap.Uint64("tikv", tikvUsage), zap.Uint64("tiflash", tiflashUsage))
 
@@ -1474,12 +1522,24 @@ func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.
 	return nil
 }
 
+func getAnyFileKeyFromTables(tables []*metautil.Table) []byte {
+	for _, table := range tables {
+		for _, files := range table.FilesOfPhysicals {
+			for _, f := range files {
+				if len(f.StartKey) > 0 {
+					return f.StartKey
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // filterRestoreFiles filters out dbs and tables.
 func filterRestoreFiles(
 	client *snapclient.SnapClient,
 	cfg *RestoreConfig,
-) (fileMap map[int64][]*backuppb.File, tableMap map[int64]*metautil.Table, dbMap map[int64]*metautil.Database, err error) {
-	fileMap = make(map[int64][]*backuppb.File)
+) (tableMap map[int64]*metautil.Table, dbMap map[int64]*metautil.Database, err error) {
 	tableMap = make(map[int64]*metautil.Table)
 	dbMap = make(map[int64]*metautil.Database)
 
@@ -1499,9 +1559,6 @@ func filterRestoreFiles(
 
 			// Add table to tableMap using table ID as key
 			tableMap[table.Info.ID] = table
-
-			// Add files to fileMap using table ID as key
-			fileMap[table.Info.ID] = table.Files
 		}
 	}
 
@@ -1539,7 +1596,6 @@ func handleTableRenames(
 	cfg *RestoreConfig,
 	existingTableMap map[int64]*metautil.Table,
 	existingDBMap map[int64]*metautil.Database,
-	existingFileMap map[int64][]*backuppb.File,
 	pitrIdTracker *utils.PiTRIdTracker,
 ) {
 	for tableId, dbIDAndTableName := range history.GetTableHistory() {
@@ -1587,11 +1643,9 @@ func handleTableRenames(
 						// track start as well as it might be in different db
 						pitrIdTracker.TrackTableId(start.DbID, tableId)
 						existingTableMap[table.Info.ID] = table
-						existingFileMap[table.Info.ID] = table.Files
 					} else {
 						// need to remove this table
 						delete(existingTableMap, table.Info.ID)
-						delete(existingFileMap, table.Info.ID)
 					}
 					break
 				}
@@ -1682,7 +1736,6 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	logBackupTableHistory *stream.LogBackupTableHistoryManager,
 	cfg *RestoreConfig,
 	snapshotDBMap map[int64]*metautil.Database,
-	fileMap map[int64][]*backuppb.File,
 	tableMap map[int64]*metautil.Table,
 	dbMap map[int64]*metautil.Database,
 ) (err error) {
@@ -1699,7 +1752,7 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	}
 
 	// first handle table renames to determine which tables we need
-	handleTableRenames(logBackupTableHistory, snapshotDBMap, cfg, tableMap, dbMap, fileMap, piTRIdTracker)
+	handleTableRenames(logBackupTableHistory, snapshotDBMap, cfg, tableMap, dbMap, piTRIdTracker)
 
 	// handle partition exchange after all tables are tracked
 	if err := handlePartitionExchanges(logBackupTableHistory, snapshotDBMap, cfg); err != nil {
@@ -1917,6 +1970,88 @@ func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (ds
 	}
 
 	return
+}
+
+func SortKeyRanges(ids []int64, preAlloced [2]int64) [][2]kv.Key {
+	if len(ids) == 0 {
+		return nil
+	}
+	slices.Sort(ids)
+	idRanges := calSortedTableIds(ids)
+
+	if preAlloced[0] < preAlloced[1] {
+		overlap := false
+		for _, r := range idRanges {
+			if r[0] < preAlloced[1] && r[1] > preAlloced[0] {
+				overlap = true
+				break
+			}
+		}
+		if overlap {
+			idRanges = append(idRanges, []int64{preAlloced[0], preAlloced[1]})
+		}
+	}
+
+	mergedRanges := mergeIntervals(idRanges)
+
+	keyRanges := make([][2]kv.Key, 0, len(mergedRanges))
+	for _, r := range mergedRanges {
+		startKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(r[0]))
+		endKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(r[1]))
+		keyRanges = append(keyRanges, [2]kv.Key{startKey, endKey})
+	}
+	return keyRanges
+}
+
+func calSortedTableIds(ids []int64) [][]int64 {
+	if len(ids) == 0 {
+		return [][]int64{}
+	}
+
+	var idRanges [][]int64
+
+	start := ids[0]
+	end := start + 1
+
+	for i := 1; i < len(ids); i++ {
+		if ids[i] == ids[i-1]+1 {
+			end = ids[i] + 1
+		} else {
+			idRanges = append(idRanges, []int64{start, end})
+			start = ids[i]
+			end = start + 1
+		}
+	}
+	idRanges = append(idRanges, []int64{start, end})
+
+	return idRanges
+}
+
+func mergeIntervals(intervals [][]int64) [][]int64 {
+	if len(intervals) == 0 {
+		return nil
+	}
+	slices.SortFunc(intervals, func(a, b []int64) int {
+		if a[0] < b[0] {
+			return -1
+		} else if a[0] > b[0] {
+			return 1
+		}
+		return 0
+	})
+	merged := [][]int64{intervals[0]}
+	for i := 1; i < len(intervals); i++ {
+		last := merged[len(merged)-1]
+		current := intervals[i]
+		if current[0] <= last[1] {
+			if current[1] > last[1] {
+				last[1] = current[1]
+			}
+		} else {
+			merged = append(merged, current)
+		}
+	}
+	return merged
 }
 
 type DDLJobFilterRule func(ddlJob *model.Job) bool

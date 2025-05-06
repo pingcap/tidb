@@ -114,7 +114,7 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 		}()
 	}
 	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
-	s.indexBlockSize = getAdjustedIndexBlockSize(s.perIndexKVMemSizePerCon)
+	s.indexBlockSize = external.GetAdjustedBlockSize(s.perIndexKVMemSizePerCon)
 	s.logger.Info("KV writer memory buf info",
 		zap.String("data-buf-limit", units.BytesSize(float64(s.dataKVMemSizePerCon))),
 		zap.String("per-index-buf-limit", units.BytesSize(float64(s.perIndexKVMemSizePerCon))),

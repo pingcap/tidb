@@ -50,11 +50,12 @@ http_archive(
 
 http_archive(
     name = "bazel_gazelle",
-    sha256 = "5d80e62a70314f39cc764c1c3eaa800c5936c9f1ea91625006227ce4d20cd086",
+    sha256 = "7c40b746387cd0c9a4d5bb0b2035abd134b3f7511015710a5ee5e07591008dde",
     urls = [
-        "http://bazel-cache.pingcap.net:8080/bazel-contrib/bazel-gazelle/releases/download/v0.42.0/bazel-gazelle-v0.42.0.tar.gz",
-        "https://github.com/bazel-contrib/bazel-gazelle/releases/download/v0.42.0/bazel-gazelle-v0.42.0.tar.gz",
-        "http://ats.apps.svc/bazel-contrib/bazel-gazelle/releases/download/v0.42.0/bazel-gazelle-v0.42.0.tar.gz",
+        "http://bazel-cache.pingcap.net:8080/bazel-contrib/bazel-gazelle/releases/download/v0.43.0/bazel-gazelle-v0.43.0.tar.gz",
+        "https://github.com/bazel-contrib/bazel-gazelle/releases/download/v0.43.0/bazel-gazelle-v0.43.0.tar.gz",
+        "http://ats.apps.svc/bazel-contrib/bazel-gazelle/releases/download/v0.43.0/bazel-gazelle-v0.43.0.tar.gz",
+        "https://cache.hawkingrei.com/bazel-contrib/bazel-gazelle/releases/download/v0.43.0/bazel-gazelle-v0.43.0.tar.gz",
     ],
 )
 

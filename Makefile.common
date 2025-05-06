@@ -29,6 +29,7 @@ export PATH := $(path_to_add):$(PATH)
 
 GO              := GO111MODULE=on go
 BUILD_FLAG	:= -tags codes
+REAL_TIKV_TEST_TAGS := deadlock,intest
 GOEXPERIMENT=
 ifeq ("${ENABLE_FIPS}", "1")
 	BUILD_FLAG = -tags codes,boringcrypto
@@ -37,6 +38,7 @@ endif
 
 ifeq ("${NEXT_GEN}", "1")
 	BUILD_FLAG := $(BUILD_FLAG),nextgen
+	REAL_TIKV_TEST_TAGS := $(REAL_TIKV_TEST_TAGS),nextgen
 endif
 
 GOBUILD         := $(GOEXPERIMENT) $(GO) build $(BUILD_FLAG)

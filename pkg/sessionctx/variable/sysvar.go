@@ -29,6 +29,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -2023,6 +2024,10 @@ var defaultSysVars = []*SysVar{
 		s.CorrelationExpFactor = int(TidbOptInt64(val, vardef.DefOptCorrelationExpFactor))
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptRiskEqSkewRatio, Value: strconv.FormatFloat(vardef.DefOptRiskEqSkewRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
+		s.RiskEqSkewRatio = tidbOptFloat64(val, vardef.DefOptRiskEqSkewRatio)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptCPUFactor, Value: strconv.FormatFloat(vardef.DefOptCPUFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
 		s.cpuFactor = tidbOptFloat64(val, vardef.DefOptCPUFactor)
 		return nil
@@ -3048,10 +3053,18 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableResourceControlStrictMode.Load()), nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPessimisticTransactionFairLocking, Value: BoolToOnOff(vardef.DefTiDBPessimisticTransactionFairLocking), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.PessimisticTransactionFairLocking = TiDBOptOn(val)
-		return nil
-	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPessimisticTransactionFairLocking, Value: BoolToOnOff(vardef.DefTiDBPessimisticTransactionFairLocking), Type: vardef.TypeBool,
+		Validation: func(_ *SessionVars, val string, _ string, _ vardef.ScopeFlag) (string, error) {
+			if kerneltype.IsNextGen() && TiDBOptOn(val) {
+				return vardef.Off, errNotSupportedInNextGen.FastGenByArgs(vardef.TiDBPessimisticTransactionFairLocking)
+			}
+			return val, nil
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.PessimisticTransactionFairLocking = TiDBOptOn(val)
+			return nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnablePlanCacheForParamLimit, Value: BoolToOnOff(vardef.DefTiDBEnablePlanCacheForParamLimit), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnablePlanCacheForParamLimit = TiDBOptOn(val)
 		return nil
@@ -3586,7 +3599,11 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 	case vardef.TiDBEnableMutationChecker:
 		varVal = vardef.On
 	case vardef.TiDBPessimisticTransactionFairLocking:
-		varVal = vardef.On
+		if kerneltype.IsNextGen() {
+			varVal = vardef.Off
+		} else {
+			varVal = vardef.On
+		}
 	}
 	return varVal
 }

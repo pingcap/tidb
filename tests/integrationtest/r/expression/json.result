@@ -873,3 +873,5 @@ select json_search('{"h": "i"}', 'all', 'i', '\\', NULL);
 json_search('{"h": "i"}', 'all', 'i', '\\', NULL)
 NULL
 set tidb_enable_vectorized_expression = default;
+select json_memberof();
+Error 1582 (42000): Incorrect parameter count in the call to native function 'json_memberof'

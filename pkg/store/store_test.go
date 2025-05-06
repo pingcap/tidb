@@ -59,7 +59,7 @@ func mustDel(t *testing.T, txn kv.Transaction) {
 }
 
 func encodeInt(n int) []byte {
-	return []byte(fmt.Sprintf("%010d", n))
+	return fmt.Appendf(nil, "%010d", n)
 }
 
 func decodeInt(s []byte) int {
@@ -504,7 +504,7 @@ func TestConditionIfNotExist(t *testing.T) {
 	b := []byte("1")
 	var wg sync.WaitGroup
 	wg.Add(cnt)
-	for i := 0; i < cnt; i++ {
+	for range cnt {
 		go func() {
 			defer wg.Done()
 			txn, err := store.Begin()
@@ -551,7 +551,7 @@ func TestConditionIfEqual(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	for i := 0; i < cnt; i++ {
+	for range cnt {
 		go func() {
 			defer wg.Done()
 			// Use txn1/err1 instead of txn/err is
@@ -649,10 +649,10 @@ func TestIsolationInc(t *testing.T) {
 	var wg sync.WaitGroup
 
 	wg.Add(threadCnt)
-	for i := 0; i < threadCnt; i++ {
+	for range threadCnt {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				var id int64
 				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 				err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
@@ -694,18 +694,18 @@ func TestIsolationMultiInc(t *testing.T) {
 	keyCnt := 4
 
 	keys := make([][]byte, 0, keyCnt)
-	for i := 0; i < keyCnt; i++ {
-		keys = append(keys, []byte(fmt.Sprintf("test_key_%d", i)))
+	for i := range keyCnt {
+		keys = append(keys, fmt.Appendf(nil, "test_key_%d", i))
 	}
 
 	var wg sync.WaitGroup
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	wg.Add(threadCnt)
-	for i := 0; i < threadCnt; i++ {
+	for range threadCnt {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < incCnt; j++ {
+			for range incCnt {
 				err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 					for _, key := range keys {
 						_, err1 := kv.IncInt64(txn, key, 1)

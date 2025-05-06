@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -3239,9 +3240,9 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a, b))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`, `b`))) USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX ((lower(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((LOWER(`a`))) USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a), a)) USING HNSW COMMENT 'a'", false, ""},
-		{"ALTER TABLE t ADD VECTOR INDEX (a, (VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", false, ""},
-		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) USING HYPO COMMENT 'a'", false, ""},
-		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
+		{"ALTER TABLE t ADD VECTOR INDEX (a, (VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX(`a`, (VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
+		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) USING HYPO COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) USING HYPO COMMENT 'a'"},
+		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX IF NOT EXISTS ((VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX IF NOT EXISTS((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD COLUMNAR (a) USING INVERTED COMMENT 'a'", false, ""},
@@ -3249,10 +3250,10 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD COLUMNAR (a) USING HASH COMMENT 'a'", false, ""},
 		{"ALTER TABLE t ADD COLUMNAR (a, b) USING INVERTED COMMENT 'a'", false, ""},
 		{"ALTER TABLE t ADD COLUMNAR KEY (a, b) USING INVERTED COMMENT 'a'", false, ""},
-		{"ALTER TABLE t ADD COLUMNAR INDEX (a, b) USING INVERTED COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD COLUMNAR INDEX (a, b) USING INVERTED COMMENT 'a'", true, "ALTER TABLE `t` ADD COLUMNAR INDEX(`a`, `b`) USING INVERTED COMMENT 'a'"},
 		{"ALTER TABLE t ADD COLUMNAR INDEX (a) USING INVERTED COMMENT 'a'", true, "ALTER TABLE `t` ADD COLUMNAR INDEX(`a`) USING INVERTED COMMENT 'a'"},
-		{"ALTER TABLE t ADD COLUMNAR INDEX (a) USING HYPO COMMENT 'a'", false, ""},
-		{"ALTER TABLE t ADD COLUMNAR INDEX ((a - 1)) USING HYPO COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD COLUMNAR INDEX (a) USING HYPO COMMENT 'a'", true, "ALTER TABLE `t` ADD COLUMNAR INDEX(`a`) USING HYPO COMMENT 'a'"},
+		{"ALTER TABLE t ADD COLUMNAR INDEX ((a - 1)) USING HYPO COMMENT 'a'", true, "ALTER TABLE `t` ADD COLUMNAR INDEX((`a`-1)) USING HYPO COMMENT 'a'"},
 		{"ALTER TABLE t ADD COLUMNAR INDEX IF NOT EXISTS (a) USING INVERTED COMMENT 'a'", true, "ALTER TABLE `t` ADD COLUMNAR INDEX IF NOT EXISTS(`a`) USING INVERTED COMMENT 'a'"},
 		{"ALTER TABLE t ADD CONSTRAINT fk_t2_id FOREIGN KEY (t2_id) REFERENCES t(id)", true, "ALTER TABLE `t` ADD CONSTRAINT `fk_t2_id` FOREIGN KEY (`t2_id`) REFERENCES `t`(`id`)"},
 		{"ALTER TABLE t ADD CONSTRAINT fk_t2_id FOREIGN KEY IF NOT EXISTS (t2_id) REFERENCES t(id)", true, "ALTER TABLE `t` ADD CONSTRAINT `fk_t2_id` FOREIGN KEY IF NOT EXISTS (`t2_id`) REFERENCES `t`(`id`)"},
@@ -3426,23 +3427,22 @@ func TestDDL(t *testing.T) {
 		{"CREATE INDEX idx ON t ( a ) USING HASH INVISIBLE", true, "CREATE INDEX `idx` ON `t` (`a`) USING HASH INVISIBLE"},
 
 		// For create vector index statement
-		{"CREATE VECTOR INDEX idx ON t (a) USING HNSW ", false, ""},
-		{"CREATE VECTOR INDEX idx ON t (a, b) USING HNSW ", false, ""},
-		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)))", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
-		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a))) TYPE BTREE", false, ""},
+		{"CREATE VECTOR INDEX idx ON t (a) USING HNSW ", true, "CREATE VECTOR INDEX `idx` ON `t` (`a`) USING HNSW"},
+		{"CREATE VECTOR INDEX idx ON t (a, b) USING HNSW ", true, "CREATE VECTOR INDEX `idx` ON `t` (`a`, `b`) USING HNSW"},
+		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)))", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`)))"},
+		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a))) TYPE BTREE", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING BTREE"},
 		{"CREATE VECTOR INDEX idx ON t USING HNSW ((VEC_COSINE_DISTANCE(a)))", false, ""},
 		{"CREATE VECTOR idx ON t ((VEC_COSINE_DISTANCE(a))) USING HNSW", false, ""},
-		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)), a) USING HNSW", false, ""},
-		{"CREATE VECTOR INDEX idx ON t (a, (VEC_COSINE_DISTANCE(a))) USING HNSW", false, ""},
-		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)), a) USING HNSW", false, ""},
+		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)), a) USING HNSW", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`)), `a`) USING HNSW"},
+		{"CREATE VECTOR INDEX idx ON t (a, (VEC_COSINE_DISTANCE(a))) USING HNSW", true, "CREATE VECTOR INDEX `idx` ON `t` (`a`, (VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
 		{"CREATE VECTOR KEY idx ON t ((VEC_COSINE_DISTANCE(a))) USING HNSW", false, ""},
 		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a))) USING HNSW", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
 		{"CREATE VECTOR INDEX IF NOT EXISTS idx ON t ((VEC_COSINE_DISTANCE(a))) USING HNSW", true, "CREATE VECTOR INDEX IF NOT EXISTS `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
 		{"CREATE VECTOR INDEX IF NOT EXISTS idx ON t ((VEC_COSINE_DISTANCE(a))) TYPE HNSW", true, "CREATE VECTOR INDEX IF NOT EXISTS `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
 		{"CREATE VECTOR INDEX ident TYPE HNSW ON d_n.t_n ((VEC_COSINE_DISTANCE(a)))", true, "CREATE VECTOR INDEX `ident` ON `d_n`.`t_n` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
 		{"CREATE VECTOR INDEX idx USING HNSW ON t ((VEC_COSINE_DISTANCE(a)))", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
-		{"CREATE VECTOR INDEX ident ON d_n.t_n ( ident , ident ASC ) TYPE HNSW", false, ""},
-		{"CREATE UNIQUE INDEX ident USING HNSW ON d_n.t_n ( ident , ident ASC )", false, ""},
+		{"CREATE VECTOR INDEX ident ON d_n.t_n ( ident , ident ASC ) TYPE HNSW", true, "CREATE VECTOR INDEX `ident` ON `d_n`.`t_n` (`ident`, `ident`) USING HNSW"},
+		{"CREATE UNIQUE INDEX ident USING HNSW ON d_n.t_n ( ident , ident ASC )", true, "CREATE UNIQUE INDEX `ident` ON `d_n`.`t_n` (`ident`, `ident`) USING HNSW"},
 
 		// For create index with algorithm
 		{"CREATE INDEX idx ON t ( a ) ALGORITHM = DEFAULT", true, "CREATE INDEX `idx` ON `t` (`a`)"},
@@ -3900,12 +3900,12 @@ func TestDDL(t *testing.T) {
 		{"alter table t add primary key (`a`, `b`) nonclustered", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`, `b`) NONCLUSTERED"},
 
 		// for create table with vector index
-		{"create table t(a int, b vector(3), vector index(b) USING HNSW);", false, ""},
-		{"create table t(a int, b vector(3), vector index(a, b) USING HNSW);", false, ""},
-		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))));", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((VEC_COSINE_DISTANCE(`b`))) USING HNSW)"},
-		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HASH);", false, ""},
-		{"create table t(a int, b vector(3), vector index(a, (VEC_COSINE_DISTANCE(b))) USING HNSW);", false, ""},
-		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b)), a) USING HNSW);", false, ""},
+		{"create table t(a int, b vector(3), vector index(b) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX(`b`) USING HNSW)"},
+		{"create table t(a int, b vector(3), vector index(a, b) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX(`a`, `b`) USING HNSW)"},
+		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))));", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((VEC_COSINE_DISTANCE(`b`))))"},
+		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HASH);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((VEC_COSINE_DISTANCE(`b`))) USING HASH)"},
+		{"create table t(a int, b vector(3), vector index(a, (VEC_COSINE_DISTANCE(b))) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX(`a`, (VEC_COSINE_DISTANCE(`b`))) USING HNSW)"},
+		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b)), a) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((VEC_COSINE_DISTANCE(`b`)), `a`) USING HNSW)"},
 		{"create table t(a int, b vector(3), vector index(VEC_COSINE_DISTANCE(b)) USING HNSW);", false, ""},
 		{"create table t(a int, b vector(3), vector key((VEC_COSINE_DISTANCE(b))) TYPE HNSW);", false, ""},
 		{"create table t(a int, b vector(3), vector index((b+1)) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((`b`+1)) USING HNSW)"},
@@ -7012,7 +7012,7 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 
 			for i, option := range col.Options {
 				if option.Tp == 0 && option.Expr == nil && !option.Stored && option.Refer == nil {
-					col.Options = append(col.Options[:i], col.Options[i+1:]...)
+					col.Options = slices.Delete(col.Options, i, i+1)
 				}
 			}
 		}
@@ -7861,6 +7861,153 @@ func TestVector(t *testing.T) {
 		{"CREATE TABLE t (a VECTOR<DOUBLE>)", false, ""},
 		{"CREATE TABLE t (a VECTOR<ABC>)", false, ""},
 		{"CREATE TABLE t (a VECTOR(5)<FLOAT>)", false, ""},
+	}
+
+	RunTest(t, table, false)
+}
+
+func TestSecondaryEngineAttribute(t *testing.T) {
+	table := []testCase{
+		// Valid Partition-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'," +
+				"PARTITION p1 VALUES LESS THAN (20) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value2\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT) PARTITION BY RANGE (`id`) (" +
+				"PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}'," +
+				"PARTITION `p1` VALUES LESS THAN (20) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value2\"}')",
+		},
+
+		// Valid Table-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'",
+			true,
+			"CREATE TABLE `t` (`id` INT) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}'",
+		},
+
+		// Valid Table-level and Partition-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}' PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"partition_value\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}' PARTITION BY RANGE (`id`) (" +
+				"PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"partition_value\"}')",
+		},
+
+		// Valid Column-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}')",
+		},
+
+		// Valid: Table-level with tablespace option SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'",
+			true,
+			"CREATE TABLE `t` (`id` INT) TABLESPACE = `ts1` SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}'",
+		},
+
+		// Valid: Index SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT,INDEX idx (id) INVISIBLE SECONDARY_ENGINE_ATTRIBUTE='{\"key1\":\"value1\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT,INDEX `idx`(`id`) INVISIBLE SECONDARY_ENGINE_ATTRIBUTE = '{\"key1\":\"value1\"}')",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Partition-level
+		{
+			"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE=)",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Table-level
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE=",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Column-level
+		{
+			"CREATE TABLE t (id INT SECONDARY_ENGINE_ATTRIBUTE=)",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE in Table-level with tablespace option
+		{
+			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE=",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Index-level
+		{
+			"CREATE TABLE t (id INT, INDEX idx (id) SECONDARY_ENGINE_ATTRIBUTE=)",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE at Partition-level
+		{
+			"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE)",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE at Table-level
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE at Column-level
+		{
+			"CREATE TABLE t (id INT SECONDARY_ENGINE_ATTRIBUTE)",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE in Table-level with tablespace option
+		{
+			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE in Index-level
+		{
+			"CREATE TABLE t (id INT, INDEX idx (id) SECONDARY_ENGINE_ATTRIBUTE)",
+			false,
+			"",
+		},
+
+		// CREATE INDEX syntax for SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE INDEX i ON t (a) SECONDARY_ENGINE_ATTRIBUTE = '{}'",
+			true,
+			"CREATE INDEX `i` ON `t` (`a`) SECONDARY_ENGINE_ATTRIBUTE = '{}'",
+		},
+
+		// CREATE INDEX syntax for SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE INDEX i ON t (a) SECONDARY_ENGINE_ATTRIBUTE '{}'",
+			true,
+			"CREATE INDEX `i` ON `t` (`a`) SECONDARY_ENGINE_ATTRIBUTE = '{}'",
+		},
+
+		// Invalid CREATE INDEX syntax for SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE INDEX i ON t (a) SECONDARY_ENGINE_ATTRIBUTE",
+			false,
+			"",
+		},
 	}
 
 	RunTest(t, table, false)

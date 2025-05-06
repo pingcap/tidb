@@ -2886,7 +2886,7 @@ func (do *Domain) autoAnalyzeWorker() {
 	analyzeTicker := time.NewTicker(do.statsLease)
 	defer func() {
 		analyzeTicker.Stop()
-		logutil.BgLogger().Info("autoAnalyzeWorker exited.")
+		statslogutil.StatsLogger().Info("autoAnalyzeWorker exited.")
 	}()
 	for {
 		select {

@@ -1,7 +1,7 @@
 # TestUpdateProjEliminate
 drop table if exists t;
 create table t(a int, b int);
-explain update t t1, (select distinct b from t) t2 set t1.b = t2.b;
+explain format='brief' update t t1, (select distinct b from t) t2 set t1.b = t2.b;
 drop table if exists tb1, tb2;
 create table tb1(a int, b int, primary key(a));
 create table tb2 (a int, b int, c int, d datetime, primary key(c),key idx_u(a));
@@ -32,7 +32,7 @@ create table t2 (
 );
 ## Test when both tables are empty, EXPLAIN ANALYZE for IndexLookUp would not panic.
 --disable_result_log
-explain analyze select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4;
+explain analyze format='brief' select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4;
 --enable_result_log
 
 # TestExplainCostTrace
@@ -60,5 +60,5 @@ insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
 insert into t2 values (2, 22), (3, 33), (5, 55), (233, 2), (333, 3), (3434, 5);
 analyze table t1, t2 all columns;
 --replace_regex /:[ ]?[.0-9]+[nµms]*/:<num>/ /time.*loops.*cop_task.*/time.*loops.*cop_task.*/ /, scan_detail: {.*}// /[.0-9]+ ((KB)|(Bytes))/<num>/
-explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1;
+explain analyze format='brief' select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1;
 set sql_mode=default;

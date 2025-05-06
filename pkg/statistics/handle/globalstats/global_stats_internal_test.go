@@ -424,7 +424,7 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	// construct some special data distribution
 	vals := make([]string, 0, 1000)
 	listVals := make([]string, 0, 1000)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		if i < 10 {
 			// for hash and range partition, 1% of records are in [0, 100)
 			vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(100), rand.Intn(100)))

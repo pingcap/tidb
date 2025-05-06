@@ -357,7 +357,7 @@ func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt in
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 
 	tk.MustExec("create table t(a int primary key, b int, index idx(b));")
-	for i := 0; i < regionCnt; i++ {
+	for i := range regionCnt {
 		tk.MustExec("insert into t values (?, ?)", i*10000, i)
 	}
 	maxRowID := regionCnt * 10000

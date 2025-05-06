@@ -82,6 +82,7 @@ func genConfig(
 	} else {
 		cfg.DupeDetectEnabled = false
 	}
+	cfg.TiKVWorkerURL = tidb.GetGlobalConfig().TiKVWorkerURL
 
 	return cfg
 }
