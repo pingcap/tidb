@@ -539,6 +539,8 @@ const (
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
 
+	// TiDBEnablePointGetCache is used to control whether to enable the point get cache for special scenario.
+	TiDBEnablePointGetCache = "tidb_enable_point_get_cache"
 	// TiDBScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	TiDBScatterRegion = "tidb_scatter_region"
 
@@ -1371,6 +1373,7 @@ const (
 	DefTiDBRestrictedReadOnly               = false
 	DefTiDBSuperReadOnly                    = false
 	DefTiDBShardAllocateStep                = math.MaxInt64
+	DefTiDBPointGetCache                    = false
 	DefTiDBEnableTelemetry                  = false
 	DefTiDBEnableParallelApply              = false
 	DefTiDBPartitionPruneMode               = "dynamic"
