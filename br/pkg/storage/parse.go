@@ -154,7 +154,7 @@ func ExtractQueryParameters(u *url.URL, options any) {
 	ty := o.Type()
 	numFields := ty.NumField()
 	tagToField := make(map[string]field, numFields)
-	for i := 0; i < numFields; i++ {
+	for i := range numFields {
 		f := ty.Field(i)
 		tag := f.Tag.Get("json")
 		tagToField[tag] = field{index: i, kind: f.Type.Kind()}
