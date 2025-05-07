@@ -358,21 +358,21 @@ with recursive cte1 as (select c1 - 1 c1 from t1 union all select c1 - 1 c1 from
 Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(cte.t1.c1 - 1)'
 drop table if exists t;
 create table t(a int, b int, key (b));
-desc with cte as (select * from t) select * from cte;
+desc format='brief' with cte as (select * from t) select * from cte;
 id	estRows	task	access object	operator info
-TableReader_9	10000.00	root		data:TableFullScan_8
-└─TableFullScan_8	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	10000.00	root		data:TableFullScan
+└─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 create SESSION binding for with cte as (select * from t) select * from cte using with cte as (select * from t use index(b)) select * from cte;
-desc with cte as (select * from t) select * from cte;
+desc format='brief' with cte as (select * from t) select * from cte;
 id	estRows	task	access object	operator info
-IndexLookUp_10	10000.00	root		
-├─IndexFullScan_8(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
-└─TableRowIDScan_9(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-desc with cte as (select * from t use index()) select * from cte;
+IndexLookUp	10000.00	root		
+├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc format='brief' with cte as (select * from t use index()) select * from cte;
 id	estRows	task	access object	operator info
-IndexLookUp_10	10000.00	root		
-├─IndexFullScan_8(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
-└─TableRowIDScan_9(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp	10000.00	root		
+├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t1, tpk;
 create table t1(c1 int);
 insert into t1 values(1), (2), (1), (2);
@@ -1060,7 +1060,7 @@ VALUES
 ('20230628', 'CFETS_MID', 'Mid', 'USD/CNY', 'USD', 'CNY',
 7.0, 'Source A', 'Unit A', 'Region A', '2023-06-28 15:00:00', '20230627',
 6.9, 'user_001', CURRENT_TIMESTAMP, 'Exchange rate on 2023-06-28');
-desc WITH date_table AS (
+desc format='brief' WITH date_table AS (
 SELECT
 d.col_1 AS date,
 (SELECT MAX(col_1)
@@ -1127,66 +1127,66 @@ SELECT col_4
 FROM product_detail
 ) a;
 id	estRows	task	access object	operator info
-Union_249	199600.20	root		
-├─Projection_250	99800.10	root		cte1.table_c.col_4->Column#418
-│ └─CTEFullScan_251	99800.10	root	CTE:product_detail	data:CTE_4
-└─Projection_252	99800.10	root		cte1.table_c.col_4->Column#418
-  └─CTEFullScan_253	99800.10	root	CTE:product_detail	data:CTE_4
+Union	199600.20	root		
+├─Projection	99800.10	root		cte1.table_c.col_4->Column#418
+│ └─CTEFullScan	99800.10	root	CTE:product_detail	data:CTE_4
+└─Projection	99800.10	root		cte1.table_c.col_4->Column#418
+  └─CTEFullScan	99800.10	root	CTE:product_detail	data:CTE_4
 CTE_4	99800.10	root		Non-Recursive CTE
-└─Projection_208(Seed Part)	99800.10	root		cte1.table_c.col_4, 3集合->Column#413
-  └─HashJoin_215	99800.10	root		left outer join, left side:HashJoin_223, equal:[eq(cte1.table_c.col_4, cte1.table_c.col_4) eq(Column#390, cte1.table_c.col_1)]
-    ├─TableReader_243(Build)	9980.01	root		data:Selection_242
-    │ └─Selection_242	9980.01	cop[tikv]		not(isnull(cte1.table_c.col_1)), not(isnull(cte1.table_c.col_4))
-    │   └─TableFullScan_241	10000.00	cop[tikv]	table:a	keep order:false, stats:pseudo
-    └─HashJoin_223(Probe)	80000.00	root		CARTESIAN left outer join, left side:HashAgg_229
-      ├─CTEFullScan_233(Build)	10.00	root	CTE:date_table AS dt	data:CTE_0
-      └─HashAgg_229(Probe)	8000.00	root		group by:cte1.table_c.col_3, cte1.table_c.col_4, funcs:firstrow(cte1.table_c.col_4)->cte1.table_c.col_4
-        └─TableReader_230	8000.00	root		data:HashAgg_225
-          └─HashAgg_225	8000.00	cop[tikv]		group by:cte1.table_c.col_3, cte1.table_c.col_4, 
-            └─TableFullScan_228	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─Projection(Seed Part)	99800.10	root		cte1.table_c.col_4, 3集合->Column#413
+  └─HashJoin	99800.10	root		left outer join, left side:HashJoin, equal:[eq(cte1.table_c.col_4, cte1.table_c.col_4) eq(Column#390, cte1.table_c.col_1)]
+    ├─TableReader(Build)	9980.01	root		data:Selection
+    │ └─Selection	9980.01	cop[tikv]		not(isnull(cte1.table_c.col_1)), not(isnull(cte1.table_c.col_4))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:a	keep order:false, stats:pseudo
+    └─HashJoin(Probe)	80000.00	root		CARTESIAN left outer join, left side:HashAgg
+      ├─CTEFullScan(Build)	10.00	root	CTE:date_table AS dt	data:CTE_0
+      └─HashAgg(Probe)	8000.00	root		group by:cte1.table_c.col_3, cte1.table_c.col_4, funcs:firstrow(cte1.table_c.col_4)->cte1.table_c.col_4
+        └─TableReader	8000.00	root		data:HashAgg
+          └─HashAgg	8000.00	cop[tikv]		group by:cte1.table_c.col_3, cte1.table_c.col_4, 
+            └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 CTE_0	10.00	root		Non-Recursive CTE
-└─Apply_95(Seed Part)	10.00	root		CARTESIAN left outer join, left side:Apply_97
-  ├─Apply_97(Build)	10.00	root		CARTESIAN left outer join, left side:Apply_99
-  │ ├─Apply_99(Build)	10.00	root		CARTESIAN left outer join, left side:Apply_101
-  │ │ ├─Apply_101(Build)	10.00	root		CARTESIAN left outer join, left side:TableReader_104
-  │ │ │ ├─TableReader_104(Build)	10.00	root		data:Selection_103
-  │ │ │ │ └─Selection_103	10.00	cop[tikv]		eq(cte1.table_d.col_1, 20240628)
-  │ │ │ │   └─TableFullScan_102	10000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
-  │ │ │ └─StreamAgg_106(Probe)	10.00	root		funcs:max(cte1.table_c.col_1)->Column#159
-  │ │ │   └─TopN_109	10.00	root		cte1.table_c.col_1:desc, offset:0, count:1
-  │ │ │     └─HashJoin_120	63936.00	root		semi join, left side:Projection_121, equal:[eq(Column#423, Column#424)]
-  │ │ │       ├─Projection_127(Build)	80000.00	root		cast(cte1.table_d.col_1, double BINARY)->Column#424
-  │ │ │       │ └─TableReader_130	80000.00	root		data:Selection_129
-  │ │ │       │   └─Selection_129	80000.00	cop[tikv]		eq(cast(cte1.table_d.col_2, double BINARY), 1)
-  │ │ │       │     └─TableFullScan_128	100000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
-  │ │ │       └─Projection_121(Probe)	79920.00	root		cte1.table_c.col_1, cast(cte1.table_c.col_1, double BINARY)->Column#423
-  │ │ │         └─IndexReader_124	79920.00	root		index:Selection_123
-  │ │ │           └─Selection_123	79920.00	cop[tikv]		le(cte1.table_c.col_1, concat(cast(year(cast(date_sub(cte1.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))
-  │ │ │             └─IndexFullScan_122	99900.00	cop[tikv]	table:a, index:index_col_1_3(col_1, col_3)	keep order:false, stats:pseudo
-  │ │ └─StreamAgg_142(Probe)	10.00	root		funcs:max(cte1.table_a.col_1)->Column#208
-  │ │   └─TopN_145	10.00	root		cte1.table_a.col_1:desc, offset:0, count:1
-  │ │     └─HashJoin_156	63936.00	root		semi join, left side:Projection_157, equal:[eq(Column#429, Column#430)]
-  │ │       ├─Projection_163(Build)	80000.00	root		cast(cte1.table_d.col_1, double BINARY)->Column#430
-  │ │       │ └─TableReader_166	80000.00	root		data:Selection_165
-  │ │       │   └─Selection_165	80000.00	cop[tikv]		eq(cast(cte1.table_d.col_2, double BINARY), 1)
-  │ │       │     └─TableFullScan_164	100000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
-  │ │       └─Projection_157(Probe)	79920.00	root		cte1.table_a.col_1, cast(cte1.table_a.col_1, double BINARY)->Column#429
-  │ │         └─IndexReader_160	79920.00	root		index:Selection_159
-  │ │           └─Selection_159	79920.00	cop[tikv]		le(cte1.table_a.col_1, concat(cast(year(cast(date_sub(cte1.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))
-  │ │             └─IndexFullScan_158	99900.00	cop[tikv]	table:a, index:index_col_1(col_1)	keep order:false, stats:pseudo
-  │ └─StreamAgg_178(Probe)	10.00	root		funcs:max(cte1.table_c.col_1)->Column#230
-  │   └─Limit_182	10.00	root		offset:0, count:1
-  │     └─IndexReader_191	10.00	root		index:Limit_190
-  │       └─Limit_190	10.00	cop[tikv]		offset:0, count:1
-  │         └─Selection_189	10.00	cop[tikv]		le(cast(cte1.table_c.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
-  │           └─IndexFullScan_188	12.50	cop[tikv]	table:table_c, index:index_col_1_3(col_1, col_3)	keep order:true, desc, stats:pseudo
-  └─StreamAgg_193(Probe)	10.00	root		funcs:max(cte1.table_a.col_1)->Column#254
-    └─Limit_197	10.00	root		offset:0, count:1
-      └─IndexReader_206	10.00	root		index:Limit_205
-        └─Limit_205	10.00	cop[tikv]		offset:0, count:1
-          └─Selection_204	10.00	cop[tikv]		le(cast(cte1.table_a.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
-            └─IndexFullScan_203	12.50	cop[tikv]	table:table_a, index:index_col_1(col_1)	keep order:true, desc, stats:pseudo
-desc WITH date_table AS (
+└─Apply(Seed Part)	10.00	root		CARTESIAN left outer join, left side:Apply
+  ├─Apply(Build)	10.00	root		CARTESIAN left outer join, left side:Apply
+  │ ├─Apply(Build)	10.00	root		CARTESIAN left outer join, left side:Apply
+  │ │ ├─Apply(Build)	10.00	root		CARTESIAN left outer join, left side:TableReader
+  │ │ │ ├─TableReader(Build)	10.00	root		data:Selection
+  │ │ │ │ └─Selection	10.00	cop[tikv]		eq(cte1.table_d.col_1, 20240628)
+  │ │ │ │   └─TableFullScan	10000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
+  │ │ │ └─StreamAgg(Probe)	10.00	root		funcs:max(cte1.table_c.col_1)->Column#159
+  │ │ │   └─TopN	10.00	root		cte1.table_c.col_1:desc, offset:0, count:1
+  │ │ │     └─HashJoin	63936.00	root		semi join, left side:Projection, equal:[eq(Column#423, Column#424)]
+  │ │ │       ├─Projection(Build)	80000.00	root		cast(cte1.table_d.col_1, double BINARY)->Column#424
+  │ │ │       │ └─TableReader	80000.00	root		data:Selection
+  │ │ │       │   └─Selection	80000.00	cop[tikv]		eq(cast(cte1.table_d.col_2, double BINARY), 1)
+  │ │ │       │     └─TableFullScan	100000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
+  │ │ │       └─Projection(Probe)	79920.00	root		cte1.table_c.col_1, cast(cte1.table_c.col_1, double BINARY)->Column#423
+  │ │ │         └─IndexReader	79920.00	root		index:Selection
+  │ │ │           └─Selection	79920.00	cop[tikv]		le(cte1.table_c.col_1, concat(cast(year(cast(date_sub(cte1.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))
+  │ │ │             └─IndexFullScan	99900.00	cop[tikv]	table:a, index:index_col_1_3(col_1, col_3)	keep order:false, stats:pseudo
+  │ │ └─StreamAgg(Probe)	10.00	root		funcs:max(cte1.table_a.col_1)->Column#208
+  │ │   └─TopN	10.00	root		cte1.table_a.col_1:desc, offset:0, count:1
+  │ │     └─HashJoin	63936.00	root		semi join, left side:Projection, equal:[eq(Column#429, Column#430)]
+  │ │       ├─Projection(Build)	80000.00	root		cast(cte1.table_d.col_1, double BINARY)->Column#430
+  │ │       │ └─TableReader	80000.00	root		data:Selection
+  │ │       │   └─Selection	80000.00	cop[tikv]		eq(cast(cte1.table_d.col_2, double BINARY), 1)
+  │ │       │     └─TableFullScan	100000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
+  │ │       └─Projection(Probe)	79920.00	root		cte1.table_a.col_1, cast(cte1.table_a.col_1, double BINARY)->Column#429
+  │ │         └─IndexReader	79920.00	root		index:Selection
+  │ │           └─Selection	79920.00	cop[tikv]		le(cte1.table_a.col_1, concat(cast(year(cast(date_sub(cte1.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))
+  │ │             └─IndexFullScan	99900.00	cop[tikv]	table:a, index:index_col_1(col_1)	keep order:false, stats:pseudo
+  │ └─StreamAgg(Probe)	10.00	root		funcs:max(cte1.table_c.col_1)->Column#230
+  │   └─Limit	10.00	root		offset:0, count:1
+  │     └─IndexReader	10.00	root		index:Limit
+  │       └─Limit	10.00	cop[tikv]		offset:0, count:1
+  │         └─Selection	10.00	cop[tikv]		le(cast(cte1.table_c.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
+  │           └─IndexFullScan	12.50	cop[tikv]	table:table_c, index:index_col_1_3(col_1, col_3)	keep order:true, desc, stats:pseudo
+  └─StreamAgg(Probe)	10.00	root		funcs:max(cte1.table_a.col_1)->Column#254
+    └─Limit	10.00	root		offset:0, count:1
+      └─IndexReader	10.00	root		index:Limit
+        └─Limit	10.00	cop[tikv]		offset:0, count:1
+          └─Selection	10.00	cop[tikv]		le(cast(cte1.table_a.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
+            └─IndexFullScan	12.50	cop[tikv]	table:table_a, index:index_col_1(col_1)	keep order:true, desc, stats:pseudo
+desc format='brief' WITH date_table AS (
 SELECT
 d.col_1 AS date,
 (SELECT MAX(col_1)
@@ -1253,65 +1253,65 @@ SELECT col_4
 FROM product_detail
 ) a;
 id	estRows	task	access object	operator info
-Union_251	199600.20	root		
-├─Projection_252	99800.10	root		cte1.table_c.col_4->Column#418
-│ └─CTEFullScan_253	99800.10	root	CTE:product_detail	data:CTE_4
-└─Projection_254	99800.10	root		cte1.table_c.col_4->Column#418
-  └─CTEFullScan_255	99800.10	root	CTE:product_detail	data:CTE_4
+Union	199600.20	root		
+├─Projection	99800.10	root		cte1.table_c.col_4->Column#418
+│ └─CTEFullScan	99800.10	root	CTE:product_detail	data:CTE_4
+└─Projection	99800.10	root		cte1.table_c.col_4->Column#418
+  └─CTEFullScan	99800.10	root	CTE:product_detail	data:CTE_4
 CTE_4	99800.10	root		Non-Recursive CTE
-└─Projection_210(Seed Part)	99800.10	root		cte1.table_c.col_4, 3集合->Column#413
-  └─HashJoin_217	99800.10	root		left outer join, left side:HashJoin_225, equal:[eq(cte1.table_c.col_4, cte1.table_c.col_4) eq(Column#390, cte1.table_c.col_1)]
-    ├─TableReader_245(Build)	9980.01	root		data:Selection_244
-    │ └─Selection_244	9980.01	cop[tikv]		not(isnull(cte1.table_c.col_1)), not(isnull(cte1.table_c.col_4))
-    │   └─TableFullScan_243	10000.00	cop[tikv]	table:a	keep order:false, stats:pseudo
-    └─HashJoin_225(Probe)	80000.00	root		CARTESIAN left outer join, left side:HashAgg_231
-      ├─CTEFullScan_235(Build)	10.00	root	CTE:date_table AS dt	data:CTE_0
-      └─HashAgg_231(Probe)	8000.00	root		group by:cte1.table_c.col_3, cte1.table_c.col_4, funcs:firstrow(cte1.table_c.col_4)->cte1.table_c.col_4
-        └─TableReader_232	8000.00	root		data:HashAgg_227
-          └─HashAgg_227	8000.00	cop[tikv]		group by:cte1.table_c.col_3, cte1.table_c.col_4, 
-            └─TableFullScan_230	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─Projection(Seed Part)	99800.10	root		cte1.table_c.col_4, 3集合->Column#413
+  └─HashJoin	99800.10	root		left outer join, left side:HashJoin, equal:[eq(cte1.table_c.col_4, cte1.table_c.col_4) eq(Column#390, cte1.table_c.col_1)]
+    ├─TableReader(Build)	9980.01	root		data:Selection
+    │ └─Selection	9980.01	cop[tikv]		not(isnull(cte1.table_c.col_1)), not(isnull(cte1.table_c.col_4))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:a	keep order:false, stats:pseudo
+    └─HashJoin(Probe)	80000.00	root		CARTESIAN left outer join, left side:HashAgg
+      ├─CTEFullScan(Build)	10.00	root	CTE:date_table AS dt	data:CTE_0
+      └─HashAgg(Probe)	8000.00	root		group by:cte1.table_c.col_3, cte1.table_c.col_4, funcs:firstrow(cte1.table_c.col_4)->cte1.table_c.col_4
+        └─TableReader	8000.00	root		data:HashAgg
+          └─HashAgg	8000.00	cop[tikv]		group by:cte1.table_c.col_3, cte1.table_c.col_4, 
+            └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 CTE_0	10.00	root		Non-Recursive CTE
-└─Apply_95(Seed Part)	10.00	root		CARTESIAN left outer join, left side:Apply_97
-  ├─Apply_97(Build)	10.00	root		CARTESIAN left outer join, left side:Apply_99
-  │ ├─Apply_99(Build)	10.00	root		CARTESIAN left outer join, left side:Apply_101
-  │ │ ├─Apply_101(Build)	10.00	root		CARTESIAN left outer join, left side:TableReader_104
-  │ │ │ ├─TableReader_104(Build)	10.00	root		data:Selection_103
-  │ │ │ │ └─Selection_103	10.00	cop[tikv]		eq(cte1.table_d.col_1, 20240628)
-  │ │ │ │   └─TableFullScan_102	10000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
-  │ │ │ └─StreamAgg_106(Probe)	10.00	root		funcs:max(cte1.table_c.col_1)->Column#159
-  │ │ │   └─TopN_109	10.00	root		cte1.table_c.col_1:desc, offset:0, count:1
-  │ │ │     └─HashJoin_120	63936.00	root		semi join, left side:Projection_122, equal:[eq(Column#423, Column#424)]
-  │ │ │       ├─Projection_128(Build)	80000.00	root		cast(cte1.table_d.col_1, double BINARY)->Column#424
-  │ │ │       │ └─TableReader_131	80000.00	root		data:Selection_130
-  │ │ │       │   └─Selection_130	80000.00	cop[tikv]		eq(cast(cte1.table_d.col_2, double BINARY), 1)
-  │ │ │       │     └─TableFullScan_129	100000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
-  │ │ │       └─Projection_122(Probe)	79920.00	root		cte1.table_c.col_1, cast(cte1.table_c.col_1, double BINARY)->Column#423
-  │ │ │         └─IndexReader_125	79920.00	root		index:Selection_124
-  │ │ │           └─Selection_124	79920.00	cop[tikv]		le(cte1.table_c.col_1, concat(cast(year(cast(date_sub(cte1.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))
-  │ │ │             └─IndexFullScan_123	99900.00	cop[tikv]	table:a, index:index_col_1_3(col_1, col_3)	keep order:false, stats:pseudo
-  │ │ └─StreamAgg_143(Probe)	10.00	root		funcs:max(cte1.table_a.col_1)->Column#208
-  │ │   └─TopN_146	10.00	root		cte1.table_a.col_1:desc, offset:0, count:1
-  │ │     └─HashJoin_157	63936.00	root		semi join, left side:Projection_159, equal:[eq(Column#429, Column#430)]
-  │ │       ├─Projection_165(Build)	80000.00	root		cast(cte1.table_d.col_1, double BINARY)->Column#430
-  │ │       │ └─TableReader_168	80000.00	root		data:Selection_167
-  │ │       │   └─Selection_167	80000.00	cop[tikv]		eq(cast(cte1.table_d.col_2, double BINARY), 1)
-  │ │       │     └─TableFullScan_166	100000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
-  │ │       └─Projection_159(Probe)	79920.00	root		cte1.table_a.col_1, cast(cte1.table_a.col_1, double BINARY)->Column#429
-  │ │         └─IndexReader_162	79920.00	root		index:Selection_161
-  │ │           └─Selection_161	79920.00	cop[tikv]		le(cte1.table_a.col_1, concat(cast(year(cast(date_sub(cte1.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))
-  │ │             └─IndexFullScan_160	99900.00	cop[tikv]	table:a, index:index_col_1(col_1)	keep order:false, stats:pseudo
-  │ └─StreamAgg_180(Probe)	10.00	root		funcs:max(cte1.table_c.col_1)->Column#230
-  │   └─Limit_184	10.00	root		offset:0, count:1
-  │     └─IndexReader_193	10.00	root		index:Limit_192
-  │       └─Limit_192	10.00	cop[tikv]		offset:0, count:1
-  │         └─Selection_191	10.00	cop[tikv]		le(cast(cte1.table_c.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
-  │           └─IndexFullScan_190	12.50	cop[tikv]	table:table_c, index:index_col_1_3(col_1, col_3)	keep order:true, desc, stats:pseudo
-  └─StreamAgg_195(Probe)	10.00	root		funcs:max(cte1.table_a.col_1)->Column#254
-    └─Limit_199	10.00	root		offset:0, count:1
-      └─IndexReader_208	10.00	root		index:Limit_207
-        └─Limit_207	10.00	cop[tikv]		offset:0, count:1
-          └─Selection_206	10.00	cop[tikv]		le(cast(cte1.table_a.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
-            └─IndexFullScan_205	12.50	cop[tikv]	table:table_a, index:index_col_1(col_1)	keep order:true, desc, stats:pseudo
+└─Apply(Seed Part)	10.00	root		CARTESIAN left outer join, left side:Apply
+  ├─Apply(Build)	10.00	root		CARTESIAN left outer join, left side:Apply
+  │ ├─Apply(Build)	10.00	root		CARTESIAN left outer join, left side:Apply
+  │ │ ├─Apply(Build)	10.00	root		CARTESIAN left outer join, left side:TableReader
+  │ │ │ ├─TableReader(Build)	10.00	root		data:Selection
+  │ │ │ │ └─Selection	10.00	cop[tikv]		eq(cte1.table_d.col_1, 20240628)
+  │ │ │ │   └─TableFullScan	10000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
+  │ │ │ └─StreamAgg(Probe)	10.00	root		funcs:max(cte1.table_c.col_1)->Column#159
+  │ │ │   └─TopN	10.00	root		cte1.table_c.col_1:desc, offset:0, count:1
+  │ │ │     └─HashJoin	63936.00	root		semi join, left side:Projection, equal:[eq(Column#423, Column#424)]
+  │ │ │       ├─Projection(Build)	80000.00	root		cast(cte1.table_d.col_1, double BINARY)->Column#424
+  │ │ │       │ └─TableReader	80000.00	root		data:Selection
+  │ │ │       │   └─Selection	80000.00	cop[tikv]		eq(cast(cte1.table_d.col_2, double BINARY), 1)
+  │ │ │       │     └─TableFullScan	100000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
+  │ │ │       └─Projection(Probe)	79920.00	root		cte1.table_c.col_1, cast(cte1.table_c.col_1, double BINARY)->Column#423
+  │ │ │         └─IndexReader	79920.00	root		index:Selection
+  │ │ │           └─Selection	79920.00	cop[tikv]		le(cte1.table_c.col_1, concat(cast(year(cast(date_sub(cte1.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))
+  │ │ │             └─IndexFullScan	99900.00	cop[tikv]	table:a, index:index_col_1_3(col_1, col_3)	keep order:false, stats:pseudo
+  │ │ └─StreamAgg(Probe)	10.00	root		funcs:max(cte1.table_a.col_1)->Column#208
+  │ │   └─TopN	10.00	root		cte1.table_a.col_1:desc, offset:0, count:1
+  │ │     └─HashJoin	63936.00	root		semi join, left side:Projection, equal:[eq(Column#429, Column#430)]
+  │ │       ├─Projection(Build)	80000.00	root		cast(cte1.table_d.col_1, double BINARY)->Column#430
+  │ │       │ └─TableReader	80000.00	root		data:Selection
+  │ │       │   └─Selection	80000.00	cop[tikv]		eq(cast(cte1.table_d.col_2, double BINARY), 1)
+  │ │       │     └─TableFullScan	100000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
+  │ │       └─Projection(Probe)	79920.00	root		cte1.table_a.col_1, cast(cte1.table_a.col_1, double BINARY)->Column#429
+  │ │         └─IndexReader	79920.00	root		index:Selection
+  │ │           └─Selection	79920.00	cop[tikv]		le(cte1.table_a.col_1, concat(cast(year(cast(date_sub(cte1.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))
+  │ │             └─IndexFullScan	99900.00	cop[tikv]	table:a, index:index_col_1(col_1)	keep order:false, stats:pseudo
+  │ └─StreamAgg(Probe)	10.00	root		funcs:max(cte1.table_c.col_1)->Column#230
+  │   └─Limit	10.00	root		offset:0, count:1
+  │     └─IndexReader	10.00	root		index:Limit
+  │       └─Limit	10.00	cop[tikv]		offset:0, count:1
+  │         └─Selection	10.00	cop[tikv]		le(cast(cte1.table_c.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
+  │           └─IndexFullScan	12.50	cop[tikv]	table:table_c, index:index_col_1_3(col_1, col_3)	keep order:true, desc, stats:pseudo
+  └─StreamAgg(Probe)	10.00	root		funcs:max(cte1.table_a.col_1)->Column#254
+    └─Limit	10.00	root		offset:0, count:1
+      └─IndexReader	10.00	root		index:Limit
+        └─Limit	10.00	cop[tikv]		offset:0, count:1
+          └─Selection	10.00	cop[tikv]		le(cast(cte1.table_a.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
+            └─IndexFullScan	12.50	cop[tikv]	table:table_a, index:index_col_1(col_1)	keep order:true, desc, stats:pseudo
 WITH date_table AS (
 SELECT
 d.col_1 AS date,
