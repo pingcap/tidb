@@ -8,7 +8,11 @@ go_test(
         "logical_mem_table_predicate_extractor_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 16,
+=======
+    shard_count = 37,
+>>>>>>> 15c9cb797a6 (planner: fix wrong TopN's ByItem with expression.ScalarFunction when to PushDownTopN (#60822))
     deps = [
         "//pkg/domain",
         "//pkg/expression",
