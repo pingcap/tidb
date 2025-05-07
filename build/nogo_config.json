@@ -356,10 +356,12 @@
       "/cgo/": "no need to vet cgo code"
     },
     "only_files": {
+      "//br/": "br code",
       "//cmd/": "cmd code",
       "//dumpling": "dumpling code",
       "pkg/autoid_service/": "autoid_service code",
       "pkg/bindinfo/": "bindinfo code",
+      "pkg/br/": "br code",
       "pkg/distsql/": "distsql code",
       "pkg/domain/": "domain code",
       "pkg/expression/": "expression code",
@@ -376,6 +378,7 @@
       "pkg/plugin/": "plugin code",
       "pkg/privileges/": "privileges code",
       "pkg/resourcegroup/": "resourcegroup code",
+      "pkg/resourcemanager/": "resourcemanager code",
       "pkg/server/": "server code",
       "pkg/statistics": "pkg/statistics code",
       "pkg/store/": "store code",

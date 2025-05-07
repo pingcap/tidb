@@ -1344,7 +1344,7 @@ func (rc *LogClient) RestoreBatchMetaKVFiles(
 	}
 
 	updateStats(kvCount, size)
-	for i := 0; i < len(files); i++ {
+	for range files {
 		progressInc()
 	}
 	return filteredOutKvEntries, nil
@@ -1898,10 +1898,7 @@ func (rc *LogClient) saveIDMap(
 	}
 	replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restored_ts, upstream_cluster_id, segment_id, id_map) VALUES (%?, %?, %?, %?);"
 	for startIdx, segmentId := 0, 0; startIdx < len(data); segmentId += 1 {
-		endIdx := startIdx + PITRIdMapBlockSize
-		if endIdx > len(data) {
-			endIdx = len(data)
-		}
+		endIdx := min(startIdx+PITRIdMapBlockSize, len(data))
 		err := rc.unsafeSession.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreTS, rc.upstreamClusterID, segmentId, data[startIdx:endIdx])
 		if err != nil {
 			return errors.Trace(err)
