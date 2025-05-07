@@ -379,6 +379,8 @@
       "pkg/statistics": "pkg/statistics code",
       "pkg/store/": "store code",
       "pkg/structure/": "structure code",
+      "pkg/table": "pkg/table code",
+      "pkg/tablecodec": "pkg/tablecodec code",
       "pkg/testkit/": "testkit code",
       "pkg/timer/": "timer code",
       "pkg/ttl/": "ttl code",
