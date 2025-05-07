@@ -169,10 +169,7 @@ func mergeOverlappingFilesInternal(
 		SetOnCloseFunc(onClose).
 		SetOnFlushFunc(onFlush).
 		BuildOneFile(store, newFilePrefix, writerID)
-	err = writer.Init(ctx, partSize)
-	if err != nil {
-		return nil
-	}
+	writer.InitPartSizeAndLogger(ctx, partSize)
 	defer func() {
 		err2 := writer.Close(ctx)
 		if err2 == nil {
