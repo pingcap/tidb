@@ -217,22 +217,16 @@ func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *
 			}
 			substitutedExprs = append(substitutedExprs, substituted)
 		}
-		pushDownTopNByItems := make([]*util.ByItems, 0, len(topN.ByItems))
 		for i, by := range topN.ByItems {
-			expr := substitutedExprs[i]
-			pushDownTopNByItems = append(pushDownTopNByItems, &util.ByItems{
-				Expr: expr,
-				Desc: by.Desc,
-			})
+			by.Expr = substitutedExprs[i]
 		}
 		// remove meaningless constant sort items.
-		for i := len(pushDownTopNByItems) - 1; i >= 0; i-- {
-			switch pushDownTopNByItems[i].Expr.(type) {
+		for i := len(topN.ByItems) - 1; i >= 0; i-- {
+			switch topN.ByItems[i].Expr.(type) {
 			case *expression.Constant, *expression.CorrelatedColumn:
-				pushDownTopNByItems = slices.Delete(pushDownTopNByItems, i, i+1)
+				topN.ByItems = slices.Delete(topN.ByItems, i, i+1)
 			}
 		}
-		topN.ByItems = pushDownTopNByItems
 		p.Children()[0] = p.Children()[0].PushDownTopN(topN, opt)
 		return p
 	}
