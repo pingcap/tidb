@@ -260,7 +260,7 @@ func TestInvalidRanges(t *testing.T) {
 func benchmarkMergeRanges(b *testing.B, filesCount int) {
 	files := make([]*backuppb.File, 0)
 	fb := fileBulder{}
-	for i := 0; i < filesCount; i++ {
+	for range filesCount {
 		files = append(files, fb.build(1, 0, 1, 1, 1)...)
 	}
 	var err error
