@@ -25,6 +25,7 @@ import (
 	"math/bits"
 	"reflect"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -399,16 +400,29 @@ func (bj BinaryJSON) marshalArrayTo(buf []byte) ([]byte, error) {
 }
 
 func (bj BinaryJSON) marshalObjTo(buf []byte) ([]byte, error) {
+	keynrs := make(map[string]int, 0)
+	keys := make([]string, 0)
+
 	elemCount := int(jsonEndian.Uint32(bj.Value))
-	buf = append(buf, '{')
 	for i := 0; i < elemCount; i++ {
+		key := string(bj.objectGetKey(i))
+		keys = append(keys, key)
+		keynrs[key] = i
+	}
+
+	sort.Slice(keys, func(i, j int) bool {
+		return len(keys[i]) < len(keys[j])
+	})
+
+	buf = append(buf, '{')
+	for i, key := range keys {
 		if i != 0 {
 			buf = append(buf, ", "...)
 		}
-		buf = jsonMarshalStringTo(buf, bj.objectGetKey(i))
+		buf = jsonMarshalStringTo(buf, []byte(key))
 		buf = append(buf, ": "...)
 		var err error
-		buf, err = bj.objectGetVal(i).marshalTo(buf)
+		buf, err = bj.objectGetVal(keynrs[key]).marshalTo(buf)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
