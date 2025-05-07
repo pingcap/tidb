@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -145,6 +146,12 @@ func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
 }
 
 func (w *writeClient) cause(err error) error {
+	if goerrors.Is(err, io.ErrClosedPipe) {
+		// we close the writer only on Recv or Close, else this error is caused by
+		// closed Reader, i.e. the request failed. We need to wait the async routine
+		// to finish setting sendReqErr to return the correct error.
+		w.wg.Wait()
+	}
 	if reqErr := w.sendReqErr.Load(); reqErr != nil {
 		return errors.Trace(reqErr)
 	}
