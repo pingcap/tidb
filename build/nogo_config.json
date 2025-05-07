@@ -373,6 +373,8 @@
       "pkg/server/": "server code",
       "pkg/statistics": "pkg/statistics code",
       "pkg/store/": "store code",
+      "pkg/table": "pkg/table code",
+      "pkg/tablecodec": "pkg/tablecodec code",
       "//pkg/util": "pkg/util code",
       "pkg/workloadlearning": "workloadlearning code"
     }
