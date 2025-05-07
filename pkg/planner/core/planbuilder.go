@@ -5222,6 +5222,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		}
 
 		if v.Select != nil {
+			// check privilege and foreign key
 			if err := b.checkCreateTableAsSelect(v); err != nil {
 				return nil, err
 			}
@@ -5544,9 +5545,9 @@ func convertRetType(fieldType *types.FieldType) *types.FieldType {
 	return tp
 }
 
-// checkCreateTableAsSelect checks the create table as select statement and adds necessary privileges
+// checkCreateTableAsSelect checks the create table as select statement and necessary privileges
 func (b *PlanBuilder) checkCreateTableAsSelect(v *ast.CreateTableStmt) error {
-	// Check INSERT privileges on the table being created
+	// Check INSERT privilege on the table being created (CREATE privilege is already checked before)
 	if b.ctx.GetSessionVars().User != nil {
 		insertErr := plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
 			b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)

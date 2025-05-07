@@ -32,7 +32,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -984,7 +983,7 @@ func checkGlobalIndexes(ec errctx.Context, tblInfo *model.TableInfo) error {
 	return nil
 }
 
-func (e *executor) handleCreateTableSelect(schema *model.DBInfo, s *ast.CreateTableStmt, tempTableName string, originTableName string) error {
+func (e *executor) handleCreateTableSelect(schema *model.DBInfo, s *ast.CreateTableStmt, tempTableName string, originTableName string, useImportInto bool) error {
 	intest.Assert(s.Select != nil, "s.Select must be not nil")
 	sctx, err := e.sessPool.Get()
 	if err != nil {
@@ -992,10 +991,8 @@ func (e *executor) handleCreateTableSelect(schema *model.DBInfo, s *ast.CreateTa
 	}
 	defer e.sessPool.Put(sctx)
 
-	// if isTikvStore is true, use import into instead of insert into
-	isTikvStore := e.store.Name() == kv.TiKV.Name()
-	insertSql, err := buildInsertSql(schema.Name.L, tempTableName, s, isTikvStore)
-	log.Info("insertSql", zap.String("insertSql", insertSql), zap.Any("e.store.Name()", e.store.Name()))
+	// if isTikvStore is true and tidb_create_table_as_select_use_import_into is true, use import into instead of insert into
+	insertSql, err := buildInsertSql(schema.Name.L, tempTableName, s, useImportInto)
 	if err != nil {
 		return err
 	}
@@ -1090,7 +1087,9 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	// if the TiDB node crash after running here, the DDL framekwork will think the CREATE TABLE job is finished
 	// the new insert and rename stuff will not be fallover to another node.
 	if s.Select != nil {
-		if err = e.handleCreateTableSelect(schema, s, tempTableName, originTableName); err != nil {
+		// if the TiKV node, and tidb_create_from_select_using_import is true, use import into instead of insert into
+		useImportInto := strings.ToLower(e.store.Name()) == kv.TiKV.Name() && ctx.GetSessionVars().CreateFromSelectUsingImport
+		if err = e.handleCreateTableSelect(schema, s, tempTableName, originTableName, useImportInto); err != nil {
 			return err
 		}
 	}
@@ -1115,7 +1114,7 @@ func buildRenameSql(dbName string, tempTableName string, originTableName string)
 	return sql
 }
 
-func buildInsertSql(dbName, tableName string, s *ast.CreateTableStmt, isTikvStore bool) (string, error) {
+func buildInsertSql(dbName, tableName string, s *ast.CreateTableStmt, useImportInto bool) (string, error) {
 	if s.Select == nil {
 		return "", nil
 	}
@@ -1131,7 +1130,7 @@ func buildInsertSql(dbName, tableName string, s *ast.CreateTableStmt, isTikvStor
 		selectedColName = append(selectedColName, sqlescape.MustEscapeSQL("%n", col.L))
 	}
 
-	if !isTikvStore {
+	if !useImportInto {
 		// example: "INSERT INTO `test`.`t13_nonpublic_xxxxxxxx`(`id`,`b`) SELECT `id`,`b` FROM `test`.`t1`"
 		return sqlescape.MustEscapeSQL("INSERT INTO %n.%n(", dbName, tableName) + strings.Join(selectedColName, ",") + ") " + selectStmt, nil
 	}

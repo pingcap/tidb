@@ -1100,3 +1100,75 @@ func TestCreateTableAsSelectPrivilege(t *testing.T) {
 	tk.MustExec("drop table if exists test.t2, test.t3")
 	tk.MustExec("drop user 'u1'@'%';")
 }
+
+func TestCreateTableAsSelectUnionPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop database if exists otherdb")
+	tk.MustExec("create database otherdb")
+	tk.MustExec("create user 'u1'@'%' identified by '';")
+
+	// Create source tables in test database
+	tk.MustExec("create table t1 (id int primary key, b int);")
+	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3);")
+	tk.MustExec("create table t2 (id int primary key, b int);")
+	tk.MustExec("insert into t2 values (4,4),(5,5),(6,6);")
+
+	// Create source tables in otherdb
+	tk.MustExec("use otherdb")
+	tk.MustExec("create table t1 (id int primary key, b int);")
+	tk.MustExec("insert into t1 values (7,7),(8,8),(9,9);")
+	tk.MustExec("use test")
+
+	// Create connection for u1
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
+
+	// Part 1: Test UNION within same database
+	// Without any privileges
+	err := tk2.ExecToErr("create table test.t3 as select * from test.t1 union select * from test.t2;")
+	require.Error(t, err)
+	require.Equal(t, "[planner:1142]CREATE command denied to user 'u1'@'%' for table 't3'", err.Error())
+
+	// GRANT CREATE
+	tk.MustExec("grant create on test.* to 'u1'@'%';")
+	err = tk2.ExecToErr("create table test.t3 as select * from test.t1 union select * from test.t2;")
+	require.Error(t, err)
+	require.Equal(t, "[planner:1142]INSERT command denied to user 'u1'@'%' for table 't3'", err.Error())
+
+	// GRANT INSERT
+	tk.MustExec("grant insert on test.* to 'u1'@'%';")
+	err = tk2.ExecToErr("create table test.t3 as select * from test.t1 union select * from test.t2;")
+	require.Error(t, err)
+	require.Equal(t, "[planner:1142]SELECT command denied to user 'u1'@'%' for table 't1'", err.Error())
+
+	// GRANT SELECT on both tables
+	tk.MustExec("grant select on test.* to 'u1'@'%';")
+	tk2.MustExec("create table test.t3 as select * from test.t1 union select * from test.t2;")
+	tk2.MustQuery("select * from test.t3 order by id").Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6"))
+
+	// Part 2: Test UNION across databases
+	// Clean up previous test table
+	tk.MustExec("drop table if exists test.t3")
+
+	// Without SELECT on otherdb.t1
+	err = tk2.ExecToErr("create table test.t4 as select * from test.t1 union select * from otherdb.t1;")
+	require.Error(t, err)
+	require.Equal(t, "[planner:1142]SELECT command denied to user 'u1'@'%' for table 't1'", err.Error())
+
+	// Grant SELECT on otherdb.t1
+	tk.MustExec("grant select on otherdb.t1 to 'u1'@'%';")
+	tk2.MustExec("create table test.t4 as select * from test.t1 union select * from otherdb.t1;")
+	tk2.MustQuery("select * from test.t4 order by id").Check(testkit.Rows("1 1", "2 2", "3 3", "7 7", "8 8", "9 9"))
+
+	// Part 3: Test complex UNION with WHERE clauses
+	tk.MustExec("drop table if exists test.t5")
+	tk2.MustExec("create table test.t5 as select * from test.t1 where id > 1 union select * from otherdb.t1 where id < 9;")
+	tk2.MustQuery("select * from test.t5 order by id").Check(testkit.Rows("2 2", "3 3", "7 7", "8 8"))
+
+	// Clean up
+	tk.MustExec("drop database if exists otherdb")
+	tk.MustExec("drop table if exists test.t3, test.t4, test.t5")
+	tk.MustExec("drop user 'u1'@'%';")
+}

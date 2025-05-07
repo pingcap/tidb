@@ -3500,6 +3500,13 @@ var defaultSysVars = []*SysVar{
 		},
 		IsHintUpdatableVerified: true,
 	},
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBCreateFromSelectUsingImport, Value: "0", Type: vardef.TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.CreateFromSelectUsingImport = TiDBOptOn(val)
+			return nil
+		},
+		IsHintUpdatableVerified: true,
+	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiFlashHashAggPreAggMode, Value: vardef.DefTiFlashPreAggMode, Type: vardef.TypeStr,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
 			if _, ok := ToTiPBTiFlashPreAggMode(normalizedValue); ok {
