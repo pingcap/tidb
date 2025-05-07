@@ -373,6 +373,7 @@
       "pkg/planner/core/generator/hash64_equals": "pkg/planner/core/generator/hash64_equals/ code",
       "pkg/planner/core/operator/logicalop": "pkg/planner/core/operator/logicalop code",
       "pkg/planner/funcdep": "pkg/planner/funcdep code",
+      "pkg/resourcemanager/": "resourcemanager code",
       "pkg/server/": "server code",
       "pkg/statistics": "pkg/statistics code",
       "pkg/store/": "store code",
