@@ -279,11 +279,11 @@ func (m *Mutator) GetPolicyID() (int64, error) {
 }
 
 func (*Mutator) policyKey(policyID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mPolicyPrefix, policyID))
+	return fmt.Appendf(nil, "%s:%d", mPolicyPrefix, policyID)
 }
 
 func (*Mutator) resourceGroupKey(groupID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mResourceGroupPrefix, groupID))
+	return fmt.Appendf(nil, "%s:%d", mResourceGroupPrefix, groupID)
 }
 
 func (*Mutator) dbKey(dbID int64) []byte {
@@ -292,7 +292,7 @@ func (*Mutator) dbKey(dbID int64) []byte {
 
 // DBkey encodes the dbID into dbKey.
 func DBkey(dbID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mDBPrefix, dbID))
+	return fmt.Appendf(nil, "%s:%d", mDBPrefix, dbID)
 }
 
 // ParseDBKey decodes the dbkey to get dbID.
@@ -317,7 +317,7 @@ func (*Mutator) autoTableIDKey(tableID int64) []byte {
 
 // AutoTableIDKey decodes the auto tableID key.
 func AutoTableIDKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mTableIDPrefix, tableID))
+	return fmt.Appendf(nil, "%s:%d", mTableIDPrefix, tableID)
 }
 
 // IsAutoTableIDKey checks whether the key is auto tableID key.
@@ -342,7 +342,7 @@ func (*Mutator) autoIncrementIDKey(tableID int64) []byte {
 
 // AutoIncrementIDKey decodes the auto inc table key.
 func AutoIncrementIDKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mIncIDPrefix, tableID))
+	return fmt.Appendf(nil, "%s:%d", mIncIDPrefix, tableID)
 }
 
 // IsAutoIncrementIDKey checks whether the key is auto increment key.
@@ -367,7 +367,7 @@ func (*Mutator) autoRandomTableIDKey(tableID int64) []byte {
 
 // AutoRandomTableIDKey encodes the auto random tableID key.
 func AutoRandomTableIDKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mRandomIDPrefix, tableID))
+	return fmt.Appendf(nil, "%s:%d", mRandomIDPrefix, tableID)
 }
 
 // IsAutoRandomTableIDKey checks whether the key is auto random tableID key.
@@ -392,7 +392,7 @@ func (*Mutator) tableKey(tableID int64) []byte {
 
 // TableKey encodes the tableID into tableKey.
 func TableKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mTablePrefix, tableID))
+	return fmt.Appendf(nil, "%s:%d", mTablePrefix, tableID)
 }
 
 // IsTableKey checks whether the tableKey comes from TableKey().
@@ -417,7 +417,7 @@ func (*Mutator) sequenceKey(sequenceID int64) []byte {
 
 // SequenceKey encodes the sequence key.
 func SequenceKey(sequenceID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mSequencePrefix, sequenceID))
+	return fmt.Appendf(nil, "%s:%d", mSequencePrefix, sequenceID)
 }
 
 // IsSequenceKey checks whether the key is sequence key.
@@ -437,7 +437,7 @@ func ParseSequenceKey(key []byte) (int64, error) {
 }
 
 func (*Mutator) sequenceCycleKey(sequenceID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mSeqCyclePrefix, sequenceID))
+	return fmt.Appendf(nil, "%s:%d", mSeqCyclePrefix, sequenceID)
 }
 
 // DDLJobHistoryKey is only used for testing.
@@ -1004,7 +1004,7 @@ func splitRangeInt64Max(n int64) [][]string {
 	// 9999999999999999999 is the max number than maxInt64 in string format.
 	batch := 9999999999999999999 / uint64(n)
 
-	for k := int64(0); k < n; k++ {
+	for k := range n {
 		start := batch * uint64(k)
 		end := batch * uint64(k+1)
 
@@ -1034,15 +1034,15 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 	kvRanges := splitRangeInt64Max(int64(concurrency))
 
 	mu := sync.Mutex{}
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		snapshot := store.GetSnapshot(kv.NewVersion(startTs))
 		snapshot.SetOption(kv.RequestSourceInternal, true)
 		snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
 		t := structure.NewStructure(snapshot, nil, mMetaPrefix)
 		workGroup.Go(func() error {
-			startKey := []byte(fmt.Sprintf("%s:", mDBPrefix))
+			startKey := fmt.Appendf(nil, "%s:", mDBPrefix)
 			startKey = codec.EncodeBytes(startKey, []byte(kvRanges[i][0]))
-			endKey := []byte(fmt.Sprintf("%s:", mDBPrefix))
+			endKey := fmt.Appendf(nil, "%s:", mDBPrefix)
 			endKey = codec.EncodeBytes(endKey, []byte(kvRanges[i][1]))
 
 			return t.IterateHashWithBoundedKey(startKey, endKey, func(key []byte, field []byte, value []byte) error {
@@ -1798,7 +1798,7 @@ func DecodeElement(b []byte) (*Element, error) {
 }
 
 func (*Mutator) schemaDiffKey(schemaVersion int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mSchemaDiffPrefix, schemaVersion))
+	return fmt.Appendf(nil, "%s:%d", mSchemaDiffPrefix, schemaVersion)
 }
 
 // GetSchemaDiff gets the modification information on a given schema version.
