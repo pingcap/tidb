@@ -808,7 +808,7 @@ func getSchemaTablesStorageInfo(h *SchemaStorageHandler, schema *ast.CIStr, tabl
 				break
 			}
 
-			for i := 0; i < req.NumRows(); i++ {
+			for i := range req.NumRows() {
 				messages = append(messages, &SchemaTableStorage{
 					TableSchema:   req.GetRow(i).GetString(0),
 					TableName:     req.GetRow(i).GetString(1),

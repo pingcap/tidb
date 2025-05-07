@@ -298,7 +298,7 @@ func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 		analyzed = sa.handleAutoAnalyze(sctx)
 		return nil
 	}); err != nil {
-		statslogutil.StatsLogger().Error("Failed to handle auto analyze", zap.Error(err))
+		statslogutil.StatsErrVerboseSampleLogger().Error("Failed to handle auto analyze", zap.Error(err))
 	}
 	return
 }

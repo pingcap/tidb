@@ -257,7 +257,7 @@ func runQuery(ctx context.Context, sctx sessionctx.Context, sql string, args ...
 
 func execRetry(ctx context.Context, sctx sessionctx.Context, sql string, args ...any) ([]chunk.Row, error) {
 	var errs [5]error
-	for i := 0; i < len(errs); i++ {
+	for i := range errs {
 		res, err := runQuery(ctx, sctx, sql, args...)
 		if err == nil {
 			return res, nil

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"slices"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -186,7 +187,7 @@ func (h coprHandler) buildDAGForTiFlash(ctx *dagContext, farther *tipb.Executor)
 
 func (h coprHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (executor, error) {
 	var src executor
-	for i := 0; i < len(executors); i++ {
+	for i := range executors {
 		curr, _, err := h.buildExec(ctx, executors[i])
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -729,7 +730,7 @@ func (h coprHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan
 }
 
 func reverseKVRanges(kvRanges []kv.KeyRange) {
-	for i := 0; i < len(kvRanges)/2; i++ {
+	for i := range len(kvRanges) / 2 {
 		j := len(kvRanges) - i - 1
 		kvRanges[i], kvRanges[j] = kvRanges[j], kvRanges[i]
 	}
@@ -761,12 +762,7 @@ func minEndKey(rangeEndKey kv.Key, regionEndKey []byte) []byte {
 }
 
 func isDuplicated(offsets []int, offset int) bool {
-	for _, idx := range offsets {
-		if idx == offset {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(offsets, offset)
 }
 
 func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector []int) ([]int, error) {

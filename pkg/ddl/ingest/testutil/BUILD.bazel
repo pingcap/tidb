@@ -9,6 +9,7 @@ go_library(
         "//pkg/ddl/ingest",
         "//pkg/kv",
         "//pkg/meta/model",
+        "//pkg/metrics",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
     ],
