@@ -73,6 +73,9 @@ func (p plugins) add(plugin *Plugin) {
 	}
 	plugins = append(plugins, *plugin)
 	p.plugins[plugin.Kind] = plugins
+	if p.versions == nil {
+		p.versions = make(map[string]uint16, 1)
+	}
 	p.versions[plugin.Name] = plugin.Version
 }
 
