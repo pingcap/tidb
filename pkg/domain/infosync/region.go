@@ -116,6 +116,5 @@ func CancelSchedulerJob(ctx context.Context, schedulerName string, jobID uint64)
 	if is.pdHTTPCli == nil {
 		return errs.ErrClientGetLeader.FastGenByArgs(schedulerName)
 	}
-	//return is.pdHTTPCli.CancelSchedulerJob(ctx, schedulerName, jobID)
-	return nil
+	return is.pdHTTPCli.CancelSchedulerJob(ctx, schedulerName, jobID)
 }
