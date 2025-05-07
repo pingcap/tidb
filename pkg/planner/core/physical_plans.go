@@ -964,20 +964,19 @@ type PhysicalTableScan struct {
 	runtimeFilterList []*RuntimeFilter `plan-cache-clone:"must-nil"` // plan with runtime filter is not cached
 	maxWaitTimeMs     int
 
-	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
 	// UsedColumnarIndexes is used to store the used columnar index for the table scan.
-	UsedColumnarIndexes []*tipb.ColumnarIndexInfo `plan-cache-clone:"must-nil"`
+	UsedColumnarIndexes []*ColumnarIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
 }
 
-// VectorIndexExtra is the extra information for vector index.
-type VectorIndexExtra struct {
-	// Note: Even if IndexInfo is not nil, it doesn't mean the VectorSearch push down
-	// will happen because optimizer will explore all available vector indexes and fill them
+// ColumnarIndexExtra is the extra information for columnar index.
+type ColumnarIndexExtra struct {
+	// Note: Even if IndexInfo is not nil, it doesn't mean the index will be used
+	// because optimizer will explore all available vector indexes and fill them
 	// in IndexInfo, and later invalid plans are filtered out according to a topper executor.
 	IndexInfo *model.IndexInfo
 
-	// Not nil if there is an VectorSearch push down.
-	PushDownQueryInfo *tipb.ANNQueryInfo
+	// Not nil if there is an ColumnarIndex used.
+	QueryInfo *tipb.ColumnarIndexInfo
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -1005,7 +1004,7 @@ func (ts *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, 
 		clonedRF := rf.Clone()
 		clonedScan.runtimeFilterList = append(clonedScan.runtimeFilterList, clonedRF)
 	}
-	clonedScan.UsedColumnarIndexes = make([]*tipb.ColumnarIndexInfo, 0, len(ts.UsedColumnarIndexes))
+	clonedScan.UsedColumnarIndexes = make([]*ColumnarIndexExtra, 0, len(ts.UsedColumnarIndexes))
 	for _, colIdx := range ts.UsedColumnarIndexes {
 		colIdxClone := *colIdx
 		clonedScan.UsedColumnarIndexes = append(clonedScan.UsedColumnarIndexes, &colIdxClone)

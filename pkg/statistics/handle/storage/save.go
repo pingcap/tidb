@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -48,10 +49,7 @@ func saveTopNToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hist
 		return nil
 	}
 	for i := 0; i < len(topN.TopN); {
-		end := i + batchInsertSize
-		if end > len(topN.TopN) {
-			end = len(topN.TopN)
-		}
+		end := min(i+batchInsertSize, len(topN.TopN))
 		sql := new(strings.Builder)
 		sql.WriteString("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values ")
 		for j := i; j < end; j++ {
@@ -80,10 +78,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 	}
 	sc := sctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(hg.Buckets); {
-		end := i + batchInsertSize
-		if end > len(hg.Buckets) {
-			end = len(hg.Buckets)
-		}
+		end := min(i+batchInsertSize, len(hg.Buckets))
 		sql := new(strings.Builder)
 		sql.WriteString("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values ")
 		for j := i; j < end; j++ {
@@ -93,12 +88,12 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 				count -= hg.Buckets[j-1].Count
 			}
 			var upperBound types.Datum
-			upperBound, err = hg.GetUpper(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+			upperBound, err = convertBoundToBlob(sc.TypeCtx(), *hg.GetUpper(j))
 			if err != nil {
 				return
 			}
 			var lowerBound types.Datum
-			lowerBound, err = hg.GetLower(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+			lowerBound, err = convertBoundToBlob(sc.TypeCtx(), *hg.GetLower(j))
 			if err != nil {
 				return
 			}
@@ -195,10 +190,7 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 		}
 	} else {
 		// 1-3. There's already an existing records for this table, and we are handling a normal v2 analyze.
-		modifyCnt := curModifyCnt - results.BaseModifyCnt
-		if modifyCnt < 0 {
-			modifyCnt = 0
-		}
+		modifyCnt := max(curModifyCnt-results.BaseModifyCnt, 0)
 		statslogutil.StatsLogger().Info("incrementally update modifyCount",
 			zap.Int64("tableID", tableID),
 			zap.Int64("curModifyCnt", curModifyCnt),
@@ -206,10 +198,7 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 			zap.Int64("modifyCount", modifyCnt))
 		var cnt int64
 		if analyzeSnapshot {
-			cnt = curCnt + results.Count - results.BaseCount
-			if cnt < 0 {
-				cnt = 0
-			}
+			cnt = max(curCnt+results.Count-results.BaseCount, 0)
 			statslogutil.StatsLogger().Info("incrementally update count",
 				zap.Int64("tableID", tableID),
 				zap.Int64("curCnt", curCnt),
@@ -217,10 +206,7 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 				zap.Int64("results.BaseCount", results.BaseCount),
 				zap.Int64("count", cnt))
 		} else {
-			cnt = results.Count
-			if cnt < 0 {
-				cnt = 0
-			}
+			cnt = max(results.Count, 0)
 			statslogutil.StatsLogger().Info("directly update count",
 				zap.Int64("tableID", tableID),
 				zap.Int64("results.Count", results.Count),
@@ -380,23 +366,33 @@ func SaveColOrIdxStatsToStorage(
 	return
 }
 
-// SaveMetaToStorage will save stats_meta to storage and update last stats histograms version.
+// SaveMetaToStorage will batch save stats_meta to storage.
 func SaveMetaToStorage(
 	sctx sessionctx.Context,
-	tableID, count, modifyCount int64,
 	refreshLastHistVer bool,
-) (statsVer uint64, err error) {
+	metaUpdates []statstypes.MetaUpdate,
+) (uint64, error) {
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	var sql string
+	values := make([]string, 0, len(metaUpdates))
 	if refreshLastHistVer {
-		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values (%?, %?, %?, %?, %?)", version, tableID, count, modifyCount, version)
+		for _, metaUpdate := range metaUpdates {
+			values = append(values, fmt.Sprintf("(%d, %d, %d, %d, %d)", version, metaUpdate.PhysicalID, metaUpdate.Count, metaUpdate.ModifyCount, version))
+		}
+		sql = fmt.Sprintf("insert into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values %s "+
+			"on duplicate key update version = values(version), modify_count = values(modify_count), count = values(count), last_stats_histograms_version = values(last_stats_histograms_version)", strings.Join(values, ","))
 	} else {
-		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
+		for _, metaUpdate := range metaUpdates {
+			values = append(values, fmt.Sprintf("(%d, %d, %d, %d)", version, metaUpdate.PhysicalID, metaUpdate.Count, metaUpdate.ModifyCount))
+		}
+		sql = fmt.Sprintf("insert into mysql.stats_meta (version, table_id, count, modify_count) values %s "+
+			"on duplicate key update version = values(version), modify_count = values(modify_count), count = values(count)", strings.Join(values, ","))
 	}
-	statsVer = version
-	return
+	_, err = util.Exec(sctx, sql)
+	return version, errors.Trace(err)
 }
 
 // InsertColStats2KV insert a record to stats_histograms with distinct_count 1
@@ -534,4 +530,11 @@ func InsertTableStats2KV(
 		}
 	}
 	return startTS, nil
+}
+
+// convertBoundToBlob converts the bound to blob. The `blob` will be used to store in the `mysql.stats_buckets` table.
+// The `convertBoundFromBlob(convertBoundToBlob(a))` should be equal to `a`.
+// TODO: add a test to make sure that this assumption is correct.
+func convertBoundToBlob(ctx types.Context, d types.Datum) (types.Datum, error) {
+	return d.ConvertTo(ctx, types.NewFieldType(mysql.TypeBlob))
 }
