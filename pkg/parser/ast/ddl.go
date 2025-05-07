@@ -522,6 +522,7 @@ const (
 	ColumnOptionColumnFormat
 	ColumnOptionStorage
 	ColumnOptionAutoRandom
+	ColumnOptionSecondaryEngineAttribute
 )
 
 var (
@@ -556,8 +557,9 @@ type ColumnOption struct {
 	// Enforced is only for Check, default is true.
 	Enforced bool
 	// Name is only used for Check Constraint name.
-	ConstraintName string
-	PrimaryKeyTp   PrimaryKeyType
+	ConstraintName      string
+	PrimaryKeyTp        PrimaryKeyType
+	SecondaryEngineAttr string
 }
 
 // Restore implements Node interface.
@@ -676,6 +678,10 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 			}
 			return nil
 		})
+	case ColumnOptionSecondaryEngineAttribute:
+		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE")
+		ctx.WritePlain(" = ")
+		ctx.WriteString(n.StrValue)
 	default:
 		return errors.New("An error occurred while splicing ColumnOption")
 	}
@@ -730,14 +736,15 @@ const (
 type IndexOption struct {
 	node
 
-	KeyBlockSize uint64
-	Tp           IndexType
-	Comment      string
-	ParserName   CIStr
-	Visibility   IndexVisibility
-	PrimaryKeyTp PrimaryKeyType
-	Global       bool
-	SplitOpt     *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
+	KeyBlockSize        uint64
+	Tp                  IndexType
+	Comment             string
+	ParserName          CIStr
+	Visibility          IndexVisibility
+	PrimaryKeyTp        PrimaryKeyType
+	Global              bool
+	SplitOpt            *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
+	SecondaryEngineAttr string
 }
 
 // IsEmpty is true if only default options are given
@@ -750,7 +757,8 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Comment != "" ||
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
-		n.SplitOpt != nil {
+		n.SplitOpt != nil ||
+		len(n.SecondaryEngineAttr) > 0 {
 		return false
 	}
 	return true
@@ -847,7 +855,20 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		if err != nil {
 			return err
 		}
+		hasPrevOption = true
 	}
+
+	if n.SecondaryEngineAttr != "" {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE")
+		ctx.WritePlain(" = ")
+		ctx.WriteString(n.SecondaryEngineAttr)
+		// If a new option is added after, please also uncomment:
+		//hasPrevOption = true
+	}
+
 	return nil
 }
 
@@ -2582,6 +2603,7 @@ const (
 	TableOptionTTLEnable
 	TableOptionTTLJobInterval
 	TableOptionEngineAttribute
+	TableOptionSecondaryEngineAttribute
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -2844,6 +2866,10 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("SECONDARY_ENGINE ")
 		ctx.WritePlain("= ")
 		ctx.WriteKeyWord("NULL")
+	case TableOptionSecondaryEngineAttribute:
+		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
 	case TableOptionInsertMethod:
 		ctx.WriteKeyWord("INSERT_METHOD ")
 		ctx.WritePlain("= ")

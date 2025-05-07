@@ -108,7 +108,11 @@ func TestWithSession(t *testing.T) {
 		ttlworker.DetachStatsCollector = origDetachStats
 	}()
 
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	// stop TTLJobManager to avoid unnecessary job schedule and make test stable
+	dom.TTLJobManager().Stop()
+	require.NoError(t, dom.TTLJobManager().WaitStopped(context.Background(), time.Minute))
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@time_zone = 'Asia/Shanghai'")
 	tk.MustExec("set @@global.time_zone= 'Europe/Berlin'")

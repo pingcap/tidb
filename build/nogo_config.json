@@ -356,15 +356,24 @@
       "/cgo/": "no need to vet cgo code"
     },
     "only_files": {
+      "//cmd/": "cmd code",
+      "//dumpling": "dumpling code",
+      "pkg/autoid_service/": "autoid_service code",
       "pkg/bindinfo/": "bindinfo code",
-      "pkg/util/": "util code",
-      "pkg/workloadlearning": "workloadlearning code",
+      "pkg/distsql/": "distsql code",
+      "pkg/expression/": "expression code",
+      "pkg/infoschema/": "infoschema code",
+      "pkg/owner/": "owner code",
+      "pkg/planner/cardinality": "pkg/planner/cardinality code",
+      "pkg/planner/core/casetest/tpch": "pkg/planner/core/casetest/tpch code",
       "pkg/planner/core/generator/hash64_equals": "pkg/planner/core/generator/hash64_equals/ code",
       "pkg/planner/core/operator/logicalop": "pkg/planner/core/operator/logicalop code",
-      "pkg/planner/core/casetest/tpch": "pkg/planner/core/casetest/tpch code",
-      "pkg/planner/cardinality": "pkg/planner/cardinality code",
       "pkg/planner/funcdep": "pkg/planner/funcdep code",
-      "pkg/statistics": "pkg/statistics code"
+      "pkg/server/": "server code",
+      "pkg/statistics": "pkg/statistics code",
+      "pkg/store/": "store code",
+      "//pkg/util": "pkg/util code",
+      "pkg/workloadlearning": "workloadlearning code"
     }
   },
   "inspect": {
