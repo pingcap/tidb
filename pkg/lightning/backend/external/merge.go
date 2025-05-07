@@ -195,11 +195,12 @@ func mergeOverlappingFilesInternal(
 			return err
 		}
 		size += len(iter.Key()) + len(iter.Value()) + lengthBytes*2
-		if t > 30*time.Second {
+		if t > 5*time.Second {
 			writeRateHist.Observe(float64(size) / 1024.0 / 1024.0 / t.Seconds())
 			size = 0
 			t = 0
 		}
+		logutil.BgLogger().Info("write row duration", zap.Duration("duration", time.Since(startTime)))
 	}
 	return iter.Error()
 }
