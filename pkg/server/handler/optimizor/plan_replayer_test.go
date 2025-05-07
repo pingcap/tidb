@@ -490,6 +490,7 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, b_id int, FOREIGN KEY (b_id) REFERENCES B(id),FOREIGN KEY (author_id) REFERENCES planReplayer2.t(a) ON DELETE CASCADE) placement policy p;")
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
+	// defining FKs in a circular manner
 	tk.MustExec(`CREATE TABLE A (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(50) NOT NULL,
