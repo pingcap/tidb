@@ -284,15 +284,15 @@ func TestIssue38269(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		"IndexJoin_12 37.46 root  inner join, inner:IndexLookUp_11, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-		"├─TableReader_24(Build) 9990.00 root  data:Selection_23",
-		"│ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-		"│   └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"└─IndexLookUp_11(Probe) 37.46 root  ",
-		"  ├─Selection_10(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
-		"  │ └─IndexRangeScan_8 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan_9(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).Check(testkit.Rows(
+		"IndexJoin 37.46 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+		"├─TableReader(Build) 9990.00 root  data:Selection",
+		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─IndexLookUp(Probe) 37.46 root  ",
+		"  ├─Selection(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
+		"  │ └─IndexRangeScan 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }
 
 func TestIssue38533(t *testing.T) {
@@ -327,8 +327,8 @@ func TestInvalidRange(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]any{{"TableDual_5"}}) // use TableDual directly instead of TableFullScan
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).CheckAt([]int{0},
+		[][]any{{"TableDual"}}) // use TableDual directly instead of TableFullScan
 
 	tk.MustExec("execute st using @l, @r")
 	tk.MustExec("execute st using @l, @r")
@@ -360,15 +360,15 @@ func TestIssue40093(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"Projection_9"},
-			{"└─HashJoin_21"},
-			{"  ├─IndexReader_26(Build)"},
-			{"  │ └─IndexRangeScan_25"}, // RangeScan instead of FullScan
-			{"  └─TableReader_24(Probe)"},
-			{"    └─Selection_23"},
-			{"      └─TableFullScan_22"},
+			{"Projection"},
+			{"└─HashJoin"},
+			{"  ├─IndexReader(Build)"},
+			{"  │ └─IndexRangeScan"}, // RangeScan instead of FullScan
+			{"  └─TableReader(Probe)"},
+			{"    └─Selection"},
+			{"      └─TableFullScan"},
 		})
 
 	tk.MustExec("execute st using @b")
@@ -392,15 +392,15 @@ func TestIssue38205(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"IndexJoin_10"},
-			{"├─TableReader_19(Build)"},
-			{"│ └─Selection_18"},
-			{"│   └─TableFullScan_17"}, // RangeScan instead of FullScan
-			{"└─IndexReader_9(Probe)"},
-			{"  └─Selection_8"},
-			{"    └─IndexRangeScan_7"},
+			{"IndexJoin"},
+			{"├─TableReader(Build)"},
+			{"│ └─Selection"},
+			{"│   └─TableFullScan"}, // RangeScan instead of FullScan
+			{"└─IndexReader(Probe)"},
+			{"  └─Selection"},
+			{"    └─IndexRangeScan"},
 		})
 
 	tk.MustExec("execute stmt using @a, @b, @c")
@@ -440,10 +440,10 @@ func TestIssue40224(t *testing.T) {
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"IndexReader_6"},
-			{"└─IndexRangeScan_5"}, // range scan not full scan
+			{"IndexReader"},
+			{"└─IndexRangeScan"}, // range scan not full scan
 		})
 
 	tk.MustExec("set @a=1, @b=2")
@@ -452,10 +452,10 @@ func TestIssue40224(t *testing.T) {
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // cacheable for INT
 	tk.MustExec("execute st using @a, @b")
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"IndexReader_6"},
-			{"└─IndexRangeScan_5"}, // range scan not full scan
+			{"IndexReader"},
+			{"└─IndexRangeScan"}, // range scan not full scan
 		})
 }
 

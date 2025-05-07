@@ -1034,6 +1034,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if explainForStmt, ok := s.(*ast.ExplainForStmt); ok {
 		sc.InExplainStmt = true
 		sc.InExplainAnalyzeStmt = true
+		// explain for only fetch other stored ExplainRows from another session in the process list, which
+		// is already stored as ExplainFormatRow with explain id inside. But we can do some trimming for those
+		// stored strings when showing. No need to change IgnoreExplainIDSuffix here.
 		sc.InVerboseExplain = strings.ToLower(explainForStmt.Format) == types.ExplainFormatVerbose
 	}
 
