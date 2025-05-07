@@ -380,12 +380,10 @@ KEY IDXM (COL3,COL2));
 insert into PK_MULTI_COL_5177(col1, col2, col3) values(0x00000000000000000000, 0x002B200DF5BA03E59F82, 1);
 select col1, col2 from PK_MULTI_COL_5177 where col1 = 0x00000000000000000000 and col2 in (0x002B200DF5BA03E59F82, 0x002B200DF5BA03E59F82, 0x002B200DF5BA03E59F82);
 col1	col2
-          	 + 
-ï¿½ï¿½åŸ‚
+          	 + õºåŸ‚
 select col1, col2 from PK_MULTI_COL_5177 where col1 = 0x00000000000000000000 and col2 = 0x002B200DF5BA03E59F82;
 col1	col2
-          	 + 
-ï¿½ï¿½åŸ‚
+          	 + õºåŸ‚
 drop table if exists t;
 create table t(a int, b int);
 select count(a) as b from t group by a order by b;
@@ -2873,7 +2871,7 @@ count(*)
 1
 select * from t where a=0x00A4EEF4FA55D6706ED5;
 a
- ï¿½ï¿½ï¿½ï¿½Uï¿½pnï¿½
+ ¤îôúUÖpnÕ
 drop table if exists BB;
 CREATE TABLE `BB` (
 `col_int` int(11) DEFAULT NULL,
@@ -3368,7 +3366,7 @@ update t set a = 'hig' where from_base64('invalidbase64');
 select * from t where from_base64('test');
 a
 update t set a = 'xyz' where from_base64('test');
-Error 1292 (22007): Truncated incorrect DOUBLE value: 'ï¿½ï¿½-'
+Error 1292 (22007): Truncated incorrect DOUBLE value: 'µë-'
 select * from t;
 a
 abc
