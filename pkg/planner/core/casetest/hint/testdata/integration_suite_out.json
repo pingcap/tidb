@@ -1381,7 +1381,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain format='brief' with tt as (select /*+ leading(t3), merge_join(t1) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
+        "SQL": "explain format = 'brief' with tt as (select /*+ leading(t3), merge_join(t1) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
         "Plan": [
           "HashJoin 24316.55 root  inner join, equal:[eq(test.t1.a, test.t1.a)]",
           "├─Selection(Build) 12475.01 root  not(isnull(test.t1.a))",
@@ -1403,7 +1403,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain format='brief' with tt as (select /*+ leading(t2), inl_join(t2) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
+        "SQL": "explain format = 'brief' with tt as (select /*+ leading(t2), inl_join(t2) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
         "Plan": [
           "HashJoin 24316.55 root  inner join, equal:[eq(test.t1.a, test.t1.a)]",
           "├─Selection(Build) 12475.01 root  not(isnull(test.t1.a))",
@@ -1426,7 +1426,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain format='brief' with tt as (select /*+ merge(), leading(t3), inl_join(t1) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
+        "SQL": "explain format = 'brief' with tt as (select /*+ merge(), leading(t3), inl_join(t1) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
         "Plan": [
           "HashJoin 30395.69 root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
           "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
@@ -1453,7 +1453,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' with tt as (select /*+ leading(t2), merge_join(t2), merge() */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
+        "SQL": "explain format = 'brief' with tt as (select /*+ leading(t2), merge_join(t2), merge() */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
         "Plan": [
           "HashJoin 30395.69 root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
           "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
