@@ -837,19 +837,20 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		domOwner, domNonOwner = domNonOwner, domOwner
 	}
 
-	seOwner, err := session.CreateSessionWithDomain(store, domOwner)
+	seDDLOwner, err := session.CreateSessionWithDomain(store, domOwner)
 	require.NoError(t, err)
-	seNonOwner, err := session.CreateSessionWithDomain(store, domNonOwner)
-	require.NoError(t, err)
-
-	tkDDLOwner := testkit.NewTestKitWithSession(t, store, seOwner)
+	tkDDLOwner := testkit.NewTestKitWithSession(t, store, seDDLOwner)
 	tkDDLOwner.MustExec(`use test`)
 	// Just to ensure we are not relying on the configurable assertions
 	tkDDLOwner.MustExec(`set @@global.tidb_txn_assertion_level = off`)
 	tkDDLOwner.MustExec(`set @@session.tidb_txn_assertion_level = off`)
-	tkO := testkit.NewTestKitWithSession(t, store, seOwner)
+	seTkOwner, err := session.CreateSessionWithDomain(store, domOwner)
+	require.NoError(t, err)
+	tkO := testkit.NewTestKitWithSession(t, store, seTkOwner)
 	tkO.MustExec(`use test`)
-	tkNO := testkit.NewTestKitWithSession(t, store, seNonOwner)
+	seTkNonOwner, err := session.CreateSessionWithDomain(store, domNonOwner)
+	require.NoError(t, err)
+	tkNO := testkit.NewTestKitWithSession(t, store, seTkNonOwner)
 	tkNO.MustExec(`use test`)
 
 	tkDDLOwner.MustExec(createSQL)
@@ -904,13 +905,21 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 			// This can be used for testing concurrent writes during backfill.
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", func(b bool) {
 				if b {
+					seTk, err := session.CreateSessionWithDomain(store, domOwner)
+					require.NoError(t, err)
+					tk := testkit.NewTestKitWithSession(t, store, seTk)
+					tk.MustExec(`use test`)
 					logutil.BgLogger().Info("XXXXXXXXXXX Concurrent UPDATE!")
-					tkO.MustExec(backfillDML)
+					tk.MustExec(backfillDML)
 				}
 			})
 		}
+		seDDL, err := session.CreateSessionWithDomain(store, domOwner)
+		require.NoError(t, err)
+		tkDDL := testkit.NewTestKitWithSession(t, store, seDDL)
+		tkDDL.MustExec(`use test`)
 		logutil.BgLogger().Info("XXXXXXXXXXX DDL starting!", zap.String("alterSQL", alterSQL))
-		err := tkDDLOwner.ExecToErr(alterSQL)
+		err = tkDDL.ExecToErr(alterSQL)
 		logutil.BgLogger().Info("XXXXXXXXXXX DDL done!", zap.String("alterSQL", alterSQL))
 		if backfillDML != "" {
 			testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData")
