@@ -48,7 +48,7 @@ func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, tas
 	// 1. stepOne
 	err = mgr.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil)
 	require.NoError(t, err)
-	for i := 0; i < subtaskCnt; i++ {
+	for range subtaskCnt {
 		testutil.CreateSubTask(t, mgr, taskID, proto.StepOne, ":4000", nil, proto.TaskTypeExample, 1)
 	}
 	checkSubtasks(proto.StepOne, proto.SubtaskStatePending)
@@ -62,7 +62,7 @@ func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, tas
 	// 2. stepTwo
 	err = mgr.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepTwo, nil)
 	require.NoError(t, err)
-	for i := 0; i < subtaskCnt; i++ {
+	for range subtaskCnt {
 		testutil.CreateSubTask(t, mgr, taskID, proto.StepTwo, ":4000", nil, proto.TaskTypeExample, 11)
 	}
 	checkSubtasks(proto.StepTwo, proto.SubtaskStatePending)
@@ -101,7 +101,7 @@ func TestTaskExecutorBasic(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, mgr.InitMeta(ctx, ":4000", ""))
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		runOneTask(ctx, t, mgr, "key"+strconv.Itoa(i), i)
 	}
 }

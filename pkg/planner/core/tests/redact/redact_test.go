@@ -175,12 +175,12 @@ func TestRedactExplain(t *testing.T) {
 		"    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:person, index:city_no(city_no) range:[?,?], keep order:false, stats:pseudo",
 		"    └─TableRowIDScan(Probe) 10.00 cop[tikv] table:person keep order:false, stats:pseudo"))
 	// group by
-	tk.MustQuery(" explain select 1 from test.t group by 1").Check(testkit.Rows(
-		"Projection_4 1.00 root  ?->Column#3",
-		"└─HashAgg_9 1.00 root  group by:Column#7, funcs:firstrow(Column#8)->Column#6",
-		"  └─TableReader_10 1.00 root  data:HashAgg_5",
-		"    └─HashAgg_5 1.00 cop[tikv]  group by:?, funcs:firstrow(?)->Column#8",
-		"      └─TableFullScan_8 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery(" explain format='brief' select 1 from test.t group by 1").Check(testkit.Rows(
+		"Projection 1.00 root  ?->Column#3",
+		"└─HashAgg 1.00 root  group by:Column#7, funcs:firstrow(Column#8)->Column#6",
+		"  └─TableReader 1.00 root  data:HashAgg",
+		"    └─HashAgg 1.00 cop[tikv]  group by:?, funcs:firstrow(?)->Column#8",
+		"      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 }
 
 func TestRedactForRangeInfo(t *testing.T) {

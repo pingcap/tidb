@@ -122,7 +122,8 @@ func (t *CopTask) getStoreType() kv.StoreType {
 
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalUnionScan) Attach2Task(tasks ...base.Task) base.Task {
-	// when it arrives here, physical union scan will be boundary to be the root.
+	// when it arrives here, physical union scan will absolutely require a root task type,
+	// so convert child to root task type first.
 	task := tasks[0].ConvertToRootTask(p.SCtx())
 	// We need to pull the projection under unionScan upon unionScan.
 	// Since the projection only prunes columns, it's ok the put it upon unionScan.
@@ -148,6 +149,9 @@ func (p *PhysicalUnionScan) Attach2Task(tasks ...base.Task) base.Task {
 		return pj.Attach2Task(p.BasePhysicalPlan.Attach2Task(task))
 	}
 	p.SetStats(task.Plan().StatsInfo())
+	// once task is copTask type here, it may be converted proj + tablePlan here.
+	// then when it's connected with union-scan here, we may get as: union-scan + proj + tablePlan
+	// while proj is not allowed to be built under union-scan in execution layer currently.
 	return p.BasePhysicalPlan.Attach2Task(task)
 }
 

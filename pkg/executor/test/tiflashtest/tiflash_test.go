@@ -1362,17 +1362,17 @@ func TestIssue41014(t *testing.T) {
 	tk.MustExec("alter table tai2 add index idx((lower(prilan)));")
 	tk.MustExec("set @@tidb_opt_distinct_agg_push_down = 1;")
 
-	tk.MustQuery("explain select count(distinct tai1.aid) as cb from tai1 inner join tai2 on tai1.rid = tai2.rid where lower(prilan)  LIKE LOWER('%python%');").Check(
-		testkit.Rows("HashAgg_11 1.00 root  funcs:count(distinct test.tai1.aid)->Column#8",
-			"└─HashJoin_27 9990.00 root  inner join, equal:[eq(test.tai2.rid, test.tai1.rid)]",
-			"  ├─Selection_32(Build) 8000.00 root  like(lower(test.tai2.prilan), \"%python%\", 92)",
-			"  │ └─Projection_31 10000.00 root  test.tai2.rid, lower(test.tai2.prilan)",
-			"  │   └─TableReader_30 9990.00 root  data:Selection_29",
-			"  │     └─Selection_29 9990.00 cop[tikv]  not(isnull(test.tai2.rid))",
-			"  │       └─TableFullScan_28 10000.00 cop[tikv] table:tai2 keep order:false, stats:pseudo",
-			"  └─TableReader_35(Probe) 9990.00 root  data:Selection_34",
-			"    └─Selection_34 9990.00 cop[tikv]  not(isnull(test.tai1.rid))",
-			"      └─TableFullScan_33 10000.00 cop[tikv] table:tai1 keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format='brief' select count(distinct tai1.aid) as cb from tai1 inner join tai2 on tai1.rid = tai2.rid where lower(prilan)  LIKE LOWER('%python%');").Check(
+		testkit.Rows("HashAgg 1.00 root  funcs:count(distinct test.tai1.aid)->Column#8",
+			"└─HashJoin 9990.00 root  inner join, equal:[eq(test.tai2.rid, test.tai1.rid)]",
+			"  ├─Selection(Build) 8000.00 root  like(lower(test.tai2.prilan), \"%python%\", 92)",
+			"  │ └─Projection 10000.00 root  test.tai2.rid, lower(test.tai2.prilan)",
+			"  │   └─TableReader 9990.00 root  data:Selection",
+			"  │     └─Selection 9990.00 cop[tikv]  not(isnull(test.tai2.rid))",
+			"  │       └─TableFullScan 10000.00 cop[tikv] table:tai2 keep order:false, stats:pseudo",
+			"  └─TableReader(Probe) 9990.00 root  data:Selection",
+			"    └─Selection 9990.00 cop[tikv]  not(isnull(test.tai1.rid))",
+			"      └─TableFullScan 10000.00 cop[tikv] table:tai1 keep order:false, stats:pseudo"))
 	tk.MustQuery("select count(distinct tai1.aid) as cb from tai1 inner join tai2 on tai1.rid = tai2.rid where lower(prilan)  LIKE LOWER('%python%');").Check(
 		testkit.Rows("0"))
 }
