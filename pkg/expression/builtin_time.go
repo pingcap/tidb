@@ -3240,7 +3240,7 @@ func (du *baseDateArithmetical) vecGetDateFromInt(b *baseBuiltinFunc, ctx EvalCo
 	i64s := buf.Int64s()
 	tc := typeCtx(ctx)
 	isClockUnit := types.IsClockUnit(unit)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -3282,7 +3282,7 @@ func (du *baseDateArithmetical) vecGetDateFromReal(b *baseBuiltinFunc, ctx EvalC
 	f64s := buf.Float64s()
 	tc := typeCtx(ctx)
 	isClockUnit := types.IsClockUnit(unit)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -3323,7 +3323,7 @@ func (du *baseDateArithmetical) vecGetDateFromDecimal(b *baseBuiltinFunc, ctx Ev
 	dates := result.Times()
 	tc := typeCtx(ctx)
 	isClockUnit := types.IsClockUnit(unit)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -3365,7 +3365,7 @@ func (du *baseDateArithmetical) vecGetDateFromString(b *baseBuiltinFunc, ctx Eva
 	dates := result.Times()
 	tc := typeCtx(ctx)
 	isClockUnit := types.IsClockUnit(unit)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -3405,7 +3405,7 @@ func (du *baseDateArithmetical) vecGetDateFromDatetime(b *baseBuiltinFunc, ctx E
 
 	dates := result.Times()
 	isClockUnit := types.IsClockUnit(unit)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -3434,7 +3434,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromString(b *baseBuiltinFunc, ctx
 
 	ec := errCtx(ctx)
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -3529,7 +3529,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromDecimal(b *baseBuiltinFunc, ct
 
 	result.ReserveString(n)
 	decs := buf.Decimals()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -3572,7 +3572,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromInt(b *baseBuiltinFunc, ctx Ev
 	result.ReserveString(n)
 	i64s := buf.Int64s()
 	unsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 		} else if unsigned {
@@ -3598,7 +3598,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromReal(b *baseBuiltinFunc, ctx E
 	result.ReserveString(n)
 	f64s := buf.Float64s()
 	prec := b.args[1].GetType(ctx).GetDecimal()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 		} else {
