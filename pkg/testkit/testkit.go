@@ -275,26 +275,6 @@ func (tk *TestKit) MustPartition(sql string, partitions string, args ...any) *Re
 	return tk.MustQuery(sql, args...)
 }
 
-// MustPartitionByList checks if the result execution plan must read specific partitions by list.
-func (tk *TestKit) MustPartitionByList(sql string, partitions []string, args ...any) *Result {
-	rs := tk.MustQuery("explain "+sql, args...)
-	ok := len(partitions) == 0
-	for i := range rs.rows {
-		if ok {
-			tk.require.NotContains(rs.rows[i][3], "partition:")
-		}
-		for index, partition := range partitions {
-			if !ok && strings.Contains(rs.rows[i][3], "partition:"+partition) {
-				partitions = slices.Delete(partitions, index, index+1)
-			}
-		}
-	}
-	if !ok {
-		tk.require.Len(partitions, 0)
-	}
-	return tk.MustQuery(sql, args...)
-}
-
 // QueryToErr executes a sql statement and discard results.
 func (tk *TestKit) QueryToErr(sql string, args ...any) error {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
