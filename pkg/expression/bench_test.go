@@ -76,24 +76,24 @@ func (h *benchHelper) init() {
 	h.inputTypes = append(h.inputTypes, ftb.BuildP())
 
 	// Use 20 string columns to show the cache performance.
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		ftb = types.NewFieldTypeBuilder()
 		ftb.SetType(mysql.TypeVarString).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetUTF8).SetCollate(charset.CollationUTF8)
 		h.inputTypes = append(h.inputTypes, ftb.BuildP())
 	}
 
 	h.inputChunk = chunk.NewChunkWithCapacity(h.inputTypes, numRows)
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+	for range numRows {
 		h.inputChunk.AppendInt64(0, 4)
 		h.inputChunk.AppendFloat64(1, 2.019)
 		h.inputChunk.AppendMyDecimal(2, types.NewDecFromFloatForTest(5.9101))
-		for i := 0; i < 20; i++ {
+		for i := range 20 {
 			h.inputChunk.AppendString(3+i, `abcdefughasfjsaljal1321798273528791!&(*#&@&^%&%^&!)sadfashqwer`)
 		}
 	}
 
 	cols := make([]*Column, 0, len(h.inputTypes))
-	for i := 0; i < len(h.inputTypes); i++ {
+	for i := range h.inputTypes {
 		cols = append(cols, &Column{
 			UniqueID: int64(i),
 			RetType:  h.inputTypes[i],
@@ -149,7 +149,7 @@ func (h *benchHelper) init() {
 	h.exprs = append(h.exprs, cols[2])
 
 	h.outputTypes = make([]*types.FieldType, 0, len(h.exprs))
-	for i := 0; i < len(h.exprs); i++ {
+	for i := range h.exprs {
 		h.outputTypes = append(h.outputTypes, h.exprs[i].GetType(h.ctx))
 	}
 
@@ -280,7 +280,7 @@ func (g *defaultGener) gen() any {
 		return d
 	case types.ETJson:
 		j := new(types.BinaryJSON)
-		if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, g.randGen.Int()))); err != nil {
+		if err := j.UnmarshalJSON(fmt.Appendf(nil, `{"key":%v}`, g.randGen.Int())); err != nil {
 			panic(err)
 		}
 		return *j
@@ -381,7 +381,7 @@ func newJSONStringGener() *jsonStringGener {
 
 func (g *jsonStringGener) gen() any {
 	j := new(types.BinaryJSON)
-	if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, g.randGen.Int()))); err != nil {
+	if err := j.UnmarshalJSON(fmt.Appendf(nil, `{"key":%v}`, g.randGen.Int())); err != nil {
 		panic(err)
 	}
 	return j.String()
@@ -401,8 +401,8 @@ func (g *vectorFloat32RandGener) gen() any {
 	if g.dimension == -1 {
 		return nil
 	}
-	var values []float32
-	for i := 0; i < g.dimension; i++ {
+	values := make([]float32, 0, g.dimension)
+	for range g.dimension {
 		values = append(values, g.randGen.Float32())
 	}
 	vec := types.InitVectorFloat32(g.dimension)
@@ -1226,7 +1226,7 @@ func fillColumnWithGener(eType types.EvalType, chk *chunk.Chunk, colIdx int, gen
 
 	col := chk.Column(colIdx)
 	col.Reset(eType)
-	for i := 0; i < batchSize; i++ {
+	for range batchSize {
 		v := gen.gen()
 		if v == nil {
 			col.AppendNull()
@@ -1343,49 +1343,49 @@ func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
 			c1, c2 := output.Column(0), output2.Column(0)
 			switch expr.GetType(ctx).EvalType() {
 			case types.ETInt:
-				for i := 0; i < input.NumRows(); i++ {
+				for i := range input.NumRows() {
 					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))
 					if !c1.IsNull(i) {
 						require.Equal(t, c1.GetInt64(i), c2.GetInt64(i), commentf(i))
 					}
 				}
 			case types.ETReal:
-				for i := 0; i < input.NumRows(); i++ {
+				for i := range input.NumRows() {
 					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))
 					if !c1.IsNull(i) {
 						require.Equal(t, c1.GetFloat64(i), c2.GetFloat64(i), commentf(i))
 					}
 				}
 			case types.ETDecimal:
-				for i := 0; i < input.NumRows(); i++ {
+				for i := range input.NumRows() {
 					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))
 					if !c1.IsNull(i) {
 						require.Equal(t, c1.GetDecimal(i), c2.GetDecimal(i), commentf(i))
 					}
 				}
 			case types.ETDatetime, types.ETTimestamp:
-				for i := 0; i < input.NumRows(); i++ {
+				for i := range input.NumRows() {
 					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))
 					if !c1.IsNull(i) {
 						require.Equal(t, c1.GetTime(i), c2.GetTime(i), commentf(i))
 					}
 				}
 			case types.ETDuration:
-				for i := 0; i < input.NumRows(); i++ {
+				for i := range input.NumRows() {
 					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))
 					if !c1.IsNull(i) {
 						require.Equal(t, c1.GetDuration(i, 0), c2.GetDuration(i, 0), commentf(i))
 					}
 				}
 			case types.ETJson:
-				for i := 0; i < input.NumRows(); i++ {
+				for i := range input.NumRows() {
 					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))
 					if !c1.IsNull(i) {
 						require.Equal(t, c1.GetJSON(i), c2.GetJSON(i), commentf(i))
 					}
 				}
 			case types.ETString:
-				for i := 0; i < input.NumRows(); i++ {
+				for i := range input.NumRows() {
 					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))
 					if !c1.IsNull(i) {
 						require.Equal(t, c1.GetString(i), c2.GetString(i), commentf(i))
@@ -1726,7 +1726,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 			}
 
 			warns := ctx.GetSessionVars().StmtCtx.GetWarnings()
-			for i := 0; i < int(vecWarnCnt); i++ {
+			for i := range int(vecWarnCnt) {
 				require.True(t, terror.ErrorEqual(warns[i].Err, warns[i+int(vecWarnCnt)].Err))
 			}
 		}
@@ -2021,7 +2021,7 @@ func genVecEvalBool(numCols int, colTypes, eTypes []types.EvalType) (CNFExprs, *
 	gs := make([]dataGenerator, 0, numCols)
 	fts := make([]*types.FieldType, 0, numCols)
 	randGen := newDefaultRandGen()
-	for i := 0; i < numCols; i++ {
+	for i := range numCols {
 		idx := randGen.Intn(len(eTypes))
 		if colTypes != nil {
 			for j := range eTypes {
@@ -2038,7 +2038,7 @@ func genVecEvalBool(numCols int, colTypes, eTypes []types.EvalType) (CNFExprs, *
 
 	input := chunk.New(fts, 1024, 1024)
 	exprs := make(CNFExprs, 0, numCols)
-	for i := 0; i < numCols; i++ {
+	for i := range numCols {
 		fillColumn(ts[i], input, i, vecExprBenchCase{geners: gs})
 		exprs = append(exprs, &Column{Index: i, RetType: fts[i]})
 	}
@@ -2053,7 +2053,7 @@ func generateRandomSel() []int {
 	// Use constant 256 to make it faster to generate randomly arranged sel slices
 	num := randGen.Intn(256) + 1
 	existed := make([]bool, 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		existed[i] = false
 	}
 	for count < num {
@@ -2063,7 +2063,7 @@ func generateRandomSel() []int {
 			count++
 		}
 	}
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		if existed[i] {
 			sel = append(sel, i)
 		}

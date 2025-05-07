@@ -1064,7 +1064,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 	var err error
 	var resp *clientv3.GetResponse
 	allInfo := make(map[string]*ServerInfo)
-	for i := 0; i < retryCnt; i++ {
+	for range retryCnt {
 		select {
 		case <-ctx.Done():
 			err = errors.Trace(ctx.Err())
@@ -1477,7 +1477,7 @@ func (is *InfoSyncer) getTiProxyServerInfo(ctx context.Context) (map[string]*TiP
 	var err error
 	var resp *clientv3.GetResponse
 	allInfo := make(map[string]*TiProxyServerInfo)
-	for i := 0; i < keyOpDefaultRetryCnt; i++ {
+	for range keyOpDefaultRetryCnt {
 		if ctx.Err() != nil {
 			return nil, errors.Trace(ctx.Err())
 		}
@@ -1538,7 +1538,7 @@ func (is *InfoSyncer) getTiCDCServerInfo(ctx context.Context) ([]*TiCDCInfo, err
 	var err error
 	var resp *clientv3.GetResponse
 	allInfo := make([]*TiCDCInfo, 0)
-	for i := 0; i < keyOpDefaultRetryCnt; i++ {
+	for range keyOpDefaultRetryCnt {
 		if ctx.Err() != nil {
 			return nil, errors.Trace(ctx.Err())
 		}
