@@ -262,8 +262,8 @@ func newBufferedWriter(writer ExternalFileWriter, chunkSize int, compressType Co
 	return &bufferedWriter{
 		writer:        writer,
 		buf:           newInterceptBuffer(chunkSize, compressType),
-		writeDurHist:  metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("merge_sort_write"),
-		writeRateHist: metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("merge_sort_write"),
+		writeDurHist:  metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("merge_sort_write"),
+		writeRateHist: metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("merge_sort_write"),
 	}
 }
 
