@@ -413,6 +413,7 @@ func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (
 	if op.HandleCols != nil {
 		cloned.HandleCols = op.HandleCols.Clone(newCtx.GetSessionVars().StmtCtx)
 	}
+	cloned.OutputColumns = cloneColumnsForPlanCache(op.OutputColumns, nil)
 	return cloned, true
 }
 
