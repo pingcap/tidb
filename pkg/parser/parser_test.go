@@ -1090,6 +1090,10 @@ AAAAAAAAAAAA5gm5Mg==
 		{"show distribution job 1 where id > 0", false, ""},
 		{"show distribution job 1", true, "SHOW DISTRIBUTION JOB 1"},
 
+		// for cancel distribution job JOBID
+		{"cancel distribution job", false, ""},
+		{"cancel distribution job 1", true, "CANCEL DISTRIBUTION JOB 1"},
+
 		// for show table next_row_id.
 		{"show table t1.t1 next_row_id", true, "SHOW TABLE `t1`.`t1` NEXT_ROW_ID"},
 		{"show table t1 next_row_id", true, "SHOW TABLE `t1` NEXT_ROW_ID"},

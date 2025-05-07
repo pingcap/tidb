@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -32,6 +33,8 @@ import (
 	"github.com/stretchr/testify/require"
 	pdhttp "github.com/tikv/pd/client/http"
 )
+
+var schedulerName = "balance-range-scheduler"
 
 type MockDistributePDCli struct {
 	pdhttp.Client
@@ -45,6 +48,19 @@ func (cli *MockDistributePDCli) GetSchedulerConfig(ctx context.Context, schedule
 	var jobList any
 	json.Unmarshal(data, &jobList)
 	return jobList, args.Error(1)
+}
+
+func (cli *MockDistributePDCli) CancelSchedulerJob(ctx context.Context, schedulerName string, jobID uint64) error {
+	args := cli.Called(ctx, schedulerName, jobID)
+	if args.Error(0) != nil {
+		return args.Error(0)
+	}
+	for _, job := range cli.jobs {
+		if job["job-id"] == jobID {
+			return nil
+		}
+	}
+	return errors.New("job not found")
 }
 
 func (cli *MockDistributePDCli) CreateSchedulerWithInput(ctx context.Context, name string, input map[string]any) error {
@@ -68,11 +84,11 @@ func TestShowDistributionJobs(t *testing.T) {
 	cli := &MockDistributePDCli{}
 	recoverCli := infosync.SetPDHttpCliForTest(cli)
 	defer recoverCli()
-	mockGetSchedulerConfig := func(schedulerName string) *mock.Call {
+	mockGetSchedulerConfig := func() *mock.Call {
 		return cli.On("GetSchedulerConfig", mock.Anything, schedulerName).
 			Return(nil, nil)
 	}
-	mockGetSchedulerConfig("balance-range-scheduler")
+	mockGetSchedulerConfig()
 	require.Empty(t, tk.MustQuery("show distribution jobs").Rows())
 
 	job := map[string]any{}
@@ -108,7 +124,7 @@ func TestDistributeTable(t *testing.T) {
 	cli := &MockDistributePDCli{}
 	recoverCli := infosync.SetPDHttpCliForTest(cli)
 	defer recoverCli()
-	mockCreateSchedulerWithInput := func(tblName, partition string, schedulerName string, config map[string]any) *mock.Call {
+	mockCreateSchedulerWithInput := func(tblName, partition string, config map[string]any) *mock.Call {
 		is := tk.Session().GetDomainInfoSchema()
 		tbl, err := is.TableInfoByName(ast.NewCIStr(database), ast.NewCIStr(tblName))
 		require.NoError(t, err)
@@ -139,10 +155,10 @@ func TestDistributeTable(t *testing.T) {
 	}
 	tk.MustExec("create table t1(a int)")
 	mockGetSchedulerConfig("balance-range-scheduler")
-	mockCreateSchedulerWithInput(table, partition, "balance-range-scheduler", config)
+	mockCreateSchedulerWithInput(table, partition, config)
 	tk.MustQuery(fmt.Sprintf("distribute table %s rule=leader engine=tikv", table)).Check(testkit.Rows("1"))
 	// create new scheduler with the same inputs
-	mockCreateSchedulerWithInput(table, partition, "balance-range-scheduler", config)
+	mockCreateSchedulerWithInput(table, partition, config)
 	tk.MustQuery(fmt.Sprintf("distribute table %s rule=leader engine=tikv", table)).Check(testkit.Rows("2"))
 
 	// test for incorrect arguments
@@ -209,4 +225,20 @@ func TestShowTableDistributions(t *testing.T) {
 		"1000 100 10 1000 10000 100"))
 	tk.MustQuery("show table tp1 partition(p0,p1) distributions").Check(testkit.Rows("p0 1 tikv 1 3 100 10 1 "+
 		"1000 100 10 1000 10000 100", "p1 1 tikv 1 3 100 10 1 1000 100 10 1000 10000 100"))
+}
+
+func TestCancelDistributionJob(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	cli := &MockDistributePDCli{}
+	recoverCli := infosync.SetPDHttpCliForTest(cli)
+	defer recoverCli()
+	mockCancelJobID := func(jobID uint64) *mock.Call {
+		return cli.On("CancelSchedulerJob", mock.Anything, schedulerName, jobID).
+			Return(nil)
+	}
+	mockCancelJobID(1)
+	_, err := tk.Exec("cancel distribution job 1")
+	require.Nil(t, err)
 }
