@@ -858,11 +858,9 @@ func testRandomPlanCacheCases(t *testing.T,
 		result1 := tk.MustQuery(q).Sort()
 		tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
 
-		// the first execution caches the plan
 		result2 := tk.MustQuery(q).Sort()
 		require.True(t, result1.Equal(result2.Rows()))
 
-		// the second execution uses the cache
 		result2 = tk.MustQuery(q).Sort()
 		require.True(t, result1.Equal(result2.Rows()))
 	}
