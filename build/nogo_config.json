@@ -363,6 +363,7 @@
       "pkg/distsql/": "distsql code",
       "pkg/expression/": "expression code",
       "pkg/infoschema/": "infoschema code",
+      "pkg/meta/": "meta code",
       "pkg/owner/": "owner code",
       "pkg/planner/cardinality": "pkg/planner/cardinality code",
       "pkg/planner/core/casetest/tpch": "pkg/planner/core/casetest/tpch code",
