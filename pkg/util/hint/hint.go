@@ -506,7 +506,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 // isStmtHint checks whether this hint is a statement-level hint.
 func isStmtHint(h *ast.TableOptimizerHint) bool {
 	switch h.HintName.L {
-	case "max_execution_time", "memory_quota", "resource_group":
+	case "max_execution_time", "memory_quota", "resource_group", "set_var":
 		return true
 	default:
 		return false
