@@ -363,9 +363,11 @@
       "pkg/bindinfo/": "bindinfo code",
       "pkg/distsql/": "distsql code",
       "pkg/disttask": "disttask code",
+      "pkg/domain/": "domain code",
       "pkg/lightning/": "lightning code",
       "pkg/expression/": "expression code",
       "pkg/infoschema/": "infoschema code",
+      "pkg/meta/": "meta code",
       "pkg/owner/": "owner code",
       "pkg/planner/cardinality": "pkg/planner/cardinality code",
       "pkg/planner/core/casetest/tpch": "pkg/planner/core/casetest/tpch code",
@@ -375,6 +377,8 @@
       "pkg/server/": "server code",
       "pkg/statistics": "pkg/statistics code",
       "pkg/store/": "store code",
+      "pkg/table": "pkg/table code",
+      "pkg/tablecodec": "pkg/tablecodec code",
       "//pkg/util": "pkg/util code",
       "pkg/workloadlearning": "workloadlearning code"
     }
