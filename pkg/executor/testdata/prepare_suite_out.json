@@ -1173,10 +1173,10 @@
           "6 6 6"
         ],
         "Plan": [
-          "Limit_8 10.00 root  offset:0, count:10",
-          "└─TableReader_12 10.00 root  data:Limit_11",
-          "  └─Limit_11 10.00 cop[tikv]  offset:0, count:10",
-          "    └─TableFullScan_10 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Limit_7 10.00 root  offset:0, count:10",
+          "└─TableReader_11 10.00 root  data:Limit_10",
+          "  └─Limit_10 10.00 cop[tikv]  offset:0, count:10",
+          "    └─TableFullScan_9 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },
@@ -1190,10 +1190,10 @@
           "6 6 6"
         ],
         "Plan": [
-          "Limit_8 20.00 root  offset:0, count:20",
-          "└─TableReader_12 20.00 root  data:Limit_11",
-          "  └─Limit_11 20.00 cop[tikv]  offset:0, count:20",
-          "    └─TableFullScan_10 20.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Limit_7 20.00 root  offset:0, count:20",
+          "└─TableReader_11 20.00 root  data:Limit_10",
+          "  └─Limit_10 20.00 cop[tikv]  offset:0, count:20",
+          "    └─TableFullScan_9 20.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },
@@ -1207,10 +1207,10 @@
           "1 1 1"
         ],
         "Plan": [
-          "TopN_8 1.00 root  test.t.b, offset:0, count:1",
-          "└─TableReader_15 1.00 root  data:TopN_14",
-          "  └─TopN_14 1.00 cop[tikv]  test.t.b, offset:0, count:1",
-          "    └─TableFullScan_13 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TopN_7 1.00 root  test.t.b, offset:0, count:1",
+          "└─TableReader_14 1.00 root  data:TopN_13",
+          "  └─TopN_13 1.00 cop[tikv]  test.t.b, offset:0, count:1",
+          "    └─TableFullScan_12 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },
@@ -1223,10 +1223,10 @@
           "5 5 5"
         ],
         "Plan": [
-          "TopN_8 5.00 root  test.t.b, offset:0, count:5",
-          "└─TableReader_15 5.00 root  data:TopN_14",
-          "  └─TopN_14 5.00 cop[tikv]  test.t.b, offset:0, count:5",
-          "    └─TableFullScan_13 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TopN_7 5.00 root  test.t.b, offset:0, count:5",
+          "└─TableReader_14 5.00 root  data:TopN_13",
+          "  └─TopN_13 5.00 cop[tikv]  test.t.b, offset:0, count:5",
+          "    └─TableFullScan_12 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },
