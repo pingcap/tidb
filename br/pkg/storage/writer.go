@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"time"
 
 	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/snappy"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -182,6 +185,10 @@ func newSimpleCompressBuffer(chunkSize int, compressType CompressType) *simpleCo
 type bufferedWriter struct {
 	buf    interceptBuffer
 	writer ExternalFileWriter
+
+	// monitor the speed of reading from external storage
+	writeDurHist  prometheus.Observer
+	writeRateHist prometheus.Observer
 }
 
 func (u *bufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
@@ -222,6 +229,16 @@ func (u *bufferedWriter) uploadChunk(ctx context.Context) error {
 	}
 	b := u.buf.Bytes()
 	u.buf.Reset()
+	size := len(b)
+	startTime := time.Now()
+	defer func() {
+		if u.writeDurHist != nil {
+			u.writeDurHist.Observe(time.Since(startTime).Seconds())
+		}
+		if u.writeRateHist != nil {
+			u.writeRateHist.Observe(float64(size) / 1024.0 / 1024.0 / time.Since(startTime).Seconds())
+		}
+	}()
 	_, err := u.writer.Write(ctx, b)
 	return errors.Trace(err)
 }
@@ -243,8 +260,10 @@ func NewUploaderWriter(writer ExternalFileWriter, chunkSize int, compressType Co
 // newBufferedWriter is used to build a buffered writer.
 func newBufferedWriter(writer ExternalFileWriter, chunkSize int, compressType CompressType) *bufferedWriter {
 	return &bufferedWriter{
-		writer: writer,
-		buf:    newInterceptBuffer(chunkSize, compressType),
+		writer:        writer,
+		buf:           newInterceptBuffer(chunkSize, compressType),
+		writeDurHist:  metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("merge_sort_write"),
+		writeRateHist: metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("merge_sort_write"),
 	}
 }
 
