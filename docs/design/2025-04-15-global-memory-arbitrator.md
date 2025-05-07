@@ -22,7 +22,7 @@ According to the introduction in [tidb#58194](https://github.com/pingcap/tidb/is
 
 - Kill SQL/session Risk
 - Heavy Golang GC Impact
-- OOM Risk
+- OOM
 
 Severity: `OOM` ≈ `Heavy Golang GC` > `Kill SQL/session`
 
