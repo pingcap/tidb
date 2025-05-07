@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -69,6 +69,9 @@ type byteReader struct {
 	}
 
 	logger *zap.Logger
+	// monitor the speed of reading from external storage
+	readDurHist  prometheus.Observer
+	readRateHist prometheus.Observer
 }
 
 func openStoreReaderAndSeek(
@@ -277,17 +280,18 @@ func (r *byteReader) next(n int) (int, [][]byte) {
 func (r *byteReader) reload() error {
 	startTime := time.Now()
 	defer func() {
-		readDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("merge_sort_read")
-		readRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("merge_sort_read")
-
-		readSecond := time.Since(startTime).Seconds()
-		readDurHist.Observe(readSecond)
-		size := 0
-		for _, b := range r.curBuf {
-			size += len(b)
+		//readDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("merge_sort_read")
+		//readRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("merge_sort_read")
+		if r.readDurHist == nil && r.readRateHist == nil {
+			readSecond := time.Since(startTime).Seconds()
+			r.readDurHist.Observe(readSecond)
+			size := 0
+			for _, b := range r.curBuf {
+				size += len(b)
+			}
+			r.readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
+			r.logger.Info("global_sort_read ", zap.Int("size", size), zap.Float64("readSecond", readSecond))
 		}
-		readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
-		r.logger.Info("global_sort_read ", zap.Int("size", size), zap.Float64("readSecond", readSecond))
 	}()
 	to := r.concurrentReader.expected
 	now := r.concurrentReader.now
