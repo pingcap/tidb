@@ -446,6 +446,7 @@ func (s *AzureBlobStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec
 			}
 			rem := total - finished
 			// In practice, most copies finish when the initial request returns.
+			// To avoid a busy loop of requesting, we need a minimal sleep duration.
 			toSleep := max(time.Duration(rem/azblobPremisedCopySpeedPerMilliSecond)*time.Millisecond, azblobCopyPollPendingMinimalDuration)
 			logutil.CL(ctx).Info("AzureBlobStorage: asynchronous copy triggered",
 				zap.Int("finished", finished), zap.Int("total", total),
