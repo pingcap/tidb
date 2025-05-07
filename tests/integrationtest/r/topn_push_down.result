@@ -186,8 +186,8 @@ Limit	0.00	root		offset:0, count:5
       └─IndexRangeScan	0.00	cop[tikv]	table:p, index:payment_relate_id(relate_id)	range: decided by [eq(topn_push_down.p.relate_id, topn_push_down.tr.id)], keep order:false, stats:pseudo
 desc select 1 as a from dual order by a limit 1;
 id	estRows	task	access object	operator info
-Projection_7	1.00	root		1->Column#1
-└─TableDual_8	1.00	root		rows:1
+Projection_6	1.00	root		1->Column#1
+└─TableDual_7	1.00	root		rows:1
 drop table if exists t1;
 drop table if exists t2;
 create table t1(a bigint, b bigint);
@@ -206,16 +206,16 @@ Apply_15	9990.00	root		semi join, left side:TableReader_18, equal:[eq(topn_push_
           └─TableFullScan_22	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 desc select * from t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t2 where t2.b > t1.b) x order by b limit 1);
 id	estRows	task	access object	operator info
-Apply_18	9990.00	root		semi join, left side:TableReader_21, equal:[eq(topn_push_down.t1.a, topn_push_down.t2.a)]
-├─TableReader_21(Build)	9990.00	root		data:Selection_20
-│ └─Selection_20	9990.00	cop[tikv]		not(isnull(topn_push_down.t1.a))
-│   └─TableFullScan_19	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Selection_22(Probe)	7992.00	root		not(isnull(topn_push_down.t2.a))
-  └─Limit_24	9990.00	root		offset:0, count:1
-    └─TableReader_29	9990.00	root		data:Limit_28
-      └─Limit_28	9990.00	cop[tikv]		offset:0, count:1
-        └─Selection_27	9990.00	cop[tikv]		gt(topn_push_down.t2.b, topn_push_down.t1.b)
-          └─TableFullScan_26	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
+Apply_17	9990.00	root		semi join, left side:TableReader_20, equal:[eq(topn_push_down.t1.a, topn_push_down.t2.a)]
+├─TableReader_20(Build)	9990.00	root		data:Selection_19
+│ └─Selection_19	9990.00	cop[tikv]		not(isnull(topn_push_down.t1.a))
+│   └─TableFullScan_18	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Selection_21(Probe)	7992.00	root		not(isnull(topn_push_down.t2.a))
+  └─Limit_23	9990.00	root		offset:0, count:1
+    └─TableReader_28	9990.00	root		data:Limit_27
+      └─Limit_27	9990.00	cop[tikv]		offset:0, count:1
+        └─Selection_26	9990.00	cop[tikv]		gt(topn_push_down.t2.b, topn_push_down.t1.b)
+          └─TableFullScan_25	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int not null, index idx(a));
 explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;

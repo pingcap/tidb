@@ -110,19 +110,19 @@ select * from t limit 1;
 a
 explain format = 'plan_cache' select * from (select * from t) t1 limit 1;
 id	estRows	task	access object	operator info
-Limit_9	1.00	root		offset:0, count:1
-└─TableReader_13	1.00	root		data:Limit_12
-  └─Limit_12	1.00	cop[tikv]		offset:0, count:1
-    └─TableFullScan_11	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Limit_8	1.00	root		offset:0, count:1
+└─TableReader_12	1.00	root		data:Limit_11
+  └─Limit_11	1.00	cop[tikv]		offset:0, count:1
+    └─TableFullScan_10	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 Warning	1105	skip non-prepared plan-cache: queries that have sub-queries are not supported
 explain format = 'plan_cache' select * from (select * from t) t1 limit 1;
 id	estRows	task	access object	operator info
-Limit_9	1.00	root		offset:0, count:1
-└─TableReader_13	1.00	root		data:Limit_12
-  └─Limit_12	1.00	cop[tikv]		offset:0, count:1
-    └─TableFullScan_11	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Limit_8	1.00	root		offset:0, count:1
+└─TableReader_12	1.00	root		data:Limit_11
+  └─Limit_11	1.00	cop[tikv]		offset:0, count:1
+    └─TableFullScan_10	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
