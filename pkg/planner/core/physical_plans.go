@@ -757,6 +757,7 @@ type PhysicalIndexScan struct {
 	isPartition bool
 	Desc        bool
 	KeepOrder   bool
+	FullText    bool
 	// ByItems only for partition table with orderBy + pushedLimit
 	ByItems []*util.ByItems
 
@@ -780,6 +781,8 @@ type PhysicalIndexScan struct {
 	// usedStatsInfo records stats status of this physical table.
 	// It's for printing stats related information when display execution plan.
 	usedStatsInfo *stmtctx.UsedStatsInfoForTable `plan-cache-clone:"shallow"`
+
+	StoreType kv.StoreType
 }
 
 // Clone implements op.PhysicalPlan interface.

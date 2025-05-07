@@ -1618,6 +1618,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		er.ctxStack[len(er.ctxStack)-1].SetCoercibility(expression.CoercibilityExplicit)
 		er.ctxStack[len(er.ctxStack)-1].SetCharsetAndCollation(arg.GetType(er.sctx.GetEvalCtx()).GetCharset(), arg.GetType(er.sctx.GetEvalCtx()).GetCollate())
+	case *ast.MatchAgainst:
+		er.matchAgainstToExpression(v)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
@@ -2243,6 +2245,27 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 		}
 	}
 	er.ctxStackPop(3)
+	er.ctxStackAppend(function, types.EmptyName)
+}
+
+func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
+	stkLen := len(er.ctxStack)
+	er.err = expression.CheckArgsNotMultiColumnRow(er.ctxStack[stkLen-1:]...)
+	if er.err != nil {
+		return
+	}
+
+	modifierConst := expression.NewInt64Const(int64(v.Modifier))
+	er.ctxStack = append(er.ctxStack, modifierConst)
+
+	argLen := len(v.ColumnNames) + 2
+	function, err := er.newFunction(expression.FulltextSearch, types.NewFieldType(mysql.TypeTiny), er.ctxStack[len(er.ctxStack)-argLen:]...)
+	if err != nil {
+		er.err = err
+		return
+	}
+	er.ctxStack = er.ctxStack[:len(er.ctxStack)-1]
+	er.ctxStackPop(argLen - 1)
 	er.ctxStackAppend(function, types.EmptyName)
 }
 

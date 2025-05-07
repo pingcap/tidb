@@ -819,6 +819,7 @@ var funcs = map[string]functionClass{
 	ast.Ucase:           &upperFunctionClass{baseFunctionClass{ast.Ucase, 1, 1}},
 	ast.Unhex:           &unhexFunctionClass{baseFunctionClass{ast.Unhex, 1, 1}},
 	ast.WeightString:    &weightStringFunctionClass{baseFunctionClass{ast.WeightString, 1, 3}},
+	FulltextSearch:      &fulltextSearchFunctionClass{baseFunctionClass{FulltextSearch, 2, -1}},
 
 	// information functions
 	ast.ConnectionID:         &connectionIDFunctionClass{baseFunctionClass{ast.ConnectionID, 0, 0}},

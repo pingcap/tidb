@@ -124,6 +124,10 @@ type AccessPath struct {
 
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
+
+	FullText     bool
+	QueryColumns []*expression.Column
+	QueryJSONStr string
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -178,7 +182,7 @@ func (path *AccessPath) Clone() *AccessPath {
 
 // IsTablePath returns true if it's IntHandlePath or CommonHandlePath. Including tiflash table scan.
 func (path *AccessPath) IsTablePath() bool {
-	return path.IsIntHandlePath || path.IsCommonHandlePath || (path.Index != nil && path.StoreType == kv.TiFlash)
+	return path.IsIntHandlePath || path.IsCommonHandlePath || (path.Index != nil && !path.Index.IsFulltextIndex() && path.StoreType == kv.TiFlash)
 }
 
 // IsTiKVTablePath returns true if it's IntHandlePath or CommonHandlePath. And the store type is TiKV.

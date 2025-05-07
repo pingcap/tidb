@@ -256,6 +256,12 @@ type PhysicalProperty struct {
 		TopK uint32
 	}
 
+	FullTextProp struct {
+		QueryColumns []*expression.Column
+		QueryJSONStr string
+		Limit        int
+	}
+
 	IndexJoinProp *IndexJoinRuntimeProp
 }
 
