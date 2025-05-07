@@ -446,6 +446,8 @@ OUTER:
 		totalExpr := expression.ComposeCNFCondition(ctx.GetExprCtx(), remainedExprs...)
 		ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.RealtimeCount))
 	}
+	// Don't allow the result to be less than 1 row
+	ret = max(ret, 1.0/float64(coll.RealtimeCount))
 	return ret, nodes, nil
 }
 
