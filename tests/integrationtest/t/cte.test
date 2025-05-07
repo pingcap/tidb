@@ -173,10 +173,10 @@ with recursive cte1 as (select c1 - 1 c1 from t1 union all select c1 - 1 c1 from
 # case 32
 drop table if exists t;
 create table t(a int, b int, key (b));
-desc with cte as (select * from t) select * from cte;
+desc format='brief' with cte as (select * from t) select * from cte;
 create SESSION binding for with cte as (select * from t) select * from cte using with cte as (select * from t use index(b)) select * from cte;
-desc with cte as (select * from t) select * from cte;
-desc with cte as (select * from t use index()) select * from cte;
+desc format='brief' with cte as (select * from t) select * from cte;
+desc format='brief' with cte as (select * from t use index()) select * from cte;
 # case 33
 drop table if exists t1, tpk;
 create table t1(c1 int);
@@ -531,7 +531,7 @@ VALUES
  7.0, 'Source A', 'Unit A', 'Region A', '2023-06-28 15:00:00', '20230627',
  6.9, 'user_001', CURRENT_TIMESTAMP, 'Exchange rate on 2023-06-28');
 
-desc WITH date_table AS (
+desc format='brief' WITH date_table AS (
   SELECT
         d.col_1 AS date,
         (SELECT MAX(col_1)
@@ -602,7 +602,7 @@ SELECT /*+ set_var(tidb_hash_join_version=legacy) */ col_4
           FROM product_detail
 ) a;
 
-desc WITH date_table AS (
+desc format='brief' WITH date_table AS (
   SELECT
         d.col_1 AS date,
         (SELECT MAX(col_1)
