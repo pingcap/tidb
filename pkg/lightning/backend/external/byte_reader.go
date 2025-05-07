@@ -282,7 +282,7 @@ func (r *byteReader) reload() error {
 	defer func() {
 		//readDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("merge_sort_read")
 		//readRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("merge_sort_read")
-		if r.readDurHist == nil && r.readRateHist == nil {
+		if r.readDurHist != nil && r.readRateHist != nil {
 			readSecond := time.Since(startTime).Seconds()
 			r.readDurHist.Observe(readSecond)
 			size := 0
