@@ -43,6 +43,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -94,7 +95,7 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 	case model.StateDeleteOnly:
 		tblInfo.State = model.StateNone
 		oldIDs := getPartitionIDs(tblInfo)
-		ruleIDs := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
+		ruleIDs := append(getPartitionRuleIDs(jobCtx.store.GetCodec(), job.SchemaName, tblInfo), label.NewRuleID(jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, ""))
 
 		args.OldPartitionIDs = oldIDs
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != tblInfo.State)
@@ -267,7 +268,7 @@ func (w *worker) recoverTable(
 	job *model.Job,
 	recoverInfo *model.RecoverTableInfo,
 ) (ver int64, err error) {
-	tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(recoverInfo.TableInfo, recoverInfo.OldSchemaName, recoverInfo.OldTableName)
+	tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(w.store.GetCodec(), recoverInfo.TableInfo, recoverInfo.OldSchemaName, recoverInfo.OldTableName)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to get old label rules from PD")
@@ -299,7 +300,7 @@ func (w *worker) recoverTable(
 		}
 	})
 
-	err = updateLabelRules(job, recoverInfo.TableInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, recoverInfo.TableInfo.ID)
+	err = updateLabelRules(w.store.GetCodec(), job, recoverInfo.TableInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, recoverInfo.TableInfo.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to update the label rule to PD")
@@ -518,13 +519,13 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 		args.NewPartIDsWithPolicy = newIDs
 	}
 
-	tableRuleID, partRuleIDs, _, oldRules, err := getOldLabelRules(tblInfo, job.SchemaName, tblInfo.Name.L)
+	tableRuleID, partRuleIDs, _, oldRules, err := getOldLabelRules(jobCtx.store.GetCodec(), tblInfo, job.SchemaName, tblInfo.Name.L)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Wrapf(err, "failed to get old label rules from PD")
 	}
 
-	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, []string{}, args.NewTableID)
+	err = updateLabelRules(jobCtx.store.GetCodec(), job, tblInfo, oldRules, tableRuleID, partRuleIDs, []string{}, args.NewTableID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Wrapf(err, "failed to update the label rule to PD")
@@ -783,7 +784,7 @@ func onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 	oldTableName := tblInfo.Name
-	ver, err = checkAndRenameTables(metaMut, job, tblInfo, args)
+	ver, err = checkAndRenameTables(jobCtx.store.GetCodec(), metaMut, job, tblInfo, args)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -822,7 +823,7 @@ func onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		ver, err := checkAndRenameTables(metaMut, job, tblInfo, info)
+		ver, err := checkAndRenameTables(jobCtx.store.GetCodec(), metaMut, job, tblInfo, info)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -842,7 +843,7 @@ func onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	return ver, nil
 }
 
-func checkAndRenameTables(t *meta.Mutator, job *model.Job, tblInfo *model.TableInfo, args *model.RenameTableArgs) (ver int64, _ error) {
+func checkAndRenameTables(codec tikv.Codec, t *meta.Mutator, job *model.Job, tblInfo *model.TableInfo, args *model.RenameTableArgs) (ver int64, _ error) {
 	err := t.DropTableOrView(args.OldSchemaID, tblInfo.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -859,7 +860,7 @@ func checkAndRenameTables(t *meta.Mutator, job *model.Job, tblInfo *model.TableI
 	})
 
 	oldTableName := tblInfo.Name
-	tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(tblInfo, args.OldSchemaName.L, oldTableName.L)
+	tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(codec, tblInfo, args.OldSchemaName.L, oldTableName.L)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to get old label rules from PD")
@@ -884,7 +885,7 @@ func checkAndRenameTables(t *meta.Mutator, job *model.Job, tblInfo *model.TableI
 		return ver, errors.Trace(err)
 	}
 
-	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, tblInfo.ID)
+	err = updateLabelRules(codec, job, tblInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, tblInfo.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to update the label rule to PD")
@@ -1587,7 +1588,7 @@ func getOldLabelRules(tblInfo *model.TableInfo, oldSchemaName, oldTableName stri
 	oldRuleIDs = []string{tableRuleID}
 	if tblInfo.GetPartitionInfo() != nil {
 		for _, def := range tblInfo.GetPartitionInfo().Definitions {
-			partRuleIDs = append(partRuleIDs, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName, oldTableName, def.Name.L))
+			partRuleIDs = append(partRuleIDs, label.NewRuleID(codec, oldSchemaName, oldTableName, def.Name.L))
 		}
 	}
 
@@ -1596,7 +1597,7 @@ func getOldLabelRules(tblInfo *model.TableInfo, oldSchemaName, oldTableName stri
 	return tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err
 }
 
-func updateLabelRules(job *model.Job, tblInfo *model.TableInfo, oldRules map[string]*label.Rule, tableRuleID string, partRuleIDs, oldRuleIDs []string, tID int64) error {
+func updateLabelRules(codec tikv.Codec, job *model.Job, tblInfo *model.TableInfo, oldRules map[string]*label.Rule, tableRuleID string, partRuleIDs, oldRuleIDs []string, tID int64) error {
 	if oldRules == nil {
 		return nil
 	}
@@ -1604,7 +1605,7 @@ func updateLabelRules(job *model.Job, tblInfo *model.TableInfo, oldRules map[str
 	if tblInfo.GetPartitionInfo() != nil {
 		for idx, def := range tblInfo.GetPartitionInfo().Definitions {
 			if r, ok := oldRules[partRuleIDs[idx]]; ok {
-				newRules = append(newRules, r.Clone().Reset(job.SchemaName, tblInfo.Name.L, def.Name.L, def.ID))
+				newRules = append(newRules, r.Clone().Reset(codec, job.SchemaName, tblInfo.Name.L, def.Name.L, def.ID))
 			}
 		}
 	}
@@ -1615,7 +1616,7 @@ func updateLabelRules(job *model.Job, tblInfo *model.TableInfo, oldRules map[str
 				ids = append(ids, def.ID)
 			}
 		}
-		newRules = append(newRules, r.Clone().Reset(job.SchemaName, tblInfo.Name.L, "", ids...))
+		newRules = append(newRules, r.Clone().Reset(codec, job.SchemaName, tblInfo.Name.L, "", ids...))
 	}
 
 	patch := label.NewRulePatch(newRules, oldRuleIDs)
