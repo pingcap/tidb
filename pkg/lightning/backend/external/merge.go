@@ -16,11 +16,13 @@ package external
 
 import (
 	"context"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -181,10 +183,22 @@ func mergeOverlappingFilesInternal(
 
 	// currently use same goroutine to do read and write. The main advantage is
 	// there's no KV copy and iter can reuse the buffer.
+	var size int
+	var t time.Duration
+	//writeDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("merge_sort_write")
+	writeRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("merge_sort_write")
 	for iter.Next() {
+		startTime := time.Now()
 		err = writer.WriteRow(ctx, iter.Key(), iter.Value())
+		t += time.Since(startTime)
 		if err != nil {
 			return err
+		}
+		size += len(iter.Key()) + len(iter.Value()) + lengthBytes*2
+		if t > 30*time.Second {
+			writeRateHist.Observe(float64(size) / 1024.0 / 1024.0 / t.Seconds())
+			size = 0
+			t = 0
 		}
 	}
 	return iter.Error()
