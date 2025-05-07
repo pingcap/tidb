@@ -232,14 +232,8 @@ func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *
 				pushDownTopNByItems = slices.Delete(pushDownTopNByItems, i, i+1)
 			}
 		}
-		pushDownTopN := LogicalTopN{
-			Count:            topN.Count,
-			Offset:           topN.Offset,
-			ByItems:          pushDownTopNByItems,
-			PreferLimitToCop: topN.PreferLimitToCop,
-			PartitionBy:      topN.GetPartitionBy(),
-		}.Init(topN.SCtx(), topN.QueryBlockOffset())
-		p.Children()[0] = p.Children()[0].PushDownTopN(pushDownTopN, opt)
+		topN.ByItems = pushDownTopNByItems
+		p.Children()[0] = p.Children()[0].PushDownTopN(topN, opt)
 		return p
 	}
 
