@@ -3024,6 +3024,8 @@ func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *MppTask, stats
 		if sel := ts.buildPushedDownSelection(stats, indexHints); sel != nil {
 			sel.SetChildren(ts)
 			mpp.p = sel
+		} else {
+			mpp.p = ts
 		}
 	}
 	return mpp
@@ -3039,6 +3041,7 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *CopTask, stats *pro
 	if len(ts.filterCondition) > 0 {
 		sel := ts.buildPushedDownSelection(stats, indexHints)
 		if sel == nil {
+			copTask.tablePlan = ts
 			return
 		}
 		if len(copTask.rootTaskConds) != 0 {
