@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 // extractableCols records the column names used by tables in information_schema.
@@ -163,7 +163,7 @@ func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 		if len(tableIDs) > 0 {
 			tableMap := make(map[int64]*model.TableInfo, len(tableIDs))
 			findTablesByID(is, tableIDs, tableNames, tableMap)
-			tableSlice := maps.Values(tableMap)
+			tableSlice := slices.AppendSeq(make([]*model.TableInfo, 0, len(tableMap)), maps.Values(tableMap))
 			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
 			return findSchemasForTables(e, is, tableSlice)
 		}
@@ -173,7 +173,7 @@ func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 		if len(partIDs) > 0 {
 			tableMap := make(map[int64]*model.TableInfo, len(partIDs))
 			findTablesByPartID(is, partIDs, tableNames, tableMap)
-			tableSlice := maps.Values(tableMap)
+			tableSlice := slices.AppendSeq(make([]*model.TableInfo, 0, len(tableMap)), maps.Values(tableMap))
 			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
 			return findSchemasForTables(e, is, tableSlice)
 		}
@@ -239,8 +239,8 @@ func (e *InfoSchemaBaseExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	}
 
 	r := new(bytes.Buffer)
-	colNames := maps.Keys(e.ColPredicates)
-	sort.Strings(colNames)
+	colNames := slices.AppendSeq(make([]string, 0, len(e.ColPredicates)), maps.Keys(e.ColPredicates))
+	slices.Sort(colNames)
 	for _, colName := range colNames {
 		preds := e.ColPredicates[colName]
 		if len(preds) > 0 {
@@ -248,8 +248,8 @@ func (e *InfoSchemaBaseExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 		}
 	}
 
-	colNames = maps.Keys(e.LikePatterns)
-	sort.Strings(colNames)
+	colNames = slices.AppendSeq(make([]string, 0, len(e.LikePatterns)), maps.Keys(e.LikePatterns))
+	slices.Sort(colNames)
 	for _, colName := range colNames {
 		patterns := e.LikePatterns[colName]
 		if len(patterns) > 0 {

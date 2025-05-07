@@ -16,6 +16,7 @@ package core
 
 import (
 	"cmp"
+	"maps"
 	"slices"
 	"strings"
 
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
@@ -501,7 +501,7 @@ func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCn
 		}
 	}
 	// after all mv index is traversed, pick those remained paths which has already been de-duplicated for its accessFilters.
-	recordsCollection := maps.Values(mm)
+	recordsCollection := slices.AppendSeq(make([]*record, 0, len(mm)), maps.Values(mm))
 	// according origin offset to stable the partial paths order. (golang map is not order stable)
 	slices.SortFunc(recordsCollection, func(a, b *record) int {
 		return cmp.Compare(a.originOffset, b.originOffset)
