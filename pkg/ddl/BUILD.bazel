@@ -37,6 +37,7 @@ go_library(
         "delete_range_util.go",
         "dist_owner.go",
         "doc.go",
+        "engine_attribute.go",
         "executor.go",
         "foreign_key.go",
         "generated_column.go",
@@ -64,6 +65,7 @@ go_library(
         "sequence.go",
         "split_region.go",
         "stat.go",
+        "storage_class.go",
         "table.go",
         "table_lock.go",
         "table_mode.go",
@@ -76,6 +78,7 @@ go_library(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl/copr",
         "//pkg/ddl/ingest",
         "//pkg/ddl/label",

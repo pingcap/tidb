@@ -16,6 +16,7 @@ package model
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -203,6 +204,12 @@ type TableInfo struct {
 	DBID int64 `json:"-"`
 
 	Mode TableMode `json:"mode,omitempty"`
+
+	// EngineAttribute is the ENGINE_ATTRIBUTE for the table.
+	EngineAttribute string `json:"engine_attribute,omitempty"`
+
+	// StorageClassTier is the storage class tier of the table level.
+	StorageClassTier string `json:"storage_class_tier,omitempty"`
 }
 
 // Hash64 implement HashEquals interface.
@@ -1142,6 +1149,7 @@ type PartitionDefinition struct {
 	InValues           [][]string     `json:"in_values"`
 	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
 	Comment            string         `json:"comment,omitempty"`
+	StorageClassTier   string         `json:"storage_class_tier,omitempty"`
 }
 
 // Clone clones PartitionDefinition.
@@ -1406,4 +1414,46 @@ func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
 	}
 
 	return duration.ParseDuration(t.JobInterval)
+}
+
+// EngineAttribute is the JSON format of ENGINE_ATTRIBUTE property of tables.
+type EngineAttribute struct {
+	StorageClass json.RawMessage `json:"storage_class"`
+}
+
+func ParseEngineAttributeFromString(input string) (*EngineAttribute, error) {
+	attr := &EngineAttribute{}
+	if len(input) == 0 {
+		return attr, nil
+	}
+	err := json.Unmarshal([]byte(input), attr)
+	if err != nil {
+		return nil, err
+	}
+	return attr, nil
+}
+
+// Name of storage class tiers
+const (
+	StorageClassTierStandard string = "STANDARD"
+	StorageClassTierIA       string = "IA"
+
+	StorageClassTierDefault string = StorageClassTierStandard
+)
+
+// StorageClassDef is the tier & scope definition for storage class.
+type StorageClassDef struct {
+	Tier     string   `json:"tier"`
+	NamesIn  []string `json:"names_in"`
+	LessThan *string  `json:"less_than"`
+	ValuesIn []string `json:"values_in"`
+}
+
+func (d *StorageClassDef) HasNoScopeDef() bool {
+	return len(d.NamesIn) == 0 && d.LessThan == nil && len(d.ValuesIn) == 0
+}
+
+// StorageClassSettings is the settings for storage class.
+type StorageClassSettings struct {
+	Defs []*StorageClassDef `json:"defs"`
 }

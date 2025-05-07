@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
@@ -1884,7 +1885,12 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					}
 				case ast.TableOptionEngine:
 				case ast.TableOptionEngineAttribute:
-					err = dbterror.ErrUnsupportedEngineAttribute
+					if kerneltype.IsNextGen() {
+						spec.EngineAttribute = opt.StrValue
+						err = e.AlterTableEngineAttribute(sctx, ident, spec)
+					} else {
+						err = dbterror.ErrUnsupportedEngineAttribute
+					}
 				case ast.TableOptionRowFormat:
 				case ast.TableOptionTTL, ast.TableOptionTTLEnable, ast.TableOptionTTLJobInterval:
 					var ttlInfo *model.TTLInfo
@@ -6727,6 +6733,43 @@ func (e *executor) genPlacementPolicyID() (int64, error) {
 	})
 
 	return ret, err
+}
+
+// AlterTableEngineAttribute updates the table engine attribute.
+func (e *executor) AlterTableEngineAttribute(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := e.infoCache.GetLatest()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(context.Background(), ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+	if _, err = model.ParseEngineAttributeFromString(spec.EngineAttribute); err != nil {
+		return dbterror.ErrEngineAttributeInvalidFormat.GenWithStackByArgs(fmt.Sprintf("'%v'", err))
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       schema.ID,
+		TableID:        tb.Meta().ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tb.Meta().Name.L,
+		Type:           model.ActionModifyEngineAttribute,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		Priority:       ctx.GetSessionVars().DDLReorgPriority,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+
+	args := &model.AlterEngineAttributeArgs{
+		EngineAttribute: &spec.EngineAttribute,
+	}
+
+	return e.doDDLJob2(ctx, job, args)
+	// err = e.callHookOnChanged(job, err)
 }
 
 // DoDDLJob will return

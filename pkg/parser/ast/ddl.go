@@ -2669,6 +2669,10 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		} else {
 			ctx.WritePlain("''")
 		}
+	case TableOptionEngineAttribute:
+		ctx.WriteKeyWord("ENGINE_ATTRIBUTE ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
 	case TableOptionCharset:
 		if n.UintValue == TableOptionCharsetWithConvertTo {
 			ctx.WriteKeyWord("CONVERT TO ")
@@ -3289,6 +3293,7 @@ type AlterTableSpec struct {
 	Statistics       *StatisticsSpec
 	AttributesSpec   *AttributesSpec
 	StatsOptionsSpec *StatsOptionsSpec
+	EngineAttribute  string
 }
 
 type TiFlashReplicaSpec struct {

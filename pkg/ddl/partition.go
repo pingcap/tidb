@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -1394,6 +1395,20 @@ func buildPartitionDefinitionsInfo(ctx expression.BuildContext, defs []*ast.Part
 
 	if err != nil {
 		return nil, err
+	}
+
+	if kerneltype.IsNextGen() {
+		settings, errSc := getStorageClassSettingsFromTableInfo(tbInfo)
+		if errSc == nil {
+			errSc = BuildStorageClassForPartitions(partitions, tbInfo, settings)
+		}
+		if errSc != nil {
+			logutil.DDLLogger().Warn("storage class: build for partition failed", zap.Int64("tableID", tbInfo.ID), zap.Error(errSc))
+			msg := fmt.Sprintf("invalid storage class settings: '%v'", errSc)
+			ctx.GetEvalCtx().AppendWarning(
+				dbterror.ErrStorageClassInvalidSpec.GenWithStackByArgs(msg),
+			)
+		}
 	}
 
 	return partitions, nil
