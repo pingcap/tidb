@@ -231,15 +231,13 @@ func (u *bufferedWriter) uploadChunk(ctx context.Context) error {
 	u.buf.Reset()
 	size := len(b)
 	startTime := time.Now()
-	defer func() {
-		if u.writeDurHist != nil {
-			u.writeDurHist.Observe(time.Since(startTime).Seconds())
-		}
-		if u.writeRateHist != nil {
-			u.writeRateHist.Observe(float64(size) / 1024.0 / 1024.0 / time.Since(startTime).Seconds())
-		}
-	}()
 	_, err := u.writer.Write(ctx, b)
+	if u.writeDurHist != nil {
+		u.writeDurHist.Observe(time.Since(startTime).Seconds())
+	}
+	if u.writeRateHist != nil {
+		u.writeRateHist.Observe(float64(size) / 1024.0 / 1024.0 / time.Since(startTime).Seconds())
+	}
 	return errors.Trace(err)
 }
 
