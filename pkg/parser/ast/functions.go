@@ -375,6 +375,9 @@ const (
 	NextVal = "nextval"
 	LastVal = "lastval"
 	SetVal  = "setval"
+
+	// about import into
+	FileRoute = "file_route"
 )
 
 type FuncCallExprType int8
