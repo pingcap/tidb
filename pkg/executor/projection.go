@@ -268,7 +268,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 
 	// Initialize projectionWorker.
 	e.workers = make([]*projectionWorker, 0, e.numWorkers)
-	for i := int64(0); i < e.numWorkers; i++ {
+	for i := range e.numWorkers {
 		e.workers = append(e.workers, &projectionWorker{
 			proj:            e,
 			ctx:             e.projectionExecutorContext,

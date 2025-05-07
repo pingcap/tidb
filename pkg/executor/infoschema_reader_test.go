@@ -750,7 +750,7 @@ func TestJoinSystemTableContainsView(t *testing.T) {
 	tk.MustExec("create view v as select * from t;")
 	// This is used by grafana when TiDB is specified as the data source.
 	// See https://github.com/grafana/grafana/blob/e86b6662a187c77656f72bef3b0022bf5ced8b98/public/app/plugins/datasource/mysql/meta_query.ts#L31
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustQueryWithContext(context.Background(), `
 SELECT
     table_name as table_name,
@@ -915,10 +915,10 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		tk.MustExec(fmt.Sprintf("create database d%d", i))
 		tk.MustExec(fmt.Sprintf("use d%d", i))
-		for j := 0; j < 4; j++ {
+		for j := range 4 {
 			tk.MustExec(fmt.Sprintf("create table t%d(id int, col1 int, col2 int)", j))
 			tk.MustExec(fmt.Sprintf("alter table t%d add index (col1)", j))
 		}
@@ -1002,15 +1002,15 @@ func TestInfoSchemaConditionWorks(t *testing.T) {
 	// - "index_name"
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	for db := 0; db < 2; db++ {
-		for table := 0; table < 2; table++ {
+	for db := range 2 {
+		for table := range 2 {
 			tk.MustExec(fmt.Sprintf("create database if not exists Db%d;", db))
 			tk.MustExec(fmt.Sprintf(`create table Db%d.Table%d (id int primary key, data0 varchar(255), data1 varchar(255))
 				partition by range (id) (
 					partition p0 values less than (10),
 					partition p1 values less than (20)
 				);`, db, table))
-			for index := 0; index < 2; index++ {
+			for index := range 2 {
 				tk.MustExec(fmt.Sprintf("create unique index Idx%d on Db%d.Table%d (id, data%d);", index, db, table, index))
 			}
 		}
@@ -1060,10 +1060,10 @@ func TestInfoSchemaConditionWorks(t *testing.T) {
 			// TODO: find a way to test the table without any rows by adding some rows to them.
 			continue
 		}
-		for i := 0; i < len(cols); i++ {
+		for i := range cols {
 			colName := cols[i].Column.Name.L
 			if valPrefix, ok := testColumns[colName]; ok {
-				for j := 0; j < 2; j++ {
+				for j := range 2 {
 					sql := fmt.Sprintf("select * from information_schema.%s where %s = '%s%d';",
 						table, colName, valPrefix, j)
 					rows := tk.MustQuery(sql).Rows()

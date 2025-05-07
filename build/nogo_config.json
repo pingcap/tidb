@@ -364,6 +364,7 @@
       "pkg/br/": "br code",
       "pkg/distsql/": "distsql code",
       "pkg/domain/": "domain code",
+      "pkg/executor/": "util code",
       "pkg/expression/": "expression code",
       "pkg/infoschema/": "infoschema code",
       "pkg/meta/": "meta code",
