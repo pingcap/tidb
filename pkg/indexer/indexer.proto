@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package indexer;
 
-option go_package = "github.com/tici/proto/indexer";
+option go_package = "./indexer";
 
 // IndexerService provides index creation and deletion functionality
 service IndexerService {
