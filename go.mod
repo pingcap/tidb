@@ -92,6 +92,7 @@ require (
 	github.com/pingcap/kvproto v0.0.0-20250224053625-b6a98c6bf02d
 	github.com/pingcap/log v1.1.1-0.20250424032633-85a82d016f84
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
+	github.com/pingcap/tidb/pkg/indexer v0.0.0-00010101000000-000000000000
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20250401143359-775c2379cbc7
 	github.com/prometheus/client_golang v1.22.0
@@ -111,9 +112,9 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/tdakkota/asciicheck v0.4.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20250421022114-157f083989fa
-	github.com/tikv/pd/client v0.0.0-20250421073700-f86063f60638
-	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
+	github.com/tikv/client-go/v2 v2.0.8-0.20250327030528-1906b778d741
+	github.com/tikv/pd/client v0.0.0-20250327162546-07c19b1f2f9f
+	github.com/timakin/bodyclose v0.0.0-20241017074812-ed6a65f985e3
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
@@ -330,8 +331,8 @@ require (
 
 replace (
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
+	github.com/pingcap/tidb/pkg/indexer => ./pkg/indexer
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
-	github.com/tici/proto/indexer => ./indexer
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.

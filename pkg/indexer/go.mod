@@ -1,4 +1,4 @@
-module github.com/tici/proto/indexer
+module indexer
 
 go 1.23.8
 
