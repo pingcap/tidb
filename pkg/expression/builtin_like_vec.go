@@ -57,7 +57,7 @@ func (b *builtinLikeSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(bufVal, bufPattern, bufEscape)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}

@@ -42,7 +42,7 @@ func Debug(full *ValueSortedFull) {
 // Collapse({[1, 3], [4, 7], [2, 3]}) == {[1, 3], [4, 7]}
 func Collapse(length int, getRange func(int) Span) []Span {
 	frs := make([]Span, 0, length)
-	for i := 0; i < length; i++ {
+	for i := range length {
 		frs = append(frs, getRange(i))
 	}
 

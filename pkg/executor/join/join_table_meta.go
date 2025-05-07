@@ -317,7 +317,7 @@ func setupJoinKeys(meta *joinTableMeta, buildKeyIndex []int, buildKeyTypes, prob
 	if !meta.isJoinKeysInlined {
 		if varLengthKeyNumber == 1 {
 			// if key is not inlined and there is only one var-length key, then don't need to record the var length
-			for i := 0; i < len(buildKeyIndex); i++ {
+			for i := range buildKeyIndex {
 				if meta.serializeModes[i] == codec.KeepVarColumnLength {
 					meta.serializeModes[i] = codec.Normal
 				}

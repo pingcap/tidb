@@ -91,9 +91,9 @@ func (r *resultChecker) getSavedChunksRowNumber() int {
 func (r *resultChecker) initRowPtrs() {
 	r.rowPtrs = make([]chunk.RowPtr, 0, r.getSavedChunksRowNumber())
 	chunkNum := len(r.savedChunks)
-	for chkIdx := 0; chkIdx < chunkNum; chkIdx++ {
+	for chkIdx := range chunkNum {
 		chk := r.savedChunks[chkIdx]
-		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+		for rowIdx := range chk.NumRows() {
 			r.rowPtrs = append(r.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}
@@ -131,7 +131,7 @@ func (r *resultChecker) check(resultChunks []*chunk.Chunk, offset int64, count i
 
 	for _, chk := range resultChunks {
 		rowNum := chk.NumRows()
-		for i := 0; i < rowNum; i++ {
+		for i := range rowNum {
 			resRow := chk.GetRow(i)
 			res := resRow.ToString(fieldTypes)
 
@@ -305,7 +305,7 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 		require.Greater(t, sortPartitionNum, 1)
 
 		// Ensure all partitions are spilled
-		for i := 0; i < sortPartitionNum; i++ {
+		for i := range sortPartitionNum {
 			// The last partition may not be spilled.
 			if i < sortPartitionNum-1 {
 				require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(i))
@@ -353,7 +353,7 @@ func TestUnparallelSortSpillDisk(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort")
 
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		onePartitionAndAllDataInMemoryCase(t, ctx, sortCase)
 		onePartitionAndAllDataInDiskCase(t, ctx, sortCase)
 		multiPartitionCase(t, ctx, sortCase, false)

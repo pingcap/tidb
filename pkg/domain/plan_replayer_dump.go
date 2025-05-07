@@ -129,6 +129,10 @@ func findFK(is infoschema.InfoSchema, dbName, tableName string, tableMap map[tab
 			TableName: fk.RefTable.L,
 			IsView:    false,
 		}
+		// Skip already visited tables to prevent infinite recursion in case of circular foreign key definitions.
+		if _, ok := tableMap[key]; ok {
+			continue
+		}
 		tableMap[key] = struct{}{}
 		err := findFK(is, key.DBName, key.TableName, tableMap)
 		if err != nil {
@@ -867,7 +871,7 @@ func resultSetToStringSlice(ctx context.Context, rs sqlexec.RecordSet, emptyAsNi
 	sRows := make([][]string, len(rows))
 	for i, row := range rows {
 		iRow := make([]string, row.Len())
-		for j := 0; j < row.Len(); j++ {
+		for j := range row.Len() {
 			if row.IsNull(j) {
 				iRow[j] = "<nil>"
 			} else {

@@ -125,7 +125,7 @@ func (p *parallelSortSpillHelper) spill() (err error) {
 	workerWaiter.Add(workerNum)
 	sortedRowsIters := make([]*chunk.Iterator4Slice, workerNum)
 	errChannel := make(chan error, workerNum)
-	for i := 0; i < workerNum; i++ {
+	for i := range workerNum {
 		go func(idx int) {
 			defer func() {
 				if r := recover(); r != nil {
