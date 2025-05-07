@@ -134,41 +134,64 @@ func generateStatsPartition(partitionIDs []int64) (*model.PartitionInfo, *model.
 		})
 		upDefs = append(upDefs, model.PartitionDefinition{
 			ID:   partitionID + 1000,
-			Name: ast.NewCIStr(fmt.Sprintf("p%d", partitionID+1000)),
+			Name: ast.NewCIStr(fmt.Sprintf("p%d", partitionID)),
 		})
 	}
 	return &model.PartitionInfo{Definitions: downDefs}, &model.PartitionInfo{Definitions: upDefs}
 }
 
-func generateStatsFiles(tableID int64, partitionIDs []int64, allFiles bool) map[int64][]*backuppb.File {
+func generateStatsFiles(tableID int64, partitionIDs []int64, hasGlobalIndex bool) map[int64][]*backuppb.File {
 	if len(partitionIDs) == 0 {
 		return map[int64][]*backuppb.File{
-			tableID: {{TotalKvs: uint64(tableID)}, {TotalKvs: uint64(tableID + 1)}},
+			tableID + 1000: {
+				{TotalKvs: uint64(tableID)}, {TotalKvs: uint64(tableID)}, {TotalKvs: uint64(tableID)},
+				{TotalKvs: uint64(tableID + 1)}, {TotalKvs: uint64(tableID + 1)}, {TotalKvs: uint64(tableID + 1)},
+			},
 		}
 	}
 	files := map[int64][]*backuppb.File{}
-	if allFiles {
-		files[tableID] = []*backuppb.File{{TotalKvs: uint64(tableID)}, {TotalKvs: uint64(tableID + 1)}}
-	}
-	for _, partitionID := range partitionIDs {
-		files[partitionID] = []*backuppb.File{{TotalKvs: uint64(partitionID)}, {TotalKvs: uint64(partitionID + 1)}}
+	if hasGlobalIndex {
+		files[tableID+1000] = []*backuppb.File{{TotalKvs: uint64(tableID)}, {TotalKvs: uint64(tableID + 1)}}
+		for _, partitionID := range partitionIDs {
+			files[partitionID+1000] = []*backuppb.File{
+				{TotalKvs: uint64(partitionID)}, {TotalKvs: uint64(partitionID)},
+				{TotalKvs: uint64(partitionID + 1)}, {TotalKvs: uint64(partitionID + 1)},
+			}
+		}
+	} else {
+		for _, partitionID := range partitionIDs {
+			files[partitionID+1000] = []*backuppb.File{
+				{TotalKvs: uint64(partitionID)}, {TotalKvs: uint64(partitionID)}, {TotalKvs: uint64(partitionID)},
+				{TotalKvs: uint64(partitionID + 1)}, {TotalKvs: uint64(partitionID + 1)}, {TotalKvs: uint64(partitionID + 1)},
+			}
+		}
 	}
 	return files
 }
 
-func generateStatsCreatedTables(allFiles bool, tableID int64, partitionIDs ...int64) *snapclient.CreatedTable {
+func generateStatsIndices(hasGlobalIndex bool) []*model.IndexInfo {
+	return []*model.IndexInfo{
+		{Global: hasGlobalIndex},
+		{Global: false},
+	}
+}
+
+func generateStatsCreatedTables(hasGlobalIndex bool, tableID int64, partitionIDs ...int64) *snapclient.CreatedTable {
 	downPart, upPart := generateStatsPartition(partitionIDs)
-	files := generateStatsFiles(tableID, partitionIDs, allFiles)
+	indices := generateStatsIndices(hasGlobalIndex)
+	files := generateStatsFiles(tableID, partitionIDs, hasGlobalIndex)
 	return &snapclient.CreatedTable{
 		Table: &model.TableInfo{
 			ID:        tableID,
 			Partition: downPart,
+			Indices:   indices,
 		},
 		OldTable: &metautil.Table{
 			DB: &model.DBInfo{Name: ast.NewCIStr("test")},
 			Info: &model.TableInfo{
 				ID:        tableID + 1000,
 				Partition: upPart,
+				Indices:   indices,
 			},
 			FilesOfPhysicals: files,
 		},
@@ -197,14 +220,20 @@ func TestUpdateStatsMeta(t *testing.T) {
 	err = builder.StartPipelineTask(ctx, []*snapclient.CreatedTable{
 		generateStatsCreatedTables(false, 100, 101, 102, 103),
 		generateStatsCreatedTables(true, 104, 105, 106, 107),
-		generateStatsCreatedTables(false, 108),
-		generateStatsCreatedTables(true, 109),
+		generateStatsCreatedTables(false, 116),
+		generateStatsCreatedTables(true, 117),
 	})
 	require.NoError(t, err)
 	require.Equal(t, map[int64]int64{
 		100: 615,
-		104: 848,
-		108: 217,
-		109: 219,
+		101: 203,
+		102: 205,
+		103: 207,
+		104: 639,
+		105: 211,
+		106: 213,
+		107: 215,
+		116: 233,
+		117: 235,
 	}, rows)
 }
