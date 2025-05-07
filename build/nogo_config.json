@@ -361,6 +361,7 @@
       "pkg/autoid_service/": "autoid_service code",
       "pkg/bindinfo/": "bindinfo code",
       "pkg/distsql/": "distsql code",
+      "pkg/domain/": "domain code",
       "pkg/expression/": "expression code",
       "pkg/extension/": "extension code",
       "pkg/infoschema/": "infoschema code",
