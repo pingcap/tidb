@@ -129,10 +129,14 @@ func findFK(is infoschema.InfoSchema, dbName, tableName string, tableMap map[tab
 			TableName: fk.RefTable.L,
 			IsView:    false,
 		}
-		tableMap[key] = struct{}{}
-		err := findFK(is, key.DBName, key.TableName, tableMap)
-		if err != nil {
-			return err
+		if _, ok := tableMap[key]; ok {
+			continue
+		} else {
+			tableMap[key] = struct{}{}
+			err := findFK(is, key.DBName, key.TableName, tableMap)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
