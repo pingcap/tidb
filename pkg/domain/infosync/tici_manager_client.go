@@ -44,10 +44,9 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 	columns := make([]*indexer.ColumnInfo, 0)
 	for i := range indexInfo.Columns {
 		columns = append(columns, &indexer.ColumnInfo{
-			ColumnId:   indexInfo.ID,
-			ColumnName: indexInfo.Name.L,
-			Type:       int32(indexInfo.Tp),
-			// Collation: tblInfo.Collate,
+			ColumnId:     indexInfo.ID,
+			ColumnName:   indexInfo.Name.L,
+			Type:         int32(indexInfo.Tp),
 			ColumnLength: int32(indexInfo.Columns[i].Length),
 			Decimal:      int32(tblInfo.Columns[i].GetDecimal()),
 			DefaultVal:   tblInfo.Columns[i].DefaultValueBit,
