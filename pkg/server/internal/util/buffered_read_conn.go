@@ -29,6 +29,8 @@ const DefaultReaderSize = 16 * 1024
 type BufferedReadConn struct {
 	net.Conn
 	rb *bufio.Reader
+	// `mu` is for `IsAlive()` function.
+	// We use this to ensure that `SetReadDeadline` is not called concurrently.
 	mu *sync.Mutex
 }
 
