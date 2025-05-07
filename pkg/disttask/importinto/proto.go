@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -128,14 +129,15 @@ type SharedVars struct {
 	DataEngine    *backend.OpenedEngine
 	IndexEngine   *backend.OpenedEngine
 
-	mu          sync.Mutex
-	Checksum    *verification.KVGroupChecksum
-	writtenRows atomic.Int64
+	mu       sync.Mutex
+	Checksum *verification.KVGroupChecksum
 
 	SortedDataMeta *external.SortedKVMeta
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
 	SortedIndexMetas map[int64]*external.SortedKVMeta
 	ShareMu          sync.Mutex
+
+	*execute.RunningSubtaskSummary
 }
 
 func (sv *SharedVars) mergeDataSummary(summary *external.WriterSummary) {

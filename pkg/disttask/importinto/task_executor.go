@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -209,17 +210,12 @@ outer:
 }
 
 func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	rows := int64(0)
-
-	v, ok := s.sharedVars.Load(s.subtaskID)
-	if ok {
+	if v, ok := s.sharedVars.Load(s.subtaskID); ok {
 		sv, _ := v.(*SharedVars)
-		rows = sv.writtenRows.Load()
+		return sv.ToSummary()
 	}
 
-	return &execute.SubtaskSummary{
-		RowCount: rows,
-	}
+	return &execute.SubtaskSummary{}
 }
 
 func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
@@ -319,7 +315,8 @@ type mergeSortStepExecutor struct {
 	// 	max(max-merged-files * max-file-size / max-part-num(10000), min-part-size)
 	dataKVPartSize  int64
 	indexKVPartSize int64
-	writtenRows     atomic.Int64
+
+	summary execute.RunningSubtaskSummary
 }
 
 var _ execute.StepExecutor = &mergeSortStepExecutor{}
@@ -345,12 +342,14 @@ func (m *mergeSortStepExecutor) Init(ctx context.Context) error {
 }
 
 func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
-	m.writtenRows.Store(0)
 	sm := &MergeSortStepMeta{}
 	err = json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	m.summary.Reset(int64(sm.TotalKVCnt), int64(sm.TotalKVSize))
+
 	// read merge sort step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {
 		if err := sm.ReadJSONFromExternalStorage(ctx, m.controller.GlobalSortStore, sm); err != nil {
@@ -370,8 +369,12 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		defer mu.Unlock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 	}
-	onWritten := func(written int) {
-		m.writtenRows.Add(int64(written))
+	onFlush := func(written, writtenBytes int64) {
+		m.summary.ProcessedRowCount.Add(written)
+		m.summary.ProcessedBytes.Add(writtenBytes)
+		if metric, ok := metric.GetCommonMetric(ctx); ok {
+			metric.BytesCounter.WithLabelValues(lightningmetric.StateMerged).Add(float64(writtenBytes))
+		}
 	}
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
@@ -388,7 +391,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		prefix,
 		getKVGroupBlockSize(sm.KVGroup),
 		onClose,
-		onWritten,
+		onFlush,
 		int(m.GetResource().CPU.Capacity()),
 		false,
 	)
@@ -435,9 +438,7 @@ func (m *mergeSortStepExecutor) Cleanup(ctx context.Context) (err error) {
 }
 
 func (m *mergeSortStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	return &execute.SubtaskSummary{
-		RowCount: m.writtenRows.Load(),
-	}
+	return m.summary.ToSummary()
 }
 
 type writeAndIngestStepExecutor struct {
@@ -448,6 +449,8 @@ type writeAndIngestStepExecutor struct {
 	logger        *zap.Logger
 	tableImporter *importer.TableImporter
 	store         tidbkv.Storage
+
+	*execute.RunningSubtaskSummary
 }
 
 var _ execute.StepExecutor = &writeAndIngestStepExecutor{}
@@ -467,6 +470,8 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	e.Reset(int64(sm.TotalKVCnt), int64(sm.TotalKVSize))
 
 	// read write and ingest step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {
@@ -508,15 +513,21 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if err != nil {
 		return err
 	}
-	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+
+	ctxWithFunc := external.WithOnFlushFunc(ctx, func(written, writtenBytes int64) {
+		e.ProcessedRowCount.Add(written)
+		e.ProcessedBytes.Add(writtenBytes)
+	})
+
+	err = localBackend.ImportEngine(ctxWithFunc, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return e.onFinished(ctx, subtask)
 }
 
-func (*writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	return nil
+func (e *writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	return e.ToSummary()
 }
 
 func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -474,6 +475,11 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 				return annotateErr(err, allPeers[i], "when send data")
 			}
 		}
+
+		if onFlush, ok := external.GetOnFlushFunc(ctx); ok {
+			onFlush(int64(count), size)
+		}
+
 		failpoint.Inject("afterFlushKVs", func() {
 			log.FromContext(ctx).Info(fmt.Sprintf("afterFlushKVs count=%d,size=%d", count, size))
 		})

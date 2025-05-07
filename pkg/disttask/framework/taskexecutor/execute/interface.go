@@ -65,13 +65,43 @@ type StepExecutor interface {
 
 // SubtaskSummary contains the summary of a subtask.
 type SubtaskSummary struct {
-	RowCount int64
+	ProcessedRowCount int64
 
 	TotalRowCount int64
 
 	ProcessedBytes int64
 
 	TotalBytes int64
+}
+
+// RunningSubtaskSummary is used to store the summary of a running subtask.
+// It uses atomic operations to avoid lock contention.
+type RunningSubtaskSummary struct {
+	ProcessedRowCount atomic.Int64
+
+	TotalRowCount atomic.Int64
+
+	ProcessedBytes atomic.Int64
+
+	TotalBytes atomic.Int64
+}
+
+// Reset resets the summary to the given row count and bytes.
+func (s *RunningSubtaskSummary) Reset(rowCount, bytes int64) {
+	s.ProcessedRowCount.Store(0)
+	s.TotalRowCount.Store(rowCount)
+	s.ProcessedBytes.Store(0)
+	s.TotalBytes.Store(bytes)
+}
+
+// ToSummary converts the running subtask summary to a subtask summary.
+func (s *RunningSubtaskSummary) ToSummary() *SubtaskSummary {
+	return &SubtaskSummary{
+		ProcessedRowCount: s.ProcessedRowCount.Load(),
+		TotalRowCount:     s.TotalRowCount.Load(),
+		ProcessedBytes:    s.ProcessedBytes.Load(),
+		TotalBytes:        s.TotalBytes.Load(),
+	}
 }
 
 // StepExecFrameworkInfo is an interface that should be embedded into the
