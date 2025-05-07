@@ -55,13 +55,12 @@ type plugins struct {
 func (p *plugins) clone() *plugins {
 	np := &plugins{
 		plugins:      make(map[Kind][]Plugin, len(p.plugins)),
-		versions:     make(map[string]uint16, len(p.versions)),
+		versions:     maps.Clone(p.versions),
 		dyingPlugins: make([]Plugin, len(p.dyingPlugins)),
 	}
 	for key, value := range p.plugins {
 		np.plugins[key] = slices.Clone(value)
 	}
-	maps.Copy(np.versions, p.versions)
 	copy(np.dyingPlugins, p.dyingPlugins)
 	return np
 }
@@ -138,13 +137,11 @@ func (p *Plugin) validate(ctx context.Context, tiPlugins *plugins) error {
 // This method need be called before domain init to inject global variable info during bootstrap.
 func Load(ctx context.Context, cfg Config) (err error) {
 	tiPlugins := &plugins{
-		plugins:      make(map[Kind][]Plugin),
-		versions:     make(map[string]uint16, len(cfg.EnvVersion)),
+		plugins: make(map[Kind][]Plugin),
+		// Setup component version info for plugin running env.
+		versions:     maps.Clone(cfg.EnvVersion),
 		dyingPlugins: make([]Plugin, 0),
 	}
-
-	// Setup component version info for plugin running env.
-	maps.Copy(tiPlugins.versions, cfg.EnvVersion)
 
 	// Load plugin dl & manifest.
 	for _, pluginID := range cfg.Plugins {
