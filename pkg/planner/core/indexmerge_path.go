@@ -349,10 +349,9 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 			if !expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cond}, kv.TiKV) {
 				notCoveredConds = append(notCoveredConds, cond)
 				return true
-			} else {
-				coveredConds = append(coveredConds, cond)
-				return false
 			}
+			coveredConds = append(coveredConds, cond)
+			return false
 		})
 		// TableFilters can't be covered by partial path.
 		notCoveredConds = append(notCoveredConds, path.TableFilters...)

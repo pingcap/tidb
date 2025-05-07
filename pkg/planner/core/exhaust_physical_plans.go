@@ -1997,11 +1997,10 @@ func filterIndexJoinBySessionVars(sc base.PlanContext, indexJoins []base.Physica
 	if sc.GetSessionVars().EnableIndexMergeJoin {
 		return indexJoins
 	}
-	slices.DeleteFunc(indexJoins, func(indexJoin base.PhysicalPlan) bool {
+	return slices.DeleteFunc(indexJoins, func(indexJoin base.PhysicalPlan) bool {
 		_, ok := indexJoin.(*PhysicalIndexMergeJoin)
 		return ok
 	})
-	return indexJoins
 }
 
 const (

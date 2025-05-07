@@ -6147,7 +6147,7 @@ func (p *Delete) cleanTblID2HandleMap(
 			delete(tblID2Handle, id)
 			continue
 		}
-		slices.DeleteFunc(cols, func(hCols util.HandleCols) bool {
+		cols = slices.DeleteFunc(cols, func(hCols util.HandleCols) bool {
 			for col := range hCols.IterColumns() {
 				if p.matchingDeletingTable(names, outputNames[col.Index]) {
 					return false
