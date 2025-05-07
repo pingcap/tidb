@@ -445,6 +445,7 @@ func (s *AzureBlobStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec
 				return errors.Annotate(err, "failed to parse progress")
 			}
 			rem := total - finished
+			// In practice, most copies finish when the initial request returns.
 			toSleep := max(time.Duration(rem/azblobPremisedCopySpeedPerMilliSecond)*time.Millisecond, azblobCopyPollPendingMinimalDuration)
 			logutil.CL(ctx).Info("AzureBlobStorage: asynchronous copy triggered",
 				zap.Int("finished", finished), zap.Int("total", total),
