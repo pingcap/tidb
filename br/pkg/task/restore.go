@@ -174,7 +174,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"(deprecated) concurrency pd-relative operations like split & scatter.")
 	flags.Uint(FlagStatsConcurrency, defaultStatsConcurrency,
 		"concurrency to restore statistic")
-	flags.Bool(FlagAutoAnalyze, true, "trigger tidb analyze priority queue to analyze table")
+	flags.Bool(FlagAutoAnalyze, true, "trigger tidb analyze priority queue to analyze table (must be true if --load-stats is set)")
 	flags.Duration(FlagBatchFlushInterval, defaultBatchFlushInterval,
 		"after how long a restore batch would be auto sent.")
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
@@ -412,6 +412,9 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	cfg.AutoAnalyze, err = flags.GetBool(FlagAutoAnalyze)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagAutoAnalyze)
+	}
+	if cfg.LoadStats && !cfg.AutoAnalyze {
+		return errors.Errorf("cannot set --auto-analyze to false if --load-stats is set")
 	}
 	cfg.BatchFlushInterval, err = flags.GetDuration(FlagBatchFlushInterval)
 	if err != nil {

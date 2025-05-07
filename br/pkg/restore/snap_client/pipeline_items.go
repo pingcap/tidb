@@ -312,13 +312,11 @@ const statsMetaItemBufferSize = 3000
 
 type statsMetaItemBuffer struct {
 	sync.Mutex
-	autoAnalyze bool
 	metaUpdates []statstypes.MetaUpdate
 }
 
-func NewStatsMetaItemBuffer(autoAnalyze bool) *statsMetaItemBuffer {
+func NewStatsMetaItemBuffer() *statsMetaItemBuffer {
 	return &statsMetaItemBuffer{
-		autoAnalyze: autoAnalyze,
 		metaUpdates: make([]statstypes.MetaUpdate, 0, statsMetaItemBufferSize),
 	}
 }
@@ -355,10 +353,7 @@ func (buffer *statsMetaItemBuffer) TryUpdateMetas(ctx context.Context, statsHand
 	item := statstypes.MetaUpdate{
 		PhysicalID:  physicalID,
 		Count:       count,
-		ModifyCount: 0,
-	}
-	if buffer.autoAnalyze {
-		item.ModifyCount = count
+		ModifyCount: count,
 	}
 	metaUpdates := buffer.appendItem(item)
 	if len(metaUpdates) == 0 {
@@ -376,7 +371,7 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 	loadStats bool,
 ) {
 	statsHandler := rc.dom.StatsHandle()
-	buffer := NewStatsMetaItemBuffer(autoAnalyze)
+	buffer := NewStatsMetaItemBuffer()
 
 	builder.RegisterPipelineTask("Update Stats", statsConcurrency, func(c context.Context, tbl *CreatedTable) error {
 		oldTable := tbl.OldTable
@@ -411,7 +406,7 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 				zap.Duration("cost", time.Since(start)))
 		}
 
-		if statsErr != nil || !loadStats || (oldTable.Stats == nil && len(oldTable.StatsFileIndexes) == 0) {
+		if autoAnalyze && (statsErr != nil || !loadStats || (oldTable.Stats == nil && len(oldTable.StatsFileIndexes) == 0)) {
 			// Not need to return err when failed because of update analysis-meta
 			log.Info("start update metas", zap.Stringer("table", oldTable.Info.Name), zap.Stringer("db", oldTable.DB.Name))
 			// get the the number of rows of each partition
