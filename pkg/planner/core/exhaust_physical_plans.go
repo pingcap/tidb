@@ -2103,7 +2103,7 @@ func tryToEnumerateIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalPr
 		stmtCtx.SetHintWarning("Some INL_MERGE_JOIN and NO_INDEX_MERGE_JOIN hints conflict, NO_INDEX_MERGE_JOIN may be ignored")
 	}
 	// previously we will think about force index join hints here, but we have to wait the inner plans to be a valid
-	// physical one/ones. Because indexJoinProp may not be admitted by its inner patterns, so we innovative-ly move all
+	// physical one/ones. Because indexJoinProp may not be admitted by its inner patterns, so we innovatively move all
 	// hint related handling to the findBestTask function when we see the entire inner physical-ized plan tree. See xxx
 	// for details.
 	//
