@@ -472,7 +472,7 @@ func (tc *TransactionContext) DeleteSavepoint(name string) bool {
 	name = strings.ToLower(name)
 	for i, sp := range tc.Savepoints {
 		if sp.Name == name {
-			tc.Savepoints = append(tc.Savepoints[:i], tc.Savepoints[i+1:]...)
+			tc.Savepoints = slices.Delete(tc.Savepoints, i, i+1)
 			return true
 		}
 	}
@@ -513,9 +513,7 @@ func (tc *TransactionContext) FlushStmtPessimisticLockCache() {
 	if tc.pessimisticLockCache == nil {
 		tc.pessimisticLockCache = make(map[string][]byte)
 	}
-	for key, val := range tc.CurrentStmtPessimisticLockCache {
-		tc.pessimisticLockCache[key] = val
-	}
+	maps.Copy(tc.pessimisticLockCache, tc.CurrentStmtPessimisticLockCache)
 	tc.CurrentStmtPessimisticLockCache = nil
 }
 
@@ -1016,6 +1014,9 @@ type SessionVars struct {
 
 	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
 	CorrelationExpFactor int
+
+	// RiskEqSkewRatio is used to control the ratio of skew that is applied to equal predicates not found in TopN/buckets.
+	RiskEqSkewRatio float64
 
 	// cpuFactor is the CPU cost of processing one expression for one row.
 	cpuFactor float64
@@ -2152,6 +2153,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		LimitPushDownThreshold:        vardef.DefOptLimitPushDownThreshold,
 		CorrelationThreshold:          vardef.DefOptCorrelationThreshold,
 		CorrelationExpFactor:          vardef.DefOptCorrelationExpFactor,
+		RiskEqSkewRatio:               vardef.DefOptRiskEqSkewRatio,
 		cpuFactor:                     vardef.DefOptCPUFactor,
 		copCPUFactor:                  vardef.DefOptCopCPUFactor,
 		CopTiFlashConcurrencyFactor:   vardef.DefOptTiFlashConcurrencyFactor,

@@ -65,7 +65,7 @@ func TestTick(t *testing.T) {
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 	require.NoError(t, adv.OnTick(ctx))
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		cp := c.advanceCheckpoints()
 		require.NoError(t, adv.OnTick(ctx))
 		require.Equal(t, env.getCheckpoint(), cp)
@@ -129,7 +129,7 @@ func TestCollectorFailure(t *testing.T) {
 	}
 	ctx := context.Background()
 	splitKeys := make([]string, 0, 10000)
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		splitKeys = append(splitKeys, fmt.Sprintf("%04d", i))
 	}
 	c.splitAndScatter(splitKeys...)
@@ -169,7 +169,7 @@ func TestOneStoreFailure(t *testing.T) {
 	c := createFakeCluster(t, 4, true)
 	ctx := context.Background()
 	splitKeys := make([]string, 0, 1000)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		splitKeys = append(splitKeys, fmt.Sprintf("%04d", i))
 	}
 	c.splitAndScatter(splitKeys...)
@@ -181,7 +181,7 @@ func TestOneStoreFailure(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	c.onGetClient = oneStoreFailure()
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		c.advanceCheckpoints()
 		c.flushAll()
 		require.ErrorContains(t, adv.OnTick(ctx), "the warm lamplight")
@@ -510,7 +510,7 @@ func TestEnableCheckPointLimit(t *testing.T) {
 	c.advanceClusterTimeBy(1 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
 	adv.StartTaskListener(ctx)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		c.advanceClusterTimeBy(30 * time.Second)
 		c.advanceCheckpointBy(20 * time.Second)
 		require.NoError(t, adv.OnTick(ctx))
@@ -559,7 +559,7 @@ func TestOwnerChangeCheckPointLagged(t *testing.T) {
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	adv2.OnStart(ctx2)
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		c.advanceClusterTimeBy(2 * time.Minute)
 		c.advanceCheckpointBy(2 * time.Minute)
 		require.NoError(t, adv.OnTick(ctx1))
@@ -578,7 +578,7 @@ func TestOwnerChangeCheckPointLagged(t *testing.T) {
 	require.NoError(t, adv2.OnTick(ctx2))
 
 	// advancer2 should take over and tick normally
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		c.advanceClusterTimeBy(2 * time.Minute)
 		c.advanceCheckpointBy(2 * time.Minute)
 		require.NoError(t, adv2.OnTick(ctx2))

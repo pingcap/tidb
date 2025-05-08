@@ -138,7 +138,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 	}
 	writer := builder.BuildOneFile(
 		s.store, filePath, "writerID")
-	intest.AssertNoError(writer.Init(ctx, 20*1024*1024))
+	writer.InitPartSizeAndLogger(ctx, 20*1024*1024)
 	var minKey, maxKey []byte
 
 	key, val, _ := s.source.next()
@@ -697,10 +697,9 @@ func TestReadAllData(t *testing.T) {
 		eg.Go(func() error {
 			fileName := fmt.Sprintf("/test%d", fileIdx)
 			writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
-			err := writer.Init(ctx, 5*1024*1024)
-			require.NoError(t, err)
-			key := []byte(fmt.Sprintf("key0%d", fileIdx))
-			err = writer.WriteRow(ctx, key, val)
+			writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
+			key := fmt.Appendf(nil, "key0%d", fileIdx)
+			err := writer.WriteRow(ctx, key, val)
 			require.NoError(t, err)
 
 			// write some extra data that is greater than readRangeEnd
@@ -720,21 +719,20 @@ func TestReadAllData(t *testing.T) {
 		eg.Go(func() error {
 			fileName := fmt.Sprintf("/test%d", fileIdx)
 			writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
-			err := writer.Init(ctx, 5*1024*1024)
-			require.NoError(t, err)
+			writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
 
 			kvSize := 0
 			keyIdx := 0
 			for kvSize < 900*1024 {
-				key := []byte(fmt.Sprintf("key%06d_%d", keyIdx, fileIdx))
+				key := fmt.Appendf(nil, "key%06d_%d", keyIdx, fileIdx)
 				keyIdx++
 				kvSize += len(key) + len(val)
-				err = writer.WriteRow(ctx, key, val)
+				err := writer.WriteRow(ctx, key, val)
 				require.NoError(t, err)
 			}
 
 			// write some extra data that is greater than readRangeEnd
-			err = writer.WriteRow(ctx, keyAfterRange, val)
+			err := writer.WriteRow(ctx, keyAfterRange, val)
 			require.NoError(t, err)
 			err = writer.WriteRow(ctx, keyAfterRange2, make([]byte, 300*1024))
 			require.NoError(t, err)
@@ -749,21 +747,20 @@ func TestReadAllData(t *testing.T) {
 		eg.Go(func() error {
 			fileName := fmt.Sprintf("/test%d", fileIdx)
 			writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
-			err := writer.Init(ctx, 5*1024*1024)
-			require.NoError(t, err)
+			writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
 
 			kvSize := 0
 			keyIdx := 0
 			for kvSize < 10*1024*1024 {
-				key := []byte(fmt.Sprintf("key%09d_%d", keyIdx, fileIdx))
+				key := fmt.Appendf(nil, "key%09d_%d", keyIdx, fileIdx)
 				keyIdx++
 				kvSize += len(key) + len(val)
-				err = writer.WriteRow(ctx, key, val)
+				err := writer.WriteRow(ctx, key, val)
 				require.NoError(t, err)
 			}
 
 			// write some extra data that is greater than readRangeEnd
-			err = writer.WriteRow(ctx, keyAfterRange, val)
+			err := writer.WriteRow(ctx, keyAfterRange, val)
 			require.NoError(t, err)
 			err = writer.WriteRow(ctx, keyAfterRange2, make([]byte, 900*1024))
 			require.NoError(t, err)
@@ -776,21 +773,20 @@ func TestReadAllData(t *testing.T) {
 	for ; fileIdx < 2091; fileIdx++ {
 		fileName := fmt.Sprintf("/test%d", fileIdx)
 		writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
-		err := writer.Init(ctx, 5*1024*1024)
-		require.NoError(t, err)
+		writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
 
 		kvSize := 0
 		keyIdx := 0
 		for kvSize < 1024*1024*1024 {
-			key := []byte(fmt.Sprintf("key%010d_%d", keyIdx, fileIdx))
+			key := fmt.Appendf(nil, "key%010d_%d", keyIdx, fileIdx)
 			keyIdx++
 			kvSize += len(key) + len(val)
-			err = writer.WriteRow(ctx, key, val)
+			err := writer.WriteRow(ctx, key, val)
 			require.NoError(t, err)
 		}
 
 		// write some extra data that is greater than readRangeEnd
-		err = writer.WriteRow(ctx, keyAfterRange, val)
+		err := writer.WriteRow(ctx, keyAfterRange, val)
 		require.NoError(t, err)
 		err = writer.WriteRow(ctx, keyAfterRange2, make([]byte, 900*1024))
 		require.NoError(t, err)

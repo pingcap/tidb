@@ -50,9 +50,9 @@ func TestReadAllDataBasic(t *testing.T) {
 	writer := NewEngineWriter(w)
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		kvs[i] = common.KvPair{
-			Key: []byte(fmt.Sprintf("key%05d", i)),
+			Key: fmt.Appendf(nil, "key%05d", i),
 			Val: []byte("56789"),
 		}
 	}
@@ -85,13 +85,13 @@ func TestReadAllOneFile(t *testing.T) {
 		SetMemorySizeLimit(uint64(memSizeLimit)).
 		BuildOneFile(memStore, "/test", "0")
 
-	require.NoError(t, w.Init(ctx, int64(5*size.MB)))
+	w.InitPartSizeAndLogger(ctx, int64(5*size.MB))
 
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		kvs[i] = common.KvPair{
-			Key: []byte(fmt.Sprintf("key%05d", i)),
+			Key: fmt.Appendf(nil, "key%05d", i),
 			Val: []byte("56789"),
 		}
 		require.NoError(t, w.WriteRow(ctx, kvs[i].Key, kvs[i].Val))
@@ -123,11 +123,11 @@ func TestReadLargeFile(t *testing.T) {
 		SetPropKeysDistance(1000).
 		BuildOneFile(memStore, "/test", "0")
 
-	require.NoError(t, w.Init(ctx, int64(5*size.MB)))
+	w.InitPartSizeAndLogger(ctx, int64(5*size.MB))
 
 	val := make([]byte, 10000)
-	for i := 0; i < 10000; i++ {
-		key := []byte(fmt.Sprintf("key%06d", i))
+	for i := range 10000 {
+		key := fmt.Appendf(nil, "key%06d", i)
 		require.NoError(t, w.WriteRow(ctx, key, val))
 	}
 	require.NoError(t, w.Close(ctx))

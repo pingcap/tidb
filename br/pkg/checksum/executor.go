@@ -4,6 +4,7 @@ package checksum
 
 import (
 	"context"
+	"slices"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -133,10 +134,9 @@ func buildChecksumRequest(
 	for _, partDef := range partDefs {
 		var oldPartID int64
 		if oldTable != nil {
-			for _, oldPartDef := range oldTable.Info.Partition.Definitions {
-				if oldPartDef.Name == partDef.Name {
-					oldPartID = oldPartDef.ID
-				}
+			oldPartID, err = utils.GetPartitionByName(oldTable.Info, partDef.Name)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 		}
 		rs, err := buildRequest(newTable, partDef.ID, oldTable, oldPartID, startTS, concurrency,
@@ -217,8 +217,8 @@ func buildTableRequest(
 	var rule *tipb.ChecksumRewriteRule
 	if oldTable != nil {
 		rule = &tipb.ChecksumRewriteRule{
-			OldPrefix: append(append([]byte{}, oldKeyspace...), tablecodec.GenTableRecordPrefix(oldTableID)...),
-			NewPrefix: append(append([]byte{}, newKeyspace...), tablecodec.GenTableRecordPrefix(tableID)...),
+			OldPrefix: slices.Concat(oldKeyspace, tablecodec.GenTableRecordPrefix(oldTableID)),
+			NewPrefix: slices.Concat(newKeyspace, tablecodec.GenTableRecordPrefix(tableID)),
 		}
 	}
 
@@ -261,10 +261,8 @@ func buildIndexRequest(
 	var rule *tipb.ChecksumRewriteRule
 	if oldIndexInfo != nil {
 		rule = &tipb.ChecksumRewriteRule{
-			OldPrefix: append(append([]byte{}, oldKeyspace...),
-				tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexInfo.ID)...),
-			NewPrefix: append(append([]byte{}, newKeyspace...),
-				tablecodec.EncodeTableIndexPrefix(tableID, indexInfo.ID)...),
+			OldPrefix: slices.Concat(oldKeyspace, tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexInfo.ID)),
+			NewPrefix: slices.Concat(newKeyspace, tablecodec.EncodeTableIndexPrefix(tableID, indexInfo.ID)),
 		}
 	}
 	checksum := &tipb.ChecksumRequest{

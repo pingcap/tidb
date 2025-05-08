@@ -1,5 +1,26 @@
 [
   {
+    "Name": "TestQ1",
+    "Cases": [
+      {
+        "SQL": "explain format='brief' SELECT l_returnflag, l_linestatus, SUM(l_quantity) AS sum_qty, SUM(l_extendedprice) AS sum_base_price, SUM(l_extendedprice * (1 - l_discount)) AS sum_disc_price, SUM(l_extendedprice * (1 - l_discount) * (1 + l_tax)) AS sum_charge, AVG(l_quantity) AS avg_qty, AVG(l_extendedprice) AS avg_price, AVG(l_discount) AS avg_disc, COUNT(*) AS count_order FROM lineitem WHERE l_shipdate <= DATE_SUB('1998-12-01', INTERVAL 108 DAY) GROUP BY l_returnflag, l_linestatus ORDER BY l_returnflag, l_linestatus;",
+        "Result": [
+          "Sort 2658.67 root  test.lineitem.l_returnflag, test.lineitem.l_linestatus",
+          "└─TableReader 2658.67 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 2658.67 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection 2658.67 mpp[tiflash]  test.lineitem.l_returnflag, test.lineitem.l_linestatus, Column#17, Column#18, Column#19, Column#20, Column#21, Column#22, Column#23, Column#24",
+          "      └─Projection 2658.67 mpp[tiflash]  Column#17, Column#18, Column#19, Column#20, div(Column#21, cast(case(eq(Column#70, 0), 1, Column#70), decimal(20,0) BINARY))->Column#21, div(Column#22, cast(case(eq(Column#71, 0), 1, Column#71), decimal(20,0) BINARY))->Column#22, div(Column#23, cast(case(eq(Column#72, 0), 1, Column#72), decimal(20,0) BINARY))->Column#23, Column#24, test.lineitem.l_returnflag, test.lineitem.l_linestatus",
+          "        └─HashAgg 2658.67 mpp[tiflash]  group by:Column#100, Column#99, funcs:sum(Column#89)->Column#17, funcs:sum(Column#90)->Column#18, funcs:sum(Column#91)->Column#19, funcs:sum(Column#92)->Column#20, funcs:count(Column#93)->Column#70, funcs:sum(Column#94)->Column#21, funcs:count(Column#95)->Column#71, funcs:sum(Column#96)->Column#22, funcs:count(Column#97)->Column#72, funcs:sum(Column#98)->Column#23, funcs:count(1)->Column#24, funcs:firstrow(Column#99)->test.lineitem.l_returnflag, funcs:firstrow(Column#100)->test.lineitem.l_linestatus",
+          "          └─Projection 3323.33 mpp[tiflash]  test.lineitem.l_quantity->Column#89, test.lineitem.l_extendedprice->Column#90, mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount))->Column#91, mul(mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount)), plus(1, test.lineitem.l_tax))->Column#92, test.lineitem.l_quantity->Column#93, test.lineitem.l_quantity->Column#94, test.lineitem.l_extendedprice->Column#95, test.lineitem.l_extendedprice->Column#96, test.lineitem.l_discount->Column#97, test.lineitem.l_discount->Column#98, test.lineitem.l_returnflag->Column#99, test.lineitem.l_linestatus->Column#100",
+          "            └─ExchangeReceiver 3323.33 mpp[tiflash]  ",
+          "              └─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_returnflag, collate: utf8mb4_bin], [name: test.lineitem.l_linestatus, collate: utf8mb4_bin]",
+          "                └─Selection 3323.33 mpp[tiflash]  le(test.lineitem.l_shipdate, 1998-08-15 00:00:00.000000)",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:lineitem pushed down filter:empty, keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestQ3",
     "Cases": [
       {
@@ -134,30 +155,6 @@
   {
     "Name": "TestQ13",
     "Cases": [
-      {
-        "SQL": "explain format='brief' select c_count, count(*) as custdist from ( select c_custkey, count(o_orderkey) as c_count from customer left outer join orders on c_custkey = o_custkey and o_comment not like '%pending%deposits%' group by c_custkey ) c_orders group by c_count order by custdist desc, c_count desc;",
-        "Result": [
-          "Sort 8000.00 root  Column#19:desc, Column#18:desc",
-          "└─TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Projection 8000.00 mpp[tiflash]  Column#18, Column#19",
-          "      └─Projection 8000.00 mpp[tiflash]  Column#19, Column#18",
-          "        └─HashAgg 8000.00 mpp[tiflash]  group by:Column#18, funcs:count(1)->Column#19, funcs:firstrow(Column#18)->Column#18",
-          "          └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
-          "            └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#18, collate: binary]",
-          "              └─Projection 8000.00 mpp[tiflash]  Column#18",
-          "                └─HashAgg 8000.00 mpp[tiflash]  group by:test.customer.c_custkey, funcs:count(test.orders.o_orderkey)->Column#18",
-          "                  └─Projection 10000.00 mpp[tiflash]  test.customer.c_custkey, test.orders.o_orderkey",
-          "                    └─HashJoin 10000.00 mpp[tiflash]  left outer join, left side:ExchangeReceiver, equal:[eq(test.customer.c_custkey, test.orders.o_custkey)]",
-          "                      ├─ExchangeReceiver(Build) 8000.00 mpp[tiflash]  ",
-          "                      │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.orders.o_custkey, collate: binary]",
-          "                      │   └─Selection 8000.00 mpp[tiflash]  not(like(test.orders.o_comment, \"%pending%deposits%\", 92))",
-          "                      │     └─TableFullScan 10000.00 mpp[tiflash] table:orders pushed down filter:empty, keep order:false, stats:pseudo",
-          "                      └─ExchangeReceiver(Probe) 10000.00 mpp[tiflash]  ",
-          "                        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.customer.c_custkey, collate: binary]",
-          "                          └─TableFullScan 10000.00 mpp[tiflash] table:customer keep order:false, stats:pseudo"
-        ]
-      },
       {
         "SQL": "explain format='brief' select c_count, count(*) as custdist from ( select c_custkey, count(o_orderkey) as c_count from customer left outer join orders on c_custkey = o_custkey and o_comment not like '%pending%deposits%' group by c_custkey ) c_orders group by c_count order by custdist desc, c_count desc;",
         "Result": [
