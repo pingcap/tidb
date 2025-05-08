@@ -623,20 +623,13 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 		}
 		newProp = prop
 	}
-	var (
-		cnt     int64
-		prefer  bool
-		curTask base.Task
-	)
-	if bestTask, cnt, prefer, err = enumeratePhysicalPlans4Task(p, plansFitsProp, newProp, false, planCounter, opt); err != nil {
+	var cnt int64
+	var curTask base.Task
+	if bestTask, cnt, err = enumeratePhysicalPlans4Task(p, plansFitsProp, newProp, false, planCounter, opt); err != nil {
 		return nil, 0, err
 	}
 	cntPlan += cnt
 	if planCounter.Empty() {
-		goto END
-	}
-	// preferred valid one should have it priority.
-	if bestTask != nil && !bestTask.Invalid() && prefer {
 		goto END
 	}
 
