@@ -207,7 +207,10 @@ func enumeratePhysicalPlans4Task(
 			fd = logicalPlan.ExtractFD()
 		}
 	}
-	for _, pp := range physicalPlans {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL && len(physicalPlans) == 7 {
+		fmt.Println("wwz")
+	}
+	for idx, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()
 
@@ -271,7 +274,9 @@ func enumeratePhysicalPlans4Task(
 			break
 		}
 		appendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
-
+		if !p.SCtx().GetSessionVars().InRestrictedSQL && idx == 3 {
+			fmt.Println("wwz")
+		}
 		// Get the most efficient one only by low-cost priority among all valid plans.
 		if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
 			return nil, 0, err
