@@ -143,6 +143,66 @@ CREATE TABLE lineitem (
 	}
 }
 
+func TestQ4(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+CREATE TABLE orders (
+    O_ORDERKEY bigint NOT NULL,
+    O_CUSTKEY bigint NOT NULL,
+    O_ORDERSTATUS char(1) NOT NULL,
+    O_TOTALPRICE decimal(15,2) NOT NULL,
+    O_ORDERDATE date NOT NULL,
+    O_ORDERPRIORITY char(15) NOT NULL,
+    O_CLERK char(15) NOT NULL,
+    O_SHIPPRIORITY bigint NOT NULL,
+    O_COMMENT varchar(79) NOT NULL,
+    PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`
+CREATE TABLE lineitem (
+    L_ORDERKEY bigint NOT NULL,
+    L_PARTKEY bigint NOT NULL,
+    L_SUPPKEY bigint NOT NULL,
+    L_LINENUMBER bigint NOT NULL,
+    L_QUANTITY decimal(15,2) NOT NULL,
+    L_EXTENDEDPRICE decimal(15,2) NOT NULL,
+    L_DISCOUNT decimal(15,2) NOT NULL,
+    L_TAX decimal(15,2) NOT NULL,
+    L_RETURNFLAG char(1) NOT NULL,
+    L_LINESTATUS char(1) NOT NULL,
+    L_SHIPDATE date NOT NULL,
+    L_COMMITDATE date NOT NULL,
+    L_RECEIPTDATE date NOT NULL,
+    L_SHIPINSTRUCT char(25) NOT NULL,
+    L_SHIPMODE char(10) NOT NULL,
+    L_COMMENT varchar(44) NOT NULL,
+    PRIMARY KEY (L_ORDERKEY, L_LINENUMBER) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+`)
+	testkit.SetTiFlashReplica(t, dom, "test", "orders")
+	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
+	//tk.MustExec(`set @@session.tidb_enforce_mpp=1;`)
+	tk.MustQuery(`explain format='cost_trace' select /*+ read_from_storage(tiflash[lineitem,orders]) */ 
+        o_orderpriority,
+        count(*) as order_count
+from
+        orders
+where
+        o_orderdate >= '1995-01-01'
+        and o_orderdate < date_add('1995-01-01', interval '3' month)
+        and exists (
+                select    *
+                from
+                        lineitem
+                where
+                        l_orderkey = o_orderkey
+                        and l_commitdate < l_receiptdate  )
+group by  o_orderpriority
+order by       o_orderpriority`).Check(testkit.Rows())
+}
+
 func TestQ9(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
