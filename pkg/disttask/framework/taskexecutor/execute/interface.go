@@ -65,13 +65,10 @@ type StepExecutor interface {
 
 // SubtaskSummary contains the summary of a subtask.
 type SubtaskSummary struct {
-	ProcessedRowCount int64
-
-	TotalRowCount int64
-
-	ProcessedBytes int64
-
-	TotalBytes int64
+	ProcessedRowCount int64 `json:"row_count,omitempty"`
+	TotalRowCount     int64 `json:"total_row,omitempty"`
+	ProcessedBytes    int64 `json:"bytes,omitempty"`
+	TotalBytes        int64 `json:"total_bytes,omitempty"`
 }
 
 // RunningSubtaskSummary is used to store the summary of a running subtask.

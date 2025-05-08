@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -63,8 +64,13 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 	sharedVars := e.mTtask.SharedVars
 	checksum := verify.NewKVGroupChecksumWithKeyspace(sharedVars.TableImporter.GetKeySpace())
 	if sharedVars.TableImporter.IsLocalSort() {
+		ctxWithFunc := external.WithOnFlushFunc(ctx, func(written, writtenBytes int64) {
+			sharedVars.ProcessedRowCount.Add(written)
+			sharedVars.ProcessedBytes.Add(writtenBytes)
+		})
+
 		if err := importer.ProcessChunk(
-			ctx,
+			ctxWithFunc,
 			&chunkCheckpoint,
 			sharedVars.TableImporter,
 			sharedVars.DataEngine,

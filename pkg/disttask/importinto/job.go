@@ -138,31 +138,20 @@ func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error
 		return nil, errors.Trace(err)
 	}
 	var importedRows uint64
-	if taskMeta.Plan.CloudStorageURI == "" {
-		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepImport)
-		if err != nil {
-			return nil, err
-		}
-		for _, subtask := range subtasks {
-			var subtaskMeta ImportStepMeta
-			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return nil, errors.Trace(err2)
-			}
-			importedRows += subtaskMeta.Result.LoadedRowCnt
-		}
-	} else {
-		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepWriteAndIngest)
-		if err != nil {
-			return nil, err
-		}
-		for _, subtask := range subtasks {
-			var subtaskMeta WriteIngestStepMeta
-			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return nil, errors.Trace(err2)
-			}
-			importedRows += subtaskMeta.Result.LoadedRowCnt
-		}
+
+	step := proto.ImportStepImport
+	if taskMeta.Plan.IsGlobalSort() {
+		step = proto.ImportStepWriteAndIngest
 	}
+
+	summaries, err := taskManager.GetSubtaskSummarysWithHistory(ctx, task.ID, step)
+	if err != nil {
+		return nil, err
+	}
+	for _, summary := range summaries {
+		importedRows += uint64(summary.ProcessedRowCount)
+	}
+
 	var errMsg string
 	if task.Error != nil {
 		errMsg = task.Error.Error()

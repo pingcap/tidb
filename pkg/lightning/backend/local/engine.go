@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -1375,6 +1376,10 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		time.Sleep(5 * time.Second)
 		failpoint.Return(errors.Trace(ctx.Err()))
 	})
+
+	if onFlush, ok := external.GetOnFlushFunc(ctx); ok {
+		onFlush(int64(w.batchCount), w.batchSize.Load())
+	}
 
 	err = w.addSST(ctx, meta)
 	if err != nil {
