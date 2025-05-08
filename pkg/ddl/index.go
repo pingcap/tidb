@@ -2410,6 +2410,9 @@ func (w *worker) addTableIndex(
 			}
 			//nolint:forcetypeassert
 			discovery := w.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+			if reorgInfo.ReorgMeta.UseCloudStorage {
+				return nil
+			}
 			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, discovery)
 		}
 	}
