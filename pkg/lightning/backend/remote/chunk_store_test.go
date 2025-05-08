@@ -31,7 +31,7 @@ func testChunksStore(t *testing.T, basePath string) {
 	// Create a new store
 	taskID := "test-task"
 
-	chunksStore, err := newChunksStore(taskID, 1, basePath)
+	chunksStore, err := newChunkStore(taskID, 1, basePath)
 	require.NoError(t, err)
 
 	// Get a non-existent chunk
