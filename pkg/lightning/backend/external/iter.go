@@ -468,6 +468,10 @@ func (p *kvPair) len() int {
 	return len(p.key) + len(p.value)
 }
 
+func getPairKey(p *kvPair) []byte {
+	return p.key
+}
+
 type kvReaderProxy struct {
 	p string
 	r *kvReader
