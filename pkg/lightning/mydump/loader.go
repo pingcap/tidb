@@ -296,7 +296,7 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 		o(mdLoaderSetupCfg)
 	}
 	if mdLoaderSetupCfg.FileIter == nil {
-		mdLoaderSetupCfg.FileIter = &allFileIterator{
+		mdLoaderSetupCfg.FileIter = &AllFileIterator{
 			store:        store,
 			maxScanFiles: mdLoaderSetupCfg.MaxScanFiles,
 		}
@@ -576,12 +576,19 @@ type FileIterator interface {
 	IterateFiles(ctx context.Context, hdl FileHandler) error
 }
 
-type allFileIterator struct {
+type AllFileIterator struct {
 	store        storage.ExternalStorage
 	maxScanFiles int
 }
 
-func (iter *allFileIterator) IterateFiles(ctx context.Context, hdl FileHandler) error {
+func NewAllFileIterator(s storage.ExternalStorage, maxScanFiles int) *AllFileIterator {
+	return &AllFileIterator{
+		store:        s,
+		maxScanFiles: maxScanFiles,
+	}
+}
+
+func (iter *AllFileIterator) IterateFiles(ctx context.Context, hdl FileHandler) error {
 	// `filepath.Walk` yields the paths in a deterministic (lexicographical) order,
 	// meaning the file and chunk orders will be the same everytime it is called
 	// (as long as the source is immutable).
