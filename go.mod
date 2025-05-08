@@ -26,13 +26,13 @@ require (
 	github.com/charithe/durationcheck v0.0.10
 	github.com/cheggaaa/pb/v3 v3.0.8
 	github.com/cheynewallace/tabby v1.1.1
-	github.com/ckaznocha/intrange v0.3.0
+	github.com/ckaznocha/intrange v0.3.1
 	github.com/cloudfoundry/gosigar v1.3.6
 	github.com/cockroachdb/pebble v1.1.4-0.20250120151818-5dd133a1e6fb
 	github.com/coocood/freecache v1.2.1
 	github.com/coreos/go-semver v0.3.1
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
-	github.com/daixiang0/gci v0.13.5
+	github.com/daixiang0/gci v0.13.6
 	github.com/danjacques/gofslock v0.0.0-20191023191349-0a45f885bc37
 	github.com/dgraph-io/ristretto v0.1.1
 	github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da
@@ -49,8 +49,8 @@ require (
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/protobuf v1.5.4
 	github.com/golang/snappy v0.0.4
-	github.com/golangci/gofmt v0.0.0-20250106114630-d62b90e6713d
-	github.com/golangci/golangci-lint v1.64.8
+	github.com/golangci/gofmt v0.0.0-20250413222143-f2e10e00591b
+	github.com/golangci/golangci-lint/v2 v2.1.6
 	github.com/golangci/gosec v0.0.0-20180901114220-8afd9cbb6cfb
 	github.com/golangci/misspell v0.6.0
 	github.com/golangci/prealloc v0.0.0-20180630174525-215b22d4de21
@@ -74,6 +74,7 @@ require (
 	github.com/kisielk/errcheck v1.9.0
 	github.com/klauspost/compress v1.18.0
 	github.com/ks3sdklib/aws-sdk-go v1.2.9
+	github.com/ldez/exptostd v0.4.3
 	github.com/lestrrat-go/jwx/v2 v2.0.21
 	github.com/mgechev/revive v1.9.0
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
@@ -112,7 +113,7 @@ require (
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.8-0.20250421022114-157f083989fa
 	github.com/tikv/pd/client v0.0.0-20250421073700-f86063f60638
-	github.com/timakin/bodyclose v0.0.0-20241017074812-ed6a65f985e3
+	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
@@ -189,7 +190,7 @@ require (
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.2.2 // indirect
 	github.com/DataDog/zstd v1.5.5 // indirect
 	github.com/Masterminds/goutils v1.1.1 // indirect
-	github.com/Masterminds/semver/v3 v3.3.0 // indirect
+	github.com/Masterminds/semver/v3 v3.3.1 // indirect
 	github.com/Masterminds/sprig/v3 v3.2.2 // indirect
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
