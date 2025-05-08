@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -347,7 +348,7 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 		}
 		if cmp == 0 && i != k {
 			if dupKey.Load() == nil {
-				cloned := append([]byte(nil), e.memKVsAndBuffers.kvs[i].key...)
+				cloned := slices.Clone(e.memKVsAndBuffers.kvs[i].key)
 				dupKey.Store(&cloned)
 			}
 		}

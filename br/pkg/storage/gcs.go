@@ -339,10 +339,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 	}
 	uri := s.objectName(name)
 	// 5MB is the minimum part size for GCS.
-	partSize := int64(gcsMinimumChunkSize)
-	if wo.PartSize > partSize {
-		partSize = wo.PartSize
-	}
+	partSize := max(wo.PartSize, int64(gcsMinimumChunkSize))
 	w, err := NewGCSWriter(ctx, s.getClient(), uri, partSize, wo.Concurrency, s.gcs.Bucket)
 	if err != nil {
 		return nil, errors.Trace(err)

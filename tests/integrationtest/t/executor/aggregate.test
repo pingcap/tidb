@@ -634,8 +634,12 @@ select a, var_pop(distinct b), var_pop(distinct c), var_pop(distinct d), var_pop
 drop table t;
 create table t(a int, b bigint, c float, d double, e decimal);
 insert into t values(1, 1000, 6.8, 3.45, 8.3), (1, 3998, -3.4, 5.12, 9.3),(1, 288, 9.2, 6.08, 1);
+# On Mac arm64 floating point calculations slightly different than x86
+--replace_regex /1.1808222222222222/1.1808222222222229/
 select variance(b), variance(c), variance(d), variance(e) from t group by a;
 insert into t values(1, 255, 6.8, 6.08, 1);
+# On Mac arm64 floating point calculations slightly different than x86
+--replace_regex /1.1808222222222222/1.1808222222222229/
 select variance(distinct b), variance(distinct c), variance(distinct d), variance(distinct e) from t group by a;
 insert into t values(2, 322, 0.8, 2.22, 6);
 --sorted_result

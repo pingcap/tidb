@@ -328,10 +328,7 @@ func generatePlanForPhysicalTable(
 			if err != nil {
 				return true, nil
 			}
-			end := i + regionBatch
-			if end > len(recordRegionMetas) {
-				end = len(recordRegionMetas)
-			}
+			end := min(i+regionBatch, len(recordRegionMetas))
 			batch := recordRegionMetas[i:end]
 			subTaskMeta := &BackfillSubTaskMeta{
 				PhysicalTableID: tbl.GetPhysicalID(),
@@ -621,10 +618,7 @@ func generateMergePlan(
 		start := 0
 		step := external.MergeSortFileCountStep
 		for start < len(dataFiles) {
-			end := start + step
-			if end > len(dataFiles) {
-				end = len(dataFiles)
-			}
+			end := min(start+step, len(dataFiles))
 			m := &BackfillSubTaskMeta{
 				DataFiles: dataFiles[start:end],
 				EleIDs:    eleID,
