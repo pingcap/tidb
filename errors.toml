@@ -471,6 +471,11 @@ error = '''
 server is busy
 '''
 
+["Lightning:KV:StoreDiskFull"]
+error = '''
+store disk full
+'''
+
 ["Lightning:Loader:ErrInvalidSchemaFile"]
 error = '''
 invalid schema file
@@ -2404,6 +2409,11 @@ Table '%s' from one of the %ss cannot be used in %s
 ["planner:1288"]
 error = '''
 The target table %-.100s of the %s is not updatable
+'''
+
+["planner:1305"]
+error = '''
+%s %s does not exist
 '''
 
 ["planner:1345"]

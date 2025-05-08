@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"go.uber.org/zap"
 )
@@ -124,28 +123,6 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 			zap.Error(err))
 	}
 	return errors.Trace(err)
-}
-
-// UpdateStatsMeta update count and snapshot ts in mysql.stats_meta
-func (db *DB) UpdateStatsMeta(ctx context.Context, tableID int64, restoreTS uint64, count uint64) error {
-	sysDB := mysql.SystemDB
-	statsMetaTbl := "stats_meta"
-
-	// set restoreTS to snapshot and version which is used to update stats_meta
-	err := db.se.ExecuteInternal(
-		ctx,
-		"update %n.%n set snapshot = %?, version = %?, count = %? where table_id = %?",
-		sysDB,
-		statsMetaTbl,
-		restoreTS,
-		restoreTS,
-		count,
-		tableID,
-	)
-	if err != nil {
-		log.Error("execute update sql failed", zap.Error(err))
-	}
-	return nil
 }
 
 // CreatePlacementPolicy check whether cluster support policy and create the policy.

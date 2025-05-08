@@ -57,7 +57,7 @@ func TestHashJoinV2UnderApply(t *testing.T) {
 
 	executor := prepare4HashJoinV2(casTest, dataSource1, dataSource2)
 	ctx := context.Background()
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		// when in apply, the same executor will be open/closed multiple times
 		chk := exec.NewFirstChunk(executor)
 		err := executor.Open(ctx)
@@ -136,14 +136,14 @@ func TestJoinExec(t *testing.T) {
 		require.Equal(t, 4, result.NumCols())
 		require.Equal(t, casTest.rows, result.NumRows())
 		visit := make(map[int64]bool, casTest.rows)
-		for i := 0; i < casTest.rows; i++ {
+		for i := range casTest.rows {
 			val := result.Column(0).Int64s()[i]
 			require.Equal(t, float64(val), result.Column(1).Float64s()[i])
 			require.Equal(t, val, result.Column(2).Int64s()[i])
 			require.Equal(t, float64(val), result.Column(3).Float64s()[i])
 			visit[val] = true
 		}
-		for i := 0; i < casTest.rows; i++ {
+		for i := range casTest.rows {
 			require.True(t, visit[int64(i)])
 		}
 	}

@@ -1950,15 +1950,46 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 			if physicalIndexScan == nil && len(dsCopTask.indexPlan.Children()) == 1 {
 				physicalIndexScan, _ = dsCopTask.indexPlan.Children()[0].(*PhysicalIndexScan)
 			}
+			// The double read case should change the table plan together if we want to build stream agg,
+			// so it need to find out the table scan
+			// Try to get the physical table scan from dsCopTask.tablePlan
+			// now, we only support the pattern tablescan and tablescan+selection
+			var physicalTableScan *PhysicalTableScan
+			if dsCopTask.tablePlan != nil {
+				physicalTableScan, _ = dsCopTask.tablePlan.(*PhysicalTableScan)
+				if physicalTableScan == nil && len(dsCopTask.tablePlan.Children()) == 1 {
+					physicalTableScan, _ = dsCopTask.tablePlan.Children()[0].(*PhysicalTableScan)
+				}
+				// We may not be able to build stream agg, break here and directly build hash agg
+				if physicalTableScan == nil {
+					goto buildHashAgg
+				}
+			}
 			if physicalIndexScan != nil {
 				physicalIndexScan.KeepOrder = true
 				dsCopTask.keepOrder = true
+				// Fix issue #60297, if index lookup(double read) as build side and table key is not common handle(row_id),
+				// we need to reset extraHandleCol and needExtraProj.
+				// The reason why the reset cop task needs to be specially modified here is that:
+				// The cop task has been constructed in the previous logic,
+				// but it was not possible to determine whether the stream agg was needed (that is, whether keep order was true).
+				// Therefore, when updating the keep order, the relevant properties in the cop task need to be modified at the same time.
+				// The following code is copied from the logic when keep order is true in function constructDS2IndexScanTask.
+				if dsCopTask.tablePlan != nil && physicalTableScan != nil && !ds.TableInfo.IsCommonHandle {
+					var needExtraProj bool
+					dsCopTask.extraHandleCol, needExtraProj = physicalTableScan.appendExtraHandleCol(ds)
+					dsCopTask.needExtraProj = dsCopTask.needExtraProj || needExtraProj
+				}
+				if dsCopTask.needExtraProj {
+					dsCopTask.originSchema = ds.Schema()
+				}
 				streamAgg.SetStats(stats)
 				aggTask = streamAgg.Attach2Task(dsCopTask)
 			}
 		}
 	}
 
+buildHashAgg:
 	// build hash agg, when the stream agg is illegal such as the order by prop is not matched
 	if aggTask == nil {
 		physicalHashAgg := NewPhysicalHashAgg(la, stats, prop)

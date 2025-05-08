@@ -16,6 +16,7 @@ package core
 
 import (
 	"math"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -42,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -116,31 +119,37 @@ func (t *CopTask) getStoreType() kv.StoreType {
 
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalUnionScan) Attach2Task(tasks ...base.Task) base.Task {
+	// when it arrives here, physical union scan will absolutely require a root task type,
+	// so convert child to root task type first.
+	task := tasks[0].ConvertToRootTask(p.SCtx())
 	// We need to pull the projection under unionScan upon unionScan.
 	// Since the projection only prunes columns, it's ok the put it upon unionScan.
-	if sel, ok := tasks[0].Plan().(*PhysicalSelection); ok {
+	if sel, ok := task.Plan().(*PhysicalSelection); ok {
 		if pj, ok := sel.Children()[0].(*PhysicalProjection); ok {
 			// Convert unionScan->selection->projection to projection->unionScan->selection.
 			sel.SetChildren(pj.Children()...)
 			p.SetChildren(sel)
-			p.SetStats(tasks[0].Plan().StatsInfo())
-			rt, _ := tasks[0].(*RootTask)
+			p.SetStats(task.Plan().StatsInfo())
+			rt, _ := task.(*RootTask)
 			rt.SetPlan(p)
 			pj.SetChildren(p)
-			return pj.Attach2Task(tasks...)
+			return pj.Attach2Task(task)
 		}
 	}
-	if pj, ok := tasks[0].Plan().(*PhysicalProjection); ok {
+	if pj, ok := task.Plan().(*PhysicalProjection); ok {
 		// Convert unionScan->projection to projection->unionScan, because unionScan can't handle projection as its children.
 		p.SetChildren(pj.Children()...)
-		p.SetStats(tasks[0].Plan().StatsInfo())
-		rt, _ := tasks[0].(*RootTask)
+		p.SetStats(task.Plan().StatsInfo())
+		rt, _ := task.(*RootTask)
 		rt.SetPlan(pj.Children()[0])
 		pj.SetChildren(p)
-		return pj.Attach2Task(p.BasePhysicalPlan.Attach2Task(tasks...))
+		return pj.Attach2Task(p.BasePhysicalPlan.Attach2Task(task))
 	}
-	p.SetStats(tasks[0].Plan().StatsInfo())
-	return p.BasePhysicalPlan.Attach2Task(tasks...)
+	p.SetStats(task.Plan().StatsInfo())
+	// once task is copTask type here, it may be converted proj + tablePlan here.
+	// then when it's connected with union-scan here, we may get as: union-scan + proj + tablePlan
+	// while proj is not allowed to be built under union-scan in execution layer currently.
+	return p.BasePhysicalPlan.Attach2Task(task)
 }
 
 // Attach2Task implements PhysicalPlan interface.
@@ -431,16 +440,42 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *MppTask) (_,
 	return lTask, rTask
 }
 
+func (p *PhysicalHashJoin) enforceExchangerByBackup(task *MppTask, idx int, expectedCols int) *MppTask {
+	if backupHashProp := p.GetChildReqProps(idx); backupHashProp != nil {
+		if len(backupHashProp.MPPPartitionCols) == expectedCols {
+			return task.enforceExchangerImpl(backupHashProp)
+		}
+	}
+	return nil
+}
+
 func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
-	rTask, rok := tasks[1].(*MppTask)
-	lTask, lok := tasks[0].(*MppTask)
+	const (
+		left  = 0
+		right = 1
+	)
+	rTask, rok := tasks[right].(*MppTask)
+	lTask, lok := tasks[left].(*MppTask)
 	if !lok || !rok {
 		return base.InvalidTask
 	}
 	if p.mppShuffleJoin {
-		// protection check is case of some bugs
-		if len(lTask.hashCols) != len(rTask.hashCols) || len(lTask.hashCols) == 0 {
+		if len(lTask.hashCols) == 0 || len(rTask.hashCols) == 0 {
+			// if the hash columns are empty, this is very likely a bug.
 			return base.InvalidTask
+		}
+		if len(lTask.hashCols) != len(rTask.hashCols) {
+			// if the hash columns are not the same, The most likely scenario is that
+			// they have undergone exchange optimization, removing some hash columns.
+			// In this case, we need to restore them on the side that is missing.
+			if len(lTask.hashCols) < len(rTask.hashCols) {
+				lTask = p.enforceExchangerByBackup(lTask, left, len(rTask.hashCols))
+			} else {
+				rTask = p.enforceExchangerByBackup(rTask, right, len(lTask.hashCols))
+			}
+			if lTask == nil || rTask == nil {
+				return base.InvalidTask
+			}
 		}
 		lTask, rTask = p.convertPartitionKeysIfNeed(lTask, rTask)
 	}
@@ -1014,6 +1049,13 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 		}
 		topN.SetChildren(bottomProj)
 
+		// orderByCol is the column `distanceCol`, so this explain always success.
+		orderByCol, _ := topN.ByItems[0].Expr.(*expression.Column)
+		orderByCol.Index = len(bottomProj.Exprs) - 1
+
+		// try to Check and modify plan when it is possible to not scanning vector column at all.
+		tryReturnDistanceFromIndex(topN, newGlobalTopN, childPlan, bottomProj)
+
 		return topN, newGlobalTopN
 	}
 
@@ -1024,6 +1066,107 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 	}.Init(p.SCtx(), stats, p.QueryBlockOffset(), p.GetChildReqProps(0))
 	topN.SetChildren(childPlan)
 	return topN, newGlobalTopN
+}
+
+// tryReturnDistanceFromIndex checks whether the vector in the plan can be removed and a distance column will be added.
+// Consider this situation sql statement: select id from t order by vec_distance(vec, '[1,2,3]') limit x
+// The plan like:
+//
+// DataSource(id, vec) -> Projection1(id, vec->dis) -> TopN(by dis) -> Projection2(id)
+// └─Schema: id, vec
+//
+// In vector index, the distance result already exists, so there is no need to calculate it again in projection1.
+// We can directly read the distance result. After this Optimization, the plan will be modified to:
+//
+// DataSource(id, dis) -> TopN(by dis) -> Projection2(id)
+// └─Schema: id, dis
+func tryReturnDistanceFromIndex(local *PhysicalTopN, global *PhysicalTopN, childPlan base.PhysicalPlan, proj *PhysicalProjection) bool {
+	tableScan, ok := childPlan.(*PhysicalTableScan)
+	if !ok {
+		return false
+	}
+
+	orderByCol, _ := local.ByItems[0].Expr.(*expression.Column)
+	var annQueryInfo *ColumnarIndexExtra
+	for _, idx := range tableScan.UsedColumnarIndexes {
+		if idx != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector && idx.QueryInfo != nil {
+			annQueryInfo = idx
+			break
+		}
+	}
+	if annQueryInfo == nil {
+		return false
+	}
+
+	// If the vector column is only used in the VectorSearch and no where
+	// else, then it can be eliminated in TableScan.
+	if orderByCol.Index < 0 || orderByCol.Index >= len(proj.Exprs) {
+		return false
+	}
+
+	isVecColumnInUse := false
+	for idx, projExpr := range proj.Exprs {
+		if idx == orderByCol.Index {
+			// Skip the distance function projection itself.
+			continue
+		}
+		flag := expression.HasColumnWithCondition(projExpr, func(col *expression.Column) bool {
+			return col.ID == annQueryInfo.QueryInfo.GetAnnQueryInfo().GetColumn().ColumnId
+		})
+		if flag {
+			isVecColumnInUse = true
+			break
+		}
+	}
+
+	if isVecColumnInUse {
+		return false
+	}
+
+	// append distance column to the table scan
+	virtualDistanceColInfo := &model.ColumnInfo{
+		ID:        model.VirtualColVecSearchDistanceID,
+		FieldType: *types.NewFieldType(mysql.TypeFloat),
+		Offset:    len(tableScan.Columns) - 1,
+	}
+
+	virtualDistanceCol := &expression.Column{
+		UniqueID: tableScan.SCtx().GetSessionVars().AllocPlanColumnID(),
+		RetType:  types.NewFieldType(mysql.TypeFloat),
+	}
+
+	// remove the vector column in order to read distance directly by virtualDistanceCol
+	vectorIdx := -1
+	for i, col := range tableScan.Columns {
+		if col.ID == annQueryInfo.QueryInfo.GetAnnQueryInfo().GetColumn().ColumnId {
+			vectorIdx = i
+			break
+		}
+	}
+	if vectorIdx == -1 {
+		return false
+	}
+
+	// set the EnableDistanceProj to modify the read process of tiflash.
+	annQueryInfo.QueryInfo.GetAnnQueryInfo().EnableDistanceProj = true
+
+	// append the distance column to the last position in columns and schema.
+	tableScan.Columns = slices.Delete(tableScan.Columns, vectorIdx, vectorIdx+1)
+	tableScan.Columns = append(tableScan.Columns, virtualDistanceColInfo)
+
+	tableScan.Schema().Columns = slices.Delete(tableScan.Schema().Columns, vectorIdx, vectorIdx+1)
+	tableScan.Schema().Append(virtualDistanceCol)
+
+	// The children of topN are currently projections. After optimization, we no longer
+	// need the projection and directly set the children to tablescan.
+	local.SetChildren(tableScan)
+
+	// modify the topN's ByItem
+	local.ByItems[0].Expr = virtualDistanceCol
+	global.ByItems[0].Expr = virtualDistanceCol
+	local.ByItems[0].Expr.(*expression.Column).Index = tableScan.Schema().Len() - 1
+
+	return true
 }
 
 // ContainHeavyFunction check if the expr contains a function that need to do HeavyFunctionOptimize. Currently this only applies

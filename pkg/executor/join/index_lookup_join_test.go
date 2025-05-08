@@ -43,7 +43,7 @@ func TestIndexLookupJoinHang(t *testing.T) {
 	rs, err := tk.Exec("select /*+ INL_JOIN(i)*/ * from idxJoinOuter o left join idxJoinInner i on o.a = i.a where o.a in (1, 2) and (i.a - 3) > 0")
 	require.NoError(t, err)
 	req := rs.NewChunk(nil)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		// FIXME: cannot check err, since err exists,  Panic: [tikv:1690]BIGINT UNSIGNED value is out of range in '(Column#0 - 3)'
 		_ = rs.Next(context.Background(), req)
 	}
@@ -53,7 +53,7 @@ func TestIndexLookupJoinHang(t *testing.T) {
 	rs, err = tk.Exec("select /*+ INL_HASH_JOIN(i)*/ * from idxJoinOuter o left join idxJoinInner i on o.a = i.a where o.a in (1, 2) and (i.a - 3) > 0")
 	require.NoError(t, err)
 	req = rs.NewChunk(nil)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		// to fix: cannot check err, since err exists,  Panic: [tikv:1690]BIGINT UNSIGNED value is out of range in '(Column#0 - 3)'
 		_ = rs.Next(context.Background(), req)
 	}
@@ -63,7 +63,7 @@ func TestIndexLookupJoinHang(t *testing.T) {
 	rs, err = tk.Exec("select /*+ INL_MERGE_JOIN(i)*/ * from idxJoinOuter o left join idxJoinInner i on o.a = i.a where o.a in (1, 2) and (i.a - 3) > 0")
 	require.NoError(t, err)
 	req = rs.NewChunk(nil)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		// to fix: cannot check err, since err exists,  Panic: [tikv:1690]BIGINT UNSIGNED value is out of range in '(Column#0 - 3)'
 		_ = rs.Next(context.Background(), req)
 	}
@@ -97,7 +97,7 @@ func TestPartitionTableIndexJoinAndIndexReader(t *testing.T) {
 	tk.MustExec("create table tnormal (a int, b int, key(a), key(b))")
 	nRows := 512
 	values := make([]string, 0, nRows)
-	for i := 0; i < nRows; i++ {
+	for range nRows {
 		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(nRows), rand.Intn(nRows)))
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(values, ", ")))
@@ -110,7 +110,7 @@ func TestPartitionTableIndexJoinAndIndexReader(t *testing.T) {
 		}
 		return a, b
 	}
-	for i := 0; i < nRows; i++ {
+	for range nRows {
 		lb, rb := randRange()
 		cond := fmt.Sprintf("(t2.b between %v and %v)", lb, rb)
 		result := tk.MustQuery("select t1.a from tnormal t1, tnormal t2 where t1.a=t2.b and " + cond).Sort().Rows()

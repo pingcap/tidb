@@ -14,6 +14,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/store/driver/txn",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/mysql",

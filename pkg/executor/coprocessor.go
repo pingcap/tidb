@@ -277,7 +277,7 @@ func (h *CoprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.Fie
 	requestedRow := make([]byte, 0)
 	chunks := []tipb.Chunk{}
 	errCtx := stmtCtx.ErrCtx()
-	for i := 0; i < chk.NumRows(); i++ {
+	for i := range chk.NumRows() {
 		requestedRow = requestedRow[:0]
 		row := chk.GetRow(i)
 		for _, ordinal := range colOrdinal {

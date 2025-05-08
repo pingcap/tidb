@@ -203,7 +203,7 @@ func (h *restoreEBSMetaHelper) doRestore(ctx context.Context, progress glue.Prog
 	}
 
 	if h.cfg.SkipAWS {
-		for i := 0; i < int(h.metaInfo.GetStoreCount()); i++ {
+		for i := range int(h.metaInfo.GetStoreCount()) {
 			progress.Inc()
 			log.Info("mock: create volume from snapshot finished.", zap.Int("index", i))
 			time.Sleep(800 * time.Millisecond)

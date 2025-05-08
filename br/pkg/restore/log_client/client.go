@@ -571,8 +571,9 @@ func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 	}
 	if exists {
 		// we need to load the checkpoint data for the following restore
-		_, err = sstCheckpointMetaManager.LoadCheckpointData(ctx, func(tableID int64, v checkpoint.RestoreValueType) {
+		_, err = sstCheckpointMetaManager.LoadCheckpointData(ctx, func(tableID int64, v checkpoint.RestoreValueType) error {
 			sstCheckpointSets[v.Name] = struct{}{}
+			return nil
 		})
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1303,7 +1304,7 @@ func (rc *LogClient) RestoreBatchMetaKVFiles(
 	}
 
 	updateStats(kvCount, size)
-	for i := 0; i < len(files); i++ {
+	for range files {
 		progressInc()
 	}
 	return filteredOutKvEntries, nil

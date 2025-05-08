@@ -16,6 +16,7 @@ package infosync
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -51,7 +52,7 @@ func (m *MockGlobalServerInfoManager) Delete(idx int) error {
 	if idx >= len(m.infos) || idx < 0 {
 		return errors.New("server idx out of bound")
 	}
-	m.infos = append(m.infos[:idx], m.infos[idx+1:]...)
+	m.infos = slices.Delete(m.infos, idx, idx+1)
 	return nil
 }
 
@@ -59,10 +60,10 @@ func (m *MockGlobalServerInfoManager) Delete(idx int) error {
 func (m *MockGlobalServerInfoManager) DeleteByExecID(execID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for i := 0; i < len(m.infos); i++ {
+	for i := range m.infos {
 		name := fmt.Sprintf("%s:%d", m.infos[i].IP, m.infos[i].Port)
 		if name == execID {
-			m.infos = append(m.infos[:i], m.infos[i+1:]...)
+			m.infos = slices.Delete(m.infos, i, i+1)
 			break
 		}
 	}

@@ -114,7 +114,7 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 		}()
 	}
 	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
-	s.indexBlockSize = getAdjustedIndexBlockSize(s.perIndexKVMemSizePerCon)
+	s.indexBlockSize = external.GetAdjustedBlockSize(s.perIndexKVMemSizePerCon)
 	s.logger.Info("KV writer memory buf info",
 		zap.String("data-buf-limit", units.BytesSize(float64(s.dataKVMemSizePerCon))),
 		zap.String("per-index-buf-limit", units.BytesSize(float64(s.perIndexKVMemSizePerCon))),
@@ -403,6 +403,15 @@ func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 	}
 	subtask.Meta = newMeta
 	return nil
+}
+
+// Cleanup implements the StepExecutor.Cleanup interface.
+func (m *mergeSortStepExecutor) Cleanup(ctx context.Context) (err error) {
+	m.logger.Info("cleanup subtask env")
+	if m.controller != nil {
+		m.controller.Close()
+	}
+	return m.BaseStepExecutor.Cleanup(ctx)
 }
 
 type writeAndIngestStepExecutor struct {

@@ -16,11 +16,11 @@ package external
 
 import (
 	"context"
-	"fmt"
 	"path"
 	"testing"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
@@ -30,7 +30,7 @@ import (
 
 func testGetFirstAndLastKey(
 	t *testing.T,
-	data common.IngestData,
+	data engineapi.IngestData,
 	lowerBound, upperBound []byte,
 	expectedFirstKey, expectedLastKey []byte,
 ) {
@@ -42,7 +42,7 @@ func testGetFirstAndLastKey(
 
 func testNewIter(
 	t *testing.T,
-	data common.IngestData,
+	data engineapi.IngestData,
 	lowerBound, upperBound []byte,
 	expectedKVs []kvPair,
 	bufPool *membuf.Pool,
@@ -212,32 +212,6 @@ func TestSplit(t *testing.T) {
 		got := split(c.input, c.conc)
 		require.Equal(t, c.expected, got)
 	}
-}
-
-func TestGetAdjustedConcurrency(t *testing.T) {
-	genFiles := func(n int) []string {
-		files := make([]string, 0, n)
-		for i := 0; i < n; i++ {
-			files = append(files, fmt.Sprintf("file%d", i))
-		}
-		return files
-	}
-	e := &Engine{
-		checkHotspot:      true,
-		workerConcurrency: 32,
-		dataFiles:         genFiles(100),
-	}
-	require.Equal(t, 8, e.getAdjustedConcurrency())
-	e.dataFiles = genFiles(8000)
-	require.Equal(t, 1, e.getAdjustedConcurrency())
-
-	e.checkHotspot = false
-	e.dataFiles = genFiles(10)
-	require.Equal(t, 32, e.getAdjustedConcurrency())
-	e.dataFiles = genFiles(100)
-	require.Equal(t, 10, e.getAdjustedConcurrency())
-	e.dataFiles = genFiles(10000)
-	require.Equal(t, 1, e.getAdjustedConcurrency())
 }
 
 func TestTryDecodeEndKey(t *testing.T) {
