@@ -20,6 +20,7 @@ import (
 	"context"
 	goerrors "errors"
 	"io"
+	"slices"
 	"sort"
 	"sync"
 
@@ -459,8 +460,8 @@ func (p *kvPair) sortKey() []byte {
 }
 
 func (p *kvPair) cloneInnerFields() {
-	p.key = append([]byte{}, p.key...)
-	p.value = append([]byte{}, p.value...)
+	p.key = slices.Clone(p.key)
+	p.value = slices.Clone(p.value)
 }
 
 func (p *kvPair) len() int {
@@ -580,8 +581,8 @@ func (p *rangeProperty) sortKey() []byte {
 }
 
 func (p *rangeProperty) cloneInnerFields() {
-	p.firstKey = append([]byte{}, p.firstKey...)
-	p.lastKey = append([]byte{}, p.lastKey...)
+	p.firstKey = slices.Clone(p.firstKey)
+	p.lastKey = slices.Clone(p.lastKey)
 }
 
 func (p *rangeProperty) len() int {
@@ -706,7 +707,7 @@ func newMergePropBaseIter(
 
 	readerOpeners := make([]readerOpenerFn[*rangeProperty, statReaderProxy], 0, len(multiStat.Filenames))
 	// first `limit` reader will be opened by newLimitSizeMergeIter
-	for i := 0; i < int(limit); i++ {
+	for i := range int(limit) {
 		path := multiStat.Filenames[i][1]
 		readerOpeners = append(readerOpeners, func() (*statReaderProxy, error) {
 			rd, err := newStatsReader(ctx, exStorage, path, 250*1024)
