@@ -20,18 +20,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-<<<<<<< HEAD
-=======
-	"path"
 	"reflect"
->>>>>>> c1576410ac1 (util: Fixed the issues when using the same log files for different log types (#61012))
 	"runtime"
+	"strings"
 	"testing"
-<<<<<<< HEAD
-=======
-	"time"
 	"unsafe"
->>>>>>> c1576410ac1 (util: Fixed the issues when using the same log files for different log types (#61012))
 
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
@@ -193,12 +186,8 @@ func TestSetLevel(t *testing.T) {
 
 func TestSlowQueryLoggerAndGeneralLoggerCreation(t *testing.T) {
 	var err error
-<<<<<<< HEAD
-	for i := 0; i < 2; i++ {
-=======
 	var l *zap.Logger
-	for i := range 2 {
->>>>>>> c1576410ac1 (util: Fixed the issues when using the same log files for different log types (#61012))
+	for i := 0; i < 2; i++ {
 		level := "Error"
 		conf := NewLogConfig(level, DefaultLogFormat, "", "", EmptyFileLogConfig, false)
 		if i == 0 {
