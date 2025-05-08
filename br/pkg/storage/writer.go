@@ -8,7 +8,6 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"io"
 )
@@ -182,10 +181,6 @@ func newSimpleCompressBuffer(chunkSize int, compressType CompressType) *simpleCo
 type bufferedWriter struct {
 	buf    interceptBuffer
 	writer ExternalFileWriter
-
-	// monitor the speed of reading from external storage
-	writeDurHist  prometheus.Observer
-	writeRateHist prometheus.Observer
 }
 
 func (u *bufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
