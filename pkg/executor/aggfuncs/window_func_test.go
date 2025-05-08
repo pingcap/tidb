@@ -42,7 +42,7 @@ type windowTest struct {
 func (p *windowTest) genSrcChk() *chunk.Chunk {
 	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
 	dataGen := getDataGenFunc(p.dataType)
-	for i := 0; i < p.numRows; i++ {
+	for i := range p.numRows {
 		dt := dataGen(i)
 		srcChk.AppendDatum(0, &dt)
 	}
@@ -72,7 +72,7 @@ func testWindowFunc(t *testing.T, p windowTest) {
 	}
 
 	require.Len(t, p.results, p.numRows)
-	for i := 0; i < p.numRows; i++ {
+	for i := range p.numRows {
 		err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
 		require.NoError(t, err)
 		dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)

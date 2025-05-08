@@ -828,7 +828,7 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 	defer tracing.StartRegion(ctx, "buildMemIndexMergeReader").End()
 	indexCount := len(indexMergeReader.indexes)
 	memReaders := make([]memReader, 0, indexCount)
-	for i := 0; i < indexCount; i++ {
+	for i := range indexCount {
 		if indexMergeReader.indexes[i] == nil {
 			colIDs, pkColIDs, rd := getColIDAndPkColIDs(indexMergeReader.Ctx(), indexMergeReader.table, indexMergeReader.columns)
 			memReaders = append(memReaders, &memTableReader{

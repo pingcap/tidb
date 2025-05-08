@@ -188,7 +188,7 @@ create table t3(
   id20 varchar(40) DEFAULT NULL,
   UNIQUE KEY IX_id20 (id20)
 );
-explain UPDATE t1 a
+explain format='brief' UPDATE t1 a
 SET a.id1 = '04',
   a.id3 = CURRENT_TIMESTAMP,
   a.id4 = SUBSTRING_INDEX(USER(), '@', 1),
@@ -213,7 +213,7 @@ drop table if exists t;
 create table t (a int, b int, index (a));
 insert into t values (1, 1);
 --replace_column 6 <execution_info> 8 <memory> 9 <disk>
-explain analyze select * from t t1, t t2 where t1.b = t2.a and t1.b = 2333;
+explain analyze format='brief' select * from t t1, t t2 where t1.b = t2.a and t1.b = 2333;
 
 # TestIssue49605
 drop table if exists t;

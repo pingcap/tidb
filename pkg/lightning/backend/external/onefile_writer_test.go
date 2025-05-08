@@ -56,7 +56,7 @@ func TestOnefileWriterBasic(t *testing.T) {
 
 	kvCnt := 100
 	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		randLen := rand.Intn(10) + 1
 		kvs[i].Key = make([]byte, randLen)
 		_, err := rand.Read(kvs[i].Key)
@@ -76,7 +76,7 @@ func TestOnefileWriterBasic(t *testing.T) {
 	bufSize := rand.Intn(100) + 1
 	kvReader, err := newKVReader(ctx, "/test/0/one-file", memStore, 0, bufSize)
 	require.NoError(t, err)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		key, value, err := kvReader.nextKV()
 		require.NoError(t, err)
 		require.Equal(t, kvs[i].Key, key)
@@ -125,9 +125,9 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 
 	writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
 	kvs := make([]common.KvPair, 0, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		kvs = append(kvs, common.KvPair{
-			Key: []byte(fmt.Sprintf("key%02d", i)),
+			Key: fmt.Appendf(nil, "key%02d", i),
 			Val: []byte("56789"),
 		})
 	}
@@ -139,7 +139,7 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 	bufSize := rand.Intn(100) + 1
 	kvReader, err := newKVReader(ctx, "/"+prefix+"/0/one-file", memStore, 0, bufSize)
 	require.NoError(t, err)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		key, value, err := kvReader.nextKV()
 		require.NoError(t, err)
 		require.Equal(t, kvs[i].Key, key)
@@ -187,7 +187,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		Build(memStore, "/test", "0")
 
 	kvCount := 2000000
-	for i := 0; i < kvCount; i++ {
+	for i := range kvCount {
 		v := i
 		if v == kvCount/2 {
 			v-- // insert a duplicate key.
@@ -221,7 +221,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 
 	kvReader, err := newKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, 100)
 	require.NoError(t, err)
-	for i := 0; i < kvCount; i++ {
+	for range kvCount {
 		key, value, err := kvReader.nextKV()
 		require.NoError(t, err)
 		clonedKey := make([]byte, len(key))
@@ -273,7 +273,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	kvCnt := 100000
 	expectedTotalSize := 0
 	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		randLen := rand.Intn(10) + 1
 		kvs[i].Key = make([]byte, randLen)
 		_, err := rand.Read(kvs[i].Key)
@@ -324,7 +324,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	bufSize := rand.Intn(100) + 1
 	kvReader, err := newKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, bufSize)
 	require.NoError(t, err)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		key, value, err := kvReader.nextKV()
 		require.NoError(t, err)
 		require.Equal(t, kvs[i].Key, key)
@@ -372,7 +372,7 @@ func TestOnefilePropOffset(t *testing.T) {
 
 	kvCnt := 10000
 	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		randLen := rand.Intn(10) + 1
 		kvs[i].Key = make([]byte, randLen)
 		_, err := rand.Read(kvs[i].Key)

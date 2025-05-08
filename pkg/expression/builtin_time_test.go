@@ -1525,7 +1525,7 @@ func TestSysDate(t *testing.T) {
 		require.NoError(t, err)
 		last = time.Now()
 		times := output.Times()
-		for i := 0; i < 1024; i++ {
+		for i := range 1024 {
 			require.GreaterOrEqual(t, times[i].String(), last.Format(types.TimeFormat))
 		}
 
@@ -1540,7 +1540,7 @@ func TestSysDate(t *testing.T) {
 		startTm := time.Now().In(loc)
 		err = vecEvalType(ctx, baseFunc, types.ETDatetime, input, output)
 		require.NoError(t, err)
-		for i := 0; i < 1024; i++ {
+		for i := range 1024 {
 			require.GreaterOrEqual(t, times[i].String(), startTm.Format(types.TimeFormat))
 		}
 	}
