@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -45,8 +47,8 @@ import (
 // a 16c32G machine, each worker can use 2G memory.
 // And for the memory corresponding to each job worker, we divide into below and
 // total 6.5 shares:
-//   - one share used by HTTP and GRPC buf, such as loadBatchRegionData, write TiKV
-//   - one share used by loadBatchRegionData to store loaded data batch A
+//   - one share used by HTTP and GRPC buf, such as loadRangeBatchData, write TiKV
+//   - one share used by loadRangeBatchData to store loaded data batch A
 //   - one share used by generateAndSendJob for handle loaded data batch B
 //   - one share used by the active job on job worker
 //   - 2.5 share for others, and burst allocation to avoid OOM
@@ -158,6 +160,14 @@ type Engine struct {
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
 	memLimit        int
+	onDup           engineapi.OnDuplicateKey
+	filePrefix      string
+	// below fields are only used when onDup is OnDuplicateKeyRecord.
+	recordedDupCnt  int
+	recordedDupSize int64
+	dupFile         string
+	dupWriter       storage.ExternalFileWriter
+	dupKVStore      *KeyValueStore
 }
 
 var _ engineapi.Engine = (*Engine)(nil)
@@ -185,7 +195,9 @@ func NewExternalEngine(
 	totalKVCount int64,
 	checkHotspot bool,
 	memCapacity int64,
-) engineapi.Engine {
+	onDup engineapi.OnDuplicateKey,
+	filePrefix string,
+) *Engine {
 	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
 	memLimit := int(float64(memCapacity) / writeStepMemShareCount * 3)
 	logutil.BgLogger().Info("create external engine",
@@ -221,6 +233,8 @@ func NewExternalEngine(
 		importedKVSize:     atomic.NewInt64(0),
 		importedKVCount:    atomic.NewInt64(0),
 		memLimit:           memLimit,
+		onDup:              onDup,
+		filePrefix:         filePrefix,
 	}
 }
 
@@ -288,7 +302,7 @@ func getFilesReadConcurrency(
 	return result, startOffs, nil
 }
 
-func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outCh chan<- engineapi.DataAndRanges) error {
+func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh chan<- engineapi.DataAndRanges) error {
 	readAndSortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read_and_sort")
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_and_sort")
 	readRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read")
@@ -316,11 +330,9 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	}
 	e.memKVsAndBuffers.build(ctx)
 
-	readSecond := time.Since(readStart).Seconds()
+	readDur := time.Since(readStart)
+	readSecond := readDur.Seconds()
 	readDurHist.Observe(readSecond)
-	logutil.Logger(ctx).Info("reading external storage in loadBatchRegionData",
-		zap.Duration("cost time", time.Since(readStart)),
-		zap.Int("droppedSize", e.memKVsAndBuffers.droppedSize))
 
 	sortStart := time.Now()
 	oldSortyGor := sorty.MaxGor
@@ -335,18 +347,24 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 			return true
 		}
 		if cmp == 0 && i != k {
-			cloned := append([]byte(nil), e.memKVsAndBuffers.kvs[i].key...)
-			dupKey.Store(&cloned)
+			if dupKey.Load() == nil {
+				cloned := slices.Clone(e.memKVsAndBuffers.kvs[i].key)
+				dupKey.Store(&cloned)
+			}
 		}
 		return false
 	})
 	sorty.MaxGor = oldSortyGor
-	sortSecond := time.Since(sortStart).Seconds()
+	sortDur := time.Since(sortStart)
+	sortSecond := sortDur.Seconds()
 	sortDurHist.Observe(sortSecond)
-	logutil.Logger(ctx).Info("sorting in loadBatchRegionData",
-		zap.Duration("cost time", time.Since(sortStart)))
 
-	if k := dupKey.Load(); k != nil {
+	// we shouldn't handle duplicates for OnDuplicateKeyIgnore, it's the semantic
+	// of OnDuplicateKeyError, but to make keep compatible with the old code, we
+	// keep this behavior.
+	// TODO: remove this when we have have fully integrated the OnDuplicateKey.
+	if k := dupKey.Load(); k != nil &&
+		(e.onDup == engineapi.OnDuplicateKeyIgnore || e.onDup == engineapi.OnDuplicateKeyError) {
 		return errors.Errorf("duplicate key found: %s", hex.EncodeToString(*k))
 	}
 	readAndSortSecond := time.Since(readStart).Seconds()
@@ -357,8 +375,48 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
 	sortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / sortSecond)
 
+	var (
+		deduplicatedKVs, dups []kvPair
+		dupCount              int
+		deduplicateDur        time.Duration
+	)
+	deduplicatedKVs = e.memKVsAndBuffers.kvs
+	dupFound := dupKey.Load() != nil
+	if dupFound {
+		start := time.Now()
+		if e.onDup == engineapi.OnDuplicateKeyRecord {
+			if err = e.lazyInitDupWriter(ctx); err != nil {
+				return err
+			}
+			deduplicatedKVs, dups, dupCount = removeDuplicates(deduplicatedKVs, getPairKey, true)
+			e.recordedDupCnt += len(dups)
+			for _, p := range dups {
+				e.recordedDupSize += int64(len(p.key) + len(p.value))
+				if err = e.dupKVStore.addRawKV(p.key, p.value); err != nil {
+					return err
+				}
+			}
+		} else if e.onDup == engineapi.OnDuplicateKeyRemove {
+			deduplicatedKVs, _, dupCount = removeDuplicates(deduplicatedKVs, getPairKey, false)
+		}
+		deduplicateDur = time.Since(start)
+	}
+	logutil.Logger(ctx).Info("load range batch done",
+		zap.Duration("readDur", readDur),
+		zap.Duration("sortDur", sortDur),
+		zap.Int("droppedSize", e.memKVsAndBuffers.droppedSize),
+		zap.Int("loadedKVs", len(e.memKVsAndBuffers.kvs)),
+		zap.String("loadedSize", units.HumanSize(float64(e.memKVsAndBuffers.size))),
+		zap.Stringer("onDup", e.onDup),
+		zap.Int("dupCount", dupCount),
+		zap.Int("recordedDupCount", len(dups)),
+		zap.Int("totalRecordedDupCount", e.recordedDupCnt),
+		zap.String("totalRecordedDupSize", units.BytesSize(float64(e.recordedDupSize))),
+		zap.Duration("deduplicateDur", deduplicateDur),
+	)
+
 	data := e.buildIngestData(
-		e.memKVsAndBuffers.kvs,
+		deduplicatedKVs,
 		e.memKVsAndBuffers.memKVBuffers,
 	)
 
@@ -412,7 +470,15 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 func (e *Engine) LoadIngestData(
 	ctx context.Context,
 	outCh chan<- engineapi.DataAndRanges,
-) error {
+) (err error) {
+	if e.onDup == engineapi.OnDuplicateKeyRecord {
+		defer func() {
+			err1 := e.closeDupWriterAsNeeded(ctx)
+			if err == nil {
+				err = err1
+			}
+		}()
+	}
 	// try to make every worker busy for each batch
 	rangeBatchSize := e.workerConcurrency
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
@@ -422,10 +488,48 @@ func (e *Engine) LoadIngestData(
 	for start := 0; start < len(e.jobKeys)-1; start += rangeBatchSize {
 		// want to generate N ranges, so we need N+1 keys
 		end := min(1+start+rangeBatchSize, len(e.jobKeys))
-		err := e.loadBatchRegionData(ctx, e.jobKeys[start:end], outCh)
+		err = e.loadRangeBatchData(ctx, e.jobKeys[start:end], outCh)
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// lazyInitDupWriter lazily initializes the duplicate writer.
+// we need test on KS3 which will report InvalidArgument if the file is empty.
+// GCS is ok with empty file.
+func (e *Engine) lazyInitDupWriter(ctx context.Context) error {
+	if e.dupWriter != nil {
+		return nil
+	}
+	dupFile := filepath.Join(e.filePrefix, "dup")
+	dupWriter, err := e.storage.Create(ctx, dupFile, &storage.WriterOption{
+		// TODO might need to tune concurrency.
+		// max 150GiB duplicates can be saved, it should be enough, as we split
+		// subtask into 100G each.
+		Concurrency: 1,
+		PartSize:    3 * MinUploadPartSize})
+	if err != nil {
+		logutil.Logger(ctx).Info("create dup writer failed", zap.Error(err))
+		return err
+	}
+	e.dupFile = dupFile
+	e.dupWriter = dupWriter
+	e.dupKVStore = NewKeyValueStore(ctx, e.dupWriter, nil)
+	return nil
+}
+
+func (e *Engine) closeDupWriterAsNeeded(ctx context.Context) error {
+	if e.dupWriter == nil {
+		return nil
+	}
+	kvStore, writer := e.dupKVStore, e.dupWriter
+	e.dupKVStore, e.dupWriter = nil, nil
+	kvStore.finish()
+	if err := writer.Close(ctx); err != nil {
+		logutil.Logger(ctx).Info("close dup writer failed", zap.Error(err))
+		return err
 	}
 	return nil
 }
@@ -453,6 +557,17 @@ func (e *Engine) KVStatistics() (totalKVSize int64, totalKVCount int64) {
 // ImportedStatistics returns the imported kv size and imported kv count.
 func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64) {
 	return e.importedKVSize.Load(), e.importedKVCount.Load()
+}
+
+// ConflictInfo implements common.Engine.
+func (e *Engine) ConflictInfo() engineapi.ConflictInfo {
+	if e.recordedDupCnt == 0 {
+		return engineapi.ConflictInfo{}
+	}
+	return engineapi.ConflictInfo{
+		Count: uint64(e.recordedDupCnt),
+		Files: []string{e.dupFile},
+	}
 }
 
 // ID is the identifier of an engine.

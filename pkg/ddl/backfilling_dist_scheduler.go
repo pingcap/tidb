@@ -329,10 +329,7 @@ func generatePlanForPhysicalTable(
 			if err != nil {
 				return true, nil
 			}
-			end := i + regionBatch
-			if end > len(recordRegionMetas) {
-				end = len(recordRegionMetas)
-			}
+			end := min(i+regionBatch, len(recordRegionMetas))
 			batch := recordRegionMetas[i:end]
 			subTaskMeta := &BackfillSubTaskMeta{
 				PhysicalTableID: tbl.GetPhysicalID(),

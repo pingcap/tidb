@@ -442,7 +442,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 
 	tkCancel := testkit.NewTestKit(t, store)
 	defer tk.MustExec("drop table t")
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	var checkErr error

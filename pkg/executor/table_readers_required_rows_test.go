@@ -66,7 +66,7 @@ func (r *requiredRowsSelectResult) Next(ctx context.Context, chk *chunk.Chunk) e
 		return nil
 	}
 	required := min(chk.RequiredRows(), r.totalRows-r.count)
-	for i := 0; i < required; i++ {
+	for range required {
 		chk.AppendRow(r.genOneRow())
 	}
 	r.count += required

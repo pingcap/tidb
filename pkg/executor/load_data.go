@@ -522,7 +522,7 @@ func (w *encodeWorker) parserData2TableData(
 	}
 
 	fieldMappings := w.controller.FieldMappings
-	for i := 0; i < len(fieldMappings); i++ {
+	for i := range fieldMappings {
 		if i >= len(parserData) {
 			if fieldMappings[i].Column == nil {
 				setVar(fieldMappings[i].UserVar.Name, nil)
@@ -552,7 +552,7 @@ func (w *encodeWorker) parserData2TableData(
 
 		row = append(row, parserData[i])
 	}
-	for i := 0; i < len(w.colAssignExprs); i++ {
+	for i := range w.colAssignExprs {
 		// eval expression of `SET` clause
 		d, err := w.colAssignExprs[i].Eval(w.Ctx().GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
@@ -721,7 +721,7 @@ func (e *LoadDataWorker) TestLoadLocal(parser mydump.Parser) error {
 		return err
 	}
 
-	for i := uint64(0); i < e.controller.IgnoreLines; i++ {
+	for range e.controller.IgnoreLines {
 		//nolint: errcheck
 		_ = parser.ReadRow()
 	}
