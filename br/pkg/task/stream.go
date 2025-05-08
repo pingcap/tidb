@@ -2128,7 +2128,7 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 		PiTRTableTracker:        cfg.PiTRTableTracker,
 		FullBackupStorageConfig: fullBackupStorageConfig,
 		CipherInfo:              &cfg.Config.CipherInfo,
-	})
+	}, cfg.logCheckpointMetaManager)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -30,7 +30,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/fatih/color"
-	"github.com/gogo/protobuf/proto"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -964,46 +963,6 @@ func (rc *LogClient) RestoreKVFiles(
 	return errors.Trace(err)
 }
 
-func (rc *LogClient) loadSchemasMap(
-	ctx context.Context,
-	restoreTS uint64,
-) ([]*backuppb.PitrDBMap, error) {
-	getPitrIDMapSQL := "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
-	execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
-	rows, _, errSQL := execCtx.ExecRestrictedSQL(
-		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-		nil,
-		getPitrIDMapSQL,
-		restoreTS,
-		rc.upstreamClusterID,
-	)
-	if errSQL != nil {
-		return nil, errors.Annotatef(errSQL, "failed to get pitr id map from mysql.tidb_pitr_id_map")
-	}
-	if len(rows) == 0 {
-		log.Info("pitr id map does not exist", zap.Uint64("restored ts", restoreTS))
-		return nil, nil
-	}
-	metaData := make([]byte, 0, len(rows)*PITRIdMapBlockSize)
-	for i, row := range rows {
-		elementID := row.GetUint64(0)
-		if uint64(i) != elementID {
-			return nil, errors.Errorf("the part(segment_id = %d) of pitr id map is lost", i)
-		}
-		d := row.GetBytes(1)
-		if len(d) == 0 {
-			return nil, errors.Errorf("get the empty part(segment_id = %d) of pitr id map", i)
-		}
-		metaData = append(metaData, d...)
-	}
-	backupMeta := &backuppb.BackupMeta{}
-	if err := backupMeta.Unmarshal(metaData); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return backupMeta.GetDbMaps(), nil
-}
-
 func readFilteredFullBackupTables(
 	ctx context.Context,
 	s storage.ExternalStorage,
@@ -1153,6 +1112,7 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 func (rc *LogClient) GetBaseIDMap(
 	ctx context.Context,
 	cfg *GetIDMapConfig,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) (map[stream.UpstreamID]*stream.DBReplace, error) {
 	var (
 		err        error
@@ -1163,7 +1123,7 @@ func (rc *LogClient) GetBaseIDMap(
 	// this is a retry, id map saved last time, load it from external storage
 	if cfg.LoadSavedIDMap {
 		log.Info("try to load previously saved pitr id maps")
-		dbMaps, err = rc.loadSchemasMap(ctx, rc.restoreTS)
+		dbMaps, err = rc.loadSchemasMap(ctx, rc.restoreTS, logCheckpointMetaManager)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1173,7 +1133,7 @@ func (rc *LogClient) GetBaseIDMap(
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
 	if len(dbMaps) <= 0 && cfg.FullBackupStorageConfig == nil {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
-		dbMaps, err = rc.loadSchemasMap(ctx, rc.startTS)
+		dbMaps, err = rc.loadSchemasMap(ctx, rc.startTS, logCheckpointMetaManager)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1877,8 +1837,6 @@ func (rc *LogClient) GetGCRows() []*stream.PreDelRangeQuery {
 	return rc.deleteRangeQuery
 }
 
-const PITRIdMapBlockSize int = 524288
-
 func (rc *LogClient) SaveIdMapWithFailPoints(
 	ctx context.Context,
 	manager *stream.TableMappingManager,
@@ -1895,46 +1853,6 @@ func (rc *LogClient) SaveIdMapWithFailPoints(
 	failpoint.Inject("failed-after-id-maps-saved", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("failpoint: failed after id maps saved"))
 	})
-	return nil
-}
-
-// saveIDMap saves the id mapping information.
-func (rc *LogClient) saveIDMap(
-	ctx context.Context,
-	manager *stream.TableMappingManager,
-	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-) error {
-	backupmeta := &backuppb.BackupMeta{DbMaps: manager.ToProto()}
-	data, err := proto.Marshal(backupmeta)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// clean the dirty id map at first
-	err = rc.unsafeSession.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %?;", rc.restoreTS, rc.upstreamClusterID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restored_ts, upstream_cluster_id, segment_id, id_map) VALUES (%?, %?, %?, %?);"
-	for startIdx, segmentId := 0, 0; startIdx < len(data); segmentId += 1 {
-		endIdx := startIdx + PITRIdMapBlockSize
-		if endIdx > len(data) {
-			endIdx = len(data)
-		}
-		err := rc.unsafeSession.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreTS, rc.upstreamClusterID, segmentId, data[startIdx:endIdx])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		startIdx = endIdx
-	}
-
-	if rc.useCheckpoint {
-		log.Info("save checkpoint task info with InLogRestoreAndIdMapPersist status")
-		if err := logCheckpointMetaManager.SaveCheckpointProgress(ctx, &checkpoint.CheckpointProgress{
-			Progress: checkpoint.InLogRestoreAndIdMapPersisted,
-		}); err != nil {
-			return errors.Trace(err)
-		}
-	}
 	return nil
 }
 
