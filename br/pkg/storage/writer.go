@@ -3,13 +3,14 @@ package storage
 import (
 	"bytes"
 	"context"
+	"io"
+
 	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/snappy"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
-	"io"
 )
 
 // CompressType represents the type of compression.
