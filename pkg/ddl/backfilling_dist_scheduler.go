@@ -623,9 +623,9 @@ func generateMergePlan(
 		minFilesPerBatch := len(dataFiles) / external.MergeSortMergeFactor
 		maxFilesPerBatch := external.MergeSortFileCountStep
 		dataFilesGroup := mathutil.Divide2Batches(dataFiles, nodeCnt, minFilesPerBatch, maxFilesPerBatch)
-		for _, group := range dataFilesGroup {
+		for _, files := range dataFilesGroup {
 			m := &BackfillSubTaskMeta{
-				DataFiles: group,
+				DataFiles: files,
 				EleIDs:    eleID,
 			}
 			metaArr = append(metaArr, m)

@@ -383,11 +383,11 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 		maxFilesPerBatch := external.MergeSortFileCountStep
 		nodeCnt := max(1, planCtx.ExecuteNodesCnt)
 		dataFilesGroup := mathutil.Divide2Batches(dataFiles, nodeCnt, minFilesPerBatch, maxFilesPerBatch)
-		for _, fileGroup := range dataFilesGroup {
+		for _, files := range dataFilesGroup {
 			result = append(result, &MergeSortSpec{
 				MergeSortStepMeta: &MergeSortStepMeta{
 					KVGroup:   kvGroup,
-					DataFiles: fileGroup,
+					DataFiles: files,
 				},
 			})
 		}

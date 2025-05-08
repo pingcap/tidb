@@ -57,6 +57,7 @@ go_library(
         "//pkg/util/disttask",
         "//pkg/util/etcd",
         "//pkg/util/logutil",
+        "//pkg/util/mathutil",
         "//pkg/util/promutil",
         "@com_github_docker_go_units//:go-units",
         "@com_github_go_sql_driver_mysql//:mysql",
