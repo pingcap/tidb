@@ -189,39 +189,3 @@ func TestFilterByScope(t *testing.T) {
 		})
 	}
 }
-
-func TestSplitItemsEvenlyToWorkers(t *testing.T) {
-	items := make([]struct{}, 33)
-	var results [][]struct{}
-
-	results = make([][]struct{}, 0)
-	SplitItemsEvenlyToWorkers(items, 0, 10, func(sub []struct{}) {
-		results = append(results, sub)
-	})
-	require.Len(t, results, 4)
-	require.Len(t, results[0], 10)
-	require.Len(t, results[1], 10)
-	require.Len(t, results[2], 10)
-	require.Len(t, results[3], 3)
-
-	results = make([][]struct{}, 0)
-	SplitItemsEvenlyToWorkers(items, 3, 10, func(sub []struct{}) {
-		results = append(results, sub)
-	})
-	require.Len(t, results, 6)
-	require.Len(t, results[0], 10)
-	require.Len(t, results[1], 10)
-	require.Len(t, results[2], 10)
-	require.Len(t, results[3], 1)
-	require.Len(t, results[4], 1)
-	require.Len(t, results[5], 1)
-
-	results = make([][]struct{}, 0)
-	SplitItemsEvenlyToWorkers(items, 3, 100, func(sub []struct{}) {
-		results = append(results, sub)
-	})
-	require.Len(t, results, 3)
-	require.Len(t, results[0], 11)
-	require.Len(t, results[1], 11)
-	require.Len(t, results[2], 11)
-}

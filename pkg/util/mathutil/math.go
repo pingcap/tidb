@@ -91,10 +91,10 @@ func NextPowerOfTwo(i int64) int64 {
 	return i
 }
 
-// Divide2Batches divides 'total' into 'batches', and returns the size of each batch.
+// Divide2BatchSizes divides 'total' into 'batches', and returns the size of each batch.
 // Σ(batchSizes) = 'total'. if 'total' < 'batches', we return 'total' batches with size 1.
 // 'total' is allowed to be 0.
-func Divide2Batches(total, batches int) []int {
+func Divide2BatchSizes(total, batches int) []int {
 	result := make([]int, 0, batches)
 	quotient := total / batches
 	remainder := total % batches
@@ -107,6 +107,34 @@ func Divide2Batches(total, batches int) []int {
 		intest.Assert(size > 0, "size should be positive")
 		result = append(result, size)
 		total -= size
+	}
+	return result
+}
+
+// Divide2Batches divies 'items' into 'batches', and returns the items in each batch.
+// The size of each batch is determined by Divide2BatchSizes.
+func Divide2Batches[T any](items []T, batches int, minBatchCnt, maxBatchCnt int) [][]T {
+	if len(items) == 0 {
+		return [][]T{}
+	}
+	if minBatchCnt > 0 {
+		maxBatches := len(items) / minBatchCnt
+		batches = min(batches, maxBatches)
+	}
+	batchSizes := Divide2BatchSizes(len(items), batches)
+	result := make([][]T, 0, batches)
+	start := 0
+	for start < len(items) {
+		for i := 0; i < len(batchSizes); i++ {
+			if batchSizes[i] == 0 {
+				// if current batch is 0, all the rest should be 0
+				break
+			}
+			count := min(batchSizes[i], maxBatchCnt)
+			result = append(result, items[start:start+count])
+			start += count
+			batchSizes[i] -= count
+		}
 	}
 	return result
 }

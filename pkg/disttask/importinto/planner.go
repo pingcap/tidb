@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -379,18 +379,18 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 			continue
 		}
 		dataFiles := kvMeta.GetDataFiles()
-		scheduler.SplitItemsEvenlyToWorkers(
-			dataFiles,
-			planCtx.ExecuteNodesCnt,
-			external.MergeSortFileCountStep,
-			func(files []string) {
-				result = append(result, &MergeSortSpec{
-					MergeSortStepMeta: &MergeSortStepMeta{
-						KVGroup:   kvGroup,
-						DataFiles: files,
-					},
-				})
+		minFilesPerBatch := len(dataFiles) / external.MergeSortMergeFactor
+		maxFilesPerBatch := external.MergeSortFileCountStep
+		nodeCnt := max(1, planCtx.ExecuteNodesCnt)
+		dataFilesGroup := mathutil.Divide2Batches(dataFiles, nodeCnt, minFilesPerBatch, maxFilesPerBatch)
+		for _, fileGroup := range dataFilesGroup {
+			result = append(result, &MergeSortSpec{
+				MergeSortStepMeta: &MergeSortStepMeta{
+					KVGroup:   kvGroup,
+					DataFiles: fileGroup,
+				},
 			})
+		}
 	}
 	return result, nil
 }

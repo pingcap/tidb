@@ -524,7 +524,7 @@ func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInf
 	}
 
 	splitted := make([][]*model.DBInfo, 0, groupCnt)
-	groupSizes := mathutil.Divide2Batches(schemaCnt, groupCnt)
+	groupSizes := mathutil.Divide2BatchSizes(schemaCnt, groupCnt)
 
 	start := 0
 	for _, groupSize := range groupSizes {

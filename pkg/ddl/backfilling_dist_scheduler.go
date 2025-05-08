@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/backoff"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -619,18 +620,16 @@ func generateMergePlan(
 		if i < len(eleIDs) {
 			eleID = []int64{eleIDs[i]}
 		}
-		scheduler.SplitItemsEvenlyToWorkers(
-			dataFiles,
-			nodeCnt,
-			external.MergeSortFileCountStep,
-			func(files []string) {
-				m := &BackfillSubTaskMeta{
-					DataFiles: files,
-					EleIDs:    eleID,
-				}
-				metaArr = append(metaArr, m)
-			},
-		)
+		minFilesPerBatch := len(dataFiles) / external.MergeSortMergeFactor
+		maxFilesPerBatch := external.MergeSortFileCountStep
+		dataFilesGroup := mathutil.Divide2Batches(dataFiles, nodeCnt, minFilesPerBatch, maxFilesPerBatch)
+		for _, group := range dataFilesGroup {
+			m := &BackfillSubTaskMeta{
+				DataFiles: group,
+				EleIDs:    eleID,
+			}
+			metaArr = append(metaArr, m)
+		}
 	}
 
 	// write external meta to storage when using global sort

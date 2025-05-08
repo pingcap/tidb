@@ -168,7 +168,7 @@ func mergeCreateTableJobs(jobWs []*JobWrapper) ([]*JobWrapper, error) {
 		const maxBatchSize = 8
 		batchCount := (total + maxBatchSize - 1) / maxBatchSize
 		start := 0
-		for _, batchSize := range mathutil.Divide2Batches(total, batchCount) {
+		for _, batchSize := range mathutil.Divide2BatchSizes(total, batchCount) {
 			batch := jobs[start : start+batchSize]
 			newJobW, err := mergeCreateTableJobsOfSameSchema(batch)
 			if err != nil {
