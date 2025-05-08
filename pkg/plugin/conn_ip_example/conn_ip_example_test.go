@@ -71,7 +71,7 @@ func TestLoadPlugin(t *testing.T) {
 	require.NoErrorf(t, err, "query event fail, error [%s]\n", err)
 
 	connectionNum := 5
-	for i := 0; i < connectionNum; i++ {
+	for range connectionNum {
 		err = plugin.ForeachPlugin(plugin.Audit, func(auditPlugin *plugin.Plugin) error {
 			return plugin.DeclareAuditManifest(auditPlugin.Manifest).OnConnectionEvent(context.Background(), plugin.Connected, &variable.ConnectionInfo{Host: "localhost"})
 		})

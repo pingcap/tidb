@@ -2293,11 +2293,11 @@ create table t(a int);
 set tidb_enable_non_prepared_plan_cache=1;
 select * from t where a=1;
 a
-explain select * from t where a=2;
+explain format='brief' select * from t where a=2;
 id	estRows	task	access object	operator info
-TableReader_7	10.00	root		data:Selection_6
-└─Selection_6	10.00	cop[tikv]		eq(planner__core__plan_cache.t.a, 2)
-  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(planner__core__plan_cache.t.a, 2)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
@@ -2309,11 +2309,11 @@ TableReader_7	10.00	304642.24	root		data:Selection_6
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
-explain analyze select * from t where a=2;
+explain analyze format='brief' select * from t where a=2;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-TableReader_7	10.00	0	root	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
-└─Selection_6	10.00	0	cop[tikv]	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
-  └─TableFullScan_5	10000.00	0	cop[tikv]	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
+TableReader	10.00	0	root	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
+└─Selection	10.00	0	cop[tikv]	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
+  └─TableFullScan	10000.00	0	cop[tikv]	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0

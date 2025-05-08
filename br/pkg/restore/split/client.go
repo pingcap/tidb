@@ -312,7 +312,7 @@ func (c *pdClient) sendSplitRegionRequest(
 	ctx context.Context, regionInfo *RegionInfo, keys [][]byte,
 ) (*kvrpcpb.SplitRegionResponse, error) {
 	var splitErrors error
-	for i := 0; i < splitRegionMaxRetryTime; i++ {
+	for i := range splitRegionMaxRetryTime {
 		retry, result, err := sendSplitRegionRequest(ctx, c, regionInfo, keys, &splitErrors, i)
 		if retry {
 			continue

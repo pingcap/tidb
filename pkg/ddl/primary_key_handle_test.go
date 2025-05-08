@@ -66,7 +66,7 @@ func TestMultiRegionGetTableEndHandle(t *testing.T) {
 	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
 	var builder strings.Builder
 	_, _ = fmt.Fprintf(&builder, "insert into t values ")
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		_, _ = fmt.Fprintf(&builder, "(%v, %v),", i, i)
 	}
 	sql := builder.String()
@@ -123,7 +123,7 @@ func TestGetTableEndHandle(t *testing.T) {
 
 	var builder strings.Builder
 	_, _ = fmt.Fprintf(&builder, "insert into t1 values ")
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		_, _ = fmt.Fprintf(&builder, "(%v, %v),", i, i)
 	}
 	sql := builder.String()
@@ -144,7 +144,7 @@ func TestGetTableEndHandle(t *testing.T) {
 
 	builder.Reset()
 	_, _ = fmt.Fprintf(&builder, "insert into t2 values ")
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		_, _ = fmt.Fprintf(&builder, "(%v),", i)
 	}
 	sql = builder.String()
@@ -193,7 +193,7 @@ func TestMultiRegionGetTableEndCommonHandle(t *testing.T) {
 	tk.MustExec("create table t(a varchar(20), b int, c float, d bigint, primary key (a, b, c))")
 	var builder strings.Builder
 	_, _ = fmt.Fprintf(&builder, "insert into t values ")
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		_, _ = fmt.Fprintf(&builder, "('%v', %v, %v, %v),", i, i, i, i)
 	}
 	sql := builder.String()

@@ -36,7 +36,7 @@ import (
 )
 
 func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (bool, error) {
-	for i := 0; i < len(hg.Buckets); i++ {
+	for i := range hg.Buckets {
 		lower, upper := hg.GetLower(i), hg.GetUpper(i)
 		cmp, err := upper.Compare(sc.TypeCtx(), lower, collate.GetBinaryCollator())
 		if cmp < 0 || err != nil {
