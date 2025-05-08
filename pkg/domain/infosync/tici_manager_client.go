@@ -54,6 +54,7 @@ func NewTiCIManager(ticiHost string, ticiPort string) (*TiCIManagerCtx, error) {
 	}, nil
 }
 
+// CreateFulltextIndex creates fulltext index on TiCI.
 func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
 	columns := make([]*indexer.ColumnInfo, 0)
 	for i := range indexInfo.Columns {
