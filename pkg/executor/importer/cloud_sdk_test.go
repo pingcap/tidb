@@ -1,4 +1,4 @@
-package cloud
+package importer_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,7 +46,7 @@ func TestCreateSchemas_Success(t *testing.T) {
 
 	// invoke CreateSchemas
 	path := "file://" + tmp
-	err = CreateSchemas(context.Background(), path, db, WithConcurrency(1))
+	err = importer.CreateSchemas(context.Background(), path, db, importer.WithConcurrency(1))
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -65,7 +66,7 @@ func TestCreateSchemas_DBError(t *testing.T) {
 		WillReturnError(sql.ErrConnDone)
 
 	path := "file://" + tmp
-	err = CreateSchemas(context.Background(), path, db, WithConcurrency(1))
+	err = importer.CreateSchemas(context.Background(), path, db, importer.WithConcurrency(1))
 	require.Error(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
