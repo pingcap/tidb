@@ -23,6 +23,7 @@ source $CURRENT_DIR/_include.sh
 
 print_versions
 
+build_mysql_tester
 start_tidb
 wait_for_tidb
 wait_for_tiflash
