@@ -74,8 +74,13 @@ const (
 type ParserType string
 
 const (
-	ParserTypeAuto         ParserType = "auto"
-	ParserTypeStandard     ParserType = "standard"
+	// auto tokenizer.
+	ParserTypeAuto ParserType = "auto"
+	// default tokenizer.
+	ParserTypeStandard ParserType = "standard"
+	// tokenizer provides a better recall rate, but may be not better performed.
+	ParserTypeNgram ParserType = "ngram"
+	// tokenizer for CJK and other multi-language.
 	ParserTypeMultilingual ParserType = "multilingual"
 )
 
