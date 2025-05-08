@@ -2236,9 +2236,17 @@ func preferHashJoin(lp base.LogicalPlan, physic base.PhysicalPlan) (preferred bo
 	}
 	forceLeftToBuild := ((p.PreferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferRightAsHJProbe) > 0)
 	forceRightToBuild := ((p.PreferJoinType & h.PreferRightAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferLeftAsHJProbe) > 0)
-	preferHashJoin := p.PreferJoinType&h.PreferHashJoin > 0 || forceRightToBuild || forceLeftToBuild
-	_, ok = physic.(*PhysicalHashJoin)
-	return ok && preferHashJoin
+	if forceLeftToBuild && forceRightToBuild {
+		// for build hint conflict, restore all of them
+		forceLeftToBuild = false
+		forceRightToBuild = false
+	}
+	physicalHashJoin, ok := physic.(*PhysicalHashJoin)
+	if !ok {
+		return false
+	}
+	preferHashJoin := p.PreferJoinType&h.PreferHashJoin > 0 || (forceRightToBuild && physicalHashJoin.InnerChildIdx == 1) || (forceLeftToBuild && physicalHashJoin.InnerChildIdx == 0)
+	return preferHashJoin
 }
 
 func preferMergeJoin(lp base.LogicalPlan, physic base.PhysicalPlan) (preferred bool) {
