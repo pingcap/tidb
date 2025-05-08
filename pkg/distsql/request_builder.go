@@ -461,6 +461,12 @@ func (builder *RequestBuilder) SetConnIDAndConnAlias(connID uint64, connAlias st
 	return builder
 }
 
+// SetFullText sets request FullText
+func (builder *RequestBuilder) SetFullText(is bool) *RequestBuilder {
+	builder.FullText = is
+	return builder
+}
+
 // TableHandleRangesToKVRanges convert table handle ranges to "KeyRanges" for multiple tables.
 func TableHandleRangesToKVRanges(dctx *distsqlctx.DistSQLContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range) (*kv.KeyRanges, error) {
 	if !isCommonHandle {
@@ -878,4 +884,11 @@ func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
 		retRanges = idxRanges.AppendSelfTo(retRanges)
 	}
 	return retRanges, nil
+}
+
+func FulltextIndexRangesToKVRanges(dctx *distsqlctx.DistSQLContext, tids []int64, ranges []*ranger.Range) (*kv.KeyRanges, error) {
+	// Mocking the fulltext index ranges to be the same as the table ranges.
+	// This is a temporary solution, and we should implement the fulltext index
+	// ranges conversion in the future.
+	return CommonHandleRangesToKVRanges(dctx, tids, ranges)
 }

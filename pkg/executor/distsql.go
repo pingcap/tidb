@@ -350,7 +350,7 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	var err error
 	if e.corColInFilter {
-		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.plans)
+		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.plans, kv.TiKV)
 		if err != nil {
 			return err
 		}
@@ -592,10 +592,14 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 	} else {
 		physicalID := getPhysicalTableID(e.table)
 		var kvRanges *kv.KeyRanges
-		if e.index.ID == -1 {
-			kvRanges, err = distsql.CommonHandleRangesToKVRanges(dctx, []int64{physicalID}, e.ranges)
+		if e.index.IsFulltextIndex() {
+			kvRanges, err = distsql.FulltextIndexRangesToKVRanges(dctx, []int64{physicalID}, e.ranges)
 		} else {
-			kvRanges, err = distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, e.index.ID, e.ranges, e.memTracker, nil)
+			if e.index.ID == -1 {
+				kvRanges, err = distsql.CommonHandleRangesToKVRanges(dctx, []int64{physicalID}, e.ranges)
+			} else {
+				kvRanges, err = distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, e.index.ID, e.ranges, e.memTracker, nil)
+			}
 		}
 		e.kvRanges = kvRanges.FirstPartitionRange()
 	}
@@ -620,14 +624,18 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 
 	var err error
 	if e.corColInIdxSide {
-		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.idxPlans)
+		storeType := kv.TiKV
+		if e.index.IsFulltextIndex() {
+			storeType = kv.TiFlash
+		}
+		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.idxPlans, storeType)
 		if err != nil {
 			return err
 		}
 	}
 
 	if e.corColInTblSide {
-		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.tblPlans)
+		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.tblPlans, kv.TiKV)
 		if err != nil {
 			return err
 		}
@@ -757,6 +765,12 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
 			SetMemTracker(tracker).
 			SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
+
+		if e.index.IsFulltextIndex() {
+			builder.SetPaging(false)
+			builder.SetStoreType(kv.TiFlash)
+			builder.SetFullText(true)
+		}
 
 		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
 		if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {

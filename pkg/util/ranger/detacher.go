@@ -1010,6 +1010,7 @@ type DetachRangeResult struct {
 	// Please see comments of planner/util/AccessPath.MinAccessCondsForDNFCond for more details.
 	IsDNFCond                bool
 	MinAccessCondsForDNFCond int
+	query_json_str           string
 }
 
 // DetachCondAndBuildRangeForIndex will detach the index filters from table filters.

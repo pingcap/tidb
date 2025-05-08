@@ -1002,9 +1002,11 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 			if keyPart.Expr != nil {
 				switch constr.Tp {
 				case ast.ConstraintVector:
-					colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeVector)
+					colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeVector, false)
+				case ast.ConstraintFulltext:
+					colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeNA, true)
 				default:
-					colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeNA)
+					colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeNA, false)
 				}
 			}
 		}
@@ -1316,9 +1318,9 @@ func BuildTableInfo(
 		}
 
 		var (
-			indexName         = constr.Name
-			primary, unique   bool
-			columnarIndexType = model.ColumnarIndexTypeNA
+			indexName                 = constr.Name
+			primary, unique, fulltext bool
+			columnarIndexType         = model.ColumnarIndexTypeNA
 		)
 
 		// Check if the index is primary, unique or vector.
@@ -1334,6 +1336,8 @@ func BuildTableInfo(
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
 			}
 			columnarIndexType = model.ColumnarIndexTypeVector
+		case ast.ConstraintFulltext:
+			fulltext = true
 		}
 
 		// check constraint
@@ -1406,6 +1410,7 @@ func BuildTableInfo(
 			ast.NewCIStr(indexName),
 			primary,
 			unique,
+			fulltext,
 			columnarIndexType,
 			constr.Keys,
 			constr.Option,
@@ -1571,7 +1576,7 @@ func addIndexForForeignKey(ctx *metabuild.Context, tbInfo *model.TableInfo) erro
 				Length: types.UnspecifiedLength,
 			})
 		}
-		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, model.ColumnarIndexTypeNA, keys, nil, model.StatePublic)
+		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, false, model.ColumnarIndexTypeNA, keys, nil, model.StatePublic)
 		if err != nil {
 			return errors.Trace(err)
 		}

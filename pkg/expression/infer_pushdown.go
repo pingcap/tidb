@@ -83,6 +83,11 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 }
 
 func canScalarFuncPushDown(ctx PushDownContext, scalarFunc *ScalarFunction, storeType kv.StoreType) bool {
+	if scalarFunc.FuncName.L == FulltextSearch {
+		// Full text search function will always be converted to full text index's scan property.
+		// We push it into to datasource and let the datasource to handle it.
+		return true
+	}
 	pbCode := scalarFunc.Function.PbCode()
 	// Check whether this function can be pushed.
 	if unspecified := pbCode <= tipb.ScalarFuncSig_Unspecified; unspecified || !canFuncBePushed(ctx.EvalCtx(), scalarFunc, storeType) {

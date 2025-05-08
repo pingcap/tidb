@@ -114,6 +114,7 @@ const (
 	ActionAddColumnarIndex       ActionType = 73
 	ActionModifyEngineAttribute  ActionType = 74
 	ActionAlterTableMode         ActionType = 75
+	ActionAddFulltextIndex       ActionType = 76
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -188,6 +189,7 @@ var ActionMap = map[ActionType]string{
 	ActionAddColumnarIndex:              "add columnar index",
 	ActionModifyEngineAttribute:         "modify engine attribute",
 	ActionAlterTableMode:                "alter table mode",
+	ActionAddFulltextIndex:              "add fulltext index",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -636,8 +638,8 @@ func (job *Job) IsPausing() bool {
 
 // IsPausable checks whether we can pause the job.
 func (job *Job) IsPausable() bool {
-	// TODO: We can remove it after TiFlash supports the pause operation.
-	if job.Type == ActionAddColumnarIndex && job.SchemaState == StateWriteReorganization {
+	// TODO: We can remove it after TiFlash and Fulltext indexer supports the pause operation.
+	if (job.Type == ActionAddColumnarIndex || job.Type == ActionAddFulltextIndex) && job.SchemaState == StateWriteReorganization {
 		return false
 	}
 	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())

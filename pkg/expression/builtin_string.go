@@ -4415,3 +4415,67 @@ func buildTranslateMap4Binary(from, to []byte) map[byte]uint16 {
 	}
 	return mp
 }
+
+const FulltextSearch = "fts_search_word"
+
+type fulltextSearchFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *fulltextSearchFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(ctx, args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(1)
+	sig := &builtinFulltextSearchSig{bf}
+	return sig, nil
+}
+
+func (c *fulltextSearchFunctionClass) verifyArgs(ctx BuildContext, args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	argCnt := len(args)
+	patternPos := argCnt - 1
+	if args[argCnt-1].GetType(ctx.GetEvalCtx()).EvalType() == types.ETInt {
+		// The last argument is a modifier.
+		patternPos--
+	}
+	if args[patternPos].GetType(ctx.GetEvalCtx()).EvalType() != types.ETString {
+		return ErrIncorrectType.GenWithStackByArgs(args[patternPos].StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable), c.funcName)
+	}
+	for i := range patternPos {
+		if _, ok := args[i].(*Column); !ok {
+			return ErrIncorrectType.GenWithStackByArgs(args[i].StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable), c.funcName)
+		}
+	}
+	return nil
+}
+
+type builtinFulltextSearchSig struct {
+	baseBuiltinFunc
+}
+
+func BuildFulltextSearchFunction(ctx BuildContext, args ...Expression) (res Expression, err error) {
+	fc := funcs[FulltextSearch]
+	f, err := fc.getFunction(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	res = &ScalarFunction{
+		FuncName: ast.NewCIStr(FulltextSearch),
+		RetType:  types.NewFieldType(mysql.TypeTiny),
+		Function: f,
+	}
+	return res, nil
+}
+
+func (b *builtinFulltextSearchSig) Clone() builtinFunc {
+	newSig := &builtinFulltextSearchSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}

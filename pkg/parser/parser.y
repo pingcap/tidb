@@ -6693,8 +6693,6 @@ IndexOption:
 		$$ = &ast.IndexOption{
 			ParserName: ast.NewCIStr($3),
 		}
-		yylex.AppendError(yylex.Errorf("The WITH PARASER clause is parsed but ignored by all storage engines."))
-		parser.lastErrorAsWarn()
 	}
 |	"COMMENT" stringLit
 	{

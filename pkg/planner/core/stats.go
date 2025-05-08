@@ -127,6 +127,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		debugtrace.EnterContextCommon(ds.SCtx())
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
+	_ = ds.AnalyzeFulltextSearchPath()
 	// two preprocess here.
 	// 1: PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	// 2: EliminateNoPrecisionCast here can convert query 'cast(c<int> as bigint) = 1' to 'c = 1' to leverage access range.
@@ -398,6 +399,15 @@ func detachCondAndBuildRangeForPath(
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, path.IdxCols, path.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return err
+	}
+	for _, cond := range res.RemainedConds {
+		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == expression.FulltextSearch {
+			path.FullText = true
+			path.QueryJSONStr = sf.GetArgs()[1].(*expression.Constant).Value.GetString()
+			path.QueryColumns = append(path.QueryColumns, sf.GetArgs()[0].(*expression.Column))
+			path.StoreType = kv.TiFlash
+			res.RemainedConds = nil
+		}
 	}
 	path.Ranges = res.Ranges
 	path.AccessConds = res.AccessConds

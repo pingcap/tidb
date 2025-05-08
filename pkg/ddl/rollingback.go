@@ -260,6 +260,18 @@ func rollingbackAddColumanrIndex(w *worker, jobCtx *jobContext, job *model.Job) 
 	return
 }
 
+func rollingbackAddFulltextIndex(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	if job.SchemaState == model.StateWriteReorganization {
+		// Add fulltext index workers are started. need to ask them to exit.
+		jobCtx.logger.Info("run the cancelling DDL job", zap.String("job", job.String()))
+		ver, err = w.onCreateFulltextIndex(jobCtx, job)
+	} else {
+		// add index's reorg workers are not running, remove the indexInfo in tableInfo.
+		ver, err = convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob)
+	}
+	return
+}
+
 func rollingbackAddIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// add index's reorg workers are not running, remove the indexInfo in tableInfo.
 	return convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob)
