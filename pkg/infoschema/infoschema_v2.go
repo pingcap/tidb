@@ -459,10 +459,10 @@ func (isd *Data) GCOldVersion(schemaVersion int64) (int, int64) {
 }
 
 // GCOldFKVersion compacts btree nodes by removing items older than schema version.
-func (isd *Data) gcOldFKVersion(schemaVersion int64) {
+func (isd *Data) gcOldFKVersion(schemaVersion int64) (int, int64) {
 	maxv, ok := isd.referredForeignKeys.Load().Max()
 	if !ok {
-		return
+		return 0, 0
 	}
 
 	var total int64
@@ -490,7 +490,9 @@ func (isd *Data) gcOldFKVersion(schemaVersion int64) {
 	succ := isd.referredForeignKeys.CompareAndSwap(oldFKs, newFKs)
 	if !succ {
 		logutil.BgLogger().Info("infoschema v2 GCOldFKVersion() writes conflict, leave it to the next time.")
+		return 0, 0
 	}
+	return len(deletes), total
 }
 
 // resetBeforeFullLoad is called before a full recreate operation within builder.InitWithDBInfos().
