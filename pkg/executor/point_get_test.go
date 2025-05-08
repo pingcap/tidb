@@ -50,7 +50,7 @@ func TestSelectCheckVisibility(t *testing.T) {
 	ts := txn.StartTS()
 	sessionStore := tk.Session().GetStore().(tikv.Storage)
 	// Update gc safe time for check data visibility.
-	sessionStore.UpdateSPCache(ts+1, time.Now())
+	sessionStore.UpdateTxnSafePointCache(ts+1, time.Now())
 	checkSelectResultError := func(sql string, expectErr *terror.Error) {
 		re, err := tk.Exec(sql)
 		require.NoError(t, err)

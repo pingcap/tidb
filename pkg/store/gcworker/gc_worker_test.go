@@ -310,36 +310,6 @@ func TestGetOracleTime(t *testing.T) {
 	timeEqual(t, t2, t1.Add(time.Second*10), time.Millisecond*10)
 }
 
-func TestMinStartTS(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
-	ctx := context.Background()
-	spkv := s.tikvStore.GetSafePointKV()
-	err := spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(math.MaxUint64, 10))
-	require.NoError(t, err)
-	now := oracle.GoTimeToTS(time.Now())
-	sp := s.gcWorker.calcSafePointByMinStartTS(ctx, now)
-	require.Equal(t, now, sp)
-	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), "0")
-	require.NoError(t, err)
-	sp = s.gcWorker.calcSafePointByMinStartTS(ctx, now)
-	require.Equal(t, uint64(0), sp)
-
-	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), "0")
-	require.NoError(t, err)
-	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"), "1")
-	require.NoError(t, err)
-	sp = s.gcWorker.calcSafePointByMinStartTS(ctx, now)
-	require.Equal(t, uint64(0), sp)
-
-	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(now, 10))
-	require.NoError(t, err)
-	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"), strconv.FormatUint(now-oracle.ComposeTS(20000, 0), 10))
-	require.NoError(t, err)
-	sp = s.gcWorker.calcSafePointByMinStartTS(ctx, now-oracle.ComposeTS(10000, 0))
-	require.Equal(t, now-oracle.ComposeTS(20000, 0)-1, sp)
-}
-
 func TestPrepareGC(t *testing.T) {
 	// as we are adjusting the base TS, we need a larger schema lease to avoid
 	// the info schema outdated error. as we keep adding offset to time oracle,
@@ -555,7 +525,7 @@ func TestDoGC(t *testing.T) {
 	s := createGCWorkerSuite(t)
 
 	ctx := context.Background()
-	gcSafePointCacheInterval = 1
+	txnSafePointSyncWaitTime = 1
 
 	p := s.createGCProbe(t, "k1")
 	err := s.gcWorker.doGC(ctx, s.mustAllocTs(t), gcDefaultConcurrency)
@@ -998,7 +968,7 @@ func TestLeaderTick(t *testing.T) {
 	// the info schema outdated error.
 	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, time.Hour)
 
-	gcSafePointCacheInterval = 0
+	txnSafePointSyncWaitTime = 0
 
 	veryLong := gcDefaultLifeTime * 10
 	// Avoid failing at interval check. `lastFinish` is checked by os time.
@@ -1284,7 +1254,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 func TestRunGCJob(t *testing.T) {
 	s := createGCWorkerSuite(t)
 
-	gcSafePointCacheInterval = 0
+	txnSafePointSyncWaitTime = 0
 
 	// Test distributed mode
 	useDistributedGC := s.gcWorker.checkUseDistributedGC()
@@ -1381,7 +1351,7 @@ func TestRunGCJobAPI(t *testing.T) {
 		},
 	}
 
-	gcSafePointCacheInterval = 0
+	txnSafePointSyncWaitTime = 0
 
 	p := s.createGCProbe(t, "k1")
 	safePoint := s.mustAllocTs(t)
@@ -1396,7 +1366,7 @@ func TestRunGCJobAPI(t *testing.T) {
 func TestRunDistGCJobAPI(t *testing.T) {
 	s := createGCWorkerSuite(t)
 
-	gcSafePointCacheInterval = 0
+	txnSafePointSyncWaitTime = 0
 	mockLockResolver := &mockGCWorkerLockResolver{
 		RegionLockResolver: tikv.NewRegionLockResolver("test", s.tikvStore),
 		tikvStore:          s.tikvStore,
@@ -1519,7 +1489,7 @@ func TestGCWithPendingTxn(t *testing.T) {
 	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 30*time.Minute)
 
 	ctx := gcContext()
-	gcSafePointCacheInterval = 0
+	txnSafePointSyncWaitTime = 0
 	err := s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
 	require.NoError(t, err)
 
@@ -1572,7 +1542,7 @@ func TestGCWithPendingTxn2(t *testing.T) {
 	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 10*time.Minute)
 
 	ctx := gcContext()
-	gcSafePointCacheInterval = 0
+	txnSafePointSyncWaitTime = 0
 	err := s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
 	require.NoError(t, err)
 
@@ -1644,7 +1614,7 @@ func TestSkipGCAndOnlyResolveLock(t *testing.T) {
 	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 10*time.Minute)
 
 	ctx := gcContext()
-	gcSafePointCacheInterval = 0
+	txnSafePointSyncWaitTime = 0
 	err := s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
 	require.NoError(t, err)
 	now, err := s.oracle.GetTimestamp(ctx, &oracle.Option{})
