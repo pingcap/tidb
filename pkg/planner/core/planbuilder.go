@@ -1094,6 +1094,9 @@ func getPathByIndexName(paths []*util.AccessPath, idxName ast.CIStr, tblInfo *mo
 	var indexPrefixPath *util.AccessPath
 	prefixMatches := 0
 	for _, path := range paths {
+		if path.IsTiFlashSimpleTablePath() && idxName.L == "tiflash" {
+			return path
+		}
 		// Only accept tikv's primary key table path.
 		if path.IsTiKVTablePath() && isPrimaryIndex(idxName) && tblInfo.HasClusteredIndex() {
 			return path
@@ -1363,6 +1366,12 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	}
 	if allMVIIndexPath {
 		available = append(available, tablePath)
+	}
+
+	if strings.Contains(ctx.GetSessionVars().StmtCtx.OriginalSQL, "txx") {
+		for _, p := range available {
+			fmt.Println(">>> ", p.IsTablePath(), p.StoreType, *p)
+		}
 	}
 
 	return available, nil
