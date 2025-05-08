@@ -148,8 +148,9 @@ func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 		errVerboseLogger = logger
 	}
 
+	// init dedicated logger for slow query log,
+	// we should use same writeSyncer when filenames are equal.
 	if cfg.SlowQueryFile != "" && cfg.SlowQueryFile != cfg.File.Filename {
-		// init dedicated logger for slow query log
 		SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
 		if err != nil {
 			return errors.Trace(err)
@@ -158,8 +159,9 @@ func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 		SlowQueryLogger = newSlowQueryLoggerFromZapLogger(gl, props)
 	}
 
+	// init dedicated logger for general log,
+	// we should use same writeSyncer when filenames are equal.
 	if cfg.GeneralLogFile != "" && cfg.GeneralLogFile != cfg.File.Filename {
-		// init dedicated logger for general log
 		GeneralLogger, _, err = newGeneralLogger(cfg)
 		if err != nil {
 			return errors.Trace(err)
