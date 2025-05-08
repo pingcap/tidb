@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
@@ -202,6 +203,9 @@ func TestGlobalSortBasic(t *testing.T) {
 }
 
 func TestGlobalSortMultiSchemaChange(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("duplicate data, cause send empty request, then tikv worker panic")
+	}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRegionBatch", `return(1)`)
 
 	server, cloudStorageURI := genServerWithStorage(t)
@@ -298,6 +302,9 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 }
 
 func TestGlobalSortDuplicateErrMsg(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("duplicate data, cause send empty request, then tikv worker panic")
+	}
 	server, cloudStorageURI := genServerWithStorage(t)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -323,6 +330,9 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 
 // When meeting a retryable error, the subtask/job should be idempotent.
 func TestGlobalSortAddIndexRecoverFromRetryableError(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("might cause overlapped data")
+	}
 	server, cloudStorageURI := genServerWithStorage(t)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 

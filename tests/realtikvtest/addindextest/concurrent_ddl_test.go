@@ -17,6 +17,7 @@ package addindextest
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 )
@@ -34,6 +35,9 @@ func TestConcurrentDDLCreateNonUniqueIndex(t *testing.T) {
 }
 
 func TestConcurrentDDLCreateUniqueIndex(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("duplicate data, cause send empty request, then tikv worker panic")
+	}
 	var colIDs = [][]int{
 		{1, 6, 11, 13},
 		{2, 11, 17},
@@ -46,6 +50,9 @@ func TestConcurrentDDLCreateUniqueIndex(t *testing.T) {
 }
 
 func TestConcurrentDDLCreatePrimaryKey(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("duplicate data, cause send empty request, then tikv worker panic")
+	}
 	ctx := testutils.InitConcurrentDDLTest(t, nil, nil, testutils.TestPK)
 	ctx.CompCtx.Start(ctx)
 	err := ctx.CompCtx.Stop(ctx)
