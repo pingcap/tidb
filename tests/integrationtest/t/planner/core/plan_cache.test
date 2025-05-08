@@ -1464,12 +1464,12 @@ drop table if exists t;
 create table t(a int);
 set tidb_enable_non_prepared_plan_cache=1;
 select * from t where a=1;
-explain select * from t where a=2;
+explain format='brief' select * from t where a=2;
 select @@last_plan_from_cache;
 explain format=verbose select * from t where a=2;
 select @@last_plan_from_cache;
 --replace_column 5 <access_object> 6 <execution_info> 7 <operator_info> 8 <memory> 9 <disk>
-explain analyze select * from t where a=2;
+explain analyze format='brief' select * from t where a=2;
 select @@last_plan_from_cache;
 set tidb_enable_non_prepared_plan_cache=default;
 
