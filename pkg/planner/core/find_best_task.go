@@ -242,6 +242,16 @@ func enumeratePhysicalPlans4Task(
 			curTask = curTask.ConvertToRootTask(p.SCtx())
 		}
 
+		// Get the most preferred and efficient one by hint and low-cost priority.
+		// since hint applicable plan may greater than 1, like inl_join can suit for:
+		// index_join, index_hash_join, index_merge_join, we should chase the most efficient
+		// one among them.
+		//
+		// we need to check the hint is applicable before enforcing the property. otherwise
+		// what we get is Sort ot Exchanger kind of operators.
+		// todo: extend applyLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
+		hintApplicable := applyLogicalJoinHint(p.Self(), curTask.Plan())
+
 		// Enforce curTask property
 		if addEnforcer {
 			curTask = enforceProperty(prop, curTask, p.Plan.SCtx(), fd)
@@ -269,12 +279,7 @@ func enumeratePhysicalPlans4Task(
 			bestTask = curTask
 		}
 
-		// Get the most preferred and efficient one by hint and low-cost priority.
-		// since hint applicable plan may greater than 1, like inl_join can suit for:
-		// index_join, index_hash_join, index_merge_join, we should chase the most efficient
-		// one among them.
-		// todo: extend suitLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
-		if suitLogicalJoinHint(p.Self(), curTask.Plan()) {
+		if hintApplicable {
 			// curTask is a preferred physic plan, compare cost with previous preferred one and cache the low-cost one.
 			if curIsBetter, err := compareTaskCost(curTask, preferTask, opt); err != nil {
 				return nil, 0, err
@@ -618,13 +623,20 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 		}
 		newProp = prop
 	}
-	var cnt int64
-	var curTask base.Task
-	if bestTask, cnt, err = enumeratePhysicalPlans4Task(p, plansFitsProp, newProp, false, planCounter, opt); err != nil {
+	var (
+		cnt     int64
+		prefer  bool
+		curTask base.Task
+	)
+	if bestTask, cnt, prefer, err = enumeratePhysicalPlans4Task(p, plansFitsProp, newProp, false, planCounter, opt); err != nil {
 		return nil, 0, err
 	}
 	cntPlan += cnt
 	if planCounter.Empty() {
+		goto END
+	}
+	// preferred valid one should have it priority.
+	if bestTask != nil && !bestTask.Invalid() && prefer {
 		goto END
 	}
 
@@ -1456,11 +1468,16 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 			// even enforce hint can not work with this.
 			return base.InvalidTask, 0, nil
 		}
+		// cache the physical for indexJoinProp
+		defer func() {
+			ds.StoreTask(prop, t)
+			err = validateTableSamplePlan(ds, t, err)
+		}()
 		// when datasource leaf is in index join's inner side, build the task out with old
 		// index join build logic, we can't merge this with normal datasource's index range
 		// because normal index range is built on expression EQ/IN. while index join's inner
 		// has its special runtime constants detecting and filling logic.
-		return getBestIndexJoinInnerTaskByProp(ds, prop, opt, planCounter)
+		return getBestIndexJoinInnerTaskByProp(ds, prop, planCounter)
 	}
 	var cnt int64
 	var unenforcedTask base.Task

@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -634,35 +633,29 @@ func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoi
 
 // getBestIndexJoinInnerTaskByProp tries to build the best inner child task from ds for index join by the given property.
 func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty,
-	opt *optimizetrace.PhysicalOptimizeOp, planCounter *base.PlanCounterTp) (base.Task, int64, error) {
+	planCounter *base.PlanCounterTp) (base.Task, int64, error) {
 	// the below code is quite similar from the original logic
 	// reason1: we need to leverage original indexPathInfo down related logic to build constant range for index plan.
 	// reason2: the ranges from TS and IS couldn't be directly used to derive the stats' estimation, it's not real.
 	// reason3: skyline pruning should not prune the possible index path which could feel the runtime EQ access conditions.
-	innerTSCopTask := buildDataSource2TableScanByIndexJoinProp(ds, prop)
-	if !innerTSCopTask.Invalid() {
-		planCounter.Dec(1)
-		if planCounter.Empty() {
-			// planCounter is counted to end, just return this one.
-			return innerTSCopTask, 1, nil
+	//
+	// here we build TS and IS separately according to different index join prop is for we couldn't decide
+	// which one as the copTask here is better, some more possible upper attached operator cost should be
+	// considered, besides the row count, double reader cost for index lookup should also be considered as
+	// a whole, so we leave the cost compare for index join itself just like what it was before.
+	if prop.IndexJoinProp.TableRangeScan {
+		innerTSCopTask := buildDataSource2TableScanByIndexJoinProp(ds, prop)
+		if innerTSCopTask.Invalid() {
+			return base.InvalidTask, 0, nil
 		}
-	}
-	innerISCopTask := buildDataSource2IndexScanByIndexJoinProp(ds, prop)
-	if !innerISCopTask.Invalid() {
 		planCounter.Dec(1)
-		if planCounter.Empty() {
-			// planCounter is counted to end, just return this one.
-			return innerISCopTask, 1, nil
-		}
-	}
-	// if we can see the both, compare the cost.
-	leftIsBetter, err := compareTaskCost(innerTSCopTask, innerISCopTask, opt)
-	if err != nil {
-		return base.InvalidTask, 0, err
-	}
-	if leftIsBetter {
 		return innerTSCopTask, 1, nil
 	}
+	innerISCopTask := buildDataSource2IndexScanByIndexJoinProp(ds, prop)
+	if innerISCopTask.Invalid() {
+		return base.InvalidTask, 0, nil
+	}
+	planCounter.Dec(1)
 	return innerISCopTask, 1, nil
 }
 

@@ -1678,7 +1678,11 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 		return nil, err
 	}
 	cloned.basePhysicalJoin = *base
-	cloned.innerPlan, err = p.innerPlan.Clone(newCtx)
+	// after the new refactor of indexJoin, the inner plan field is not a necessary one.
+	// So we need to check if the inner plan is nil before we do some cloning.
+	if p.innerPlan != nil {
+		cloned.innerPlan, err = p.innerPlan.Clone(newCtx)
+	}
 	if err != nil {
 		return nil, err
 	}
