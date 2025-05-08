@@ -756,7 +756,7 @@ func (t *Table) IsEligibleForAnalysis() bool {
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (coll *HistColl) GetAnalyzeRowCount() float64 {
-	ids := slices.AppendSeq(make([]int64, 0, len(coll.columns)), maps.Keys(coll.columns))
+	ids := slices.Collect(maps.Keys(coll.columns))
 	slices.Sort(ids)
 	for _, id := range ids {
 		col := coll.columns[id]

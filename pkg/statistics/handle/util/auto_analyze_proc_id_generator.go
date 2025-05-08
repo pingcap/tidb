@@ -93,7 +93,7 @@ type AutoAnalyzeTracker struct {
 func (g *globalAutoAnalyzeProcessList) All() []uint64 {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return slices.AppendSeq(make([]uint64, 0, len(g.processes)), maps.Keys(g.processes))
+	return slices.Collect(maps.Keys(g.processes))
 }
 
 // Contains checks whether the auto analyze process ID is in the list.

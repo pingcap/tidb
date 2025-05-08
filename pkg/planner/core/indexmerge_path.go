@@ -501,7 +501,7 @@ func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCn
 		}
 	}
 	// after all mv index is traversed, pick those remained paths which has already been de-duplicated for its accessFilters.
-	recordsCollection := slices.AppendSeq(make([]*record, 0, len(mm)), maps.Values(mm))
+	recordsCollection := slices.Collect(maps.Values(mm))
 	// according origin offset to stable the partial paths order. (golang map is not order stable)
 	slices.SortFunc(recordsCollection, func(a, b *record) int {
 		return cmp.Compare(a.originOffset, b.originOffset)

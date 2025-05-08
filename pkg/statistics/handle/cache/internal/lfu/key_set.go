@@ -42,7 +42,7 @@ func (ks *keySet) Remove(key int64) int64 {
 
 func (ks *keySet) Keys() []int64 {
 	ks.mu.RLock()
-	result := slices.AppendSeq(make([]int64, 0, len(ks.set)), maps.Keys(ks.set))
+	result := slices.Collect(maps.Keys(ks.set))
 	ks.mu.RUnlock()
 	return result
 }

@@ -163,7 +163,7 @@ func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 		if len(tableIDs) > 0 {
 			tableMap := make(map[int64]*model.TableInfo, len(tableIDs))
 			findTablesByID(is, tableIDs, tableNames, tableMap)
-			tableSlice := slices.AppendSeq(make([]*model.TableInfo, 0, len(tableMap)), maps.Values(tableMap))
+			tableSlice := slices.Collect(maps.Values(tableMap))
 			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
 			return findSchemasForTables(e, is, tableSlice)
 		}
@@ -173,7 +173,7 @@ func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 		if len(partIDs) > 0 {
 			tableMap := make(map[int64]*model.TableInfo, len(partIDs))
 			findTablesByPartID(is, partIDs, tableNames, tableMap)
-			tableSlice := slices.AppendSeq(make([]*model.TableInfo, 0, len(tableMap)), maps.Values(tableMap))
+			tableSlice := slices.Collect(maps.Values(tableMap))
 			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
 			return findSchemasForTables(e, is, tableSlice)
 		}
@@ -239,7 +239,7 @@ func (e *InfoSchemaBaseExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	}
 
 	r := new(bytes.Buffer)
-	colNames := slices.AppendSeq(make([]string, 0, len(e.ColPredicates)), maps.Keys(e.ColPredicates))
+	colNames := slices.Collect(maps.Keys(e.ColPredicates))
 	slices.Sort(colNames)
 	for _, colName := range colNames {
 		preds := e.ColPredicates[colName]
@@ -248,7 +248,7 @@ func (e *InfoSchemaBaseExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 		}
 	}
 
-	colNames = slices.AppendSeq(make([]string, 0, len(e.LikePatterns)), maps.Keys(e.LikePatterns))
+	colNames = slices.Collect(maps.Keys(e.LikePatterns))
 	slices.Sort(colNames)
 	for _, colName := range colNames {
 		patterns := e.LikePatterns[colName]
