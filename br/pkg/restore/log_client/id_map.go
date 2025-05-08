@@ -31,6 +31,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// Split the pitr_id_map data into 512 KiB chunks to avoid one kv entry size too large.
 const PITRIdMapBlockSize int = 524288
 
 func pitrIDMapsFilename(clusterID, restoredTS uint64) string {
@@ -112,10 +113,7 @@ func (rc *LogClient) saveIDMap2Table(ctx context.Context, dbMaps []*backuppb.Pit
 	}
 	replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restored_ts, upstream_cluster_id, segment_id, id_map) VALUES (%?, %?, %?, %?);"
 	for startIdx, segmentId := 0, 0; startIdx < len(data); segmentId += 1 {
-		endIdx := startIdx + PITRIdMapBlockSize
-		if endIdx > len(data) {
-			endIdx = len(data)
-		}
+		endIdx := min(startIdx+PITRIdMapBlockSize, len(data))
 		err := rc.unsafeSession.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreTS, rc.upstreamClusterID, segmentId, data[startIdx:endIdx])
 		if err != nil {
 			return errors.Trace(err)
