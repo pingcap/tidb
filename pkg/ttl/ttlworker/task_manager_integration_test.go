@@ -94,7 +94,7 @@ func TestParallelLockNewTask(t *testing.T) {
 		now = now.Add(time.Hour * 48)
 
 		wg := sync.WaitGroup{}
-		for j := 0; j < concurrency; j++ {
+		for j := range concurrency {
 			scanManagerID := fmt.Sprintf("test-ttl-manager-%d", j)
 			wg.Add(1)
 			go func() {
@@ -136,15 +136,15 @@ func TestParallelSchedule(t *testing.T) {
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	// 16 tasks and 16 scan workers (in 4 task manager) should be able to be scheduled in a single "reschedule"
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW(), NOW())", table.Meta().ID, i)
 		tk.MustExec(sql)
 	}
 	scheduleWg := sync.WaitGroup{}
 	finishTasks := make([]func(), 0, 4)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		workers := []ttlworker.Worker{}
-		for j := 0; j < 4; j++ {
+		for range 4 {
 			scanWorker := ttlworker.NewMockScanWorker(t)
 			scanWorker.Start()
 			workers = append(workers, scanWorker)
@@ -176,7 +176,7 @@ func TestParallelSchedule(t *testing.T) {
 	scheduleWg.Wait()
 	// all tasks should have been scheduled
 	tk.MustQuery("select count(1) from mysql.tidb_ttl_task where status = 'running'").Check(testkit.Rows("16"))
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		sql := fmt.Sprintf("select count(1) from mysql.tidb_ttl_task where status = 'running' AND owner_id = 'task-manager-%d'", i)
 		tk.MustQuery(sql).Check(testkit.Rows("4"))
 		finishTasks[i]()
@@ -320,15 +320,15 @@ func TestTTLRunningTasksLimitation(t *testing.T) {
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	// 64 tasks and 128 scan workers (in 16 task manager) should only schedule 32 tasks
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW(), NOW())", table.Meta().ID, i)
 		tk.MustExec(sql)
 	}
 
 	scheduleWg := sync.WaitGroup{}
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		workers := []ttlworker.Worker{}
-		for j := 0; j < 8; j++ {
+		for range 8 {
 			scanWorker := ttlworker.NewMockScanWorker(t)
 			scanWorker.Start()
 			workers = append(workers, scanWorker)
@@ -393,7 +393,7 @@ func TestShrinkScanWorkerAndResignOwner(t *testing.T) {
 	testTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	taskCnt := 8
-	for id := 0; id < taskCnt; id++ {
+	for id := range taskCnt {
 		sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW() - INTERVAL 1 DAY, NOW() - interval %d second)", testTable.Meta().ID, id, taskCnt-id)
 		tk.MustExec(sql)
 	}
@@ -415,7 +415,7 @@ func TestShrinkScanWorkerAndResignOwner(t *testing.T) {
 		}
 	}()
 
-	for j := 0; j < taskCnt; j++ {
+	for j := range taskCnt {
 		scanWorker := ttlworker.NewMockScanWorker(t)
 		scanWorker.SetInfoSchema(dom.InfoSchema())
 		switch j {
@@ -577,13 +577,13 @@ func TestTaskCancelledAfterHeartbeatTimeout(t *testing.T) {
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	// 4 tasks are inserted into the table
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW(), NOW())", table.Meta().ID, i)
 		tk.MustExec(sql)
 	}
 
 	workers := []ttlworker.Worker{}
-	for j := 0; j < 8; j++ {
+	for range 8 {
 		scanWorker := ttlworker.NewMockScanWorker(t)
 		scanWorker.Start()
 		workers = append(workers, scanWorker)
@@ -600,7 +600,7 @@ func TestTaskCancelledAfterHeartbeatTimeout(t *testing.T) {
 	tk.MustQuery("select count(1) from mysql.tidb_ttl_task where status = 'running' and owner_id = 'task-manager-1'").Check(testkit.Rows("4"))
 
 	var cancelCount atomic.Uint32
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		task := m1.GetRunningTasks()[i]
 		task.SetCancel(func() {
 			cancelCount.Add(1)
@@ -615,7 +615,7 @@ func TestTaskCancelledAfterHeartbeatTimeout(t *testing.T) {
 	tk.MustQuery("select count(1) from mysql.tidb_ttl_task where status = 'running' and owner_id = 'task-manager-2'").Check(testkit.Rows("4"))
 
 	// Then m1 cannot update the heartbeat of its task
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		require.Error(t, m1.UpdateHeartBeatForTask(context.Background(), se, now.Add(time.Hour), m1.GetRunningTasks()[i]))
 	}
 	tk.MustQuery("select owner_hb_time from mysql.tidb_ttl_task").Check(testkit.Rows(
@@ -626,7 +626,7 @@ func TestTaskCancelledAfterHeartbeatTimeout(t *testing.T) {
 	))
 
 	// m2 can successfully update the heartbeat
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		require.NoError(t, m2.UpdateHeartBeatForTask(context.Background(), se, now.Add(time.Hour), m2.GetRunningTasks()[i]))
 	}
 	tk.MustQuery("select owner_hb_time from mysql.tidb_ttl_task").Check(testkit.Rows(
@@ -674,7 +674,7 @@ func TestHeartBeatErrorNotBlockOthers(t *testing.T) {
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
 	testTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	for id := 0; id < 4; id++ {
+	for id := range 4 {
 		sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW() - INTERVAL 1 DAY, NOW())", testTable.Meta().ID, id)
 		tk.MustExec(sql)
 	}
@@ -685,7 +685,7 @@ func TestHeartBeatErrorNotBlockOthers(t *testing.T) {
 
 	m := ttlworker.NewTaskManager(context.Background(), pool, cache.NewInfoSchemaCache(time.Minute), "task-manager-1", store)
 	workers := []ttlworker.Worker{}
-	for j := 0; j < 4; j++ {
+	for range 4 {
 		scanWorker := ttlworker.NewMockScanWorker(t)
 		scanWorker.Start()
 		workers = append(workers, scanWorker)

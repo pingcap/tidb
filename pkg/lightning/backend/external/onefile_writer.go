@@ -260,7 +260,10 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	w.logger.Info("close one file writer", zap.String("writerID", w.writerID))
+	w.logger.Info("close one file writer", zap.String("writerID", w.writerID),
+		zap.Uint64("totalCnt", w.totalCnt),
+		zap.Uint64("totalSize", w.totalSize),
+		zap.Int("recordedDupCnt", w.recordedDupCnt))
 
 	var minKey, maxKey []byte
 	mStats := make([]MultipleFilesStat, 0, 1)

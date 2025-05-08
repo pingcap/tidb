@@ -38,11 +38,11 @@ func (b *builtinDatabaseSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	currentDB := ctx.CurrentDB()
 	result.ReserveString(n)
 	if currentDB == "" {
-		for i := 0; i < n; i++ {
+		for range n {
 			result.AppendNull()
 		}
 	} else {
-		for i := 0; i < n; i++ {
+		for range n {
 			result.AppendString(currentDB)
 		}
 	}
@@ -66,7 +66,7 @@ func (b *builtinConnectionIDSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	connectionID := int64(data.ConnectionID)
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		i64s[i] = connectionID
 	}
 	return nil
@@ -80,7 +80,7 @@ func (b *builtinTiDBVersionSig) vecEvalString(ctx EvalContext, input *chunk.Chun
 	n := input.NumRows()
 	result.ReserveString(n)
 	info := printer.GetTiDBInfo()
-	for i := 0; i < n; i++ {
+	for range n {
 		result.AppendString(info)
 	}
 	return nil
@@ -102,7 +102,7 @@ func (b *builtinRowCountSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	res := vars.StmtCtx.PrevAffectedRows
-	for i := 0; i < n; i++ {
+	for i := range n {
 		i64s[i] = res
 	}
 	return nil
@@ -125,7 +125,7 @@ func (b *builtinCurrentUserSig) vecEvalString(ctx EvalContext, input *chunk.Chun
 	if user == nil {
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
-	for i := 0; i < n; i++ {
+	for range n {
 		result.AppendString(user.String())
 	}
 	return nil
@@ -146,7 +146,7 @@ func (b *builtinCurrentResourceGroupSig) vecEvalString(ctx EvalContext, input *c
 	n := input.NumRows()
 	result.ReserveString(n)
 	groupName := getHintResourceGroupName(data)
-	for i := 0; i < n; i++ {
+	for range n {
 		result.AppendString(groupName)
 	}
 	return nil
@@ -172,7 +172,7 @@ func (b *builtinCurrentRoleSig) vecEvalString(ctx EvalContext, input *chunk.Chun
 
 	result.ReserveString(n)
 	if len(roles) == 0 {
-		for i := 0; i < n; i++ {
+		for range n {
 			result.AppendString("NONE")
 		}
 		return nil
@@ -184,7 +184,7 @@ func (b *builtinCurrentRoleSig) vecEvalString(ctx EvalContext, input *chunk.Chun
 	}
 	slices.Sort(sortedRes)
 	res := strings.Join(sortedRes, ",")
-	for i := 0; i < n; i++ {
+	for range n {
 		result.AppendString(res)
 	}
 	return nil
@@ -207,7 +207,7 @@ func (b *builtinUserSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for range n {
 		result.AppendString(user.LoginString())
 	}
 	return nil
@@ -231,7 +231,7 @@ func (b *builtinTiDBIsDDLOwnerSig) vecEvalInt(ctx EvalContext, input *chunk.Chun
 	}
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		i64s[i] = res
 	}
 	return nil
@@ -344,7 +344,7 @@ func (b *builtinLastInsertIDSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	res := int64(vars.StmtCtx.PrevLastInsertID)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		i64s[i] = res
 	}
 	return nil
@@ -379,7 +379,7 @@ func (b *builtinVersionSig) vectorized() bool {
 func (b *builtinVersionSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for range n {
 		result.AppendString(mysql.ServerVersion)
 	}
 	return nil
@@ -436,7 +436,7 @@ func (b *builtinTiDBDecodeKeySig) vecEvalString(ctx EvalContext, input *chunk.Ch
 			return s
 		}
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue

@@ -359,10 +359,7 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 		// We have to control the batch size to avoid the error of "parameter SourceSnapshotIds must be less than or equal to 10"
 		for i := 0; i < len(snapshotsIDsMap[targetAZ]); i += FsrApiSnapshotsThreshold {
 			start := i
-			end := i + FsrApiSnapshotsThreshold
-			if end > len(snapshotsIDsMap[targetAZ]) {
-				end = len(snapshotsIDsMap[targetAZ])
-			}
+			end := min(i+FsrApiSnapshotsThreshold, len(snapshotsIDsMap[targetAZ]))
 			eg.Go(func() error {
 				log.Info("enable fsr for snapshots", zap.String("available zone", targetAZ), zap.Any("snapshots", snapshotsIDsMap[targetAZ][start:end]))
 				resp, err := e.ec2.EnableFastSnapshotRestores(&ec2.EnableFastSnapshotRestoresInput{
@@ -529,10 +526,7 @@ func (e *EC2Session) DisableDataFSR(snapshotsIDsMap map[string][]*string) error 
 		// We have to control the batch size to avoid the error of "parameter SourceSnapshotIds must be less than or equal to 10"
 		for i := 0; i < len(snapshotsIDsMap[targetAZ]); i += FsrApiSnapshotsThreshold {
 			start := i
-			end := i + FsrApiSnapshotsThreshold
-			if end > len(snapshotsIDsMap[targetAZ]) {
-				end = len(snapshotsIDsMap[targetAZ])
-			}
+			end := min(i+FsrApiSnapshotsThreshold, len(snapshotsIDsMap[targetAZ]))
 			eg.Go(func() error {
 				resp, err := e.ec2.DisableFastSnapshotRestores(&ec2.DisableFastSnapshotRestoresInput{
 					AvailabilityZones: []*string{&targetAZ},

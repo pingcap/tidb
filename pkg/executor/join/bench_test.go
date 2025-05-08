@@ -49,7 +49,7 @@ func BenchmarkHashTableConcurrentBuild(b *testing.B) {
 	buildThreads := 3
 	wg := util.WaitGroupWrapper{}
 	b.StartTimer()
-	for i := 0; i < buildThreads; i++ {
+	for i := range buildThreads {
 		segmentStart := segmentCount / buildThreads * i
 		segmentEnd := segmentCount / buildThreads * (i + 1)
 		if i == buildThreads-1 {
@@ -67,10 +67,10 @@ func BenchmarkTestUnsafePointer(b *testing.B) {
 	a := make([]byte, size*8)
 	p := make([]unsafe.Pointer, size)
 	b.StopTimer()
-	for i := 0; i < size; i++ {
+	for i := range size {
 		p[i] = unsafe.Pointer(&a[i*8])
 	}
-	for i := 0; i < size; i++ {
+	for i := range size {
 		*(*int64)(p[i]) = int64(i)
 	}
 	runtime.KeepAlive(a)
@@ -82,10 +82,10 @@ func BenchmarkTestUseUintptrAsUnsafePointer(b *testing.B) {
 	a := make([]byte, size*8)
 	p := make([]uintptr, size)
 	b.StopTimer()
-	for i := 0; i < size; i++ {
+	for i := range size {
 		*(*unsafe.Pointer)(unsafe.Pointer(&p[i])) = unsafe.Pointer(&a[i*8])
 	}
-	for i := 0; i < size; i++ {
+	for i := range size {
 		*(*int64)((unsafe.Pointer)(&p[i])) = int64(i)
 	}
 	runtime.KeepAlive(a)
