@@ -6769,7 +6769,6 @@ func (e *executor) AlterTableEngineAttribute(ctx sessionctx.Context, ident ast.I
 	}
 
 	return e.doDDLJob2(ctx, job, args)
-	// err = e.callHookOnChanged(job, err)
 }
 
 // DoDDLJob will return

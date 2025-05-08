@@ -704,7 +704,11 @@ func (e *memtableRetriever) setDataFromOneTable(
 			rowCount, avgRowLength, dataLength, indexLength = cache.TableRowStatsCache.EstimateDataLength(table)
 		}
 
-		datums := []any{
+		var storageClass any
+		if kerneltype.IsNextGen() {
+			storageClass = table.StorageClassTier
+		}
+		record := types.MakeDatums(
 			infoschema.CatalogVal, // TABLE_CATALOG
 			schema.O,              // TABLE_SCHEMA
 			table.Name.O,          // TABLE_NAME
@@ -731,17 +735,12 @@ func (e *memtableRetriever) setDataFromOneTable(
 			pkType,                // TIDB_PK_TYPE
 			policyName,            // TIDB_PLACEMENT_POLICY_NAME
 			table.Mode.String(),   // TIDB_TABLE_MODE
-		}
-		if kerneltype.IsNextGen() {
-			storageClass := table.StorageClassTier
-			datums = append(datums, storageClass) // TIDB_STORAGE_CLASS
-		}
-
-		record := types.MakeDatums(datums...)
+			storageClass,          // TIDB_STORAGE_CLASS
+		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
 	} else {
-		datums := []any{
+		record := types.MakeDatums(
 			infoschema.CatalogVal, // TABLE_CATALOG
 			schema.O,              // TABLE_SCHEMA
 			table.Name.O,          // TABLE_NAME
@@ -768,12 +767,8 @@ func (e *memtableRetriever) setDataFromOneTable(
 			pkType,                // TIDB_PK_TYPE
 			nil,                   // TIDB_PLACEMENT_POLICY_NAME
 			nil,                   // TIDB_TABLE_MODE
-		}
-		if kerneltype.IsNextGen() {
-			datums = append(datums, nil) // TIDB_STORAGE_CLASS
-		}
-
-		record := types.MakeDatums(datums...)
+			nil,                   // TIDB_STORAGE_CLASS
+		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
 	}
@@ -851,7 +846,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					return true
 				}
 
-				datums := []any{
+				record := types.MakeDatums(
 					infoschema.CatalogVal, // TABLE_CATALOG
 					t.DBName.O,            // TABLE_SCHEMA
 					t.TableName.O,         // TABLE_NAME
@@ -878,12 +873,8 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					nil,                   // TIDB_PK_TYPE
 					nil,                   // TIDB_PLACEMENT_POLICY_NAME
 					nil,                   // TIDB_TABLE_MODE
-				}
-				if kerneltype.IsNextGen() {
-					datums = append(datums, nil) // TIDB_STORAGE_CLASS
-				}
-
-				record := types.MakeDatums(datums...)
+					nil,                   // TIDB_STORAGE_CLASS
+				)
 				rows = append(rows, record)
 				e.recordMemoryConsume(record)
 				return true
@@ -1339,7 +1330,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 			if ex.HasPartitionPred() {
 				continue
 			}
-			datums := []any{
+			record := types.MakeDatums(
 				infoschema.CatalogVal, // TABLE_CATALOG
 				schema.O,              // TABLE_SCHEMA
 				table.Name.O,          // TABLE_NAME
@@ -1367,13 +1358,8 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				nil,                   // TABLESPACE_NAME
 				nil,                   // TIDB_PARTITION_ID
 				nil,                   // TIDB_PLACEMENT_POLICY_NAME
-			}
-			if kerneltype.IsNextGen() {
-				storageClass := table.StorageClassTier
-				datums = append(datums, storageClass) // TIDB_STORAGE_CLASS
-			}
-
-			record := types.MakeDatums(datums...)
+				nil,                   // TIDB_STORAGE_CLASS
+			)
 			rows = append(rows, record)
 			e.recordMemoryConsume(record)
 		} else {
@@ -1439,6 +1425,10 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				if pi.PlacementPolicyRef != nil {
 					policyName = pi.PlacementPolicyRef.Name.O
 				}
+				var storageClass any
+				if kerneltype.IsNextGen() {
+					storageClass = pi.StorageClassTier
+				}
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // TABLE_CATALOG
 					schema.O,              // TABLE_SCHEMA
@@ -1467,6 +1457,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 					nil,                   // TABLESPACE_NAME
 					pi.ID,                 // TIDB_PARTITION_ID
 					policyName,            // TIDB_PLACEMENT_POLICY_NAME
+					storageClass,          // TIDB_STORAGE_CLASS
 				)
 				rows = append(rows, record)
 				e.recordMemoryConsume(record)
