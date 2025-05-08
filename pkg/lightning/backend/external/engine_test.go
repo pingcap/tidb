@@ -408,15 +408,13 @@ func TestEngineOnDup(t *testing.T) {
 		})
 	})
 
-	t.Run("on duplicate ignore", func(t *testing.T) {
-		// OnDuplicateKeyError is used for adding unique index.
-		// Current implementation would report error when writting to tikv, instead of in LoadIngestData
+	t.Run("on duplicate error", func(t *testing.T) {
 		onDup := engineapi.OnDuplicateKeyError
 		store := storage.NewMemStorage()
 		dataFiles, statFiles := prepareKVFiles(t, store, contents)
 		extEngine := getEngineFn(store, onDup, dataFiles, statFiles)
 		loadDataCh := make(chan engineapi.DataAndRanges, 4)
-		require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
+		require.ErrorContains(t, extEngine.LoadIngestData(ctx, loadDataCh), "ErrFoundDuplicateKey")
 		t.Cleanup(func() {
 			require.NoError(t, extEngine.Close())
 		})
