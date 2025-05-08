@@ -3,9 +3,6 @@ package storage
 import (
 	"bytes"
 	"context"
-	"io"
-	"time"
-
 	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/snappy"
 	"github.com/klauspost/compress/zstd"
@@ -14,6 +11,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
+	"io"
 )
 
 // CompressType represents the type of compression.
@@ -229,15 +227,15 @@ func (u *bufferedWriter) uploadChunk(ctx context.Context) error {
 	}
 	b := u.buf.Bytes()
 	u.buf.Reset()
-	size := len(b)
-	startTime := time.Now()
+	//size := len(b)
+	//startTime := time.Now()
 	_, err := u.writer.Write(ctx, b)
-	if u.writeDurHist != nil {
-		u.writeDurHist.Observe(time.Since(startTime).Seconds())
-	}
-	if u.writeRateHist != nil {
-		u.writeRateHist.Observe(float64(size) / 1024.0 / 1024.0 / time.Since(startTime).Seconds())
-	}
+	//if u.writeDurHist != nil {
+	//	u.writeDurHist.Observe(time.Since(startTime).Seconds())
+	//}
+	//if u.writeRateHist != nil {
+	//	u.writeRateHist.Observe(float64(size) / 1024.0 / 1024.0 / time.Since(startTime).Seconds())
+	//}
 	return errors.Trace(err)
 }
 
