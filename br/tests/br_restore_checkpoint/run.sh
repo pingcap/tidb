@@ -127,10 +127,17 @@ check_result() {
 }
 
 check_result
+# check mysql.tidb_pitr_id_map has data
+count=$(run_sql 'select count(*) from mysql.tidb_pitr_id_map;' | awk '/count/{print $2}')
+if [ $count -eq 0 ]; then
+    echo "the number of pitr id map is $count"
+    exit 1
+fi
 
 # test if the cluster does not have table mysql.tidb_pitr_id_map
 restart_services
 run_sql "DROP TABLE IF EXISTS mysql.tidb_pitr_id_map;"
+rm -rf $TEST_DIR/$PREFIX/log/pitr_id_maps
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-id-maps-saved=return(true)"
 restore_fail=0
 run_br --pd $PD_ADDR restore point --full-backup-storage "local://$TEST_DIR/$PREFIX/full" -s "local://$TEST_DIR/$PREFIX/log" || restore_fail=1
