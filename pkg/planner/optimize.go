@@ -215,6 +215,15 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		}
 	}()
 
+	// The SkipPlanCache function doesn't work until EnablePlanCache() is called in GetPlanFromPlanCache.
+	skipNonPreparedCache := false
+
+	// Disable the plan cache to prevent running the code above twice.
+	if sessVars.StmtCtx.StmtHints.HasResourceGroup {
+		sessVars.StmtCtx.SetSkipPlanCache("resource_group is used in the SQL")
+		skipNonPreparedCache = true
+	}
+
 	warns = warns[:0]
 	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
 		oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
@@ -223,8 +232,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		}
 		sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 	}
+	// Setting skipNonPreparedCache to true to prevent running the code above twice.
 	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
 		sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
+		skipNonPreparedCache = true
 	}
 
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
@@ -254,7 +265,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	// try to get Plan from the NonPrepared Plan Cache
 	if sessVars.EnableNonPreparedPlanCache &&
 		isStmtNode &&
-		!useBinding { // TODO: support binding
+		!useBinding && // TODO: support binding
+		!skipNonPreparedCache {
 		cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, stmtNode, is)
 		if err != nil {
 			return nil, nil, err
@@ -282,7 +294,15 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 				setVarHintChecker, hypoIndexChecker(ctx, is),
 				sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
+
+			if sessVars.StmtCtx.StmtHints.HasResourceGroup {
+				sessVars.StmtCtx.SetSkipPlanCache("resource_group is used in the SQL binding")
+			}
+
 			// update session var by hint /set_var/
+			if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
+				sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL binding")
+			}
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
 				oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
 				if err != nil {
@@ -290,6 +310,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 				}
 				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 			}
+
 			plan, curNames, _, err := optimize(ctx, pctx, node, is)
 			if err != nil {
 				sessVars.StmtCtx.AppendWarning(errors.Errorf("binding %s failed: %v", binding.BindSQL, err))
