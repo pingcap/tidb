@@ -272,8 +272,8 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		}
 	}
 
-	var annIndexes []string
-	var invertedIndexes []string
+	annIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
+	invertedIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
 	for _, idx := range p.UsedColumnarIndexes {
 		if idx == nil {
 			continue
