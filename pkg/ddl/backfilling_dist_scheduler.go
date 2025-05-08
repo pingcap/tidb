@@ -295,10 +295,7 @@ func generateNonPartitionPlan(
 		regionBatch := calculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
 
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
-			end := i + regionBatch
-			if end > len(recordRegionMetas) {
-				end = len(recordRegionMetas)
-			}
+			end := min(i+regionBatch, len(recordRegionMetas))
 			batch := recordRegionMetas[i:end]
 			subTaskMeta := &BackfillSubTaskMeta{
 				RowStart: batch[0].StartKey(),
@@ -328,6 +325,9 @@ func generateNonPartitionPlan(
 }
 
 func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
+	failpoint.Inject("mockRegionBatch", func(val failpoint.Value) {
+		failpoint.Return(val.(int))
+	})
 	var regionBatch int
 	avgTasksPerInstance := (totalRegionCnt + instanceCnt - 1) / instanceCnt // ceiling
 	if useLocalDisk {

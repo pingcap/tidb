@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,8 +28,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -36,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -261,16 +266,96 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
-	defer func() {
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	tk.MustExec("set @@global.tidb_scatter_region = on")
+	t.Cleanup(func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		variable.CloudStorageURI.Store("")
-	}()
+		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+		tk.MustExec("set @@global.tidb_scatter_region = default")
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/collectTaskError", "return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRegionBatch", `return(1)`)
 
-	tk.MustExec("create table t (a int, b int, c int);")
-	tk.MustExec("insert into t values (1, 1, 1);")
-	tk.MustExec("insert into t values (2, 1, 2);")
+	testcases := []struct {
+		caseName        string
+		createTableSQL  string
+		splitTableSQL   string
+		initDataSQL     string
+		addUniqueKeySQL string
+		errMsg          string
+	}{
+		{
+			"int index",
+			"create table t (a int, b int, c int);",
+			"",
+			"insert into t values (1, 1, 1), (2, 1, 2);",
+			"alter table t add unique index idx(b);",
+			"Duplicate entry '1' for key 't.idx",
+		},
+		{
+			"int index on multi regions",
+			"create table t (a int primary key, b int);",
+			"split table t between (0) and (4000) regions 4;",
+			"insert into t values (1, 1), (1001, 1), (2001, 2001), (4001, 1);",
+			"alter table t add unique index idx(b);",
+			"[kv:1062]Duplicate entry '1' for key 't.idx'",
+		},
+		{
+			"varchar index",
+			"create table t (id int, data varchar(255));",
+			"",
+			"insert into t values (1, '1'), (2, '1');",
+			"alter table t add unique index i(data);",
+			"[kv:1062]Duplicate entry '1' for key 't.i'",
+		},
+		{
+			"combined index",
+			"create table t (id int, data varchar(255));",
+			"",
+			"insert into t values (1, '1'), (1, '1');",
+			"alter table t add unique index i(id, data);",
+			"[kv:1062]Duplicate entry '1-1' for key 't.i'",
+		},
+		{
+			"multi value index",
+			"create table t (id int, data json);",
+			"",
+			`insert into t values (1, '{"code":[1,1]}'), (2, '{"code":[1,1]}');`,
+			"alter table t add unique index zips( (CAST(data->'$.code' AS UNSIGNED ARRAY)));",
+			"Duplicate entry '1' for key 't.zips",
+		},
+	}
 
-	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
+	checkSubtaskErr := func(t *testing.T) {
+		errorSubtask := taskexecutor.GetErrorSubtask4Test.Swap(nil)
+		require.NotEmpty(t, errorSubtask)
+		require.Equal(t, proto.BackfillStepWriteAndIngest, errorSubtask.Step)
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.caseName, func(tt *testing.T) {
+			// init
+			taskexecutor.GetErrorSubtask4Test.Store(nil)
+			tk.MustExec(tc.createTableSQL)
+			tk.MustExec(tc.initDataSQL)
+			tt.Cleanup(func() {
+				tk.MustExec("drop table if exists t")
+			})
+
+			// pre-check
+			if len(tc.splitTableSQL) > 0 {
+				tk.MustQuery(tc.splitTableSQL).Check(testkit.Rows("3 1"))
+			}
+			if strings.Contains(tc.createTableSQL, "partition") {
+				rs := tk.MustQuery("show table t regions")
+				require.Len(tt, rs.Rows(), 2)
+			}
+
+			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
+			checkSubtaskErr(tt)
+		})
+	}
 }
 
 func TestIngestUseGivenTS(t *testing.T) {
