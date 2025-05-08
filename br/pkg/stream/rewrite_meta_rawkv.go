@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -103,9 +104,7 @@ func NewSchemasReplace(
 				continue
 			}
 			globalTableIdMap[tblID] = tr.TableID
-			for oldpID, newpID := range tr.PartitionMap {
-				globalTableIdMap[oldpID] = newpID
-			}
+			maps.Copy(globalTableIdMap, tr.PartitionMap)
 		}
 	}
 

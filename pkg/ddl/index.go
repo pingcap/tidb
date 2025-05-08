@@ -1820,7 +1820,7 @@ func removeIndexInfo(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 		return
 	}
 	// Remove the target index.
-	tblInfo.Indices = append(tblInfo.Indices[:offset], tblInfo.Indices[offset+1:]...)
+	tblInfo.Indices = slices.Delete(tblInfo.Indices, offset, offset+1)
 }
 
 func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job) (*model.TableInfo, []*model.IndexInfo, bool /* ifExists */, error) {
