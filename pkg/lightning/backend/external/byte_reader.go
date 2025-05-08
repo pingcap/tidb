@@ -280,17 +280,14 @@ func (r *byteReader) next(n int) (int, [][]byte) {
 func (r *byteReader) reload() error {
 	startTime := time.Now()
 	defer func() {
-		//readDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("merge_sort_read")
-		//readRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("merge_sort_read")
 		if r.readDurHist != nil && r.readRateHist != nil {
 			readSecond := time.Since(startTime).Seconds()
-			r.readDurHist.Observe(readSecond)
 			size := 0
 			for _, b := range r.curBuf {
 				size += len(b)
 			}
+			r.readDurHist.Observe(readSecond)
 			r.readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
-			r.logger.Info("global_sort_read ", zap.Int("size", size), zap.Float64("readSecond", readSecond))
 		}
 	}()
 	to := r.concurrentReader.expected
