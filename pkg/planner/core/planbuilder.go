@@ -1368,12 +1368,6 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = append(available, tablePath)
 	}
 
-	if strings.Contains(ctx.GetSessionVars().StmtCtx.OriginalSQL, "txx") {
-		for _, p := range available {
-			fmt.Println(">>> ", p.IsTablePath(), p.StoreType, *p)
-		}
-	}
-
 	return available, nil
 }
 
