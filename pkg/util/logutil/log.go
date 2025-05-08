@@ -148,16 +148,24 @@ func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 		errVerboseLogger = logger
 	}
 
-	// init dedicated logger for slow query log
-	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
-	if err != nil {
-		return errors.Trace(err)
+	if cfg.SlowQueryFile != "" && cfg.SlowQueryFile != cfg.File.Filename {
+		// init dedicated logger for slow query log
+		SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		SlowQueryLogger = newSlowQueryLoggerFromZapLogger(gl, props)
 	}
 
-	// init dedicated logger for general log
-	GeneralLogger, _, err = newGeneralLogger(cfg)
-	if err != nil {
-		return errors.Trace(err)
+	if cfg.GeneralLogFile != "" && cfg.GeneralLogFile != cfg.File.Filename {
+		// init dedicated logger for general log
+		GeneralLogger, _, err = newGeneralLogger(cfg)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		GeneralLogger = gl
 	}
 
 	initGRPCLogger(gl)
