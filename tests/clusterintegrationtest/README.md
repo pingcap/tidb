@@ -11,20 +11,21 @@ tiup --version
 
 ```shell
 # cd clusterintegrationtest
-./run1.sh  # mysql-tester test
+./run_mysql_tester.sh  # mysql-tester test
 
 # vector recall test
-python3 -m venv .venv
+python3 -m pip install uv
+uv venv --python python3.9
 source .venv/bin/activate
-pip3 install -r requirements.txt
+uv pip install -r requirements.txt
 # prepare datasets
 cd datasets
 wget https://ann-benchmarks.com/fashion-mnist-784-euclidean.hdf5
 wget https://ann-benchmarks.com/mnist-784-euclidean.hdf5
 cd ..
-./run2.sh
+./run_recall_test.sh
 
-./run3_upgradeTest.sh  # upgrade cluster test
+./run_upgrade_test.sh  # upgrade cluster test
 ```
 
 ## Guide: Update `r`
@@ -54,9 +55,10 @@ After changing `t` or changing optimizer plans, `r` need to be updated.
 
    ```shell
    # cd clusterintegrationtest
-   python3 -m venv .venv
+   python3 -m pip install uv
+   uv venv --python python3.9
    source .venv/bin/activate
-   pip3 install -r requirements.txt
+   uv pip install -r requirements.txt
    ```
 
 2. Download datasets

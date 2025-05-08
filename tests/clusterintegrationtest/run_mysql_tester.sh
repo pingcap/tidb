@@ -14,19 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Note: This file is supposed to run inside the docker (built by Dockerfile). Do not run it directly.
-
 set -euo pipefail
 
 CURRENT_DIR="$(dirname "$0")"
 source $CURRENT_DIR/_include.sh
 
-echo "+ Starting run vector recall test"
 print_versions
 
+build_mysql_tester
 start_tidb
 wait_for_tidb
 wait_for_tiflash
 
-echo "+ Running /root/python_testers/vector_recall.py"
-python3 ./python_testers/vector_recall.py
+echo "+ Running mysql-tester"
+~/go/bin/src -all
