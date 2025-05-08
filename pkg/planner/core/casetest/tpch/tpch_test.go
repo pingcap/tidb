@@ -183,8 +183,8 @@ CREATE TABLE lineitem (
 `)
 	testkit.SetTiFlashReplica(t, dom, "test", "orders")
 	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
-	//tk.MustExec(`set @@session.tidb_enforce_mpp=1;`)
-	tk.MustQuery(`explain format='cost_trace' select /*+ read_from_storage(tiflash[lineitem,orders]) */ 
+	tk.MustExec(`set @@session.tidb_enforce_mpp=1;`)
+	tk.MustQuery(`explain select
         o_orderpriority,
         count(*) as order_count
 from
