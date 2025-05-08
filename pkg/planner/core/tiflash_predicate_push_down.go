@@ -230,7 +230,6 @@ func predicatePushDownToTableScan(sctx base.PlanContext, conds []expression.Expr
 	if len(selectedConds) == 0 {
 		return
 	}
-	logutil.BgLogger().Debug("planner: push down conditions to table scan", zap.String("table", ts.Table.Name.L), zap.String("conditions", string(expression.SortedExplainExpressionList(sctx.GetExprCtx().GetEvalCtx(), selectedConds))))
 	// add the pushed down conditions to table scan
 	ts.LateMaterializationFilterCondition = selectedConds
 	ts.lateMaterializationSelectivity = selectedSelectivity
