@@ -232,7 +232,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		}
 		sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 	}
-	// Disable the plan cache to prevent running the code above twice.
+	// Setting skipNonPreparedCache to true to prevent running the code above twice.
 	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
 		sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
 		skipNonPreparedCache = true
