@@ -110,7 +110,7 @@ func RegisterIndexerServiceServer(s grpc.ServiceRegistrar, srv IndexerServiceSer
 	s.RegisterService(&IndexerService_ServiceDesc, srv)
 }
 
-func _IndexerService_CreateIndex_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _IndexerService_CreateIndex_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(CreateIndexRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -122,13 +122,13 @@ func _IndexerService_CreateIndex_Handler(srv interface{}, ctx context.Context, d
 		Server:     srv,
 		FullMethod: IndexerService_CreateIndex_FullMethodName,
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(IndexerServiceServer).CreateIndex(ctx, req.(*CreateIndexRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _IndexerService_DropIndex_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _IndexerService_DropIndex_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(DropIndexRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -140,13 +140,13 @@ func _IndexerService_DropIndex_Handler(srv interface{}, ctx context.Context, dec
 		Server:     srv,
 		FullMethod: IndexerService_DropIndex_FullMethodName,
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(IndexerServiceServer).DropIndex(ctx, req.(*DropIndexRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _IndexerService_GetIndexProgress_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _IndexerService_GetIndexProgress_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(GetIndexProgressRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -158,7 +158,7 @@ func _IndexerService_GetIndexProgress_Handler(srv interface{}, ctx context.Conte
 		Server:     srv,
 		FullMethod: IndexerService_GetIndexProgress_FullMethodName,
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(IndexerServiceServer).GetIndexProgress(ctx, req.(*GetIndexProgressRequest))
 	}
 	return interceptor(ctx, in, info, handler)
