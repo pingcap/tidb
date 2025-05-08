@@ -41,7 +41,7 @@ fi
 set -e
 
 err_msg=$( cat << EOF
-tidb lightning encountered error: collect local duplicate rows failed: The number of conflict errors exceeds the threshold configured by \`conflict.threshold\`: '4'
+The number of conflict errors exceeds the threshold configured by \`conflict.threshold\`: '4'
 EOF
 )
 cat "${stderr_file}"
