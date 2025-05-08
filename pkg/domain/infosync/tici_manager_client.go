@@ -1,3 +1,17 @@
+// Copyright 2025 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package infosync
 
 import (
@@ -14,11 +28,11 @@ import (
 )
 
 var (
-	_ tiCIManager = &TiCIManagerCtx{}
+	_ TiCIManager = &TiCIManagerCtx{}
 )
 
-// tiCIManager manages fulltext index for TiCI.
-type tiCIManager interface {
+// TiCIManager manages fulltext index for TiCI.
+type TiCIManager interface {
 	// CreateFulltextIndex create fulltext index on TiCI
 	CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error
 }
@@ -28,8 +42,8 @@ type TiCIManagerCtx struct {
 	indexServiceClient indexer.IndexerServiceClient
 }
 
-// newTiCIManager creates a new TiCI manager.
-func newTiCIManager(ticiHost string, ticiPort string) (*TiCIManagerCtx, error) {
+// NewTiCIManager creates a new TiCI manager.
+func NewTiCIManager(ticiHost string, ticiPort string) (*TiCIManagerCtx, error) {
 	conn, err := grpc.NewClient(fmt.Sprintf("%s:%s", ticiHost, ticiPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
