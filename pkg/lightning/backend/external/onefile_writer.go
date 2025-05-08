@@ -17,7 +17,6 @@ package external
 import (
 	"context"
 	"encoding/binary"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"path/filepath"
 	"slices"
 	"time"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
