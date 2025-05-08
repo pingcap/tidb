@@ -17,8 +17,10 @@ package external
 import (
 	"context"
 	"encoding/binary"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -212,6 +214,7 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 		return err
 	}
 	// 1. encode data and write to kvStore.
+	writeStartTime := time.Now()
 	keyLen := len(idxKey)
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
 	buf, _ := w.kvBuffer.AllocBytesWithSliceLocation(length)
@@ -241,6 +244,10 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 	}
 	w.totalCnt += 1
 	w.totalSize += uint64(keyLen + len(idxVal))
+	writeDuration := time.Since(writeStartTime)
+	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("merge_sort_write_doWriteRow").Observe(writeDuration.Seconds())
+	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("merge_sort_write_doWriteRow").Observe(float64(keyLen+len(idxVal)) / 1024.0 / 1024.0 / writeDuration.Seconds())
+	logutil.BgLogger().Info("write row to one file writer", zap.Int64("size", int64(keyLen+len(idxVal))), zap.Duration("duration", writeDuration))
 	return nil
 }
 
