@@ -215,13 +215,11 @@ func withHeavyCostFunctionForTiFlashPrefetch(cond expression.Expression) bool {
 // @param: physicalSelection: the PhysicalSelection to be modified
 // @param: exprs: the conditions to be removed
 func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, exprs []expression.Expression) {
-	conditions := physicalSelection.Conditions
-	for i := len(conditions) - 1; i >= 0; i-- {
-		if expression.Contains(physicalSelection.SCtx().GetExprCtx().GetEvalCtx(), exprs, conditions[i]) {
-			conditions = slices.Delete(conditions, i, i+1)
-		}
-	}
-	physicalSelection.Conditions = conditions
+	// Must clone, since there may be other copies of the slice.
+	conditions := slices.Clone(physicalSelection.Conditions)
+	physicalSelection.Conditions = slices.DeleteFunc(conditions, func(cond expression.Expression) bool {
+		return expression.Contains(physicalSelection.SCtx().GetExprCtx().GetEvalCtx(), exprs, cond)
+	})
 }
 
 // predicatePushDownToTableScanImpl is used to push down the some filter conditions of the selection to the tablescan.
