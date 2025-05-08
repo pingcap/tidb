@@ -765,8 +765,8 @@ func (coll *HistColl) GetAnalyzeRowCount() float64 {
 		}
 	}
 	clear(ids)
-	slices.Grow(ids, len(coll.indices))
-	slices.AppendSeq(ids, maps.Keys(coll.indices))
+	ids = slices.Grow(ids, len(coll.indices))
+	ids = slices.AppendSeq(ids, maps.Keys(coll.indices))
 	slices.Sort(ids)
 	for _, id := range ids {
 		idx := coll.indices[id]
