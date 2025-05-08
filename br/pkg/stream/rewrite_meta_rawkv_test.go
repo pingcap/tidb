@@ -781,7 +781,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(rollBackTable0IndexJob)
 	require.NoError(t, err)
 	oldPartitionIDMap := make(map[string]struct{})
-	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+	for range len(mDDLJobALLNewPartitionIDSet) {
 		qargs = <-midr.queryCh
 		require.Equal(t, len(qargs.ParamsList), 2)
 		for _, params := range qargs.ParamsList {
@@ -812,7 +812,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(dropTable0IndexJob)
 	require.NoError(t, err)
 	oldPartitionIDMap = make(map[string]struct{})
-	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+	for range len(mDDLJobALLNewPartitionIDSet) {
 		qargs = <-midr.queryCh
 		require.Equal(t, len(qargs.ParamsList), 1)
 		_, exist := oldPartitionIDMap[qargs.ParamsList[0].StartKey]
@@ -833,7 +833,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(addTable0IndexJob)
 	require.NoError(t, err)
 	oldPartitionIDMap = make(map[string]struct{})
-	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+	for range len(mDDLJobALLNewPartitionIDSet) {
 		qargs = <-midr.queryCh
 		require.Equal(t, len(qargs.ParamsList), 1)
 		_, exist := oldPartitionIDMap[qargs.ParamsList[0].StartKey]
@@ -854,7 +854,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(dropTable0ColumnJob)
 	require.NoError(t, err)
 	oldPartitionIDMap = make(map[string]struct{})
-	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+	for range len(mDDLJobALLNewPartitionIDSet) {
 		qargs = <-midr.queryCh
 		require.Equal(t, len(qargs.ParamsList), 2)
 		for _, params := range qargs.ParamsList {
@@ -885,7 +885,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(modifyTable0ColumnJob)
 	require.NoError(t, err)
 	oldPartitionIDMap = make(map[string]struct{})
-	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+	for range len(mDDLJobALLNewPartitionIDSet) {
 		qargs = <-midr.queryCh
 		require.Equal(t, len(qargs.ParamsList), 2)
 		for _, params := range qargs.ParamsList {
@@ -916,8 +916,8 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(multiSchemaChangeJob0)
 	require.NoError(t, err)
 	oldPartitionIDMap = make(map[string]struct{})
-	for l := 0; l < 2; l++ {
-		for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+	for l := range 2 {
+		for range len(mDDLJobALLNewPartitionIDSet) {
 			qargs = <-midr.queryCh
 			require.Equal(t, len(qargs.ParamsList), 1)
 			_, exist := oldPartitionIDMap[qargs.ParamsList[0].StartKey]

@@ -160,7 +160,7 @@ func (e *AlterDDLJobExec) processAlterDDLJobConfig(
 ) (err error) {
 	ns := sess.NewSession(sessCtx)
 	var job *model.Job
-	for tryN := uint(0); tryN < alterDDLJobMaxRetryCnt; tryN++ {
+	for range alterDDLJobMaxRetryCnt {
 		if err = ns.Begin(ctx); err != nil {
 			continue
 		}

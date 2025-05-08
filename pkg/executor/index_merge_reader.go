@@ -270,7 +270,7 @@ func (e *IndexMergeReaderExecutor) startWorkers(ctx context.Context) error {
 	e.startIndexMergeProcessWorker(ctx, workCh, fetchCh)
 
 	var err error
-	for i := 0; i < len(e.partialPlans); i++ {
+	for i := range e.partialPlans {
 		e.idxWorkerWg.Add(1)
 		if e.indexes[i] != nil {
 			err = e.startPartialIndexWorker(ctx, exitCh, fetchCh, i)
@@ -563,10 +563,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					}
 					failpoint.Inject("testIndexMergePartialTableWorkerCoprLeak", nil)
 					tableReaderClosed = false
-					worker.batchSize = e.MaxChunkSize()
-					if worker.batchSize > worker.maxBatchSize {
-						worker.batchSize = worker.maxBatchSize
-					}
+					worker.batchSize = min(e.MaxChunkSize(), worker.maxBatchSize)
 
 					// fetch all handles from this table
 					ctx1, cancel := context.WithCancel(ctx)
@@ -716,6 +713,8 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memDelta := chk.MemoryUsage()
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
+		// We want both to reset chunkRowOffset and keep it up-to-date after the loop
+		// nolint:intrange
 		for chunkRowOffset = 0; chunkRowOffset < chk.NumRows(); chunkRowOffset++ {
 			if w.pushedLimit != nil {
 				w.scannedKeys++
@@ -772,7 +771,7 @@ func (w *partialTableWorker) buildTableTask(handles []kv.Handle, retChk *chunk.C
 func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Context, workCh <-chan *indexMergeTableTask) {
 	lookupConcurrencyLimit := e.Ctx().GetSessionVars().IndexLookupConcurrency()
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)
-	for i := 0; i < lookupConcurrencyLimit; i++ {
+	for range lookupConcurrencyLimit {
 		worker := &indexMergeTableScanWorker{
 			stats:          e.stats,
 			workCh:         workCh,
@@ -1271,7 +1270,7 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 			w.stats.IndexMergeProcess += time.Since(start)
 		}
 		failpoint.Inject("testIndexMergeProcessWorkerUnionHang", func(_ failpoint.Value) {
-			for i := 0; i < cap(resultCh); i++ {
+			for range cap(resultCh) {
 				select {
 				case resultCh <- &indexMergeTableTask{}:
 				default:
@@ -1444,10 +1443,7 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 	for parTblIdx, intersected := range intersectedMap {
 		// Split intersected[parTblIdx] to avoid task is too large.
 		for len(intersected) > 0 {
-			length := w.batchSize
-			if length > len(intersected) {
-				length = len(intersected)
-			}
+			length := min(w.batchSize, len(intersected))
 			task := &indexMergeTableTask{
 				lookupTableTask: lookupTableTask{
 					handles: intersected[:length],
@@ -1465,7 +1461,7 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 	}
 	failpoint.Inject("testIndexMergeProcessWorkerIntersectionHang", func(_ failpoint.Value) {
 		if resultCh != nil {
-			for i := 0; i < cap(resultCh); i++ {
+			for range cap(resultCh) {
 				select {
 				case resultCh <- &indexMergeTableTask{}:
 				default:
@@ -1585,7 +1581,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 			collectWorker.doIntersectionLimitAndDispatch(ctx, workCh, resultCh, finished)
 		}, handleWorkerPanic(ctx, finished, nil, resultCh, errCh, partTblIntersectionWorkerType))
 	}
-	for i := 0; i < workerCnt; i++ {
+	for i := range workerCnt {
 		tracker := memory.NewTracker(w.indexMerge.ID(), -1)
 		tracker.AttachTo(w.indexMerge.memTracker)
 		worker := &intersectionProcessWorker{
@@ -1814,6 +1810,8 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memDelta := chk.MemoryUsage()
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
+		// We want both to reset chunkRowOffset and keep it up-to-date after the loop
+		// nolint:intrange
 		for chunkRowOffset = 0; chunkRowOffset < chk.NumRows(); chunkRowOffset++ {
 			if w.pushedLimit != nil {
 				w.scannedKeys++

@@ -302,7 +302,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 			return
 		}
 		numRows := chk.NumRows()
-		for i := 0; i < numRows; i++ {
+		for i := range numRows {
 			workerIdx := workerIndices[i]
 			w := e.workers[workerIdx]
 
@@ -441,7 +441,7 @@ func (s *partitionHashSplitter) split(ctx sessionctx.Context, input *chunk.Chunk
 	}
 	workerIndices = workerIndices[:0]
 	numRows := input.NumRows()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		workerIndices = append(workerIndices, int(murmur3.Sum32(s.hashKeys[i]))%s.numWorkers)
 	}
 	return workerIndices, nil

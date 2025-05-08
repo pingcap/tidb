@@ -17,6 +17,7 @@ package structure
 import (
 	"bytes"
 	"context"
+	"slices"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -144,7 +145,7 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 func (t *TxStructure) HKeys(key []byte) ([][]byte, error) {
 	var keys [][]byte
 	err := t.IterateHash(key, func(field []byte, _ []byte) error {
-		keys = append(keys, append([]byte{}, field...))
+		keys = append(keys, slices.Clone(field))
 		return nil
 	})
 
@@ -156,8 +157,8 @@ func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 	var res []HashPair
 	err := t.IterateHash(key, func(field []byte, value []byte) error {
 		pair := HashPair{
-			Field: append([]byte{}, field...),
-			Value: append([]byte{}, value...),
+			Field: slices.Clone(field),
+			Value: slices.Clone(value),
 		}
 		res = append(res, pair)
 		return nil
@@ -170,8 +171,8 @@ func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 func (t *TxStructure) HGetIter(key []byte, fn func(pair HashPair) error) error {
 	return t.IterateHash(key, func(field []byte, value []byte) error {
 		pair := HashPair{
-			Field: append([]byte{}, field...),
-			Value: append([]byte{}, value...),
+			Field: slices.Clone(field),
+			Value: slices.Clone(value),
 		}
 
 		return fn(pair)
@@ -194,8 +195,8 @@ func (t *TxStructure) HGetLastN(key []byte, num int) ([]HashPair, error) {
 	res := make([]HashPair, 0, num)
 	err := t.iterReverseHash(key, func(field []byte, value []byte) (bool, error) {
 		pair := HashPair{
-			Field: append([]byte{}, field...),
-			Value: append([]byte{}, value...),
+			Field: slices.Clone(field),
+			Value: slices.Clone(value),
 		}
 		res = append(res, pair)
 		if len(res) >= num {

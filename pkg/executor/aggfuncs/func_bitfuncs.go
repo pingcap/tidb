@@ -115,7 +115,7 @@ var _ SlidingWindowAggFunc = &bitXorUint64{}
 
 func (e *bitXorUint64) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4BitFunc)(pr)
-	for i := uint64(0); i < shiftStart; i++ {
+	for i := range shiftStart {
 		inputValue, isNull, err := e.args[0].EvalInt(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
@@ -125,7 +125,7 @@ func (e *bitXorUint64) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chun
 		}
 		*p ^= uint64(inputValue)
 	}
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		inputValue, isNull, err := e.args[0].EvalInt(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
