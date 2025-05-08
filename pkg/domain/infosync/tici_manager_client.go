@@ -14,11 +14,11 @@ import (
 )
 
 var (
-	_ TiCIManager = &TiCIManagerCtx{}
+	_ tiCIManager = &TiCIManagerCtx{}
 )
 
-// TiCIManager manages fulltext index for TiCI.
-type TiCIManager interface {
+// tiCIManager manages fulltext index for TiCI.
+type tiCIManager interface {
 	// CreateFulltextIndex create fulltext index on TiCI
 	CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error
 }
@@ -28,8 +28,8 @@ type TiCIManagerCtx struct {
 	indexServiceClient indexer.IndexerServiceClient
 }
 
-// NewTiCIManager creates a new TiCI manager.
-func NewTiCIManager(ticiHost string, ticiPort string) (*TiCIManagerCtx, error) {
+// newTiCIManager creates a new TiCI manager.
+func newTiCIManager(ticiHost string, ticiPort string) (*TiCIManagerCtx, error) {
 	conn, err := grpc.NewClient(fmt.Sprintf("%s:%s", ticiHost, ticiPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err

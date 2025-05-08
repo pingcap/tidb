@@ -129,7 +129,7 @@ type InfoSyncer struct {
 	tiflashReplicaManager TiFlashReplicaManager
 	resourceManagerClient pd.ResourceManagerClient
 	infoCache             infoschemaMinTS
-	TiCIManager           TiCIManager
+	TiCIManager           tiCIManager
 }
 
 // ServerInfo represents the server's basic information.
@@ -312,7 +312,7 @@ func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
 
 // TODO: init TiCI manager by PD when TiCI register in PD.
 func (is *InfoSyncer) initTiCIManager() error {
-	tiCIManager, err := NewTiCIManager("0.0.0.0", "50051")
+	tiCIManager, err := newTiCIManager("0.0.0.0", "50051")
 	if err != nil {
 		return err
 	}
