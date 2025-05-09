@@ -1152,15 +1152,6 @@ func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
 		lock.LockType == ast.SelectLockForUpdateWaitN
 }
 
-func isTiKVIndexByName(idxName string, tblInfo *model.TableInfo) bool {
-	for _, index := range tblInfo.Indices {
-		if index.Name.L == idxName {
-			return !index.IsColumnarIndex()
-		}
-	}
-	return false
-}
-
 func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
@@ -1320,7 +1311,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				ignored = append(ignored, path)
 				continue
 			}
-			if isTiKVIndexByName(idxName.L, tblInfo) && !isolationReadEnginesHasTiKV {
+			if !path.Index.IsColumnarIndex() && !isolationReadEnginesHasTiKV {
 				fmt.Println("TiKV is not supported in isolation read engines")
 				engineVals, _ := ctx.GetSessionVars().GetSystemVar(vardef.TiDBIsolationReadEngines)
 				err := fmt.Errorf("TiDB doesn't support index '%v' in the isolation read engines(value: '%v')", idxName, engineVals)
