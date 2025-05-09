@@ -145,9 +145,6 @@ a	b
 2	2
 execute stmt using @p,@u,@p;
 a	b
-1	1
-2	1
-3	1
 execute stmt using @u,@p,@p;
 a	b
 2	1
@@ -170,8 +167,6 @@ a	b
 prepare stmt from 'select * from t where a = ? and ((b >= ? and b <= ?) or b = 2)';
 execute stmt using @p,@p,@p;
 a	b
-1	1
-1	2
 execute stmt using @p,@q,@q;
 a	b
 1	2
@@ -180,9 +175,6 @@ a	b
 2	2
 execute stmt using @p,@p,@u;
 a	b
-1	1
-1	2
-1	3
 execute stmt using @p,@u,@p;
 a	b
 1	2
@@ -219,9 +211,6 @@ a	b
 2	2
 execute stmt using @p,@u,@p;
 a	b
-1	1
-2	1
-3	1
 execute stmt using @u,@p,@p;
 a	b
 2	1
@@ -244,8 +233,6 @@ a	b
 prepare stmt from 'select * from t where a = ? and ((b >= ? and b <= ?) or b = 2)';
 execute stmt using @p,@p,@p;
 a	b
-1	1
-1	2
 execute stmt using @p,@q,@q;
 a	b
 1	2
@@ -254,9 +241,6 @@ a	b
 2	2
 execute stmt using @p,@p,@u;
 a	b
-1	1
-1	2
-1	3
 execute stmt using @p,@u,@p;
 a	b
 1	2
@@ -289,9 +273,6 @@ a	b
 2	0
 execute stmt using @p,@u;
 a	b
-1	0
-2	0
-3	0
 execute stmt using @u,@p;
 a	b
 2	0
