@@ -877,18 +877,20 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 	if pi == nil {
 		return ds, nil
 	}
-	if ds.TableInfo.Indices != nil {
-		for _, hint := range ds.AstIndexHints {
-			for _, indexName := range hint.IndexNames {
-				if slices.ContainsFunc(ds.TableInfo.Indices, func(idx *model.IndexInfo) bool {
-					return idx.Name.L == indexName.L
-				}) {
-					// If the index is specified in the hint, we should not prune the partition.
-					return ds, nil
+	/*
+		if ds.TableInfo.Indices != nil {
+			for _, hint := range ds.AstIndexHints {
+				for _, indexName := range hint.IndexNames {
+					if slices.ContainsFunc(ds.TableInfo.Indices, func(idx *model.IndexInfo) bool {
+						return idx.Name.L == indexName.L
+					}) {
+						// If the index is specified in the hint, we should not prune the partition.
+						return ds, nil
+					}
 				}
 			}
 		}
-	}
+	*/
 
 	// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from ds.AllConds, the condition
 	// like 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
