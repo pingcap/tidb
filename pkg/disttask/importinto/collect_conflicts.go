@@ -188,12 +188,16 @@ func (e *collectConflictsStepExecutor) getHandler(kvGroup string) conflictKVHand
 		kvGroup:       kvGroup,
 		collector:     collector,
 	}
-	var handler conflictKVHandler = &conflictDataKVHandler{baseConflictKVHandler: baseHandler}
+	dataKVHandler := &conflictDataKVHandler{baseConflictKVHandler: baseHandler}
+	baseHandler.handleFn = dataKVHandler.handle
+	var handler conflictKVHandler = dataKVHandler
 	if kvGroup != dataKVGroup {
-		handler = &conflictIndexKVHandler{
+		indexKVHandler := &conflictIndexKVHandler{
 			baseConflictKVHandler: baseHandler,
 			isRowHandledFn:        e.isRowFromIndexHandled,
 		}
+		baseHandler.handleFn = indexKVHandler.handle
+		handler = indexKVHandler
 	}
 	return handler
 }

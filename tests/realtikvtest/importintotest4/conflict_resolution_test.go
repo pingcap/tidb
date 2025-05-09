@@ -637,9 +637,10 @@ func (s *mockGCSSuite) TestGlobalSortRetryOnConflictResolutionStep() {
 	})
 }
 
-func (s *mockGCSSuite) TestGlobalSortConflictedRowsWrite2MultipleFiles() {
+func (s *mockGCSSuite) TestGlobalSortConflictedRowsExceedMaxFileSize() {
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/forceHandleConflictsBySingleThread", "return(true)")
 	bak := importinto.MaxConflictRowFileSize
 	importinto.MaxConflictRowFileSize = 48
 	s.T().Cleanup(func() {
@@ -678,6 +679,7 @@ func (s *mockGCSSuite) TestGlobalSortTooManyConflictedRowsFromIndex() {
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/forceHandleConflictsBySingleThread", "return(true)")
 	var fpEnterCount atomic.Int32
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/trySaveHandledRowFromIndex", func(limitP *int64) {
 		*limitP = 0

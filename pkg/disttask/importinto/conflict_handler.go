@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dxfhandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -299,6 +300,9 @@ func handleKVGroupConflicts(
 	ci *common.ConflictInfo,
 	mergeCollectorResultFn func(*conflictRowCollector),
 ) (err error) {
+	failpoint.Inject("forceHandleConflictsBySingleThread", func() {
+		concurrency = 1
+	})
 	task := log.BeginTask(logger.With(
 		zap.String("kvGroup", kvGroup),
 		zap.Uint64("duplicates", ci.Count),

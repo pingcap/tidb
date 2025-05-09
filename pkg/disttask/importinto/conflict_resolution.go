@@ -83,9 +83,13 @@ func (e *conflictResolutionStepExecutor) getHandler(kvGroup string) conflictKVHa
 		logger:        e.logger,
 		kvGroup:       kvGroup,
 	}
-	var handler conflictKVHandler = &conflictDataKVHandler{baseConflictKVHandler: baseHandler}
+	dataKVHandler := &conflictDataKVHandler{baseConflictKVHandler: baseHandler}
+	baseHandler.handleFn = dataKVHandler.handle
+	var handler conflictKVHandler = dataKVHandler
 	if kvGroup != dataKVGroup {
-		handler = &conflictIndexKVHandler{baseConflictKVHandler: baseHandler}
+		indexKVHandler := &conflictIndexKVHandler{baseConflictKVHandler: baseHandler}
+		baseHandler.handleFn = indexKVHandler.handle
+		handler = indexKVHandler
 	}
 	return handler
 }
