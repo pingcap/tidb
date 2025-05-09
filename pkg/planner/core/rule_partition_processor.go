@@ -69,6 +69,9 @@ type PartitionProcessor struct{}
 // Optimize implements the LogicalOptRule.<0th> interface.
 func (s *PartitionProcessor) Optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
+	if !lp.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	p, err := s.rewriteDataSource(lp, opt)
 	return p, planChanged, err
 }
@@ -1934,6 +1937,9 @@ func (*PartitionProcessor) checkHintsApplicable(ds *logicalop.DataSource, partit
 }
 
 func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *model.PartitionInfo, or partitionRangeOR, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+	if ds.SCtx().GetSessionVars().StmtCtx.InPreparedPlanBuilding {
+		return ds, nil
+	}
 	children := make([]base.LogicalPlan, 0, len(pi.Definitions))
 	partitionNameSet := make(set.StringSet)
 	usedDefinition := make(map[int64]model.PartitionDefinition)
