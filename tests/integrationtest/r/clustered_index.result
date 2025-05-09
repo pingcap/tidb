@@ -122,11 +122,19 @@ id	estRows	task	access object	operator info
 StreamAgg_17	1.00	root		funcs:count(Column#8)->Column#6
 └─IndexReader_18	1.00	root		index:StreamAgg_9
   └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#8
+<<<<<<< HEAD
     └─IndexRangeScan_16	109.70	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[803163,+inf], keep order:false
+=======
+    └─IndexRangeScan_16	107.12	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[803163,+inf], keep order:false
+>>>>>>> 430fa8fc6a3 (planner: add tolerance for row count floating point comparison (#59241))
 explain select count(*) from wout_cluster_index.tbl_0 where col_0 >= 803163  ;
 id	estRows	task	access object	operator info
 StreamAgg_17	1.00	root		funcs:count(Column#9)->Column#7
 └─IndexReader_18	1.00	root		index:StreamAgg_9
   └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#9
+<<<<<<< HEAD
     └─IndexRangeScan_16	109.70	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[803163,+inf], keep order:false
+=======
+    └─IndexRangeScan_16	107.12	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[803163,+inf], keep order:false
+>>>>>>> 430fa8fc6a3 (planner: add tolerance for row count floating point comparison (#59241))
 set @@tidb_enable_outer_join_reorder=false;
