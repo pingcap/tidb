@@ -4435,3 +4435,58 @@ func (n *QueryWatchTextOption) Accept(v Visitor) (Node, bool) {
 	}
 	return v.Leave(n)
 }
+
+// LLMOption represents a LLM option.
+type LLMOption struct {
+	Name  string
+	Value ExprNode
+}
+
+// LLMStmt is a statement for LLM like updating or creating a LLM model.
+type LLMStmt struct {
+	stmtNode
+	Operation  string
+	Platform   bool
+	Model      bool
+	Name       string
+	OptionList []LLMOption
+}
+
+// Restore implements Node interface.
+func (n *LLMStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord(n.Operation)
+	ctx.WriteKeyWord(" LLM")
+	if n.Platform {
+		ctx.WriteKeyWord(" PLATFORM ")
+	} else if n.Model {
+		ctx.WriteKeyWord(" MODEL ")
+	}
+	ctx.WritePlain(n.Name)
+
+	for _, option := range n.OptionList {
+		ctx.WritePlain(" ")
+		ctx.WritePlain(option.Name)
+		ctx.WritePlain(" ")
+		if err := option.Value.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing LLMDDLOption: [%v]", option)
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *LLMStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*LLMStmt)
+	for _, option := range n.OptionList {
+		node, ok := option.Value.Accept(v)
+		if !ok {
+			return n, false
+		}
+		option.Value = node.(ExprNode)
+	}
+	return v.Leave(n)
+}
