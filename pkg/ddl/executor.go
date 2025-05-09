@@ -134,6 +134,7 @@ type Executor interface {
 	AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) error
 	DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) error
 	FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
+	// RefreshMeta can only be called by BR during the log restore phase.
 	RefreshMeta(ctx sessionctx.Context, args *model.RefreshMetaArgs) error
 
 	// CreateSchemaWithInfo creates a database (schema) given its database info.
