@@ -2411,6 +2411,8 @@ func (w *worker) addTableIndex(
 			//nolint:forcetypeassert
 			discovery := w.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 			if reorgInfo.ReorgMeta.UseCloudStorage {
+				// When adding unique index by global sort, it detects duplicate keys in CLOUD IMPORT step,
+				// so we can skip the check bellow.
 				return nil
 			}
 			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, discovery)
