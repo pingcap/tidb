@@ -278,9 +278,9 @@ func (r *byteReader) next(n int) (int, [][]byte) {
 }
 
 func (r *byteReader) reload() error {
-	startTime := time.Now()
-	defer func() {
-		if r.readDurHist != nil && r.readRateHist != nil {
+	if r.readDurHist != nil && r.readRateHist != nil {
+		startTime := time.Now()
+		defer func() {
 			readSecond := time.Since(startTime).Seconds()
 			size := 0
 			for _, b := range r.curBuf {
