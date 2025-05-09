@@ -448,7 +448,7 @@ func TestFlashbackPartitionTable(t *testing.T) {
 			"partition `a_2` values less than (75), " +
 			"partition `a_3` values less than (200))")
 
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 		}
 

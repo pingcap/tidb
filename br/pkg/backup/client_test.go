@@ -337,7 +337,7 @@ func TestOnBackupResponse(t *testing.T) {
 	buildProgressRangeFn := func(startKey []byte, endKey []byte) *rtree.ProgressRange {
 		return &rtree.ProgressRange{
 			Res: rtree.NewRangeTree(),
-			Origin: rtree.Range{
+			Origin: rtree.KeyRange{
 				StartKey: startKey,
 				EndKey:   endKey,
 			},
@@ -349,7 +349,7 @@ func TestOnBackupResponse(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, lock)
 
-	tree := rtree.NewProgressRangeTree()
+	tree := rtree.NewProgressRangeTree(nil, false)
 	r := &backup.ResponseAndStore{
 		StoreID: 0,
 		Resp: &backuppb.BackupResponse{
@@ -378,8 +378,9 @@ func TestOnBackupResponse(t *testing.T) {
 
 	require.NoError(t, tree.Insert(buildProgressRangeFn([]byte("aa"), []byte("c"))))
 	// error due to the tree range does not match response range.
-	_, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
-	require.Error(t, err)
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.Nil(t, lock)
+	require.NoError(t, err)
 
 	// case #3: partial range success case, find incomplete range
 	r.Resp.StartKey = []byte("aa")
@@ -387,7 +388,8 @@ func TestOnBackupResponse(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, lock)
 
-	incomplete := tree.GetIncompleteRanges()
+	incomplete, err := tree.GetIncompleteRanges()
+	require.NoError(t, err)
 	require.Len(t, incomplete, 1)
 	require.Equal(t, []byte("b"), incomplete[0].StartKey)
 	require.Equal(t, []byte("c"), incomplete[0].EndKey)
@@ -398,7 +400,8 @@ func TestOnBackupResponse(t *testing.T) {
 	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
 	require.NoError(t, err)
 	require.Nil(t, lock)
-	incomplete = tree.GetIncompleteRanges()
+	incomplete, err = tree.GetIncompleteRanges()
+	require.NoError(t, err)
 	require.Len(t, incomplete, 0)
 
 	// case #5: failed case, key is locked
@@ -453,15 +456,15 @@ func TestMainBackupLoop(t *testing.T) {
 		}
 	}
 	// split each range into limit parts
-	splitRangesFn := func(ranges []rtree.Range, limit int) [][]byte {
+	splitRangesFn := func(ranges []rtree.KeyRange, limit int) [][]byte {
 		if len(ranges) == 0 {
 			return nil
 		}
 		res := make([][]byte, 0)
 		res = append(res, ranges[0].StartKey)
-		for i := 0; i < len(ranges); i++ {
+		for i := range ranges {
 			partRes := make([][]byte, 0)
-			for j := 0; j < limit; j++ {
+			for range limit {
 				x, err := genRandBytesFn(ranges[i].StartKey, ranges[i].EndKey)
 				require.NoError(t, err)
 				partRes = append(partRes, x)
@@ -476,18 +479,18 @@ func TestMainBackupLoop(t *testing.T) {
 	}
 
 	// Case #1: normal case
-	ranges := []rtree.Range{
+	ranges := []rtree.KeyRange{
 		{
 			StartKey: []byte("aaa"),
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err := s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err := s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, nil, func(backup.ProgressUnit) {})
 	require.NoError(t, err)
 
 	mockBackupResponses := make(map[uint64][]*backup.ResponseAndStore)
 	splitKeys := splitRangesFn(ranges, 10)
-	for i := 0; i < len(splitKeys)-1; i++ {
+	for i := range len(splitKeys) - 1 {
 		randStoreID := uint64(rand.Int()%len(stores) + 1)
 		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
 			StoreID: randStoreID,
@@ -517,19 +520,19 @@ func TestMainBackupLoop(t *testing.T) {
 	require.NoError(t, s.backupClient.RunLoop(backgroundCtx, mainLoop))
 
 	// Case #2: canceled case
-	ranges = []rtree.Range{
+	ranges = []rtree.KeyRange{
 		{
 			StartKey: []byte("aaa"),
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err = s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, nil, func(backup.ProgressUnit) {})
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
 	splitKeys = splitRangesFn(ranges, 10)
 	// range is not complete
-	for i := 0; i < len(splitKeys)-2; i++ {
+	for i := range len(splitKeys) - 2 {
 		randStoreID := uint64(rand.Int()%len(stores) + 1)
 		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
 			StoreID: randStoreID,
@@ -562,18 +565,18 @@ func TestMainBackupLoop(t *testing.T) {
 	require.Error(t, s.backupClient.RunLoop(ctx, mainLoop))
 
 	// Case #3: one store drops and never come back
-	ranges = []rtree.Range{
+	ranges = []rtree.KeyRange{
 		{
 			StartKey: []byte("aaa"),
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err = s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, nil, func(backup.ProgressUnit) {})
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
 	splitKeys = splitRangesFn(ranges, 10)
-	for i := 0; i < len(splitKeys)-1; i++ {
+	for i := range len(splitKeys) - 1 {
 		randStoreID := uint64(rand.Int()%len(stores) + 1)
 		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
 			StoreID: randStoreID,
@@ -621,18 +624,18 @@ func TestMainBackupLoop(t *testing.T) {
 	require.Equal(t, 0, connectedStore[dropStoreID])
 
 	// Case #4 one store drops and come back soon
-	ranges = []rtree.Range{
+	ranges = []rtree.KeyRange{
 		{
 			StartKey: []byte("aaa"),
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err = s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, nil, func(backup.ProgressUnit) {})
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
 	splitKeys = splitRangesFn(ranges, 10)
-	for i := 0; i < len(splitKeys)-1; i++ {
+	for i := range len(splitKeys) - 1 {
 		randStoreID := uint64(rand.Int()%len(stores) + 1)
 		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
 			StoreID: randStoreID,
@@ -674,18 +677,18 @@ func TestMainBackupLoop(t *testing.T) {
 	require.Equal(t, 1, connectedStore[dropStoreID])
 
 	// Case #5 one store drops and watch store back
-	ranges = []rtree.Range{
+	ranges = []rtree.KeyRange{
 		{
 			StartKey: []byte("aaa"),
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err = s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, nil, func(backup.ProgressUnit) {})
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
 	splitKeys = splitRangesFn(ranges, 10)
-	for i := 0; i < len(splitKeys)-1; i++ {
+	for i := range len(splitKeys) - 1 {
 		randStoreID := uint64(rand.Int()%len(stores) + 1)
 		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
 			StoreID: randStoreID,
@@ -733,7 +736,7 @@ func TestMainBackupLoop(t *testing.T) {
 
 func TestBuildProgressRangeTree(t *testing.T) {
 	s := createBackupSuite(t)
-	ranges := []rtree.Range{
+	ranges := []rtree.KeyRange{
 		{
 			StartKey: []byte("aa"),
 			EndKey:   []byte("b"),
@@ -742,26 +745,38 @@ func TestBuildProgressRangeTree(t *testing.T) {
 			StartKey: []byte("c"),
 			EndKey:   []byte("d"),
 		},
+		{
+			StartKey: []byte("f"),
+			EndKey:   []byte("g"),
+		},
 	}
-	tree, err := s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err := s.backupClient.BuildProgressRangeTree(context.Background(), ranges, nil, func(backup.ProgressUnit) {})
 	require.NoError(t, err)
 
 	contained, err := tree.FindContained([]byte("a"), []byte("aa"))
 	require.Nil(t, contained)
-	require.Error(t, err)
+	require.NoError(t, err)
 
 	contained, err = tree.FindContained([]byte("b"), []byte("ba"))
 	require.Nil(t, contained)
-	require.Error(t, err)
+	require.NoError(t, err)
 
 	contained, err = tree.FindContained([]byte("e"), []byte("ea"))
 	require.Nil(t, contained)
-	require.Error(t, err)
+	require.NoError(t, err)
 
 	contained, err = tree.FindContained([]byte("aa"), []byte("b"))
 	require.NotNil(t, contained)
 	require.Equal(t, []byte("aa"), contained.Origin.StartKey)
 	require.Equal(t, []byte("b"), contained.Origin.EndKey)
+	require.NoError(t, err)
+
+	contained, err = tree.FindContained([]byte("cc"), []byte("e"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("e"), []byte("ff"))
+	require.Nil(t, contained)
 	require.NoError(t, err)
 }
 
@@ -824,7 +839,7 @@ func TestSplitBackupReqRanges(t *testing.T) {
 	require.Len(t, res, 1)
 
 	genSubRanges := func(req *backuppb.BackupRequest, count int) {
-		for i := 0; i < count; i++ {
+		for i := range count {
 			req.SubRanges = append(req.SubRanges, &kvrpcpb.KeyRange{
 				StartKey: []byte{byte(i)},
 				EndKey:   []byte{byte(i + 1)},
@@ -836,7 +851,7 @@ func TestSplitBackupReqRanges(t *testing.T) {
 	// case #3: 10 subranges and split into 10 parts
 	res = backup.SplitBackupReqRanges(req, 10)
 	require.Len(t, res, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		require.Equal(t, res[i].SubRanges[0].StartKey, req.SubRanges[i].StartKey)
 		require.Equal(t, res[i].SubRanges[0].EndKey, req.SubRanges[i].EndKey)
 	}
@@ -844,7 +859,7 @@ func TestSplitBackupReqRanges(t *testing.T) {
 	// case #3.1: 10 subranges and split into 11 parts(has no difference with 10 parts)
 	res = backup.SplitBackupReqRanges(req, 11)
 	require.Len(t, res, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		require.Equal(t, res[i].SubRanges[0].StartKey, req.SubRanges[i].StartKey)
 		require.Equal(t, res[i].SubRanges[0].EndKey, req.SubRanges[i].EndKey)
 	}
@@ -852,7 +867,7 @@ func TestSplitBackupReqRanges(t *testing.T) {
 	// case #3.2: 10 subranges and split into 9 parts(has no difference with 10 parts)
 	res = backup.SplitBackupReqRanges(req, 9)
 	require.Len(t, res, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		require.Equal(t, res[i].SubRanges[0].StartKey, req.SubRanges[i].StartKey)
 		require.Equal(t, res[i].SubRanges[0].EndKey, req.SubRanges[i].EndKey)
 	}
@@ -861,9 +876,9 @@ func TestSplitBackupReqRanges(t *testing.T) {
 	// but actually it will generate 4 parts due to not divisible.
 	res = backup.SplitBackupReqRanges(req, 3)
 	require.Len(t, res, 4)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		require.Len(t, res[i].SubRanges, 3)
-		for j := 0; j < 3; j++ {
+		for j := range 3 {
 			require.Equal(t, res[i].SubRanges[j].StartKey, req.SubRanges[i*3+j].StartKey)
 			require.Equal(t, res[i].SubRanges[j].EndKey, req.SubRanges[i*3+j].EndKey)
 		}

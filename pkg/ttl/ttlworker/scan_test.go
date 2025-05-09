@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
@@ -324,7 +325,7 @@ func (t *mockScanTask) runDoScanForTest(delTaskCnt int, errString string) *ttlSc
 	t.sessPool.lastSession = nil
 	r := t.doScan(context.TODO(), t.delCh, t.sessPool)
 	require.NotNil(t.t, t.sessPool.lastSession)
-	require.True(t.t, t.sessPool.lastSession.closed)
+	require.True(t.t, t.sessPool.lastSession.inPool)
 	require.Greater(t.t, t.sessPool.lastSession.resetTimeZoneCalls, 0)
 	require.NotNil(t.t, r)
 	require.Same(t.t, t.ttlScanTask, r.task)
@@ -389,7 +390,7 @@ loop:
 
 func (t *mockScanTask) checkDelTasks(cnt int) {
 	require.Equal(t.t, cnt, len(t.delTasks))
-	for i := 0; i < cnt; i++ {
+	for i := range cnt {
 		del := t.delTasks[i]
 		require.Nil(t.t, del)
 		require.NotNil(t.t, del.statistics)
@@ -411,7 +412,7 @@ func (t *mockScanTask) checkDelTasks(cnt int) {
 func (t *mockScanTask) execSQL(_ context.Context, sql string, _ ...any) ([]chunk.Row, error) {
 	var i int
 	found := false
-	for i = 0; i < len(t.sqlRetry); i++ {
+	for i = range t.sqlRetry {
 		if sql == t.selectSQL(i) {
 			found = true
 			break
@@ -566,7 +567,7 @@ func NewTTLScanTask(ctx context.Context, tbl *cache.PhysicalTable, ttlTask *cach
 }
 
 // DoScan is an exported version of `doScan` for test.
-func (t *ttlScanTask) DoScan(ctx context.Context, delCh chan<- *TTLDeleteTask, sessPool util.SessionPool) *ttlScanTaskExecResult {
+func (t *ttlScanTask) DoScan(ctx context.Context, delCh chan<- *TTLDeleteTask, sessPool syssession.Pool) *ttlScanTaskExecResult {
 	return t.doScan(ctx, delCh, sessPool)
 }
 

@@ -1,15 +1,15 @@
 drop table if exists t;
 create table t(a int, b int);
-explain update t t1, (select distinct b from t) t2 set t1.b = t2.b;
+explain format='brief' update t t1, (select distinct b from t) t2 set t1.b = t2.b;
 id	estRows	task	access object	operator info
-Update_7	N/A	root		N/A
-└─HashJoin_10	80000000.00	root		CARTESIAN inner join
-  ├─HashAgg_18(Build)	8000.00	root		group by:planner__core__cbo.t.b, funcs:firstrow(planner__core__cbo.t.b)->planner__core__cbo.t.b
-  │ └─TableReader_19	8000.00	root		data:HashAgg_14
-  │   └─HashAgg_14	8000.00	cop[tikv]		group by:planner__core__cbo.t.b, 
-  │     └─TableFullScan_17	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─TableReader_13(Probe)	10000.00	root		data:TableFullScan_12
-    └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Update	N/A	root		N/A
+└─HashJoin	80000000.00	root		CARTESIAN inner join
+  ├─HashAgg(Build)	8000.00	root		group by:planner__core__cbo.t.b, funcs:firstrow(planner__core__cbo.t.b)->planner__core__cbo.t.b
+  │ └─TableReader	8000.00	root		data:HashAgg
+  │   └─HashAgg	8000.00	cop[tikv]		group by:planner__core__cbo.t.b, 
+  │     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─TableReader(Probe)	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists tb1, tb2;
 create table tb1(a int, b int, primary key(a));
 create table tb2 (a int, b int, c int, d datetime, primary key(c),key idx_u(a));
@@ -36,7 +36,7 @@ b datetime,
 c varchar(45),
 d int not null unique auto_increment
 );
-explain analyze select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4;
+explain analyze format='brief' select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4;
 drop table if exists t;
 create table t (a int);
 insert into t values (1);
@@ -66,16 +66,16 @@ create table t2(a int, b int);
 insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
 insert into t2 values (2, 22), (3, 33), (5, 55), (233, 2), (333, 3), (3434, 5);
 analyze table t1, t2 all columns;
-explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1;
+explain analyze format='brief' select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Projection_9	1.00	1	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, Concurrency:OFF	planner__core__cbo.t1.a, planner__core__cbo.t1.b, Column#8	<num>	N/A
-└─StreamAgg_11	1.00	1	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>	funcs:sum(Column#16)->Column#8, funcs:firstrow(Column#17)->planner__core__cbo.t1.a, funcs:firstrow(Column#18)->planner__core__cbo.t1.b	<num>	N/A
-  └─Projection_53	4.00	3	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, Concurrency:OFF	cast(planner__core__cbo.t1.c, decimal(10,0) BINARY)->Column#16, planner__core__cbo.t1.a->Column#17, planner__core__cbo.t1.b->Column#18	<num>	N/A
-    └─HashJoin_51	4.00	3	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, build_hash_table:{concurrency:<num>, time:<num>, fetch:<num>, max_partition:<num>, total_partition:<num>, max_build:<num>, total_build:<num>}, probe:{concurrency:<num>, time:<num>, fetch_and_wait:<num>, max_worker_time:<num>, total_worker_time:<num>, max_probe:<num>, total_probe:<num>}	inner join, equal:[eq(planner__core__cbo.t1.a, planner__core__cbo.t2.b)]	<num>	<num>
-      ├─TableReader_30(Build)	6.00	6	root	NULL	time.*loops.*cop_task.*	data:Selection_29	<num>	N/A
-      │ └─Selection_29	6.00	6	cop[tikv]	NULL	tikv_task:{time:<num>, loops:<num>}	gt(planner__core__cbo.t2.b, 1), not(isnull(planner__core__cbo.t2.b))	N/A	N/A
-      │   └─TableFullScan_28	6.00	6	cop[tikv]	table:t2	tikv_task:{time:<num>, loops:<num>}	keep order:false	N/A	N/A
-      └─TableReader_33(Probe)	4.00	4	root	NULL	time.*loops.*cop_task.*	data:Selection_32	<num>	N/A
-        └─Selection_32	4.00	4	cop[tikv]	NULL	tikv_task:{time:<num>, loops:<num>}	gt(planner__core__cbo.t1.a, 1), not(isnull(planner__core__cbo.t1.a))	N/A	N/A
-          └─TableFullScan_31	5.00	5	cop[tikv]	table:t1	tikv_task:{time:<num>, loops:<num>}	keep order:false	N/A	N/A
+Projection	1.00	1	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, Concurrency:OFF	planner__core__cbo.t1.a, planner__core__cbo.t1.b, Column#8	<num>	N/A
+└─StreamAgg	1.00	1	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>	funcs:sum(Column#16)->Column#8, funcs:firstrow(Column#17)->planner__core__cbo.t1.a, funcs:firstrow(Column#18)->planner__core__cbo.t1.b	<num>	N/A
+  └─Projection	4.00	3	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, Concurrency:OFF	cast(planner__core__cbo.t1.c, decimal(10,0) BINARY)->Column#16, planner__core__cbo.t1.a->Column#17, planner__core__cbo.t1.b->Column#18	<num>	N/A
+    └─HashJoin	4.00	3	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, build_hash_table:{concurrency:<num>, time:<num>, fetch:<num>, max_partition:<num>, total_partition:<num>, max_build:<num>, total_build:<num>}, probe:{concurrency:<num>, time:<num>, fetch_and_wait:<num>, max_worker_time:<num>, total_worker_time:<num>, max_probe:<num>, total_probe:<num>}	inner join, equal:[eq(planner__core__cbo.t1.a, planner__core__cbo.t2.b)]	<num>	<num>
+      ├─TableReader(Build)	6.00	6	root	NULL	time.*loops.*cop_task.*	data:Selection	<num>	N/A
+      │ └─Selection	6.00	6	cop[tikv]	NULL	tikv_task:{time:<num>, loops:<num>}	gt(planner__core__cbo.t2.b, 1), not(isnull(planner__core__cbo.t2.b))	N/A	N/A
+      │   └─TableFullScan	6.00	6	cop[tikv]	table:t2	tikv_task:{time:<num>, loops:<num>}	keep order:false	N/A	N/A
+      └─TableReader(Probe)	4.00	4	root	NULL	time.*loops.*cop_task.*	data:Selection	<num>	N/A
+        └─Selection	4.00	4	cop[tikv]	NULL	tikv_task:{time:<num>, loops:<num>}	gt(planner__core__cbo.t1.a, 1), not(isnull(planner__core__cbo.t1.a))	N/A	N/A
+          └─TableFullScan	5.00	5	cop[tikv]	table:t1	tikv_task:{time:<num>, loops:<num>}	keep order:false	N/A	N/A
 set sql_mode=default;

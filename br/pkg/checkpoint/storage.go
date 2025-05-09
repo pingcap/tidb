@@ -99,10 +99,7 @@ const CheckpointIdMapBlockSize int = 524288
 
 func chunkInsertCheckpointData(data []byte, fn func(segmentId uint64, chunk []byte) error) error {
 	for startIdx, segmentId := 0, uint64(0); startIdx < len(data); segmentId += 1 {
-		endIdx := startIdx + CheckpointIdMapBlockSize
-		if endIdx > len(data) {
-			endIdx = len(data)
-		}
+		endIdx := min(startIdx+CheckpointIdMapBlockSize, len(data))
 		if err := fn(segmentId, data[startIdx:endIdx]); err != nil {
 			return errors.Trace(err)
 		}
@@ -226,7 +223,7 @@ func selectCheckpointData[K KeyType, V ValueType](
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
 	dbName string,
-	fn func(groupKey K, value V),
+	fn func(groupKey K, value V) error,
 ) (time.Duration, error) {
 	// records the total time cost in the past executions
 	var pastDureTime time.Duration = 0

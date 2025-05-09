@@ -80,7 +80,7 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rc.props, 1)
 
-	kvStore.Close()
+	kvStore.finish()
 	err = writer.Close(ctx)
 	require.NoError(t, err)
 	expected = &rangeProperty{
@@ -124,7 +124,7 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 		keys:     1,
 	}
 	require.Equal(t, expected, rc.props[1])
-	kvStore.Close()
+	kvStore.finish()
 	// Length of properties should not change after close.
 	require.Len(t, rc.props, 2)
 	err = writer.Close(ctx)
@@ -149,7 +149,7 @@ func TestKVReadWrite(t *testing.T) {
 	kvCnt := rand.Intn(10) + 10
 	keys := make([][]byte, kvCnt)
 	values := make([][]byte, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		randLen := rand.Intn(10) + 1
 		keys[i] = make([]byte, randLen)
 		rand.Read(keys[i])
@@ -159,14 +159,14 @@ func TestKVReadWrite(t *testing.T) {
 		err = kvStore.addEncodedData(getEncodedData(keys[i], values[i]))
 		require.NoError(t, err)
 	}
-	kvStore.Close()
+	kvStore.finish()
 	err = writer.Close(ctx)
 	require.NoError(t, err)
 
 	bufSize := rand.Intn(100) + 1
 	kvReader, err := newKVReader(ctx, "/test", memStore, 0, bufSize)
 	require.NoError(t, err)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		key, value, err := kvReader.nextKV()
 		require.NoError(t, err)
 		require.Equal(t, keys[i], key)

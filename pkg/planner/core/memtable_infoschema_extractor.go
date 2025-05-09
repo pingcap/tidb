@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 // extractableCols records the column names used by tables in information_schema.
@@ -163,7 +163,7 @@ func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 		if len(tableIDs) > 0 {
 			tableMap := make(map[int64]*model.TableInfo, len(tableIDs))
 			findTablesByID(is, tableIDs, tableNames, tableMap)
-			tableSlice := maps.Values(tableMap)
+			tableSlice := slices.Collect(maps.Values(tableMap))
 			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
 			return findSchemasForTables(e, is, tableSlice)
 		}
@@ -173,7 +173,7 @@ func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 		if len(partIDs) > 0 {
 			tableMap := make(map[int64]*model.TableInfo, len(partIDs))
 			findTablesByPartID(is, partIDs, tableNames, tableMap)
-			tableSlice := maps.Values(tableMap)
+			tableSlice := slices.Collect(maps.Values(tableMap))
 			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
 			return findSchemasForTables(e, is, tableSlice)
 		}
@@ -239,8 +239,8 @@ func (e *InfoSchemaBaseExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	}
 
 	r := new(bytes.Buffer)
-	colNames := maps.Keys(e.ColPredicates)
-	sort.Strings(colNames)
+	colNames := slices.Collect(maps.Keys(e.ColPredicates))
+	slices.Sort(colNames)
 	for _, colName := range colNames {
 		preds := e.ColPredicates[colName]
 		if len(preds) > 0 {
@@ -248,8 +248,8 @@ func (e *InfoSchemaBaseExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 		}
 	}
 
-	colNames = maps.Keys(e.LikePatterns)
-	sort.Strings(colNames)
+	colNames = slices.Collect(maps.Keys(e.LikePatterns))
+	slices.Sort(colNames)
 	for _, colName := range colNames {
 		patterns := e.LikePatterns[colName]
 		if len(patterns) > 0 {
@@ -674,7 +674,7 @@ func findTableAndSchemaByName(
 		schema ast.CIStr
 		table  *model.TableInfo
 	}
-	tableMap := make(map[int64]schemaAndTable, len(tableNames))
+	schemaAndTbls := make([]schemaAndTable, 0, len(tableNames))
 	ctx = infoschema.WithRefillOption(ctx, false)
 	for _, n := range tableNames {
 		for _, s := range schemas {
@@ -689,24 +689,22 @@ func findTableAndSchemaByName(
 			if tblInfo.TempTableType == model.TempTableLocal {
 				continue
 			}
-			tableMap[tblInfo.ID] = schemaAndTable{s, tblInfo}
+			schemaAndTbls = append(schemaAndTbls, schemaAndTable{s, tblInfo})
 		}
 	}
-	schemaSlice := make([]ast.CIStr, 0, len(tableMap))
-	tableSlice := make([]*model.TableInfo, 0, len(tableMap))
-	for _, st := range tableMap {
+
+	slices.SortFunc(schemaAndTbls, func(a, b schemaAndTable) int {
+		if a.schema.L == b.schema.L {
+			return strings.Compare(a.table.Name.L, b.table.Name.L)
+		}
+		return strings.Compare(a.schema.L, b.schema.L)
+	})
+	schemaSlice := make([]ast.CIStr, 0, len(schemaAndTbls))
+	tableSlice := make([]*model.TableInfo, 0, len(schemaAndTbls))
+	for _, st := range schemaAndTbls {
 		schemaSlice = append(schemaSlice, st.schema)
 		tableSlice = append(tableSlice, st.table)
 	}
-	sort.Slice(schemaSlice, func(i, j int) bool {
-		iSchema, jSchema := schemaSlice[i].L, schemaSlice[j].L
-		less := iSchema < jSchema ||
-			(iSchema == jSchema && tableSlice[i].Name.L < tableSlice[j].Name.L)
-		if less {
-			tableSlice[i], tableSlice[j] = tableSlice[j], tableSlice[i]
-		}
-		return less
-	})
 	return schemaSlice, tableSlice, nil
 }
 

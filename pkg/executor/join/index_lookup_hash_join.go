@@ -172,20 +172,20 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context, initBatchSiz
 	ow := e.newOuterWorker(innerCh, initBatchSize)
 	go util.WithRecovery(func() { ow.run(e.ctxWithCancel) }, e.finishJoinWorkers)
 
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		if !e.KeepOuterOrder {
 			e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
 			e.joinChkResourceCh[i] <- exec.NewFirstChunk(e)
 		} else {
 			e.joinChkResourceCh[i] = make(chan *chunk.Chunk, numResChkHold)
-			for j := 0; j < numResChkHold; j++ {
+			for range numResChkHold {
 				e.joinChkResourceCh[i] <- exec.NewFirstChunk(e)
 			}
 		}
 	}
 
 	e.WorkerWg.Add(concurrency)
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		workerID := i
 		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(e.ctxWithCancel, cancelFunc) }, e.finishJoinWorkers)
 	}
@@ -422,7 +422,7 @@ func (ow *indexHashJoinOuterWorker) buildTask(ctx context.Context) (*indexHashJo
 	}
 	numChks := task.outerResult.NumChunks()
 	outerRowStatus := make([][]outerRowStatusFlag, numChks)
-	for i := 0; i < numChks; i++ {
+	for i := range numChks {
 		outerRowStatus[i] = make([]outerRowStatusFlag, task.outerResult.GetChunk(i).NumRows())
 	}
 	return &indexHashJoinTask{
@@ -614,14 +614,14 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(task *indexHash
 	}
 	buf, numChks := make([]byte, 1), task.outerResult.NumChunks()
 	task.lookupMap = newUnsafeHashTable(task.outerResult.Len())
-	for chkIdx := 0; chkIdx < numChks; chkIdx++ {
+	for chkIdx := range numChks {
 		chk := task.outerResult.GetChunk(chkIdx)
 		numRows := chk.NumRows()
 		if iw.lookup.Finished.Load().(bool) {
 			return
 		}
 	OUTER:
-		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+		for rowIdx := range numRows {
 			if task.outerMatch != nil && !task.outerMatch[chkIdx][rowIdx] {
 				continue
 			}

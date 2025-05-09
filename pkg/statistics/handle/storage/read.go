@@ -140,7 +140,7 @@ func HistogramFromStorageWithPriority(
 	hg := statistics.NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize)
 	hg.Correlation = corr
 	totalCount := int64(0)
-	for i := 0; i < bucketSize; i++ {
+	for i := range bucketSize {
 		count := rows[i].GetInt64(0)
 		repeats := rows[i].GetInt64(1)
 		var upperBound, lowerBound types.Datum
@@ -653,6 +653,9 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 }
 
 func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
+	// Regardless of whether the load is successful or not, we must remove the item from the async load list.
+	// The principle is to load the histogram for each column at most once in async load, as we already have a retry mechanism in the sync load.
+	defer asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 	statsTbl, ok := statsHandle.Get(col.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
@@ -661,7 +664,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 			zap.Int64("tableID", col.TableID),
 			zap.Int64("columnID", col.ID),
 		)
-		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
 	// When lite-init-stats is disabled, we cannot store the column info in the ColAndIdxExistenceMap.
@@ -676,7 +678,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 			zap.Int64("tableID", col.TableID),
 			zap.Int64("columnID", col.ID),
 		)
-		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
 	tblInfo := tbl.Meta()
@@ -688,7 +689,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 			zap.Int64("tableID", col.TableID),
 			zap.Int64("columnID", col.ID),
 		)
-		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
 
@@ -705,7 +705,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 				Updated: []*statistics.Table{statsTbl},
 			})
 		}
-		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
 
@@ -718,7 +717,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 				zap.Int64("columnID", col.ID),
 			)
 		}
-		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return err
 	}
 	var (
@@ -763,7 +761,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 			zap.Int64("tableID", col.TableID),
 			zap.Int64("columnID", col.ID),
 		)
-		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
 	statsTbl = statsTbl.Copy()
@@ -782,7 +779,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
 		Updated: []*statistics.Table{statsTbl},
 	})
-	asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 	if col.IsSyncLoadFailed {
 		statslogutil.StatsLogger().Warn("Column histogram loaded asynchronously after sync load failure",
 			zap.Int64("tableID", colHist.PhysicalID),
@@ -795,6 +791,10 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 // loadNeededIndexHistograms loads the necessary index histograms.
 // It is similar to loadNeededColumnHistograms, but for index.
 func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, idx model.TableItemID, loadFMSketch bool) (err error) {
+	// Regardless of whether the load is successful or not, we must remove the item from the async load list.
+	// The principle is to load the histogram for each index at most once in async load, as we already have a retry mechanism in the sync load.
+	defer asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
+
 	tbl, ok := statsHandle.Get(idx.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
@@ -803,12 +803,10 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idx.ID),
 		)
-		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
 	_, loadNeeded := tbl.IndexIsLoadNeeded(idx.ID)
 	if !loadNeeded {
-		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
 	hgMeta, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
@@ -820,7 +818,6 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 				zap.Int64("indexID", idx.ID),
 			)
 		}
-		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return err
 	}
 	tblInfo, ok := statsHandle.TableInfoByID(is, idx.TableID)
@@ -831,7 +828,6 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idx.ID),
 		)
-		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
 	idxInfo := tblInfo.Meta().FindIndexByID(idx.ID)
@@ -842,7 +838,6 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idx.ID),
 		)
-		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
 	hg, err := HistogramFromStorageWithPriority(sctx, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation, kv.PriorityHigh)
@@ -879,7 +874,6 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idx.ID),
 		)
-		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
 	tbl = tbl.Copy()
@@ -891,7 +885,6 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
 		Updated: []*statistics.Table{tbl},
 	})
-	asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 	if idx.IsSyncLoadFailed {
 		statslogutil.StatsLogger().Warn("Index histogram loaded asynchronously after sync load failure",
 			zap.Int64("tableID", idx.TableID),

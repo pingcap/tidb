@@ -265,7 +265,7 @@ func (b *Buffer) AllocBytes(n int) []byte {
 type SliceLocation struct {
 	bufIdx int32
 	offset int32
-	length int32
+	Length int32
 }
 
 var sizeOfSliceLocation = int(unsafe.Sizeof(SliceLocation{}))
@@ -283,7 +283,7 @@ func (b *Buffer) allocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 	}
 	blockIdx := int32(b.curBlockIdx)
 	offset := int32(b.curIdx)
-	loc := SliceLocation{bufIdx: blockIdx, offset: offset, length: int32(n)}
+	loc := SliceLocation{bufIdx: blockIdx, offset: offset, Length: int32(n)}
 
 	idx := b.curIdx
 	b.curIdx += n
@@ -319,8 +319,8 @@ func (b *Buffer) addBlock() {
 }
 
 // GetSlice returns the byte slice for the slice location.
-func (b *Buffer) GetSlice(loc SliceLocation) []byte {
-	return b.blocks[loc.bufIdx][loc.offset : loc.offset+loc.length]
+func (b *Buffer) GetSlice(loc *SliceLocation) []byte {
+	return b.blocks[loc.bufIdx][loc.offset : loc.offset+loc.Length]
 }
 
 // AddBytes adds the bytes into this Buffer's managed memory and return it.

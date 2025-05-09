@@ -220,12 +220,11 @@ func TestSwitchMode(t *testing.T) {
 		SetPropKeysDistance(2).
 		BuildOneFile(st, "/test", "0")
 
-	err := writer.Init(ctx, 5*1024*1024)
-	require.NoError(t, err)
+	writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
 
 	kvCnt := 1000000
 	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		randLen := rand.Intn(10) + 1
 		kvs[i].Key = make([]byte, randLen)
 		_, err := rand.Read(kvs[i].Key)
@@ -241,7 +240,7 @@ func TestSwitchMode(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	err = writer.Close(ctx)
+	err := writer.Close(ctx)
 	require.NoError(t, err)
 	pool := membuf.NewPool()
 	ConcurrentReaderBufferSizePerConc = rand.Intn(100) + 1
