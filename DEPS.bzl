@@ -10105,6 +10105,7 @@ def go_deps():
         name = "org_golang_x_oauth2",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/oauth2",
+<<<<<<< HEAD
         sha256 = "9655523711f6a40da1851bd4fab3b43f1bc44e1af16bf1dba38572516822d4fc",
         strip_prefix = "golang.org/x/oauth2@v0.23.0",
         urls = [
@@ -10112,6 +10113,15 @@ def go_deps():
             "http://ats.apps.svc/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.23.0.zip",
             "https://cache.hawkingrei.com/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.23.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.23.0.zip",
+=======
+        sha256 = "1e1028d0b190948f0cd44229bfa298440cb2481f601f992e12424bc6fa1f183c",
+        strip_prefix = "golang.org/x/oauth2@v0.30.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.30.0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.30.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.30.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.30.0.zip",
+>>>>>>> 3b56e25d84d (build(deps): bump golang.org/x/oauth2 from 0.29.0 to 0.30.0 (#61046))
         ],
     )
     go_repository(
