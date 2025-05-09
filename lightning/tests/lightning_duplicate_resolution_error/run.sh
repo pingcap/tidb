@@ -28,4 +28,5 @@ run_sql 'DROP VIEW IF EXISTS lightning_task_info.conflict_view'
 [ $? -eq 0 ]
 
 tail -n 10 $TEST_DIR/lightning.log | grep "ERROR" | tail -n 1 | grep -Fq "[Lightning:Restore:ErrFoundDataConflictRecords]found data conflict records in table a, primary key is '3', row data is '(3, 3, \\\"3.csv\\\")'"
+
 check_not_contains "the whole procedure completed" $TEST_DIR/lightning.log
