@@ -16,12 +16,14 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
 	rpprof "runtime/pprof"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -143,15 +146,68 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 	return err
 }
 
+type CostFactor struct {
+	Var string  `json:"var"`
+	Min float64 `json:"min"`
+	Max float64 `json:"max"`
+}
+
 func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
+	if e.explain.Format == types.ExplainFormatRelevantKnobs {
+		relevantKnobs := e.Ctx().GetSessionVars().StmtCtx.RelevantCostFactors
+
+		statsRecord := e.Ctx().GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
+		maxRowCount := int64(1)
+		for _, k := range statsRecord.Keys() {
+			maxRowCount = max(maxRowCount, statsRecord.GetUsedInfo(k).RealtimeCount)
+		}
+
+		knobs := make([]CostFactor, 0, 16)
+		for name := range relevantKnobs {
+			knobs = append(knobs, CostFactor{
+				Var: name,
+				Min: float64(0),
+				Max: float64(maxRowCount),
+			})
+		}
+		for name := range e.Ctx().GetSessionVars().StmtCtx.RelevantJoinOrderTables {
+			knobs = append(knobs, CostFactor{
+				Var: "tidb_join_order_cost_factor:" + name,
+				Min: float64(0),
+				Max: float64(maxRowCount),
+			})
+		}
+		sort.Slice(knobs, func(i, j int) bool {
+			return knobs[i].Var < knobs[j].Var
+		})
+		data, jerr := json.Marshal(knobs)
+		if jerr != nil {
+			return nil, jerr
+		}
+
+		rows = append(rows, []string{string(data)})
+		return
+	}
+
+	timeout := false
 	if e.explain.Analyze {
 		if err = e.executeAnalyzeExec(ctx); err != nil {
-			return nil, err
+			if strings.Contains(err.Error(), "maximum statement execution time exceeded") {
+				e.Ctx().GetSessionVars().SQLKiller.Reset()
+				timeout = true
+			} else {
+				return nil, err
+			}
 		}
 	}
 	if err = e.explain.RenderResult(); err != nil {
 		return nil, err
 	}
+
+	if timeout && len(e.explain.Rows) > 0 && len(e.explain.Rows[0]) > 0 {
+		e.explain.Rows[0][0] += ":TIMEOUT"
+	}
+
 	return e.explain.Rows, nil
 }
 

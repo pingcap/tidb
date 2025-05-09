@@ -367,6 +367,8 @@ const (
 	TiDBOptHashJoinCostFactor         = "tidb_opt_hash_join_cost_factor"
 	TiDBOptIndexJoinCostFactor        = "tidb_opt_index_join_cost_factor"
 
+	TiDBOptJoinOrderCostFactor = "tidb_opt_join_order_cost_factor"
+
 	// TiDBOptForceInlineCTE is used to enable/disable inline CTE
 	TiDBOptForceInlineCTE = "tidb_opt_force_inline_cte"
 

@@ -2132,6 +2132,39 @@ var defaultSysVars = []*SysVar{
 		s.IndexJoinCostFactor = tidbOptFloat64(val, vardef.DefOptIndexJoinCostFactor)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptJoinOrderCostFactor, Value: "", Type: vardef.TypeStr,
+		SetSession: func(s *SessionVars, val string) error {
+			if val == "" {
+				s.JoinOrderCostFactors = nil
+				return nil
+			}
+			var joinOrderCostFactor map[string]any
+			if err := json.Unmarshal([]byte(val), &joinOrderCostFactor); err != nil {
+				return err
+			}
+			s.JoinOrderCostFactors = make(map[string]float64, len(joinOrderCostFactor))
+			for tableName, v := range joinOrderCostFactor {
+				tableName = strings.ToLower(strings.TrimSpace(tableName))
+				if !strings.Contains(tableName, ".") {
+					tableName = fmt.Sprintf("%s.%s", s.CurrentDB, tableName)
+				}
+				vStr := fmt.Sprintf("%v", v)
+				vFloat, err := strconv.ParseFloat(vStr, 64)
+				if err != nil {
+					return err
+				}
+				s.JoinOrderCostFactors[tableName] = vFloat
+			}
+			return nil
+		},
+		GetSession: func(vars *SessionVars) (string, error) {
+			v, err := json.Marshal(vars.JoinOrderCostFactors)
+			if err != nil {
+				return "", err
+			}
+			return string(v), nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptimizerEnableNewOnlyFullGroupByCheck, Value: BoolToOnOff(vardef.DefTiDBOptimizerEnableNewOFGB), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.OptimizerEnableNewOnlyFullGroupByCheck = TiDBOptOn(val)
 		return nil
