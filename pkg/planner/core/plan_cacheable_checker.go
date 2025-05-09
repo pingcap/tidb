@@ -307,13 +307,23 @@ func isSelectStmtNonPrepCacheableFastCheck(sctx base.PlanContext, selectStmt *as
 	if selectStmt.Kind != ast.SelectStmtKindSelect {
 		return nil, false, "not a select statement"
 	}
-	if len(selectStmt.TableHints) > 0 || // hints
-		selectStmt.Having != nil || // having
-		selectStmt.WindowSpecs != nil || // window function
-		(selectStmt.Limit != nil && !sctx.GetSessionVars().EnablePlanCacheForParamLimit) || // limit
-		selectStmt.SelectIntoOpt != nil { // select-into statement
-		return nil, false, "queries that have hints, having-clause, window-function are not supported"
+
+	if selectStmt.Having != nil { // having
+		return nil, false, "queries with HAVING clauses are not supported"
 	}
+
+	if selectStmt.WindowSpecs != nil { // window function
+		return nil, false, "queries using window-functions are not supported"
+	}
+
+	if selectStmt.Limit != nil && !sctx.GetSessionVars().EnablePlanCacheForParamLimit { // limit
+		return nil, false, "queries with limit clauses are not supported"
+	}
+
+	if selectStmt.SelectIntoOpt != nil { // select-into statement
+		return nil, false, "SELECT INTO queries are not supported"
+	}
+
 	from := selectStmt.From
 	if from == nil || selectStmt.From.TableRefs == nil {
 		return nil, false, "queries that have sub-queries are not supported"
@@ -404,7 +414,8 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 	switch node := in.(type) {
 	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join, *ast.BetweenExpr, *ast.OnCondition,
 		*ast.InsertStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.Assignment, *ast.ParenthesesExpr, *ast.RowExpr,
-		*ast.TableSource, *ast.ColumnNameExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr, *ast.ByItem, *ast.AggregateFuncExpr:
+		*ast.TableSource, *ast.ColumnNameExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr, *ast.ByItem, *ast.AggregateFuncExpr,
+		*ast.TableOptimizerHint:
 		return in, !checker.cacheable // skip child if un-cacheable
 	case *ast.Limit:
 		if !checker.sctx.GetSessionVars().EnablePlanCacheForParamLimit {

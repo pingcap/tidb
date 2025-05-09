@@ -172,6 +172,7 @@ nogo(
                "//build:with_nogo": [
                    "//build/linter/allrevive",
                    "//build/linter/errcheck",
+                   "//build/linter/exptostd",
                    "//build/linter/lll",
                    "//build/linter/revive",
                ],
