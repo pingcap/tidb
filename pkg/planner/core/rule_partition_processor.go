@@ -908,6 +908,9 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 	// apply for some partitions like:
 	// a = 1 OR a = 2 => for p1 only "a = 1" and for p2 only "a = 2"
 	// since a cannot be 2 in p1 and a cannot be 1 in p2
+	if ds.SCtx().GetSessionVars().StmtCtx.InPreparedPlanBuilding {
+		return ds, nil
+	}
 	switch pi.Type {
 	case ast.PartitionTypeRange:
 		return s.processRangePartition(ds, pi, opt)
@@ -919,7 +922,6 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 	if ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return ds, nil
 	}
-
 	return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)), opt)
 }
 
@@ -1937,9 +1939,6 @@ func (*PartitionProcessor) checkHintsApplicable(ds *logicalop.DataSource, partit
 }
 
 func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *model.PartitionInfo, or partitionRangeOR, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	if ds.SCtx().GetSessionVars().StmtCtx.InPreparedPlanBuilding {
-		return ds, nil
-	}
 	children := make([]base.LogicalPlan, 0, len(pi.Definitions))
 	partitionNameSet := make(set.StringSet)
 	usedDefinition := make(map[int64]model.PartitionDefinition)
