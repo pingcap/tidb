@@ -16251,7 +16251,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "Count of retryable errors in hours",
+          "description": "Count of retryable errors",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
