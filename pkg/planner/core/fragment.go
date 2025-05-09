@@ -438,19 +438,40 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 		}
 	}
 	f.MPPSink.SetSelfTasks(tasks)
-	f.replaceCTEReader(f.MPPSink)
+	e.replaceCTEReader(f.MPPSink)
 	return tasks, nil
 }
 
-func (f *Fragment) replaceCTEReader(currentPlan base.PhysicalPlan) {
+func (e *mppTaskGenerator) replaceCTEReader(currentPlan base.PhysicalPlan) {
 	newChildren := make([]base.PhysicalPlan, len(currentPlan.Children()))
-	for i := 0; i < len(currentPlan.Children()); i++ {
+	for i := range len(currentPlan.Children()) {
 		child := currentPlan.Children()[i]
 		newChildren[i] = child
 		if cteR, ok := child.(*PhysicalCTE); ok {
-			newChildren[i] = cteR.source
+			group := e.CTEGroups[cteR.CTE.IDForStorage]
+			inconsistenceNullable := false
+			for i, col := range cteR.schema.Columns {
+				if mysql.HasNotNullFlag(col.RetType.GetFlag()) != mysql.HasNotNullFlag(group.CTEStorage.Children()[0].Schema().Columns[i].RetType.GetFlag()) {
+					inconsistenceNullable = true
+					break
+				}
+			}
+			if !inconsistenceNullable {
+				newChildren[i] = cteR.source
+				continue
+			}
+
+			cols := group.CTEStorage.Children()[0].Schema().Clone().Columns
+			for i, col := range cols {
+				col.Index = i
+			}
+			proj := PhysicalProjection{Exprs: expression.Column2Exprs(cols)}.Init(cteR.SCtx(), cteR.StatsInfo(), 0, nil)
+			proj.SetSchema(cteR.schema)
+			proj.SetChildren(cteR.source)
+			cteR.source.SetSchema(group.CTEStorage.sink.Schema())
+			newChildren[i] = proj
 		} else if _, ok := child.(*PhysicalExchangeReceiver); !ok {
-			f.replaceCTEReader(child)
+			e.replaceCTEReader(child)
 		}
 	}
 	currentPlan.SetChildren(newChildren...)
@@ -475,23 +496,6 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 	cteReader.source.frags = group.StorageFragments
 	cteReader.SetChildren(receiver)
 	receiver.SetChildren(group.CTEStorage.Children()[0])
-	inconsistenceNullable := false
-	for i, col := range cteReader.schema.Columns {
-		if mysql.HasNotNullFlag(col.RetType.GetFlag()) != mysql.HasNotNullFlag(group.CTEStorage.Children()[0].Schema().Columns[i].RetType.GetFlag()) {
-			inconsistenceNullable = true
-			break
-		}
-	}
-	if inconsistenceNullable {
-		cols := group.CTEStorage.Children()[0].Schema().Clone().Columns
-		for i, col := range cols {
-			col.Index = i
-		}
-		proj := PhysicalProjection{Exprs: expression.Column2Exprs(cols)}.Init(cteReader.SCtx(), cteReader.StatsInfo(), 0, nil)
-		proj.SetSchema(cteReader.schema.Clone())
-		proj.SetChildren(receiver)
-		cteReader.source.SetChildren(proj)
-	}
 	return nil
 }
 
