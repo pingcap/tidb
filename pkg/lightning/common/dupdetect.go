@@ -94,10 +94,10 @@ func (d *DupDetector) Next(iter KVIter) (key []byte, value []byte, ok bool, err 
 			return d.curKey, d.curVal, true, nil
 		}
 		if d.option.ReportErrOnDup {
-			dupKey := make([]byte, len(d.nextKey))
-			dupVal := make([]byte, len(val))
-			copy(dupKey, d.nextKey)
-			copy(dupVal, val)
+			dupKey := make([]byte, len(d.curKey))
+			dupVal := make([]byte, len(d.curVal))
+			copy(dupKey, d.curKey)
+			copy(dupVal, d.curVal)
 			return nil, nil, false, ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupVal)
 		}
 		if !recordFirst {

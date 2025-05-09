@@ -183,7 +183,6 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	memStore := storage.NewMemStorage()
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(1000).
-		SetKeyDuplicationEncoding(true).
 		Build(memStore, "/test", "0")
 
 	kvCount := 2000000

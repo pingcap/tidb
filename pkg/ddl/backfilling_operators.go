@@ -648,16 +648,6 @@ func NewWriteExternalStoreOperator(
 	reorgMeta *model.DDLReorgMeta,
 	tikvCodec tikv.Codec,
 ) *WriteExternalStoreOperator {
-	// due to multi-schema-change, we may merge processing multiple indexes into one
-	// local backend.
-	hasUnique := false
-	for _, index := range indexes {
-		if index.Meta().Unique {
-			hasUnique = true
-			break
-		}
-	}
-
 	onDuplicateKey := engineapi.OnDuplicateKeyError
 	failpoint.Inject("ignoreReadIndexDupKey", func() {
 		onDuplicateKey = engineapi.OnDuplicateKeyIgnore
@@ -674,7 +664,6 @@ func NewWriteExternalStoreOperator(
 			for i := range indexes {
 				builder := external.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
-					SetKeyDuplicationEncoding(hasUnique).
 					SetMemorySizeLimit(memoryQuota).
 					SetTiKVCodec(tikvCodec).
 					SetBlockSize(blockSize).
