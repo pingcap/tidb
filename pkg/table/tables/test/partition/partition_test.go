@@ -3179,7 +3179,7 @@ func TestExplainPartition(t *testing.T) {
 	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE a = 3`).Check(testkit.Rows(""+
 		`TableReader 1.00 root partition:p0 data:Selection`,
 		`└─Selection 1.00 cop[tikv]  eq(test.t.a, 3)`,
-		`  └─TableFullScan 6.00 cop[tikv] table:t keep order:false`))
+		`  └─TableFullScan 6.00 cop[tikv] table:t, partition:p0 keep order:false`))
 	tk.MustExec(`drop table t`)
 
 	tk.MustExec(`CREATE TABLE t (a int unsigned primary key, b int) PARTITION BY hash(a) PARTITIONS 3`)
