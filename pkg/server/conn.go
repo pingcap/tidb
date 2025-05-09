@@ -2003,7 +2003,7 @@ func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls strin
 	normalized, digest := parser.NormalizeDigest(sqls)
 	topsql.AttachAndRegisterSQLInfo(context.Background(), normalized, digest, false)
 	if len(normalized) != 0 {
-		snapshot.SetOption(kv.ResourceGroupTagger, kv.NewResourceGroupTagBuilder().SetPlanDigest(digest))
+		snapshot.SetOption(kv.ResourceGroupTagger, kv.NewResourceGroupTagBuilder().SetSQLDigest(digest))
 	}
 }
 
