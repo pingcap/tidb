@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -4448,12 +4449,15 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.GetPartitionInfo() != nil {
+		hasGlobal := slices.ContainsFunc(tableInfo.Indices, func(idx *model.IndexInfo) bool {
+			return idx.Global
+		})
 		// If `UseDynamicPruneMode` already been false, then we don't need to check whether execute `flagPartitionProcessor`
 		// otherwise we need to check global stats initialized for each partition table
-		if !b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
+		if !b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() && !hasGlobal {
 			b.optFlag = b.optFlag | rule.FlagPartitionProcessor
 		} else {
-			if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode {
+			if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode && !hasGlobal {
 				b.optFlag = b.optFlag | rule.FlagPartitionProcessor
 			} else {
 				h := domain.GetDomain(b.ctx).StatsHandle()
@@ -4477,7 +4481,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 						}
 					}
 				})
-				b.optFlag = b.optFlag | rule.FlagPartitionProcessor
+				if !hasGlobal {
+					b.optFlag = b.optFlag | rule.FlagPartitionProcessor
+				}
 				if usePartitionProcessor {
 					b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
 					if isDynamicEnabled {
