@@ -1,0 +1,971 @@
+[
+  {
+    "Name": "TestTiFlashANNIndex",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t1;",
+        "Plan": [
+          "TableReader 48.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 48.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 where a<1;",
+        "Plan": [
+          "TableReader 15.95 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 15.95 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 15.95 mpp[tiflash]  lt(test.t1.a, 1)",
+          "    └─TableFullScan 48.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 where vec = '[1,1,1]'",
+        "Plan": [
+          "TableReader 0.05 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 0.05 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 0.05 mpp[tiflash]  eq(test.t1.vec, [1,1,1])",
+          "    └─TableFullScan 48.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 where vec_cosine_distance(vec, '[1,1,1]') < 0.1",
+        "Plan": [
+          "TableReader 38.40 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 38.40 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 38.40 mpp[tiflash]  lt(vec_cosine_distance(test.t1.vec, [1,1,1]), 0.1)",
+          "    └─TableFullScan 48.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select vec_cosine_distance(vec, '[1,1,1]') as dis from t1 having dis < 0.1",
+        "Plan": [
+          "TableReader 38.40 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 38.40 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 38.40 mpp[tiflash]  vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "    └─Selection 38.40 mpp[tiflash]  lt(vec_cosine_distance(test.t1.vec, [1,1,1]), 0.1)",
+          "      └─TableFullScan 48.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '[1,1,1]')",
+        "Plan": [
+          "Projection 48.00 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
+          "└─Sort 48.00 root  Column#7",
+          "  └─Projection 48.00 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "    └─TableReader 48.00 root  MppVersion: 3, data:ExchangeSender",
+          "      └─ExchangeSender 48.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 1",
+        "Plan": [
+          "TopN 1.00 root  Column#8, offset:0, count:1",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 mpp[tiflash]  Column#8, offset:0, count:1",
+          "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
+          "        └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,1,1], limit:1)"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, vec_from_text('[1,1,1]')) limit 1",
+        "Plan": [
+          "TopN 1.00 root  Column#8, offset:0, count:1",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 mpp[tiflash]  Column#8, offset:0, count:1",
+          "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
+          "        └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,1,1], limit:1)"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') desc limit 1",
+        "Plan": [
+          "TopN 1.00 root  Column#7:desc, offset:0, count:1",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 mpp[tiflash]  Column#7:desc, offset:0, count:1",
+          "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, vec_from_text('[1,1,1]')) desc limit 1",
+        "Plan": [
+          "TopN 1.00 root  Column#7:desc, offset:0, count:1",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 mpp[tiflash]  Column#7:desc, offset:0, count:1",
+          "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '[1,1,1]')+1 limit 1",
+        "Plan": [
+          "TopN 1.00 root  Column#7, offset:0, count:1",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
+          "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, plus(vec_cosine_distance(test.t1.vec, [1,1,1]), 1)->Column#7",
+          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '[1,1,1]'),vec limit 1",
+        "Plan": [
+          "TopN 1.00 root  Column#7, test.t1.vec, offset:0, count:1",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 mpp[tiflash]  Column#7, test.t1.vec, offset:0, count:1",
+          "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_l2_distance(vec, '[1,1,1]') limit 1",
+        "Plan": [
+          "TopN 1.00 root  Column#7, offset:0, count:1",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
+          "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l2_distance(test.t1.vec, [1,1,1])->Column#7",
+          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_l1_distance(vec, '[1,1,1]') limit 1",
+        "Plan": [
+          "TopN 1.00 root  Column#7, offset:0, count:1",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
+          "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l1_distance(test.t1.vec, [1,1,1])->Column#7",
+          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_l2_distance(c, '[1,1,1]') limit 1",
+        "Plan": [
+          "TopN 1.00 root  Column#7, offset:0, count:1",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
+          "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l2_distance(test.t1.c, [1,1,1])->Column#7",
+          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_l2_distance(d, '[1,1,1]') limit 1",
+        "Plan": [
+          "TopN 1.00 root  Column#7, offset:0, count:1",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
+          "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l2_distance(test.t1.d, [1,1,1])->Column#7",
+          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_cosine_distance(d, '[1,1,1]') limit 1",
+        "Plan": [
+          "TopN 1.00 root  Column#7, offset:0, count:1",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
+          "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.d, [1,1,1])->Column#7",
+          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_l1_distance(d, '[1,1,1]') limit 1",
+        "Plan": [
+          "TopN 1.00 root  Column#7, offset:0, count:1",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
+          "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l1_distance(test.t1.d, [1,1,1])->Column#7",
+          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d",
+        "Plan": [
+          "Sort 48.00 root  Column#7",
+          "└─TableReader 48.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 48.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection 48.00 mpp[tiflash]  vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "      └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 1",
+        "Plan": [
+          "Projection 1.00 root  vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "└─TopN 1.00 root  Column#9, offset:0, count:1",
+          "  └─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 1.00 mpp[tiflash]  Column#9, offset:0, count:1",
+          "        └─Projection 1.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#9",
+          "          └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,1,1], limit:1)"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select vec_cosine_distance(vec, '[1,1,1]') as d, vec, a, b from t1 order by d limit 1",
+        "Plan": [
+          "Projection 1.00 root  vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7, test.t1.vec, test.t1.a, test.t1.b",
+          "└─TopN 1.00 root  Column#9, offset:0, count:1",
+          "  └─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 1.00 mpp[tiflash]  Column#9, offset:0, count:1",
+          "        └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#9",
+          "          └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,1,1], limit:1)"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 where a=0 order by vec_cosine_distance(vec, '[1,1,1]') limit 1",
+        "Plan": [
+          "TopN 0.05 root  Column#7, offset:0, count:1",
+          "└─TableReader 0.05 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 0.05 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 0.05 mpp[tiflash]  Column#7, offset:0, count:1",
+          "      └─Projection 0.05 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "        └─Selection 0.05 mpp[tiflash]  eq(test.t1.a, 0)",
+          "          └─TableFullScan 48.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
+    "Name": "TestTiFlashANNIndexForPartition",
+    "Cases": [
+      {
+        "SQL": "explain select * from t1;",
+        "Plan": [
+          "TableReader_10 49152.00 root partition:all MppVersion: 3, data:ExchangeSender_9",
+          "└─ExchangeSender_9 49152.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan_8 49152.00 mpp[tiflash] table:t1 keep order:false, PartitionTableScan:true"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t1 where a<1;",
+        "Plan": [
+          "TableReader_13 0.00 root partition:all MppVersion: 3, data:ExchangeSender_12",
+          "└─ExchangeSender_12 0.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan_10 0.00 mpp[tiflash] table:t1 pushed down filter:lt(test.t1.a, 1), keep order:false, PartitionTableScan:true"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t1 where vec = '[1,1,1]'",
+        "Plan": [
+          "TableReader_13 16384.00 root partition:all MppVersion: 3, data:ExchangeSender_12",
+          "└─ExchangeSender_12 16384.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan_10 16384.00 mpp[tiflash] table:t1 pushed down filter:eq(test.t1.vec, [1,1,1]), keep order:false, PartitionTableScan:true"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]')",
+        "Plan": [
+          "Projection_13 49152.00 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.store_id",
+          "└─Sort_4 49152.00 root  Column#6",
+          "  └─Projection_14 49152.00 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.store_id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#6",
+          "    └─TableReader_12 49152.00 root partition:all MppVersion: 3, data:ExchangeSender_11",
+          "      └─ExchangeSender_11 49152.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─TableFullScan_10 49152.00 mpp[tiflash] table:t1 keep order:false, PartitionTableScan:true"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 1",
+        "Plan": [
+          "Projection_6 1.00 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.store_id",
+          "└─TopN_10 1.00 root  Column#6, offset:0, count:1",
+          "  └─TableReader_20 1.00 root partition:all MppVersion: 3, data:ExchangeSender_19",
+          "    └─ExchangeSender_19 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN_18 1.00 mpp[tiflash]  Column#6, offset:0, count:1",
+          "        └─Projection_17 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.store_id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#6",
+          "          └─TableFullScan_16 49152.00 mpp[tiflash] table:t1 keep order:false, PartitionTableScan:true"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') desc limit 1",
+        "Plan": [
+          "Projection_6 1.00 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.store_id",
+          "└─TopN_10 1.00 root  Column#6:desc, offset:0, count:1",
+          "  └─TableReader_19 1.00 root partition:all MppVersion: 3, data:ExchangeSender_18",
+          "    └─ExchangeSender_18 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN_17 1.00 mpp[tiflash]  Column#6:desc, offset:0, count:1",
+          "        └─Projection_16 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.store_id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#6",
+          "          └─TableFullScan_15 49152.00 mpp[tiflash] table:t1 keep order:false, PartitionTableScan:true"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t1 order by vec_cosine_distance(vec, vec_from_text('[1,1,1]')) desc limit 1",
+        "Plan": [
+          "Projection_6 1.00 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.store_id",
+          "└─TopN_10 1.00 root  Column#6:desc, offset:0, count:1",
+          "  └─TableReader_19 1.00 root partition:all MppVersion: 3, data:ExchangeSender_18",
+          "    └─ExchangeSender_18 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN_17 1.00 mpp[tiflash]  Column#6:desc, offset:0, count:1",
+          "        └─Projection_16 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.store_id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#6",
+          "          └─TableFullScan_15 49152.00 mpp[tiflash] table:t1 keep order:false, PartitionTableScan:true"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]')+1 limit 1",
+        "Plan": [
+          "Projection_6 1.00 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.store_id",
+          "└─TopN_10 1.00 root  Column#6, offset:0, count:1",
+          "  └─TableReader_19 1.00 root partition:all MppVersion: 3, data:ExchangeSender_18",
+          "    └─ExchangeSender_18 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN_17 1.00 mpp[tiflash]  Column#6, offset:0, count:1",
+          "        └─Projection_16 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.store_id, plus(vec_cosine_distance(test.t1.vec, [1,1,1]), 1)->Column#6",
+          "          └─TableFullScan_15 49152.00 mpp[tiflash] table:t1 keep order:false, PartitionTableScan:true"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d",
+        "Plan": [
+          "Sort_4 49152.00 root  Column#6",
+          "└─TableReader_13 49152.00 root partition:all MppVersion: 3, data:ExchangeSender_12",
+          "  └─ExchangeSender_12 49152.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection_7 49152.00 mpp[tiflash]  vec_cosine_distance(test.t1.vec, [1,1,1])->Column#6",
+          "      └─TableFullScan_11 49152.00 mpp[tiflash] table:t1 keep order:false, PartitionTableScan:true"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 1",
+        "Plan": [
+          "Projection_6 1.00 root  vec_cosine_distance(test.t1.vec, [1,1,1])->Column#6",
+          "└─TopN_10 1.00 root  Column#7, offset:0, count:1",
+          "  └─TableReader_20 1.00 root partition:all MppVersion: 3, data:ExchangeSender_19",
+          "    └─ExchangeSender_19 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN_18 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
+          "        └─Projection_17 1.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "          └─TableFullScan_16 49152.00 mpp[tiflash] table:t1 keep order:false, PartitionTableScan:true"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select vec_cosine_distance(vec, '[1,1,1]') as d, vec, a, b from t1 order by d limit 1",
+        "Plan": [
+          "Projection_6 1.00 root  vec_cosine_distance(test.t1.vec, [1,1,1])->Column#6, test.t1.vec, test.t1.a, test.t1.b",
+          "└─TopN_10 1.00 root  Column#7, offset:0, count:1",
+          "  └─TableReader_20 1.00 root partition:all MppVersion: 3, data:ExchangeSender_19",
+          "    └─ExchangeSender_19 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN_18 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
+          "        └─Projection_17 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "          └─TableFullScan_16 49152.00 mpp[tiflash] table:t1 keep order:false, PartitionTableScan:true"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t1 where a=0 order by vec_cosine_distance(vec, '[1,1,1]') limit 1",
+        "Plan": [
+          "Projection_7 0.00 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.store_id",
+          "└─TopN_11 0.00 root  Column#6, offset:0, count:1",
+          "  └─TableReader_22 0.00 root partition:all MppVersion: 3, data:ExchangeSender_21",
+          "    └─ExchangeSender_21 0.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN_20 0.00 mpp[tiflash]  Column#6, offset:0, count:1",
+          "        └─Projection_19 0.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.store_id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#6",
+          "          └─TableFullScan_17 0.00 mpp[tiflash] table:t1 pushed down filter:eq(test.t1.a, 0), keep order:false, PartitionTableScan:true"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t1 where store_id between 80 and 120 order by vec_cosine_distance(vec, '[1,1,1]') limit 1",
+        "Plan": [
+          "Projection_7 0.00 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.store_id",
+          "└─TopN_11 0.00 root  Column#6, offset:0, count:1",
+          "  └─TableReader_22 0.00 root partition:p0,p1 MppVersion: 3, data:ExchangeSender_21",
+          "    └─ExchangeSender_21 0.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN_20 0.00 mpp[tiflash]  Column#6, offset:0, count:1",
+          "        └─Projection_19 0.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.store_id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#6",
+          "          └─TableFullScan_17 0.00 mpp[tiflash] table:t1 pushed down filter:ge(test.t1.store_id, 80), le(test.t1.store_id, 120), keep order:false, PartitionTableScan:true"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t1 partition (p0) order by vec_cosine_distance(vec, '[1,1,1]') limit 1",
+        "Plan": [
+          "Projection_6 1.00 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.store_id",
+          "└─TopN_10 1.00 root  Column#6, offset:0, count:1",
+          "  └─TableReader_20 1.00 root partition:p0 MppVersion: 3, data:ExchangeSender_19",
+          "    └─ExchangeSender_19 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN_18 1.00 mpp[tiflash]  Column#6, offset:0, count:1",
+          "        └─Projection_17 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.store_id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#6",
+          "          └─TableFullScan_16 49152.00 mpp[tiflash] table:t1 keep order:false, PartitionTableScan:true"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
+    "Name": "TestVectorSearchWithPKAuto",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select id from t1",
+        "Plan": [
+          "TableReader 6000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 6000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#11, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#11, offset:0, count:10",
+          "      └─TableFullScan 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)->Column#11"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id from t1 order by vec_cosine_distance(vec, '[1,1,1]')",
+        "Plan": [
+          "Projection 6000.00 root  test.t1.id",
+          "└─Projection 6000.00 root  test.t1.id, test.t1.vec",
+          "  └─Sort 6000.00 root  Column#8",
+          "    └─Projection 6000.00 root  test.t1.id, test.t1.vec, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
+          "      └─TableReader 6000.00 root  MppVersion: 3, data:ExchangeSender",
+          "        └─ExchangeSender 6000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#9, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#9, offset:0, count:10",
+          "      └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#9",
+          "        └─TableFullScan 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id, a, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#13, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#13, offset:0, count:10",
+          "      └─TableFullScan 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)->Column#13"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select a, id, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.a, test.t1.id, test.t1.b",
+          "└─TopN 10.00 root  Column#13, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#13, offset:0, count:10",
+          "        └─TableFullScan 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)->Column#13"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "└─TopN 10.00 root  Column#10, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#10, offset:0, count:10",
+          "        └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#10",
+          "          └─TableFullScan 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d",
+        "Plan": [
+          "Sort 6000.00 root  Column#7",
+          "└─TableReader 6000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 6000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection 6000.00 mpp[tiflash]  test.t1.id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "      └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select *, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "└─TopN 10.00 root  Column#10, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#10, offset:0, count:10",
+          "        └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#10",
+          "          └─TableFullScan 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id, vec_cosine_distance(vec, '[1,1,1]') as d, a, b from t1 order by d limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7, test.t1.a, test.t1.b",
+          "└─TopN 10.00 root  Column#10, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#10, offset:0, count:10",
+          "        └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#10",
+          "          └─TableFullScan 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id, a, b, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, test.t1.a, test.t1.b, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "└─TopN 10.00 root  Column#10, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#10, offset:0, count:10",
+          "        └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#10",
+          "          └─TableFullScan 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
+    "Name": "TestVectorSearchWithPKForceTiKV",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select id from t1",
+        "Plan": [
+          "TableReader 6000.00 root  data:TableFullScan",
+          "└─TableFullScan 6000.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#8, offset:0, count:10",
+          "└─TableReader 10.00 root  data:TopN",
+          "  └─TopN 10.00 cop[tikv]  Column#8, offset:0, count:10",
+          "    └─Projection 10.00 cop[tikv]  test.t1.id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
+          "      └─TableFullScan 6000.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id from t1 order by vec_cosine_distance(vec, '[1,1,1]')",
+        "Plan": [
+          "Projection 6000.00 root  test.t1.id",
+          "└─Projection 6000.00 root  test.t1.id, test.t1.vec",
+          "  └─Sort 6000.00 root  Column#8",
+          "    └─Projection 6000.00 root  test.t1.id, test.t1.vec, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
+          "      └─TableReader 6000.00 root  data:TableFullScan",
+          "        └─TableFullScan 6000.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#7, offset:0, count:10",
+          "└─TableReader 10.00 root  data:TopN",
+          "  └─TopN 10.00 cop[tikv]  Column#7, offset:0, count:10",
+          "    └─Projection 10.00 cop[tikv]  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "      └─TableFullScan 6000.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id, a, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#10, offset:0, count:10",
+          "└─TableReader 10.00 root  data:TopN",
+          "  └─TopN 10.00 cop[tikv]  Column#10, offset:0, count:10",
+          "    └─Projection 10.00 cop[tikv]  test.t1.id, test.t1.a, test.t1.b, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#10",
+          "      └─TableFullScan 6000.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select a, id, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.a, test.t1.id, test.t1.b",
+          "└─TopN 10.00 root  Column#10, offset:0, count:10",
+          "  └─TableReader 10.00 root  data:TopN",
+          "    └─TopN 10.00 cop[tikv]  Column#10, offset:0, count:10",
+          "      └─Projection 10.00 cop[tikv]  test.t1.id, test.t1.a, test.t1.b, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#10",
+          "        └─TableFullScan 6000.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "└─TopN 10.00 root  Column#8, offset:0, count:10",
+          "  └─TableReader 10.00 root  data:TopN",
+          "    └─TopN 10.00 cop[tikv]  Column#8, offset:0, count:10",
+          "      └─Projection 10.00 cop[tikv]  test.t1.id, test.t1.vec, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
+          "        └─TableFullScan 6000.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d",
+        "Plan": [
+          "Sort 6000.00 root  Column#7",
+          "└─Projection 6000.00 root  test.t1.id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "  └─TableReader 6000.00 root  data:TableFullScan",
+          "    └─TableFullScan 6000.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select *, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "└─TopN 10.00 root  Column#8, offset:0, count:10",
+          "  └─TableReader 10.00 root  data:TopN",
+          "    └─TopN 10.00 cop[tikv]  Column#8, offset:0, count:10",
+          "      └─Projection 10.00 cop[tikv]  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
+          "        └─TableFullScan 6000.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id, vec_cosine_distance(vec, '[1,1,1]') as d, a, b from t1 order by d limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7, test.t1.a, test.t1.b",
+          "└─TopN 10.00 root  Column#8, offset:0, count:10",
+          "  └─TableReader 10.00 root  data:TopN",
+          "    └─TopN 10.00 cop[tikv]  Column#8, offset:0, count:10",
+          "      └─Projection 10.00 cop[tikv]  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
+          "        └─TableFullScan 6000.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id, a, b, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, test.t1.a, test.t1.b, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "└─TopN 10.00 root  Column#8, offset:0, count:10",
+          "  └─TableReader 10.00 root  data:TopN",
+          "    └─TopN 10.00 cop[tikv]  Column#8, offset:0, count:10",
+          "      └─Projection 10.00 cop[tikv]  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
+          "        └─TableFullScan 6000.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
+    "Name": "TestVectorSearchHeavyFunction",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select id from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#11, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#11, offset:0, count:10",
+          "      └─TableFullScan 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)->Column#11"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id from t1 order by vec_l1_distance(vec, '[1,1,1]') limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#9, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#9, offset:0, count:10",
+          "      └─Projection 10.00 mpp[tiflash]  test.t1.id, vec_l1_distance(test.t1.vec, [1,1,1])->Column#9",
+          "        └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id from t1 order by vec_l2_distance(vec, '[1,1,1]') limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#9, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#9, offset:0, count:10",
+          "      └─Projection 10.00 mpp[tiflash]  test.t1.id, vec_l2_distance(test.t1.vec, [1,1,1])->Column#9",
+          "        └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id from t1 order by vec_negative_inner_product(vec, '[1,1,1]') limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#9, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#9, offset:0, count:10",
+          "      └─Projection 10.00 mpp[tiflash]  test.t1.id, vec_negative_inner_product(test.t1.vec, [1,1,1])->Column#9",
+          "        └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id from t1 order by vec_dims(vec) limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#9, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#9, offset:0, count:10",
+          "      └─Projection 10.00 mpp[tiflash]  test.t1.id, vec_dims(test.t1.vec)->Column#9",
+          "        └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id from t1 order by vec_l2_norm(vec) limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#9, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#9, offset:0, count:10",
+          "      └─Projection 10.00 mpp[tiflash]  test.t1.id, vec_l2_norm(test.t1.vec)->Column#9",
+          "        └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id from t1 order by MOD(a, 3) limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id",
+          "└─TopN 10.00 root  Column#9, offset:0, count:10",
+          "  └─Projection 10.00 root  test.t1.id, test.t1.a, mod(test.t1.a, 3)->Column#9",
+          "    └─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "      └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.a",
+          "          └─TopN 10.00 mpp[tiflash]  Column#8, offset:0, count:10",
+          "            └─Projection 6000.00 mpp[tiflash]  test.t1.id, test.t1.a, mod(test.t1.a, 3)->Column#8",
+          "              └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "└─TopN 10.00 root  Column#10, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#10, offset:0, count:10",
+          "        └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#10",
+          "          └─TableFullScan 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id, vec_l1_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, vec_l1_distance(test.t1.vec, [1,1,1])->Column#7",
+          "└─TopN 10.00 root  Column#9, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#9, offset:0, count:10",
+          "        └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, vec_l1_distance(test.t1.vec, [1,1,1])->Column#9",
+          "          └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id, vec_l2_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, vec_l2_distance(test.t1.vec, [1,1,1])->Column#7",
+          "└─TopN 10.00 root  Column#9, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#9, offset:0, count:10",
+          "        └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, vec_l2_distance(test.t1.vec, [1,1,1])->Column#9",
+          "          └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id, vec_negative_inner_product(vec, '[1,1,1]') as d from t1 order by d limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, vec_negative_inner_product(test.t1.vec, [1,1,1])->Column#7",
+          "└─TopN 10.00 root  Column#9, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#9, offset:0, count:10",
+          "        └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, vec_negative_inner_product(test.t1.vec, [1,1,1])->Column#9",
+          "          └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id, vec_dims(vec) as d from t1 order by d limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, vec_dims(test.t1.vec)->Column#7",
+          "└─TopN 10.00 root  Column#9, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#9, offset:0, count:10",
+          "        └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, vec_dims(test.t1.vec)->Column#9",
+          "          └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id, vec_l2_norm(vec) as d from t1 order by d limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, vec_l2_norm(test.t1.vec)->Column#7",
+          "└─TopN 10.00 root  Column#9, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#9, offset:0, count:10",
+          "        └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, vec_l2_norm(test.t1.vec)->Column#9",
+          "          └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select id, MOD(a, 3) as d from t1 order by d limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, mod(test.t1.a, 3)->Column#7",
+          "└─Projection 10.00 root  test.t1.id, test.t1.a",
+          "  └─TopN 10.00 root  Column#9, offset:0, count:10",
+          "    └─Projection 10.00 root  test.t1.id, test.t1.a, mod(test.t1.a, 3)->Column#9",
+          "      └─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "        └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.a",
+          "            └─TopN 10.00 mpp[tiflash]  Column#8, offset:0, count:10",
+          "              └─Projection 6000.00 mpp[tiflash]  test.t1.id, test.t1.a, mod(test.t1.a, 3)->Column#8",
+          "                └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#9, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#9, offset:0, count:10",
+          "      └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#9",
+          "        └─TableFullScan 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_l1_distance(vec, '[1,1,1]') limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#8, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#8, offset:0, count:10",
+          "      └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l1_distance(test.t1.vec, [1,1,1])->Column#8",
+          "        └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_l2_distance(vec, '[1,1,1]') limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#8, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#8, offset:0, count:10",
+          "      └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l2_distance(test.t1.vec, [1,1,1])->Column#8",
+          "        └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_negative_inner_product(vec, '[1,1,1]') limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#8, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#8, offset:0, count:10",
+          "      └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_negative_inner_product(test.t1.vec, [1,1,1])->Column#8",
+          "        └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_dims(vec) limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#8, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#8, offset:0, count:10",
+          "      └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_dims(test.t1.vec)->Column#8",
+          "        └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by vec_l2_norm(vec) limit 10",
+        "Plan": [
+          "TopN 10.00 root  Column#8, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#8, offset:0, count:10",
+          "      └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l2_norm(test.t1.vec)->Column#8",
+          "        └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 order by MOD(a, 3) limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
+          "└─TopN 10.00 root  Column#8, offset:0, count:10",
+          "  └─Projection 10.00 root  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, mod(test.t1.a, 3)->Column#8",
+          "    └─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "      └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─Projection 10.00 mpp[tiflash]  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
+          "          └─TopN 10.00 mpp[tiflash]  Column#7, offset:0, count:10",
+          "            └─Projection 6000.00 mpp[tiflash]  test.t1.id, test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, mod(test.t1.a, 3)->Column#7",
+          "              └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
+        ],
+        "Warn": null
+      }
+    ]
+  }
+]
