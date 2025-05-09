@@ -206,7 +206,7 @@ func TestChunkSender(t *testing.T) {
 	}()
 
 	engine := genMockEngine(ctx, clusterID, loadDataTaskID, addr)
-	chunksStore, err := newChunksStore(loadDataTaskID, writerID, "")
+	chunksStore, err := newChunkStore(loadDataTaskID, writerID, "")
 	require.NoError(t, err)
 
 	sender := newChunkSender(ctx, 1, engine, chunksStore)
