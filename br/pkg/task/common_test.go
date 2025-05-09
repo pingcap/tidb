@@ -294,6 +294,7 @@ func expectedDefaultBackupConfig() BackupConfig {
 		CompressionConfig: CompressionConfig{
 			CompressionType: backup.CompressionType_ZSTD,
 		},
+		RangeLimit:       30000000,
 		IgnoreStats:      true,
 		UseBackupMetaV2:  true,
 		UseCheckpoint:    true,

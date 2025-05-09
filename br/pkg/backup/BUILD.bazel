@@ -4,6 +4,7 @@ go_library(
     name = "backup",
     srcs = [
         "client.go",
+        "limit.go",
         "metrics.go",
         "schema.go",
         "store.go",
@@ -61,6 +62,7 @@ go_test(
     timeout = "short",
     srcs = [
         "client_test.go",
+        "limit_test.go",
         "main_test.go",
         "schema_test.go",
         "store_test.go",
@@ -68,7 +70,7 @@ go_test(
     embed = [":backup"],
     flaky = True,
     race = "on",
-    shard_count = 15,
+    shard_count = 18,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/gluetidb/mock",
