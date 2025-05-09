@@ -838,7 +838,7 @@ func TestIssue59238(t *testing.T) {
 	require.True(t, tk.MustQuery("select distinct create_time from information_schema.partitions where table_name = 't'").Equal(testkit.Rows(rs)))
 }
 
-func TestRefreshMeta(t *testing.T) {
+func TestRefreshMetaBasic(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 	de := domain.DDLExecutor()
 	tk := testkit.NewTestKit(t, store)
