@@ -29,7 +29,6 @@ import (
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
-	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -914,7 +913,7 @@ func TestCreateTableAsSelect(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Case 5: Create table with not null constraint as select with aggregation (should fail)
-	tk.MustGetErrCode("create table t6 (id int, b int not null) as select id, sum(b) from t1 group by id;", mysql.ErrNoDefaultForField)
+	tk.MustGetErrCode("create table t6 (id int, b int not null) as select id, sum(b) from t1 group by id;", errno.ErrNoDefaultForField)
 	tk.MustGetErrCode("show create table t6;", errno.ErrNoSuchTable)
 
 	// Case5-1: Create table with not null constraint as select with aggregation and column alias
