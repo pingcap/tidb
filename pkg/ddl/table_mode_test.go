@@ -305,7 +305,7 @@ func TestTableModeConcurrent(t *testing.T) {
 	checkErrorCode(t, failedErr3, errno.ErrInvalidTableModeSet)
 }
 
-// TestTableModeWithRefreshMeta tests update table meta by txn(exchange partition),
+// TestTableModeWithRefreshMeta tests update table meta by txn(exchange partition ID),
 // after RefreshMeta can modify TableMode.
 func TestTableModeWithRefreshMeta(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
@@ -325,7 +325,7 @@ func TestTableModeWithRefreshMeta(t *testing.T) {
 	ntInfo, ptInfo := getClonedTableInfoFromDomain(t, "test", "nt", domain), getClonedTableInfoFromDomain(t, "test", "pt", domain)
 	// change non-partition table ID to partition ID
 	partID := ptInfo.Partition.Definitions[0].ID
-	updateTableIDWithPartitionID(t, &store, dbInfo.ID, ntInfo, ptInfo, "p10")
+	recreateTableWithPartitionID(t, &store, dbInfo.ID, ntInfo, ptInfo, "p10")
 	ntInfo = testutil.GetTableInfoByTxn(t, store, dbInfo.ID, ntInfo.ID)
 	require.Equal(t, partID, ntInfo.ID)
 	// set table mode failure before refresh meta
@@ -341,8 +341,8 @@ func TestTableModeWithRefreshMeta(t *testing.T) {
 	tk.MustExec("select * from nt")
 }
 
-// updateTableIDWithPartitionID update table ID to partition ID and recreate table.
-func updateTableIDWithPartitionID(t *testing.T, store *kv.Storage, dbID int64, ntInfo, ptInfo *model.TableInfo, partName string) {
+// recreateTableWithPartitionID update table ID to partition ID and recreate table.
+func recreateTableWithPartitionID(t *testing.T, store *kv.Storage, dbID int64, ntInfo, ptInfo *model.TableInfo, partName string) {
 	_, partDef, err := getPartitionDef(ptInfo, partName)
 	require.NoError(t, err)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)

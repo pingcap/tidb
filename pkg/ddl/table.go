@@ -1711,8 +1711,7 @@ func onRefreshMeta(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	// table ID may not exists before schema version update,
-	// so get table info after update schema version.
+
 	var tbInfo *model.TableInfo
 	metaMut := jobCtx.metaMut
 	tbInfo, err = GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
