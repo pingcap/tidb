@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -223,7 +224,7 @@ func (CollectPredicateColumnsPoint) Name() string {
 type SyncWaitStatsLoadPoint struct{}
 
 // Optimize implements the base.LogicalOptRule.<0th> interface.
-func (SyncWaitStatsLoadPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (SyncWaitStatsLoadPoint) Optimize(ctx context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, planChanged, nil
@@ -231,7 +232,7 @@ func (SyncWaitStatsLoadPoint) Optimize(_ context.Context, plan base.LogicalPlan,
 	if plan.SCtx().GetSessionVars().StmtCtx.IsSyncStatsFailed {
 		return plan, planChanged, nil
 	}
-	err := SyncWaitStatsLoad(plan)
+	err := SyncWaitStatsLoad(ctx, plan)
 	return plan, planChanged, err
 }
 
@@ -270,11 +271,13 @@ func RequestLoadStats(ctx base.PlanContext, neededHistItems []model.StatsLoadIte
 }
 
 // SyncWaitStatsLoad sync-wait for stats load until timeout
-func SyncWaitStatsLoad(plan base.LogicalPlan) error {
+func SyncWaitStatsLoad(ctx context.Context, plan base.LogicalPlan) error {
 	stmtCtx := plan.SCtx().GetSessionVars().StmtCtx
 	if len(stmtCtx.StatsLoad.NeededItems) <= 0 {
 		return nil
 	}
+
+	defer tracing.StartRegion(ctx, "plancore.SyncWaitStatsLoad").End()
 	err := domain.GetDomain(plan.SCtx()).StatsHandle().SyncWaitStatsLoad(stmtCtx)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
