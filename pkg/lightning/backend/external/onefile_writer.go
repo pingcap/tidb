@@ -247,7 +247,7 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 	writeDuration := time.Since(writeStartTime)
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("merge_sort_write").Observe(writeDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("merge_sort_write").
-		Observe(float64(keyLen+len(idxVal)) / 1024.0 / 1024.0 / writeDuration.Seconds())
+		Observe(float64(length) / 1024.0 / 1024.0 / writeDuration.Seconds())
 	return nil
 }
 
