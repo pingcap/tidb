@@ -18,6 +18,7 @@ import (
 	"archive/zip"
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -531,50 +532,109 @@ func TestTiDBLastTxnInfo(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key)")
-	tk.MustQuery("select @@tidb_last_txn_info").Check(testkit.Rows(""))
+	// prepare point get
+	pointGetStmtID, _, _, err := tk.Session().PrepareStmt("select a from t where a = 1024")
+	require.NoError(t, err)
+	// first execute short path point-get
+	rs, err := tk.Session().ExecutePreparedStmt(context.Background(), pointGetStmtID, nil)
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
+	tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts')").Check(
+		testkit.Rows(strconv.FormatUint(math.MaxUint64, 10)),
+	)
 
+	// autocommit txn
 	tk.MustExec("insert into t values (1)")
 	rows1 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()
-	require.Greater(t, rows1[0][0].(string), "0")
-	require.Less(t, rows1[0][0].(string), rows1[0][1].(string))
+	startTS1, err := strconv.ParseUint(rows1[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	commitTS1 := tk.Session().GetSessionVars().LastCommitTS
+	require.Less(t, startTS1, commitTS1)
+	require.Equal(t, strconv.FormatUint(commitTS1, 10), rows1[0][1])
 
+	// readonly txn should also update @@tidb_last_txn_info
 	tk.MustExec("begin")
 	tk.MustQuery("select a from t where a = 1").Check(testkit.Rows("1"))
+	startTS2 := tk.Session().GetSessionVars().TxnCtx.StartTS
+	require.Less(t, commitTS1, startTS2)
 	rows2 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts'), @@tidb_current_ts").Rows()
-	tk.MustExec("commit")
-	rows3 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()
 	require.Equal(t, rows1[0][0], rows2[0][0])
 	require.Equal(t, rows1[0][1], rows2[0][1])
-	require.Equal(t, rows1[0][0], rows3[0][0])
-	require.Equal(t, rows1[0][1], rows3[0][1])
-	require.Less(t, rows2[0][1], rows2[0][2])
+	require.Equal(t, strconv.FormatUint(startTS2, 10), rows2[0][2])
+	tk.MustExec("commit")
+	rows3 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()
+	require.Equal(t, strconv.FormatUint(startTS2, 10), rows3[0][0])
+	require.Equal(t, "<nil>", rows3[0][1])
 
+	// txn explicitly started with begin
 	tk.MustExec("begin")
+	startTS3 := tk.Session().GetSessionVars().TxnCtx.StartTS
+	require.Less(t, startTS2, startTS3)
 	tk.MustExec("update t set a = a + 1 where a = 1")
 	rows4 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts'), @@tidb_current_ts").Rows()
+	require.Equal(t, rows3[0][0], rows4[0][0])
+	require.Equal(t, rows3[0][1], rows4[0][1])
+	require.Equal(t, strconv.FormatUint(startTS3, 10), rows4[0][2])
 	tk.MustExec("commit")
+	commitTS3 := tk.Session().GetSessionVars().LastCommitTS
+	require.Less(t, startTS3, commitTS3)
 	rows5 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()
-	require.Equal(t, rows1[0][0], rows4[0][0])
-	require.Equal(t, rows1[0][1], rows4[0][1])
-	require.Equal(t, rows5[0][0], rows4[0][2])
-	require.Less(t, rows4[0][1], rows4[0][2])
-	require.Less(t, rows4[0][2], rows5[0][1])
+	require.Equal(t, strconv.FormatUint(startTS3, 10), rows5[0][0])
+	require.Equal(t, strconv.FormatUint(commitTS3, 10), rows5[0][1])
 
+	// rollback txn
 	tk.MustExec("begin")
+	startTS4 := tk.Session().GetSessionVars().TxnCtx.StartTS
+	require.Less(t, commitTS3, startTS4)
 	tk.MustExec("update t set a = a + 1 where a = 2")
 	tk.MustExec("rollback")
 	rows6 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()
-	require.Equal(t, rows5[0][0], rows6[0][0])
-	require.Equal(t, rows5[0][1], rows6[0][1])
+	require.Equal(t, strconv.FormatUint(startTS4, 10), rows6[0][0])
+	require.Equal(t, "<nil>", rows6[0][1])
 
+	// optimistic txn commit failed
 	tk.MustExec("begin optimistic")
+	startTS5 := tk.Session().GetSessionVars().TxnCtx.StartTS
+	require.Less(t, startTS4, startTS5)
 	tk.MustExec("insert into t values (2)")
-	err := tk.ExecToErr("commit")
+	err = tk.ExecToErr("commit")
 	require.Error(t, err)
 	rows7 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts'), json_extract(@@tidb_last_txn_info, '$.error')").Rows()
-	require.Greater(t, rows7[0][0], rows5[0][0])
+	require.Equal(t, strconv.FormatUint(startTS5, 10), rows7[0][0])
 	require.Equal(t, "0", rows7[0][1])
 	require.Contains(t, err.Error(), rows7[0][1])
+
+	// autocommit=0
+	tk.MustExec("set @@autocommit=0")
+	tk.MustExec("update t set a = a + 1 where a = 1")
+	startTS6 := tk.Session().GetSessionVars().TxnCtx.StartTS
+	require.Less(t, startTS5, startTS6)
+	tk.MustExec("commit")
+	rows8 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()
+	commitTS6 := tk.Session().GetSessionVars().LastCommitTS
+	require.Less(t, startTS6, commitTS6)
+	require.Equal(t, strconv.FormatUint(startTS6, 10), rows8[0][0])
+	require.Equal(t, strconv.FormatUint(commitTS6, 10), rows8[0][1])
+	tk.MustExec("set @@autocommit=1")
+
+	// not active txn
+	tk.MustQuery("select 1")
+	require.Equal(t, rows8, tk.MustQuery(
+		"select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows(),
+	)
+
+	// select @@tidb_last_txn_info should not update @@tidb_last_txn_info
+	require.Equal(t, rows8, tk.MustQuery(
+		"select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows(),
+	)
+
+	// execute short path point-get again to test the cached case
+	rs, err = tk.Session().ExecutePreparedStmt(context.Background(), pointGetStmtID, nil)
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
+	tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts')").Check(
+		testkit.Rows(strconv.FormatUint(math.MaxUint64, 10)),
+	)
 
 	err = tk.ExecToErr("set @@tidb_last_txn_info = '{}'")
 	require.True(t, terror.ErrorEqual(err, variable.ErrIncorrectScope), fmt.Sprintf("err: %v", err))

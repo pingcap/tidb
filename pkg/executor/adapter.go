@@ -330,6 +330,11 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 			exec.Recreated(pointGetPlan, a.Ctx)
 			a.PsStmt.PointGet.Executor = exec
 			executor = exec
+			// If reuses the executor, the executor build phase is skipped, and the txn will not be activated that
+			// caused `TxnCtx.StartTS` to be 0.
+			// So we should set the `TxnCtx.StartTS` manually here to make sure it is not 0
+			// to provide the right value for `@@tidb_last_txn_info` or other variables.
+			a.Ctx.GetSessionVars().TxnCtx.StartTS = startTs
 		}
 	}
 
