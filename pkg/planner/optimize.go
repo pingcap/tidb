@@ -218,9 +218,15 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	// The SkipPlanCache function doesn't work until EnablePlanCache() is called in GetPlanFromPlanCache.
 	skipNonPreparedCache := false
 
-	// Disable the plan cache to prevent running the code above twice.
 	if sessVars.StmtCtx.StmtHints.HasResourceGroup {
+		/* If the prepared plan cache is enabled, this SetSkipPlanCache call is
+		needed to insure that the resource_group handling code is run each time
+		the query is executed. */
 		sessVars.StmtCtx.SetSkipPlanCache("resource_group is used in the SQL")
+
+		/* If the non-prepared plan cache is enabled, skipNonPreparedCache must
+		be set to true to insure that the resource_group handling code does not
+		run twice for non-prepared statements. */
 		skipNonPreparedCache = true
 	}
 
@@ -234,7 +240,14 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	}
 	// Setting skipNonPreparedCache to true to prevent running the code above twice.
 	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
+		/* If the prepared plan cache is enabled, this SetSkipPlanCache call is
+		needed to insure that the SET_VAR code is run each time the query is
+		executed. */
 		sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
+
+		/* If the non-prepared plan cache is enabled, skipNonPreparedCache must
+		be set to true to insure that the SET_VAR code does not run twice for
+		non-prepared statements. */
 		skipNonPreparedCache = true
 	}
 
@@ -265,7 +278,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	// try to get Plan from the NonPrepared Plan Cache
 	if sessVars.EnableNonPreparedPlanCache &&
 		isStmtNode &&
-		!useBinding && // TODO: support binding
 		!skipNonPreparedCache {
 		cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, stmtNode, is)
 		if err != nil {
