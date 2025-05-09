@@ -160,6 +160,26 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 	logFields = append(logFields, zap.Uint64("txn_start_ts", info.CurTxnStartTS))
 	if memTracker := info.MemTracker; memTracker != nil {
 		logFields = append(logFields, zap.String("mem_max", fmt.Sprintf("%d Bytes (%v)", memTracker.MaxConsumed(), memTracker.FormatBytes(memTracker.MaxConsumed()))))
+
+		totalMemory := memTracker.MaxConsumed()
+		if totalMemory > 0 {
+			var buf strings.Builder
+			firstComma := false
+			for label, tracker := range memTracker.GetChildrenForTest() {
+				usage := tracker.MaxConsumed()
+				percentage := (float64(usage) / float64(totalMemory)) * 100
+				if percentage > 10 { // Only log if the usage is greater than 10%
+					if firstComma {
+						buf.WriteString(", ")
+					}
+					buf.WriteString(fmt.Sprintf("%d: %d Bytes (%.2f%%)", label, usage, percentage))
+					firstComma = true
+				}
+			}
+			if buf.Len() > 0 {
+				logFields = append(logFields, zap.String("mem_top_contributors", buf.String()))
+			}
+		}
 	}
 
 	const logSQLLen = 1024 * 8
