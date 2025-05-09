@@ -973,6 +973,9 @@ func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *
 	var primaryIdxPath, indexPrefixPath *util.AccessPath
 	prefixMatches := 0
 	for _, path := range paths {
+		if path.StoreType == kv.TiFlash && idxName.L == "tiflash" {
+			return path
+		}
 		if path.StoreType == kv.TiFlash {
 			continue
 		}
