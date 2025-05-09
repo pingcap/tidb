@@ -134,6 +134,8 @@ type Executor interface {
 	AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) error
 	DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) error
 	FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
+	// RefreshMeta can only be called by BR during the log restore phase.
+	RefreshMeta(ctx sessionctx.Context, args *model.RefreshMetaArgs) error
 
 	// CreateSchemaWithInfo creates a database (schema) given its database info.
 	//
@@ -7057,4 +7059,30 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 		ResourceGroupName: ctx.GetSessionVars().StmtCtx.ResourceGroupName,
 		Version:           model.CurrentReorgMetaVersion,
 	}
+}
+
+// RefreshMeta is a internal DDL job. In some cases, BR log restore will
+// exchange table partition in meta kv directly, and table info in meta kv
+// is not consistent with info schema. So when BR call AlterTableMode for new
+// table will failure. RefreshMeta will reload schema diff to update info schema
+// by schema ID and table ID.
+func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaArgs) error {
+	is := e.infoCache.GetLatest()
+	_, ok := is.SchemaByID(args.SchemaID)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("SchemaID: %v", args.SchemaID))
+	}
+
+	job := &model.Job{
+		Version:        model.JobVersion2,
+		SchemaID:       args.SchemaID,
+		TableID:        args.TableID,
+		Type:           model.ActionRefreshMeta,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        sctx.GetSessionVars().SQLMode,
+	}
+	sctx.SetValue(sessionctx.QueryString, "skip")
+	err := e.doDDLJob2(sctx, job, args)
+	return errors.Trace(err)
 }
