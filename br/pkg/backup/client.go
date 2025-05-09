@@ -1117,6 +1117,7 @@ func (bc *Client) BackupRanges(
 	ranges []rtree.KeyRange,
 	request backuppb.BackupRequest,
 	concurrency uint,
+	rangeLimit int,
 	replicaReadLabel map[string]string,
 	metaWriter *metautil.MetaWriter,
 	progressCallBack func(ProgressUnit),
@@ -1149,7 +1150,7 @@ func (bc *Client) BackupRanges(
 		GlobalProgressTree: &globalProgressTree,
 		ReplicaReadLabel:   replicaReadLabel,
 		StateNotifier:      stateNotifier,
-		Limiter:            NewResourceMemoryLimiter(RangesSentThreshold),
+		Limiter:            NewResourceMemoryLimiter(rangeLimit),
 		ProgressCallBack:   progressCallBack,
 		// always use reset connection here.
 		// because we need to reset connection when store state changed.
