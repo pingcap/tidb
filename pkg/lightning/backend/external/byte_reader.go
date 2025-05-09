@@ -288,8 +288,8 @@ func (r *byteReader) reload() error {
 			}
 			r.readDurHist.Observe(readSecond)
 			r.readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
-		}
-	}()
+		}()
+	}
 	to := r.concurrentReader.expected
 	now := r.concurrentReader.now
 	// in read only false -> true is possible
