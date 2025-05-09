@@ -973,7 +973,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	if p.err = checkUnsupportedTableOptions(stmt.Options); p.err != nil {
 		return
 	}
-	if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
+	if stmt.Select == nil && len(stmt.Cols) == 0 && stmt.ReferTable == nil {
 		p.err = dbterror.ErrTableMustHaveColumns
 		return
 	}
