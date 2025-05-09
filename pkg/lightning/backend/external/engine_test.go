@@ -44,30 +44,30 @@ func testNewIter(
 	t *testing.T,
 	data common.IngestData,
 	lowerBound, upperBound []byte,
-	expectedKVs []kvPair,
+	expectedKVs []KVPair,
 	bufPool *membuf.Pool,
 ) {
 	ctx := context.Background()
 	iter := data.NewIter(ctx, lowerBound, upperBound, bufPool)
-	var kvs []kvPair
+	var kvs []KVPair
 	for iter.First(); iter.Valid(); iter.Next() {
 		require.NoError(t, iter.Error())
-		kvs = append(kvs, kvPair{key: iter.Key(), value: iter.Value()})
+		kvs = append(kvs, KVPair{Key: iter.Key(), Value: iter.Value()})
 	}
 	require.NoError(t, iter.Error())
 	require.NoError(t, iter.Close())
 	require.Equal(t, expectedKVs, kvs)
 }
 
-func checkDupDB(t *testing.T, db *pebble.DB, expectedKVs []kvPair) {
+func checkDupDB(t *testing.T, db *pebble.DB, expectedKVs []KVPair) {
 	iter, _ := db.NewIter(nil)
-	var gotKVs []kvPair
+	var gotKVs []KVPair
 	for iter.First(); iter.Valid(); iter.Next() {
 		key := make([]byte, len(iter.Key()))
 		copy(key, iter.Key())
 		value := make([]byte, len(iter.Value()))
 		copy(value, iter.Value())
-		gotKVs = append(gotKVs, kvPair{key: key, value: value})
+		gotKVs = append(gotKVs, KVPair{Key: key, Value: value})
 	}
 	require.NoError(t, iter.Close())
 	require.Equal(t, expectedKVs, gotKVs)
@@ -76,12 +76,12 @@ func checkDupDB(t *testing.T, db *pebble.DB, expectedKVs []kvPair) {
 }
 
 func TestMemoryIngestData(t *testing.T) {
-	kvs := []kvPair{
-		{key: []byte("key1"), value: []byte("value1")},
-		{key: []byte("key2"), value: []byte("value2")},
-		{key: []byte("key3"), value: []byte("value3")},
-		{key: []byte("key4"), value: []byte("value4")},
-		{key: []byte("key5"), value: []byte("value5")},
+	kvs := []KVPair{
+		{Key: []byte("key1"), Value: []byte("value1")},
+		{Key: []byte("key2"), Value: []byte("value2")},
+		{Key: []byte("key3"), Value: []byte("value3")},
+		{Key: []byte("key4"), Value: []byte("value4")},
+		{Key: []byte("key5"), Value: []byte("value5")},
 	}
 	data := &MemoryIngestData{
 		keyAdapter: common.NoopKeyAdapter{},
@@ -117,27 +117,27 @@ func TestMemoryIngestData(t *testing.T) {
 		duplicateDB:        db,
 		ts:                 234,
 	}
-	encodedKVs := make([]kvPair, 0, len(kvs)*2)
+	encodedKVs := make([]KVPair, 0, len(kvs)*2)
 	encodedZero := codec.EncodeInt(nil, 0)
 	encodedOne := codec.EncodeInt(nil, 1)
-	duplicatedKVs := make([]kvPair, 0, len(kvs)*2)
+	duplicatedKVs := make([]KVPair, 0, len(kvs)*2)
 
 	for i := range kvs {
-		encodedKey := keyAdapter.Encode(nil, kvs[i].key, encodedZero)
-		encodedKVs = append(encodedKVs, kvPair{key: encodedKey, value: kvs[i].value})
+		encodedKey := keyAdapter.Encode(nil, kvs[i].Key, encodedZero)
+		encodedKVs = append(encodedKVs, KVPair{Key: encodedKey, Value: kvs[i].Value})
 		if i%2 == 0 {
 			continue
 		}
 
 		// duplicatedKeys will be like key2_0, key2_1, key4_0, key4_1
-		duplicatedKVs = append(duplicatedKVs, kvPair{key: encodedKey, value: kvs[i].value})
+		duplicatedKVs = append(duplicatedKVs, KVPair{Key: encodedKey, Value: kvs[i].Value})
 
-		encodedKey = keyAdapter.Encode(nil, kvs[i].key, encodedOne)
-		newValues := make([]byte, len(kvs[i].value)+1)
-		copy(newValues, kvs[i].value)
-		newValues[len(kvs[i].value)] = 1
-		encodedKVs = append(encodedKVs, kvPair{key: encodedKey, value: newValues})
-		duplicatedKVs = append(duplicatedKVs, kvPair{key: encodedKey, value: newValues})
+		encodedKey = keyAdapter.Encode(nil, kvs[i].Key, encodedOne)
+		newValues := make([]byte, len(kvs[i].Value)+1)
+		copy(newValues, kvs[i].Value)
+		newValues[len(kvs[i].Value)] = 1
+		encodedKVs = append(encodedKVs, KVPair{Key: encodedKey, Value: newValues})
+		duplicatedKVs = append(duplicatedKVs, KVPair{Key: encodedKey, Value: newValues})
 	}
 	data.kvs = encodedKVs
 
