@@ -69,6 +69,22 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "exptostd": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    },
+    "only_files": {
+      "pkg/bindinfo/": "bindinfo code",
+      "pkg/meta/": "meta code",
+      "pkg/owner/": "owner code",
+      "pkg/planner/": "planner code",
+      "pkg/statistics/": "pkg/statistics/ code",
+      "pkg/ttl/": "ttl code",
+      "pkg/util/": "util code"
+    }
+  },
   "printexpression": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
@@ -359,17 +375,21 @@
       "//br/": "br code",
       "//cmd/": "cmd code",
       "//dumpling": "dumpling code",
+      "//lightning/": "lightning code",
       "pkg/autoid_service/": "autoid_service code",
       "pkg/bindinfo/": "bindinfo code",
       "pkg/br/": "br code",
+      "pkg/config/": "config code",
       "pkg/ddl/": "ddl code",
       "pkg/distsql/": "distsql code",
+      "pkg/disttask": "disttask code",
       "pkg/domain/": "domain code",
       "pkg/executor/": "util code",
       "pkg/expression/": "expression code",
       "pkg/extension/": "extension code",
       "pkg/infoschema/": "infoschema code",
       "pkg/kv/": "kv code",
+      "pkg/lightning/": "lightning code",
       "pkg/meta/": "meta code",
       "pkg/owner/": "owner code",
       "pkg/planner/cardinality": "pkg/planner/cardinality code",
@@ -382,6 +402,9 @@
       "pkg/resourcegroup/": "resourcegroup code",
       "pkg/resourcemanager/": "resourcemanager code",
       "pkg/server/": "server code",
+      "pkg/session": "pkg/session code",
+      "pkg/sessionctx": "pkg/sessionctx code",
+      "pkg/sessiontxn": "pkg/sessiontxn code",
       "pkg/statistics": "pkg/statistics code",
       "pkg/store/": "store code",
       "pkg/structure/": "structure code",

@@ -155,8 +155,8 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*precheck.CheckR
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			newTasks := append([]taskMeta(nil), tasks...)
-			for i := 0; i < len(newTasks); i++ {
+			newTasks := slices.Clone(tasks)
+			for i := range newTasks {
 				newTasks[i].tikvAvail = tikvAvail
 				newTasks[i].tiflashAvail = tiflashAvail
 			}
@@ -1229,7 +1229,7 @@ outer:
 			return theResult, nil
 		}
 
-		for i := 0; i < len(rows[0]); i++ {
+		for i := range rows[0] {
 			if rows[0][i].GetString() != rows[1][i].GetString() {
 				return theResult, nil
 			}
@@ -1375,7 +1375,7 @@ func (ci *tableEmptyCheckItem) Check(ctx context.Context) (*precheck.CheckResult
 	ch := make(chan tableNameComponents, concurrency)
 	eg, gCtx := errgroup.WithContext(ctx)
 
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		eg.Go(func() error {
 			for tblNameComp := range ch {
 				fullTableName := common.UniqueTable(tblNameComp.DBName, tblNameComp.TableName)
