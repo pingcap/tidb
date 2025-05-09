@@ -894,19 +894,25 @@ set tidb_enable_non_prepared_plan_cache=1;
 create binding for select * from t where a=1 using select /*+ use_index(t, a) */ * from t where a=1;
 select * from t where a=1;
 a
+select @@last_plan_from_binding, @@last_plan_from_cache;
+@@last_plan_from_binding	@@last_plan_from_cache
+1	0
 select * from t where a=1;
 a
-select @@last_plan_from_cache;
-@@last_plan_from_cache
-0
+select @@last_plan_from_binding, @@last_plan_from_cache;
+@@last_plan_from_binding	@@last_plan_from_cache
+1	1
 drop binding for select * from t where a=1;
 select * from t where a=1;
 a
+select @@last_plan_from_binding, @@last_plan_from_cache;
+@@last_plan_from_binding	@@last_plan_from_cache
+0	0
 select * from t where a=1;
 a
-select @@last_plan_from_cache;
-@@last_plan_from_cache
-1
+select @@last_plan_from_binding, @@last_plan_from_cache;
+@@last_plan_from_binding	@@last_plan_from_cache
+0	1
 set tidb_enable_non_prepared_plan_cache=DEFAULT;
 drop table if exists t;
 create table t (a int primary key, b int, unique key(b));
