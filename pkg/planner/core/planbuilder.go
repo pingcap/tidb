@@ -1311,7 +1311,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				ignored = append(ignored, path)
 				continue
 			}
-			if !path.Index.IsColumnarIndex() && !isolationReadEnginesHasTiKV {
+			if path.Index != nil && !path.Index.IsColumnarIndex() && !isolationReadEnginesHasTiKV {
 				fmt.Println("TiKV is not supported in isolation read engines")
 				engineVals, _ := ctx.GetSessionVars().GetSystemVar(vardef.TiDBIsolationReadEngines)
 				err := fmt.Errorf("TiDB doesn't support index '%v' in the isolation read engines(value: '%v')", idxName, engineVals)
