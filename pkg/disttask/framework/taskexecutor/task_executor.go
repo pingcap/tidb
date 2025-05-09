@@ -82,11 +82,6 @@ func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.No
 	}
 }
 
-var (
-	// GetErrorSubtask4Test is used for UT to collect error
-	GetErrorSubtask4Test atomic.Pointer[proto.Subtask]
-)
-
 // BaseTaskExecutor is the base implementation of TaskExecutor.
 type BaseTaskExecutor struct {
 	Param
@@ -471,9 +466,6 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	failpoint.InjectCall("mockTiDBShutdown", e, e.execID, e.GetTaskBase())
 
 	if subtaskErr != nil {
-		failpoint.Inject("collectTaskError", func() {
-			GetErrorSubtask4Test.CompareAndSwap(nil, subtask)
-		})
 		if err := e.markSubTaskCanceledOrFailed(subtaskCtx, subtask, subtaskErr); err != nil {
 			logger.Error("failed to handle subtask error", zap.Error(err))
 		}

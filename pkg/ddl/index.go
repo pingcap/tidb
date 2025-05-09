@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/common"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -2272,7 +2271,6 @@ func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 func writeChunk(
 	ctx context.Context,
 	writers []ingest.Writer,
-	tbl table.Table,
 	indexes []table.Index,
 	copCtx copr.CopContext,
 	loc *time.Location,
@@ -2335,7 +2333,7 @@ func writeChunk(
 			if needRestoreForIndexes[i] {
 				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
 			}
-			err = writeOneKV(ctx, writers[i], tbl, index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
+			err = writeOneKV(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -2360,7 +2358,6 @@ func maxIndexColumnCount(indexes []table.Index) int {
 func writeOneKV(
 	ctx context.Context,
 	writer ingest.Writer,
-	tbl table.Table,
 	index table.Index,
 	loc *time.Location,
 	errCtx errctx.Context,
@@ -2379,9 +2376,6 @@ func writeOneKV(
 		})
 		err = writer.WriteRow(ctx, key, idxVal, handle)
 		if err != nil {
-			if common.ErrFoundDuplicateKeys.Equal(err) {
-				err = local.ConvertToErrFoundConflictRecords(err, tbl)
-			}
 			return errors.Trace(err)
 		}
 		failpoint.Inject("mockLocalWriterError", func() {
@@ -2524,6 +2518,8 @@ func (w *worker) addTableIndex(
 				return err
 			}
 			if reorgInfo.ReorgMeta.UseCloudStorage {
+				// When adding unique index by global sort, it detects duplicate keys in each step.
+				// A duplicate key must be detected before, so we can skip the check bellow.
 				return nil
 			}
 			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, w.store)

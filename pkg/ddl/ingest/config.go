@@ -77,15 +77,9 @@ func genConfig(
 		cfg.WorkerConcurrency = int(ImporterRangeConcurrencyForTest.Load()) * 2
 	}
 	adjustImportMemory(ctx, memRoot, cfg)
-	cfg.KeyAdapter = common.KeyAdapter(common.NoopKeyAdapter{})
-	if unique {
+	if unique && !globalSort {
 		cfg.DupeDetectEnabled = true
 		cfg.DuplicateDetectOpt = common.DupDetectOpt{ReportErrOnDup: true}
-		if !globalSort {
-			cfg.KeyAdapter = common.DupDetectKeyAdapter{}
-		}
-	} else {
-		cfg.DupeDetectEnabled = false
 	}
 	cfg.TiKVWorkerURL = tidb.GetGlobalConfig().TiKVWorkerURL
 

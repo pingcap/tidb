@@ -331,8 +331,15 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 		tk.MustExec("set @@session.tidb_scatter_region = ''")
 	})
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/collectTaskError", "return(true)")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRegionBatch", `return(1)`)
+	testErrStep := proto.StepInit
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterRunSubtask",
+		func(e taskexecutor.TaskExecutor, errP *error, _ context.Context) {
+			if errP != nil {
+				testErrStep = e.GetTaskBase().Step
+			}
+		},
+	)
 
 	testcases := []struct {
 		caseName        string
@@ -392,16 +399,14 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 		},
 	}
 
-	checkSubtaskErr := func(t *testing.T, errStep proto.Step) {
-		errorSubtask := taskexecutor.GetErrorSubtask4Test.Swap(nil)
-		require.NotEmpty(t, errorSubtask)
-		require.Equal(t, errStep, errorSubtask.Step)
+	checkSubtaskErr := func(t *testing.T, expectedStep proto.Step) {
+		require.Equal(t, expectedStep, testErrStep)
+		testErrStep = proto.StepInit
 	}
 
 	for _, tc := range testcases {
 		t.Run(tc.caseName, func(tt *testing.T) {
 			// init
-			taskexecutor.GetErrorSubtask4Test.Store(nil)
 			tk.MustExec(tc.createTableSQL)
 			tk.MustExec(tc.initDataSQL)
 			tt.Cleanup(func() {
