@@ -3,9 +3,9 @@
     {
       "sql": "CREATE TABLE t1 AS SELECT 1 AS id, NULL AS val UNION ALL SELECT 2, '5' UNION ALL SELECT 3, 'abc';WITH cte AS (SELECT id, val FROM t1) SELECT id, COALESCE(val, 'default') FROM cte ORDER BY id;DROP TABLE t1;",
       "args": null,
-      "pass": false,
+      "pass": true,
       "known": true,
-      "comment": "'CREATE TABLE ... SELECT' is not implemented yet"
+      "comment": ""
     },
     {
       "sql": "WITH RECURSIVE cte(n) AS (SELECT 1 UNION ALL SELECT n + '1' FROM cte WHERE n \u003c 5) SELECT * FROM cte ORDER BY n;",
@@ -17,9 +17,9 @@
     {
       "sql": "CREATE TABLE t2 AS SELECT '5' AS id, 5 AS x;WITH cte1 AS (SELECT '5' AS id), cte2 AS (SELECT 5 AS num) SELECT t2.x FROM t2 JOIN cte1 ON t2.id = cte1.id JOIN cte2 ON t2.x = cte2.num;DROP TABLE t2;",
       "args": null,
-      "pass": false,
+      "pass": true,
       "known": true,
-      "comment": "'CREATE TABLE ... SELECT' is not implemented yet"
+      "comment": ""
     },
     {
       "sql": "WITH cte AS (SELECT 10 AS col UNION ALL SELECT '20' UNION ALL SELECT 30) SELECT SUM(col) AS total FROM cte;",
@@ -38,9 +38,9 @@
     {
       "sql": "CREATE TABLE t3 AS SELECT 1 AS a UNION ALL SELECT NULL UNION ALL SELECT 3;WITH cte AS (SELECT NULL AS b) SELECT t3.a, cte.b FROM t3 LEFT JOIN cte ON t3.a = cte.b ORDER BY a;DROP TABLE t3;",
       "args": null,
-      "pass": false,
+      "pass": true,
       "known": true,
-      "comment": "'CREATE TABLE ... SELECT' is not implemented yet"
+      "comment": ""
     },
     {
       "sql": "WITH cte AS (SELECT CASE WHEN 1=1 THEN 5 ELSE 'text' END AS mixed) SELECT mixed FROM cte;",
