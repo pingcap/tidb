@@ -639,7 +639,7 @@ func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.Ph
 	// reason2: the ranges from TS and IS couldn't be directly used to derive the stats' estimation, it's not real.
 	// reason3: skyline pruning should not prune the possible index path which could feel the runtime EQ access conditions.
 	//
-	// here we build TS and IS separately according to different index join prop is for we couldn't decide
+	// here we build TableScan(TS) and IndexScan(IS) separately according to different index join prop is for we couldn't decide
 	// which one as the copTask here is better, some more possible upper attached operator cost should be
 	// considered, besides the row count, double reader cost for index lookup should also be considered as
 	// a whole, so we leave the cost compare for index join itself just like what it was before.
