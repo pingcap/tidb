@@ -43,12 +43,10 @@ func TestRedactExplain(t *testing.T) {
 	// in multi-value
 	tk.MustQuery("explain format='brief' select 1 from t left join tlist on tlist.a=t.a where t.a in (12, 13)").
 		Check(testkit.Rows(
-			"Projection 2.50 root  ‹1›->Column#5",
-			"└─HashJoin 2.50 root  left outer join, left side:Batch_Point_Get, equal:[eq(test.t.a, test.tlist.a)]",
-			"  ├─Batch_Point_Get(Build) 2.00 root table:t handle:[12 13], keep order:false, desc:false",
-			"  └─TableReader(Probe) 20.00 root partition:dual data:Selection",
-			"    └─Selection 20.00 cop[tikv]  in(test.tlist.a, ‹12›, ‹13›), not(isnull(test.tlist.a))",
-			"      └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"))
+			"Projection 2.00 root  ‹1›->Column#5",
+			"└─HashJoin 2.00 root  left outer join, left side:Batch_Point_Get, equal:[eq(test.t.a, test.tlist.a)]",
+			"  ├─TableDual(Build) 0.00 root  rows:0",
+			"  └─Batch_Point_Get(Probe) 2.00 root table:t handle:[12 13], keep order:false, desc:false]"))
 	// TableRangeScan + Limit
 	tk.MustQuery("explain format='brief' select * from t where a > 1 limit 10 offset 10;").
 		Check(testkit.Rows(
