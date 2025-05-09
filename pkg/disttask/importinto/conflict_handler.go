@@ -115,13 +115,14 @@ func (h *baseConflictKVHandler) refreshSnapshotAsNeeded() error {
 	return nil
 }
 
-// re-encode the row from the handle and value of data KV, and delete all encoded keys.
-// it's possible that part or all of the keys are already deleted.
+// re-encode the row from the handle and value of data KV, then we either delete
+// all encoded keys or call handleConflictRowFn, it's possible that part or all
+// of the keys are already deleted.
 func (h *baseConflictKVHandler) encodeAndHandleRow(ctx context.Context,
-	encoder *importer.TableKVEncoder, handle tidbkv.Handle, val []byte) (err error) {
+	handle tidbkv.Handle, val []byte) (err error) {
 	tbl := h.tableImporter.Table
 	tblMeta := tbl.Meta()
-	decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
+	decodedData, _, err := tables.DecodeRawRowData(h.encoder.SessionCtx,
 		tblMeta, handle, tbl.Cols(), val)
 	if err != nil {
 		return errors.Trace(err)
@@ -130,7 +131,7 @@ func (h *baseConflictKVHandler) encodeAndHandleRow(ctx context.Context,
 	if !tblMeta.HasClusteredIndex() {
 		autoRowID = handle.IntValue()
 	}
-	kvPairs, err := encoder.Encode(decodedData, autoRowID)
+	kvPairs, err := h.encoder.Encode(decodedData, autoRowID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -161,16 +162,22 @@ func (h *baseConflictKVHandler) deleteKeysWithRetry(ctx context.Context, pairs [
 // we are deleting keys related to a single row in one transaction, and a normal
 // 'insert SQL' will also generate this mount of data, so we shouldn't meet the
 // 'transaction too large' issue in normal case.
+// as all duplicate KVs are either removed or recorded during importing, and we
+// only delete existing KVs, so there will be no overlap in the KVs to be deleted
+// for any 2 conflict KVs in a single KV group, it's safe to resolve a single KV
+// group in multiple routines, and we can use a relatively stale snapshot to check
+// existence of the KVs to be deleted.
 func (h *baseConflictKVHandler) deleteKeys(ctx context.Context, pairs []common.KvPair) (err error) {
 	if err = h.refreshSnapshotAsNeeded(); err != nil {
 		return errors.Trace(err)
 	}
 	existingPairs := make([]common.KvPair, 0, len(pairs))
 	for _, p := range pairs {
+		// TODO test if BatchGet performs better
 		_, err = h.snapshot.Get(ctx, p.Key)
 		if err != nil {
 			if isKeyNotFoundErr(err) {
-				// not ingested, or already deleted by previous resolution.
+				// not ingested, or already deleted when resolving other KV groups.
 				continue
 			}
 			return errors.Trace(err)
@@ -213,7 +220,7 @@ func (h *conflictDataKVHandler) handle(ctx context.Context, kv *external.KVPair)
 	if err != nil {
 		return err
 	}
-	return h.encodeAndHandleRow(ctx, h.encoder, handle, kv.Value)
+	return h.encodeAndHandleRow(ctx, handle, kv.Value)
 }
 
 type conflictIndexKVHandler struct {
@@ -271,7 +278,7 @@ func (h *conflictIndexKVHandler) handle(ctx context.Context, kv *external.KVPair
 	if h.isRowHandledFn != nil && h.isRowHandledFn(handle) {
 		return nil
 	}
-	return h.encodeAndHandleRow(ctx, h.encoder, handle, val)
+	return h.encodeAndHandleRow(ctx, handle, val)
 }
 
 func handleKVGroupConflicts(

@@ -62,11 +62,12 @@ type collectConflictsStepExecutor struct {
 	tableImporter *importer.TableImporter
 
 	// per subtask fields
-	currSubtaskID        int64
-	conflictedRowCount   int64
-	conflictedRowSize    int64
-	conflictRowsChecksum *verification.KVChecksum
-	handledRowsFromIndex map[string]bool
+	currSubtaskID             int64
+	conflictedRowCount        int64
+	conflictedRowSize         int64
+	currConflictedRowFileSize int64
+	conflictRowsChecksum      *verification.KVChecksum
+	handledRowsFromIndex      map[string]bool
 	// if there are too many conflict rows from index, we must stop caching them
 	// in memory, and we must skip the checksum for the whole task.
 	// but we still need keep running this step to record all conflicted rows to
@@ -164,7 +165,7 @@ func (e *collectConflictsStepExecutor) getHandler(kvGroup string) conflictKVHand
 	if kvGroup != dataKVGroup {
 		handler = &conflictIndexKVHandler{
 			baseConflictKVHandler: baseHandler,
-			isRowHandledFn:        e.isRowHandledFn,
+			isRowHandledFn:        e.isRowFromIndexHandled,
 		}
 	}
 	return handler
@@ -176,6 +177,7 @@ func (e *collectConflictsStepExecutor) resetForNewSubtask(subtaskID int64, poten
 	e.currSubtaskID = subtaskID
 	e.conflictedRowCount = 0
 	e.conflictedRowSize = 0
+	e.currConflictedRowFileSize = 0
 	e.conflictRowsChecksum = verification.NewKVChecksumWithKeyspace(e.store.GetCodec().GetKeyspace())
 	e.handledRowsFromIndex = make(map[string]bool, potentialConflictRowsDueToIndex)
 	e.tooManyConflictsFromIndex = false
@@ -210,7 +212,7 @@ func (e *collectConflictsStepExecutor) switchConflictRowFile(ctx context.Context
 	return nil
 }
 
-func (e *collectConflictsStepExecutor) isRowHandledFn(handle tidbkv.Handle) bool {
+func (e *collectConflictsStepExecutor) isRowFromIndexHandled(handle tidbkv.Handle) bool {
 	if e.tooManyConflictsFromIndex {
 		return false
 	}
@@ -239,12 +241,13 @@ func (e *collectConflictsStepExecutor) tryCacheHandledRowFromIndex(handle tidbkv
 
 func (e *collectConflictsStepExecutor) recordConflictRow(ctx context.Context, kvGroup string,
 	handle tidbkv.Handle, row []types.Datum, kvPairs *kv.Pairs) error {
-	if e.conflictedRowSize >= MaxConflictRowFileSize {
+	if e.currConflictedRowFileSize >= MaxConflictRowFileSize {
 		e.logger.Info("conflict row file size exceeds the limit, switch to a new file",
-			zap.String("currSize", units.BytesSize(float64(e.conflictedRowSize))))
+			zap.String("currSize", units.BytesSize(float64(e.currConflictedRowFileSize))))
 		if err := e.switchConflictRowFile(ctx); err != nil {
 			return errors.Trace(err)
 		}
+		e.currConflictedRowFileSize = 0
 	}
 	// every conflicted row from data KV group must be recorded, but for index KV
 	// group, they might come from the same row, so we only need to record it on
@@ -254,6 +257,7 @@ func (e *collectConflictsStepExecutor) recordConflictRow(ctx context.Context, kv
 	// TODO we can upload those handles to sort storage and check them in another
 	//  pass later.
 	if kvGroup != dataKVGroup {
+		// 确定下并发执行的情况
 		e.tryCacheHandledRowFromIndex(handle)
 	}
 	e.conflictRowsChecksum.Update(kvPairs.Pairs)
@@ -265,6 +269,7 @@ func (e *collectConflictsStepExecutor) recordConflictRow(ctx context.Context, kv
 	}
 	content := []byte(str + "\n")
 	e.conflictedRowSize += int64(len(content))
+	e.currConflictedRowFileSize += int64(len(content))
 	_, err = e.conflictRowWriter.Write(ctx, content)
 	return errors.Trace(err)
 }

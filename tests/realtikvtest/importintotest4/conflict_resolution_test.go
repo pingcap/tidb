@@ -641,34 +641,29 @@ func (s *mockGCSSuite) TestGlobalSortConflictedRowsWrite2MultipleFiles() {
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 	bak := importinto.MaxConflictRowFileSize
-	importinto.MaxConflictRowFileSize = 1
+	importinto.MaxConflictRowFileSize = 48
 	s.T().Cleanup(func() {
 		importinto.MaxConflictRowFileSize = bak
 	})
 	contents := []string{
-		"1,0,0,0,0\n2,1,1,1,1\n3,1,2,2,2\n4,3,2,3,3\n5,1,5,3,5",
-		"6,6,6,6,6\n6,6,6,6,6\n6,6,6,6,6\n6,6,6,6,6\n",
-		"7,7,7,7,7\n7,8,8,8,8\n9,8,9,9,9\n10,10,9,10,10\n11,11,11,10,11",
-		"2,1,1,1,1\n3,1,2,2,2",
-		"4,3,2,3,3\n5,1,5,3,5\n6,6,6,6,6\n6,6,6,6,6",
-		"6,6,6,6,6\n6,6,6,6,6\n7,7,7,7,7\n7,8,8,8,8",
-		"9,8,9,9,9\n10,10,9,10,10\n11,11,11,10,11",
-		"12,12,12,12\n12,12,12,12\n12,12,12,12\n12,12,12,12",
-		"12,12,12,12\n12,12,12,12\n12,12,12,12\n12,12,12,12",
+		"16 bytes: 000000",
+		"16 bytes: 000001", "16 bytes: 000001", "16 bytes: 000001",
+		"16 bytes: 000002", "16 bytes: 000002", "16 bytes: 000002",
+		"16 bytes: 000003", "16 bytes: 000003", "16 bytes: 000003",
+		"16 bytes: 000004", "16 bytes: 000004",
 	}
-	totalSourceRows := s.getSourceRowCount(contents)
 	jobID := s.testConflictResolution(
-		`create table t(pk int primary key clustered, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))`,
+		`create table t(pk varchar(64) primary key clustered)`,
 		contents,
-		[]string{"1 0 0 0 0"},
+		[]string{"16 bytes: 000000"},
 	)
 	task := s.getTaskByJob(jobID)
 	subtasks := s.getSubtasksOfStep(task.ID, proto.ImportStepCollectConflicts)
 	s.Len(subtasks, 1)
 	subtaskM := &importinto.CollectConflictsStepMeta{}
 	s.NoError(json.Unmarshal(subtasks[0].Meta, subtaskM))
-	// one file per row
-	s.Len(subtaskM.ConflictedRowFilenames, totalSourceRows-1)
+	// 3 rows per file except the last one
+	s.Len(subtaskM.ConflictedRowFilenames, 4)
 	s.False(subtaskM.TooManyConflictsFromIndex)
 
 	// we still need to verify checksum
