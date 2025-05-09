@@ -992,23 +992,23 @@ func (e *executor) handleCreateTableSelect(schema *model.DBInfo, s *ast.CreateTa
 	defer e.sessPool.Put(sctx)
 
 	// if isTikvStore is true and tidb_create_table_as_select_use_import_into is true, use import into instead of insert into
-	insertSql, err := buildInsertSql(schema.Name.L, tempTableName, s, useImportInto)
+	insertSQL, err := buildInsertSQL(schema.Name.L, tempTableName, s, useImportInto)
 	if err != nil {
 		return err
 	}
 	// insert data into temporary table
-	if _, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, insertSql); err != nil {
+	if _, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, insertSQL); err != nil {
 		// if insert data into temporary table failed, drop the temporary table (like rollback)
-		dropSql := buildDropSql(schema.Name.L, tempTableName)
-		if _, dropErr := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, dropSql); dropErr != nil {
+		dropSQL := buildDropSQL(schema.Name.L, tempTableName)
+		if _, dropErr := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, dropSQL); dropErr != nil {
 			return errors.Trace(dropErr)
 		}
 		return errors.Trace(err)
 	}
 
 	// rename the temporary table to the original table
-	renameSql := buildRenameSql(schema.Name.L, tempTableName, originTableName)
-	if _, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, renameSql); err != nil {
+	renameSQL := buildRenameSQL(schema.Name.L, tempTableName, originTableName)
+	if _, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, renameSQL); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1096,7 +1096,7 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	return nil
 }
 
-func buildDropSql(dbName, tempTableName string) string {
+func buildDropSQL(dbName, tempTableName string) string {
 	sql, err := sqlescape.EscapeSQL("DROP TABLE %n.%n", dbName, tempTableName)
 	if err != nil {
 		// This should never happen as we control the input
@@ -1105,7 +1105,7 @@ func buildDropSql(dbName, tempTableName string) string {
 	return sql
 }
 
-func buildRenameSql(dbName string, tempTableName string, originTableName string) string {
+func buildRenameSQL(dbName string, tempTableName string, originTableName string) string {
 	sql, err := sqlescape.EscapeSQL("RENAME TABLE %n.%n TO %n.%n", dbName, tempTableName, dbName, originTableName)
 	if err != nil {
 		// This should never happen as we control the input
@@ -1114,7 +1114,7 @@ func buildRenameSql(dbName string, tempTableName string, originTableName string)
 	return sql
 }
 
-func buildInsertSql(dbName, tableName string, s *ast.CreateTableStmt, useImportInto bool) (string, error) {
+func buildInsertSQL(dbName, tableName string, s *ast.CreateTableStmt, useImportInto bool) (string, error) {
 	if s.Select == nil {
 		return "", nil
 	}
@@ -1125,9 +1125,9 @@ func buildInsertSql(dbName, tableName string, s *ast.CreateTableStmt, useImportI
 		return "", err
 	}
 	selectStmt := res.String()
-	var selectedColName []string
-	for _, col := range s.SelectColumns {
-		selectedColName = append(selectedColName, sqlescape.MustEscapeSQL("%n", col.L))
+	selectedColName := make([]string, len(s.SelectColumns))
+	for i, col := range s.SelectColumns {
+		selectedColName[i] = sqlescape.MustEscapeSQL("%n", col.L)
 	}
 
 	if !useImportInto {
