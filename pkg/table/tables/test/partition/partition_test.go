@@ -3227,7 +3227,7 @@ func TestPartitionCoverage(t *testing.T) {
 	tk.MustExec(`set tidb_partition_prune_mode = 'dynamic'`)
 	tk.MustQuery(`explain format='brief' ` + query).Check(testkit.Rows(""+
 		"TableReader 2.00 root partition:p1 data:TableRangeScan",
-		"└─TableRangeScan 2.00 cop[tikv] table:t range:[1 1,1 1], [2 1,2 1], keep order:true"))
+		"└─TableRangeScan 2.00 cop[tikv] table:t, partition:p1 range:[1 1,1 1], [2 1,2 1], keep order:true"))
 	tk.MustQuery(query).Check(testkit.Rows("1 1", "2 1"))
 
 	query = `select * from t where a = 1 and b in (1,2)`
