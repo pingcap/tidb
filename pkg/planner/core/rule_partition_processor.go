@@ -894,7 +894,9 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 			}
 		}
 	*/
-
+	if ds.SCtx().GetSessionVars().StmtCtx.InPreparedPlanBuilding {
+		return ds, nil
+	}
 	// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from ds.AllConds, the condition
 	// like 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
 	// TODO: there may be a better way to push down Not once for all.
@@ -908,9 +910,6 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 	// apply for some partitions like:
 	// a = 1 OR a = 2 => for p1 only "a = 1" and for p2 only "a = 2"
 	// since a cannot be 2 in p1 and a cannot be 1 in p2
-	if ds.SCtx().GetSessionVars().StmtCtx.InPreparedPlanBuilding {
-		return ds, nil
-	}
 	switch pi.Type {
 	case ast.PartitionTypeRange:
 		return s.processRangePartition(ds, pi, opt)
