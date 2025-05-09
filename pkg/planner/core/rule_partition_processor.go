@@ -919,9 +919,6 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 	case ast.PartitionTypeList:
 		return s.processListPartition(ds, pi, opt)
 	}
-	if ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		return ds, nil
-	}
 	return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)), opt)
 }
 
