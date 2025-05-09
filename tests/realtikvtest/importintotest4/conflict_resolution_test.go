@@ -679,7 +679,7 @@ func (s *mockGCSSuite) TestGlobalSortTooManyConflictedRowsFromIndex() {
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
 	var fpEnterCount atomic.Int32
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/tryCacheHandledRowFromIndex", func(limitP *int64) {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/trySaveHandledRowFromIndex", func(limitP *int64) {
 		*limitP = 0
 		fpEnterCount.Add(1)
 	})

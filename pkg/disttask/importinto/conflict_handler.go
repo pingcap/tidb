@@ -25,13 +25,11 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/redact"
@@ -51,18 +49,19 @@ const (
 type conflictKVHandler interface {
 	init() error
 	run(context.Context, chan *external.KVPair) error
-	close() error
+	getCollector() *conflictRowCollector
+	close(context.Context) error
 }
 
 var _ conflictKVHandler = (*baseConflictKVHandler)(nil)
 
 type baseConflictKVHandler struct {
-	tableImporter       *importer.TableImporter
-	store               tidbkv.Storage
-	logger              *zap.Logger
-	kvGroup             string
-	handleConflictRowFn func(ctx context.Context, kvGroup string, handle tidbkv.Handle, row []types.Datum, pairs *kv.Pairs) error
+	tableImporter *importer.TableImporter
+	store         tidbkv.Storage
+	logger        *zap.Logger
+	kvGroup       string
 
+	collector       *conflictRowCollector
 	encoder         *importer.TableKVEncoder
 	lastRefreshTime time.Time
 	snapshot        tidbkv.Snapshot
@@ -91,8 +90,17 @@ func (h *baseConflictKVHandler) run(ctx context.Context, pairCh chan *external.K
 	return nil
 }
 
-func (h *baseConflictKVHandler) close() error {
-	return h.encoder.Close()
+func (h *baseConflictKVHandler) getCollector() *conflictRowCollector {
+	return h.collector
+}
+
+func (h *baseConflictKVHandler) close(ctx context.Context) error {
+	var firstErr common.OnceError
+	if h.collector != nil {
+		firstErr.Set(h.collector.close(ctx))
+	}
+	firstErr.Set(h.encoder.Close())
+	return firstErr.Get()
 }
 
 func (h *baseConflictKVHandler) refreshSnapshotAsNeeded() error {
@@ -136,8 +144,8 @@ func (h *baseConflictKVHandler) encodeAndHandleRow(ctx context.Context,
 		return errors.Trace(err)
 	}
 
-	if h.handleConflictRowFn != nil {
-		err = h.handleConflictRowFn(ctx, h.kvGroup, handle, decodedData, kvPairs)
+	if h.collector != nil {
+		err = h.collector.recordConflictRow(ctx, h.kvGroup, handle, decodedData, kvPairs)
 	} else {
 		err = h.deleteKeysWithRetry(ctx, kvPairs.Pairs)
 	}
@@ -289,6 +297,7 @@ func handleKVGroupConflicts(
 	store storage.ExternalStorage,
 	kvGroup string,
 	ci *common.ConflictInfo,
+	mergeCollectorResultFn func(*conflictRowCollector),
 ) (err error) {
 	task := log.BeginTask(logger.With(
 		zap.String("kvGroup", kvGroup),
@@ -305,7 +314,7 @@ func handleKVGroupConflicts(
 	eg.Go(func() error {
 		defer close(pairCh)
 		for _, file := range ci.Files {
-			if err = readOneFile(egCtx, store, file, pairCh); err != nil {
+			if err := readOneFile(egCtx, store, file, pairCh); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -314,11 +323,20 @@ func handleKVGroupConflicts(
 	for i := 0; i < concurrency; i++ {
 		handler := newHandlerFn(kvGroup)
 		eg.Go(func() error {
-			if err = handler.init(); err != nil {
+			if err := handler.init(); err != nil {
 				return errors.Trace(err)
 			}
-			defer handler.close()
-			return handler.run(egCtx, pairCh)
+			if err := handler.run(egCtx, pairCh); err != nil {
+				_ = handler.close(egCtx)
+				return err
+			}
+			if err := handler.close(egCtx); err != nil {
+				return err
+			}
+			if mergeCollectorResultFn != nil {
+				mergeCollectorResultFn(handler.getCollector())
+			}
+			return nil
 		})
 	}
 	return eg.Wait()

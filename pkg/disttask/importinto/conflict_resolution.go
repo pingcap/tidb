@@ -67,7 +67,7 @@ func (e *conflictResolutionStepExecutor) RunSubtask(ctx context.Context, subtask
 		}
 	}
 	for kvGroup, ci := range stepMeta.Infos.ConflictInfos {
-		err = handleKVGroupConflicts(ctx, e.logger, subtask.Concurrency, e.getHandler, e.tableImporter.GlobalSortStore, kvGroup, ci)
+		err = handleKVGroupConflicts(ctx, e.logger, subtask.Concurrency, e.getHandler, e.tableImporter.GlobalSortStore, kvGroup, ci, nil)
 		failpoint.InjectCall("afterResolveOneKVGroup", &err)
 		if err != nil {
 			return err
