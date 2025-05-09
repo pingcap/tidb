@@ -7,7 +7,7 @@
         "DynamicPlan": [
           "TableReader 10.00 root partition:p0 data:Selection",
           "└─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "TableReader 10.00 root  data:Selection",
@@ -20,7 +20,7 @@
         "DynamicPlan": [
           "TableReader 10.00 root partition:p2 data:Selection",
           "└─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 7)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "TableReader 10.00 root  data:Selection",
@@ -50,7 +50,7 @@
         "DynamicPlan": [
           "TableReader 10.00 root partition:p0 data:Selection",
           "└─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 2)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "TableReader 10.00 root  data:Selection",
@@ -63,7 +63,7 @@
         "DynamicPlan": [
           "TableReader 10.00 root partition:p2 data:Selection",
           "└─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 7)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p2 keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "TableReader 10.00 root  data:Selection",
@@ -207,7 +207,7 @@
         "DynamicPlan": [
           "TableReader 3333.33 root partition:p3 data:Selection",
           "└─Selection 3333.33 cop[tikv]  gt(list_partition_pruning.tlist.a, 8)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "TableReader 3333.33 root  data:Selection",
@@ -220,7 +220,7 @@
         "DynamicPlan": [
           "TableReader 3333.33 root partition:p3 data:Selection",
           "└─Selection 3333.33 cop[tikv]  gt(list_partition_pruning.tcollist.a, 8)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p3 keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "TableReader 3333.33 root  data:Selection",
@@ -347,7 +347,7 @@
         "DynamicPlan": [
           "TableReader 24.00 root partition:p0 data:Selection",
           "└─Selection 24.00 cop[tikv]  eq(mod(list_partition_pruning.tlist.a, 2), 0), in(list_partition_pruning.tlist.a, 0, 1, 2)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "TableReader 24.00 root  data:Selection",
@@ -380,7 +380,7 @@
         "DynamicPlan": [
           "TableReader 24.00 root partition:p0 data:Selection",
           "└─Selection 24.00 cop[tikv]  eq(mod(list_partition_pruning.tcollist.a, 2), 0), in(list_partition_pruning.tcollist.a, 0, 1, 2)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "TableReader 24.00 root  data:Selection",
@@ -414,7 +414,7 @@
           "Delete N/A root  N/A",
           "└─TableReader 10.00 root partition:p0 data:Selection",
           "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "Delete N/A root  N/A",
@@ -448,7 +448,7 @@
           "Delete N/A root  N/A",
           "└─TableReader 10.00 root partition:p0 data:Selection",
           "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 2)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "Delete N/A root  N/A",
@@ -482,7 +482,7 @@
           "Update N/A root  N/A",
           "└─TableReader 10.00 root partition:p0 data:Selection",
           "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "Update N/A root  N/A",
@@ -516,7 +516,7 @@
           "Update N/A root  N/A",
           "└─TableReader 10.00 root partition:p0 data:Selection",
           "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 2)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "Update N/A root  N/A",
@@ -550,7 +550,7 @@
           "Insert N/A root  N/A",
           "└─TableReader 10.00 root partition:p0 data:Selection",
           "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "Insert N/A root  N/A",
@@ -584,7 +584,7 @@
           "Insert N/A root  N/A",
           "└─TableReader 10.00 root partition:p0 data:Selection",
           "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 2)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "Insert N/A root  N/A",
@@ -618,7 +618,7 @@
           "Insert N/A root  N/A",
           "└─TableReader 10.00 root partition:p0 data:Selection",
           "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "Insert N/A root  N/A",
@@ -652,7 +652,7 @@
           "Insert N/A root  N/A",
           "└─TableReader 10.00 root partition:p0 data:Selection",
           "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 2)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "Insert N/A root  N/A",
