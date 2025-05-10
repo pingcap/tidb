@@ -14,12 +14,15 @@
 
 package base
 
+import "github.com/pingcap/tidb/pkg/util/context"
+
 // Note: appending the new adding method to the last, for the convenience of easy
 // locating in other implementor from other package.
 
 // Task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
 // A task may be CopTask, RootTask, MPPTaskMeta or a ParallelTask.
 type Task interface {
+	context.WarnAppender
 	// Count returns current task's row count.
 	Count() float64
 	// Copy return a shallow copy of current task with the same pointer to p.
@@ -34,6 +37,8 @@ type Task interface {
 	ConvertToRootTask(ctx PlanContext) Task
 	// MemoryUsage returns the memory usage of current task.
 	MemoryUsage() int64
+	// GetWarnings returns the warnings of current task.
+	GetWarnings() []context.SQLWarn
 }
 
 // InvalidTask is just a common invalid singleton instance initialized by core's empty RootTask.

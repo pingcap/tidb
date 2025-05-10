@@ -1563,9 +1563,9 @@
         "Plan": [
           "Projection 12487.50 root  test.t.a, test.t.b, test.t1.a, test.t1.b",
           "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t2.b)], other cond:lt(cast(test.t1.a, decimal(10,0) BINARY), Column#10)",
-          "  ├─HashAgg(Build) 7992.00 root  group by:test.t2.b, funcs:sum(Column#32)->Column#10, funcs:firstrow(test.t2.b)->test.t2.b",
+          "  ├─HashAgg(Build) 7992.00 root  group by:test.t2.b, funcs:sum(Column#38)->Column#10, funcs:firstrow(test.t2.b)->test.t2.b",
           "  │ └─TableReader 7992.00 root  data:HashAgg",
-          "  │   └─HashAgg 7992.00 cop[tikv]  group by:test.t2.b, funcs:sum(test.t2.a)->Column#32",
+          "  │   └─HashAgg 7992.00 cop[tikv]  group by:test.t2.b, funcs:sum(test.t2.a)->Column#38",
           "  │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
           "  │       └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  └─MergeJoin(Probe) 12487.50 root  inner join, left key:test.t1.a, right key:test.t.a",

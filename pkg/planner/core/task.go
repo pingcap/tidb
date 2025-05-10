@@ -62,6 +62,9 @@ var HeavyFunctionNameMap = map[string]struct{}{
 }
 
 func attachPlan2Task(p base.PhysicalPlan, t base.Task) base.Task {
+	// since almost all current physical plan will be attached to bottom encapsulated task.
+	// we do the stats inheritance here for all the index join inner task.
+	inheritStatsFromBottomTaskForIndexJoinInner(p, t)
 	switch v := t.(type) {
 	case *CopTask:
 		if v.indexPlanFinished {
@@ -131,7 +134,7 @@ func (p *PhysicalUnionScan) Attach2Task(tasks ...base.Task) base.Task {
 			p.SetChildren(sel)
 			p.SetStats(task.Plan().StatsInfo())
 			rt, _ := task.(*RootTask)
-			rt.SetPlan(p)
+			rt.SetPlan(p) // root task plan current is p headed.
 			pj.SetChildren(p)
 			return pj.Attach2Task(task)
 		}
@@ -160,6 +163,7 @@ func (p *PhysicalApply) Attach2Task(tasks ...base.Task) base.Task {
 	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	t := &RootTask{}
 	t.SetPlan(p)
+	t.CopyFrom(&lTask.(*RootTask).simpleWarnings, &lTask.(*RootTask).simpleWarnings)
 	return t
 }
 
@@ -200,12 +204,15 @@ func indexHashJoinAttach2TaskV2(p *PhysicalIndexHashJoin, tasks ...base.Task) ba
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
+	t.CopyFrom(&outerTask.(*RootTask).simpleWarnings, &innerTask.(*RootTask).simpleWarnings)
 	return t
 }
 
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
-	// todo: feel index jon build v2
+	if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
+		return indexHashJoinAttach2TaskV2(p, tasks...)
+	}
 	return indexHashJoinAttach2TaskV1(p, tasks...)
 }
 
@@ -232,12 +239,15 @@ func indexJoinAttach2TaskV2(p *PhysicalIndexJoin, tasks ...base.Task) base.Task 
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
+	t.CopyFrom(&outerTask.(*RootTask).simpleWarnings, &innerTask.(*RootTask).simpleWarnings)
 	return t
 }
 
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
-	// todo: feel index jon build v2
+	if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
+		return indexJoinAttach2TaskV2(p, tasks...)
+	}
 	return indexJoinAttach2TaskV1(p, tasks...)
 }
 
@@ -264,6 +274,7 @@ func (p *PhysicalHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 	p.SetChildren(lTask.Plan(), rTask.Plan())
 	task := &RootTask{}
 	task.SetPlan(p)
+	task.CopyFrom(&rTask.(*RootTask).simpleWarnings, &lTask.(*RootTask).simpleWarnings)
 	return task
 }
 
@@ -504,6 +515,7 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		partTp:   outerTask.partTp,
 		hashCols: outerTask.hashCols,
 	}
+	task.CopyFrom(&rTask.simpleWarnings, &lTask.simpleWarnings)
 	// Current TiFlash doesn't support receive Join executors' schema info directly from TiDB.
 	// Instead, it calculates Join executors' output schema using algorithm like BuildPhysicalJoinSchema which
 	// produces full semantic schema.
@@ -594,6 +606,7 @@ func (p *PhysicalHashJoin) attach2TaskForTiFlash(tasks ...base.Task) base.Task {
 		indexPlanFinished: true,
 		tablePlan:         p,
 	}
+	task.CopyFrom(&rTask.simpleWarnings, &lTask.simpleWarnings)
 	return task
 }
 
@@ -604,6 +617,7 @@ func (p *PhysicalMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 	p.SetChildren(lTask.Plan(), rTask.Plan())
 	t := &RootTask{}
 	t.SetPlan(p)
+	t.CopyFrom(&rTask.(*RootTask).simpleWarnings, &lTask.(*RootTask).simpleWarnings)
 	return t
 }
 
@@ -1503,6 +1517,45 @@ func (sel *PhysicalSelection) Attach2Task(tasks ...base.Task) base.Task {
 	return attachPlan2Task(sel, t)
 }
 
+func inheritStatsFromBottomElemForIndexJoinInner(p base.PhysicalPlan, indexJoinInfo *IndexJoinInfo, stats *property.StatsInfo) {
+	var isIndexJoinOrApply bool
+	switch p.(type) {
+	case *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *PhysicalApply:
+		isIndexJoinOrApply = true
+	default:
+	}
+	if !isIndexJoinOrApply && indexJoinInfo != nil {
+		switch p.(type) {
+		case *PhysicalSelection:
+			// todo: for simplicity, we can just inherit it from child.
+			p.SetStats(stats)
+		case *PhysicalProjection:
+			// mainly about the rowEst, proj doesn't change that.
+			p.SetStats(stats)
+		case *PhysicalHashAgg, *PhysicalStreamAgg:
+			// todo: for simplicity, we can just inherit it from child.
+			p.SetStats(stats)
+		case *PhysicalUnionScan:
+			// todo: for simplicity, we can just inherit it from child.
+			p.SetStats(stats)
+		default:
+			p.SetStats(stats)
+		}
+	}
+}
+
+func inheritStatsFromBottomTaskForIndexJoinInner(p base.PhysicalPlan, t base.Task) {
+	var indexJoinInfo *IndexJoinInfo
+	switch v := t.(type) {
+	case *CopTask:
+		indexJoinInfo = v.IndexJoinInfo
+	case *RootTask:
+		indexJoinInfo = v.IndexJoinInfo
+	default:
+	}
+	inheritStatsFromBottomElemForIndexJoinInner(p, indexJoinInfo, t.Plan().StatsInfo())
+}
+
 // CheckAggCanPushCop checks whether the aggFuncs and groupByItems can
 // be pushed down to coprocessor.
 func CheckAggCanPushCop(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, storeType kv.StoreType) bool {
@@ -2179,6 +2232,10 @@ func (p *PhysicalStreamAgg) Attach2Task(tasks ...base.Task) base.Task {
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
+					// the partialAgg attachment didn't follow the attachPlan2Task function, so here we actively call
+					// inheritStatsFromBottomForIndexJoinInner(p, t) to inherit stats from the bottom plan for index
+					// join inner side. note: partialAgg will share stats with finalAgg.
+					inheritStatsFromBottomElemForIndexJoinInner(partialAgg, cop.IndexJoinInfo, cop.tablePlan.StatsInfo())
 					partialAgg.SetChildren(cop.tablePlan)
 					cop.tablePlan = partialAgg
 					// If needExtraProj is true, a projection will be created above the PhysicalIndexLookUpReader to make sure
@@ -2189,6 +2246,10 @@ func (p *PhysicalStreamAgg) Attach2Task(tasks ...base.Task) base.Task {
 					// the partial agg, and the schema will be broken.
 					cop.needExtraProj = false
 				} else {
+					// the partialAgg attachment didn't follow the attachPlan2Task function, so here we actively call
+					// inheritStatsFromBottomForIndexJoinInner(p, t) to inherit stats from the bottom plan for index
+					// join inner side. note: partialAgg will share stats with finalAgg.
+					inheritStatsFromBottomElemForIndexJoinInner(partialAgg, cop.IndexJoinInfo, cop.indexPlan.StatsInfo())
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg
 				}
@@ -2680,6 +2741,10 @@ func (p *PhysicalHashAgg) Attach2Task(tasks ...base.Task) base.Task {
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
+					// the partialAgg attachment didn't follow the attachPlan2Task function, so here we actively call
+					// inheritStatsFromBottomForIndexJoinInner(p, t) to inherit stats from the bottom plan for index
+					// join inner side. note: partialAgg will share stats with finalAgg.
+					inheritStatsFromBottomElemForIndexJoinInner(partialAgg, cop.IndexJoinInfo, cop.tablePlan.StatsInfo())
 					partialAgg.SetChildren(cop.tablePlan)
 					cop.tablePlan = partialAgg
 					// If needExtraProj is true, a projection will be created above the PhysicalIndexLookUpReader to make sure
@@ -2690,6 +2755,10 @@ func (p *PhysicalHashAgg) Attach2Task(tasks ...base.Task) base.Task {
 					// the partial agg, and the schema will be broken.
 					cop.needExtraProj = false
 				} else {
+					// the partialAgg attachment didn't follow the attachPlan2Task function, so here we actively call
+					// inheritStatsFromBottomForIndexJoinInner(p, t) to inherit stats from the bottom plan for index
+					// join inner side. note: partialAgg will share stats with finalAgg.
+					inheritStatsFromBottomElemForIndexJoinInner(partialAgg, cop.IndexJoinInfo, cop.indexPlan.StatsInfo())
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg
 				}
@@ -2744,17 +2813,20 @@ func (p *PhysicalCTEStorage) Attach2Task(tasks ...base.Task) base.Task {
 	t := tasks[0].Copy()
 	if mpp, ok := t.(*MppTask); ok {
 		p.SetChildren(t.Plan())
-		return &MppTask{
+		nt := &MppTask{
 			p:           p,
 			partTp:      mpp.partTp,
 			hashCols:    mpp.hashCols,
 			tblColHists: mpp.tblColHists,
 		}
+		nt.CopyFrom(&mpp.simpleWarnings)
+		return nt
 	}
 	t.ConvertToRootTask(p.SCtx())
 	p.SetChildren(t.Plan())
 	ta := &RootTask{}
 	ta.SetPlan(p)
+	ta.CopyFrom(&t.(*RootTask).simpleWarnings)
 	return ta
 }
 
@@ -2781,6 +2853,20 @@ func (p *PhysicalSequence) Attach2Task(tasks ...base.Task) base.Task {
 		partTp:      lastTask.partTp,
 		hashCols:    lastTask.hashCols,
 		tblColHists: lastTask.tblColHists,
+	}
+	for _, t := range tasks {
+		if mpp, ok := t.(*MppTask); ok {
+			mppTask.CopyFrom(&mpp.simpleWarnings)
+			continue
+		}
+		if root, ok := t.(*RootTask); ok {
+			mppTask.CopyFrom(&root.simpleWarnings)
+			continue
+		}
+		if cop, ok := t.(*CopTask); ok {
+			mppTask.CopyFrom(&cop.simpleWarnings)
+			continue
+		}
 	}
 	return mppTask
 }
@@ -2880,11 +2966,13 @@ func (t *MppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *MppTask
 	sender.SetChildren(t.p)
 	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.StatsInfo())
 	receiver.SetChildren(sender)
-	return &MppTask{
+	nt := &MppTask{
 		p:        receiver,
 		partTp:   prop.MPPPartitionTp,
 		hashCols: prop.MPPPartitionCols,
 	}
+	nt.CopyFrom(&t.simpleWarnings)
+	return nt
 }
 
 // IndexJoinInfo is generated by index join's inner ds, which will build their own index choice based

@@ -1024,14 +1024,24 @@ func enumerateIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.Physi
 	if count := outerChild.StatsInfo().RowCount; count > 0 {
 		avgInnerRowCnt = p.EqualCondOutCnt / count
 	}
-	indexJoinProp := &property.IndexJoinRuntimeProp{
+	indexJoinPropTS := &property.IndexJoinRuntimeProp{
 		OtherConditions: p.OtherConditions,
 		InnerJoinKeys:   innerJoinKeys,
 		OuterJoinKeys:   outerJoinKeys,
 		AvgInnerRowCnt:  avgInnerRowCnt,
+		TableRangeScan:  true,
 	}
-	indexJoins := constructIndexJoinStatic(p, prop, outerIdx, indexJoinProp)
-	indexJoins = append(indexJoins, constructIndexHashJoinStatic(p, prop, outerIdx, indexJoinProp)...)
+	indexJoinPropIS := &property.IndexJoinRuntimeProp{
+		OtherConditions: p.OtherConditions,
+		InnerJoinKeys:   innerJoinKeys,
+		OuterJoinKeys:   outerJoinKeys,
+		AvgInnerRowCnt:  avgInnerRowCnt,
+		TableRangeScan:  false,
+	}
+	indexJoins := constructIndexJoinStatic(p, prop, outerIdx, indexJoinPropTS)
+	indexJoins = append(indexJoins, constructIndexJoinStatic(p, prop, outerIdx, indexJoinPropIS)...)
+	indexJoins = append(indexJoins, constructIndexHashJoinStatic(p, prop, outerIdx, indexJoinPropTS)...)
+	indexJoins = append(indexJoins, constructIndexHashJoinStatic(p, prop, outerIdx, indexJoinPropIS)...)
 	return indexJoins
 }
 
@@ -1195,11 +1205,15 @@ func buildDataSource2IndexScanByIndexJoinProp(
 	} else {
 		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 	}
+	// since there is a possibility that inner task can't be built, we just return base.InvalidTask.
+	if innerTask == nil {
+		return base.InvalidTask
+	}
 	// prepare the index path chosen information and wrap them as IndexJoinInfo and fill back to CopTask.
 	// here we don't need to construct physical index join here anymore, because we will encapsulate it bottom-up.
 	// chosenPath and lastColManager of indexJoinResult should be returned to the caller (seen by index join to keep
 	// index join aware of indexColLens and compareFilters).
-	completeIndexJoinFeedBackInfo(innerTask.(*CopTask), indexJoinResult, indexJoinResult.chosenRanges.Range(), keyOff2IdxOff)
+	completeIndexJoinFeedBackInfo(innerTask.(*CopTask), indexJoinResult, indexJoinResult.chosenRanges, keyOff2IdxOff)
 	return innerTask
 }
 
@@ -1260,6 +1274,9 @@ func buildDataSource2TableScanByIndexJoinProp(
 		} else {
 			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt)
 		}
+	}
+	if innerTask == nil {
+		return base.InvalidTask
 	}
 	// prepare the index path chosen information and wrap them as IndexJoinInfo and fill back to CopTask.
 	// here we don't need to construct physical index join here anymore, because we will encapsulate it bottom-up.
@@ -2083,8 +2100,8 @@ func tryToEnumerateIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalPr
 		stmtCtx.SetHintWarning("Some INL_MERGE_JOIN and NO_INDEX_MERGE_JOIN hints conflict, NO_INDEX_MERGE_JOIN may be ignored")
 	}
 	// previously we will think about force index join hints here, but we have to wait the inner plans to be a valid
-	// physical one/ones. Because indexJoinProp may not be admitted by its inner patterns, so we innovatively move all
-	// hint related handling to the findBestTask function when we see the entire inner physicalized plan tree. See xxx
+	// physical one/ones. Because indexJoinProp may not be admitted by its inner patterns, so we innovative-ly move all
+	// hint related handling to the findBestTask function when we see the entire inner physical-ized plan tree. See xxx
 	// for details.
 	//
 	// handleFilterIndexJoinHints is trying to avoid generating index join or index hash join when no-index-join related
@@ -2136,6 +2153,17 @@ func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty
 	return filterIndexJoinBySessionVars(p.SCtx(), candidates), false
 }
 
+func enumerationContainIndexJoin(candidates []base.PhysicalPlan) bool {
+	for _, candidate := range candidates {
+		_, _, ok := getIndexJoinSideAndMethod(candidate)
+		if ok {
+			// contain index join type
+			return ok
+		}
+	}
+	return false
+}
+
 // handleFilterIndexJoinHints is trying to avoid generating index join or index hash join when no-index-join related
 // hint is specified in the query. So we can do it in physic enumeration phase.
 func handleFilterIndexJoinHints(p *logicalop.LogicalJoin, candidates []base.PhysicalPlan) []base.PhysicalPlan {
@@ -2160,16 +2188,24 @@ func handleFilterIndexJoinHints(p *logicalop.LogicalJoin, candidates []base.Phys
 
 // recordIndexJoinHintWarnings records the warnings msg if no valid preferred physic are picked.
 // todo: extend recordIndexJoinHintWarnings to support all kind of operator's warnings handling.
-func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalProperty) error {
+func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalProperty, inEnforce bool) error {
 	p, ok := lp.(*logicalop.LogicalJoin)
 	if !ok {
 		return nil
+	}
+	if !p.PreferAny(h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
+		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner) {
+		return nil // no force index join hints
 	}
 	// Cannot find any valid index join plan with these force hints.
 	// Print warning message if any hints cannot work.
 	// If the required property is not empty, we will enforce it and try the hint again.
 	// So we only need to generate warning message when the property is empty.
-	if prop.IsSortItemEmpty() {
+	//
+	// but for warnings handle inside findBestTask here, even the not-empty prop
+	// will be reset to get the planNeedEnforce plans, but the prop passed down here will
+	// still be the same, so here we change the admission to both.
+	if prop.IsSortItemEmpty() || inEnforce {
 		var indexJoinTables, indexHashJoinTables, indexMergeJoinTables []h.HintedTable
 		if p.HintInfo != nil {
 			t := p.HintInfo.IndexJoin
@@ -2197,12 +2233,47 @@ func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalPro
 	return nil
 }
 
-// suitLogicalJoinHint is used to handle logic hint/prefer/variable, which is not a strong guide for optimization phase.
+// applyLogicalJoinHint is used to handle logic hint/prefer/variable, which is not a strong guide for optimization phase.
 // It is changed from handleForceIndexJoinHints to handle the preferred join hint among several valid physical plan choices.
 // It will return true if the hint can be applied when saw a real physic plan successfully built and returned up from child.
 // we cache the most preferred one among this valid and preferred physic plans. If there is no preferred physic applicable
 // for the logic hint, we will return false and the optimizer will continue to return the normal low-cost one.
-func suitLogicalJoinHint(lp base.LogicalPlan, physic base.PhysicalPlan) (preferred bool) {
+func applyLogicalJoinHint(lp base.LogicalPlan, physic base.PhysicalPlan) (preferred bool) {
+	return preferMergeJoin(lp, physic) || preferIndexJoinFamily(lp, physic) || preferHashJoin(lp, physic)
+}
+
+func preferHashJoin(lp base.LogicalPlan, physic base.PhysicalPlan) (preferred bool) {
+	p, ok := lp.(*logicalop.LogicalJoin)
+	if !ok {
+		return false
+	}
+	if physic == nil {
+		return false
+	}
+	forceLeftToBuild := ((p.PreferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferRightAsHJProbe) > 0)
+	forceRightToBuild := ((p.PreferJoinType & h.PreferRightAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferLeftAsHJProbe) > 0)
+	preferHashJoin := p.PreferJoinType&h.PreferHashJoin > 0 || forceRightToBuild || forceLeftToBuild
+	if _, ok := physic.(*PhysicalHashJoin); ok && preferHashJoin {
+		return true
+	}
+	return false
+}
+
+func preferMergeJoin(lp base.LogicalPlan, physic base.PhysicalPlan) (preferred bool) {
+	p, ok := lp.(*logicalop.LogicalJoin)
+	if !ok {
+		return false
+	}
+	if physic == nil {
+		return false
+	}
+	if _, ok := physic.(*PhysicalMergeJoin); ok && p.PreferJoinType&h.PreferMergeJoin > 0 {
+		return true
+	}
+	return false
+}
+
+func preferIndexJoinFamily(lp base.LogicalPlan, physic base.PhysicalPlan) (preferred bool) {
 	p, ok := lp.(*logicalop.LogicalJoin)
 	if !ok {
 		return false
@@ -2708,12 +2779,28 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 		}
 		joins = append(joins, mergeJoins...)
 
-		// todo: feel vars.EnhanceIndexJoinBuildV2 and tryToEnumerateIndexJoin(p, prop)
-		indexJoins, forced := tryToGetIndexJoin(p, prop)
-		if forced {
-			return indexJoins, true, nil
+		if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
+			indexJoins := tryToEnumerateIndexJoin(p, prop)
+			joins = append(joins, indexJoins...)
+
+			failpoint.Inject("MockOnlyEnableIndexHashJoinV2", func(val failpoint.Value) {
+				if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
+					indexHashJoin := make([]base.PhysicalPlan, 0, len(indexJoins))
+					for _, one := range indexJoins {
+						if _, ok := one.(*PhysicalIndexHashJoin); ok {
+							indexHashJoin = append(indexHashJoin, one)
+						}
+					}
+					failpoint.Return(indexHashJoin, true, nil)
+				}
+			})
+		} else {
+			indexJoins, forced := tryToGetIndexJoin(p, prop)
+			if forced {
+				return indexJoins, true, nil
+			}
+			joins = append(joins, indexJoins...)
 		}
-		joins = append(joins, indexJoins...)
 	}
 
 	hashJoins, forced := getHashJoins(p, prop)
@@ -3239,7 +3326,6 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 	if childProp == nil {
 		return nil
 	}
-
 	for _, possibleChildProperty := range la.PossibleProperties {
 		childProp.SortItems = property.SortItemsFromCols(possibleChildProperty[:len(groupByCols)], desc)
 		if !prop.IsPrefix(childProp) {
