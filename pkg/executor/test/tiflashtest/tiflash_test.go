@@ -555,9 +555,28 @@ func TestPartitionTable(t *testing.T) {
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/checkTotalMPPTasks", `return(4)`)
 	tk.MustQuery("select count(*) from t, t3 where t3.a = t.a and t3.b <= 4").Check(testkit.Rows("3"))
+	tk.MustQuery("explain format='brief' select count(*) from t, t3 where t3.a = t.a and t3.b <= 4").Check(testkit.Rows(
+		"HashAgg 1.00 root  funcs:count(Column#7)->Column#6",
+		"└─TableReader 1.00 root partition:p0,p1,p2 of t3, partition:all of t MppVersion: 3, data:ExchangeSender",
+		"  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#7",
+		"      └─Projection 4154.17 mpp[tiflash]  test.t3.a",
+		"        └─HashJoin 4154.17 mpp[tiflash]  inner join, equal:[eq(test.t3.a, test.t.a)]",
+		"          ├─ExchangeReceiver(Build) 3323.33 mpp[tiflash]  ",
+		"          │ └─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+		"          │   └─Selection 3323.33 mpp[tiflash]  le(test.t3.b, 4)",
+		"          │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo, PartitionTableScan:true",
+		"          └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo, PartitionTableScan:true"))
 	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/checkTotalMPPTasks")
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/checkTotalMPPTasks", `return(3)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/checkTotalMPPTasks", `return(2)`)
 	tk.MustQuery("select count(*) from t, t3 where t3.a = t.a and t3.b > 10").Check(testkit.Rows("0"))
+	tk.MustQuery("explain format='brief' select count(*) from t, t3 where t3.a = t.a and t3.b > 10").Check(testkit.Rows(
+		"StreamAgg 1.00 root  funcs:count(1)->Column#6",
+		"└─HashJoin 0.00 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
+		"  ├─TableDual(Build) 0.00 root  rows:0",
+		"  └─TableReader(Probe) 10000.00 root partition:all MppVersion: 3, data:ExchangeSender",
+		"    └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo, PartitionTableScan:true"))
 	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/checkTotalMPPTasks")
 	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/checkUseMPP")
 }
