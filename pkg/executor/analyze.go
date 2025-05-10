@@ -180,7 +180,7 @@ TASKLOOP:
 		}
 	}
 
-	if intest.InTest {
+	if intest.EnableInternalCheck {
 		for {
 			stop := true
 			failpoint.Inject("mockStuckAnalyze", func() {
