@@ -894,7 +894,8 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 			}
 		}
 	*/
-	if ds.SCtx().GetSessionVars().StmtCtx.InPreparedPlanBuilding {
+	if ds.SCtx().GetSessionVars().StmtCtx.InPreparedPlanBuilding &&
+		ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return ds, nil
 	}
 	// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from ds.AllConds, the condition
