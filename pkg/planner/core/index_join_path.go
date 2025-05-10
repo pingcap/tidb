@@ -643,20 +643,16 @@ func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.Ph
 	// which one as the copTask here is better, some more possible upper attached operator cost should be
 	// considered, besides the row count, double reader cost for index lookup should also be considered as
 	// a whole, so we leave the cost compare for index join itself just like what it was before.
+	var innerCopTask base.Task
 	if prop.IndexJoinProp.TableRangeScan {
-		innerTSCopTask := buildDataSource2TableScanByIndexJoinProp(ds, prop)
-		if innerTSCopTask.Invalid() {
-			return base.InvalidTask, 0, nil
-		}
-		planCounter.Dec(1)
-		return innerTSCopTask, 1, nil
+		innerCopTask = buildDataSource2TableScanByIndexJoinProp(ds, prop)
 	}
-	innerISCopTask := buildDataSource2IndexScanByIndexJoinProp(ds, prop)
-	if innerISCopTask.Invalid() {
+	innerCopTask = buildDataSource2IndexScanByIndexJoinProp(ds, prop)
+	if innerCopTask.Invalid() {
 		return base.InvalidTask, 0, nil
 	}
 	planCounter.Dec(1)
-	return innerISCopTask, 1, nil
+	return innerCopTask, 1, nil
 }
 
 // getBestIndexJoinPathResultByProp tries to iterate all possible access paths of the inner child and builds

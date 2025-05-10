@@ -2222,16 +2222,16 @@ func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalPro
 // It will return true if the hint can be applied when saw a real physic plan successfully built and returned up from child.
 // we cache the most preferred one among this valid and preferred physic plans. If there is no preferred physic applicable
 // for the logic hint, we will return false and the optimizer will continue to return the normal low-cost one.
-func applyLogicalJoinHint(lp base.LogicalPlan, physic base.PhysicalPlan) (preferred bool) {
-	return preferMergeJoin(lp, physic) || preferIndexJoinFamily(lp, physic) || preferHashJoin(lp, physic)
+func applyLogicalJoinHint(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
+	return preferMergeJoin(lp, physicPlan) || preferIndexJoinFamily(lp, physicPlan) || preferHashJoin(lp, physicPlan)
 }
 
-func preferHashJoin(lp base.LogicalPlan, physic base.PhysicalPlan) (preferred bool) {
+func preferHashJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
 	p, ok := lp.(*logicalop.LogicalJoin)
 	if !ok {
 		return false
 	}
-	if physic == nil {
+	if physicPlan == nil {
 		return false
 	}
 	forceLeftToBuild := ((p.PreferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferRightAsHJProbe) > 0)
@@ -2241,7 +2241,7 @@ func preferHashJoin(lp base.LogicalPlan, physic base.PhysicalPlan) (preferred bo
 		forceLeftToBuild = false
 		forceRightToBuild = false
 	}
-	physicalHashJoin, ok := physic.(*PhysicalHashJoin)
+	physicalHashJoin, ok := physicPlan.(*PhysicalHashJoin)
 	if !ok {
 		return false
 	}
@@ -2249,31 +2249,31 @@ func preferHashJoin(lp base.LogicalPlan, physic base.PhysicalPlan) (preferred bo
 	return preferHashJoin
 }
 
-func preferMergeJoin(lp base.LogicalPlan, physic base.PhysicalPlan) (preferred bool) {
+func preferMergeJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
 	p, ok := lp.(*logicalop.LogicalJoin)
 	if !ok {
 		return false
 	}
-	if physic == nil {
+	if physicPlan == nil {
 		return false
 	}
-	_, ok = physic.(*PhysicalMergeJoin)
+	_, ok = physicPlan.(*PhysicalMergeJoin)
 	return ok && p.PreferJoinType&h.PreferMergeJoin > 0
 }
 
-func preferIndexJoinFamily(lp base.LogicalPlan, physic base.PhysicalPlan) (preferred bool) {
+func preferIndexJoinFamily(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
 	p, ok := lp.(*logicalop.LogicalJoin)
 	if !ok {
 		return false
 	}
-	if physic == nil {
+	if physicPlan == nil {
 		return false
 	}
 	if !p.PreferAny(h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
 		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner) {
 		return false // no force index join hints
 	}
-	innerSide, joinMethod, ok := getIndexJoinSideAndMethod(physic)
+	innerSide, joinMethod, ok := getIndexJoinSideAndMethod(physicPlan)
 	if !ok {
 		return false
 	}

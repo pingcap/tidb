@@ -1678,13 +1678,11 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 		return nil, err
 	}
 	cloned.basePhysicalJoin = *base
-	// after the new refactor of indexJoin, the inner plan field is not a necessary one.
-	// So we need to check if the inner plan is nil before we do some cloning.
 	if p.innerPlan != nil {
 		cloned.innerPlan, err = p.innerPlan.Clone(newCtx)
-	}
-	if err != nil {
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
 	}
 	cloned.Ranges = p.Ranges.CloneForPlanCache() // this clone is deep copy
 	cloned.KeyOff2IdxOff = make([]int, len(p.KeyOff2IdxOff))

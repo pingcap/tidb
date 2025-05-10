@@ -1464,7 +1464,6 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		// cache the physical for indexJoinProp
 		defer func() {
 			ds.StoreTask(prop, t)
-			err = validateTableSamplePlan(ds, t, err)
 		}()
 		// when datasource leaf is in index join's inner side, build the task out with old
 		// index join build logic, we can't merge this with normal datasource's index range
