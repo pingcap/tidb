@@ -125,10 +125,10 @@ func TestPreparedPlanCachePartitionIndex(t *testing.T) {
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0}, [][]any{
-		{"IndexLookUp_9"},
-		{"├─IndexRangeScan_7(Build)"},
-		{"└─TableRowIDScan_8(Probe)"}})
+	tk.MustQuery(fmt.Sprintf("explain format='breif' for connection %d", tkProcess.ID)).CheckAt([]int{0}, [][]any{
+		{"IndexLookUp"},
+		{"├─IndexRangeScan(Build)"},
+		{"└─TableRowIDScan(Probe)"}})
 	tk.MustExec(`set @a=2,@b=5,@c=4`)
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Sort().Check(testkit.Rows("AC 4", "BA 5", "abc 2"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)

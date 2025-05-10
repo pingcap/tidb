@@ -117,7 +117,7 @@ func TestRedactExplain(t *testing.T) {
 			"Projection 2.00 root  ?->Column#5",
 			"└─HashJoin 2.00 root  left outer join, left side:Batch_Point_Get, equal:[eq(test.t.a, test.tlist.a)]",
 			"  ├─TableDual(Build) 0.00 root  rows:0",
-			"  └─Batch_Point_Get(Probe) 2.00 root table:t handle:[12 13], keep order:false, desc:false]"))
+			"  └─Batch_Point_Get(Probe) 2.00 root table:t handle:[12 13], keep order:false, desc:false"))
 	// TableRangeScan + Limit
 	tk.MustQuery("explain format='brief' select * from t where a > 1 limit 10 offset 10;").
 		Check(testkit.Rows(
@@ -149,7 +149,7 @@ func TestRedactExplain(t *testing.T) {
 	tk.MustQuery("explain format = 'brief' select * from tlist where a in (2)").Check(testkit.Rows(
 		"TableReader 10.00 root partition:p0 data:Selection",
 		"└─Selection 10.00 cop[tikv]  eq(test.tlist.a, ?)",
-		"  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"))
+		"  └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"))
 	// CTE
 	tk.MustQuery("explain format='brief' with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000) select * from cte, t limit 100 offset 100;").Check(
 		testkit.Rows("Limit 100.00 root  offset:?, count:?",
