@@ -80,11 +80,63 @@ func ExhaustErrors(ec <-chan error) []error {
 	}
 }
 
+func (rc *SnapClient) filterAndValidateStatisticTables(
+	ctx context.Context,
+	createdTables []*CreatedTable,
+	kvClient kv.Client,
+	checksumConcurrency uint,
+) (map[string][]string, int, error) {
+	statisticTables := make(map[string][]string)
+	statisticTableCount := 0
+	workerpool := tidbutil.NewWorkerPool(defaultChecksumConcurrency, "Restore Statistic Checksum")
+	eg, ectx := errgroup.WithContext(ctx)
+	for _, createdTable := range createdTables {
+		tempSchemaName := createdTable.OldTable.DB.Name.O
+		tableName := createdTable.OldTable.Info.Name.O
+		if dbName, ok := GetDBNameIfStatsTemporaryTable(tempSchemaName, tableName); ok {
+			statisticTables[dbName] = append(statisticTables[dbName], tableName)
+			workerpool.ApplyOnErrorGroup(eg, func() error {
+				return rc.execAndValidateChecksum(ectx, createdTable, kvClient, checksumConcurrency)
+			})
+			statisticTableCount += 1
+		}
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	return statisticTables, statisticTableCount, nil
+}
+
+func (rc *SnapClient) moveStatsTable(ctx context.Context, statisticTables map[string][]string) error {
+	renameSQL, dropSQL := GenerateMoveStatsTableSQLPair(statisticTables)
+	if err := rc.db.Session().Execute(ctx, renameSQL); err != nil {
+		return errors.Trace(err)
+	}
+	if err := rc.db.Session().Execute(ctx, dropSQL); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (rc *SnapClient) replaceStatsTables(ctx context.Context, createdTables []*CreatedTable, kvClient kv.Client, checksumConcurrency uint) (int, error) {
+	statisticTables, statisticTableCount, err := rc.filterAndValidateStatisticTables(ctx, createdTables, kvClient, checksumConcurrency)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	if err := rc.moveStatsTable(ctx, statisticTables); err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	return statisticTableCount, nil
+}
+
 type PipelineContext struct {
 	// pipeline item switch
-	Checksum         bool
-	LoadStats        bool
-	WaitTiflashReady bool
+	Checksum          bool
+	LoadStats         bool
+	LoadStatsPhysical bool
+	WaitTiflashReady  bool
 
 	// pipeline item configuration
 	LogProgress         bool
@@ -104,27 +156,35 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 	defer func() {
 		summary.CollectDuration("restore pipeline", time.Since(start))
 	}()
-	progressLen := int64(0)
+	pipelineNum := 0
 	if plCtx.Checksum {
-		progressLen += int64(len(createdTables))
+		pipelineNum += 1
 	}
-	progressLen += int64(len(createdTables)) // for pipeline item - update stats meta
+	pipelineNum += 1 // for pipeline item - update stats meta
 	if plCtx.WaitTiflashReady {
-		progressLen += int64(len(createdTables))
+		pipelineNum += 1
+	}
+	progressLen := int64(pipelineNum * len(createdTables))
+	if plCtx.LoadStatsPhysical {
+		statsTableCount, err := rc.replaceStatsTables(ctx, createdTables, plCtx.KvClient, plCtx.ChecksumConcurrency)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		progressLen -= int64(pipelineNum * statsTableCount)
 	}
 
 	// Redirect to log if there is no log file to avoid unreadable output.
 	updateCh := plCtx.Glue.StartProgress(ctx, "Restore Pipeline", progressLen, !plCtx.LogProgress)
 	defer updateCh.Close()
 
-	handlerBuilder := &PipelineConcurrentBuilder{}
+	handlerBuilder := &PipelineConcurrentBuilder{loadStatsPhysical: plCtx.LoadStatsPhysical}
 	// pipeline checksum
 	if plCtx.Checksum {
 		rc.registerValidateChecksum(handlerBuilder, plCtx.KvClient, updateCh, plCtx.ChecksumConcurrency)
 	}
 
 	// pipeline update meta and load stats
-	rc.registerUpdateMetaAndLoadStats(handlerBuilder, plCtx.ExtStorage, updateCh, plCtx.StatsConcurrency, plCtx.AutoAnalyze, plCtx.LoadStats)
+	rc.registerUpdateMetaAndLoadStats(handlerBuilder, plCtx.ExtStorage, updateCh, plCtx.StatsConcurrency, plCtx.AutoAnalyze, plCtx.LoadStats && !plCtx.LoadStatsPhysical)
 
 	// pipeline wait Tiflash synced
 	if plCtx.WaitTiflashReady {
@@ -146,6 +206,8 @@ type pipelineFunction struct {
 
 type PipelineConcurrentBuilder struct {
 	pipelineFunctions []pipelineFunction
+
+	loadStatsPhysical bool
 }
 
 func (builder *PipelineConcurrentBuilder) RegisterPipelineTask(
@@ -170,7 +232,7 @@ func (builder *PipelineConcurrentBuilder) StartPipelineTask(ctx context.Context,
 	}
 
 	// the first pipeline task
-	postHandleCh := handler.afterTableRestoredCh(createdTables)
+	postHandleCh := handler.afterTableRestoredCh(createdTables, builder.loadStatsPhysical)
 
 	// the middle pipeline tasks
 	for _, f := range builder.pipelineFunctions {
@@ -188,13 +250,16 @@ type PipelineConcurrentHandler struct {
 	eg              *errgroup.Group
 }
 
-func (handler *PipelineConcurrentHandler) afterTableRestoredCh(createdTables []*CreatedTable) <-chan *CreatedTable {
+func (handler *PipelineConcurrentHandler) afterTableRestoredCh(createdTables []*CreatedTable, loadStatsPhysical bool) <-chan *CreatedTable {
 	outCh := make(chan *CreatedTable)
 
 	handler.eg.Go(func() error {
 		defer close(outCh)
 
 		for _, createdTable := range createdTables {
+			if loadStatsPhysical && IsStatsTemporaryTable(createdTable.OldTable.DB.Name.O, createdTable.OldTable.Info.Name.O) {
+				continue
+			}
 			select {
 			case <-handler.pipelineTaskCtx.Done():
 				return handler.pipelineTaskCtx.Err()

@@ -119,3 +119,45 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
 	require.Equal(t, int64(247), session.CurrentBootstrapVersion)
 }
+
+func TestIsStatsTemporaryTable(t *testing.T) {
+	require.False(t, snapclient.IsStatsTemporaryTable("", ""))
+	require.False(t, snapclient.IsStatsTemporaryTable("", "stats_meta"))
+	require.False(t, snapclient.IsStatsTemporaryTable("mysql", "stats_meta"))
+	require.False(t, snapclient.IsStatsTemporaryTable("__TiDB_BR_Temporary_test", "stats_meta"))
+	require.True(t, snapclient.IsStatsTemporaryTable("__TiDB_BR_Temporary_mysql", "stats_meta"))
+	require.False(t, snapclient.IsStatsTemporaryTable("__TiDB_BR_Temporary_mysql", "test"))
+}
+
+func TestGetDBNameIfStatsTemporaryTable(t *testing.T) {
+	_, ok := snapclient.GetDBNameIfStatsTemporaryTable("", "")
+	require.False(t, ok)
+	_, ok = snapclient.GetDBNameIfStatsTemporaryTable("", "stats_meta")
+	require.False(t, ok)
+	_, ok = snapclient.GetDBNameIfStatsTemporaryTable("mysql", "stats_meta")
+	require.False(t, ok)
+	_, ok = snapclient.GetDBNameIfStatsTemporaryTable("__TiDB_BR_Temporary_test", "stats_meta")
+	require.False(t, ok)
+	name, ok := snapclient.GetDBNameIfStatsTemporaryTable("__TiDB_BR_Temporary_mysql", "stats_meta")
+	require.True(t, ok)
+	require.Equal(t, "mysql", name)
+	_, ok = snapclient.GetDBNameIfStatsTemporaryTable("__TiDB_BR_Temporary_mysql", "test")
+	require.False(t, ok)
+}
+
+func TestGenerateMoveStatsTableSQLPair(t *testing.T) {
+	renameSQL, dropSQL := snapclient.GenerateMoveStatsTableSQLPair(map[string][]string{
+		"mysql": {"stats_meta", "stats_buckets", "stats_top_n"},
+	})
+	require.Equal(t, "RENAME TABLE "+
+		"mysql.stats_meta TO __TiDB_BR_Temporary_mysql.stats_meta_deleted,"+
+		"__TiDB_BR_Temporary_mysql.stats_meta TO mysql.stats_meta,"+
+		"mysql.stats_buckets TO __TiDB_BR_Temporary_mysql.stats_buckets_deleted,"+
+		"__TiDB_BR_Temporary_mysql.stats_buckets TO mysql.stats_buckets,"+
+		"mysql.stats_top_n TO __TiDB_BR_Temporary_mysql.stats_top_n_deleted,"+
+		"__TiDB_BR_Temporary_mysql.stats_top_n TO mysql.stats_top_n", renameSQL)
+	require.Equal(t, "DROP TABLE "+
+		"__TiDB_BR_Temporary_mysql.stats_meta_deleted,"+
+		"__TiDB_BR_Temporary_mysql.stats_buckets_deleted,"+
+		"__TiDB_BR_Temporary_mysql.stats_top_n_deleted", dropSQL)
+}
