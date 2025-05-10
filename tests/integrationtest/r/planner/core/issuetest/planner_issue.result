@@ -708,7 +708,6 @@ JOIN tceb7972c ON tceb7972c.col_19 = t61a85298.col_71
 WHERE 16739493649928310215 MEMBER OF (derived_table.col_60767)
 OR NOT (JSON_CONTAINS(derived_table.col_60767, '6019730272580550835'));
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
 Projection	6.00	root		1->Column#18
 └─HashJoin	6.00	root		inner join, equal:[eq(test.tceb7972c.col_19, Column#19)]
   ├─TableReader(Build)	4.80	root	partition:all	data:Selection
@@ -717,16 +716,6 @@ Projection	6.00	root		1->Column#18
   └─Projection(Probe)	10000.00	root		cast(test.t61a85298.col_71, double BINARY)->Column#19
     └─TableReader	10000.00	root		data:TableFullScan
       └─TableFullScan	10000.00	cop[tikv]	table:t61a85298	keep order:false, stats:pseudo
-=======
-Projection_15	6.00	root		1->Column#18
-└─HashJoin_17	6.00	root		inner join, equal:[eq(test.tceb7972c.col_19, Column#19)]
-  ├─TableReader_20(Build)	4.80	root	partition:all	data:Selection_19
-  │ └─Selection_19	4.80	cop[tikv]		or(json_memberof(cast(16739493649928310215, json BINARY), test.tceb7972c.col_17), not(istrue_with_null(json_contains(test.tceb7972c.col_17, cast("6019730272580550835", json BINARY)))))
-  │   └─TableFullScan_18	6.00	cop[tikv]	table:tceb7972c	keep order:false, stats:partial[col_17:missing]
-  └─Projection_21(Probe)	10000.00	root		cast(test.t61a85298.col_71, double BINARY)->Column#19
-    └─TableReader_23	10000.00	root		data:TableFullScan_22
-      └─TableFullScan_22	10000.00	cop[tikv]	table:t61a85298	keep order:false, stats:pseudo
->>>>>>> 543a6c6d3a (update)
 drop table if exists t0, t1;
 CREATE TABLE t0(c0 int);
 CREATE TABLE t1(c0 int);
