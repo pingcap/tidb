@@ -455,7 +455,6 @@ OUTER:
 		// Don't allow the result to be less than 1 row
 		ret = max(ret, 1.0/float64(coll.RealtimeCount))
 	}
-
 	return ret, nodes, nil
 }
 
