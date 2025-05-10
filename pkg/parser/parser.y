@@ -478,6 +478,7 @@ import (
 	less                     "LESS"
 	level                    "LEVEL"
 	list                     "LIST"
+	llm                      "LLM"
 	loadStats                "LOAD_STATS"
 	local                    "LOCAL"
 	location                 "LOCATION"
@@ -500,6 +501,7 @@ import (
 	minValue                 "MINVALUE"
 	minRows                  "MIN_ROWS"
 	mode                     "MODE"
+	model                    "MODEL"
 	modify                   "MODIFY"
 	month                    "MONTH"
 	names                    "NAMES"
@@ -542,6 +544,7 @@ import (
 	per_db                   "PER_DB"
 	per_table                "PER_TABLE"
 	pipesAsOr
+	platform                 "PLATFORM"
 	plugins                  "PLUGINS"
 	point                    "POINT"
 	policy                   "POLICY"
@@ -1034,6 +1037,7 @@ import (
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockStatsStmt              "Lock statistic statement"
+	LLMStmt                    "LLM statement"
 	UnlockStatsStmt            "Unlock statistic statement"
 	LockTablesStmt             "Lock tables statement"
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
@@ -1245,6 +1249,7 @@ import (
 	LockClause                             "Alter table lock clause"
 	LogTypeOpt                             "Optional log type used in FLUSH statements"
 	LowPriorityOpt                         "LOAD DATA low priority option"
+	LLMOptionList                          "LLM option list"
 	MaxValPartOpt                          "MAXVALUE partition option"
 	NullPartOpt                            "NULL Partition option"
 	NumLiteral                             "Num/Int/Float/Decimal Literal"
@@ -6933,6 +6938,7 @@ UnReservedKeyword:
 |	"STATUS"
 |	"OPEN"
 |	"POINT"
+|	"PLATFORM"
 |	"SUBPARTITIONS"
 |	"SUBPARTITION"
 |	"TABLES"
@@ -7014,6 +7020,7 @@ UnReservedKeyword:
 |	"ROW_COUNT"
 |	"COALESCE"
 |	"MONTH"
+|	"MODEL"
 |	"PROCESS"
 |	"PROFILE"
 |	"PROFILES"
@@ -7212,6 +7219,7 @@ UnReservedKeyword:
 |	"COMPRESSION_TYPE"
 |	"ENCRYPTION_METHOD"
 |	"ENCRYPTION_KEYFILE"
+|	"LLM"
 
 TiDBKeyword:
 	"ADMIN"
@@ -12395,6 +12403,7 @@ Statement:
 |	LoadDataStmt
 |	LoadStatsStmt
 |	LockStatsStmt
+|	LLMStmt
 |	UnlockStatsStmt
 |	PlanReplayerStmt
 |	PreparedStmt
@@ -16704,6 +16713,55 @@ CalibrateResourceWorkloadOption:
 |	"WORKLOAD" "TPCH_10"
 	{
 		$$ = ast.TPCH10
+	}
+
+LLMStmt:
+	"ALTER" "LLM" "PLATFORM" Identifier LLMOptionList
+	{
+		$$ = &ast.LLMStmt{
+			Operation:  "ALTER",
+			Platform:   true,
+			Name:       $4,
+			OptionList: $5.([]ast.LLMOption),
+		}
+	}
+|	"CREATE" "LLM" "MODEL" Identifier LLMOptionList
+	{
+		$$ = &ast.LLMStmt{
+			Operation:  "CREATE",
+			Model:      true,
+			Name:       $4,
+			OptionList: $5.([]ast.LLMOption),
+		}
+	}
+|	"ALTER" "LLM" "MODEL" Identifier LLMOptionList
+	{
+		$$ = &ast.LLMStmt{
+			Operation:  "ALTER",
+			Model:      true,
+			Name:       $4,
+			OptionList: $5.([]ast.LLMOption),
+		}
+	}
+|	"DROP" "LLM" "MODEL" Identifier
+	{
+		$$ = &ast.LLMStmt{
+			Operation: "DROP",
+			Model:     true,
+			Name:      $4,
+		}
+	}
+
+LLMOptionList:
+	Identifier Expression
+	{
+		opt := ast.LLMOption{$1, $2}
+		$$ = []ast.LLMOption{opt}
+	}
+|	LLMOptionList Identifier Expression
+	{
+		opt := ast.LLMOption{$2, $3}
+		$$ = append($1.([]ast.LLMOption), opt)
 	}
 
 /********************************************************************
