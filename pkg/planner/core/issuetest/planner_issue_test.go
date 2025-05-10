@@ -259,3 +259,12 @@ func TestIssue59902(t *testing.T) {
 			"        └─Selection 1.00 cop[tikv]  not(isnull(test.t2.a))",
 			"          └─IndexRangeScan 1.00 cop[tikv] table:t2, index:idx(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"))
 }
+
+func TestIssue57284(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`CREATE  TABLE  t0(c0 INT);`)
+	tk.MustQuery(`SELECT * FROM t0 RIGHT  JOIN  (SELECT BIT_OR(1970) FROM t0) AS sub0  ON true WHERE (CASE 1 WHEN NULL THEN true END );`).Check(
+		testkit.Rows())
+}
