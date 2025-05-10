@@ -78,7 +78,7 @@ func TestRedactExplain(t *testing.T) {
 	tk.MustQuery("explain format = 'brief' select * from tlist where a in (2)").Check(testkit.Rows(
 		"TableReader 10.00 root partition:p0 data:Selection",
 		"└─Selection 10.00 cop[tikv]  eq(test.tlist.a, ‹2›)",
-		"  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"))
+		"  └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"))
 	// CTE
 	tk.MustQuery("explain format='brief' with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000) select * from cte, t limit 100 offset 100;").Check(
 		testkit.Rows(
