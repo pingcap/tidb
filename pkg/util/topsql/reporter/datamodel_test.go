@@ -201,7 +201,8 @@ func Test_record_toProto(t *testing.T) {
 		totalCPUTimeMs: 123,
 		tsItems:        tsItems{{}, {}, {}},
 	}
-	pb := r.toProto()
+	pb := r.toProto(123)
+	require.Equal(t, uint32(123), pb.KeyspaceId)
 	require.Equal(t, []byte("SQL-1"), pb.SqlDigest)
 	require.Equal(t, []byte("PLAN-1"), pb.PlanDigest)
 	require.Len(t, pb.Items, 3)
@@ -235,7 +236,7 @@ func Test_records_topN(t *testing.T) {
 
 func Test_records_toProto(t *testing.T) {
 	rs := records{{}, {}}
-	pb := rs.toProto()
+	pb := rs.toProto(0)
 	require.Len(t, pb, 2)
 }
 
@@ -373,23 +374,26 @@ func Test_normalizedSQLMap_toProto(t *testing.T) {
 	m.register([]byte("SQL-1"), "SQL-1", true)
 	m.register([]byte("SQL-2"), "SQL-2", false)
 	m.register([]byte("SQL-3"), "SQL-3", true)
-	pb := m.toProto()
+	pb := m.toProto(12345)
 	require.Len(t, pb, 3)
 	hash := map[string]tipb.SQLMeta{}
 	for _, meta := range pb {
 		hash[meta.NormalizedSql] = meta
 	}
 	require.Equal(t, tipb.SQLMeta{
+		KeyspaceId:    uint32(12345),
 		SqlDigest:     []byte("SQL-1"),
 		NormalizedSql: "SQL-1",
 		IsInternalSql: true,
 	}, hash["SQL-1"])
 	require.Equal(t, tipb.SQLMeta{
+		KeyspaceId:    uint32(12345),
 		SqlDigest:     []byte("SQL-2"),
 		NormalizedSql: "SQL-2",
 		IsInternalSql: false,
 	}, hash["SQL-2"])
 	require.Equal(t, tipb.SQLMeta{
+		KeyspaceId:    uint32(12345),
 		SqlDigest:     []byte("SQL-3"),
 		NormalizedSql: "SQL-3",
 		IsInternalSql: true,
@@ -451,6 +455,7 @@ func Test_normalizedPlanMap_toProto(t *testing.T) {
 	m.register([]byte("PLAN-2"), "PLAN-2", true)
 	m.register([]byte("PLAN-3"), "PLAN-3", false)
 	pb := m.toProto(
+		123,
 		func(s string) (string, error) { return "[decoded] " + s, nil },
 		func(s []byte) string { return "[encoded] " + string(s) })
 	require.Len(t, pb, 3)
@@ -459,14 +464,17 @@ func Test_normalizedPlanMap_toProto(t *testing.T) {
 		hash[string(meta.PlanDigest)] = meta
 	}
 	require.Equal(t, tipb.PlanMeta{
+		KeyspaceId:     uint32(123),
 		PlanDigest:     []byte("PLAN-1"),
 		NormalizedPlan: "[decoded] PLAN-1",
 	}, hash["PLAN-1"])
 	require.Equal(t, tipb.PlanMeta{
+		KeyspaceId:            uint32(123),
 		PlanDigest:            []byte("PLAN-2"),
 		EncodedNormalizedPlan: "[encoded] PLAN-2",
 	}, hash["PLAN-2"])
 	require.Equal(t, tipb.PlanMeta{
+		KeyspaceId:     uint32(123),
 		PlanDigest:     []byte("PLAN-3"),
 		NormalizedPlan: "[decoded] PLAN-3",
 	}, hash["PLAN-3"])

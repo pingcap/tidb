@@ -18,10 +18,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/stretchr/testify/require"
 )
 
-func TestSetKeyspaceNameInConf(t *testing.T) {
+func TestSetKeyspaceNameAndIDInConf(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceName = ""
 	})
@@ -38,9 +39,22 @@ func TestSetKeyspaceNameInConf(t *testing.T) {
 	// The cfg.keyspaceName get higher weights than KEYSPACE_NAME in system env.
 	require.Equal(t, keyspaceNameInCfg, getKeyspaceName)
 	require.Equal(t, false, IsKeyspaceNameEmpty(getKeyspaceName))
+
+	// convert KeyspaceName to uint32 failed
+	getKeyspaceID := GetKeyspaceIDBySettings()
+	require.Equal(t, uint32(0), getKeyspaceID)
+	// get keyspaceID normally
+	keyspaceNameInCfg = "123"
+	c1.KeyspaceName = keyspaceNameInCfg
+	getKeyspaceID = GetKeyspaceIDBySettings()
+	if kerneltype.IsNextGen() {
+		require.Equal(t, uint32(123), getKeyspaceID)
+	} else {
+		require.Equal(t, uint32(0), getKeyspaceID)
+	}
 }
 
-func TestNoKeyspaceNameSet(t *testing.T) {
+func TestNoKeyspaceNameAndIDSet(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceName = ""
 	})
@@ -49,4 +63,7 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 
 	require.Equal(t, "", getKeyspaceName)
 	require.Equal(t, true, IsKeyspaceNameEmpty(getKeyspaceName))
+
+	getKeyspaceID := GetKeyspaceIDBySettings()
+	require.Equal(t, uint32(0), getKeyspaceID)
 }
