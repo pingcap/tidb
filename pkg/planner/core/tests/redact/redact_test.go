@@ -46,7 +46,7 @@ func TestRedactExplain(t *testing.T) {
 			"Projection 2.00 root  ‹1›->Column#5",
 			"└─HashJoin 2.00 root  left outer join, left side:Batch_Point_Get, equal:[eq(test.t.a, test.tlist.a)]",
 			"  ├─TableDual(Build) 0.00 root  rows:0",
-			"  └─Batch_Point_Get(Probe) 2.00 root table:t handle:[12 13], keep order:false, desc:false]"))
+			"  └─Batch_Point_Get(Probe) 2.00 root table:t handle:[12 13], keep order:false, desc:false"))
 	// TableRangeScan + Limit
 	tk.MustQuery("explain format='brief' select * from t where a > 1 limit 10 offset 10;").
 		Check(testkit.Rows(
