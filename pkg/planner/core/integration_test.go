@@ -444,7 +444,7 @@ func TestTimeToSecPushDownToTiFlash(t *testing.T) {
 		{"  └─Projection", "10000.00", "mpp[tiflash]", " time_to_sec(test.t.a)->Column#3"},
 		{"    └─TableFullScan", "10000.00", "mpp[tiflash]", "table:t", "keep order:false, stats:pseudo"},
 	}
-	tk.MustQuery("explain format = 'brief'  time_to_sec(a) from t;").Check(rows)
+	tk.MustQuery("explain format = 'brief' select time_to_sec(a) from t;").Check(rows)
 }
 
 func TestRightShiftPushDownToTiFlash(t *testing.T) {
