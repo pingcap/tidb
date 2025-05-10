@@ -293,6 +293,9 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 			return nil, err
 		}
 		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = sortAndEncodeMeta
+		if err := updateTaskSummary(taskHandle, task, taskMeta, proto.ImportStepEncodeAndSort); err != nil {
+			return nil, err
+		}
 	case proto.ImportStepWriteAndIngest:
 		failpoint.Inject("failWhenDispatchWriteIngestSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error"))
@@ -312,6 +315,10 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		if err = job2Step(ctx, logger, taskMeta, importer.JobStepImporting); err != nil {
 			return nil, err
 		}
+		// TODO(joechenrh): merge step may remove some duplicate data, so we have to update the total bytes after merge sort.
+		if err := updateTaskSummary(taskHandle, task, taskMeta, proto.ImportStepEncodeAndSort); err != nil {
+			return nil, err
+		}
 	case proto.ImportStepPostProcess:
 		sch.switchTiKV2NormalMode(ctx, task, logger)
 		failpoint.Inject("clearLastSwitchTime", func() {
@@ -323,8 +330,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		failpoint.Inject("failWhenDispatchPostProcessSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error after ImportStepImport"))
 		})
-		// we need get metas where checksum is stored.
-		if err := updateResult(taskHandle, task, taskMeta, sch.GlobalSort); err != nil {
+		if err := updateTaskSummary(taskHandle, task, taskMeta, getStepOfEncode(sch.GlobalSort)); err != nil {
 			return nil, err
 		}
 		step := getStepOfEncode(sch.GlobalSort)
@@ -333,7 +339,13 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 			return nil, err
 		}
 		previousSubtaskMetas[step] = metas
-		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result))
+
+		var importResult importer.Summary
+		if err := json.Unmarshal(taskMeta.TaskResult, &importResult); err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		logger.Info("move to post-process step ", zap.Any("result", importResult))
 	case proto.StepDone:
 		return nil, nil
 	default:
@@ -558,50 +570,47 @@ func getStepOfEncode(globalSort bool) proto.Step {
 }
 
 // we will update taskMeta in place and make task.Meta point to the new taskMeta.
-func updateResult(handle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta, globalSort bool) error {
-	stepOfEncode := getStepOfEncode(globalSort)
-	metas, err := handle.GetPreviousSubtaskMetas(task.ID, stepOfEncode)
+func updateTaskSummary(handle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta, prevStep proto.Step) error {
+	var (
+		processedRowCnt uint64
+		processedBytes  uint64
+		importSummary   importer.Summary
+	)
+
+	if len(taskMeta.TaskResult) > 0 {
+		if err := json.Unmarshal(taskMeta.TaskResult, &importSummary); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	summaries, err := handle.GetPreviousSubtaskSummary(task.ID, prevStep)
 	if err != nil {
 		return err
 	}
 
-	subtaskMetas := make([]*ImportStepMeta, 0, len(metas))
-	for _, bs := range metas {
-		var subtaskMeta ImportStepMeta
-		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
-			return errors.Trace(err)
-		}
-		subtaskMetas = append(subtaskMetas, &subtaskMeta)
-	}
-	for _, subtaskMeta := range subtaskMetas {
-		taskMeta.Result.LoadedRowCnt += subtaskMeta.Result.LoadedRowCnt
+	if len(summaries) == 0 {
+		return nil
 	}
 
-	if globalSort {
-		taskMeta.Result.LoadedRowCnt, err = getLoadedRowCountOnGlobalSort(handle, task)
-		if err != nil {
-			return err
-		}
+	switch prevStep {
+	case proto.ImportStepEncodeAndSort:
+		importSummary.EncodedRowCnt = processedRowCnt
+		importSummary.EncodedBytes = processedBytes
+	case proto.ImportStepMergeSort:
+		importSummary.MergedRowCnt = processedRowCnt
+		importSummary.MergedBytes = processedBytes
+	case proto.ImportStepImport:
+		importSummary.LoadedRowCnt = processedRowCnt
+		importSummary.LoadedBytes = processedBytes
+	default:
+		return errors.Errorf("unknown step %d", prevStep)
+	}
+
+	if taskMeta.TaskResult, err = json.Marshal(importSummary); err != nil {
+		return errors.Trace(err)
 	}
 
 	return updateMeta(task, taskMeta)
-}
-
-func getLoadedRowCountOnGlobalSort(handle storage.TaskHandle, task *proto.Task) (uint64, error) {
-	metas, err := handle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepWriteAndIngest)
-	if err != nil {
-		return 0, err
-	}
-
-	var loadedRowCount uint64
-	for _, bs := range metas {
-		var subtaskMeta WriteIngestStepMeta
-		if err = json.Unmarshal(bs, &subtaskMeta); err != nil {
-			return 0, errors.Trace(err)
-		}
-		loadedRowCount += subtaskMeta.Result.LoadedRowCnt
-	}
-	return loadedRowCount, nil
 }
 
 func startJob(ctx context.Context, logger *zap.Logger, taskHandle storage.TaskHandle, taskMeta *TaskMeta, jobStep string) error {
@@ -644,21 +653,26 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 
 func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 	taskHandle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta) error {
+
+	var summary importer.Summary
+	if err := json.Unmarshal(taskMeta.TaskResult, &summary); err != nil {
+		return errors.Trace(err)
+	}
+
 	// we have already switch import-mode when switch to post-process step.
 	sch.unregisterTask(ctx, task)
-	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
 				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, &importer.JobImportResult{
-					Affected: taskMeta.Result.LoadedRowCnt,
+					Affected: summary.LoadedRowCnt,
 				}); err != nil {
 					logger.Warn("flush table stats failed", zap.Error(err))
 				}
 				exec := se.GetSQLExecutor()
-				return importer.FinishJob(ctx, exec, taskMeta.JobID, summary)
+				return importer.FinishJob(ctx, exec, taskMeta.JobID, &summary)
 			})
 		},
 	)

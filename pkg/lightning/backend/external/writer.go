@@ -162,6 +162,26 @@ type OnCloseFunc func(summary *WriterSummary)
 // dummyOnCloseFunc is a dummy OnCloseFunc.
 func dummyOnCloseFunc(*WriterSummary) {}
 
+// OnFlushFunc is the callback function when flush kvs to file.
+// It's used to collect task progress.
+type OnFlushFunc func(writtenRows, writtenBytes int64)
+
+// dummyOnFlushFunc is a dummy OnWriteFileFunc.
+func dummyOnFlushFunc(int64, int64) {}
+
+var onFlushKey string = "common-metrics"
+
+// WithOnFlushFunc returns a new context with the provided onFlush function.
+func WithOnFlushFunc(ctx context.Context, onFlush OnFlushFunc) context.Context {
+	return context.WithValue(ctx, onFlushKey, onFlush)
+}
+
+// GetOnFlushFunc returns the onFlush function stored in the context.
+func GetOnFlushFunc(ctx context.Context) (OnFlushFunc, bool) {
+	m, ok := ctx.Value(onFlushKey).(OnFlushFunc)
+	return m, ok
+}
+
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
 	groupOffset     int
@@ -170,6 +190,7 @@ type WriterBuilder struct {
 	propSizeDist    uint64
 	propKeysDist    uint64
 	onClose         OnCloseFunc
+	onFlush         OnFlushFunc
 	keyDupeEncoding bool
 	tikvCodec       tikv.Codec
 	onDup           engineapi.OnDuplicateKey
@@ -183,6 +204,7 @@ func NewWriterBuilder() *WriterBuilder {
 		propSizeDist: defaultPropSizeDist,
 		propKeysDist: defaultPropKeysDist,
 		onClose:      dummyOnCloseFunc,
+		onFlush:      dummyOnFlushFunc,
 	}
 }
 
@@ -213,6 +235,15 @@ func (b *WriterBuilder) SetOnCloseFunc(onClose OnCloseFunc) *WriterBuilder {
 		onClose = dummyOnCloseFunc
 	}
 	b.onClose = onClose
+	return b
+}
+
+// SetOnFlushFunc sets the callback function when a writer is closed.
+func (b *WriterBuilder) SetOnFlushFunc(onFlush OnFlushFunc) *WriterBuilder {
+	if onFlush == nil {
+		onFlush = dummyOnFlushFunc
+	}
+	b.onFlush = onFlush
 	return b
 }
 
@@ -281,6 +312,7 @@ func (b *WriterBuilder) Build(
 		writerID:       writerID,
 		groupOffset:    b.groupOffset,
 		onClose:        b.onClose,
+		onFlush:        b.onFlush,
 		onDup:          b.onDup,
 		closed:         false,
 		multiFileStats: make([]MultipleFilesStat, 0),
@@ -411,6 +443,7 @@ type Writer struct {
 	kvSize      int64
 
 	onClose OnCloseFunc
+	onFlush OnFlushFunc
 	onDup   engineapi.OnDuplicateKey
 	closed  bool
 
@@ -620,6 +653,9 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			Files: []string{dupFile},
 		})
 	}
+
+	// Use count before deduplication.
+	w.onFlush(int64(batchKVCnt), int64(w.batchSize))
 
 	w.kvLocations = w.kvLocations[:0]
 	w.kvSize = 0

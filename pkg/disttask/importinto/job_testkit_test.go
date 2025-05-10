@@ -23,6 +23,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -55,23 +56,17 @@ func TestGetTaskImportedRows(t *testing.T) {
 	require.NoError(t, err)
 	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(111), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
-	importStepMetas := []*importinto.ImportStepMeta{
+	importStepSummaries := []*execute.SubtaskSummary{
 		{
-			Result: importinto.Result{
-				LoadedRowCnt: 1,
-			},
+			ProcessedRowCount: 1,
 		},
 		{
-			Result: importinto.Result{
-				LoadedRowCnt: 2,
-			},
+			ProcessedRowCount: 2,
 		},
 	}
-	for _, m := range importStepMetas {
-		bytes, err := json.Marshal(m)
-		require.NoError(t, err)
-		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepImport,
-			"", bytes, proto.ImportInto, 11)
+	for _, m := range importStepSummaries {
+		testutil.CreateSubTaskWithSummary(t, manager, taskID, proto.ImportStepImport,
+			"", nil, m, proto.ImportInto, 11)
 	}
 	runInfo, err := importinto.GetRuntimeInfoForJob(ctx, 111)
 	require.NoError(t, err)
@@ -87,23 +82,17 @@ func TestGetTaskImportedRows(t *testing.T) {
 	require.NoError(t, err)
 	taskID, err = manager.CreateTask(ctx, importinto.TaskKey(222), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
-	ingestStepMetas := []*importinto.WriteIngestStepMeta{
+	ingestStepSummaries := []*execute.SubtaskSummary{
 		{
-			Result: importinto.Result{
-				LoadedRowCnt: 11,
-			},
+			ProcessedRowCount: 11,
 		},
 		{
-			Result: importinto.Result{
-				LoadedRowCnt: 22,
-			},
+			ProcessedRowCount: 22,
 		},
 	}
-	for _, m := range ingestStepMetas {
-		bytes, err := json.Marshal(m)
-		require.NoError(t, err)
-		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepWriteAndIngest,
-			"", bytes, proto.ImportInto, 11)
+	for _, m := range ingestStepSummaries {
+		testutil.CreateSubTaskWithSummary(t, manager, taskID, proto.ImportStepWriteAndIngest,
+			"", bytes, m, proto.ImportInto, 11)
 	}
 	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, 222)
 	require.NoError(t, err)

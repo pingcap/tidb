@@ -26,11 +26,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	clitutil "github.com/tikv/client-go/v2/util"
@@ -113,6 +115,10 @@ type SessionExecutor interface {
 type TaskHandle interface {
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(taskID int64, step proto.Step) ([][]byte, error)
+
+	// GetPreviousSubtaskSummary gets previous subtask metas.
+	GetPreviousSubtaskSummary(taskID int64, step proto.Step) ([]*execute.SubtaskSummary, error)
+
 	SessionExecutor
 }
 
@@ -582,6 +588,31 @@ func (mgr *TaskManager) GetAllSubtasksByStepAndState(ctx context.Context, taskID
 	return subtasks, nil
 }
 
+// GetAllSubtaskSummaryByStepAndState gets the subtask summaries by step and state.
+func (mgr *TaskManager) GetAllSubtaskSummaryByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState) ([]*execute.SubtaskSummary, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select summary from mysql.tidb_background_subtask
+		where task_key = %? and state = %? and step = %?`,
+		taskID, state, step)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+	summaries := make([]*execute.SubtaskSummary, 0, len(rs))
+	for _, r := range rs {
+		summary := &execute.SubtaskSummary{}
+		if err := json.Unmarshal(hack.Slice(r.GetJSON(0).String()), summary); err != nil {
+			return nil, errors.Trace(err)
+		}
+		summaries = append(summaries, summary)
+	}
+	return summaries, nil
+}
+
 // GetSubtaskRowCount gets the subtask row count.
 func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, step proto.Step) (int64, error) {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
@@ -604,15 +635,22 @@ func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, st
 	return rs[0].GetInt64(0), nil
 }
 
-// UpdateSubtaskRowCount updates the subtask row count.
-func (mgr *TaskManager) UpdateSubtaskRowCount(ctx context.Context, subtaskID int64, rowCount int64) error {
+// UpdateSubtaskSummary updates the subtask summary.
+func (mgr *TaskManager) UpdateSubtaskSummary(ctx context.Context, subtaskID int64, summary *execute.SubtaskSummary) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	_, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`update mysql.tidb_background_subtask
-		set summary = json_set(summary, '$.row_count', %?) where id = %?`,
-		rowCount, subtaskID)
+
+	summaryBytes, err := json.Marshal(summary)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	summaryStr := hack.String(summaryBytes)
+
+	// TODO(joechenrh): remove this when we find a more generalized way to update the summary.
+	_, err = mgr.ExecuteSQLWithNewSession(ctx,
+		`update mysql.tidb_background_subtask set summary = %? where id = %?`,
+		summaryStr, subtaskID)
 	return err
 }
 
@@ -903,6 +941,56 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 		subtasks = append(subtasks, Row2SubTask(r))
 	}
 	return subtasks, nil
+}
+
+// summaries gets summary of subtasks from tidb_global_task and tidb_global_task_history.
+func (mgr *TaskManager) GetSubtaskSummarysWithHistory(ctx context.Context, taskID int64, step proto.Step) ([]*execute.SubtaskSummary, error) {
+	var (
+		rs  []chunk.Row
+		err error
+	)
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+	err = mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`select summary from mysql.tidb_background_subtask where task_key = %? and step = %?`,
+			taskID, step,
+		)
+		if err != nil {
+			return err
+		}
+
+		// To avoid the situation that the subtasks has been `TransferTasks2History`
+		// when the user show import jobs, we need to check the history table.
+		rsFromHistory, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`select summary from mysql.tidb_background_subtask_history where task_key = %? and step = %?`,
+			taskID, step,
+		)
+		if err != nil {
+			return err
+		}
+
+		rs = append(rs, rsFromHistory...)
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+	summaries := make([]*execute.SubtaskSummary, 0, len(rs))
+	for _, r := range rs {
+		subtaskSummary := &execute.SubtaskSummary{}
+		if err := json.Unmarshal([]byte(r.GetJSON(0).String()), subtaskSummary); err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		summaries = append(summaries, subtaskSummary)
+	}
+	return summaries, nil
 }
 
 // GetAllTasks gets all tasks with basic columns.

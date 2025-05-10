@@ -285,6 +285,21 @@ type ASTArgs struct {
 	LinesInfo          *ast.LinesClause
 }
 
+// Summary records the metrics information, which is stored in the TaskMeta.
+// And this information will be stored into tidb_import_jobs table after the job is done.
+// Because data may have duplicates, the number of rows after each step may be different.
+type Summary struct {
+	EncodedRowCnt uint64 `json:"encoded-rows,omitempty"`
+	EncodedBytes  uint64 `json:"encoded-bytes,omitempty"`
+
+	MergedRowCnt      uint64 `json:"merged-rows,omitempty"`
+	MergedBytes       uint64 `json:"merged-bytes,omitempty"`
+	MergedOutputBytes uint64 `json:"merged-output-bytes,omitempty"`
+
+	LoadedRowCnt uint64 `json:"imported-rows,omitempty"`
+	LoadedBytes  uint64 `json:"imported-bytes,omitempty"`
+}
+
 // LoadDataController load data controller.
 // todo: need a better name
 type LoadDataController struct {

@@ -199,7 +199,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 func (r *readIndexStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return &execute.SubtaskSummary{
-		RowCount: r.curRowCount.Load(),
+		ProcessedRowCount: r.curRowCount.Load(),
 	}
 }
 
