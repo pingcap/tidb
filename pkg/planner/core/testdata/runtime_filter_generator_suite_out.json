@@ -123,15 +123,15 @@
       {
         "SQL": "select /*+ hash_join_build(t2) */ * from t2, (select k1, k1+1 as k11 from t1) t1 where t1.k11=t2.k1; -- Doesn't support transform column k11",
         "Plan": [
-          "TableReader 0.80 root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender 0.80 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 0.80 mpp[tiflash]  inner join, equal:[eq(test.t2.k1, Column#7)]",
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(test.t2.k1, Column#7)]",
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t2.k1))",
           "    │     └─TableFullScan 1.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false",
-          "    └─Projection(Probe) 0.80 mpp[tiflash]  test.t1.k1, plus(test.t1.k1, 1)->Column#7",
-          "      └─Selection 0.80 mpp[tiflash]  not(isnull(plus(test.t1.k1, 1)))",
+          "    └─Projection(Probe) 1.00 mpp[tiflash]  test.t1.k1, plus(test.t1.k1, 1)->Column#7",
+          "      └─Selection 1.00 mpp[tiflash]  not(isnull(plus(test.t1.k1, 1)))",
           "        └─TableFullScan 1.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false"
         ]
       },
