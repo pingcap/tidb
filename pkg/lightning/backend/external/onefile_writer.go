@@ -19,13 +19,20 @@ import (
 	"encoding/binary"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/lightning/common"
+=======
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
+>>>>>>> 2503d50c4d1 (global sort: add metrics for merge sort stage (#60971))
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -113,6 +120,7 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 		return common.ErrFoundDuplicateKeys.FastGenByArgs(idxKey, idxVal)
 	}
 	// 1. encode data and write to kvStore.
+	writeStartTime := time.Now()
 	keyLen := len(idxKey)
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
 	buf, _ := w.kvBuffer.AllocBytesWithSliceLocation(length)
@@ -145,7 +153,14 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 	}
 	w.totalCnt += 1
 	w.totalSize += uint64(keyLen + len(idxVal))
+<<<<<<< HEAD
 	w.lastKey = slices.Clone(idxKey)
+=======
+	writeDuration := time.Since(writeStartTime)
+	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("merge_sort_write").Observe(writeDuration.Seconds())
+	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("merge_sort_write").
+		Observe(float64(length) / 1024.0 / 1024.0 / writeDuration.Seconds())
+>>>>>>> 2503d50c4d1 (global sort: add metrics for merge sort stage (#60971))
 	return nil
 }
 
