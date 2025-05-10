@@ -85,7 +85,7 @@ func TestCostModelTraceVer2(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int primary key, b int, c int, key(b))`)
 	vals := make([]string, 0, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		vals = append(vals, fmt.Sprintf("(%v, %v, %v)", i, i, i))
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(vals, ", ")))
