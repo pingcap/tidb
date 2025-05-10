@@ -179,6 +179,7 @@ delete from t where a = 2 or a = 3;
 select * from t order by a;
 a	b
 1	5
+2	3
 4	8
 6	8
 7	6
@@ -187,9 +188,11 @@ a	b
 7	6
 6	8
 4	8
+2	3
 1	5
 select * from t order by b, a;
 a	b
+2	3
 1	5
 7	6
 4	8
@@ -200,11 +203,13 @@ a	b
 4	8
 7	6
 1	5
+2	3
 insert t values (2, 3), (3, 4);
 select * from t order by a;
 a	b
 1	5
 2	3
+2	3
 3	4
 4	8
 6	8
@@ -216,9 +221,11 @@ a	b
 4	8
 3	4
 2	3
+2	3
 1	5
 select * from t order by b, a;
 a	b
+2	3
 2	3
 3	4
 1	5
@@ -232,6 +239,7 @@ a	b
 7	6
 1	5
 3	4
+2	3
 2	3
 truncate table t;
 select * from t;
