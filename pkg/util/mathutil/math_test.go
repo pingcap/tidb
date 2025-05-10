@@ -68,15 +68,32 @@ func TestNextPowerOfTwo(t *testing.T) {
 	require.Equal(t, int64(0x100000000), NextPowerOfTwo(0xabcd1234))
 }
 
+func TestDivide2BatchSizes(t *testing.T) {
+	require.EqualValues(t, []int{}, Divide2BatchSizes(0, 1))
+	require.EqualValues(t, []int{1}, Divide2BatchSizes(1, 1))
+	require.EqualValues(t, []int{1}, Divide2BatchSizes(1, 3))
+	require.EqualValues(t, []int{1, 1}, Divide2BatchSizes(2, 2))
+	require.EqualValues(t, []int{1, 1}, Divide2BatchSizes(2, 10))
+	require.EqualValues(t, []int{10}, Divide2BatchSizes(10, 1))
+	require.EqualValues(t, []int{5, 5}, Divide2BatchSizes(10, 2))
+	require.EqualValues(t, []int{4, 3, 3}, Divide2BatchSizes(10, 3))
+	require.EqualValues(t, []int{3, 3, 2, 2}, Divide2BatchSizes(10, 4))
+	require.EqualValues(t, []int{2, 2, 2, 2, 2}, Divide2BatchSizes(10, 5))
+}
+
 func TestDivide2Batches(t *testing.T) {
-	require.EqualValues(t, []int{}, Divide2Batches(0, 1))
-	require.EqualValues(t, []int{1}, Divide2Batches(1, 1))
-	require.EqualValues(t, []int{1}, Divide2Batches(1, 3))
-	require.EqualValues(t, []int{1, 1}, Divide2Batches(2, 2))
-	require.EqualValues(t, []int{1, 1}, Divide2Batches(2, 10))
-	require.EqualValues(t, []int{10}, Divide2Batches(10, 1))
-	require.EqualValues(t, []int{5, 5}, Divide2Batches(10, 2))
-	require.EqualValues(t, []int{4, 3, 3}, Divide2Batches(10, 3))
-	require.EqualValues(t, []int{3, 3, 2, 2}, Divide2Batches(10, 4))
-	require.EqualValues(t, []int{2, 2, 2, 2, 2}, Divide2Batches(10, 5))
+	items := []int{}
+	require.EqualValues(t, [][]int{}, Divide2Batches(items, 0, 0, 10))
+	require.EqualValues(t, [][]int{}, Divide2Batches(items, 3, 0, 10))
+	items = []int{1, 2, 3}
+	require.EqualValues(t, [][]int{{1, 2, 3}}, Divide2Batches(items, 1, 0, 10))
+	require.EqualValues(t, [][]int{{1, 2}, {3}}, Divide2Batches(items, 2, 0, 10))
+	items = []int{1, 2, 3, 4, 5}
+	require.EqualValues(t, [][]int{{1, 2}, {3, 4}, {5}}, Divide2Batches(items, 3, 0, 10))
+	require.EqualValues(t, [][]int{{1, 2}, {3, 4}, {5}}, Divide2Batches(items, 3, 0, 2))
+	require.EqualValues(t, [][]int{{1}, {2}, {3}, {4}, {5}}, Divide2Batches(items, 3, 0, 1))
+	items = []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
+	require.EqualValues(t, [][]int{{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11}}, Divide2Batches(items, 3, 2, 10))
+	require.EqualValues(t, [][]int{{1, 2, 3, 4, 5, 6}, {7, 8, 9, 10, 11}}, Divide2Batches(items, 3, 5, 10))
+	require.EqualValues(t, [][]int{{1, 2, 3, 4, 5}, {6, 7, 8, 9, 10}, {11}}, Divide2Batches(items, 3, 5, 5))
 }

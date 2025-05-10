@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -354,7 +355,6 @@ func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
 }
 
 func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
-	step := external.MergeSortFileCountStep
 	result := make([]planner.PipelineSpec, 0, 16)
 
 	ctx := planCtx.Ctx
@@ -379,13 +379,15 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 			continue
 		}
 		dataFiles := kvMeta.GetDataFiles()
-		length := len(dataFiles)
-		for start := 0; start < length; start += step {
-			end := min(start+step, length)
+		minFilesPerBatch := len(dataFiles) / external.MergeSortMergeFactor
+		maxFilesPerBatch := external.MergeSortFileCountStep
+		nodeCnt := max(1, planCtx.ExecuteNodesCnt)
+		dataFilesGroup := mathutil.Divide2Batches(dataFiles, nodeCnt, minFilesPerBatch, maxFilesPerBatch)
+		for _, files := range dataFilesGroup {
 			result = append(result, &MergeSortSpec{
 				MergeSortStepMeta: &MergeSortStepMeta{
 					KVGroup:   kvGroup,
-					DataFiles: dataFiles[start:end],
+					DataFiles: files,
 				},
 			})
 		}
