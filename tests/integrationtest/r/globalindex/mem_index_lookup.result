@@ -35,12 +35,12 @@ a	b
 5	1
 explain select * from t partition(p1) use index(idx1) where b <= 2 and a = 10;
 id	estRows	task	access object	operator info
-Projection_5	0.33	root		globalindex__mem_index_lookup.t.a, globalindex__mem_index_lookup.t.b
-└─UnionScan_6	0.33	root		eq(globalindex__mem_index_lookup.t.a, 10), le(globalindex__mem_index_lookup.t.b, 2)
-  └─IndexLookUp_12	0.33	root	partition:dual	
+Projection_5	1.00	root		globalindex__mem_index_lookup.t.a, globalindex__mem_index_lookup.t.b
+└─UnionScan_6	1.00	root		eq(globalindex__mem_index_lookup.t.a, 10), le(globalindex__mem_index_lookup.t.b, 2)
+  └─IndexLookUp_12	1.00	root	partition:dual	
     ├─Selection_10(Build)	3323.33	cop[tikv]		in(globalindex__mem_index_lookup.t._tidb_tid, dual)
     │ └─IndexRangeScan_7	3323.33	cop[tikv]	table:t, index:idx1(b)	range:[-inf,2], keep order:false, stats:pseudo
-    └─Selection_11(Probe)	0.33	cop[tikv]		eq(globalindex__mem_index_lookup.t.a, 10)
+    └─Selection_11(Probe)	1.00	cop[tikv]		eq(globalindex__mem_index_lookup.t.a, 10)
       └─TableRowIDScan_8	3323.33	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t partition(p1) use index(idx1) where b <= 2 and a = 10;
 a	b
@@ -127,12 +127,12 @@ a	b	c
 2005	1	NULL
 explain select * from t partition(p1) use index(idx1) where b <= 2 and a = 2010;
 id	estRows	task	access object	operator info
-Projection_5	0.33	root		globalindex__mem_index_lookup.t.a, globalindex__mem_index_lookup.t.b, globalindex__mem_index_lookup.t.c
-└─UnionScan_6	0.33	root		eq(globalindex__mem_index_lookup.t.a, 2010), le(globalindex__mem_index_lookup.t.b, 2)
-  └─IndexLookUp_11	0.33	root	partition:dual	
-    ├─Selection_10(Build)	0.33	cop[tikv]		eq(globalindex__mem_index_lookup.t.a, 2010), in(globalindex__mem_index_lookup.t._tidb_tid, dual)
+Projection_5	1.00	root		globalindex__mem_index_lookup.t.a, globalindex__mem_index_lookup.t.b, globalindex__mem_index_lookup.t.c
+└─UnionScan_6	1.00	root		eq(globalindex__mem_index_lookup.t.a, 2010), le(globalindex__mem_index_lookup.t.b, 2)
+  └─IndexLookUp_11	1.00	root	partition:dual	
+    ├─Selection_10(Build)	1.00	cop[tikv]		eq(globalindex__mem_index_lookup.t.a, 2010), in(globalindex__mem_index_lookup.t._tidb_tid, dual)
     │ └─IndexRangeScan_7	3323.33	cop[tikv]	table:t, index:idx1(b)	range:[-inf,2], keep order:false, stats:pseudo
-    └─TableRowIDScan_8(Probe)	0.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─TableRowIDScan_8(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t partition(p1) use index(idx1) where b <= 2 and a = 2010;
 a	b	c
 explain select * from t partition(p0, p1) use index(idx1) where b <= 2;

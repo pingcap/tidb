@@ -185,9 +185,9 @@ IndexLookUp	10.00	root
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN format = 'brief' SELECT c FROM t1 WHERE c=2 AND d=3;
 id	estRows	task	access object	operator info
-Projection	0.10	root		generated_columns.t1.c
-└─IndexReader	0.10	root		index:IndexRangeScan
-  └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:IDX(c, d)	range:[2 3,2 3], keep order:false, stats:pseudo
+Projection	1.00	root		generated_columns.t1.c
+└─IndexReader	1.25	root		index:IndexRangeScan
+  └─IndexRangeScan	1.25	cop[tikv]	table:t1, index:IDX(c, d)	range:[2 3,2 3], keep order:false, stats:pseudo
 DROP TABLE IF EXISTS person;
 CREATE TABLE person (
 id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
