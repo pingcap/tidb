@@ -1607,7 +1607,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1095
+                    "TopN total count": 1096
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -2130,7 +2130,7 @@
                 "partial cover": false
               },
               {
-                "Result": 0.0000052707033226513745
+                "Result": 0.0003246753246753247
               }
             ]
           }
@@ -2536,7 +2536,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1095
+                    "TopN total count": 1096
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -3498,7 +3498,7 @@
                 "partial cover": false
               },
               {
-                "Result": 2.1082813290605499e-7
+                "Result": 0.0003246753246753247
               }
             ]
           }
@@ -4155,7 +4155,7 @@
                 "partial cover": false
               },
               {
-                "Result": 0.000019066503965832824
+                "Result": 0.0003246753246753247
               }
             ]
           }
