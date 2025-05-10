@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -487,6 +488,75 @@ func TestRenameTables(t *testing.T) {
 	wantTblInfos := historyJob.BinlogInfo.MultipleTableInfos
 	require.Equal(t, wantTblInfos[0].Name.L, "tt1")
 	require.Equal(t, wantTblInfos[1].Name.L, "tt2")
+}
+
+func TestAlterTableEngineAttribute(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`)
+	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount")
+
+	store := testkit.CreateMockStoreWithSchemaLease(t, 200*time.Millisecond)
+	tk := testkit.NewTestKit(t, store)
+	rpcserver, _ := setUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
+	defer rpcserver.Stop()
+
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383));")
+	tk.MustExecToErr("ALTER TABLE t ENGINE_ATTRIBUTE = '{\"key\": \"value}';")                                // invalid json
+	tk.MustExecToErr("ALTER TABLE t ENGINE_ATTRIBUTE = '{\"key\": \"value\"}';")                              // invalid key
+	tk.MustExecToErr("ALTER TABLE t ENGINE_ATTRIBUTE = '{\"tiflash-replica\": \"2\"}';")                      // invalid value
+	tk.MustExecToErr("ALTER TABLE t ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 13}';")                         // invalid value
+	tk.MustExecToErr("ALTER TABLE t ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 2, \"columnar-replica\": 2}';") // duplicate key
+	// not support temporary table
+	tk.MustExec("CREATE TEMPORARY TABLE tt (id INT PRIMARY KEY, value VARCHAR(16383));")
+	tk.MustExecToErr("ALTER TABLE tt ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 2}';")
+	tk.MustExec("DROP TABLE tt;")
+	// not support temporary table
+	tk.MustExec("CREATE GLOBAL TEMPORARY TABLE tt (id INT PRIMARY KEY, value VARCHAR(16383)) ON COMMIT DELETE ROWS;")
+	tk.MustExecToErr("ALTER TABLE tt ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 2}';")
+	tk.MustExec("DROP TABLE tt;")
+
+	tk.MustExec("ALTER TABLE t ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 2}';") // valid
+	tk.MustQuery("SELECT REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='t'").Check(testkit.Rows("2"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` int(11) NOT NULL,\n" +
+			"  `value` varchar(16383) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 2}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("DROP TABLE t;")
+
+	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383));")
+	tk.MustExec("ALTER TABLE t ENGINE_ATTRIBUTE = '{\"columnar-replica\": 2}';") // valid
+	tk.MustQuery("SELECT REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='t'").Check(testkit.Rows("2"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` int(11) NOT NULL,\n" +
+			"  `value` varchar(16383) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 2}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("DROP TABLE t;")
+
+	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383));")
+	tk.MustExec("ALTER TABLE t ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 1}';") // valid
+	tk.MustQuery("SELECT REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='t'").Check(testkit.Rows("1"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` int(11) NOT NULL,\n" +
+			"  `value` varchar(16383) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("DROP TABLE t;")
+
+	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383));")
+	tk.MustExec("ALTER TABLE t ENGINE_ATTRIBUTE = '{\"columnar-replica\": 1}';") // valid
+	tk.MustQuery("SELECT REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='t'").Check(testkit.Rows("1"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` int(11) NOT NULL,\n" +
+			"  `value` varchar(16383) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("DROP TABLE t;")
 }
 
 func TestCreateTables(t *testing.T) {

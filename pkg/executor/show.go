@@ -1368,6 +1368,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
+	if tableInfo.TiFlashReplica != nil && tableInfo.TiFlashReplica.Count > 0 {
+		fmt.Fprintf(buf, " ENGINE_ATTRIBUTE=`{\"columnar-replica\": %v}`", tableInfo.TiFlashReplica.Count)
+	}
+
 	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 || tblCollate == "binary" {

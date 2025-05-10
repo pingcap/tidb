@@ -1342,7 +1342,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` vector(3) DEFAULT NULL,\n" +
 		"  VECTOR INDEX `idx`((VEC_COSINE_DISTANCE(`b`))) COMMENT 'b comment'\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 2}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// test multi-schema change for unsupported operations
 	tk.MustContainErrMsg("alter table t drop column b;",
@@ -1381,7 +1381,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` vector(3) NOT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 2}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// test create a vector index with same name
 	tk.MustExec("create vector index idx on t ((VEC_COSINE_DISTANCE(b))) USING HNSW COMMENT 'b comment';")
@@ -1396,7 +1396,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` vector(3) NOT NULL,\n" +
 		"  VECTOR INDEX `idx`((VEC_COSINE_DISTANCE(`b`))) COMMENT 'b comment'\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 2}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// test multi-schema change for dropping indexes
 	tk.MustExec("alter table t add index idx2(a)")
@@ -1404,7 +1404,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` vector(3) NOT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 2}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
 	tk.MustExec("admin check table t")
 
@@ -1516,7 +1516,7 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL,\n" +
 		"  COLUMNAR INDEX `idx`(`a`) USING INVERTED COMMENT 'a comment'\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 2}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// test multi-schema change for unsupported operations
 	tk.MustContainErrMsg("alter table t drop column a;",
@@ -1554,7 +1554,7 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 2}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// test create a columnar index with same name
 	tk.MustExec("create columnar index idx on t (b) USING INVERTED COMMENT 'b comment';")
@@ -1568,7 +1568,7 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 		"  `a` int(11) NOT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL,\n" +
 		"  COLUMNAR INDEX `idx`(`b`) USING INVERTED COMMENT 'b comment'\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 2}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// test multi-schema change for dropping indexes
 	tk.MustExec("alter table t add index idx2(a)")
@@ -1576,7 +1576,7 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 2}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2"))
 	tk.MustExec("admin check table t")
 
