@@ -337,7 +337,7 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 	sortStart := time.Now()
 	oldSortyGor := sorty.MaxGor
 	sorty.MaxGor = uint64(e.workerConcurrency * 2)
-	var dupKey atomic.Pointer[[]byte]
+	var dupKey, dupVal atomic.Pointer[[]byte]
 	sorty.Sort(len(e.memKVsAndBuffers.kvs), func(i, k, r, s int) bool {
 		cmp := bytes.Compare(e.memKVsAndBuffers.kvs[i].key, e.memKVsAndBuffers.kvs[k].key)
 		if cmp < 0 { // strict comparator like < or >
@@ -348,8 +348,10 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 		}
 		if cmp == 0 && i != k {
 			if dupKey.Load() == nil {
-				cloned := slices.Clone(e.memKVsAndBuffers.kvs[i].key)
-				dupKey.Store(&cloned)
+				key := slices.Clone(e.memKVsAndBuffers.kvs[i].key)
+				dupKey.Store(&key)
+				value := slices.Clone(e.memKVsAndBuffers.kvs[i].value)
+				dupVal.Store(&value)
 			}
 		}
 		return false
@@ -363,9 +365,12 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 	// of OnDuplicateKeyError, but to make keep compatible with the old code, we
 	// keep this behavior.
 	// TODO: remove this when we have have fully integrated the OnDuplicateKey.
-	if k := dupKey.Load(); k != nil &&
-		(e.onDup == engineapi.OnDuplicateKeyIgnore || e.onDup == engineapi.OnDuplicateKeyError) {
-		return errors.Errorf("duplicate key found: %s", hex.EncodeToString(*k))
+	if k, v := dupKey.Load(), dupVal.Load(); k != nil {
+		if e.onDup == engineapi.OnDuplicateKeyIgnore {
+			return errors.Errorf("duplicate key found: %s", hex.EncodeToString(*k))
+		} else if e.onDup == engineapi.OnDuplicateKeyError {
+			return common.ErrFoundDuplicateKeys.FastGenByArgs(*k, *v)
+		}
 	}
 	readAndSortSecond := time.Since(readStart).Seconds()
 	readAndSortDurHist.Observe(readAndSortSecond)

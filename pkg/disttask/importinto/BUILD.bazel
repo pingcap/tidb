@@ -32,6 +32,7 @@ go_library(
         "//pkg/domain/infosync",
         "//pkg/errno",
         "//pkg/executor/importer",
+        "//pkg/ingestor/engineapi",
         "//pkg/kv",
         "//pkg/lightning/backend",
         "//pkg/lightning/backend/external",
