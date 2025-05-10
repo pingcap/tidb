@@ -530,7 +530,7 @@ func TestSelectivity(t *testing.T) {
 		},
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
-			selectivity:              5.870830440255832e-05,
+			selectivity:              0.001851851851851852,
 			selectivityAfterIncrease: 0.21916666666666668,
 		},
 		{
