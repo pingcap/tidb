@@ -178,6 +178,7 @@ go_library(
         "//pkg/util/set",
         "//pkg/util/size",
         "//pkg/util/slice",
+        "//pkg/util/sqlescape",
         "//pkg/util/sqlexec",
         "//pkg/util/sqlkiller",
         "//pkg/util/stringutil",

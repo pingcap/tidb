@@ -5232,6 +5232,35 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, v.ReferTable.Schema.L,
 				v.ReferTable.Name.L, "", authErr)
 		}
+
+		if v.Select != nil {
+			// check privilege and foreign key
+			if err := b.checkCreateTableAsSelect(v); err != nil {
+				return nil, err
+			}
+			switch selectStmt := v.Select.(type) {
+			// simple select statement
+			case *ast.SelectStmt:
+				logicalPlan, err := b.buildSelect(ctx, selectStmt)
+				if err != nil {
+					return nil, err
+				}
+				if err = buildColsFromPlan(v, logicalPlan); err != nil {
+					return nil, err
+				}
+			// case select union select
+			case *ast.SetOprStmt:
+				logicalPlan, err := b.buildSetOpr(ctx, selectStmt)
+				if err != nil {
+					return nil, err
+				}
+				if err = buildColsFromPlan(v, logicalPlan); err != nil {
+					return nil, err
+				}
+			default:
+				return nil, errors.New("unsupported select stmt type: " + reflect.TypeOf(selectStmt).String())
+			}
+		}
 	case *ast.CreateViewStmt:
 		err := checkForUserVariables(v.Select)
 		if err != nil {
@@ -5428,6 +5457,185 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 	}
 	p := &DDL{Statement: node}
 	return p, nil
+}
+
+// buildColsFromPlan builds the columns of the table from the logical plan for CREATE TABLE AS SELECT statement.
+// It handles two scenarios to compatible with MySQL behavior.
+// 1. When no columns are specified in CREATE TABLE (v.Cols == nil):
+//   - Uses the columns from SELECT statement directly
+//   - Column order matches the SELECT statement
+//
+// 2. When columns are specified in CREATE TABLE:
+//   - Columns that exist only in CREATE TABLE (not in SELECT) are placed first
+//   - Columns from SELECT statement follow in their original order
+//   - For columns that exist in both, uses the definition from CREATE TABLE (including options)
+//   - Checks NOT NULL constraints for columns that only exist in CREATE TABLE
+func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) error {
+	schema := logicalPlan.Schema()
+	names := logicalPlan.OutputNames()
+
+	// Store column names from SELECT statement for later use in INSERT
+	for _, name := range names {
+		v.SelectColumns = append(v.SelectColumns, &name.ColName)
+	}
+
+	if v.Cols == nil {
+		// Case 1: No columns specified in CREATE TABLE
+		// Use columns directly from SELECT statement
+		v.Cols = make([]*ast.ColumnDef, len(schema.Columns))
+		for i, name := range names {
+			tp := convertRetType(schema.Columns[i].RetType)
+			v.Cols[i] = &ast.ColumnDef{
+				Name:    &ast.ColumnName{Name: name.ColName},
+				Tp:      tp,
+				Options: []*ast.ColumnOption{},
+			}
+		}
+		return nil
+	}
+
+	// Case 2: Columns specified in CREATE TABLE
+	// Build a map for quick lookup of column definitions from CREATE TABLE
+	colMap := make(map[string]*ast.ColumnDef)
+	for _, col := range v.Cols {
+		colMap[col.Name.Name.L] = col
+	}
+
+	// First pass: Collect columns that only exist in CREATE TABLE
+	// These columns will be placed at the beginning of the final column list
+	newCols := make([]*ast.ColumnDef, 0, len(schema.Columns))
+	for _, col := range v.Cols {
+		found := false
+		for _, name := range names {
+			if name.ColName.L == col.Name.Name.L {
+				found = true
+				break
+			}
+		}
+		if !found {
+			// Check NOT NULL constraint for columns that only exist in CREATE TABLE
+			for _, opt := range col.Options {
+				if opt.Tp == ast.ColumnOptionNotNull {
+					return table.ErrNoDefaultValue.GenWithStackByArgs(col.Name.Name.L)
+				}
+			}
+			newCols = append(newCols, col)
+		}
+	}
+
+	// Second pass: Add columns from SELECT statement in their original order
+	// For columns that exist in both CREATE TABLE and SELECT, use the definition from CREATE TABLE
+	for i, name := range names {
+		if col, exists := colMap[name.ColName.L]; exists {
+			// Use the column definition from CREATE TABLE (including options)
+			newCols = append(newCols, col)
+		} else {
+			// Create new column definition for columns that only exist in SELECT
+			tp := convertRetType(schema.Columns[i].RetType)
+			newCols = append(newCols, &ast.ColumnDef{
+				Name:    &ast.ColumnName{Name: name.ColName},
+				Tp:      tp,
+				Options: []*ast.ColumnOption{},
+			})
+		}
+	}
+
+	v.Cols = newCols
+	return nil
+}
+
+// convertRetType checks the type of the column and changes it (eg. VarString -> Varchar)
+// it's used in create table as select statement to show the correct type, such as using `show create table`
+// for now, we only support convert VarString to Varchar
+func convertRetType(fieldType *types.FieldType) *types.FieldType {
+	var tp *types.FieldType = fieldType.Clone()
+	if fieldType.GetType() == mysql.TypeVarString {
+		// change VarString to Varchar
+		// charset and collate are set behind the scenes
+		tp.SetType(mysql.TypeVarchar)
+	}
+	return tp
+}
+
+// checkCreateTableAsSelect checks the create table as select statement and necessary privileges
+func (b *PlanBuilder) checkCreateTableAsSelect(v *ast.CreateTableStmt) error {
+	// Check INSERT privilege on the table being created (CREATE privilege is already checked before)
+	if b.ctx.GetSessionVars().User != nil {
+		insertErr := plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
+			b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, v.Table.Schema.L,
+			v.Table.Name.L, "", insertErr)
+	}
+
+	// For SELECT statement, we need to check SELECT privilege on all involved tables
+	switch sel := v.Select.(type) {
+	case *ast.SelectStmt:
+		// Check all table references in the simple SELECT statement
+		b.checkSelectTablesPriv(sel)
+	case *ast.SetOprStmt:
+		// Handle UNION/INTERSECT/EXCEPT operations
+		for _, selectStmt := range sel.SelectList.Selects {
+			if ss, ok := selectStmt.(*ast.SelectStmt); ok {
+				b.checkSelectTablesPriv(ss)
+			}
+		}
+	}
+
+	// check foreign key
+	for _, constraint := range v.Constraints {
+		if constraint.Tp == ast.ConstraintForeignKey {
+			return plannererrors.ErrForeignKeyWithAtomicCreateSelect
+		}
+	}
+
+	return nil
+}
+
+// checkSelectTablesPriv collects all tables referenced in a SELECT statement and adds SELECT privilege check
+func (b *PlanBuilder) checkSelectTablesPriv(sel *ast.SelectStmt) {
+	if sel.From == nil {
+		return
+	}
+
+	// Recursive function to find all table references
+	var visitTableRefs func(node ast.ResultSetNode)
+	visitTableRefs = func(node ast.ResultSetNode) {
+		if node == nil {
+			return
+		}
+
+		switch ref := node.(type) {
+		case *ast.TableSource:
+			switch source := ref.Source.(type) {
+			case *ast.TableName:
+				// Add SELECT privilege for this table
+				if b.ctx.GetSessionVars().User != nil {
+					selectErr := plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", b.ctx.GetSessionVars().User.AuthUsername,
+						b.ctx.GetSessionVars().User.AuthHostname, source.Name.L)
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, source.Schema.L,
+						source.Name.L, "", selectErr)
+				}
+			case *ast.SelectStmt:
+				// Recursively check subquery
+				b.checkSelectTablesPriv(source)
+			case *ast.SetOprStmt:
+				// Handle UNION/INTERSECT/EXCEPT subqueries
+				for _, subSel := range source.SelectList.Selects {
+					if ss, ok := subSel.(*ast.SelectStmt); ok {
+						b.checkSelectTablesPriv(ss)
+					}
+				}
+			}
+		case *ast.Join:
+			// Check both sides of the join
+			visitTableRefs(ref.Left)
+			visitTableRefs(ref.Right)
+		}
+	}
+
+	if sel.From.TableRefs != nil {
+		visitTableRefs(sel.From.TableRefs)
+	}
 }
 
 const (
