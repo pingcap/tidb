@@ -45,6 +45,7 @@ go_library(
         "@com_github_jfcg_sorty_v2//:sorty",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_prometheus_client_golang//prometheus",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_golang_x_sync//errgroup",
