@@ -26,6 +26,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -506,6 +507,7 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		onClose,
 		s.concurrency,
 		s.mergeIterHotspot,
+		engineapi.OnDuplicateKeyIgnore,
 	)
 
 	intest.AssertNoError(err)
