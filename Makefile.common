@@ -27,8 +27,8 @@ CURDIR := $(shell pwd)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
-GO              := GO111MODULE=on go
-BUILD_TAGS      := codes
+BUILD_TAGS          := codes
+REAL_TIKV_TEST_TAGS := deadlock,intest
 GOEXPERIMENT=
 ifeq ("${ENABLE_FIPS}", "1")
 	BUILD_TAGS  := $(BUILD_TAGS),boringcrypto
@@ -37,8 +37,10 @@ endif
 
 ifeq ("${NEXT_GEN}", "1")
 	BUILD_TAGS := $(BUILD_TAGS),nextgen
+	REAL_TIKV_TEST_TAGS := $(REAL_TIKV_TEST_TAGS),nextgen
 endif
 
+GO              := GO111MODULE=on go
 GOBUILD         := $(GOEXPERIMENT) $(GO) build -tags $(BUILD_TAGS)
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
 GOTEST          := $(GO) test -p $(P)

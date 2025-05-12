@@ -11,7 +11,7 @@ CREATE TABLE aa311c3c (
 		KEY 464b386e (b80b3746),
 		KEY 19dc3c2d (57fd8d09)
 	      ) ENGINE=InnoDB DEFAULT CHARSET=ascii COLLATE=ascii_bin COMMENT='320f8401';
-explain select  /*+ use_index_merge( `aa311c3c` ) */   `aa311c3c`.`43b06e99` as r0 , `aa311c3c`.`6302d8ac` as r1 from `aa311c3c` where `aa311c3c`.`b80b3746` = 3 or not( `aa311c3c`.`57fd8d09` >= '2008' )   order by r0,r1 limit 95;
+explain format='brief' select  /*+ use_index_merge( `aa311c3c` ) */   `aa311c3c`.`43b06e99` as r0 , `aa311c3c`.`6302d8ac` as r1 from `aa311c3c` where `aa311c3c`.`b80b3746` = 3 or not( `aa311c3c`.`57fd8d09` >= '2008' )   order by r0,r1 limit 95;
 
 # TestIssue43645
 CREATE TABLE t1(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));
@@ -62,7 +62,7 @@ PARTITION `p20220101` VALUES IN ('20220101'),
 PARTITION `p20230516` VALUES IN ('20230516'));
 analyze table ads_txn;
 set autocommit=OFF;
-explain update ads_txn s set aml_cntpr_accno = trim(acpayr_accno) where s._tidb_rowid between 1 and 100000;
+explain format='brief' update ads_txn s set aml_cntpr_accno = trim(acpayr_accno) where s._tidb_rowid between 1 and 100000;
 
 # TestIssue45758
 CREATE TABLE tb1 (cid INT, code INT, class VARCHAR(10));
@@ -76,7 +76,7 @@ INSERT INTO v0 WITH ta2 AS (TABLE v0) TABLE ta2 FOR UPDATE OF ta2;
 # TestIssue46005
 create table tbl_39(col_239 year(4) not null default '2009', primary key(col_239), unique key idx_223(col_239), key idx_224(col_239));
 insert into tbl_39 values (1994),(1995),(1996),(1997);
-explain select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
+explain format='brief' select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
 select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
 
 # https://github.com/pingcap/tidb/issues/47881
@@ -449,7 +449,7 @@ insert into t2 values (2, '2');
 
 set tidb_executor_concurrency = 1;
 set tidb_window_concurrency = 100;
-explain select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a,b,c;
+explain format='brief' select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a,b,c;
 select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a,b,c;
 
 # TestIssue55818
@@ -484,7 +484,7 @@ PARTITION BY RANGE (`col_18`)
 INSERT INTO `tceb7972c` VALUES(NULL,32768,3820.5208),('[2978991857918245466, 2358633058135455779]',14958,9050.871),('[3209216649516490663, 8796285761077563704, 8679842102776923655, 7938639730493564777]',50028,5950.6714),('[1835017567976206479, 2]',25510,6779.271),('[7771897049175925887, 1, 5907722896328501457, 2218303279528464844, 4106409123325473016]',56899,9767.853),('[7839602274985524695, 4773627824242235154, 5873227109465605544, 4833046260666832936]',33174,3820.5208);
 
 analyze table tceb7972c;
-explain SELECT 1
+explain format='brief' SELECT 1
 FROM (
     SELECT /*+ USE_INDEX_MERGE(tceb7972c t61a85298)*/ tceb7972c.col_17 AS col_60767
     FROM t61a85298
@@ -550,7 +550,7 @@ create table t1(a int primary key, b int, index idx(b));
 insert into t values(1), (2), (123);
 insert into t1 values(2, 123), (123, 2);
 set tidb_opt_fix_control='44855:on';
-explain select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
+explain format='brief' select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
 select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
 
 # TestIssue59926
@@ -560,14 +560,14 @@ insert into t values(1), (2);
 # safe to directly compare the output since the data is stored in one region. so the output is ordered in fact
 select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
 # the limit is push down across the join node
-explain select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
+explain format='brief' select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
 
 # TestIssue20710
 drop table if exists t1, t2;
 create table t1(a int, b int, index idx(a, b));
 create table t2(a int, b int, index idx(a));
-explain select /*+ merge_join(t1) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
-explain select /*+ no_hash_join(t1), no_index_join(t1,t2), no_index_hash_join(t1,t2) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
+explain format='brief' select /*+ merge_join(t1) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
+explain format='brief' select /*+ no_hash_join(t1), no_index_join(t1,t2), no_index_hash_join(t1,t2) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
 
 # TestIssue59427
 drop table if exists t;

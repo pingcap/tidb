@@ -7199,7 +7199,8 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where exists (select t3.a from t3);
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+Projection	0.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
+└─TableDual	0.00	root		rows:0
 explain format = 'brief' select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3);
 id	estRows	task	access object	operator info
 TableDual	0.00	root		rows:0

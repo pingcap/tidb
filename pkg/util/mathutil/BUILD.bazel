@@ -9,10 +9,7 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/mathutil",
     visibility = ["//visibility:public"],
-    deps = [
-        "//pkg/util/intest",
-        "@org_golang_x_exp//constraints",
-    ],
+    deps = ["//pkg/util/intest"],
 )
 
 go_test(

@@ -219,7 +219,7 @@ func testAddIndex(t *testing.T, tp testAddIndexType, createTableSQL, idxTp strin
 			base = i % 4 << 61
 		}
 		n := base + i*defaultBatchSize + i
-		for j := 0; j < rand.Intn(maxBatch); j++ {
+		for j := range rand.Intn(maxBatch) {
 			n += j
 			sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", n, n, n)
 			tk.MustExec(sql)
@@ -341,7 +341,7 @@ func TestAddIndexForGeneratedColumn(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(y year NOT NULL DEFAULT '2155')")
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		tk.MustExec("insert into t values (?)", i)
 	}
 	tk.MustExec("insert into t values()")
@@ -513,7 +513,7 @@ func testAddIndexWithSplitTable(t *testing.T, createSQL, splitTableSQL string) {
 	// Add some discrete rows.
 	goCnt := 10
 	errCh := make(chan error, goCnt)
-	for i := 0; i < goCnt; i++ {
+	for i := range goCnt {
 		base := (i % 8) << 60
 		go func(b int, eCh chan error) {
 			tk1 := testkit.NewTestKit(t, store)
@@ -521,7 +521,7 @@ func testAddIndexWithSplitTable(t *testing.T, createSQL, splitTableSQL string) {
 			eCh <- batchInsertRows(tk1, !hasAutoRandomField, "test_add_index", base+start, base+num)
 		}(base, errCh)
 	}
-	for i := 0; i < goCnt; i++ {
+	for range goCnt {
 		err := <-errCh
 		require.NoError(t, err)
 	}
@@ -905,7 +905,7 @@ func testDropIndexes(t *testing.T, store kv.Storage, createSQL, dropIdxSQL strin
 
 	num := 100
 	// add some rows
-	for i := 0; i < num; i++ {
+	for i := range num {
 		tk.MustExec("insert into test_drop_indexes values (?, ?, ?)", i, i, i)
 	}
 	idxIDs := make([]int64, 0, 3)
@@ -974,7 +974,7 @@ func testDropIndexesFromPartitionedTable(t *testing.T, store kv.Storage) {
 		create table test_drop_indexes_from_partitioned_table (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2))
 		partition by range(id) (partition p0 values less than (6), partition p1 values less than maxvalue);
 	`)
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		tk.MustExec("insert into test_drop_indexes_from_partitioned_table values (?, ?, ?)", i, i, i)
 	}
 	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop index i1, drop index if exists i2;")
@@ -1015,7 +1015,7 @@ func testDropIndex(t *testing.T, store kv.Storage, createSQL, dropIdxSQL, idxNam
 
 	num := 100
 	// add some rows
-	for i := 0; i < num; i++ {
+	for i := range num {
 		tk.MustExec("insert into test_drop_index values (?, ?, ?)", i, i, i)
 	}
 	testddlutil.SessionExecInGoroutine(store, "test", dropIdxSQL, done)
@@ -1274,7 +1274,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	// for TiFlash replica
 	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
 	tk.MustContainErrMsg("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW COMMENT 'b comment';",
-		"unsupported empty TiFlash replica, the replica is nil")
+		"columnar replica must exist")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 	tk.MustContainErrMsg("alter table t add key idx(a) USING HNSW;", "[ddl:8200]'USING HNSW' can be only used for VECTOR INDEX")
 	// for a wrong column
@@ -1458,7 +1458,7 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	// for TiFlash replica
 	tk.MustExec("create table t (a int, b vector(4), c int, d char(4));")
 	tk.MustContainErrMsg("alter table t add columnar index idx(a) USING INVERTED COMMENT 'b comment';",
-		"unsupported empty TiFlash replica, the replica is nil")
+		"columnar replica must exist")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 	tk.MustContainErrMsg("alter table t add key idx(d) USING INVERTED;", "[ddl:8200]'USING INVERTED' can be only used for COLUMNAR INDEX")
 	// for a wrong column

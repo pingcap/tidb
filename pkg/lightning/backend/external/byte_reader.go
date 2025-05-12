@@ -19,6 +19,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/pingcap/errors"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -67,6 +69,9 @@ type byteReader struct {
 	}
 
 	logger *zap.Logger
+	// monitor the speed of reading from external storage
+	readDurHist  prometheus.Observer
+	readRateHist prometheus.Observer
 }
 
 func openStoreReaderAndSeek(
@@ -273,6 +278,18 @@ func (r *byteReader) next(n int) (int, [][]byte) {
 }
 
 func (r *byteReader) reload() error {
+	if r.readDurHist != nil && r.readRateHist != nil {
+		startTime := time.Now()
+		defer func() {
+			readSecond := time.Since(startTime).Seconds()
+			size := 0
+			for _, b := range r.curBuf {
+				size += len(b)
+			}
+			r.readDurHist.Observe(readSecond)
+			r.readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
+		}()
+	}
 	to := r.concurrentReader.expected
 	now := r.concurrentReader.now
 	// in read only false -> true is possible

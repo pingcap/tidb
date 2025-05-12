@@ -77,6 +77,8 @@ type LogMetaManager[K KeyType, SV, LV ValueType, M any] interface {
 	LoadCheckpointIngestIndexRepairSQLs(context.Context) (*CheckpointIngestIndexRepairSQLs, error)
 	SaveCheckpointIngestIndexRepairSQLs(context.Context, *CheckpointIngestIndexRepairSQLs) error
 	ExistsCheckpointIngestIndexRepairSQLs(context.Context) (bool, error)
+
+	TryGetStorage() storage.ExternalStorage
 }
 
 type TableMetaManager[K KeyType, SV, LV ValueType, M any] struct {
@@ -269,6 +271,10 @@ func (manager *TableMetaManager[K, SV, LV, M]) StartCheckpointRunner(
 	return runner, nil
 }
 
+func (manager *TableMetaManager[K, SV, LV, M]) TryGetStorage() storage.ExternalStorage {
+	return nil
+}
+
 type StorageMetaManager[K KeyType, SV, LV ValueType, M any] struct {
 	storage   storage.ExternalStorage
 	cipher    *backuppb.CipherInfo
@@ -414,4 +420,8 @@ func (manager *StorageMetaManager[K, SV, LV, M]) StartCheckpointRunner(
 		ctx,
 		cfg.tickDurationForFlush, cfg.tickDurationForChecksum, 0, cfg.retryDuration)
 	return runner, nil
+}
+
+func (manager *StorageMetaManager[K, SV, LV, M]) TryGetStorage() storage.ExternalStorage {
+	return manager.storage
 }

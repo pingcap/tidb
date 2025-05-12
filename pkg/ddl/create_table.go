@@ -873,10 +873,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			if op.UintValue > 0 && tbInfo.HasClusteredIndex() {
 				return dbterror.ErrUnsupportedShardRowIDBits
 			}
-			tbInfo.ShardRowIDBits = op.UintValue
-			if tbInfo.ShardRowIDBits > vardef.MaxShardRowIDBits {
-				tbInfo.ShardRowIDBits = vardef.MaxShardRowIDBits
-			}
+			tbInfo.ShardRowIDBits = min(op.UintValue, vardef.MaxShardRowIDBits)
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		case ast.TableOptionPreSplitRegion:
 			if tbInfo.TempTableType != model.TempTableNone {
@@ -1301,11 +1298,6 @@ func BuildTableInfo(
 			}
 		}
 
-		if constr.Tp == ast.ConstraintFulltext {
-			ctx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
-			continue
-		}
-
 		var (
 			indexName         = constr.Name
 			primary, unique   bool
@@ -1326,6 +1318,8 @@ func BuildTableInfo(
 				columnarIndexType = model.ColumnarIndexTypeVector
 			case ast.IndexTypeInverted:
 				columnarIndexType = model.ColumnarIndexTypeInverted
+			case ast.IndexTypeFulltext:
+				columnarIndexType = model.ColumnarIndexTypeFulltext
 			default:
 				return nil, dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(constr.Option.Tp)
 			}

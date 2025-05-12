@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -115,7 +116,7 @@ func (a *recordSet) Fields() []*resolve.ResultField {
 func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, defaultDB string) []*resolve.ResultField {
 	rfs := make([]*resolve.ResultField, 0, schema.Len())
 	defaultDBCIStr := ast.NewCIStr(defaultDB)
-	for i := 0; i < schema.Len(); i++ {
+	for i := range schema.Len() {
 		dbName := names[i].DBName
 		if dbName.L == "" && names[i].TblName.L != "" {
 			dbName = defaultDBCIStr
@@ -1658,7 +1659,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	)
 	keyspaceName = keyspace.GetKeyspaceNameBySettings()
 	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
-		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
+		if kerneltype.IsNextGen() {
+			keyspaceIDU64, _ := strconv.ParseUint(keyspaceName, 10, 32) //nolint:errcheck
+			keyspaceID = uint32(keyspaceIDU64)
+		} else {
+			keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
+		}
 	}
 	if txnTS == 0 {
 		// TODO: txnTS maybe ambiguous, consider logging stale-read-ts with a new field in the slow log.
