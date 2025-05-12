@@ -1300,6 +1300,7 @@ func (e *executor) CreateTableWithInfo(
 	cs ...CreateTableOption,
 ) (err error) {
 	c := GetCreateTableConfig(cs)
+
 	jobW, err := e.createTableWithInfoJob(ctx, dbName, tbInfo, involvingRef, c)
 	if err != nil {
 		return err
@@ -2615,7 +2616,7 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 	}
 	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	args := &model.TablePartitionArgs{
 		PartNames: partNames,
@@ -2684,7 +2685,7 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 	}
 	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	args := &model.TablePartitionArgs{
 		PartNames: partNames,
@@ -5789,7 +5790,6 @@ func (e *executor) UnlockTables(ctx sessionctx.Context, unlockTables []model.Tab
 			ServerID:  e.uuid,
 			SessionID: ctx.GetSessionVars().ConnectionID,
 		},
-		IsCleanup: true,
 	}
 
 	involveSchemaInfo := make([]model.InvolvingSchemaInfo, 0, len(unlockTables))

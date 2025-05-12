@@ -2641,6 +2641,11 @@ error = '''
 Variable '%s' might not be affected by SET_VAR hint.
 '''
 
+["planner:3978"]
+error = '''
+Foreign key creation is not allowed with CREATE TABLE as SELECT and CREATE TABLE with START TRANSACTION statement.
+'''
+
 ["planner:8006"]
 error = '''
 `%s` is unsupported on temporary tables.

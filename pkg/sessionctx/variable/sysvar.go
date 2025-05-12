@@ -3509,7 +3509,7 @@ var defaultSysVars = []*SysVar{
 		},
 		IsHintUpdatableVerified: true,
 	},
-	{Scope: vardef.ScopeSession, Name: vardef.TiDBCreateFromSelectUsingImport, Value: "0", Type: vardef.TypeBool,
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBCreateFromSelectUsingImport, Value: BoolToOnOff(vardef.DefTiDBCreateFromSelectUsingImport), Type: vardef.TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.CreateFromSelectUsingImport = TiDBOptOn(val)
 			return nil
