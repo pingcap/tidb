@@ -1,6 +1,9 @@
 # See the OWNERS docs at https://www.kubernetes.dev/docs/guide/owners/#owners
 # The members of 'sig-community-*' are synced from memberships defined in repository: https://github.com/pingcap/community.
 filters:
+  "go\\.mod$":
+    approvers:
+      - sig-critical-approvers-dep
   .*:
     approvers:
       - sig-community-approvers
