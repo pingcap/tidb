@@ -13,15 +13,6 @@ import (
 )
 
 func TestCreateTableAsSelect(t *testing.T) {
-	// var internelInsertSql string
-	// testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/AfterBuildInsertSql", func(insertSql string) {
-	// 	if strings.Contains(insertSql, "import into") {
-	// 		log.Println("insertSql = ", insertSql)
-	// 		internelInsertSql = insertSql
-	// 	}
-	// })
-	// defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/AfterBuildInsertSql")
-
 	defer config.RestoreFunc()
 	require.True(t, *realtikvtest.WithRealTiKV)
 	config.UpdateGlobal(func(conf *config.Config) {
