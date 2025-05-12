@@ -92,9 +92,10 @@ func (s *simpleWarnings) AppendNote(note error) {
 
 // GetWarnings returns the internal all stored warnings.
 func (s *simpleWarnings) GetWarnings() []context.SQLWarn {
-	// we use pointer warnings across different level's task to avoid mem cost.
-	// when best task is finished and final warnings is determined, we should
-	// convert pointer to struct to append it to session context.
+	// we just reuse and reorganize pointer of warning elem across different level's
+	// task warnings slice to avoid copy them totally leading mem cost.
+	// when best task is finished and final warnings is determined, we should convert
+	// pointer to struct to append it to session context.
 	warnings := make([]context.SQLWarn, 0, len(s.warnings))
 	for _, w := range s.warnings {
 		warnings = append(warnings, *w)
