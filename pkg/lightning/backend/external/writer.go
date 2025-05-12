@@ -170,19 +170,21 @@ type Collector interface {
 
 type collectFunc func(bytes, rows int64)
 
-func dummyCollector(_, _ int64) {}
-
 type collector struct {
 	readFunc  collectFunc
 	writeFunc collectFunc
 }
 
 func (c *collector) OnRead(bytes, rows int64) {
-	c.readFunc(bytes, rows)
+	if c.readFunc != nil {
+		c.readFunc(bytes, rows)
+	}
 }
 
 func (c *collector) OnWrite(bytes, rows int64) {
-	c.writeFunc(bytes, rows)
+	if c.writeFunc != nil {
+		c.writeFunc(bytes, rows)
+	}
 }
 
 // NewCollector returns a new collector with the provided read and write functions.
@@ -206,8 +208,8 @@ func GetCollector(ctx context.Context) Collector {
 		return m
 	}
 	return &collector{
-		readFunc:  dummyCollector,
-		writeFunc: dummyCollector,
+		readFunc:  nil,
+		writeFunc: nil,
 	}
 }
 

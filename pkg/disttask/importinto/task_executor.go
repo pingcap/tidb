@@ -181,10 +181,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 			s.InputBytes.Add(bytes)
 			s.InputRowCnt.Add(rows)
 		},
-		func(bytes, rows int64) {
-			s.OutputBytes.Add(bytes)
-			s.OutputRowCnt.Add(rows)
-		},
+		nil,
 	)
 
 	ctxWithCollector := external.WithCollector(ctx, collector)
@@ -368,14 +365,11 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		func(bytes, rows int64) {
 			m.InputBytes.Add(bytes)
 			m.InputRowCnt.Add(rows)
-		},
-		func(bytes, rows int64) {
-			m.OutputBytes.Add(bytes)
-			m.OutputRowCnt.Add(rows)
-			if metric, ok := metric.GetCommonMetric(ctx); ok {
-				metric.BytesCounter.WithLabelValues(lightningmetric.StateMerged).Add(float64(bytes))
+			if me, ok := metric.GetCommonMetric(ctx); ok {
+				me.BytesCounter.WithLabelValues(lightningmetric.StateMerged).Add(float64(bytes))
 			}
 		},
+		nil,
 	)
 
 	ctxWithCollector := external.WithCollector(ctx, collector)
