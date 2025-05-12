@@ -367,7 +367,7 @@ func TestTikvRegionStatus(t *testing.T) {
 	))
 
 	// Run the query to ensure virtual schemas are excluded and expect no rows to be returned
-	tk.MustQuery(`SELECT DB_NAME FROM information_schema.TIKV_REGION_STATUS WHERE DB_NAME IN ('information_schema', 'metrics_schema', 'performance_schema')`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT DB_NAME FROM information_schema.TIKV_REGION_STATUS WHERE DB_NAME IN ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA')`).Check(testkit.Rows())
 }
 
 func TestTableStorageStats(t *testing.T) {
