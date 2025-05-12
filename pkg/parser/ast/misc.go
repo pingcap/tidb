@@ -4468,7 +4468,7 @@ func (n *LLMStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(option.Name)
 		ctx.WritePlain(" ")
 		if err := option.Value.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while splicing LLMDDLOption: [%v]", option)
+			return errors.Annotatef(err, "An error occurred while splicing LLMOption: [%v]", option)
 		}
 	}
 	return nil
