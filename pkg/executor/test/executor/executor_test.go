@@ -564,7 +564,7 @@ func TestTiDBLastTxnInfo(t *testing.T) {
 	tk.MustExec("commit")
 	rows3 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()
 	require.Equal(t, strconv.FormatUint(startTS2, 10), rows3[0][0])
-	require.Equal(t, "<nil>", rows3[0][1])
+	require.Equal(t, "0", rows3[0][1])
 
 	// txn explicitly started with begin
 	tk.MustExec("begin")
@@ -590,7 +590,7 @@ func TestTiDBLastTxnInfo(t *testing.T) {
 	tk.MustExec("rollback")
 	rows6 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()
 	require.Equal(t, strconv.FormatUint(startTS4, 10), rows6[0][0])
-	require.Equal(t, "<nil>", rows6[0][1])
+	require.Equal(t, "0", rows6[0][1])
 
 	// optimistic txn commit failed
 	tk.MustExec("begin optimistic")

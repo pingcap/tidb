@@ -128,6 +128,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -984,10 +985,12 @@ func (s *session) setLastTxnInfoBeforeTxnEnd() {
 		return
 	}
 
-	s.GetSessionVars().LastTxnInfo = fmt.Sprintf(
-		`{"txn_scope": "%s", "start_ts": %d, "for_update_ts": %d}`,
-		txnCtx.TxnScope, txnCtx.StartTS, txnCtx.GetForUpdateTS(),
-	)
+	lastTxnInfo, err := json.Marshal(transaction.TxnInfo{
+		TxnScope: txnCtx.TxnScope,
+		StartTS:  txnCtx.StartTS,
+	})
+	terror.Log(err)
+	s.GetSessionVars().LastTxnInfo = string(lastTxnInfo)
 }
 
 func (s *session) GetClient() kv.Client {
