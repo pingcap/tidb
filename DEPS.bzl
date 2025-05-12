@@ -7230,19 +7230,21 @@ def go_deps():
     )
     go_repository(
         name = "com_github_tikv_client_go_v2",
+        build_tags = ["nextgen"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sha256 = "5da6c01384f018fc9e7608e82ab83165ff365ac8c36e76979e9de15ff2528f3a",
-        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20250421022114-157f083989fa",
+        sha256 = "30d52344099753eefb3f7334ef4f5605d8122d628c090dc2a7f4319baef9e063",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20250422123919-7cca6713e938",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250421022114-157f083989fa.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250421022114-157f083989fa.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250421022114-157f083989fa.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250421022114-157f083989fa.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250422123919-7cca6713e938.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250422123919-7cca6713e938.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250422123919-7cca6713e938.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250422123919-7cca6713e938.zip",
         ],
     )
     go_repository(
         name = "com_github_tikv_pd_client",
+        build_tags = ["nextgen"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
         sha256 = "766500f34469c58d7076bdec73f7115c8b4fe1d0ad66cdf73775f81daa387817",
