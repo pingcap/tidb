@@ -648,9 +648,9 @@ func NewWriteExternalStoreOperator(
 	reorgMeta *model.DDLReorgMeta,
 	tikvCodec tikv.Codec,
 ) *WriteExternalStoreOperator {
-	onDuplicateKey := engineapi.OnDuplicateKeyError
+	onDuplicateAction := engineapi.OnDuplicateKeyError
 	failpoint.Inject("ignoreReadIndexDupKey", func() {
-		onDuplicateKey = engineapi.OnDuplicateKeyIgnore
+		onDuplicateAction = engineapi.OnDuplicateKeyIgnore
 	})
 
 	totalCount := new(atomic.Int64)

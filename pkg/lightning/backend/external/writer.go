@@ -236,8 +236,8 @@ func (b *WriterBuilder) SetTiKVCodec(codec tikv.Codec) *WriterBuilder {
 	return b
 }
 
-// SetOnDup set the action when checkDup enabled and a duplicate key is found.
-func (b *WriterBuilder) SetOnDup(onDup engineapi.OnDuplicateKey) *WriterBuilder {
+// SetOnDupAction set the action when checkDup enabled and a duplicate key is found.
+func (b *WriterBuilder) SetOnDupAction(onDup engineapi.OnDuplicateKey) *WriterBuilder {
 	b.onDup = onDup
 	return b
 }
