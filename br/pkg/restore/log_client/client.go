@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/config"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -914,6 +915,10 @@ func (rc *LogClient) RestoreKVFiles(
 						}
 						log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
 							zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
+
+						metrics.KVApplyBatchDuration.Observe(time.Since(fileStart).Seconds())
+						metrics.KVApplyBatchSize.Observe(float64(size))
+						metrics.KVApplyBatchFiles.Observe(float64(len(files)))
 					}
 				}()
 
@@ -1307,6 +1312,11 @@ func (rc *LogClient) RestoreBatchMetaKVFiles(
 	for range files {
 		progressInc()
 	}
+	metrics.MetaKVBatchFiles.WithLabelValues(cf).Observe(float64(len(files)))
+	metrics.MetaKVBatchFilteredKeys.WithLabelValues(cf).Observe(float64(len(filteredOutKvEntries)))
+	metrics.MetaKVBatchKeys.WithLabelValues(cf).Observe(float64(kvCount))
+	metrics.MetaKVBatchSize.WithLabelValues(cf).Observe(float64(size))
+
 	return filteredOutKvEntries, nil
 }
 

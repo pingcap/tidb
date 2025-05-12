@@ -47,6 +47,7 @@ go_library(
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
+        "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/tablecodec",
         "//pkg/util",
