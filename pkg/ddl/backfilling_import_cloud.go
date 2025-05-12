@@ -146,7 +146,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			TotalKVCount:  0,
 			CheckHotspot:  true,
 			MemCapacity:   e.GetResource().Mem.Capacity(),
-			OnDupAction:   engineapi.OnDuplicateKeyError,
+			OnDup:         engineapi.OnDuplicateKeyError,
 		},
 		TS: sm.TS,
 	}, engineUUID)

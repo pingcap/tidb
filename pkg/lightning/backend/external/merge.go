@@ -168,7 +168,7 @@ func mergeOverlappingFilesInternal(
 		SetMemorySizeLimit(defaultOneWriterMemSizeLimit).
 		SetBlockSize(blockSize).
 		SetOnCloseFunc(onClose).
-		SetOnDupAction(onDup).
+		SetOnDup(onDup).
 		BuildOneFile(store, newFilePrefix, writerID)
 	writer.InitPartSizeAndLogger(ctx, partSize)
 	defer func() {

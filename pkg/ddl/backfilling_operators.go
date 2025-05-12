@@ -648,9 +648,9 @@ func NewWriteExternalStoreOperator(
 	reorgMeta *model.DDLReorgMeta,
 	tikvCodec tikv.Codec,
 ) *WriteExternalStoreOperator {
-	onDuplicateAction := engineapi.OnDuplicateKeyError
+	onDuplicateKey := engineapi.OnDuplicateKeyError
 	failpoint.Inject("ignoreReadIndexDupKey", func() {
-		onDuplicateAction = engineapi.OnDuplicateKeyIgnore
+		onDuplicateKey = engineapi.OnDuplicateKeyIgnore
 	})
 
 	totalCount := new(atomic.Int64)
@@ -668,7 +668,7 @@ func NewWriteExternalStoreOperator(
 					SetTiKVCodec(tikvCodec).
 					SetBlockSize(blockSize).
 					SetGroupOffset(i).
-					SetOnDupAction(onDuplicateAction)
+					SetOnDup(onDuplicateKey)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
 				writer := builder.Build(store, prefix, writerID)
