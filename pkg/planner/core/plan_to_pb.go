@@ -751,9 +751,18 @@ func (p *PhysicalCTESink) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType)
 	if err != nil {
 		return nil, err
 	}
+	fieldTypes := make([]*tipb.FieldType, 0, len(p.Schema().Columns))
+	for _, column := range p.Schema().Columns {
+		pbType, err := expression.ToPBFieldTypeWithCheck(column.RetType, kv.TiFlash)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		fieldTypes = append(fieldTypes, pbType)
+	}
 	cteSink := &tipb.CTESink{
-		CteId: uint32(p.IDForStorage),
-		Child: childPb,
+		CteId:      uint32(p.IDForStorage),
+		Child:      childPb,
+		FieldTypes: fieldTypes,
 	}
 	executorID := p.ExplainID().String()
 	return &tipb.Executor{
