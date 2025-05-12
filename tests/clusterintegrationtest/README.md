@@ -13,7 +13,7 @@ tiup --version
 # cd clusterintegrationtest
 ./run_mysql_tester.sh  # mysql-tester test
 
-# vector recall test
+# vector python testers
 python3 -m pip install uv
 uv venv --python python3.9
 source .venv/bin/activate
@@ -23,7 +23,7 @@ cd datasets
 wget https://ann-benchmarks.com/fashion-mnist-784-euclidean.hdf5
 wget https://ann-benchmarks.com/mnist-784-euclidean.hdf5
 cd ..
-./run_recall_test.sh
+./run_python_testers.sh
 
 ./run_upgrade_test.sh  # upgrade cluster test
 ```

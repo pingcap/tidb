@@ -19,7 +19,7 @@ set -euo pipefail
 CURRENT_DIR="$(dirname "$0")"
 source $CURRENT_DIR/_include.sh
 
-echo "+ Starting run vector python testers"
+echo "+ Starting run python testers"
 print_versions
 
 start_tidb
