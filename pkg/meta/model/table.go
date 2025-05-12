@@ -1421,6 +1421,7 @@ type EngineAttribute struct {
 	StorageClass json.RawMessage `json:"storage_class"`
 }
 
+// ParseEngineAttributeFromString parses the JSON format of ENGINE_ATTRIBUTE property of tables.
 func ParseEngineAttributeFromString(input string) (*EngineAttribute, error) {
 	attr := &EngineAttribute{}
 	if len(input) == 0 {
@@ -1449,11 +1450,13 @@ type StorageClassDef struct {
 	ValuesIn []string `json:"values_in"`
 }
 
+// HasNoScopeDef checks if the storage class definition has no scope definition.
 func (d *StorageClassDef) HasNoScopeDef() bool {
 	return len(d.NamesIn) == 0 && d.LessThan == nil && len(d.ValuesIn) == 0
 }
 
 // StorageClassSettings is the settings for storage class.
 type StorageClassSettings struct {
+	// StorageClassDef is the storage class definition.
 	Defs []*StorageClassDef `json:"defs"`
 }
