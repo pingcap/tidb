@@ -399,7 +399,7 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 		},
 	}
 
-	checkSubtaskErr := func(t *testing.T, expectedStep proto.Step) {
+	checkSubtaskStepAndReset := func(t *testing.T, expectedStep proto.Step) {
 		require.Equal(t, expectedStep, testErrStep)
 		testErrStep = proto.StepInit
 	}
@@ -426,22 +426,21 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			// 1. read index
 			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
 			if multipleRegions {
-				checkSubtaskErr(tt, proto.BackfillStepWriteAndIngest)
+				checkSubtaskStepAndReset(tt, proto.BackfillStepWriteAndIngest)
 			} else {
-				checkSubtaskErr(tt, proto.BackfillStepReadIndex)
+				checkSubtaskStepAndReset(tt, proto.BackfillStepReadIndex)
 			}
 
 			// 2. merge sort
-			require.NoError(tt, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ignoreReadIndexDupKey", "return(true)"))
+			testfailpoint.Enable(tt, "github.com/pingcap/tidb/pkg/ddl/ignoreReadIndexDupKey", `return(true)`)
 			require.NoError(tt, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()"))
 			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
-			checkSubtaskErr(tt, proto.BackfillStepMergeSort)
+			checkSubtaskStepAndReset(tt, proto.BackfillStepMergeSort)
 
 			// 3. cloud import
 			require.NoError(tt, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
 			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
-			checkSubtaskErr(tt, proto.BackfillStepWriteAndIngest)
-			require.NoError(tt, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ignoreReadIndexDupKey"))
+			checkSubtaskStepAndReset(tt, proto.BackfillStepWriteAndIngest)
 		})
 	}
 }

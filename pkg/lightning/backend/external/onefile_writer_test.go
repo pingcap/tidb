@@ -175,8 +175,8 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 
 func TestMergeOverlappingFilesInternal(t *testing.T) {
 	changePropDist(t, defaultPropSizeDist, 2)
-	// 1. Write to 5 files.
-	// 2. merge 5 files into one file.
+	// 1. Write to 3 files.
+	// 2. merge 3 files into one file.
 	// 3. read one file and check result.
 	// 4. check duplicate key.
 	ctx := context.Background()

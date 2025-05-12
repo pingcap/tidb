@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -516,13 +515,13 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	sortStart := time.Now()
 	var (
 		dupFound bool
-		dupLoc   atomic.Pointer[membuf.SliceLocation]
+		dupLoc   *membuf.SliceLocation
 	)
-	dupLoc.Store(nil)
 	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
 		res := bytes.Compare(w.getKeyByLoc(&i), w.getKeyByLoc(&j))
-		if res == 0 && dupLoc.CompareAndSwap(nil, &i) {
+		if res == 0 && !dupFound {
 			dupFound = true
+			dupLoc = &i
 		}
 		return res
 	})
@@ -547,8 +546,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
 			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyError:
-			dupKey := slices.Clone(w.getKeyByLoc(dupLoc.Load()))
-			dupValue := slices.Clone(w.getValueByLoc(dupLoc.Load()))
+			dupKey := slices.Clone(w.getKeyByLoc(dupLoc))
+			dupValue := slices.Clone(w.getValueByLoc(dupLoc))
 			return common.ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupValue)
 		}
 	}

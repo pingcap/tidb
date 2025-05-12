@@ -414,7 +414,7 @@ func TestEngineOnDup(t *testing.T) {
 		dataFiles, statFiles := prepareKVFiles(t, store, contents)
 		extEngine := getEngineFn(store, onDup, dataFiles, statFiles)
 		loadDataCh := make(chan engineapi.DataAndRanges, 4)
-		require.ErrorContains(t, extEngine.LoadIngestData(ctx, loadDataCh), "ErrFoundDuplicateKey")
+		require.ErrorContains(t, extEngine.LoadIngestData(ctx, loadDataCh), "[Lightning:Restore:ErrFoundDuplicateKey]found duplicate key '\x01', value 'aa'")
 		t.Cleanup(func() {
 			require.NoError(t, extEngine.Close())
 		})
