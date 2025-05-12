@@ -22,10 +22,12 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"math"
 )
 
 var (
@@ -33,6 +35,71 @@ var (
 	_ base.Task = &MppTask{}
 	_ base.Task = &CopTask{}
 )
+
+var _ context.WarnGetterAppender = &simpleWarnings{}
+
+type simpleWarnings struct {
+	warnings []*context.SQLWarn
+}
+
+// WarningCount returns the number of warnings.
+func (s *simpleWarnings) WarningCount() int {
+	return len(s.warnings)
+}
+
+// Copy implemented the simple warnings copy to avoid use the same warnings slice for different task instance.
+func (s *simpleWarnings) Copy(src *simpleWarnings) {
+	warnings := make([]*context.SQLWarn, 0, len(src.warnings))
+	warnings = append(warnings, src.warnings...)
+	s.warnings = warnings
+}
+
+// CopyFrom copy the warnings from src to s.
+func (s *simpleWarnings) CopyFrom(src ...*simpleWarnings) {
+	if src == nil {
+		return
+	}
+	length := 0
+	for _, one := range src {
+		if one == nil {
+			continue
+		}
+		length += one.WarningCount()
+	}
+	s.warnings = make([]*context.SQLWarn, 0, length)
+	for _, one := range src {
+		if one == nil {
+			continue
+		}
+		s.warnings = append(s.warnings, one.warnings...)
+	}
+}
+
+// AppendWarning appends a warning to the warnings slice.
+func (s *simpleWarnings) AppendWarning(warn error) {
+	if len(s.warnings) < math.MaxUint16 {
+		s.warnings = append(s.warnings, &context.SQLWarn{Level: context.WarnLevelWarning, Err: warn})
+	}
+}
+
+// AppendNote appends a note to the warnings slice.
+func (s *simpleWarnings) AppendNote(note error) {
+	if len(s.warnings) < math.MaxUint16 {
+		s.warnings = append(s.warnings, &context.SQLWarn{Level: context.WarnLevelNote, Err: note})
+	}
+}
+
+// GetWarnings returns the internal all stored warnings.
+func (s *simpleWarnings) GetWarnings() []context.SQLWarn {
+	// we use pointer warnings across different level's task to avoid mem cost.
+	// when best task is finished and final warnings is determined, we should
+	// convert pointer to struct to append it to session context.
+	warnings := make([]context.SQLWarn, 0, len(s.warnings))
+	for _, w := range s.warnings {
+		warnings = append(warnings, *w)
+	}
+	return warnings
+}
 
 // ************************************* RootTask Start ******************************************
 
@@ -45,6 +112,9 @@ type RootTask struct {
 	// For copTask and rootTask, when we compose physical tree bottom-up, index join need some special info
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
 	IndexJoinInfo *IndexJoinInfo
+
+	// warnings passed through different task copy attached with more upper operator specific warnings. (not concurrent safe)
+	simpleWarnings
 }
 
 // GetPlan returns the root task's plan.
@@ -69,16 +139,24 @@ func (t *RootTask) SetEmpty(x bool) {
 
 // Copy implements Task interface.
 func (t *RootTask) Copy() base.Task {
-	return &RootTask{
+	nt := &RootTask{
 		p: t.p,
 
 		// when copying, just copy it out.
 		IndexJoinInfo: t.IndexJoinInfo,
 	}
+	// since *t will reuse the same warnings slice, we need to copy it out.
+	// because different task instance should have different warning slice.
+	nt.simpleWarnings.Copy(&t.simpleWarnings)
+	return nt
 }
 
 // ConvertToRootTask implements Task interface.
 func (t *RootTask) ConvertToRootTask(_ base.PlanContext) base.Task {
+	// root -> root, only copy another one instance.
+	// *p: a new pointer to pointer current task's physic plan
+	// warnings: a new slice to store current task-bound(p-bound) warnings.
+	// *indexInfo: a new pointer to inherit the index join info upward if necessary.
 	return t.Copy().(*RootTask)
 }
 
@@ -136,6 +214,9 @@ type MppTask struct {
 	// So physical plan be like: PhysicalHashAgg -> PhysicalSelection -> TableReader -> ExchangeSender -> PhysicalTableScan(mpp tiflash)
 	rootTaskConds []expression.Expression
 	tblColHists   *statistics.HistColl
+
+	// warnings passed through different task copy attached with more upper operator specific warnings. (not concurrent safe)
+	simpleWarnings
 }
 
 // Count implements Task interface.
@@ -146,6 +227,9 @@ func (t *MppTask) Count() float64 {
 // Copy implements Task interface.
 func (t *MppTask) Copy() base.Task {
 	nt := *t
+	// since *t will reuse the same warnings slice, we need to copy it out.
+	// cause different task instance should have different warning slice.
+	nt.simpleWarnings.Copy(&t.simpleWarnings)
 	return &nt
 }
 
@@ -178,7 +262,14 @@ func (t *MppTask) MemoryUsage() (sum int64) {
 }
 
 // ConvertToRootTaskImpl implements Task interface.
-func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) *RootTask {
+func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
+	defer func() {
+		// mppTask should inherit the indexJoinInfo upward.
+		// because mpp task bottom doesn't form the indexJoin related cop task.
+		if t.WarningCount() > 0 {
+			rt.simpleWarnings.CopyFrom(&t.simpleWarnings)
+		}
+	}()
 	// In disaggregated-tiflash mode, need to consider generated column.
 	tryExpandVirtualColumn(t.p)
 	sender := PhysicalExchangeSender{
@@ -192,7 +283,7 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 	}.Init(ctx, t.p.QueryBlockOffset())
 	p.SetStats(t.p.StatsInfo())
 	collectPartitionInfosFromMPPPlan(p, t.p)
-	rt := &RootTask{}
+	rt = &RootTask{}
 	rt.SetPlan(p)
 
 	if len(t.rootTaskConds) > 0 {
@@ -269,6 +360,9 @@ type CopTask struct {
 	// For copTask and rootTask, when we compose physical tree bottom-up, index join need some special info
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
 	IndexJoinInfo *IndexJoinInfo
+
+	// warnings passed through different task copy attached with more upper operator specific warnings. (not concurrent safe)
+	simpleWarnings
 }
 
 // Invalid implements Task interface.
@@ -287,6 +381,9 @@ func (t *CopTask) Count() float64 {
 // Copy implements Task interface.
 func (t *CopTask) Copy() base.Task {
 	nt := *t
+	// since *t will reuse the same warnings slice, we need to copy it out.
+	// cause different task instance should have different warning slice.
+	nt.simpleWarnings.Copy(&t.simpleWarnings)
 	return &nt
 }
 
@@ -347,6 +444,9 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		if t.IndexJoinInfo != nil {
 			// return indexJoinInfo upward, when copTask is converted to rootTask.
 			rt.IndexJoinInfo = t.IndexJoinInfo
+		}
+		if t.WarningCount() > 0 {
+			rt.CopyFrom(&t.simpleWarnings)
 		}
 	}()
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize

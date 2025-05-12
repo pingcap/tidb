@@ -14,12 +14,16 @@
 
 package base
 
+import "github.com/pingcap/tidb/pkg/util/context"
+
 // Note: appending the new adding method to the last, for the convenience of easy
 // locating in other implementor from other package.
 
 // Task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
 // A task may be CopTask, RootTask, MPPTaskMeta or a ParallelTask.
 type Task interface {
+	// WarnGetterAppender is used to get and append warnings.
+	context.WarnGetterAppender
 	// Count returns current task's row count.
 	Count() float64
 	// Copy return a shallow copy of current task with the same pointer to p.
