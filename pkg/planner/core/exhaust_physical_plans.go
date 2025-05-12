@@ -1024,6 +1024,7 @@ func enumerateIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.Physi
 	if count := outerChild.StatsInfo().RowCount; count > 0 {
 		avgInnerRowCnt = p.EqualCondOutCnt / count
 	}
+	// for pk path
 	indexJoinPropTS := &property.IndexJoinRuntimeProp{
 		OtherConditions: p.OtherConditions,
 		InnerJoinKeys:   innerJoinKeys,
@@ -1031,6 +1032,7 @@ func enumerateIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.Physi
 		AvgInnerRowCnt:  avgInnerRowCnt,
 		TableRangeScan:  true,
 	}
+	// for normal index path
 	indexJoinPropIS := &property.IndexJoinRuntimeProp{
 		OtherConditions: p.OtherConditions,
 		InnerJoinKeys:   innerJoinKeys,
@@ -1200,12 +1202,12 @@ func buildDataSource2IndexScanByIndexJoinProp(
 		}
 	}
 	var innerTask base.Task
-	if isMatchProp(ds, indexJoinResult.chosenPath, prop) {
-		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+	if !prop.IsSortItemEmpty() && isMatchProp(ds, indexJoinResult.chosenPath, prop) {
+		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 	} else {
 		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 	}
-	// since there is a possibility that inner task can't be built, we just return base.InvalidTask.
+	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.
 	if innerTask == nil {
 		return base.InvalidTask
 	}
@@ -1269,12 +1271,13 @@ func buildDataSource2TableScanByIndexJoinProp(
 			return base.InvalidTask
 		}
 		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
-		if isMatchProp(ds, chosenPath, prop) {
-			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt)
+		if !prop.IsSortItemEmpty() && isMatchProp(ds, chosenPath, prop) {
+			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt)
 		} else {
 			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt)
 		}
 	}
+	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.
 	if innerTask == nil {
 		return base.InvalidTask
 	}
@@ -2100,7 +2103,7 @@ func tryToEnumerateIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalPr
 		stmtCtx.SetHintWarning("Some INL_MERGE_JOIN and NO_INDEX_MERGE_JOIN hints conflict, NO_INDEX_MERGE_JOIN may be ignored")
 	}
 	// previously we will think about force index join hints here, but we have to wait the inner plans to be a valid
-	// physical one/ones. Because indexJoinProp may not be admitted by its inner patterns, so we innovative-ly move all
+	// physical one/ones. Because indexJoinProp may not be admitted by its inner patterns, so we innovatively move all
 	// hint related handling to the findBestTask function when we see the entire inner physical-ized plan tree. See xxx
 	// for details.
 	//
@@ -2238,54 +2241,58 @@ func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalPro
 // It will return true if the hint can be applied when saw a real physic plan successfully built and returned up from child.
 // we cache the most preferred one among this valid and preferred physic plans. If there is no preferred physic applicable
 // for the logic hint, we will return false and the optimizer will continue to return the normal low-cost one.
-func applyLogicalJoinHint(lp base.LogicalPlan, physic base.PhysicalPlan) (preferred bool) {
-	return preferMergeJoin(lp, physic) || preferIndexJoinFamily(lp, physic) || preferHashJoin(lp, physic)
+func applyLogicalJoinHint(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
+	return preferMergeJoin(lp, physicPlan) || preferIndexJoinFamily(lp, physicPlan) || preferHashJoin(lp, physicPlan)
 }
 
-func preferHashJoin(lp base.LogicalPlan, physic base.PhysicalPlan) (preferred bool) {
+func preferHashJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
 	p, ok := lp.(*logicalop.LogicalJoin)
 	if !ok {
 		return false
 	}
-	if physic == nil {
+	if physicPlan == nil {
 		return false
 	}
 	forceLeftToBuild := ((p.PreferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferRightAsHJProbe) > 0)
 	forceRightToBuild := ((p.PreferJoinType & h.PreferRightAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferLeftAsHJProbe) > 0)
-	preferHashJoin := p.PreferJoinType&h.PreferHashJoin > 0 || forceRightToBuild || forceLeftToBuild
-	if _, ok := physic.(*PhysicalHashJoin); ok && preferHashJoin {
-		return true
+	if forceLeftToBuild && forceRightToBuild {
+		// for build hint conflict, restore all of them
+		forceLeftToBuild = false
+		forceRightToBuild = false
 	}
-	return false
+	physicalHashJoin, ok := physicPlan.(*PhysicalHashJoin)
+	if !ok {
+		return false
+	}
+	preferHashJoin := p.PreferJoinType&h.PreferHashJoin > 0 || (forceRightToBuild && physicalHashJoin.InnerChildIdx == 1) || (forceLeftToBuild && physicalHashJoin.InnerChildIdx == 0)
+	return preferHashJoin
 }
 
-func preferMergeJoin(lp base.LogicalPlan, physic base.PhysicalPlan) (preferred bool) {
+func preferMergeJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
 	p, ok := lp.(*logicalop.LogicalJoin)
 	if !ok {
 		return false
 	}
-	if physic == nil {
+	if physicPlan == nil {
 		return false
 	}
-	if _, ok := physic.(*PhysicalMergeJoin); ok && p.PreferJoinType&h.PreferMergeJoin > 0 {
-		return true
-	}
-	return false
+	_, ok = physicPlan.(*PhysicalMergeJoin)
+	return ok && p.PreferJoinType&h.PreferMergeJoin > 0
 }
 
-func preferIndexJoinFamily(lp base.LogicalPlan, physic base.PhysicalPlan) (preferred bool) {
+func preferIndexJoinFamily(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
 	p, ok := lp.(*logicalop.LogicalJoin)
 	if !ok {
 		return false
 	}
-	if physic == nil {
+	if physicPlan == nil {
 		return false
 	}
 	if !p.PreferAny(h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
 		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner) {
 		return false // no force index join hints
 	}
-	innerSide, joinMethod, ok := getIndexJoinSideAndMethod(physic)
+	innerSide, joinMethod, ok := getIndexJoinSideAndMethod(physicPlan)
 	if !ok {
 		return false
 	}

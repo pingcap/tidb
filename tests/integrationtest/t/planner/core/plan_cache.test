@@ -622,12 +622,14 @@ create table t(a int, index(a));
 set tidb_enable_non_prepared_plan_cache=1;
 create binding for select * from t where a=1 using select /*+ use_index(t, a) */ * from t where a=1;
 select * from t where a=1;
+select @@last_plan_from_binding, @@last_plan_from_cache;
 select * from t where a=1;
-select @@last_plan_from_cache;
+select @@last_plan_from_binding, @@last_plan_from_cache;
 drop binding for select * from t where a=1;
 select * from t where a=1;
+select @@last_plan_from_binding, @@last_plan_from_cache;
 select * from t where a=1;
-select @@last_plan_from_cache;
+select @@last_plan_from_binding, @@last_plan_from_cache;
 set tidb_enable_non_prepared_plan_cache=DEFAULT;
 
 

@@ -250,6 +250,9 @@ func enumeratePhysicalPlans4Task(
 		// since hint applicable plan may greater than 1, like inl_join can suit for:
 		// index_join, index_hash_join, index_merge_join, we should chase the most efficient
 		// one among them.
+		//
+		// we need to check the hint is applicable before enforcing the property. otherwise
+		// what we get is Sort ot Exchanger kind of operators.
 		// todo: extend applyLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
 		hintApplicable := applyLogicalJoinHint(p.Self(), curTask.Plan())
 
@@ -1487,9 +1490,9 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 			// even enforce hint can not work with this.
 			return base.InvalidTask, 0, nil
 		}
+		// cache the physical for indexJoinProp
 		defer func() {
 			ds.StoreTask(prop, t)
-			err = validateTableSamplePlan(ds, t, err)
 		}()
 		// when datasource leaf is in index join's inner side, build the task out with old
 		// index join build logic, we can't merge this with normal datasource's index range
