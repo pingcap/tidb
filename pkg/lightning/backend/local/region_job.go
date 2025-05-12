@@ -454,6 +454,8 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 		regionMaxSize = j.regionSplitSize * 4 / 3
 	}
 
+	collector := external.GetCollector(ctx)
+
 	flushKVs := func() error {
 		req.Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 		preparedMsg := &grpc.PreparedMsg{}
@@ -477,9 +479,9 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 			}
 		}
 
-		if onFlush, ok := external.GetOnFlushFunc(ctx); ok {
-			onFlush(int64(count), size)
-		}
+		// TODO(joechenrh): consider duplication for OnRead
+		collector.OnRead(size, int64(count))
+		collector.OnWrite(size, int64(count))
 
 		failpoint.Inject("afterFlushKVs", func() {
 			log.FromContext(ctx).Info(fmt.Sprintf("afterFlushKVs count=%d,size=%d", count, size))

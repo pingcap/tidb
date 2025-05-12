@@ -261,10 +261,11 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	nextStep proto.Step,
 ) (
 	resSubtaskMeta [][]byte, err error) {
+	currStep := task.Step
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
-		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
+		zap.String("curr-step", proto.Step2Str(task.Type, currStep)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
 	)
 	taskMeta := &TaskMeta{}
@@ -293,9 +294,6 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 			return nil, err
 		}
 		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = sortAndEncodeMeta
-		if err := updateTaskSummary(taskHandle, task, taskMeta, proto.ImportStepEncodeAndSort); err != nil {
-			return nil, err
-		}
 	case proto.ImportStepWriteAndIngest:
 		failpoint.Inject("failWhenDispatchWriteIngestSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error"))
@@ -315,10 +313,6 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		if err = job2Step(ctx, logger, taskMeta, importer.JobStepImporting); err != nil {
 			return nil, err
 		}
-		// TODO(joechenrh): merge step may remove some duplicate data, so we have to update the total bytes after merge sort.
-		if err := updateTaskSummary(taskHandle, task, taskMeta, proto.ImportStepEncodeAndSort); err != nil {
-			return nil, err
-		}
 	case proto.ImportStepPostProcess:
 		sch.switchTiKV2NormalMode(ctx, task, logger)
 		failpoint.Inject("clearLastSwitchTime", func() {
@@ -330,9 +324,6 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		failpoint.Inject("failWhenDispatchPostProcessSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error after ImportStepImport"))
 		})
-		if err := updateTaskSummary(taskHandle, task, taskMeta, getStepOfEncode(sch.GlobalSort)); err != nil {
-			return nil, err
-		}
 		step := getStepOfEncode(sch.GlobalSort)
 		metas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, step)
 		if err != nil {
@@ -373,6 +364,11 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	if err != nil {
 		return nil, err
 	}
+
+	if err := updateTaskSummary(taskHandle, task, taskMeta, currStep, nextStep, logicalPlan); err != nil {
+		return nil, err
+	}
+
 	logger.Info("generate subtasks", zap.Int("subtask-count", len(metaBytes)))
 	return metaBytes, nil
 }
@@ -570,40 +566,41 @@ func getStepOfEncode(globalSort bool) proto.Step {
 }
 
 // we will update taskMeta in place and make task.Meta point to the new taskMeta.
-func updateTaskSummary(handle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta, prevStep proto.Step) error {
+func updateTaskSummary(
+	handle storage.TaskHandle,
+	task *proto.Task, taskMeta *TaskMeta,
+	currStep, nextStep proto.Step,
+	p *LogicalPlan,
+) error {
 	var (
-		processedRowCnt uint64
-		processedBytes  uint64
-		importSummary   importer.Summary
+		importSummary importer.Summary
+		err           error
 	)
 
 	if len(taskMeta.TaskResult) > 0 {
-		if err := json.Unmarshal(taskMeta.TaskResult, &importSummary); err != nil {
+		if err = json.Unmarshal(taskMeta.TaskResult, &importSummary); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	summaries, err := handle.GetPreviousSubtaskSummary(task.ID, prevStep)
-	if err != nil {
-		return err
-	}
-
-	if len(summaries) == 0 {
-		return nil
-	}
-
-	switch prevStep {
-	case proto.ImportStepEncodeAndSort:
-		importSummary.EncodedRowCnt = processedRowCnt
-		importSummary.EncodedBytes = processedBytes
+	// Process output row count and data size
+	switch nextStep {
 	case proto.ImportStepMergeSort:
-		importSummary.MergedRowCnt = processedRowCnt
-		importSummary.MergedBytes = processedBytes
-	case proto.ImportStepImport:
-		importSummary.LoadedRowCnt = processedRowCnt
-		importSummary.LoadedBytes = processedBytes
-	default:
-		return errors.Errorf("unknown step %d", prevStep)
+		importSummary.EncodeSummary = p.summary.EncodeSummary
+		importSummary.MergeSummary = p.summary.MergeSummary
+	case proto.ImportStepWriteAndIngest:
+		importSummary.IngestSummary = p.summary.IngestSummary
+	case proto.ImportStepPostProcess:
+		// For ingest step, we need to sum up the output row count and data size from subtasks summary.
+		// Only summaries of data kv groups will record row count.
+		summaries, err := handle.GetPreviousSubtaskSummary(task.ID, currStep)
+		if err != nil {
+			return err
+		}
+		for _, summary := range summaries {
+			importSummary.PostProcessSummary.RowCnt += uint64(summary.OutputRowCnt)
+			importSummary.PostProcessSummary.Bytes += uint64(summary.OutputBytes)
+		}
 	}
 
 	if taskMeta.TaskResult, err = json.Marshal(importSummary); err != nil {
@@ -667,7 +664,7 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
 				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, &importer.JobImportResult{
-					Affected: summary.LoadedRowCnt,
+					Affected: summary.PostProcessSummary.RowCnt,
 				}); err != nil {
 					logger.Warn("flush table stats failed", zap.Error(err))
 				}

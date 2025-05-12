@@ -636,7 +636,7 @@ func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, st
 }
 
 // UpdateSubtaskSummary updates the subtask summary.
-func (mgr *TaskManager) UpdateSubtaskSummary(ctx context.Context, subtaskID int64, summary *execute.SubtaskSummary) error {
+func (mgr *TaskManager) UpdateSubtaskSummary(ctx context.Context, subtaskID int64, summary any) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}

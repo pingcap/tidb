@@ -64,11 +64,11 @@ type importStepExecutor struct {
 	perIndexKVMemSizePerCon uint64
 	indexBlockSize          int
 
-	summary *execute.RunningSubtaskSummary
-
 	importCtx    context.Context
 	importCancel context.CancelFunc
 	wg           sync.WaitGroup
+
+	*execute.RunningSubtaskSummary
 }
 
 func getTableImporter(
@@ -104,7 +104,6 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 		return err
 	}
 	s.tableImporter = tableImporter
-	s.summary = &execute.RunningSubtaskSummary{}
 
 	// we need this sub context since Cleanup which wait on this routine is called
 	// before parent context is canceled in normal flow.
@@ -133,7 +132,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		task.End(zapcore.ErrorLevel, err)
 	}()
 
-	s.summary.Reset(0, 0)
+	s.Reset(0, 0)
 
 	bs := subtask.Meta
 	var subtaskMeta ImportStepMeta
@@ -168,18 +167,30 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		}
 	}
 	sharedVars := &SharedVars{
-		TableImporter:         s.tableImporter,
-		DataEngine:            dataEngine,
-		IndexEngine:           indexEngine,
-		Checksum:              verification.NewKVGroupChecksumWithKeyspace(s.tableImporter.GetKeySpace()),
-		SortedDataMeta:        &external.SortedKVMeta{},
-		SortedIndexMetas:      make(map[int64]*external.SortedKVMeta),
-		RunningSubtaskSummary: s.summary,
+		TableImporter:    s.tableImporter,
+		DataEngine:       dataEngine,
+		IndexEngine:      indexEngine,
+		Checksum:         verification.NewKVGroupChecksumWithKeyspace(s.tableImporter.GetKeySpace()),
+		SortedDataMeta:   &external.SortedKVMeta{},
+		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
+	collector := external.NewCollector(
+		func(bytes, rows int64) {
+			s.InputBytes.Add(bytes)
+			s.InputRowCnt.Add(rows)
+		},
+		func(bytes, rows int64) {
+			s.OutputBytes.Add(bytes)
+			s.OutputRowCnt.Add(rows)
+		},
+	)
+
+	ctxWithCollector := external.WithCollector(ctx, collector)
+
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID, int(s.GetResource().CPU.Capacity()))
+	op := newEncodeAndSortOperator(ctxWithCollector, s, sharedVars, subtask.ID, int(s.GetResource().CPU.Capacity()))
 	op.SetSource(source)
 	pipeline := operator.NewAsyncPipeline(op)
 	if err = pipeline.Execute(); err != nil {
@@ -213,8 +224,8 @@ outer:
 	return s.onFinished(ctx, subtask)
 }
 
-func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	return s.summary.ToSummary()
+func (s *importStepExecutor) RealtimeSummary() any {
+	return s.ToSummary()
 }
 
 func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
@@ -352,13 +363,22 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		defer mu.Unlock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 	}
-	onFlush := func(written, writtenBytes int64) {
-		m.ProcessedRowCount.Add(written)
-		m.ProcessedBytes.Add(writtenBytes)
-		if metric, ok := metric.GetCommonMetric(ctx); ok {
-			metric.BytesCounter.WithLabelValues(lightningmetric.StateMerged).Add(float64(writtenBytes))
-		}
-	}
+
+	collector := external.NewCollector(
+		func(bytes, rows int64) {
+			m.InputBytes.Add(bytes)
+			m.InputRowCnt.Add(rows)
+		},
+		func(bytes, rows int64) {
+			m.OutputBytes.Add(bytes)
+			m.OutputRowCnt.Add(rows)
+			if metric, ok := metric.GetCommonMetric(ctx); ok {
+				metric.BytesCounter.WithLabelValues(lightningmetric.StateMerged).Add(float64(bytes))
+			}
+		},
+	)
+
+	ctxWithCollector := external.WithCollector(ctx, collector)
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
 
@@ -367,14 +387,13 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		partSize = m.indexKVPartSize
 	}
 	err = external.MergeOverlappingFiles(
-		logutil.WithFields(ctx, zap.String("kv-group", sm.KVGroup), zap.Int64("subtask-id", subtask.ID)),
+		logutil.WithFields(ctxWithCollector, zap.String("kv-group", sm.KVGroup), zap.Int64("subtask-id", subtask.ID)),
 		sm.DataFiles,
 		m.controller.GlobalSortStore,
 		partSize,
 		prefix,
 		getKVGroupBlockSize(sm.KVGroup),
 		onClose,
-		onFlush,
 		int(m.GetResource().CPU.Capacity()),
 		false,
 	)
@@ -420,7 +439,7 @@ func (m *mergeSortStepExecutor) Cleanup(ctx context.Context) (err error) {
 	return m.BaseStepExecutor.Cleanup(ctx)
 }
 
-func (m *mergeSortStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+func (m *mergeSortStepExecutor) RealtimeSummary() any {
 	return m.ToSummary()
 }
 
@@ -497,19 +516,28 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		return err
 	}
 
-	ctxWithFunc := external.WithOnFlushFunc(ctx, func(written, writtenBytes int64) {
-		e.ProcessedRowCount.Add(written)
-		e.ProcessedBytes.Add(writtenBytes)
-	})
+	collector := external.NewCollector(
+		func(bytes, rows int64) {
+			e.InputBytes.Add(bytes)
+			e.InputRowCnt.Add(rows)
+		},
+		func(bytes, rows int64) {
+			e.OutputBytes.Add(bytes)
+			if sm.KVGroup == dataKVGroup {
+				e.OutputRowCnt.Add(rows)
+			}
+		},
+	)
 
-	err = localBackend.ImportEngine(ctxWithFunc, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	ctxWithCollector := external.WithCollector(ctx, collector)
+	err = localBackend.ImportEngine(ctxWithCollector, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return e.onFinished(ctx, subtask)
 }
 
-func (e *writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+func (e *writeAndIngestStepExecutor) RealtimeSummary() any {
 	return e.ToSummary()
 }
 
@@ -626,10 +654,11 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 	switch task.Step {
 	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
 		return &importStepExecutor{
-			taskID:   task.ID,
-			taskMeta: &taskMeta,
-			logger:   logger,
-			store:    e.store,
+			taskID:                task.ID,
+			taskMeta:              &taskMeta,
+			logger:                logger,
+			store:                 e.store,
+			RunningSubtaskSummary: &execute.RunningSubtaskSummary{},
 		}, nil
 	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{

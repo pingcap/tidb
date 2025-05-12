@@ -44,7 +44,7 @@ type StepExecutor interface {
 	RunSubtask(ctx context.Context, subtask *proto.Subtask) error
 
 	// RealtimeSummary returns the realtime summary of the running subtask by this executor.
-	RealtimeSummary() *SubtaskSummary
+	RealtimeSummary() any
 
 	// Cleanup is used to clean up the environment for this step.
 	// the returned error will not affect task/subtask state, it's only logged,
@@ -65,39 +65,36 @@ type StepExecutor interface {
 
 // SubtaskSummary contains the summary of a subtask.
 type SubtaskSummary struct {
-	ProcessedRowCount int64 `json:"row_count,omitempty"`
-	TotalRowCount     int64 `json:"total_row,omitempty"`
-	ProcessedBytes    int64 `json:"bytes,omitempty"`
-	TotalBytes        int64 `json:"total_bytes,omitempty"`
+	InputRowCnt  int64 `json:"input_rows,omitempty"`
+	InputBytes   int64 `json:"input_bytes,omitempty"`
+	OutputRowCnt int64 `json:"output_rows,omitempty"`
+	OutputBytes  int64 `json:"output_bytes,omitempty"`
 }
 
 // RunningSubtaskSummary is used to store the summary of a running subtask.
 // It uses atomic operations to avoid lock contention.
 type RunningSubtaskSummary struct {
-	ProcessedRowCount atomic.Int64
-
-	TotalRowCount atomic.Int64
-
-	ProcessedBytes atomic.Int64
-
-	TotalBytes atomic.Int64
+	InputRowCnt  atomic.Int64
+	InputBytes   atomic.Int64
+	OutputRowCnt atomic.Int64
+	OutputBytes  atomic.Int64
 }
 
 // Reset resets the summary to the given row count and bytes.
 func (s *RunningSubtaskSummary) Reset(rowCount, bytes int64) {
-	s.ProcessedRowCount.Store(0)
-	s.TotalRowCount.Store(rowCount)
-	s.ProcessedBytes.Store(0)
-	s.TotalBytes.Store(bytes)
+	s.InputRowCnt.Store(0)
+	s.InputBytes.Store(0)
+	s.OutputRowCnt.Store(0)
+	s.OutputBytes.Store(0)
 }
 
 // ToSummary converts the running subtask summary to a subtask summary.
 func (s *RunningSubtaskSummary) ToSummary() *SubtaskSummary {
 	return &SubtaskSummary{
-		ProcessedRowCount: s.ProcessedRowCount.Load(),
-		TotalRowCount:     s.TotalRowCount.Load(),
-		ProcessedBytes:    s.ProcessedBytes.Load(),
-		TotalBytes:        s.TotalBytes.Load(),
+		InputRowCnt:  s.InputRowCnt.Load(),
+		InputBytes:   s.InputBytes.Load(),
+		OutputRowCnt: s.OutputRowCnt.Load(),
+		OutputBytes:  s.OutputBytes.Load(),
 	}
 }
 

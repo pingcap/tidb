@@ -197,9 +197,9 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	return r.runLocalPipeline(ctx, opCtx, subtask, sm, concurrency)
 }
 
-func (r *readIndexStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+func (r *readIndexStepExecutor) RealtimeSummary() any {
 	return &execute.SubtaskSummary{
-		ProcessedRowCount: r.curRowCount.Load(),
+		OutputRowCnt: r.curRowCount.Load(),
 	}
 }
 

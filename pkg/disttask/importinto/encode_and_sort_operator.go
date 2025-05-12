@@ -177,10 +177,6 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(op.sharedVars.mergeDataSummary).
-			SetOnFlushFunc(func(written int64, writtenBytes int64) {
-				op.sharedVars.ProcessedRowCount.Add(written)
-				op.sharedVars.ProcessedBytes.Add(writtenBytes)
-			}).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(getKVGroupBlockSize(dataKVGroup)).
 			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())

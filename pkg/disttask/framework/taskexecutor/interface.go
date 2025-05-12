@@ -134,7 +134,7 @@ func (*BaseStepExecutor) RunSubtask(context.Context, *proto.Subtask) error {
 }
 
 // RealtimeSummary implements the StepExecutor interface.
-func (*BaseStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+func (*BaseStepExecutor) RealtimeSummary() any {
 	return nil
 }
 

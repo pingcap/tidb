@@ -241,18 +241,23 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		encodedRowsCounter = metrics.RowsCounter.WithLabelValues(metric.StateRestored, "")
 	}
 
+	collectorFuncs := external.GetCollector(ctx)
+
 	recordSendReset := func() error {
 		if len(rowBatch) == 0 {
 			return nil
 		}
 
-		if currOffset >= 0 && metrics != nil {
-			delta := currOffset - p.offset
+		var delta int64
+		if currOffset >= 0 {
+			delta = currOffset - p.offset
 			p.offset = currOffset
-			// if we're using split_file, this metric might larger than total
-			// source file size, as the offset we're using is the reader offset,
-			// not parser offset, and we'll buffer data.
-			encodedBytesCounter.Add(float64(delta))
+			if metrics != nil {
+				// if we're using split_file, this metric might larger than total
+				// source file size, as the offset we're using is the reader offset,
+				// not parser offset, and we'll buffer data.
+				encodedBytesCounter.Add(float64(delta))
+			}
 		}
 
 		if metrics != nil {
@@ -276,6 +281,9 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		if err := p.sendFn(ctx, kvGroupBatch); err != nil {
 			return err
 		}
+
+		dataKVS, _ := kvGroupBatch.groupChecksum.DataAndIndexSumKVS()
+		collectorFuncs.OnRead(delta, int64(dataKVS))
 
 		// the ownership of rowBatch is transferred to the receiver of sendFn, we should
 		// not touch it anymore.

@@ -60,6 +60,9 @@ type OneFileWriter struct {
 	onClose OnCloseFunc
 	closed  bool
 
+	outSize   uint64
+	outRowCnt uint64
+
 	// for duplicate detection.
 	onDup      engineapi.OnDuplicateKey
 	pivotKey   []byte
@@ -241,6 +244,16 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 	}
 	w.totalCnt += 1
 	w.totalSize += uint64(keyLen + len(idxVal))
+
+	w.outRowCnt++
+	w.outSize += uint64(length)
+	if w.outRowCnt%1000 == 0 {
+		collector := GetCollector(ctx)
+		collector.OnWrite(int64(w.outSize), int64(w.outRowCnt))
+		w.outSize = 0
+		w.outRowCnt = 0
+	}
+
 	return nil
 }
 

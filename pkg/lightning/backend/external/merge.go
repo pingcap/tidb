@@ -46,7 +46,6 @@ func MergeOverlappingFiles(
 	newFilePrefix string,
 	blockSize int,
 	onClose OnCloseFunc,
-	onFlush OnFlushFunc,
 	concurrency int,
 	checkHotspot bool,
 ) error {
@@ -75,7 +74,6 @@ func MergeOverlappingFiles(
 				uuid.New().String(),
 				blockSize,
 				onClose,
-				onFlush,
 				checkHotspot,
 			)
 		})
@@ -140,7 +138,6 @@ func mergeOverlappingFilesInternal(
 	writerID string,
 	blockSize int,
 	onClose OnCloseFunc,
-	onFlush OnFlushFunc,
 	checkHotspot bool,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx).With(
@@ -167,7 +164,6 @@ func mergeOverlappingFilesInternal(
 		SetMemorySizeLimit(defaultOneWriterMemSizeLimit).
 		SetBlockSize(blockSize).
 		SetOnCloseFunc(onClose).
-		SetOnFlushFunc(onFlush).
 		BuildOneFile(store, newFilePrefix, writerID)
 	writer.InitPartSizeAndLogger(ctx, partSize)
 	defer func() {
@@ -183,13 +179,27 @@ func mergeOverlappingFilesInternal(
 		}
 	}()
 
+	collector := GetCollector(ctx)
+	bytes := int64(0)
+	rowCnt := int64(0)
+
 	// currently use same goroutine to do read and write. The main advantage is
 	// there's no KV copy and iter can reuse the buffer.
 	for iter.Next() {
-		err = writer.WriteRow(ctx, iter.Key(), iter.Value())
+		key, value := iter.Key(), iter.Value()
+		err = writer.WriteRow(ctx, key, value)
 		if err != nil {
 			return err
 		}
+
+		bytes += int64(len(key) + len(value) + lengthBytes*2)
+		rowCnt++
+		if bytes > 104857600 { // update metrics every 100MB
+			collector.OnRead(bytes, rowCnt)
+			bytes = 0
+			rowCnt = 0
+		}
 	}
+	collector.OnRead(bytes, rowCnt)
 	return iter.Error()
 }

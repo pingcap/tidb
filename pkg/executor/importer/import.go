@@ -285,19 +285,27 @@ type ASTArgs struct {
 	LinesInfo          *ast.LinesClause
 }
 
+// StepSummary records the output data size and row count of each step.
+type StepSummary struct {
+	Bytes  uint64 `json:"input-bytes,omitempty"`
+	RowCnt uint64 `json:"input-rows,omitempty"`
+}
+
 // Summary records the metrics information, which is stored in the TaskMeta.
 // And this information will be stored into tidb_import_jobs table after the job is done.
-// Because data may have duplicates, the number of rows after each step may be different.
+// Because data may have duplicates, rows and size of each step may be different.
 type Summary struct {
-	EncodedRowCnt uint64 `json:"encoded-rows,omitempty"`
-	EncodedBytes  uint64 `json:"encoded-bytes,omitempty"`
+	// bytes and rows after encoding
+	EncodeSummary StepSummary `json:"encode-summary,omitempty"`
 
-	MergedRowCnt      uint64 `json:"merged-rows,omitempty"`
-	MergedBytes       uint64 `json:"merged-bytes,omitempty"`
-	MergedOutputBytes uint64 `json:"merged-output-bytes,omitempty"`
+	// bytes and rows during merging
+	MergeSummary StepSummary `json:"merge-summary,omitempty"`
 
-	LoadedRowCnt uint64 `json:"imported-rows,omitempty"`
-	LoadedBytes  uint64 `json:"imported-bytes,omitempty"`
+	// bytes and rows to ingest
+	IngestSummary StepSummary `json:"ingest-summary,omitempty"`
+
+	// bytes and rows after ingesting
+	PostProcessSummary StepSummary `json:"post-process-summary,omitempty"`
 }
 
 // LoadDataController load data controller.

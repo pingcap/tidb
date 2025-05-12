@@ -97,7 +97,6 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		prefix,
 		external.DefaultBlockSize,
 		onClose,
-		nil,
 		int(res.CPU.Capacity()),
 		true,
 	)

@@ -56,6 +56,8 @@ type LogicalPlan struct {
 	Stmt              string
 	EligibleInstances []*infosync.ServerInfo
 	ChunkMap          map[int32][]importer.Chunk
+
+	summary importer.Summary
 }
 
 // GetTaskExtraParams implements the planner.LogicalPlan interface.
@@ -371,12 +373,22 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 	if err != nil {
 		return nil, err
 	}
+
+	sm := &p.summary
 	for kvGroup, kvMeta := range kvMetas {
+		sm.EncodeSummary.Bytes += kvMeta.TotalKVSize
+		if kvGroup == dataKVGroup {
+			sm.EncodeSummary.RowCnt += kvMeta.TotalKVCnt
+		}
 		if !p.Plan.ForceMergeStep && skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
 			logutil.Logger(planCtx.Ctx).Info("skip merge sort for kv group",
 				zap.Int64("task-id", planCtx.TaskID),
 				zap.String("kv-group", kvGroup))
 			continue
+		}
+		sm.MergeSummary.Bytes += kvMeta.TotalKVSize
+		if kvGroup == dataKVGroup {
+			sm.MergeSummary.RowCnt += kvMeta.TotalKVCnt
 		}
 		dataFiles := kvMeta.GetDataFiles()
 		length := len(dataFiles)
@@ -431,8 +443,14 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	}
 	ts := oracle.ComposeTS(pTS, lTS)
 
+	sm := &p.summary
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
+		sm.IngestSummary.Bytes += kvMeta.TotalKVSize
+		if kvGroup == dataKVGroup {
+			sm.IngestSummary.RowCnt += kvMeta.TotalKVCnt
+		}
+
 		specsForOneSubtask, err3 := splitForOneSubtask(ctx, controller.GlobalSortStore, kvGroup, kvMeta, ts)
 		if err3 != nil {
 			return nil, err3

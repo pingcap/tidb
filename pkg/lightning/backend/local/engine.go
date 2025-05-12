@@ -1294,6 +1294,9 @@ func (w *Writer) flush(ctx context.Context) error {
 		}
 	}
 
+	collector := external.GetCollector(ctx)
+	collector.OnWrite(int64(w.writerSize.Load()), int64(w.batchCount))
+
 	writer := w.writer.Load()
 	if writer != nil {
 		meta, err := writer.close()
@@ -1376,10 +1379,6 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		time.Sleep(5 * time.Second)
 		failpoint.Return(errors.Trace(ctx.Err()))
 	})
-
-	if onFlush, ok := external.GetOnFlushFunc(ctx); ok {
-		onFlush(int64(w.batchCount), w.batchSize.Load())
-	}
 
 	err = w.addSST(ctx, meta)
 	if err != nil {
