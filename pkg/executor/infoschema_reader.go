@@ -2095,6 +2095,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 	}
 
 	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, is, nil)
+	virtualSchemas := []string{"information_schema", "metrics_schema", "performance_schema"}
 	for i := range allRegionsInfo.Regions {
 		regionTableList := tableInfos[allRegionsInfo.Regions[i].ID]
 		if len(regionTableList) == 0 {
@@ -2102,7 +2103,6 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 		}
 		for j, regionTable := range regionTableList {
 			// Exclude virtual schemas
-			var virtualSchemas = []string{"information_schema", "metrics_schema", "performance_schema"}
 			if slices.Contains(virtualSchemas, regionTable.DB.Name.L) {
 				continue
 			}
