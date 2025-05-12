@@ -243,7 +243,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			}
 			e.dagPB.RootExecutor = execs[0]
 		} else {
-			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.plans)
+			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.plans, kv.TiKV)
 			if err != nil {
 				return err
 			}

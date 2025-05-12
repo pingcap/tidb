@@ -32,10 +32,10 @@ func ConstructTreeBasedDistExec(pctx *planctx.BuildPBContext, p plannercore.Phys
 }
 
 // ConstructListBasedDistExec constructs list based DAGRequest
-func ConstructListBasedDistExec(pctx *planctx.BuildPBContext, plans []plannercore.PhysicalPlan) ([]*tipb.Executor, error) {
+func ConstructListBasedDistExec(pctx *planctx.BuildPBContext, plans []plannercore.PhysicalPlan, storeType kv.StoreType) ([]*tipb.Executor, error) {
 	executors := make([]*tipb.Executor, 0, len(plans))
 	for _, p := range plans {
-		execPB, err := p.ToPB(pctx, kv.TiKV)
+		execPB, err := p.ToPB(pctx, storeType)
 		if err != nil {
 			return nil, err
 		}
@@ -63,7 +63,7 @@ func ConstructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 		executors, err = ConstructTreeBasedDistExec(ctx.GetBuildPBCtx(), plans[0])
 		dagReq.RootExecutor = executors[0]
 	} else {
-		dagReq.Executors, err = ConstructListBasedDistExec(ctx.GetBuildPBCtx(), plans)
+		dagReq.Executors, err = ConstructListBasedDistExec(ctx.GetBuildPBCtx(), plans, storeType)
 	}
 
 	distsql.SetEncodeType(ctx.GetDistSQLCtx(), dagReq)

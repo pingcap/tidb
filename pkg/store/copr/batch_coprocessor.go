@@ -1134,9 +1134,13 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 		}
 		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store.kvStore, keyRanges, req.StoreType, false, 0, false, 0, partitionIDs, tiflashcompute.DispatchPolicyInvalid, option.TiFlashReplicaRead, option.AppendWarning)
 	} else {
-		// TODO: merge the if branch.
-		ranges := NewKeyRanges(req.KeyRanges.FirstPartitionRange())
-		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store.kvStore, ranges, req.StoreType, false, 0, false, 0, tiflashcompute.DispatchPolicyInvalid, option.TiFlashReplicaRead, option.AppendWarning)
+		if req.StoreType == kv.TiFlash && req.FullText {
+			tasks, err = buildBatchCopTasksForFullText(c.store.kvStore)
+		} else {
+			// TODO: merge the if branch.
+			ranges := NewKeyRanges(req.KeyRanges.FirstPartitionRange())
+			tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store.kvStore, ranges, req.StoreType, false, 0, false, 0, tiflashcompute.DispatchPolicyInvalid, option.TiFlashReplicaRead, option.AppendWarning)
+		}
 	}
 
 	if err != nil {
@@ -1601,4 +1605,22 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 	}
 	failpointCheckForConsistentHash(res)
 	return res, nil
+}
+
+func buildBatchCopTasksForFullText(store *kvStore) ([]*batchCopTask, error) {
+	cache := store.GetRegionCache()
+	tiflashs := cache.GetTiFlashStores(tikv.LabelFilterAllNode)
+	cmdType := tikvrpc.CmdBatchCop
+	tasks := make([]*batchCopTask, 0)
+	for _, ser := range tiflashs {
+		tasks = append(tasks, &batchCopTask{
+			ctx: &tikv.RPCContext{
+				Addr: ser.GetAddr(),
+			},
+			cmdType:   cmdType,
+			storeAddr: ser.GetAddr(),
+		})
+		break // now only one tiflash store
+	}
+	return tasks, nil
 }

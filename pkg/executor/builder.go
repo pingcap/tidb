@@ -4098,13 +4098,13 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []base.PhysicalPlan)
 // If len(ByItems) != 0 means index request should return related columns
 // to sort result rows in TiDB side for partition tables.
 func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []base.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
-	indexReq, err := builder.ConstructDAGReq(ctx, plans, kv.TiKV)
+	idxScan := plans[0].(*plannercore.PhysicalIndexScan)
+	indexReq, err := builder.ConstructDAGReq(ctx, plans, idxScan.StoreType)
 	if err != nil {
 		return nil, err
 	}
 
 	indexReq.OutputOffsets = []uint32{}
-	idxScan := plans[0].(*plannercore.PhysicalIndexScan)
 	if len(idxScan.ByItems) != 0 {
 		schema := idxScan.Schema()
 		for _, item := range idxScan.ByItems {
@@ -4193,6 +4193,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		PushedLimit:                v.PushedLimit,
 		idxNetDataSize:             v.GetAvgTableRowSize(),
 		avgRowSize:                 v.GetAvgTableRowSize(),
+		storeType:                  v.StoreType,
+		batchCop:                   v.ReadReqType == plannercore.BatchCop,
 	}
 
 	if v.ExtraHandleCol != nil {

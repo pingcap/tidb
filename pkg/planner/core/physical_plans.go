@@ -503,6 +503,13 @@ type PhysicalIndexLookUpReader struct {
 	// required by cost calculation
 	expectedCnt uint64
 	keepOrder   bool
+
+	// StoreType indicates table read from which type of store.
+	StoreType kv.StoreType
+
+	// ReadReqType is the read request type for current physical table reader, there are 3 kinds of read request: Cop,
+	// BatchCop and MPP, currently, the latter two are only used in TiFlash
+	ReadReqType ReadReqType
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -757,6 +764,7 @@ type PhysicalIndexScan struct {
 	isPartition bool
 	Desc        bool
 	KeepOrder   bool
+	FullText    bool
 	// ByItems only for partition table with orderBy + pushedLimit
 	ByItems []*util.ByItems
 
@@ -780,6 +788,8 @@ type PhysicalIndexScan struct {
 	// usedStatsInfo records stats status of this physical table.
 	// It's for printing stats related information when display execution plan.
 	usedStatsInfo *stmtctx.UsedStatsInfoForTable `plan-cache-clone:"shallow"`
+
+	StoreType kv.StoreType
 }
 
 // Clone implements op.PhysicalPlan interface.

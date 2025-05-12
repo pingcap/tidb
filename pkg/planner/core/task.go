@@ -616,6 +616,7 @@ func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 		CommonHandleCols: t.commonHandleCols,
 		expectedCnt:      t.expectCnt,
 		keepOrder:        t.keepOrder,
+		StoreType:        t.indexPlan.(*PhysicalIndexScan).StoreType,
 	}.Init(ctx, t.tablePlan.QueryBlockOffset())
 	p.PlanPartInfo = t.physPlanPartInfo
 	setTableScanToTableRowIDScan(p.tablePlan)

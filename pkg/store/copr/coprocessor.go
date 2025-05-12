@@ -340,6 +340,9 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	if req.StoreType == kv.TiDB {
 		return buildTiDBMemCopTasks(ranges, req)
 	}
+	if req.StoreType == kv.TiFlash && req.FullText {
+		return buildFullTextCopTasks(ranges, req, cache)
+	}
 	rangesLen := ranges.Len()
 	// something went wrong, disable hints to avoid out of range index.
 	if len(hints) != rangesLen {
@@ -2350,4 +2353,22 @@ func checkStoreBatchCopr(req *kv.Request) bool {
 		return false
 	}
 	return true
+}
+
+func buildFullTextCopTasks(ranges *KeyRanges, req *kv.Request, cache *RegionCache) ([]*copTask, error) {
+	tiflashs := cache.GetTiFlashStores(tikv.LabelFilterAllTiFlashNode)
+	cmdType := tikvrpc.CmdCop
+	tasks := make([]*copTask, 0)
+	for _, ser := range tiflashs {
+		tasks = append(tasks, &copTask{
+			ranges:       ranges,
+			respChan:     make(chan *copResponse, 2),
+			cmdType:      cmdType,
+			storeType:    req.StoreType,
+			storeAddr:    ser.GetAddr(),
+			RowCountHint: -1,
+		})
+		break // now only one tiflash store
+	}
+	return tasks, nil
 }
