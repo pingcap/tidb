@@ -24,7 +24,7 @@ func StartDynamicPProfListener(tls *tidbutils.TLS) {
 		for sig := range signalChan {
 			if sig == startPProfSignal {
 				log.Info("signal received, starting pprof...", zap.Stringer("signal", sig))
-				if err := StartPProfListener("0.0.0.0:0", tls); err != nil {
+				if err := StartStatusListener("0.0.0.0:0", tls); err != nil {
 					log.Warn("failed to start pprof", zap.Error(err))
 					return
 				}
