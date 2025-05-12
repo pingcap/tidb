@@ -668,7 +668,7 @@ func NewWriteExternalStoreOperator(
 					SetTiKVCodec(tikvCodec).
 					SetBlockSize(blockSize).
 					SetGroupOffset(i).
-					SetOnDup(onDuplicateKey)
+					SetOnDupAction(onDuplicateAction)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
 				writer := builder.Build(store, prefix, writerID)
@@ -863,10 +863,10 @@ func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, nextKey
 	vars := w.se.GetSessionVars()
 	sc := vars.StmtCtx
 	cnt, lastHandle, err := writeChunk(w.ctx, w.writers, w.indexes, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk)
-	if common.ErrFoundDuplicateKeys.Equal(err) {
-		err = local.ConvertToErrFoundConflictRecords(err, w.tbl)
-	}
 	if err != nil || cnt == 0 {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = local.ConvertToErrFoundConflictRecords(err, w.tbl)
+		}
 		return 0, nil, err
 	}
 	logSlowOperations(time.Since(oprStartTime), "writeChunk", 3000)
