@@ -259,3 +259,15 @@ func TestIssue59902(t *testing.T) {
 			"        └─Selection 1.00 cop[tikv]  not(isnull(test.t2.a))",
 			"          └─IndexRangeScan 1.00 cop[tikv] table:t2, index:idx(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"))
 }
+
+func TestABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`CREATE TABLE t0(c0 FLOAT UNSIGNED);`)
+	tk.MustExec(`CREATE TABLE t1 LIKE t0;`)
+	tk.MustExec(`INSERT IGNORE  INTO t0 VALUES (0.5);`)
+	tk.MustExec(`INSERT IGNORE  INTO t1 VALUES (NULL);`)
+	tk.MustQuery(`explain SELECT t0.c0, t1.c0 FROM t0 INNER JOIN t1 ON true WHERE (NOT (CAST(t0.c0 AS DATETIME)));`).
+		Check(testkit.Rows())
+}
