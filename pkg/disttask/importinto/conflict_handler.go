@@ -15,6 +15,7 @@
 package importinto
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"time"
@@ -364,7 +365,10 @@ func readOneFile(ctx context.Context, store storage.ExternalStorage, file string
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case outCh <- &external.KVPair{Key: key, Value: val}:
+		case outCh <- &external.KVPair{
+			Key:   bytes.Clone(key),
+			Value: bytes.Clone(val),
+		}:
 		}
 	}
 	return nil
