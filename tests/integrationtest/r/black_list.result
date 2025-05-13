@@ -129,14 +129,14 @@ delete from mysql.expr_pushdown_blacklist;
 admin reload expr_pushdown_blacklist;
 desc format='brief' select * from t where b = 1 and a = 1;
 id	estRows	task	access object	operator info
-IndexLookUp	0.10	root		
-├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:idx(b, a)	range:["a" "a","a" "a"], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp	1.25	root		
+├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t, index:idx(b, a)	range:["a" "a","a" "a"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	1.25	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc format='brief' select * from t where b = 'a' and a = 'a';
 id	estRows	task	access object	operator info
-IndexLookUp	0.10	root		
-├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:idx(b, a)	range:["a" "a","a" "a"], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp	1.25	root		
+├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t, index:idx(b, a)	range:["a" "a","a" "a"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	1.25	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc format='brief' select * from t where b = 1 and a > 1;
 id	estRows	task	access object	operator info
 IndexLookUp	33.33	root		
@@ -144,6 +144,6 @@ IndexLookUp	33.33	root
 └─TableRowIDScan(Probe)	33.33	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc format='brief' select * from t where b = 1 and a > 'a';
 id	estRows	task	access object	operator info
-IndexLookUp	0.20	root		
-├─IndexRangeScan(Build)	0.20	cop[tikv]	table:t, index:idx(b, a)	range:["a" "b","a" "b"], ["a" "c","a" "c"], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	0.20	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp	1.25	root		
+├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t, index:idx(b, a)	range:["a" "b","a" "b"], ["a" "c","a" "c"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	1.25	cop[tikv]	table:t	keep order:false, stats:pseudo

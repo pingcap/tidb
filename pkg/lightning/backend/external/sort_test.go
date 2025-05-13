@@ -25,6 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -82,7 +83,7 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 	writer := NewEngineWriter(w)
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		kvs[i] = common.KvPair{
 			Key: []byte(uuid.New().String()),
 			Val: []byte("56789"),
@@ -118,7 +119,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	writer := NewEngineWriter(w)
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		kvs[i] = common.KvPair{
 			Key: []byte(uuid.New().String()),
 			Val: []byte("56789"),
@@ -181,6 +182,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			nil,
 			1,
 			true,
+			engineapi.OnDuplicateKeyIgnore,
 		))
 	}
 
@@ -228,7 +230,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	writer := NewEngineWriter(w)
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		kvs[i] = common.KvPair{
 			Key: []byte(uuid.New().String()),
 			Val: []byte("56789"),

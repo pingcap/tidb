@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -523,7 +524,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 		if totalSize >= regionMaxSize || totalCount >= j.regionSplitKeys {
 			// we will shrink the key range of this job to real written range
 			if iter.Next() {
-				remainingStartKey = append([]byte{}, iter.Key()...)
+				remainingStartKey = slices.Clone(iter.Key())
 				log.FromContext(ctx).Info("write to tikv partial finish",
 					zap.Int64("count", totalCount),
 					zap.Int64("size", totalSize),
@@ -622,7 +623,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 	}
 
 	var lastRetriedErr error
-	for retry := 0; retry < maxRetryTimes; retry++ {
+	for retry := range maxRetryTimes {
 		resp, err := local.doIngest(ctx, j)
 		if err != nil {
 			if common.IsContextCanceledError(err) {
@@ -1171,7 +1172,7 @@ func (b *storeBalancer) runSendToWorker(workerCtx context.Context) {
 		}
 
 		remainJobCnt := b.jobLen()
-		for i := 0; i < remainJobCnt; i++ {
+		for range remainJobCnt {
 			j := b.pickJob()
 			if j == nil {
 				// j can be nil if it's executed after the jobs.Store of runReadToWorkerCh

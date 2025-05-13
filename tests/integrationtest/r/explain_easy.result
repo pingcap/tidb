@@ -86,7 +86,7 @@ IndexLookUp	11.08	root
   └─TableRowIDScan	33.33	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 where c1 = 1 and c2 > 1;
 id	estRows	task	access object	operator info
-Selection	0.33	root		gt(explain_easy.t1.c2, 1)
+Selection	1.00	root		gt(explain_easy.t1.c2, 1)
 └─Point_Get	1.00	root	table:t1	handle:1
 explain format = 'brief' select sum(t1.c1 in (select c1 from t2)) from t1;
 id	estRows	task	access object	operator info
@@ -438,10 +438,10 @@ id	estRows	task	access object	operator info
 TableDual	0.00	root		rows:0
 explain format = 'brief' select * from t t1 join t t2 where t1.b = t2.b and t2.b is null;
 id	estRows	task	access object	operator info
-Projection	0.00	root		explain_easy.t.a, explain_easy.t.b, explain_easy.t.a, explain_easy.t.b
-└─HashJoin	0.00	root		inner join, equal:[eq(explain_easy.t.b, explain_easy.t.b)]
-  ├─TableReader(Build)	0.00	root		data:Selection
-  │ └─Selection	0.00	cop[tikv]		isnull(explain_easy.t.b), not(isnull(explain_easy.t.b))
+Projection	1.25	root		explain_easy.t.a, explain_easy.t.b, explain_easy.t.a, explain_easy.t.b
+└─HashJoin	1.25	root		inner join, equal:[eq(explain_easy.t.b, explain_easy.t.b)]
+  ├─TableReader(Build)	1.00	root		data:Selection
+  │ └─Selection	1.00	cop[tikv]		isnull(explain_easy.t.b), not(isnull(explain_easy.t.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader(Probe)	9990.00	root		data:Selection
     └─Selection	9990.00	cop[tikv]		not(isnull(explain_easy.t.b))
@@ -514,10 +514,11 @@ StreamAgg	1.00	root		funcs:count(1)->Column#22
       │   │ └─HashAgg	1.00	root		group by:explain_easy.test01.region_id, explain_easy.test01.show_date, explain_easy.test01.stat_date, funcs:firstrow(explain_easy.test01.stat_date)->Column#33, funcs:firstrow(explain_easy.test01.show_date)->Column#34, funcs:firstrow(explain_easy.test01.region_id)->Column#35, funcs:firstrow(explain_easy.test01.stat_date)->Column#14, funcs:firstrow(explain_easy.test01.show_date)->Column#15, funcs:firstrow(explain_easy.test01.region_id)->Column#16, funcs:count(1)->Column#38
       │   │   └─TableDual	0.00	root		rows:0
       │   └─Projection	1.00	root		Column#33, Column#34, Column#35, Column#14, Column#15, Column#16
-      │     └─HashAgg	1.00	root		group by:explain_easy.test01.region_id, explain_easy.test01.show_date, explain_easy.test01.stat_date, funcs:firstrow(explain_easy.test01.stat_date)->Column#33, funcs:firstrow(explain_easy.test01.show_date)->Column#34, funcs:firstrow(explain_easy.test01.region_id)->Column#35, funcs:firstrow(explain_easy.test01.stat_date)->Column#14, funcs:firstrow(explain_easy.test01.show_date)->Column#15, funcs:firstrow(explain_easy.test01.region_id)->Column#16, funcs:count(1)->Column#39
-      │       └─TableReader	0.01	root		data:Selection
-      │         └─Selection	0.01	cop[tikv]		eq(explain_easy.test01.period, 1), ge(explain_easy.test01.stat_date, 20191202), gt(cast(explain_easy.test01.registration_num, decimal(20,0) BINARY), 0), le(explain_easy.test01.stat_date, 20191202)
-      │           └─TableFullScan	10000.00	cop[tikv]	table:test01	keep order:false, stats:pseudo
+      │     └─HashAgg	1.00	root		group by:explain_easy.test01.region_id, explain_easy.test01.show_date, explain_easy.test01.stat_date, funcs:firstrow(explain_easy.test01.stat_date)->Column#33, funcs:firstrow(explain_easy.test01.show_date)->Column#34, funcs:firstrow(explain_easy.test01.region_id)->Column#35, funcs:firstrow(explain_easy.test01.stat_date)->Column#14, funcs:firstrow(explain_easy.test01.show_date)->Column#15, funcs:firstrow(explain_easy.test01.region_id)->Column#16, funcs:count(Column#46)->Column#39
+      │       └─TableReader	1.00	root		data:HashAgg
+      │         └─HashAgg	1.00	cop[tikv]		group by:explain_easy.test01.region_id, explain_easy.test01.show_date, explain_easy.test01.stat_date, funcs:count(1)->Column#46
+      │           └─Selection	1.00	cop[tikv]		eq(explain_easy.test01.period, 1), ge(explain_easy.test01.stat_date, 20191202), gt(cast(explain_easy.test01.registration_num, decimal(20,0) BINARY), 0), le(explain_easy.test01.stat_date, 20191202)
+      │             └─TableFullScan	10000.00	cop[tikv]	table:test01	keep order:false, stats:pseudo
       └─TableReader(Probe)	2.00	root		data:TableRangeScan
         └─TableRangeScan	2.00	cop[tikv]	table:b	range: decided by [Column#16], keep order:false, stats:pseudo
 drop table if exists t;
@@ -788,15 +789,15 @@ drop table if exists t;
 create table t(a binary(16) not null, b varchar(2) default null, c varchar(100) default 'aaaa', key (a,b));
 explain format = 'brief' select * from t where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
 id	estRows	task	access object	operator info
-IndexLookUp	0.10	root		
-├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:["\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb","\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb"], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp	1.25	root		
+├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t, index:a(a, b)	range:["\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb","\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	1.25	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' update t set c = 'ssss' where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─IndexLookUp	0.10	root		
-  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:["\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb","\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb"], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexLookUp	1.25	root		
+  ├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t, index:a(a, b)	range:["\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb","\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb"], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	1.25	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int);
 explain format = 'brief' select (select count(n.a) from t) from t n;

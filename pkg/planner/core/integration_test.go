@@ -2181,11 +2181,11 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 	// TopN to tikv.
 	rows := [][]any{
-		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
-		{"└─TableReader_13", "root", "data:TableFullScan_12"},
-		{"  └─TableFullScan_12", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"TopN", "root", "test.t.c2, offset:0, count:2"},
+		{"└─TableReader", "root", "data:TableFullScan"},
+		{"  └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
-	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustQuery("explain format='brief' select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
 
 	// Projection to tikv.
 	rows = [][]any{
@@ -2217,11 +2217,11 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 	// TopN to tiflash.
 	rows = [][]any{
-		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
-		{"└─TableReader_15", "root", "data:TableFullScan_14"},
-		{"  └─TableFullScan_14", "cop[tiflash]", "keep order:false, stats:pseudo"},
+		{"TopN", "root", "test.t.c2, offset:0, count:2"},
+		{"└─TableReader", "root", "data:TableFullScan"},
+		{"  └─TableFullScan", "cop[tiflash]", "keep order:false, stats:pseudo"},
 	}
-	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustQuery("explain format='brief' select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
 
 	// Projection to tiflash.
 	rows = [][]any{
@@ -2445,12 +2445,12 @@ func TestIssue54213(t *testing.T) {
   c bigint(20) ,
   PRIMARY KEY (object_id),
   KEY ab (a,b))`)
-	tk.MustQuery(`explain select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
-		testkit.Rows("StreamAgg_11 1.00 root  funcs:count(1)->Column#6",
-			"└─Limit_12 0.10 root  offset:0, count:100",
-			"  └─IndexReader_16 0.10 root  index:Limit_15",
-			"    └─Limit_15 0.10 cop[tikv]  offset:0, count:100",
-			"      └─IndexRangeScan_14 0.10 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
+	tk.MustQuery(`explain format='brief' select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
+		testkit.Rows("StreamAgg 1.00 root  funcs:count(1)->Column#6",
+			"└─Limit 1.00 root  offset:0, count:100",
+			"  └─IndexReader 1.25 root  index:Limit",
+			"    └─Limit 1.25 cop[tikv]  offset:0, count:100",
+			"      └─IndexRangeScan 1.25 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
 }
 
 func TestIssue54870(t *testing.T) {

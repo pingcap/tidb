@@ -241,11 +241,11 @@ create table t(a int, b int, c int, d int, index ia(a), index ibc(b,c));
 set @@tidb_cost_model_version=1;
 explain select * from t where a between 1 and 5 and b != 200 and c = 20 limit 100000;
 id	estRows	task	access object	operator info
-Limit_9	0.17	root		offset:0, count:100000
-└─IndexLookUp_22	0.17	root		
+Limit_9	1.00	root		offset:0, count:100000
+└─IndexLookUp_22	1.00	root		
   ├─IndexRangeScan_14(Build)	250.00	cop[tikv]	table:t, index:ia(a)	range:[1,5], keep order:false, stats:pseudo
-  └─Limit_21(Probe)	0.17	cop[tikv]		offset:0, count:100000
-    └─Selection_16	0.17	cop[tikv]		eq(planner__core__plan_cost_ver2.t.c, 20), ne(planner__core__plan_cost_ver2.t.b, 200)
+  └─Limit_21(Probe)	1.00	cop[tikv]		offset:0, count:100000
+    └─Selection_16	1.00	cop[tikv]		eq(planner__core__plan_cost_ver2.t.c, 20), ne(planner__core__plan_cost_ver2.t.b, 200)
       └─TableRowIDScan_15	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t (a int);

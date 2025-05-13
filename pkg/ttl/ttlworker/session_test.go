@@ -116,7 +116,7 @@ func (r *mockRows) Append(row ...any) *mockRows {
 
 func (r *mockRows) Rows() []chunk.Row {
 	rows := make([]chunk.Row, r.NumRows())
-	for i := 0; i < r.NumRows(); i++ {
+	for i := range r.NumRows() {
 		rows[i] = r.GetRow(i)
 	}
 	return rows

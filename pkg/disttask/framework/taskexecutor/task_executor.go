@@ -463,7 +463,6 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	defer subtaskCancel()
 	failpoint.InjectCall("afterRunSubtask", e, &subtaskErr, subtaskCtx)
 	logTask.End2(zap.InfoLevel, subtaskErr)
-
 	failpoint.InjectCall("mockTiDBShutdown", e, e.execID, e.GetTaskBase())
 
 	if subtaskErr != nil {
