@@ -10339,13 +10339,13 @@ def go_deps():
         name = "org_golang_google_protobuf",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/protobuf",
-        sha256 = "bef3555844d24e73f06b2c2e653bfd4ab4e3c79f4150def6ee9be45f0e2e81b5",
-        strip_prefix = "google.golang.org/protobuf@v1.36.5",
+        sha256 = "3294ac8ea5089b3c231351afaea4f012e8027a9beeb523bbf31dcb383cc0ab99",
+        strip_prefix = "google.golang.org/protobuf@v1.36.6",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.36.5.zip",
-            "http://ats.apps.svc/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.36.5.zip",
-            "https://cache.hawkingrei.com/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.36.5.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.36.5.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.36.6.zip",
+            "http://ats.apps.svc/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.36.6.zip",
+            "https://cache.hawkingrei.com/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.36.6.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.36.6.zip",
         ],
     )
     go_repository(
