@@ -1,4 +1,5 @@
-# Sort the member alphabetically.
+# See the OWNERS docs at https://www.kubernetes.dev/docs/guide/owners/#owners_aliases
+# The members of 'sig-community-*' are synced from memberships defined in repository: https://github.com/pingcap/community.
 aliases:
   sig-critical-approvers-tidb-server:
     - yudongusa
@@ -9,6 +10,9 @@ aliases:
   sig-critical-approvers-parser:
     - yudongusa
     - BenMeadowcroft
+  sig-critical-approvers-dep: # approvers for upgrading for dependencies.
+    - bb7133
+    - cfzjywxk
   sig-approvers-autoid-service: # approvers for auto-id service
     - bb7133
     - tiancaiamao
@@ -114,3 +118,166 @@ aliases:
     - ghazalfamilyusa
     - henrybw
     - wddevries
+  sig-community-reviewers:
+    - CabinfeverB
+    - ChenPeng2013
+    - LittleFall
+    - MoCuishle28
+    - RidRisR
+    - SeaRise
+    - Tjianke
+    - TonsnakeLin
+    - Tristan1900
+    - TszKitLo40
+    - aytrack
+    - ben1009
+    - bobotu
+    - charleszheng44
+    - dhysum
+    - fengou1
+    - fzzf678
+    - gengliqi
+    - ghazalfamilyusa
+    - iamxy
+    - joechenrh
+    - js00070
+    - lamxTyler
+    - longfangsong
+    - lyzx2001
+    - mengxin9014
+    - mornyx
+    - nongfushanquan
+    - pingyu
+    - shihongzhi
+    - spongedu
+    - tangwz
+    - terry1purcell
+    - tsthght
+    - xzhangxian1008
+    - yibin87
+    - zhangjinpeng1987
+    - zhongzc
+    - zhuo-zhi
+  sig-community-approvers:
+    - 3AceShowHand
+    - 3pointer
+    - 5kbpers
+    - AilinKid
+    - AndreMouche
+    - AndrewDi
+    - Benjamin2037
+    - BornChanger
+    - CharlesCheung96
+    - D3Hunter
+    - Deardrops
+    - Defined2014
+    - Ehco1996
+    - GMHDBJD
+    - IANTHEREAL
+    - JmPotato
+    - Leavrth
+    - Little-Wallace
+    - MyonKeminta
+    - Reminiscent
+    - Rustin170506
+    - SunRunAway
+    - Tammyxia
+    - WangXiangUSTC
+    - WizardXiao
+    - XuHuaiyu
+    - Yisaer
+    - YuJuncen
+    - amyangfei
+    - andylokandy
+    - asddongmen
+    - b41sh
+    - bb7133
+    - breezewish
+    - buchuitoudegou
+    - c4pt0r
+    - cbcwestwolf
+    - cfzjywxk
+    - chrysan
+    - coocood
+    - crazycs520
+    - csuzhangxc
+    - disksing
+    - djshow832
+    - dsdashun
+    - dveeden
+    - ekexium
+    - elsa0520
+    - eurekaka
+    - fixdb
+    - francis0407
+    - fzhedu
+    - glorv
+    - gozssky
+    - guo-shaoge
+    - hanfei1991
+    - hawkingrei
+    - hicqu
+    - holys
+    - hongyunyan
+    - ichn-hu
+    - imtbkcat
+    - jackysp
+    - jiyfhust
+    - joccau
+    - july2993
+    - kennytm
+    - lance6716
+    - lcwangchao
+    - leoppro
+    - lichunzhu
+    - lidezhu
+    - liuzix
+    - lonng
+    - lysu
+    - lzmhhh123
+    - maxshuang
+    - mjonss
+    - mmyj
+    - morgo
+    - ngaut
+    - niubell
+    - nolouch
+    - nrc
+    - okJiang
+    - overvenus
+    - qiuyesuifeng
+    - qw4990
+    - rebelice
+    - rleungx
+    - sdojjy
+    - shenli
+    - siddontang
+    - sticnarf
+    - suzaku
+    - sylzd
+    - tangenta
+    - tiancaiamao
+    - time-and-fate
+    - tisonkun
+    - windtalker
+    - winkyao
+    - winoros
+    - wjhuang2016
+    - wk989898
+    - wlwilliamx
+    - wshwsh12
+    - xhebox
+    - xiongjiwei
+    - xuyifangreeneyes
+    - yangkeao
+    - you06
+    - youjiali1995
+    - ywqzzy
+    - zanmato1984
+    - zhangjinpeng87
+    - zhaoxinyu
+    - zhouqiang-cl
+    - zimulala
+    - zwj-coder
+    - zyguan
+    - zz-jason
