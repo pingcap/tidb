@@ -16,9 +16,11 @@ package keyspace
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -52,6 +54,16 @@ func MakeKeyspaceEtcdNamespaceSlash(c tikv.Codec) string {
 func GetKeyspaceNameBySettings() (keyspaceName string) {
 	keyspaceName = config.GetGlobalKeyspaceName()
 	return keyspaceName
+}
+
+// GetKeyspaceIDBySettings is used to get Keyspace ID setting.
+func GetKeyspaceIDBySettings() (keyspaceID uint32) {
+	keyspaceName := config.GetGlobalKeyspaceName()
+	if !IsKeyspaceNameEmpty(keyspaceName) && kerneltype.IsNextGen() {
+		keyspaceIDU64, _ := strconv.ParseUint(keyspaceName, 10, 32) //nolint:errcheck
+		return uint32(keyspaceIDU64)
+	}
+	return uint32(0)
 }
 
 // IsKeyspaceNameEmpty is used to determine whether keyspaceName is set.
