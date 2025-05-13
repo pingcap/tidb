@@ -954,6 +954,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("the incremental snapshot restore doesn't support checkpoint mode, disable checkpoint.")
 		cfg.UseCheckpoint = false
 	}
+
 	var checkpointFirstRun = true
 	if cfg.UseCheckpoint {
 		if len(cfg.CheckpointStorage) > 0 {
@@ -975,6 +976,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if !existsCheckpointMetadata {
 			checkpointFirstRun = true
 		}
+
+		//TODO: (ris)change this
 		checkpointMeta, err := cfg.snapshotCheckpointMetaManager.LoadCheckpointMetadata(ctx)
 		if err != nil {
 			return errors.Trace(err)
@@ -983,7 +986,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if bytes.Equal(checkpointMeta.Hash, hash) {
+		if !bytes.Equal(checkpointMeta.Hash, hash) {
 			return errors.Trace(errors.Annotatef(berrors.ErrRestoreCheckpointMismatch, "checkpoint hash mismatch, failed"))
 		}
 	}
