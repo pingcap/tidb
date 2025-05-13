@@ -16,6 +16,7 @@ package utils
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -117,13 +118,10 @@ func SetTimeRangeFilter(tableRules *RewriteRules,
 	var ignoreBeforeTs uint64
 	switch {
 	case strings.Contains(cfName, DefaultCFName):
-		ignoreBeforeTs = tableRules.ShiftStartTs
-		if ignoreBeforeTs > tableRules.StartTs {
-			// for default cf, shift start ts could less than start ts
-			// this could happen when large kv txn happen after small kv txn.
-			// use the start ts to filter out irrelevant data for default cf is more safe
-			ignoreBeforeTs = tableRules.StartTs
-		}
+		// for default cf, shift start ts could be less than start ts
+		// this could happen when large kv txn happen after small kv txn.
+		// use the start ts to filter out irrelevant data for default cf is more safe
+		ignoreBeforeTs = min(tableRules.ShiftStartTs, tableRules.StartTs)
 	case strings.Contains(cfName, WriteCFName):
 		ignoreBeforeTs = tableRules.StartTs
 	default:
@@ -453,7 +451,7 @@ func replacePrefix(s []byte, rewriteRules *RewriteRules) ([]byte, *import_sstpb.
 	// We should search the dataRules firstly.
 	for _, rule := range rewriteRules.Data {
 		if bytes.HasPrefix(s, rule.GetOldKeyPrefix()) {
-			return append(append([]byte{}, rule.GetNewKeyPrefix()...), s[len(rule.GetOldKeyPrefix()):]...), rule
+			return slices.Concat(rule.GetNewKeyPrefix(), s[len(rule.GetOldKeyPrefix()):]), rule
 		}
 	}
 

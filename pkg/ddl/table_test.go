@@ -506,7 +506,7 @@ func TestCreateTables(t *testing.T) {
 	args := &model.BatchCreateTableArgs{
 		Tables: make([]*model.CreateTableArgs, 0, 3),
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		args.Tables = append(args.Tables, &model.CreateTableArgs{
 			TableInfo: &model.TableInfo{
 				ID:   genIDs[i],

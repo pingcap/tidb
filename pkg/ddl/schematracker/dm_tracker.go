@@ -20,6 +20,7 @@ package schematracker
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -557,7 +558,7 @@ func (d *SchemaTracker) dropColumn(_ sessionctx.Context, ti ast.Ident, spec *ast
 			continue
 		}
 
-		idx.Columns = append(idx.Columns[:i], idx.Columns[i+1:]...)
+		idx.Columns = slices.Delete(idx.Columns, i, i+1)
 		if len(idx.Columns) == 0 {
 			continue
 		}
@@ -815,13 +816,7 @@ func (d *SchemaTracker) dropTablePartitions(_ sessionctx.Context, ident ast.Iden
 
 	newDefs := make([]model.PartitionDefinition, 0, len(tblInfo.Partition.Definitions)-len(partNames))
 	for _, def := range tblInfo.Partition.Definitions {
-		found := false
-		for _, partName := range partNames {
-			if def.Name.L == partName {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(partNames, def.Name.L)
 		if !found {
 			newDefs = append(newDefs, def)
 		}

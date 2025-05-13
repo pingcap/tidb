@@ -45,8 +45,8 @@ TableReader	3583.33	root		data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select f from t use index() where f not in (1,2,3) and f in (1,2,3) -- intersection of in and not in. Not done yet;
 id	estRows	task	access object	operator info
-TableReader	0.00	root		data:Selection
-└─Selection	0.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3), not(in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3))
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3), not(in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3))
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, f int);
@@ -84,8 +84,8 @@ TableReader	30.00	root		data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select f from t use index() where f <> 3 and f in (1,2,3) and f <> 1 and f <> 2 -- Multiple <> values and cover whole inlist. We keep at least one in inlist;
 id	estRows	task	access object	operator info
-TableReader	0.00	root		data:Selection
-└─Selection	0.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 2), ne(planner__core__casetest__predicate_simplification.t.f, 2)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 2), ne(planner__core__casetest__predicate_simplification.t.f, 2)
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select 1 from t A, t B where A.f <> 3 and B.f in (1,2,3) and A.f <> 1 and A.f <> 2 -- on different columns. No simplification should be done.;
 id	estRows	task	access object	operator info
@@ -209,13 +209,13 @@ id	estRows	task	access object	operator info
 TableDual	0.00	root		rows:0
 explain format='brief' select * from t1 where a1=1 and (b1=1 or a1 < 1);
 id	estRows	task	access object	operator info
-TableReader	0.01	root		data:Selection
-└─Selection	0.01	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a1, 1), eq(planner__core__casetest__predicate_simplification.t1.b1, 1)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a1, 1), eq(planner__core__casetest__predicate_simplification.t1.b1, 1)
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='brief' select * from t1 where (b1=1 or a1 < 1) and a1=1;
 id	estRows	task	access object	operator info
-TableReader	0.01	root		data:Selection
-└─Selection	0.01	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a1, 1), eq(planner__core__casetest__predicate_simplification.t1.b1, 1)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a1, 1), eq(planner__core__casetest__predicate_simplification.t1.b1, 1)
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='brief' select * from t1 where a1 is null and (b1 = 1 or a1 > 5);
 id	estRows	task	access object	operator info
@@ -270,24 +270,24 @@ COL1 timestamp NULL DEFAULT NULL,
 COL2 timestamp NULL DEFAULT NULL,
 COL3 timestamp NULL DEFAULT NULL
 );
-explain
+explain format = 'brief'
 select* from IDT_MC21780 t1 where t1.col1 < "1976-09-09 20:21:11" and t1.col1 in ("2021-07-14 09:28:16", "1982-01-09 03:36:39", "1970-12-18 10:53:28");
 id	estRows	task	access object	operator info
-TableReader_7	10.00	root		data:Selection_6
-└─Selection_6	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000), lt(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1976-09-09 20:21:11.000000)
-  └─TableFullScan_5	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-explain
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000), lt(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1976-09-09 20:21:11.000000)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief'
 select/*+ hash_join(t1) */ * from IDT_MC21780 t1 join IDT_MC21780 t2 on t1.col1 = t2.col1
 where t1. col1 < "1976-09-09 20:21:11"
 and t2. col1 in ("2021-07-14 09:28:16", "1982-01-09 03:36:39", "1970-12-18 10:53:28");
 id	estRows	task	access object	operator info
-HashJoin_9	12.50	root		inner join, equal:[eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, planner__core__casetest__predicate_simplification.idt_mc21780.col1)]
-├─TableReader_16(Build)	10.00	root		data:Selection_15
-│ └─Selection_15	10.00	cop[tikv]		lt(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1976-09-09 20:21:11.000000), not(isnull(planner__core__casetest__predicate_simplification.idt_mc21780.col1)), or(eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 2021-07-14 09:28:16.000000), or(eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1982-01-09 03:36:39.000000), eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000)))
-│   └─TableFullScan_14	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader_13(Probe)	10.00	root		data:Selection_12
-  └─Selection_12	10.00	cop[tikv]		lt(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1976-09-09 20:21:11.000000), not(isnull(planner__core__casetest__predicate_simplification.idt_mc21780.col1)), or(eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 2021-07-14 09:28:16.000000), or(eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1982-01-09 03:36:39.000000), eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000)))
-    └─TableFullScan_11	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashJoin	12.50	root		inner join, equal:[eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, planner__core__casetest__predicate_simplification.idt_mc21780.col1)]
+├─TableReader(Build)	10.00	root		data:Selection
+│ └─Selection	10.00	cop[tikv]		lt(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1976-09-09 20:21:11.000000), not(isnull(planner__core__casetest__predicate_simplification.idt_mc21780.col1)), or(eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 2021-07-14 09:28:16.000000), or(eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1982-01-09 03:36:39.000000), eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000)))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	10.00	root		data:Selection
+  └─Selection	10.00	cop[tikv]		lt(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1976-09-09 20:21:11.000000), not(isnull(planner__core__casetest__predicate_simplification.idt_mc21780.col1)), or(eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 2021-07-14 09:28:16.000000), or(eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1982-01-09 03:36:39.000000), eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000)))
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t1;
 drop table if exists t2;
 create table t1 (a1 int, b1 int, c1 int);
@@ -435,8 +435,8 @@ TableReader	10.00	root		data:Selection
 EXPLAIN format=brief
 SELECT * FROM t1 WHERE (1 = 1 AND a1 = 1) AND (b1 = 2);
 id	estRows	task	access object	operator info
-TableReader	0.01	root		data:Selection
-└─Selection	0.01	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a1, 1), eq(planner__core__casetest__predicate_simplification.t1.b1, 2)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a1, 1), eq(planner__core__casetest__predicate_simplification.t1.b1, 2)
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN format=brief
 SELECT * FROM t1 WHERE (1 = 1 AND a1 = 1) OR (b1 = 2);
@@ -453,8 +453,8 @@ TableReader	19.99	root		data:Selection
 EXPLAIN format=brief
 SELECT * FROM t1 WHERE (1 = 0 OR a1 = 1) AND (b1 = 2);
 id	estRows	task	access object	operator info
-TableReader	0.01	root		data:Selection
-└─Selection	0.01	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a1, 1), eq(planner__core__casetest__predicate_simplification.t1.b1, 2)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a1, 1), eq(planner__core__casetest__predicate_simplification.t1.b1, 2)
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN format=brief
 SELECT * FROM t1 WHERE (1 = 0 AND a1 = 1) AND (b1 = 2);
@@ -581,18 +581,18 @@ TableReader	59.91	root		data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format=brief select * from t1 where a = 1 and (b = 1.1 or b = 2.2 or b = 3.3 or b = 3.3);
 id	estRows	task	access object	operator info
-TableReader	0.03	root		data:Selection
-└─Selection	0.03	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), or(eq(planner__core__casetest__predicate_simplification.t1.b, 2.2), eq(planner__core__casetest__predicate_simplification.t1.b, 3.3)))
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), or(eq(planner__core__casetest__predicate_simplification.t1.b, 2.2), eq(planner__core__casetest__predicate_simplification.t1.b, 3.3)))
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format=brief select * from t1 where a = 1 or (b = 1.1 and (a = 1 or a = 2 or a = 5 or a = 5 or a = 5));
 id	estRows	task	access object	operator info
-TableReader	10.03	root		data:Selection
-└─Selection	10.03	cop[tikv]		or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), and(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 2), eq(planner__core__casetest__predicate_simplification.t1.a, 5)))))
+TableReader	11.00	root		data:Selection
+└─Selection	11.00	cop[tikv]		or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), and(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 2), eq(planner__core__casetest__predicate_simplification.t1.a, 5)))))
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format=brief select * from t1 where (a = 1 and (b = 2.2 or (c = 1 and (b = 1 or b = 1)))) or (b = 1.1 and b = 1.1 and (a = 1 or a = 2 or a = 5 or a = 5 or a = 5));
 id	estRows	task	access object	operator info
-TableReader	0.04	root		data:Selection
-└─Selection	0.04	cop[tikv]		or(and(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.b, 2.2), and(eq(planner__core__casetest__predicate_simplification.t1.c, 1), eq(planner__core__casetest__predicate_simplification.t1.b, 1)))), and(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 2), eq(planner__core__casetest__predicate_simplification.t1.a, 5)))))
+TableReader	2.00	root		data:Selection
+└─Selection	2.00	cop[tikv]		or(and(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.b, 2.2), and(eq(planner__core__casetest__predicate_simplification.t1.c, 1), eq(planner__core__casetest__predicate_simplification.t1.b, 1)))), and(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 2), eq(planner__core__casetest__predicate_simplification.t1.a, 5)))))
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format=brief select * from t1 where (c = 10 or (b + 1 > 10 and (a + 1 < 5 or a + 1 < 5 or a = 20))) and c + 1 < 10 and (a = 1 or a = 2 or a = 5 or a = 5 or b = 5 or b = 5);
 id	estRows	task	access object	operator info
@@ -617,8 +617,8 @@ IndexReader	10.00	root		index:IndexRangeScan
 └─IndexRangeScan	10.00	cop[tikv]	table:t2, index:iab(a, b)	range:[2025-01-01 00:00:00.000000,2025-01-01 00:00:00.000000], keep order:false, stats:pseudo
 explain format=brief select * from t2 where (a = '2025-01-01 00:00:00' or a = '2025-01-01 00:00:00' or a = '2025-01-01 00:00:00') and (b = '2025-01-01 00:00:00' or b = '2025-01-01 00:00:00' or b = '2025-01-01 00:00:00');
 id	estRows	task	access object	operator info
-IndexReader	0.10	root		index:IndexRangeScan
-└─IndexRangeScan	0.10	cop[tikv]	table:t2, index:iab(a, b)	range:[2025-01-01 00:00:00.000000 2025-01-01 00:00:00.000000,2025-01-01 00:00:00.000000 2025-01-01 00:00:00.000000], keep order:false, stats:pseudo
+IndexReader	1.25	root		index:IndexRangeScan
+└─IndexRangeScan	1.25	cop[tikv]	table:t2, index:iab(a, b)	range:[2025-01-01 00:00:00.000000 2025-01-01 00:00:00.000000,2025-01-01 00:00:00.000000 2025-01-01 00:00:00.000000], keep order:false, stats:pseudo
 drop table if exists t3;
 create table t3 (a varchar(10) collate utf8mb4_general_ci, b varchar(10) collate utf8mb4_bin, index ia(a), index ib(b));
 explain format=brief select * from t3 where a = 'a' or a = 'a' or a = 'A';

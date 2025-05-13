@@ -2389,9 +2389,9 @@ func TestIssue40997(t *testing.T) {
         )
     )
 	`).Check(testkit.Rows(
-		"IndexLookUp_7 0.67 root  ",
-		"├─IndexRangeScan_5(Build) 0.67 cop[tikv] table:t71706696, index:dt_2(dt, db_id, tbl_id) range:(\"20210112\" 62812 228892694,\"20210112\" 62812 +inf], [\"20210112\" 62813 -inf,\"20210112\" 62813 226785696], keep order:false, stats:pseudo",
-		"└─TableRowIDScan_6(Probe) 0.67 cop[tikv] table:t71706696 keep order:false, stats:pseudo",
+		"IndexLookUp_7 1.25 root  ",
+		"├─IndexRangeScan_5(Build) 1.25 cop[tikv] table:t71706696, index:dt_2(dt, db_id, tbl_id) range:(\"20210112\" 62812 228892694,\"20210112\" 62812 +inf], [\"20210112\" 62813 -inf,\"20210112\" 62813 226785696], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_6(Probe) 1.25 cop[tikv] table:t71706696 keep order:false, stats:pseudo",
 	))
 }
 

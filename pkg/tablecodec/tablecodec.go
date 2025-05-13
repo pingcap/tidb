@@ -748,7 +748,7 @@ func CutIndexPrefix(key kv.Key) []byte {
 func CutIndexKeyTo(key kv.Key, values [][]byte) (b []byte, err error) {
 	b = key[prefixLen+idLen:]
 	length := len(values)
-	for i := 0; i < length; i++ {
+	for i := range length {
 		var val []byte
 		val, b, err = codec.CutOne(b)
 		if err != nil {
@@ -774,7 +774,7 @@ func CutIndexKeyNew(key kv.Key, length int) (values [][]byte, b []byte, err erro
 func CutCommonHandle(key kv.Key, length int) (values [][]byte, b []byte, err error) {
 	b = key[prefixLen:]
 	values = make([][]byte, 0, length)
-	for i := 0; i < length; i++ {
+	for range length {
 		var val []byte
 		val, b, err = codec.CutOne(b)
 		if err != nil {
@@ -812,7 +812,7 @@ func reEncodeHandle(handle kv.Handle, unsigned bool) ([][]byte, error) {
 func reEncodeHandleTo(handle kv.Handle, unsigned bool, buf []byte, result [][]byte) ([][]byte, error) {
 	if !handle.IsInt() {
 		handleColLen := handle.NumCols()
-		for i := 0; i < handleColLen; i++ {
+		for i := range handleColLen {
 			result = append(result, handle.EncodedCol(i))
 		}
 		return result, nil
@@ -830,7 +830,7 @@ func reEncodeHandleTo(handle kv.Handle, unsigned bool, buf []byte, result [][]by
 func reEncodeHandleConsiderNewCollation(handle kv.Handle, columns []rowcodec.ColInfo, restoreData []byte) ([][]byte, error) {
 	handleColLen := handle.NumCols()
 	cHandleBytes := make([][]byte, 0, handleColLen)
-	for i := 0; i < handleColLen; i++ {
+	for i := range handleColLen {
 		cHandleBytes = append(cHandleBytes, handle.EncodedCol(i))
 	}
 	if len(restoreData) == 0 {
@@ -1006,7 +1006,7 @@ func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, column
 func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 	var err error
 	b := key[prefixLen+idLen:]
-	for i := 0; i < colsLen; i++ {
+	for range colsLen {
 		_, b, err = codec.CutOne(b)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1710,7 +1710,7 @@ func genIndexValueVersion0(loc *time.Location, tblInfo *model.TableInfo, idxInfo
 
 // TruncateIndexValues truncates the index values created using only the leading part of column values.
 func TruncateIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) {
-	for i := 0; i < len(indexedValues); i++ {
+	for i := range indexedValues {
 		idxCol := idxInfo.Columns[i]
 		tblCol := tblInfo.Columns[idxCol.Offset]
 		TruncateIndexValue(&indexedValues[i], idxCol, tblCol)

@@ -100,7 +100,7 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 
 	// Add retry to avoid network error.
 	var prometheusAddr string
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		//TODO: the prometheus will be Integrated into the PD, then we need to query the prometheus in PD directly, which need change the quire API
 		prometheusAddr, err = infosync.GetPrometheusAddr()
 		if err == nil || err == infosync.ErrPrometheusAddrIsNotSet {
@@ -123,7 +123,7 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 	promQL := e.tblDef.GenPromQL(sctx.GetSessionVars().MetricSchemaRangeDuration, e.extractor.LabelConditions, quantile)
 
 	// Add retry to avoid network error.
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		result, _, err = promQLAPI.QueryRange(ctx, promQL, queryRange)
 		if err == nil {
 			break

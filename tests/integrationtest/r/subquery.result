@@ -23,7 +23,7 @@ Projection	5.00	root		Column#22
   ├─TableReader(Build)	5.00	root		data:TableFullScan
   │ └─TableFullScan	5.00	cop[tikv]	table:t	keep order:false
   └─StreamAgg(Probe)	5.00	root		funcs:count(1)->Column#21
-    └─IndexJoin	2.50	root		inner join, inner:TableReader, outer key:subquery.t.a, inner key:subquery.t.a, equal cond:eq(subquery.t.a, subquery.t.a)
+    └─IndexJoin	5.00	root		inner join, inner:TableReader, outer key:subquery.t.a, inner key:subquery.t.a, equal cond:eq(subquery.t.a, subquery.t.a)
       ├─IndexReader(Build)	5.00	root		index:IndexRangeScan
       │ └─IndexRangeScan	5.00	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(subquery.t.b, 1) eq(subquery.t.c, 1) eq(subquery.t.d, subquery.t.a)], keep order:false
       └─TableReader(Probe)	5.00	root		data:TableRangeScan
