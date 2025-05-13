@@ -17,7 +17,7 @@ package statistics
 import (
 	"cmp"
 	"fmt"
-	stdmaps "maps"
+	"maps"
 	"slices"
 	"strings"
 
@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/atomic"
-	"golang.org/x/exp/maps"
 )
 
 const (
@@ -629,7 +628,7 @@ func (t *Table) Copy() *Table {
 			Stats:             make(map[string]*ExtendedStatsItem),
 			LastUpdateVersion: t.ExtendedStats.LastUpdateVersion,
 		}
-		stdmaps.Copy(newExtStatsColl.Stats, t.ExtendedStats.Stats)
+		maps.Copy(newExtStatsColl.Stats, t.ExtendedStats.Stats)
 		nt.ExtendedStats = newExtStatsColl
 	}
 	if t.ColAndIdxExistenceMap != nil {
@@ -757,7 +756,7 @@ func (t *Table) IsEligibleForAnalysis() bool {
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (coll *HistColl) GetAnalyzeRowCount() float64 {
-	ids := maps.Keys(coll.columns)
+	ids := slices.Collect(maps.Keys(coll.columns))
 	slices.Sort(ids)
 	for _, id := range ids {
 		col := coll.columns[id]
@@ -765,7 +764,9 @@ func (coll *HistColl) GetAnalyzeRowCount() float64 {
 			return col.TotalRowCount()
 		}
 	}
-	ids = maps.Keys(coll.indices)
+	clear(ids)
+	ids = slices.Grow(ids, len(coll.indices))
+	ids = slices.AppendSeq(ids, maps.Keys(coll.indices))
 	slices.Sort(ids)
 	for _, id := range ids {
 		idx := coll.indices[id]
@@ -921,11 +922,11 @@ func (t *Table) ReleaseAndPutToPool() {
 	for _, col := range t.columns {
 		col.FMSketch.DestroyAndPutToPool()
 	}
-	maps.Clear(t.columns)
+	clear(t.columns)
 	for _, idx := range t.indices {
 		idx.FMSketch.DestroyAndPutToPool()
 	}
-	maps.Clear(t.indices)
+	clear(t.indices)
 }
 
 // ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.

@@ -223,7 +223,7 @@ func TestLoadAndReadConcurrently(t *testing.T) {
 		}
 	})
 	// the loader
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		wg.Run(func() {
 			for time.Now().Before(deadline) {
 				ReloadSigningCert()
@@ -232,7 +232,7 @@ func TestLoadAndReadConcurrently(t *testing.T) {
 		})
 	}
 	// the reader
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		id := i
 		wg.Run(func() {
 			username := fmt.Sprintf("test_user_%d", id)

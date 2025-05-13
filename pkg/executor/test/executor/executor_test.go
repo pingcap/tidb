@@ -648,11 +648,11 @@ func TestPartitionHashCode(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t(c1 bigint, c2 bigint, c3 bigint, primary key(c1)) partition by hash (c1) partitions 4;`)
 	var wg util.WaitGroupWrapper
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		wg.Run(func() {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
-			for i := 0; i < 5; i++ {
+			for range 5 {
 				tk1.MustExec("select * from t")
 			}
 		})
@@ -1838,7 +1838,7 @@ func TestUnion2(t *testing.T) {
 	tk.MustQuery("select a from t1 union select a from t1 order by (select a+1);").Check(testkit.Rows("1", "2", "3"))
 
 	// #issue 8201
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		tk.MustQuery("SELECT(SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a ASC  LIMIT 1) AS dev").Check(testkit.Rows("0"))
 	}
 
@@ -1879,7 +1879,7 @@ func TestUnionLimit(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists union_limit")
 	tk.MustExec("create table union_limit (id int) partition by hash(id) partitions 30")
-	for i := 0; i < 60; i++ {
+	for i := range 60 {
 		tk.MustExec(fmt.Sprintf("insert into union_limit values (%d)", i))
 	}
 	// Cover the code for worker count limit in the union executor.
@@ -2116,7 +2116,7 @@ func TestColumnName(t *testing.T) {
 	rs, err = tk.Exec("select (c), (+c), +(c), +(+(c)), ++c from t")
 	require.NoError(t, err)
 	fields = rs.Fields()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.Equal(t, "c", fields[i].Column.Name.L)
 		require.Equal(t, "c", fields[i].ColumnAsName.L)
 	}
@@ -2513,7 +2513,7 @@ func TestAdmin(t *testing.T) {
 	flag := true
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			tk.MustExec("drop table if exists admin_test9")
 			tk.MustExec("create table admin_test9 (c1 int, c2 int, c3 int default 1, index (c1))")
 		}
@@ -2521,7 +2521,7 @@ func TestAdmin(t *testing.T) {
 	go func() {
 		// check that the result set has no duplication
 		defer wg.Done()
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			result := tk2.MustQuery(`admin show ddl job queries 20`)
 			rows := result.Rows()
 			rowIDs := make(map[string]struct{})
@@ -2544,7 +2544,7 @@ func TestAdmin(t *testing.T) {
 	flag = true
 	go func() {
 		defer wg2.Done()
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			tk.MustExec("drop table if exists admin_test9")
 			tk.MustExec("create table admin_test9 (c1 int, c2 int, c3 int default 1, index (c1))")
 		}
@@ -2552,7 +2552,7 @@ func TestAdmin(t *testing.T) {
 	go func() {
 		// check that the result set has no duplication
 		defer wg2.Done()
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			result := tk2.MustQuery(`admin show ddl job queries limit 3 offset 2`)
 			rows := result.Rows()
 			rowIDs := make(map[string]struct{})
@@ -2751,7 +2751,7 @@ func TestSignalCheckpointForSort(t *testing.T) {
 	tk.MustExec("set tidb_mem_quota_query = 100000000")
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d)", i))
 	}
 	tk.Session().GetSessionVars().ConnectionID = 123456
@@ -3039,7 +3039,7 @@ func TestQueryWithKill(t *testing.T) {
 	var wg sync.WaitGroup
 	ch := make(chan context.CancelFunc, 1024)
 	testDuration := time.Second * 10
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

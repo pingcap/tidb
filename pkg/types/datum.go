@@ -310,7 +310,7 @@ func (d *Datum) GetBinaryLiteral4Cmp() BinaryLiteral {
 	if bitLen == 0 {
 		return d.b
 	}
-	for i := 0; i < bitLen; i++ {
+	for i := range bitLen {
 		// Remove the prefix 0 in the bit array.
 		if d.b[i] != 0 {
 			return d.b[i:]

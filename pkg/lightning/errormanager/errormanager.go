@@ -1033,10 +1033,7 @@ func (em *ErrorManager) RecordDuplicateOnce(
 
 func (em *ErrorManager) errorCount(typeVal func(*config.MaxError) int64) int64 {
 	cfgVal := typeVal(em.configError)
-	val := typeVal(&em.remainingError)
-	if val < 0 {
-		val = 0
-	}
+	val := max(typeVal(&em.remainingError), 0)
 	return cfgVal - val
 }
 
@@ -1053,10 +1050,7 @@ func (em *ErrorManager) syntaxError() int64 {
 }
 
 func (em *ErrorManager) conflictError() int64 {
-	val := em.conflictErrRemain.Load()
-	if val < 0 {
-		val = 0
-	}
+	val := max(em.conflictErrRemain.Load(), 0)
 	return em.configConflict.Threshold - val
 }
 

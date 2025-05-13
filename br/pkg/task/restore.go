@@ -1197,7 +1197,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			createdTable.RewriteRule.NewKeyspace = newKeyspace
 
 			for _, rule := range createdTable.RewriteRule.Data {
-				rule.OldKeyPrefix = append(append([]byte{}, oldKeyspace...), rule.OldKeyPrefix...)
+				rule.OldKeyPrefix = slices.Concat(oldKeyspace, rule.OldKeyPrefix)
 				rule.NewKeyPrefix = codec.EncodeKey(rule.NewKeyPrefix)
 			}
 		}

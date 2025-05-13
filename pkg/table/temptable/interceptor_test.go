@@ -17,6 +17,7 @@ package temptable
 import (
 	"context"
 	"math"
+	"slices"
 	"testing"
 	"time"
 
@@ -31,13 +32,13 @@ import (
 )
 
 func incLastByte(key kv.Key) kv.Key {
-	key = append([]byte{}, key...)
+	key = slices.Clone(key)
 	key[len(key)-1] += 1
 	return key
 }
 
 func decLastByte(key kv.Key) kv.Key {
-	key = append([]byte{}, key...)
+	key = slices.Clone(key)
 	key[len(key)-1] -= 1
 	return key
 }
@@ -94,7 +95,7 @@ func TestGetKeyAccessedTableID(t *testing.T) {
 				codec.EncodeInt(nil, math.MaxInt64/2),
 				codec.EncodeInt(nil, math.MaxInt64),
 			} {
-				newKey := append([]byte{}, c.key...)
+				newKey := slices.Clone(c.key)
 				newKey = append(newKey, s...)
 				keys = append(keys, newKey)
 			}
@@ -280,7 +281,7 @@ func TestGetSessionTemporaryTableKey(t *testing.T) {
 	defer cancel()
 
 	// test local temporary table should read from session
-	cases := append(append([]*kv.Entry{}, localTempTableData...), &kv.Entry{
+	cases := append(slices.Clone(localTempTableData), &kv.Entry{
 		// also add a test case for key not exist in retriever
 		Key: encodeTableKey(5, 'n'), Value: []byte("non-exist-key"),
 	})
@@ -416,13 +417,13 @@ func TestInterceptorOnGet(t *testing.T) {
 	defer cancel()
 
 	// test normal table and no table key should read from snapshot
-	cases := append(append([]*kv.Entry{}, noTempTableData...), []*kv.Entry{
-		// also add a test case for key not exist in snap
+	cases := slices.Concat(noTempTableData, []*kv.Entry{
+
 		{Key: encodeTableKey(1, 'n'), Value: []byte("non-exist-key")},
 		{Key: encodeTableKey(2, 'n'), Value: []byte("non-exist-key")},
 		{Key: kv.Key("sn"), Value: []byte("non-exist-key")},
 		{Key: kv.Key("un"), Value: []byte("non-exist-key")},
-	}...)
+	})
 	for i, c := range cases {
 		for _, emptyRetriever := range []bool{false, true} {
 			inter := interceptor
@@ -466,7 +467,7 @@ func TestInterceptorOnGet(t *testing.T) {
 	require.Equal(t, 0, len(snap.GetInvokes()))
 
 	// test local temporary table should read from session
-	cases = append(append([]*kv.Entry{}, localTempTableData...), &kv.Entry{
+	cases = append(slices.Clone(localTempTableData), &kv.Entry{
 		// also add a test case for key not exist in retriever
 		Key: encodeTableKey(5, 'n'), Value: []byte("non-exist-key"),
 	})

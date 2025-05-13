@@ -17,6 +17,7 @@ package model
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -712,12 +713,7 @@ type TiFlashReplicaInfo struct {
 
 // IsPartitionAvailable checks whether the partition table replica was available.
 func (tr *TiFlashReplicaInfo) IsPartitionAvailable(pid int64) bool {
-	for _, id := range tr.AvailablePartitionIDs {
-		if id == pid {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(tr.AvailablePartitionIDs, pid)
 }
 
 // ViewInfo provides meta data describing a DB view.

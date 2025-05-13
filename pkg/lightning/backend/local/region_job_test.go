@@ -220,7 +220,7 @@ func TestRegionJobRetryer(t *testing.T) {
 		retryer.run()
 	}()
 
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		go func() {
 			job := &regionJob{
 				waitUntil: time.Now().Add(time.Hour),
@@ -321,7 +321,7 @@ func TestRegionJobRetryer(t *testing.T) {
 func TestNewRegionJobs(t *testing.T) {
 	buildRegion := func(regionKeys [][]byte) []*split.RegionInfo {
 		ret := make([]*split.RegionInfo, 0, len(regionKeys)-1)
-		for i := 0; i < len(regionKeys)-1; i++ {
+		for i := range len(regionKeys) - 1 {
 			ret = append(ret, &split.RegionInfo{
 				Region: &metapb.Region{
 					StartKey: codec.EncodeBytes(nil, regionKeys[i]),
@@ -333,7 +333,7 @@ func TestNewRegionJobs(t *testing.T) {
 	}
 	buildJobRanges := func(jobRangeKeys [][]byte) []engineapi.Range {
 		ret := make([]engineapi.Range, 0, len(jobRangeKeys)-1)
-		for i := 0; i < len(jobRangeKeys)-1; i++ {
+		for i := range len(jobRangeKeys) - 1 {
 			ret = append(ret, engineapi.Range{
 				Start: jobRangeKeys[i],
 				End:   jobRangeKeys[i+1],
@@ -505,7 +505,7 @@ func TestStoreBalancerPick(t *testing.T) {
 		jonDone <- struct{}{}
 	}()
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		<-jonDone
 	}
 	checkStoreScoreZero(t, b)
@@ -615,7 +615,7 @@ func TestUpdateAndGetLimiterConcurrencySafety(t *testing.T) {
 
 	var wg sync.WaitGroup
 	concurrentRoutines := 100
-	for i := 0; i < concurrentRoutines; i++ {
+	for i := range concurrentRoutines {
 		wg.Add(2)
 		go func(limit int) {
 			defer wg.Done()

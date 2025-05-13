@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -49,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	atomic2 "go.uber.org/atomic"
-	"golang.org/x/exp/maps"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -1331,7 +1331,7 @@ func (s *UsedStatsInfoForTable) FormatForExplain() string {
 	b.WriteString(strings.Join(strs, ", "))
 	if len(statusCnt) > 0 {
 		b.WriteString("...(more: ")
-		keys := maps.Keys(statusCnt)
+		keys := slices.Collect(maps.Keys(statusCnt))
 		slices.Sort(keys)
 		var cntStrs []string
 		for _, key := range keys {
@@ -1380,7 +1380,7 @@ func (s *UsedStatsInfoForTable) collectFromColOrIdxStatus(
 	} else {
 		status = s.IndexStatsLoadStatus
 	}
-	keys := maps.Keys(status)
+	keys := slices.Collect(maps.Keys(status))
 	slices.Sort(keys)
 	strs := make([]string, 0, len(status))
 	for _, id := range keys {

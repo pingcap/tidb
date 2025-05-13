@@ -40,10 +40,9 @@ const (
 // GeneralEventFromString gets the `GeneralEvent` from the given string
 func GeneralEventFromString(s string) (GeneralEvent, error) {
 	upperStr := strings.ToUpper(s)
-	for i := 0; i < int(GeneralEventCount); i++ {
-		event := GeneralEvent(i)
-		if event.String() == upperStr {
-			return event, nil
+	for i := range GeneralEventCount {
+		if i.String() == upperStr {
+			return i, nil
 		}
 	}
 	return 0, errors.Errorf("Invalid general event: %s", s)

@@ -335,7 +335,7 @@ func TestProcessChunkWith(t *testing.T) {
 		}()
 		chkCh := make(chan importer.QueryChunk, 3)
 		fields := make([]*types.FieldType, 0, 3)
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			fields = append(fields, types.NewFieldType(mysql.TypeLong))
 		}
 		chk := chunk.New(fields, 2, 2)

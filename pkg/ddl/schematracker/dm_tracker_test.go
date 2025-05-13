@@ -64,13 +64,13 @@ func TestNoNumLimit(t *testing.T) {
 	execCreate(t, tracker, sql)
 
 	sql = "create table test.t_too_many_indexes ("
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if i != 0 {
 			sql += ","
 		}
 		sql += fmt.Sprintf("c%d int", i)
 	}
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		sql += ","
 		sql += fmt.Sprintf("key k%d(c%d)", i, i)
 	}

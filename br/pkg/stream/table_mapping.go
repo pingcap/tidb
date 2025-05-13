@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sort"
 
 	"github.com/pingcap/errors"
@@ -280,9 +281,7 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 		for tableUpID, baseTableReplace := range baseDBReplace.TableMap {
 			tm.globalIdMap[tableUpID] = baseTableReplace.TableID
 
-			for partUpID, basePartDownID := range baseTableReplace.PartitionMap {
-				tm.globalIdMap[partUpID] = basePartDownID
-			}
+			maps.Copy(tm.globalIdMap, baseTableReplace.PartitionMap)
 		}
 	}
 

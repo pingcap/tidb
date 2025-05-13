@@ -44,10 +44,10 @@ func genAntiSemiJoinResult(t *testing.T, sessCtx sessionctx.Context, leftChunks 
 
 	for _, leftChunk := range leftChunks {
 		isResult := true
-		for leftIndex := 0; leftIndex < leftChunk.NumRows(); leftIndex++ {
+		for leftIndex := range leftChunk.NumRows() {
 			leftRow := leftChunk.GetRow(leftIndex)
 			for _, rightChunk := range rightChunks {
-				for rightIndex := 0; rightIndex < rightChunk.NumRows(); rightIndex++ {
+				for rightIndex := range rightChunk.NumRows() {
 					if resultChk.IsFull() {
 						returnChks = append(returnChks, resultChk)
 						resultChk = chunk.New(resultTypes, sessCtx.GetSessionVars().MaxChunkSize, sessCtx.GetSessionVars().MaxChunkSize)
@@ -406,7 +406,7 @@ func TestAntiSemiJoinProbeAllJoinKeys(t *testing.T) {
 	rightAsBuildSide := []bool{true, false}
 
 	// single key
-	for i := 0; i < len(lTypes); i++ {
+	for i := range lTypes {
 		lKeyTypes := []*types.FieldType{lTypes[i]}
 		rKeyTypes := []*types.FieldType{rTypes[i]}
 		for _, rightAsBuild := range rightAsBuildSide {

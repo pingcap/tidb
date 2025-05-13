@@ -20,58 +20,58 @@ create table thh (a int, b int, key(a)) partition by hash(a) partitions 4;
 create definer='root'@'localhost' view v as select * from t1 where a<10 order by a limit 1;
 create definer='root'@'localhost' view v1 as select * from t where a<10 order by a limit 1;
 -- error 1815
-explain select /*+ order_index(t1, idx_a) */ * from t1 where a<10 limit 1;
+explain format='brief' select /*+ order_index(t1, idx_a) */ * from t1 where a<10 limit 1;
 -- error 1815
-explain select /*+ order_index(t, primary) */ * from t where a<10 limit 1;
+explain format='brief' select /*+ order_index(t, primary) */ * from t where a<10 limit 1;
 analyze table th;
 analyze table thp;
 analyze table thh;
 select a from th where a<1 order by a limit 1;
 select /*+ order_index(thh, a) */ * from thh where a<1 order by a limit 1;
 --enable_warnings
-explain select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
-explain select /*+ order_index(t, primary) */ * from t where a<10 order by a limit 1;
-explain select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
-explain select /*+ no_order_index(t, primary) */ * from t where a<10 order by a limit 1;
-explain select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 limit 1;
-explain select /*+ no_order_index(t, primary) */ * from t where a<10 limit 1;
-explain select /*+ order_index(t1, idx_b) */ * from t1 where b<10 order by b limit 1;
-explain select /*+ order_index(t, idx_b) */ * from t where b<10 order by b limit 1;
-explain select /*+ no_order_index(t1, idx_b) */ * from t1 where b<10 order by b limit 1;
-explain select /*+ no_order_index(t, idx_b) */ * from t where b<10 order by b limit 1;
-explain select /*+ order_index(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
-explain select /*+ order_index(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;
-explain select /*+ order_index(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
-explain select /*+ order_index(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;
-explain select /*+ order_index(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
-explain select /*+ order_index(t, primary) use_index(t, primary) */ * from t where a<10 order by a limit 1;
-explain select /*+ order_index(t, primary) */ * from t use index(primary) where a<10 order by a limit 1;
-explain select /*+ order_index(t, primary) force_index(t, primary) */ * from t where a<10 order by a limit 1;
-explain select /*+ order_index(t, primary) */ * from t force index(primary) where a<10 order by a limit 1;
-explain select /*+ order_index(t, primary) ignore_index(t, primary) */ * from t where a<10 order by a limit 1;
-explain select /*+ no_order_index(t, primary) use_index(t, primary) */ * from t where a<10 order by a limit 1;
-explain select /*+ no_order_index(t, primary) */ * from t use index(primary) where a<10 order by a limit 1;
-explain select /*+ no_order_index(t, primary) force_index(t, primary) */ * from t where a<10 order by a limit 1;
-explain select /*+ no_order_index(t, primary) */ * from t force index(primary) where a<10 order by a limit 1;
-explain select /*+ no_order_index(t, primary) ignore_index(t, primary) */ * from t where a<10 order by a limit 1;
-explain select /*+ no_order_index(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
-explain select /*+ no_order_index(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;
-explain select /*+ no_order_index(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
-explain select /*+ no_order_index(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;
-explain select /*+ no_order_index(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
-explain select /*+ qb_name(qb, v) order_index(t1@qb, idx_a) */ * from v;
-explain select /*+ qb_name(qb, v1) order_index(t@qb, primary) */ * from v1;
-explain select /*+ qb_name(qb, v) no_order_index(t1@qb, idx_a) */ * from v;
-explain select /*+ qb_name(qb, v1) no_order_index(t@qb, primary) */ * from v1;
-explain WITH CTE AS (select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
-explain WITH CTE AS (select /*+ order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
-explain WITH CTE AS (select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
-explain WITH CTE AS (select /*+ no_order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
-explain select /*+ order_index(th, a) */ a from th where a<1 order by a limit 1;
-explain select /*+ no_order_index(th, a) */ a from th where a<1 order by a limit 1;
-explain select /*+ order_index(thp, primary) */ a from thp where a<1 order by a limit 1;
-explain select /*+ no_order_index(thp, primary) */ a from thp where a<1 order by a limit 1;
-explain select /*+ order_index(thh, a) */ * from thh where a<1 order by a limit 1;
+explain format='brief' select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+explain format='brief' select /*+ order_index(t, primary) */ * from t where a<10 order by a limit 1;
+explain format='brief' select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+explain format='brief' select /*+ no_order_index(t, primary) */ * from t where a<10 order by a limit 1;
+explain format='brief' select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 limit 1;
+explain format='brief' select /*+ no_order_index(t, primary) */ * from t where a<10 limit 1;
+explain format='brief' select /*+ order_index(t1, idx_b) */ * from t1 where b<10 order by b limit 1;
+explain format='brief' select /*+ order_index(t, idx_b) */ * from t where b<10 order by b limit 1;
+explain format='brief' select /*+ no_order_index(t1, idx_b) */ * from t1 where b<10 order by b limit 1;
+explain format='brief' select /*+ no_order_index(t, idx_b) */ * from t where b<10 order by b limit 1;
+explain format='brief' select /*+ order_index(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+explain format='brief' select /*+ order_index(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;
+explain format='brief' select /*+ order_index(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+explain format='brief' select /*+ order_index(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;
+explain format='brief' select /*+ order_index(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+explain format='brief' select /*+ order_index(t, primary) use_index(t, primary) */ * from t where a<10 order by a limit 1;
+explain format='brief' select /*+ order_index(t, primary) */ * from t use index(primary) where a<10 order by a limit 1;
+explain format='brief' select /*+ order_index(t, primary) force_index(t, primary) */ * from t where a<10 order by a limit 1;
+explain format='brief' select /*+ order_index(t, primary) */ * from t force index(primary) where a<10 order by a limit 1;
+explain format='brief' select /*+ order_index(t, primary) ignore_index(t, primary) */ * from t where a<10 order by a limit 1;
+explain format='brief' select /*+ no_order_index(t, primary) use_index(t, primary) */ * from t where a<10 order by a limit 1;
+explain format='brief' select /*+ no_order_index(t, primary) */ * from t use index(primary) where a<10 order by a limit 1;
+explain format='brief' select /*+ no_order_index(t, primary) force_index(t, primary) */ * from t where a<10 order by a limit 1;
+explain format='brief' select /*+ no_order_index(t, primary) */ * from t force index(primary) where a<10 order by a limit 1;
+explain format='brief' select /*+ no_order_index(t, primary) ignore_index(t, primary) */ * from t where a<10 order by a limit 1;
+explain format='brief' select /*+ no_order_index(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+explain format='brief' select /*+ no_order_index(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;
+explain format='brief' select /*+ no_order_index(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+explain format='brief' select /*+ no_order_index(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;
+explain format='brief' select /*+ no_order_index(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+explain format='brief' select /*+ qb_name(qb, v) order_index(t1@qb, idx_a) */ * from v;
+explain format='brief' select /*+ qb_name(qb, v1) order_index(t@qb, primary) */ * from v1;
+explain format='brief' select /*+ qb_name(qb, v) no_order_index(t1@qb, idx_a) */ * from v;
+explain format='brief' select /*+ qb_name(qb, v1) no_order_index(t@qb, primary) */ * from v1;
+explain format='brief' WITH CTE AS (select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
+explain format='brief' WITH CTE AS (select /*+ order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
+explain format='brief' WITH CTE AS (select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
+explain format='brief' WITH CTE AS (select /*+ no_order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
+explain format='brief' select /*+ order_index(th, a) */ a from th where a<1 order by a limit 1;
+explain format='brief' select /*+ no_order_index(th, a) */ a from th where a<1 order by a limit 1;
+explain format='brief' select /*+ order_index(thp, primary) */ a from thp where a<1 order by a limit 1;
+explain format='brief' select /*+ no_order_index(thp, primary) */ a from thp where a<1 order by a limit 1;
+explain format='brief' select /*+ order_index(thh, a) */ * from thh where a<1 order by a limit 1;
 --disable_warnings
 
 # TestViewHint
@@ -140,7 +140,7 @@ explain format = 'brief' select /*+ merge_join(t1@qb_v_2), qb_name(qb_v_2, v@sel
 explain format = 'brief' select /*+ merge_join(t@qb_v_1), stream_agg(@qb_v_2), qb_name(qb_v_2, v@sel_1 .@sel_2), qb_name(qb_v_1, v@sel_1 .@sel_1) */ * from v;
 explain format = 'brief' select /*+ qb_name(qb_v3_2, v3@sel_1 .@sel_2), merge_join(t1@qb_v3_2) */ * from v3;
 explain format = 'brief' select /*+ qb_name(qb_v3_2, v3@sel_1 .@sel_2), merge_join(t1@qb_v3_2), hash_agg(@qb_v3_2), qb_name(qb_v3_1, v3@sel_1 .@sel_1), hash_join(t@qb_v3_1) */ * from v3;
-explain with d1 as (
+explain format='brief' with d1 as (
     select a from (
         select a from (
             select /*+ qb_name(qb, v4) use_index(t4@qb, idx_a) */ a from v4 where a < 10
@@ -149,7 +149,7 @@ explain with d1 as (
 ), d2 as (select /*+ qb_name(qb2, v4) use_index(t4@qb2, idx_b) */ a from v4 where b < 10)
 
 select * from (select * from d1) as t0 join (select * from d2) as t1;
-explain with d1 as (
+explain format='brief' with d1 as (
     select a from (
         select a from (
             select a from v4 where a < 10
@@ -158,7 +158,7 @@ explain with d1 as (
 ), d2 as (select a from v4 where b < 10)
 
 select /*+ qb_name(qb, v4@sel_4) use_index(t4@qb, idx_a)   qb_name(qb2, v4@sel_5) use_index(t4@qb, idx_b) */ * from (select * from d1) as t0 join (select * from d2) as t1;
-explain with d1 as (
+explain format='brief' with d1 as (
     select a from (
         select a from (
             select /*+ qb_name(qb, v5) use_index(t4@qb, idx_a) */ a from v4 where a < 10

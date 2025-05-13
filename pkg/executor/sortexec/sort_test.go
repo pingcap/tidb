@@ -76,7 +76,7 @@ func testSortInDisk(t *testing.T, removeDir bool) {
 	tk.MustExec("create table t(c1 int, c2 int, c3 int)")
 	var buf bytes.Buffer
 	buf.WriteString("insert into t values ")
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		for j := i; j < 1024; j += 5 {
 			if j > 0 {
 				buf.WriteString(", ")
@@ -86,7 +86,7 @@ func testSortInDisk(t *testing.T, removeDir bool) {
 	}
 	tk.MustExec(buf.String())
 	result := tk.MustQuery("select * from t order by c1")
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		require.Equal(t, fmt.Sprint(i), result.Rows()[i][0].(string))
 		require.Equal(t, fmt.Sprint(i), result.Rows()[i][1].(string))
 		require.Equal(t, fmt.Sprint(i), result.Rows()[i][2].(string))
@@ -119,7 +119,7 @@ func TestIssue16696(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` (`a` int(11) DEFAULT NULL,`b` int(11) DEFAULT NULL)")
 	tk.MustExec("insert into t values (1, 1)")
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		tk.MustExec("insert into t select * from t")
 	}
 	tk.MustExec("set tidb_mem_quota_query = 1;")

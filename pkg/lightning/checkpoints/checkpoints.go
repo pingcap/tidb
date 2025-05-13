@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"path"
 	"slices"
@@ -431,9 +432,7 @@ func (cpd *TableCheckpointDiff) insertEngineCheckpointDiff(engineID int32, newDi
 			oldDiff.hasStatus = true
 			oldDiff.status = newDiff.status
 		}
-		for key, chunkDiff := range newDiff.chunks {
-			oldDiff.chunks[key] = chunkDiff
-		}
+		maps.Copy(oldDiff.chunks, newDiff.chunks)
 		newDiff = oldDiff
 	}
 	cpd.engines[engineID] = newDiff

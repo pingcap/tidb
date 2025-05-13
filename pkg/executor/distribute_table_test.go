@@ -156,18 +156,18 @@ func TestDistributeTable(t *testing.T) {
 	tk.MustExec("create table t1(a int)")
 	mockGetSchedulerConfig("balance-range-scheduler")
 	mockCreateSchedulerWithInput(table, partition, config)
-	tk.MustQuery(fmt.Sprintf("distribute table %s rule=leader-scatter engine=tikv", table)).Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=tikv", table)).Check(testkit.Rows("1"))
 	// create new scheduler with the same inputs
 	mockCreateSchedulerWithInput(table, partition, config)
-	tk.MustQuery(fmt.Sprintf("distribute table %s rule=leader-scatter engine=tikv", table)).Check(testkit.Rows("2"))
+	tk.MustQuery(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=tikv", table)).Check(testkit.Rows("2"))
 
 	// test for incorrect arguments
-	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=leader-scatter engine=tiflash", table),
+	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=tiflash", table),
 		"[planner:1210]Incorrect arguments to the rule of tiflash must be learner-scatter")
-	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=leader engine=titan", table),
+	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=titan", table),
 		"[planner:1210]Incorrect arguments to engine must be tikv or tiflash")
-	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=witness engine=tikv", table),
-		"[planner:1210]Incorrect arguments to rule must be leader-scatter, follower-scatter or learner-scatter")
+	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=`witness` engine=tikv", table),
+		"[planner:1210]Incorrect arguments to rule must be leader-scatter, peer-scatter or learner-scatter")
 }
 
 func TestShowTableDistributions(t *testing.T) {

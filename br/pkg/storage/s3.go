@@ -628,7 +628,7 @@ func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error
 		data    []byte
 		readErr error
 	)
-	for retryCnt := 0; retryCnt < maxErrorRetries; retryCnt += 1 {
+	for retryCnt := range maxErrorRetries {
 		input := &s3.GetObjectInput{
 			Bucket: aws.String(rs.options.Bucket),
 			Key:    aws.String(rs.options.Prefix + file),

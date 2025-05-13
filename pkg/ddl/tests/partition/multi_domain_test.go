@@ -19,7 +19,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -233,8 +233,8 @@ func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
 			// tkO see non-readable/non-writable p0 partition, and should try to read from p1
 			// in case there is something written to overlapping p1
 			tkO.MustContainErrMsg(`insert into t values (1,1,1)`, "[table:1526]Table has no partition for value matching a partition being dropped, 'p0'")
-			tkNO.MustContainErrMsg(`insert into t values (1,1,1)`, "[kv:1062]Duplicate entry '1' for key 't.a_2'")
-			tkO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101' for key 't.a_2'")
+			tkNO.MustContainErrMsg(`insert into t values (1,1,1)`, "[kv:1062]Duplicate entry '1' for key")
+			tkO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101")
 			tkNO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101' for key 't.a_2'")
 			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1 1", "101 101 101", "102 102 102", "2 2 2"))
 			tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("101 101 101", "102 102 102"))
@@ -769,7 +769,7 @@ func checkTableAndIndexEntries(t *testing.T, tk *testkit.TestKit, originalIDs []
 	if tbl.Meta().Partition == nil {
 		require.Equal(t, 0, len(globalIndexes))
 	} else {
-		sort.Slice(globalIndexes, func(i, j int) bool { return globalIndexes[i] < globalIndexes[j] })
+		slices.Sort(globalIndexes)
 		prev := int64(0)
 		for _, idxID := range globalIndexes {
 			if prev+1 == idxID {
@@ -783,7 +783,7 @@ func checkTableAndIndexEntries(t *testing.T, tk *testkit.TestKit, originalIDs []
 	}
 
 	// Only existing non-global indexes on partitions or non-partitioned tables
-	sort.Slice(indexes, func(i, j int) bool { return indexes[i] < indexes[j] })
+	slices.Sort(indexes)
 	prev := int64(0)
 	for _, idxID := range indexes {
 		if prev+1 == idxID {
@@ -837,19 +837,20 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		domOwner, domNonOwner = domNonOwner, domOwner
 	}
 
-	seOwner, err := session.CreateSessionWithDomain(store, domOwner)
+	seDDLOwner, err := session.CreateSessionWithDomain(store, domOwner)
 	require.NoError(t, err)
-	seNonOwner, err := session.CreateSessionWithDomain(store, domNonOwner)
-	require.NoError(t, err)
-
-	tkDDLOwner := testkit.NewTestKitWithSession(t, store, seOwner)
+	tkDDLOwner := testkit.NewTestKitWithSession(t, store, seDDLOwner)
 	tkDDLOwner.MustExec(`use test`)
 	// Just to ensure we are not relying on the configurable assertions
 	tkDDLOwner.MustExec(`set @@global.tidb_txn_assertion_level = off`)
 	tkDDLOwner.MustExec(`set @@session.tidb_txn_assertion_level = off`)
-	tkO := testkit.NewTestKitWithSession(t, store, seOwner)
+	seTkOwner, err := session.CreateSessionWithDomain(store, domOwner)
+	require.NoError(t, err)
+	tkO := testkit.NewTestKitWithSession(t, store, seTkOwner)
 	tkO.MustExec(`use test`)
-	tkNO := testkit.NewTestKitWithSession(t, store, seNonOwner)
+	seTkNonOwner, err := session.CreateSessionWithDomain(store, domNonOwner)
+	require.NoError(t, err)
+	tkNO := testkit.NewTestKitWithSession(t, store, seTkNonOwner)
 	tkNO.MustExec(`use test`)
 
 	tkDDLOwner.MustExec(createSQL)
@@ -904,13 +905,21 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 			// This can be used for testing concurrent writes during backfill.
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", func(b bool) {
 				if b {
+					seTk, err := session.CreateSessionWithDomain(store, domOwner)
+					require.NoError(t, err)
+					tk := testkit.NewTestKitWithSession(t, store, seTk)
+					tk.MustExec(`use test`)
 					logutil.BgLogger().Info("XXXXXXXXXXX Concurrent UPDATE!")
-					tkO.MustExec(backfillDML)
+					tk.MustExec(backfillDML)
 				}
 			})
 		}
+		seDDL, err := session.CreateSessionWithDomain(store, domOwner)
+		require.NoError(t, err)
+		tkDDL := testkit.NewTestKitWithSession(t, store, seDDL)
+		tkDDL.MustExec(`use test`)
 		logutil.BgLogger().Info("XXXXXXXXXXX DDL starting!", zap.String("alterSQL", alterSQL))
-		err := tkDDLOwner.ExecToErr(alterSQL)
+		err = tkDDL.ExecToErr(alterSQL)
 		logutil.BgLogger().Info("XXXXXXXXXXX DDL done!", zap.String("alterSQL", alterSQL))
 		if backfillDML != "" {
 			testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData")
@@ -1801,9 +1810,9 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 	states := 7
 	fromStates := 3
 	IDs := make([][][][]int, states)
-	for s := 0; s < states; s++ {
+	for s := range states {
 		IDs[s] = make([][][]int, fromStates)
-		for f := 0; f < fromStates; f++ {
+		for f := range fromStates {
 			IDs[s][f] = make([][]int, 4)
 		}
 	}

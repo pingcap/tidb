@@ -88,11 +88,11 @@ func (mds *MockDataSource) GenColDatums(col int) (results []any) {
 	// ndv == -2: use rows provided by user
 	if ndv == 0 {
 		if mds.P.GenDataFunc == nil {
-			for i := 0; i < rows; i++ {
+			for range rows {
 				results = append(results, mds.RandDatum(typ))
 			}
 		} else {
-			for i := 0; i < rows; i++ {
+			for i := range rows {
 				results = append(results, mds.P.GenDataFunc(i, typ))
 			}
 		}
@@ -125,7 +125,7 @@ func (mds *MockDataSource) GenColDatums(col int) (results []any) {
 			}
 		}
 
-		for i := 0; i < rows; i++ {
+		for range rows {
 			val, err := rand.Int(rand.Reader, big.NewInt(int64(len(datums))))
 			if err != nil {
 				panic("Fail to generate int number")
@@ -273,7 +273,7 @@ func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 	rTypes := exec.RetTypes(m)
 	colNum := len(rTypes)
 	colData := make([][]any, colNum)
-	for i := 0; i < colNum; i++ {
+	for i := range colNum {
 		colData[i] = m.GenColDatums(i)
 	}
 
@@ -293,10 +293,10 @@ func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 		}
 	}
 
-	for i := 0; i < m.P.Rows; i++ {
+	for i := range m.P.Rows {
 		idx := i / m.MaxChunkSize()
 		retTypes := exec.RetTypes(m)
-		for colIdx := 0; colIdx < colNum; colIdx++ {
+		for colIdx := range colNum {
 			if nulls[colIdx][i] {
 				m.GenData[idx].AppendNull(colIdx)
 				continue
@@ -400,7 +400,7 @@ func genRandomColumn(col *chunk.Column, fieldType *types.FieldType, size int) {
 	switch fieldType.GetType() {
 	case mysql.TypeLonglong, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeTiny:
 		upBound := getUpBound(fieldType)
-		for i := 0; i < size; i++ {
+		for range size {
 			if handleNull(col) {
 				continue
 			}
@@ -418,7 +418,7 @@ func genRandomColumn(col *chunk.Column, fieldType *types.FieldType, size int) {
 			}
 		}
 	case mysql.TypeYear:
-		for i := 0; i < size; i++ {
+		for range size {
 			if handleNull(col) {
 				continue
 			}
@@ -426,7 +426,7 @@ func genRandomColumn(col *chunk.Column, fieldType *types.FieldType, size int) {
 			col.AppendInt64(1901 + n)
 		}
 	case mysql.TypeFloat:
-		for i := 0; i < size; i++ {
+		for range size {
 			if handleNull(col) {
 				continue
 			}
@@ -434,7 +434,7 @@ func genRandomColumn(col *chunk.Column, fieldType *types.FieldType, size int) {
 			col.AppendFloat32(f)
 		}
 	case mysql.TypeDouble:
-		for i := 0; i < size; i++ {
+		for range size {
 			if handleNull(col) {
 				continue
 			}
@@ -442,7 +442,7 @@ func genRandomColumn(col *chunk.Column, fieldType *types.FieldType, size int) {
 		}
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		buf := make([]byte, 0)
-		for i := 0; i < size; i++ {
+		for range size {
 			if handleNull(col) {
 				continue
 			}
@@ -467,7 +467,7 @@ func genRandomColumn(col *chunk.Column, fieldType *types.FieldType, size int) {
 			col.AppendBytes(buf)
 		}
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		for i := 0; i < size; i++ {
+		for range size {
 			if handleNull(col) {
 				continue
 			}
@@ -490,7 +490,7 @@ func genRandomColumn(col *chunk.Column, fieldType *types.FieldType, size int) {
 			col.AppendTime(time)
 		}
 	case mysql.TypeDuration:
-		for i := 0; i < size; i++ {
+		for range size {
 			if handleNull(col) {
 				continue
 			}
@@ -506,7 +506,7 @@ func genRandomColumn(col *chunk.Column, fieldType *types.FieldType, size int) {
 			}
 		}
 	case mysql.TypeNewDecimal:
-		for i := 0; i < size; i++ {
+		for range size {
 			if handleNull(col) {
 				continue
 			}
@@ -526,7 +526,7 @@ func genRandomColumn(col *chunk.Column, fieldType *types.FieldType, size int) {
 		}
 	case mysql.TypeEnum:
 		fieldType.SetElems(setOrEnumSample)
-		for i := 0; i < size; i++ {
+		for range size {
 			if handleNull(col) {
 				continue
 			}
@@ -535,7 +535,7 @@ func genRandomColumn(col *chunk.Column, fieldType *types.FieldType, size int) {
 		}
 	case mysql.TypeSet:
 		fieldType.SetElems(setOrEnumSample)
-		for i := 0; i < size; i++ {
+		for range size {
 			if handleNull(col) {
 				continue
 			}
@@ -543,7 +543,7 @@ func genRandomColumn(col *chunk.Column, fieldType *types.FieldType, size int) {
 			col.AppendSet(types.Set{Name: setOrEnumSample[n], Value: uint64(n)})
 		}
 	case mysql.TypeBit:
-		for i := 0; i < size; i++ {
+		for range size {
 			if handleNull(col) {
 				continue
 			}
@@ -551,7 +551,7 @@ func genRandomColumn(col *chunk.Column, fieldType *types.FieldType, size int) {
 			col.AppendBytes(unsafe.Slice((*byte)(unsafe.Pointer(&n)), serialization.Uint64Len))
 		}
 	case mysql.TypeJSON:
-		for i := 0; i < size; i++ {
+		for range size {
 			if handleNull(col) {
 				continue
 			}

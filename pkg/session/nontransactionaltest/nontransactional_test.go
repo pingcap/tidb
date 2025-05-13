@@ -83,7 +83,7 @@ func testSharding(tables []string, tk *testkit.TestKit, tp string) {
 		for _, c := range compositions {
 			tk.MustExec("truncate t2")
 			rows := make([]string, 0, c.tableSize)
-			for i := 0; i < c.tableSize; i++ {
+			for i := range c.tableSize {
 				tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 				tk.MustExec(fmt.Sprintf("insert into t2 values ('%d', %d)", i, i))
 				rows = append(rows, fmt.Sprintf("%d %d", i, i*2))
@@ -128,7 +128,7 @@ func TestNonTransactionalDMLErrorMessage(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, primary key(a, b) clustered)")
 	tk.MustExec("create table t1(a int, b int, primary key(a, b) clustered)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
 	tk.MustExec("set @@tidb_nontransactional_ignore_error=1")
@@ -157,7 +157,7 @@ func TestNonTransactionalDMLErrorMessage(t *testing.T) {
 
 	tk.MustExec("truncate t")
 	tk.MustExec("truncate t1")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
 	tk.MustExec("set @@tidb_nontransactional_ignore_error=1")
@@ -210,7 +210,7 @@ func TestNonTransactionalDMLErrorMessage(t *testing.T) {
 
 	tk.MustExec("truncate t")
 	tk.MustExec("truncate t1")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
 	tk.MustExec("set @@tidb_nontransactional_ignore_error=0")
@@ -280,7 +280,7 @@ func TestNonTransactionalWithCheckConstraint(t *testing.T) {
 	tk.MustExec("set @@tidb_max_chunk_size=35")
 	tk.MustExec("set @a=now(6)")
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i*2))
 	}
 	tk.MustExec("set @@tidb_snapshot=@a")
@@ -386,7 +386,7 @@ func TestNonTransactionalDMLWorkWithForeignKey(t *testing.T) {
 	}
 
 	// The check should work for INSERT
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
 		tk.MustExec(fmt.Sprintf("insert into t3 values (%d, %d)", i, i))
 	}
@@ -397,11 +397,11 @@ func TestNonTransactionalDMLWorkWithForeignKey(t *testing.T) {
 	cleanFn()
 
 	// The check should work for UPDATE
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
 	}
 	tk.MustExec("DELETE FROM t1 WHERE a = 55")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if i != 55 {
 			tk.MustExec(fmt.Sprintf("insert into t2 values (%d, %d)", i, i))
 		}
@@ -411,7 +411,7 @@ func TestNonTransactionalDMLWorkWithForeignKey(t *testing.T) {
 	cleanFn()
 
 	// The check should work for DELETE
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
 	}
 	tk.MustExec("DELETE FROM t1 WHERE a = 55")

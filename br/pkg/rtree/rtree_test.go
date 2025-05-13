@@ -48,7 +48,7 @@ func TestRangeTree(t *testing.T) {
 		}
 	}
 	assertAllComplete := func() {
-		for s := 0; s < 0xfe; s++ {
+		for s := range 0xfe {
 			for e := s + 1; e < 0xff; e++ {
 				start := []byte{byte(s)}
 				end := []byte{byte(e)}
@@ -308,11 +308,11 @@ func TestRangeIntersect(t *testing.T) {
 
 func BenchmarkRangeTreeUpdate(b *testing.B) {
 	rangeTree := rtree.NewRangeTree()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		item := rtree.Range{
 			KeyRange: rtree.KeyRange{
-				StartKey: []byte(fmt.Sprintf("%20d", i)),
-				EndKey:   []byte(fmt.Sprintf("%20d", i+1)),
+				StartKey: fmt.Appendf(nil, "%20d", i),
+				EndKey:   fmt.Appendf(nil, "%20d", i+1),
 			},
 		}
 		rangeTree.Update(item)

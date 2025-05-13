@@ -70,7 +70,7 @@ func runEtcd(t *testing.T) (*embed.Etcd, *clientv3.Client) {
 
 func simpleRanges(tableCount int) streamhelper.Ranges {
 	ranges := streamhelper.Ranges{}
-	for i := 0; i < tableCount; i++ {
+	for i := range tableCount {
 		base := int64(i*2 + 1)
 		ranges = append(ranges, streamhelper.Range{
 			StartKey: tablecodec.EncodeTablePrefix(base),

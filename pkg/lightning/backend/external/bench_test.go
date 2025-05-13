@@ -26,6 +26,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -506,6 +507,7 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		onClose,
 		s.concurrency,
 		s.mergeIterHotspot,
+		engineapi.OnDuplicateKeyIgnore,
 	)
 
 	intest.AssertNoError(err)
@@ -698,7 +700,7 @@ func TestReadAllData(t *testing.T) {
 			fileName := fmt.Sprintf("/test%d", fileIdx)
 			writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
 			writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
-			key := []byte(fmt.Sprintf("key0%d", fileIdx))
+			key := fmt.Appendf(nil, "key0%d", fileIdx)
 			err := writer.WriteRow(ctx, key, val)
 			require.NoError(t, err)
 
@@ -724,7 +726,7 @@ func TestReadAllData(t *testing.T) {
 			kvSize := 0
 			keyIdx := 0
 			for kvSize < 900*1024 {
-				key := []byte(fmt.Sprintf("key%06d_%d", keyIdx, fileIdx))
+				key := fmt.Appendf(nil, "key%06d_%d", keyIdx, fileIdx)
 				keyIdx++
 				kvSize += len(key) + len(val)
 				err := writer.WriteRow(ctx, key, val)
@@ -752,7 +754,7 @@ func TestReadAllData(t *testing.T) {
 			kvSize := 0
 			keyIdx := 0
 			for kvSize < 10*1024*1024 {
-				key := []byte(fmt.Sprintf("key%09d_%d", keyIdx, fileIdx))
+				key := fmt.Appendf(nil, "key%09d_%d", keyIdx, fileIdx)
 				keyIdx++
 				kvSize += len(key) + len(val)
 				err := writer.WriteRow(ctx, key, val)
@@ -778,7 +780,7 @@ func TestReadAllData(t *testing.T) {
 		kvSize := 0
 		keyIdx := 0
 		for kvSize < 1024*1024*1024 {
-			key := []byte(fmt.Sprintf("key%010d_%d", keyIdx, fileIdx))
+			key := fmt.Appendf(nil, "key%010d_%d", keyIdx, fileIdx)
 			keyIdx++
 			kvSize += len(key) + len(val)
 			err := writer.WriteRow(ctx, key, val)

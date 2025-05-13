@@ -5,7 +5,9 @@ package split
 import (
 	"bytes"
 	"context"
+	"maps"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -473,9 +475,7 @@ func (fpdh *FakePDHTTPClient) SetSchedulerDelay(_ context.Context, key string, d
 }
 
 func (fpdh *FakePDHTTPClient) SetConfig(_ context.Context, config map[string]any, ttl ...float64) error {
-	for key, value := range config {
-		fpdh.cfgs[key] = value
-	}
+	maps.Copy(fpdh.cfgs, config)
 	return nil
 }
 
@@ -547,7 +547,7 @@ func (fpdc *FakePDClient) SetRegions(regions []*router.Region) {
 }
 
 func (fpdc *FakePDClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
-	return append([]*metapb.Store{}, fpdc.stores...), nil
+	return slices.Clone(fpdc.stores), nil
 }
 
 func (fpdc *FakePDClient) ScanRegions(

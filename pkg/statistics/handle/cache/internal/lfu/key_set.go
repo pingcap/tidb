@@ -15,10 +15,11 @@
 package lfu
 
 import (
+	"maps"
+	"slices"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/statistics"
-	"golang.org/x/exp/maps"
 )
 
 type keySet struct {
@@ -41,7 +42,7 @@ func (ks *keySet) Remove(key int64) int64 {
 
 func (ks *keySet) Keys() []int64 {
 	ks.mu.RLock()
-	result := maps.Keys(ks.set)
+	result := slices.Collect(maps.Keys(ks.set))
 	ks.mu.RUnlock()
 	return result
 }

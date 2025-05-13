@@ -99,10 +99,7 @@ const CheckpointIdMapBlockSize int = 524288
 
 func chunkInsertCheckpointData(data []byte, fn func(segmentId uint64, chunk []byte) error) error {
 	for startIdx, segmentId := 0, uint64(0); startIdx < len(data); segmentId += 1 {
-		endIdx := startIdx + CheckpointIdMapBlockSize
-		if endIdx > len(data) {
-			endIdx = len(data)
-		}
+		endIdx := min(startIdx+CheckpointIdMapBlockSize, len(data))
 		if err := fn(segmentId, data[startIdx:endIdx]); err != nil {
 			return errors.Trace(err)
 		}

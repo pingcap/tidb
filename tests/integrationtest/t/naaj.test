@@ -212,3 +212,12 @@ explain format='brief' select (a+1,b*2) not in (select a, b=1 from naaj_B where 
 explain format='brief' select /*+ set_var(tidb_hash_join_version=legacy) */ * from naaj_A where (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a);
 explain format='brief' select /*+ set_var(tidb_hash_join_version=optimized) */ * from naaj_A where (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a);
 set @@session.tidb_enable_null_aware_anti_join=0;
+
+# fix issue #60866
+drop table if exists chqin,chqin1;
+create table chqin(id int, f1 int,f2 int);
+create table chqin1(id int, f1 int,f2 int);
+insert into chqin values (1,1,1),(2,2,2),(3,3,3);
+insert into chqin1 values (4,4,4),(5,5,5),(6,6,6);
+explain format=brief SELECT -1405353984 FROM chqin t1 WHERE t1.f1 not IN (  SELECT a1.f2 FROM chqin1 a1 WHERE  ( 1 >= t1.id ) ) ;
+SELECT -1405353984 as myName FROM chqin t1 WHERE t1.f1 not IN (  SELECT a1.f2 FROM chqin1 a1 WHERE  ( 1 >= t1.id ) ) ;

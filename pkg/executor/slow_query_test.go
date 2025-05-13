@@ -397,7 +397,7 @@ select 7;`
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.SlowQueryFile = fileName3
 	})
-	for k := 0; k < 2; k++ {
+	for k := range 2 {
 		// k = 0 for normal files
 		// k = 1 for compressed files
 		var fileNames []string
@@ -844,11 +844,11 @@ func TestIssue54324(t *testing.T) {
 	defer os.Remove(f.Name()) // clean up
 
 	w := bufio.NewWriter(f)
-	for i := 0; i < 8191; i++ {
+	for range 8191 {
 		w.WriteByte('x')
 	}
 	w.WriteByte('\n')
-	for i := 0; i < 4096; i++ {
+	for range 4096 {
 		w.WriteByte('a')
 	}
 	require.NoError(t, w.Flush())
