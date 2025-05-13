@@ -56,16 +56,35 @@ func NewTiCIManager(ticiHost string, ticiPort string) (*TiCIManagerCtx, error) {
 
 // CreateFulltextIndex creates fulltext index on TiCI.
 func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
-	columns := make([]*indexer.ColumnInfo, 0)
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	pkName := tblInfo.GetPkName()
+	indexColumns := make([]*indexer.ColumnInfo, 0)
 	for i := range indexInfo.Columns {
-		columns = append(columns, &indexer.ColumnInfo{
-			ColumnId:     indexInfo.ID,
-			ColumnName:   indexInfo.Name.L,
-			Type:         int32(indexInfo.Tp),
-			ColumnLength: int32(indexInfo.Columns[i].Length),
+		offset := indexInfo.Columns[i].Offset
+		indexColumns = append(indexColumns, &indexer.ColumnInfo{
+			ColumnId:     tblInfo.Columns[offset].ID,
+			ColumnName:   tblInfo.Columns[offset].Name.String(),
+			Type:         int32(tblInfo.Columns[offset].GetType()),
+			ColumnLength: int32(tblInfo.Columns[offset].FieldType.StorageLength()),
+			Decimal:      int32(tblInfo.Columns[offset].GetDecimal()),
+			DefaultVal:   tblInfo.Columns[offset].DefaultValueBit,
+			IsPrimaryKey: pkName == tblInfo.Columns[offset].Name,
+			IsArray:      false,
+		})
+	}
+	tableColumns := make([]*indexer.ColumnInfo, 0)
+	for i := range tblInfo.Columns {
+		tableColumns = append(tableColumns, &indexer.ColumnInfo{
+			ColumnId:     tblInfo.Columns[i].ID,
+			ColumnName:   tblInfo.Columns[i].Name.String(),
+			Type:         int32(tblInfo.Columns[i].GetType()),
+			ColumnLength: int32(tblInfo.Columns[i].FieldType.StorageLength()),
 			Decimal:      int32(tblInfo.Columns[i].GetDecimal()),
 			DefaultVal:   tblInfo.Columns[i].DefaultValueBit,
-			IsPrimaryKey: indexInfo.Primary,
+			IsPrimaryKey: pkName == tblInfo.Columns[i].Name,
 			IsArray:      false,
 		})
 	}
@@ -73,9 +92,9 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 		IndexInfo: &indexer.IndexInfo{
 			TableId:   tblInfo.ID,
 			IndexId:   indexInfo.ID,
-			IndexName: indexInfo.Name.L,
+			IndexName: indexInfo.Name.String(),
 			IndexType: indexer.IndexType_FULL_TEXT,
-			Columns:   columns,
+			Columns:   indexColumns,
 			IsUnique:  indexInfo.Unique,
 			ParserInfo: &indexer.ParserInfo{
 				ParserType: indexer.ParserType_DEFAULT_PARSER,
@@ -86,16 +105,16 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 			TableName:    tblInfo.Name.L,
 			DatabaseName: schemaName,
 			Version:      int64(tblInfo.Version),
-			Columns:      columns,
+			Columns:      tableColumns,
 		},
 	}
-	resp, err := t.indexServiceClient.CreateIndex(ctx, req)
+	resp, err := is.tiCIManagerCtx.indexServiceClient.CreateIndex(ctx, req)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if resp.Status != 0 {
 		logutil.BgLogger().Error("create fulltext index failed", zap.String("indexID", resp.IndexId), zap.String("errorMessage", resp.ErrorMessage))
-		return errors.New(resp.ErrorMessage)
+		return nil
 	}
 	logutil.BgLogger().Info("create fulltext index success", zap.String("indexID", resp.IndexId))
 
