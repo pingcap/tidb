@@ -608,6 +608,14 @@ func (p *PhysicalMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 }
 
 func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
+	tp := t.indexPlan
+	for len(tp.Children()) > 0 {
+		if len(tp.Children()) == 1 {
+			tp = tp.Children()[0]
+		} else {
+			break
+		}
+	}
 	newTask := &RootTask{}
 	p := PhysicalIndexLookUpReader{
 		tablePlan:        t.tablePlan,
@@ -616,7 +624,7 @@ func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 		CommonHandleCols: t.commonHandleCols,
 		expectedCnt:      t.expectCnt,
 		keepOrder:        t.keepOrder,
-		StoreType:        t.indexPlan.(*PhysicalIndexScan).StoreType,
+		StoreType:        tp.(*PhysicalIndexScan).StoreType,
 	}.Init(ctx, t.tablePlan.QueryBlockOffset())
 	p.PlanPartInfo = t.physPlanPartInfo
 	setTableScanToTableRowIDScan(p.tablePlan)
