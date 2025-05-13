@@ -1017,7 +1017,7 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 		if err != nil {
 			return nil, err
 		}
-		// If len(value) >= 9, it may contains partition id, 9 for partition id.
+		// If len(value) >= 9, it may contains partition id.
 		// We should decode it and return a partition handle.
 		if len(value) >= 9 {
 			seg := SplitIndexValue(value)
