@@ -106,7 +106,7 @@ func TestShowDistributionJobs(t *testing.T) {
 	cli.jobs = jobs
 
 	tk.MustQuery("show distribution jobs").Check(testkit.Rows(
-		fmt.Sprintf("1 test test partition(P0,P1) tikv leader finish %s %s <nil>",
+		fmt.Sprintf("1 test test partition(P0,P1) tikv leader-scatter finish %s %s <nil>",
 			now.Add(-time.Minute).Format("2006-01-02 15:04:05"),
 			now.Add(-time.Second*30).Format("2006-01-02 15:04:05"))))
 
