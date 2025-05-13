@@ -24,6 +24,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/storage",
+        "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/ingestor/engineapi",
         "//pkg/kv",
         "//pkg/lightning/backend",

@@ -17,8 +17,8 @@ package importer
 import (
 	"context"
 
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
@@ -33,7 +33,7 @@ func ProcessChunk(
 	dataEngine, indexEngine *backend.OpenedEngine,
 	logger *zap.Logger,
 	groupChecksum *verification.KVGroupChecksum,
-	collector external.Collector,
+	collector execute.Collector,
 ) error {
 	// if the key are ordered, LocalWrite can optimize the writing.
 	// table has auto-incremented _tidb_rowid must satisfy following restrictions:
@@ -77,7 +77,7 @@ func ProcessChunkWithWriter(
 	dataWriter, indexWriter backend.EngineWriter,
 	logger *zap.Logger,
 	groupChecksum *verification.KVGroupChecksum,
-	collector external.Collector,
+	collector execute.Collector,
 ) error {
 	encoder, err := tableImporter.getKVEncoder(chunk)
 	if err != nil {

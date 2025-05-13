@@ -162,42 +162,6 @@ type OnCloseFunc func(summary *WriterSummary)
 // dummyOnCloseFunc is a dummy OnCloseFunc.
 func dummyOnCloseFunc(*WriterSummary) {}
 
-// Collector is the interface for collecting read/write statistics.
-type Collector interface {
-	OnRead(bytes, rows int64)
-	OnWrite(bytes, rows int64)
-}
-
-// collector is the implement of Collector interface
-type collector struct {
-	readFunc  func(bytes, rows int64)
-	writeFunc func(bytes, rows int64)
-}
-
-func (c *collector) OnRead(bytes, rows int64) {
-	c.readFunc(bytes, rows)
-}
-
-func (c *collector) OnWrite(bytes, rows int64) {
-	c.writeFunc(bytes, rows)
-}
-
-func dummyCollect(_, _ int64) {}
-
-// NewCollector returns a new collector with the provided read and write functions.
-func NewCollector(readFunc, writeFunc func(bytes, rows int64)) Collector {
-	if readFunc == nil {
-		readFunc = dummyCollect
-	}
-	if writeFunc == nil {
-		writeFunc = dummyCollect
-	}
-	return &collector{
-		readFunc:  readFunc,
-		writeFunc: writeFunc,
-	}
-}
-
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
 	groupOffset  int

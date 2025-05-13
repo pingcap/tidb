@@ -13,8 +13,8 @@ import (
 	context "context"
 	reflect "reflect"
 
+	execute "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	backend "github.com/pingcap/tidb/pkg/lightning/backend"
-	external "github.com/pingcap/tidb/pkg/lightning/backend/external"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -47,7 +47,7 @@ func (m *MockMiniTaskExecutor) ISGOMOCK() struct{} {
 }
 
 // Run mocks base method.
-func (m *MockMiniTaskExecutor) Run(arg0 context.Context, arg1, arg2 backend.EngineWriter, arg3 external.Collector) error {
+func (m *MockMiniTaskExecutor) Run(arg0 context.Context, arg1, arg2 backend.EngineWriter, arg3 execute.Collector) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Run", arg0, arg1, arg2, arg3)
 	ret0, _ := ret[0].(error)

@@ -177,7 +177,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
-	collector := external.NewCollector(
+	collector := execute.NewCollector(
 		func(bytes, rows int64) {
 			if s.tableImporter.IsLocalSort() {
 				s.OutputBytes.Add(bytes)
@@ -374,7 +374,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 	}
 
-	collector := external.NewCollector(
+	collector := execute.NewCollector(
 		func(bytes, rows int64) {
 			m.InputBytes.Add(bytes)
 			m.InputRowCnt.Add(rows)
@@ -522,7 +522,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		return err
 	}
 
-	localBackend.SetCollector(external.NewCollector(
+	localBackend.SetCollector(execute.NewCollector(
 		func(bytes, rows int64) {
 			e.InputBytes.Add(bytes)
 			e.InputRowCnt.Add(rows)

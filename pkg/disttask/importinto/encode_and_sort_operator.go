@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -55,7 +56,7 @@ type encodeAndSortOperator struct {
 
 	ctx       context.Context
 	cancel    context.CancelFunc
-	collector external.Collector
+	collector execute.Collector
 
 	taskID, subtaskID int64
 	tableImporter     *importer.TableImporter
@@ -74,7 +75,7 @@ func newEncodeAndSortOperator(
 	sharedVars *SharedVars,
 	subtaskID int64,
 	concurrency int,
-	collector external.Collector,
+	collector execute.Collector,
 ) *encodeAndSortOperator {
 	subCtx, cancel := context.WithCancel(ctx)
 	op := &encodeAndSortOperator{

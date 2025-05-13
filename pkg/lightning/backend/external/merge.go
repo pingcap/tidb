@@ -20,6 +20,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -47,7 +48,7 @@ func MergeOverlappingFiles(
 	newFilePrefix string,
 	blockSize int,
 	onClose OnCloseFunc,
-	collector Collector,
+	collector execute.Collector,
 	concurrency int,
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
@@ -143,7 +144,7 @@ func mergeOverlappingFilesInternal(
 	writerID string,
 	blockSize int,
 	onClose OnCloseFunc,
-	collector Collector,
+	collector execute.Collector,
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
 ) (err error) {

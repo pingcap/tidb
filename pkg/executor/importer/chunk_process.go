@@ -21,6 +21,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -191,7 +192,7 @@ type chunkEncoder struct {
 	readFn    encodeReaderFn
 	offset    int64
 	sendFn    func(ctx context.Context, batch *encodedKVGroupBatch) error
-	collector external.Collector
+	collector execute.Collector
 
 	chunkName string
 	logger    *zap.Logger
@@ -210,7 +211,7 @@ func newChunkEncoder(
 	readFn encodeReaderFn,
 	offset int64,
 	sendFn func(ctx context.Context, batch *encodedKVGroupBatch) error,
-	collector external.Collector,
+	collector execute.Collector,
 	logger *zap.Logger,
 	encoder KVEncoder,
 	keyspace []byte,
@@ -398,7 +399,7 @@ func NewFileChunkProcessor(
 	dataWriter backend.EngineWriter,
 	indexWriter backend.EngineWriter,
 	groupChecksum *verify.KVGroupChecksum,
-	collector external.Collector,
+	collector execute.Collector,
 ) ChunkProcessor {
 	chunkLogger := logger.With(zap.String("key", chunk.GetKey()))
 	deliver := &dataDeliver{
@@ -543,7 +544,7 @@ func newQueryChunkProcessor(
 	dataWriter backend.EngineWriter,
 	indexWriter backend.EngineWriter,
 	groupChecksum *verify.KVGroupChecksum,
-	collector external.Collector,
+	collector execute.Collector,
 ) ChunkProcessor {
 	chunkName := "import-from-select"
 	chunkLogger := logger.With(zap.String("key", chunkName))

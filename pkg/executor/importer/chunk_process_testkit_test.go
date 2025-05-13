@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -103,7 +103,7 @@ func TestFileChunkProcess(t *testing.T) {
 	t.Run("process success", func(t *testing.T) {
 		readRowCnt := int64(0)
 		readBytes := int64(0)
-		collector := external.NewCollector(
+		collector := execute.NewCollector(
 			func(bytes, rows int64) {
 				readBytes += bytes
 				readRowCnt += rows

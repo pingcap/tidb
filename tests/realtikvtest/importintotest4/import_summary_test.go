@@ -91,8 +91,9 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 }
 
 func (s *mockGCSSuite) TestLocallSortSummary() {
-	var allData []string
-	var content []byte
+	allData := make([]string, 0, 10000)
+	content := make([]byte, 0, 10000*10)
+
 	for idx := range 10000 {
 		content = append(content, fmt.Appendf(nil, "%d,test-%d\n", idx, idx)...)
 		allData = append(allData, fmt.Sprintf("%d test-%d", idx, idx))

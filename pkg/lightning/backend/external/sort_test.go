@@ -25,6 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -176,7 +177,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	defaultOneWriterMemSizeLimit = uint64(mergeMemSize)
 
 	readRows, readBytes := int64(0), int64(0)
-	collector := NewCollector(
+	collector := execute.NewCollector(
 		func(bytes, rows int64) {
 			readRows += rows
 			readBytes += bytes

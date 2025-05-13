@@ -28,6 +28,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -207,7 +208,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	defaultOneWriterMemSizeLimit = 1000
 
 	readRows, readBytes := int64(0), int64(0)
-	collector := NewCollector(
+	collector := execute.NewCollector(
 		func(bytes, rows int64) {
 			readRows += rows
 			readBytes += bytes

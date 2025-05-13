@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/disttask/importinto/mock",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/lightning/backend",
         "@org_uber_go_mock//gomock",
     ],

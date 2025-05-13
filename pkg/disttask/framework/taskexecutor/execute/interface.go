@@ -79,7 +79,7 @@ type RunningSubtaskSummary struct {
 	OutputBytes  atomic.Int64
 }
 
-// Reset resets the summary to the given row count and bytes.
+// ResetMetrics resets the summary to the given row count and bytes.
 func (s *RunningSubtaskSummary) ResetMetrics() {
 	s.InputRowCnt.Store(0)
 	s.InputBytes.Store(0)
@@ -94,6 +94,42 @@ func (s *RunningSubtaskSummary) ToSummary() *SubtaskSummary {
 		InputBytes:   s.InputBytes.Load(),
 		OutputRowCnt: s.OutputRowCnt.Load(),
 		OutputBytes:  s.OutputBytes.Load(),
+	}
+}
+
+// Collector is the interface for collecting subtask metrics.
+type Collector interface {
+	OnRead(bytes, rows int64)
+	OnWrite(bytes, rows int64)
+}
+
+// collector is the implement of Collector interface
+type collector struct {
+	readFunc  func(bytes, rows int64)
+	writeFunc func(bytes, rows int64)
+}
+
+func (c *collector) OnRead(bytes, rows int64) {
+	c.readFunc(bytes, rows)
+}
+
+func (c *collector) OnWrite(bytes, rows int64) {
+	c.writeFunc(bytes, rows)
+}
+
+func dummyCollect(_, _ int64) {}
+
+// NewCollector returns a new collector with the provided read and write functions.
+func NewCollector(readFunc, writeFunc func(bytes, rows int64)) Collector {
+	if readFunc == nil {
+		readFunc = dummyCollect
+	}
+	if writeFunc == nil {
+		writeFunc = dummyCollect
+	}
+	return &collector{
+		readFunc:  readFunc,
+		writeFunc: writeFunc,
 	}
 }
 
