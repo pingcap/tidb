@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/indexer"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -56,10 +55,6 @@ func NewTiCIManager(ticiHost string, ticiPort string) (*TiCIManagerCtx, error) {
 
 // CreateFulltextIndex creates fulltext index on TiCI.
 func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return errors.Trace(err)
-	}
 	pkName := tblInfo.GetPkName()
 	indexColumns := make([]*indexer.ColumnInfo, 0)
 	for i := range indexInfo.Columns {
@@ -108,7 +103,7 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 			Columns:      tableColumns,
 		},
 	}
-	resp, err := is.tiCIManagerCtx.indexServiceClient.CreateIndex(ctx, req)
+	resp, err := t.indexServiceClient.CreateIndex(ctx, req)
 	if err != nil {
 		return err
 	}
