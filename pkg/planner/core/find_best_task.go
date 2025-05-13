@@ -210,7 +210,7 @@ func enumeratePhysicalPlans4Task(
 	if !p.SCtx().GetSessionVars().InRestrictedSQL && len(physicalPlans) == 7 {
 		fmt.Println("wwz")
 	}
-	for idx, pp := range physicalPlans {
+	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()
 
@@ -274,8 +274,14 @@ func enumeratePhysicalPlans4Task(
 			break
 		}
 		appendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
-		if !p.SCtx().GetSessionVars().InRestrictedSQL && idx == 3 {
+		if !p.SCtx().GetSessionVars().InRestrictedSQL && curTask.Plan() != nil {
 			fmt.Println("wwz")
+			fmt.Println("========")
+			curCost, _, _ := getTaskPlanCost(curTask, opt)
+			fmt.Println(curTask.Plan().TP())
+			fmt.Println(curTask.Plan().ExplainInfo())
+			fmt.Println("cost:", curCost)
+			fmt.Println("========")
 		}
 		// Get the most efficient one only by low-cost priority among all valid plans.
 		if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
@@ -283,7 +289,6 @@ func enumeratePhysicalPlans4Task(
 		} else if curIsBetter {
 			bestTask = curTask
 		}
-
 		if hintApplicable {
 			// curTask is a preferred physic plan, compare cost with previous preferred one and cache the low-cost one.
 			if curIsBetter, err := compareTaskCost(curTask, preferTask, opt); err != nil {
