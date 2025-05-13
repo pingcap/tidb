@@ -108,6 +108,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		err = context.DeadlineExceeded
 	})
 	if err != nil {
+		// TODO
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			return local.ConvertToErrFoundConflictRecords(err, m.ptbl)
 		}

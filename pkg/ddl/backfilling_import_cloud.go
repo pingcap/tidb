@@ -162,10 +162,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 
 	if currentIdx != nil {
-		if common.ErrFoundDuplicateKeys.Equal(err) {
-			return local.ConvertToErrFoundConflictRecords(err, e.ptbl)
-		}
-		return err
+		return ingest.TryConvertToKeyExistsErr(err, currentIdx, e.ptbl.Meta())
 	}
 
 	// cannot fill the index name for subtask generated from an old version TiDB

@@ -37,8 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -833,16 +831,14 @@ func (w *indexIngestWorker) initSessCtx() {
 func (w *indexIngestWorker) Close() {
 	// TODO(lance6716): unify the real write action for engineInfo and external
 	// writer.
-	for _, writer := range w.writers {
+	for i, writer := range w.writers {
 		ew, ok := writer.(*external.Writer)
 		if !ok {
 			break
 		}
 		err := ew.Close(w.ctx)
 		if err != nil {
-			if common.ErrFoundDuplicateKeys.Equal(err) {
-				err = local.ConvertToErrFoundConflictRecords(err, w.tbl)
-			}
+			err = ingest.TryConvertToKeyExistsErr(err, w.indexes[i].Meta(), w.tbl.Meta())
 			w.ctx.onError(err)
 		}
 	}
@@ -862,11 +858,8 @@ func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, nextKey
 	oprStartTime := time.Now()
 	vars := w.se.GetSessionVars()
 	sc := vars.StmtCtx
-	cnt, lastHandle, err := writeChunk(w.ctx, w.writers, w.indexes, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk)
+	cnt, lastHandle, err := writeChunk(w.ctx, w.writers, w.indexes, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta())
 	if err != nil || cnt == 0 {
-		if common.ErrFoundDuplicateKeys.Equal(err) {
-			err = local.ConvertToErrFoundConflictRecords(err, w.tbl)
-		}
 		return 0, nil, err
 	}
 	logSlowOperations(time.Since(oprStartTime), "writeChunk", 3000)
