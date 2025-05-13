@@ -1013,7 +1013,23 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 		}
 	}
 	if len(b) > 0 {
-		return decodeHandleInIndexKey(b)
+		handle, err := decodeHandleInIndexKey(b)
+		if err != nil {
+			return nil, err
+		}
+		// If len(value) >= 9, it may contains partition id, 9 for partition id.
+		// We should decode it and return a partition handle.
+		if len(value) >= 9 {
+			seg := SplitIndexValue(value)
+			if len(seg.PartitionID) != 0 {
+				_, pid, err := codec.DecodeInt(seg.PartitionID)
+				if err != nil {
+					return nil, err
+				}
+				handle = kv.NewPartitionHandle(pid, handle)
+			}
+		}
+		return handle, nil
 	} else if len(value) >= 8 {
 		return DecodeHandleInIndexValue(value)
 	}
