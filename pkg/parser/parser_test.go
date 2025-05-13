@@ -8012,3 +8012,28 @@ func TestSecondaryEngineAttribute(t *testing.T) {
 
 	RunTest(t, table, false)
 }
+
+func TestAlterLLM(t *testing.T) {
+	table := []testCase{
+		{`alter llm platform openai k "v"`, true, `ALTER LLM PLATFORM openai k _UTF8MB4'v'`},
+		{`alter llm platform openai k1 "v1" k2 "v2"`, true, `ALTER LLM PLATFORM openai k1 _UTF8MB4'v1' k2 _UTF8MB4'v2'`},
+		{`alter llm platform openai n 1`, true, `ALTER LLM PLATFORM openai n 1`},
+		{`alter llm platform openai k "v" n 1`, true, `ALTER LLM PLATFORM openai k _UTF8MB4'v' n 1`},
+		{`create llm model test platform openai model 'gpt-3'`, true, "CREATE LLM MODEL test platform `openai` model _UTF8MB4'gpt-3'"},
+		{`create llm model test platform openai model 'gpt-3' region "us"`, true, "CREATE LLM MODEL test platform `openai` model _UTF8MB4'gpt-3' region _UTF8MB4'us'"},
+		{`create llm model test platform openai model 'gpt-3' region "us" max_token 233`, true,
+			"CREATE LLM MODEL test platform `openai` model _UTF8MB4'gpt-3' region _UTF8MB4'us' max_token 233"},
+		{`alter llm model test platform openai model 'gpt-3'`, true, "ALTER LLM MODEL test platform `openai` model _UTF8MB4'gpt-3'"},
+		{`alter llm model test platform openai model 'gpt-3' region "us"`, true, "ALTER LLM MODEL test platform `openai` model _UTF8MB4'gpt-3' region _UTF8MB4'us'"},
+		{`alter llm model test platform openai model 'gpt-3' region "us" max_token 233`, true,
+			"ALTER LLM MODEL test platform `openai` model _UTF8MB4'gpt-3' region _UTF8MB4'us' max_token 233"},
+		{"DROP LLM MODEL test1", true, "DROP LLM MODEL test1"},
+
+		{`ALTER LLM PLATFORM openai api_key 'xxx' max_token 1000 timeout 0.5`, true, "ALTER LLM PLATFORM openai api_key _UTF8MB4'xxx' max_token 1000 timeout 0.5"},
+		{`CREATE LLM MODEL model1 platform 'openai' model 'gpt-3' max_token 500`, true, "CREATE LLM MODEL model1 platform _UTF8MB4'openai' model _UTF8MB4'gpt-3' max_token 500"},
+		{`ALTER LLM MODEL model1 max_token 100 status 'enabled'`, true, "ALTER LLM MODEL model1 max_token 100 status _UTF8MB4'enabled'"},
+		{`DROP LLM MODEL model1`, true, "DROP LLM MODEL model1"},
+	}
+
+	RunTest(t, table, false)
+}
