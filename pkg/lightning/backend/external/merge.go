@@ -46,6 +46,7 @@ func MergeOverlappingFiles(
 	newFilePrefix string,
 	blockSize int,
 	onClose OnCloseFunc,
+	collector Collector,
 	concurrency int,
 	checkHotspot bool,
 ) error {
@@ -74,6 +75,7 @@ func MergeOverlappingFiles(
 				uuid.New().String(),
 				blockSize,
 				onClose,
+				collector,
 				checkHotspot,
 			)
 		})
@@ -138,6 +140,7 @@ func mergeOverlappingFilesInternal(
 	writerID string,
 	blockSize int,
 	onClose OnCloseFunc,
+	collector Collector,
 	checkHotspot bool,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx).With(
@@ -179,7 +182,6 @@ func mergeOverlappingFilesInternal(
 		}
 	}()
 
-	collector := GetCollector(ctx)
 	bytes := int64(0)
 	rowCnt := int64(0)
 
@@ -194,12 +196,14 @@ func mergeOverlappingFilesInternal(
 
 		bytes += int64(len(key) + len(value) + lengthBytes*2)
 		rowCnt++
-		if bytes > 104857600 { // update metrics every 100MB
+		if bytes > 104857600 && collector != nil { // update metrics every 100MB
 			collector.OnRead(bytes, rowCnt)
 			bytes = 0
 			rowCnt = 0
 		}
 	}
-	collector.OnRead(bytes, rowCnt)
+	if collector != nil {
+		collector.OnRead(bytes, rowCnt)
+	}
 	return iter.Error()
 }

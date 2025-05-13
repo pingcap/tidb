@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -1293,9 +1292,6 @@ func (w *Writer) flush(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
-
-	collector := external.GetCollector(ctx)
-	collector.OnWrite(int64(w.writerSize.Load()), int64(w.batchCount))
 
 	writer := w.writer.Load()
 	if writer != nil {

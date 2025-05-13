@@ -53,8 +53,9 @@ type encodeAndSortOperator struct {
 	wg       tidbutil.WaitGroupWrapper
 	firstErr atomic.Error
 
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx       context.Context
+	cancel    context.CancelFunc
+	collector external.Collector
 
 	taskID, subtaskID int64
 	tableImporter     *importer.TableImporter
@@ -73,11 +74,13 @@ func newEncodeAndSortOperator(
 	sharedVars *SharedVars,
 	subtaskID int64,
 	concurrency int,
+	collector external.Collector,
 ) *encodeAndSortOperator {
 	subCtx, cancel := context.WithCancel(ctx)
 	op := &encodeAndSortOperator{
 		ctx:           subCtx,
 		cancel:        cancel,
+		collector:     collector,
 		taskID:        executor.taskID,
 		subtaskID:     subtaskID,
 		tableImporter: executor.tableImporter,
@@ -198,7 +201,7 @@ func (w *chunkWorker) HandleTask(task *importStepMinimalTask, _ func(workerpool.
 	// we don't use the input send function, it makes workflow more complex
 	// we send result to errCh and handle it here.
 	executor := newImportMinimalTaskExecutor(task)
-	if err := executor.Run(w.ctx, w.dataWriter, w.indexWriter); err != nil {
+	if err := executor.Run(w.ctx, w.dataWriter, w.indexWriter, w.op.collector); err != nil {
 		w.op.onError(err)
 	}
 }

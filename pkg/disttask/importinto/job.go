@@ -148,6 +148,7 @@ func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error
 	if err != nil {
 		return nil, err
 	}
+
 	for _, summary := range summaries {
 		importedRows += uint64(summary.OutputRowCnt)
 	}

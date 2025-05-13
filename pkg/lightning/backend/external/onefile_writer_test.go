@@ -212,6 +212,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		"mergeID",
 		1000,
 		nil,
+		nil,
 		true,
 	))
 
@@ -316,6 +317,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		"mergeID",
 		1000,
 		onClose,
+		nil
 		true,
 	))
 

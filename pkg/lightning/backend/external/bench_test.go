@@ -504,6 +504,7 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		mergeOutput,
 		DefaultBlockSize,
 		onClose,
+		nil,
 		s.concurrency,
 		s.mergeIterHotspot,
 	)

@@ -144,7 +144,7 @@ func TestFileChunkProcess(t *testing.T) {
 		checksum := verify.NewKVGroupChecksumWithKeyspace(nil)
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, checksum,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, checksum, nil,
 		)
 		require.NoError(t, processor.Process(ctx))
 		require.True(t, ctrl.Satisfied())

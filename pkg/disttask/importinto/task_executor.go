@@ -183,11 +183,18 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		},
 		nil,
 	)
-
-	ctxWithCollector := external.WithCollector(ctx, collector)
+	if s.tableImporter.IsLocalSort() {
+		collector = external.NewCollector(
+			func(bytes, rows int64) {
+				s.OutputBytes.Add(bytes)
+				s.OutputRowCnt.Add(rows)
+			},
+			nil,
+		)
+	}
 
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(ctxWithCollector, s, sharedVars, subtask.ID, int(s.GetResource().CPU.Capacity()))
+	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID, int(s.GetResource().CPU.Capacity()), collector)
 	op.SetSource(source)
 	pipeline := operator.NewAsyncPipeline(op)
 	if err = pipeline.Execute(); err != nil {
@@ -221,7 +228,7 @@ outer:
 	return s.onFinished(ctx, subtask)
 }
 
-func (s *importStepExecutor) RealtimeSummary() any {
+func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return s.ToSummary()
 }
 
@@ -372,8 +379,6 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		nil,
 	)
 
-	ctxWithCollector := external.WithCollector(ctx, collector)
-
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
 
 	partSize := m.dataKVPartSize
@@ -381,13 +386,14 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		partSize = m.indexKVPartSize
 	}
 	err = external.MergeOverlappingFiles(
-		logutil.WithFields(ctxWithCollector, zap.String("kv-group", sm.KVGroup), zap.Int64("subtask-id", subtask.ID)),
+		logutil.WithFields(ctx, zap.String("kv-group", sm.KVGroup), zap.Int64("subtask-id", subtask.ID)),
 		sm.DataFiles,
 		m.controller.GlobalSortStore,
 		partSize,
 		prefix,
 		getKVGroupBlockSize(sm.KVGroup),
 		onClose,
+		collector,
 		int(m.GetResource().CPU.Capacity()),
 		false,
 	)
@@ -433,7 +439,7 @@ func (m *mergeSortStepExecutor) Cleanup(ctx context.Context) (err error) {
 	return m.BaseStepExecutor.Cleanup(ctx)
 }
 
-func (m *mergeSortStepExecutor) RealtimeSummary() any {
+func (m *mergeSortStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return m.ToSummary()
 }
 
@@ -510,7 +516,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		return err
 	}
 
-	collector := external.NewCollector(
+	localBackend.SetCollector(external.NewCollector(
 		func(bytes, rows int64) {
 			e.InputBytes.Add(bytes)
 			e.InputRowCnt.Add(rows)
@@ -521,17 +527,16 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 				e.OutputRowCnt.Add(rows)
 			}
 		},
-	)
+	))
 
-	ctxWithCollector := external.WithCollector(ctx, collector)
-	err = localBackend.ImportEngine(ctxWithCollector, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return e.onFinished(ctx, subtask)
 }
 
-func (e *writeAndIngestStepExecutor) RealtimeSummary() any {
+func (e *writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return e.ToSummary()
 }
 

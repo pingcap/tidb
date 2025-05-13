@@ -168,48 +168,33 @@ type Collector interface {
 	OnWrite(bytes, rows int64)
 }
 
-type collectFunc func(bytes, rows int64)
-
+// collector is the implement of Collector interface
 type collector struct {
-	readFunc  collectFunc
-	writeFunc collectFunc
+	readFunc  func(bytes, rows int64)
+	writeFunc func(bytes, rows int64)
 }
 
 func (c *collector) OnRead(bytes, rows int64) {
-	if c.readFunc != nil {
-		c.readFunc(bytes, rows)
-	}
+	c.readFunc(bytes, rows)
 }
 
 func (c *collector) OnWrite(bytes, rows int64) {
-	if c.writeFunc != nil {
-		c.writeFunc(bytes, rows)
-	}
+	c.writeFunc(bytes, rows)
 }
 
+func dummyCollect(_, _ int64) {}
+
 // NewCollector returns a new collector with the provided read and write functions.
-func NewCollector(readFunc, writeFunc collectFunc) Collector {
+func NewCollector(readFunc, writeFunc func(bytes, rows int64)) Collector {
+	if readFunc == nil {
+		readFunc = dummyCollect
+	}
+	if writeFunc == nil {
+		writeFunc = dummyCollect
+	}
 	return &collector{
 		readFunc:  readFunc,
 		writeFunc: writeFunc,
-	}
-}
-
-var onCollectorKey string = "common-metrics"
-
-// WithCollector returns a new context with the provided collector.
-func WithCollector(ctx context.Context, c Collector) context.Context {
-	return context.WithValue(ctx, onCollectorKey, c)
-}
-
-// GetCollector returns the collector function stored in the context.
-func GetCollector(ctx context.Context) Collector {
-	if m, ok := ctx.Value(onCollectorKey).(Collector); ok {
-		return m
-	}
-	return &collector{
-		readFunc:  nil,
-		writeFunc: nil,
 	}
 }
 

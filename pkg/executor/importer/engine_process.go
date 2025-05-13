@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
@@ -32,6 +33,7 @@ func ProcessChunk(
 	dataEngine, indexEngine *backend.OpenedEngine,
 	logger *zap.Logger,
 	groupChecksum *verification.KVGroupChecksum,
+	collector external.Collector,
 ) error {
 	// if the key are ordered, LocalWrite can optimize the writing.
 	// table has auto-incremented _tidb_rowid must satisfy following restrictions:
@@ -64,7 +66,7 @@ func ProcessChunk(
 		}
 	}()
 
-	return ProcessChunkWithWriter(ctx, chunk, tableImporter, dataWriter, indexWriter, logger, groupChecksum)
+	return ProcessChunkWithWriter(ctx, chunk, tableImporter, dataWriter, indexWriter, logger, groupChecksum, collector)
 }
 
 // ProcessChunkWithWriter processes a chunk, and write kv pairs to dataWriter and indexWriter.
@@ -75,6 +77,7 @@ func ProcessChunkWithWriter(
 	dataWriter, indexWriter backend.EngineWriter,
 	logger *zap.Logger,
 	groupChecksum *verification.KVGroupChecksum,
+	collector external.Collector,
 ) error {
 	encoder, err := tableImporter.getKVEncoder(chunk)
 	if err != nil {
@@ -102,12 +105,12 @@ func ProcessChunkWithWriter(
 		}()
 		cp = NewFileChunkProcessor(
 			parser, encoder, tableImporter.GetKeySpace(), chunk, logger,
-			tableImporter.diskQuotaLock, dataWriter, indexWriter, groupChecksum,
+			tableImporter.diskQuotaLock, dataWriter, indexWriter, groupChecksum, collector,
 		)
 	case DataSourceTypeQuery:
 		cp = newQueryChunkProcessor(
 			tableImporter.chunkCh, encoder, tableImporter.GetKeySpace(), logger,
-			tableImporter.diskQuotaLock, dataWriter, indexWriter, groupChecksum,
+			tableImporter.diskQuotaLock, dataWriter, indexWriter, groupChecksum, collector,
 		)
 	}
 	err = cp.Process(ctx)

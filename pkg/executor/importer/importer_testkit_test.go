@@ -316,7 +316,7 @@ func TestProcessChunkWith(t *testing.T) {
 		kvWriter := mock.NewMockEngineWriter(ctrl)
 		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		checksum := verify.NewKVGroupChecksumWithKeyspace(keyspace)
-		err := importer.ProcessChunkWithWriter(ctx, chunkInfo, ti, kvWriter, kvWriter, zap.NewExample(), checksum)
+		err := importer.ProcessChunkWithWriter(ctx, chunkInfo, ti, kvWriter, kvWriter, zap.NewExample(), checksum, nil)
 		require.NoError(t, err)
 		checksumMap := checksum.GetInnerChecksums()
 		require.Len(t, checksumMap, 1)

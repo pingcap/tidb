@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -454,8 +453,6 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 		regionMaxSize = j.regionSplitSize * 4 / 3
 	}
 
-	collector := external.GetCollector(ctx)
-
 	flushKVs := func() error {
 		req.Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 		preparedMsg := &grpc.PreparedMsg{}
@@ -480,8 +477,10 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 		}
 
 		// TODO(joechenrh): consider duplication for OnRead
-		collector.OnRead(size, int64(count))
-		collector.OnWrite(size, int64(count))
+		if local.collector != nil {
+			local.collector.OnRead(size, int64(count))
+			local.collector.OnWrite(size, int64(count))
+		}
 
 		failpoint.Inject("afterFlushKVs", func() {
 			log.FromContext(ctx).Info(fmt.Sprintf("afterFlushKVs count=%d,size=%d", count, size))

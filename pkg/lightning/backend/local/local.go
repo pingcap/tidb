@@ -518,6 +518,8 @@ type Backend struct {
 	tls       *common.TLS
 	tikvCodec tikvclient.Codec
 
+	collector external.Collector
+
 	BackendConfig
 	engineMgr *engineManager
 
@@ -691,6 +693,10 @@ func NewBackendForTest(ctx context.Context, config BackendConfig, storeHelper St
 	}
 
 	return local, nil
+}
+
+func (local *Backend) SetCollector(c external.Collector) {
+	local.collector = c
 }
 
 // TotalMemoryConsume returns the total memory usage of the local backend.

@@ -593,7 +593,8 @@ func (mgr *TaskManager) GetAllSubtaskSummaryByStepAndState(ctx context.Context, 
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nil, err
 	}
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select summary from mysql.tidb_background_subtask
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		`select summary from mysql.tidb_background_subtask
 		where task_key = %? and state = %? and step = %?`,
 		taskID, state, step)
 	if err != nil {
@@ -619,7 +620,7 @@ func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, st
 		return 0, err
 	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select
-    	cast(sum(json_extract(summary, '$.row_count')) as signed) as row_count
+    	cast(sum(json_extract(summary, '$.input_rows')) as signed) as row_count
 		from (
 			select summary from mysql.tidb_background_subtask where task_key = %? and step = %?
 			union all

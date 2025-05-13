@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -575,7 +576,7 @@ func TestSubTaskTable(t *testing.T) {
 	rowCount, err := sm.GetSubtaskRowCount(ctx, 2, proto.StepOne)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), rowCount)
-	require.NoError(t, sm.UpdateSubtaskRowCount(ctx, subtaskID, 100))
+	require.NoError(t, sm.UpdateSubtaskSummary(ctx, subtaskID, &execute.SubtaskSummary{InputRowCnt: 100}))
 	rowCount, err = sm.GetSubtaskRowCount(ctx, 2, proto.StepOne)
 	require.NoError(t, err)
 	require.Equal(t, int64(100), rowCount)

@@ -188,9 +188,10 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 
 // chunkEncoder encodes data from readFn and sends encoded data to sendFn.
 type chunkEncoder struct {
-	readFn encodeReaderFn
-	offset int64
-	sendFn func(ctx context.Context, batch *encodedKVGroupBatch) error
+	readFn    encodeReaderFn
+	offset    int64
+	sendFn    func(ctx context.Context, batch *encodedKVGroupBatch) error
+	collector external.Collector
 
 	chunkName string
 	logger    *zap.Logger
@@ -209,6 +210,7 @@ func newChunkEncoder(
 	readFn encodeReaderFn,
 	offset int64,
 	sendFn func(ctx context.Context, batch *encodedKVGroupBatch) error,
+	collector external.Collector,
 	logger *zap.Logger,
 	encoder KVEncoder,
 	keyspace []byte,
@@ -218,6 +220,7 @@ func newChunkEncoder(
 		readFn:        readFn,
 		offset:        offset,
 		sendFn:        sendFn,
+		collector:     collector,
 		logger:        logger,
 		encoder:       encoder,
 		keyspace:      keyspace,
@@ -240,8 +243,6 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		// table name doesn't matter here, all those metrics will have task-id label.
 		encodedRowsCounter = metrics.RowsCounter.WithLabelValues(metric.StateRestored, "")
 	}
-
-	collectorFuncs := external.GetCollector(ctx)
 
 	recordSendReset := func() error {
 		if len(rowBatch) == 0 {
@@ -283,7 +284,9 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		}
 
 		dataKVS, _ := kvGroupBatch.groupChecksum.DataAndIndexSumKVS()
-		collectorFuncs.OnRead(delta, int64(dataKVS))
+		if p.collector != nil {
+			p.collector.OnRead(delta, int64(dataKVS))
+		}
 
 		// the ownership of rowBatch is transferred to the receiver of sendFn, we should
 		// not touch it anymore.
@@ -395,6 +398,7 @@ func NewFileChunkProcessor(
 	dataWriter backend.EngineWriter,
 	indexWriter backend.EngineWriter,
 	groupChecksum *verify.KVGroupChecksum,
+	collector external.Collector,
 ) ChunkProcessor {
 	chunkLogger := logger.With(zap.String("key", chunk.GetKey()))
 	deliver := &dataDeliver{
@@ -412,6 +416,7 @@ func NewFileChunkProcessor(
 			parserEncodeReader(parser, chunk.Chunk.EndOffset, chunk.GetKey()),
 			chunk.Chunk.Offset,
 			deliver.sendEncodedData,
+			collector,
 			chunkLogger,
 			encoder,
 			keyspace,
@@ -538,6 +543,7 @@ func newQueryChunkProcessor(
 	dataWriter backend.EngineWriter,
 	indexWriter backend.EngineWriter,
 	groupChecksum *verify.KVGroupChecksum,
+	collector external.Collector,
 ) ChunkProcessor {
 	chunkName := "import-from-select"
 	chunkLogger := logger.With(zap.String("key", chunkName))
@@ -556,6 +562,7 @@ func newQueryChunkProcessor(
 			queryRowEncodeReader(chunkCh),
 			-1,
 			deliver.sendEncodedData,
+			collector,
 			chunkLogger,
 			encoder,
 			keyspace,

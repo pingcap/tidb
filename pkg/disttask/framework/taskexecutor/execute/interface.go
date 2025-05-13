@@ -44,7 +44,7 @@ type StepExecutor interface {
 	RunSubtask(ctx context.Context, subtask *proto.Subtask) error
 
 	// RealtimeSummary returns the realtime summary of the running subtask by this executor.
-	RealtimeSummary() any
+	RealtimeSummary() *SubtaskSummary
 
 	// Cleanup is used to clean up the environment for this step.
 	// the returned error will not affect task/subtask state, it's only logged,

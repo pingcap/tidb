@@ -178,6 +178,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			"/test2",
 			mergeMemSize,
 			closeFn,
+			nil,
 			1,
 			true,
 		))

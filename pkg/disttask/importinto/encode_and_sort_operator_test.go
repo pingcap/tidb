@@ -81,7 +81,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	}
 
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(context.Background(), executorForParam, nil, 3, 1)
+	op := newEncodeAndSortOperator(context.Background(), executorForParam, nil, 3, 1, nil)
 	op.SetSource(source)
 	require.NoError(t, op.Open())
 	require.Greater(t, len(op.String()), 0)
