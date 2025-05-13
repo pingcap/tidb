@@ -5505,7 +5505,7 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (base.Plan, error) {
 	return p, nil
 }
 
-func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, explainRows [][]string, analyze bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl) (base.Plan, error) {
+func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, explainRows [][]string, analyze, explore bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl, sqlDigest string) (base.Plan, error) {
 	format = strings.ToLower(format)
 	if format == types.ExplainFormatTrueCardCost && !analyze {
 		return nil, errors.Errorf("'explain format=%v' cannot work without 'analyze', please use 'explain analyze format=%v'", format, format)
@@ -5515,6 +5515,8 @@ func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, expl
 		TargetPlan:       targetPlan,
 		Format:           format,
 		Analyze:          analyze,
+		Explore:          explore,
+		SQLDigest:        sqlDigest,
 		ExecStmt:         execStmt,
 		ExplainRows:      explainRows,
 		RuntimeStatsColl: runtimeStats,
@@ -5547,7 +5549,7 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (base.Plan
 	if explainForFormat == types.ExplainFormatROW {
 		explainRows = processInfo.PlanExplainRows
 	}
-	return b.buildExplainPlan(targetPlan, explainForFormat, explainRows, false, nil, processInfo.RuntimeStatsColl)
+	return b.buildExplainPlan(targetPlan, explainForFormat, explainRows, false, false, nil, processInfo.RuntimeStatsColl, "")
 }
 
 func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt) (base.Plan, error) {
@@ -5560,13 +5562,16 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 		return nil, err
 	}
 
-	nodeW := resolve.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
-	targetPlan, _, err := OptimizeAstNode(ctx, sctx, nodeW, b.is)
-	if err != nil {
-		return nil, err
+	var targetPlan base.Plan
+	if explain.Stmt != nil && !explain.Explore {
+		nodeW := resolve.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
+		targetPlan, _, err = OptimizeAstNode(ctx, sctx, nodeW, b.is)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	return b.buildExplainPlan(targetPlan, explain.Format, nil, explain.Analyze, explain.Stmt, nil)
+	return b.buildExplainPlan(targetPlan, explain.Format, nil, explain.Analyze, explain.Explore, explain.Stmt, nil, explain.SQLDigest)
 }
 
 func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) (base.Plan, error) {

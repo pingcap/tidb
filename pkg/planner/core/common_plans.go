@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/texttree"
@@ -843,6 +845,8 @@ type Explain struct {
 	TargetPlan       base.Plan
 	Format           string
 	Analyze          bool
+	Explore          bool   // EXPLAIN EXPLORE statement
+	SQLDigest        string // "EXPLAIN EXPLORE <sql_digest>"
 	ExecStmt         ast.StmtNode
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 
@@ -912,6 +916,9 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"binary plan"}
 	case format == types.ExplainFormatTiDBJSON:
 		fieldNames = []string{"TiDB_JSON"}
+	case e.Explore:
+		fieldNames = []string{"statement", "binding_hint", "plan", "plan_digest", "avg_latency", "exec_times", "avg_scan_rows",
+			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -929,8 +936,48 @@ func (e *Explain) prepareSchema() error {
 	return nil
 }
 
+func (e *Explain) renderResultForExplore() error {
+	bindingHandle := domain.GetDomain(e.SCtx()).BindingHandle()
+	charset, collation := e.SCtx().GetSessionVars().GetCharsetInfo()
+	currentDB := e.SCtx().GetSessionVars().CurrentDB
+
+	sqlOrDigest := e.SQLDigest
+	if sqlOrDigest == "" {
+		sqlOrDigest = parser.RestoreWithDefaultDB(e.ExecStmt, currentDB, "")
+	}
+	plans, err := bindingHandle.ShowPlansForSQL(currentDB, sqlOrDigest, charset, collation)
+	if err != nil {
+		return err
+	}
+	for _, p := range plans {
+		hintStr, err := p.Binding.Hint.Restore()
+		if err != nil {
+			return err
+		}
+
+		e.Rows = append(e.Rows, []string{
+			p.Binding.OriginalSQL,
+			hintStr,
+			p.Plan,
+			p.PlanDigest,
+			strconv.FormatFloat(p.AvgLatency, 'f', -1, 64),
+			strconv.Itoa(int(p.ExecTimes)),
+			strconv.FormatFloat(p.AvgScanRows, 'f', -1, 64),
+			strconv.FormatFloat(p.AvgReturnedRows, 'f', -1, 64),
+			strconv.FormatFloat(p.LatencyPerReturnRow, 'f', -1, 64),
+			strconv.FormatFloat(p.ScanRowsPerReturnRow, 'f', -1, 64),
+			p.Recommend,
+			p.Reason})
+	}
+	return nil
+}
+
 // RenderResult renders the explain result as specified format.
 func (e *Explain) RenderResult() error {
+	if e.Explore {
+		return e.renderResultForExplore()
+	}
+
 	if e.TargetPlan == nil {
 		return nil
 	}
