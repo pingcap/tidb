@@ -52,7 +52,7 @@ const (
 type conflictKVHandler interface {
 	init() error
 	run(context.Context, chan *external.KVPair) error
-	getCollector() *conflictRowCollector
+	getCollectResult() *collectConflictResult
 	close(context.Context) error
 }
 
@@ -93,8 +93,11 @@ func (h *baseConflictKVHandler) run(ctx context.Context, pairCh chan *external.K
 	return nil
 }
 
-func (h *baseConflictKVHandler) getCollector() *conflictRowCollector {
-	return h.collector
+func (h *baseConflictKVHandler) getCollectResult() *collectConflictResult {
+	if h.collector != nil {
+		return h.collector.collectConflictResult
+	}
+	return nil
 }
 
 func (h *baseConflictKVHandler) close(ctx context.Context) error {
@@ -300,8 +303,7 @@ func handleKVGroupConflicts(
 	store storage.ExternalStorage,
 	kvGroup string,
 	ci *common.ConflictInfo,
-	mergeCollectorResultFn func(*conflictRowCollector),
-) (err error) {
+) (result *collectConflictResult, err error) {
 	failpoint.Inject("forceHandleConflictsBySingleThread", func() {
 		concurrency = 1
 	})
@@ -335,6 +337,8 @@ func handleKVGroupConflicts(
 		// AST node, and data race.
 		return handler.init()
 	}
+	result = newCollectConflictResultForMerge()
+	var mu sync.Mutex
 	for i := 0; i < concurrency; i++ {
 		handler := newHandlerFn(kvGroup)
 		eg.Go(func() error {
@@ -348,13 +352,14 @@ func handleKVGroupConflicts(
 			if err := handler.close(egCtx); err != nil {
 				return err
 			}
-			if mergeCollectorResultFn != nil {
-				mergeCollectorResultFn(handler.getCollector())
-			}
+			res := handler.getCollectResult()
+			mu.Lock()
+			result.merge(res)
+			mu.Unlock()
 			return nil
 		})
 	}
-	return eg.Wait()
+	return result, eg.Wait()
 }
 
 func readOneFile(ctx context.Context, store storage.ExternalStorage, file string, outCh chan *external.KVPair) error {
