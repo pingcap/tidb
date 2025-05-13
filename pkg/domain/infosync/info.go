@@ -129,7 +129,6 @@ type InfoSyncer struct {
 	tiflashReplicaManager TiFlashReplicaManager
 	resourceManagerClient pd.ResourceManagerClient
 	infoCache             infoschemaMinTS
-	TiCIManager           TiCIManager
 }
 
 // ServerInfo represents the server's basic information.
@@ -276,10 +275,6 @@ func GlobalInfoSyncerInit(
 	is.initScheduleManager()
 	is.initTiFlashReplicaManager(codec)
 	is.initResourceManagerClient(pdCli)
-	err = is.initTiCIManager()
-	if err != nil {
-		return nil, err
-	}
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
@@ -308,16 +303,6 @@ func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
 	is.managerMu.mu.RLock()
 	defer is.managerMu.mu.RUnlock()
 	return is.managerMu.SessionManager
-}
-
-// TODO: init TiCI manager by PD when TiCI register in PD.
-func (is *InfoSyncer) initTiCIManager() error {
-	tiCIManager, err := NewTiCIManager("0.0.0.0", "50051")
-	if err != nil {
-		return err
-	}
-	is.TiCIManager = tiCIManager
-	return nil
 }
 
 func (is *InfoSyncer) initLabelRuleManager() {
