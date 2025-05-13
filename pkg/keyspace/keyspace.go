@@ -60,7 +60,7 @@ func GetKeyspaceNameBySettings() (keyspaceName string) {
 func GetKeyspaceIDBySettings() (keyspaceID *uint32) {
 	keyspaceName := config.GetGlobalKeyspaceName()
 	if !IsKeyspaceNameEmpty(keyspaceName) && kerneltype.IsNextGen() {
-		keyspaceIDU64, err := strconv.ParseUint(keyspaceName, 10, 32) //nolint:errcheck
+		keyspaceIDU64, err := strconv.ParseUint(keyspaceName, 10, 32)
 		if err != nil {
 			return nil
 		}
