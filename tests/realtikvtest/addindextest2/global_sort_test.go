@@ -255,26 +255,14 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 				tk.MustExec("alter table " + tn + " drop index idx_1, drop index idx_2;")
 			}
 
-			// FIXME: unify error message
-			if tc.cloudStorageURI == "" {
-				tk.MustContainErrMsg(
-					"alter table t_dup add index idx(a), add unique index idx2(b);",
-					"Duplicate entry '2' for key 't_dup.idx2'",
-				)
-				tk.MustContainErrMsg(
-					"alter table t_dup_2 add unique index idx2(b);",
-					"Duplicate entry '2' for key 't_dup_2.idx2'",
-				)
-			} else {
-				tk.MustContainErrMsg(
-					"alter table t_dup add index idx(a), add unique index idx2(b);",
-					"found index conflict records in table t_dup, index name is 't_dup.idx2'",
-				)
-				tk.MustContainErrMsg(
-					"alter table t_dup_2 add unique index idx2(b);",
-					"found index conflict records in table t_dup_2, index name is 't_dup_2.idx2'",
-				)
-			}
+			tk.MustContainErrMsg(
+				"alter table t_dup add index idx(a), add unique index idx2(b);",
+				"Duplicate entry '2' for key 't_dup.idx2'",
+			)
+			tk.MustContainErrMsg(
+				"alter table t_dup_2 add unique index idx2(b);",
+				"Duplicate entry '2' for key 't_dup_2.idx2'",
+			)
 		})
 	}
 
@@ -348,6 +336,7 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 		initDataSQL     string
 		addUniqueKeySQL string
 		errMsg          string
+		redactErrMsg    string
 	}{
 		{
 			"int index",
@@ -355,7 +344,8 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			"",
 			"insert into t values (1, 1, 1), (2, 1, 2);",
 			"alter table t add unique index idx(b);",
-			"found index conflict records in table t, index name is 't.idx', unique key is '[1]', primary key is '2'",
+			"[kv:1062]Duplicate entry '1' for key 't.idx",
+			"[kv:1062]Duplicate entry '?' for key 't.idx",
 		},
 		{
 			"int index on multi regions",
@@ -363,7 +353,8 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			"split table t between (0) and (4000) regions 4;",
 			"insert into t values (1, 1), (1001, 1), (2001, 2001), (4001, 1);",
 			"alter table t add unique index idx(b);",
-			"found index conflict records in table t, index name is 't.idx', unique key is '[1]'",
+			"[kv:1062]Duplicate entry '1' for key 't.idx'",
+			"[kv:1062]Duplicate entry '?' for key 't.idx'",
 		},
 		{
 			"varchar index",
@@ -371,7 +362,8 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			"",
 			"insert into t values (1, '1'), (2, '1');",
 			"alter table t add unique index i(data);",
-			"found index conflict records in table t, index name is 't.i', unique key is '[1]', primary key is '2'",
+			"[kv:1062]Duplicate entry '1' for key 't.i'",
+			"[kv:1062]Duplicate entry '?' for key 't.i'",
 		},
 		{
 			"combined index",
@@ -379,7 +371,8 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			"",
 			"insert into t values (1, '1'), (1, '1');",
 			"alter table t add unique index i(id, data);",
-			"found index conflict records in table t, index name is 't.i', unique key is '[1 1]', primary key is '2'",
+			"[kv:1062]Duplicate entry '1-1' for key 't.i'",
+			"[kv:1062]Duplicate entry '?' for key 't.i'",
 		},
 		{
 			"multi value index",
@@ -387,7 +380,8 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			"",
 			`insert into t values (1, '{"code":[1,1]}'), (2, '{"code":[1,1]}');`,
 			"alter table t add unique index zips( (CAST(data->'$.code' AS UNSIGNED ARRAY)));",
-			"found index conflict records in table t, index name is 't.zips', unique key is '[1]', primary key is '2'",
+			"[kv:1062]Duplicate entry '1' for key 't.zips'",
+			"[kv:1062]Duplicate entry '?' for key 't.zips'",
 		},
 		{
 			"global index",
@@ -395,7 +389,8 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			"",
 			"insert into t values (1, 1), (2, 1)",
 			"alter table t add unique index i(c) global",
-			"found index conflict records in table t, index name is 't.i', unique key is '[1]'",
+			"[kv:1062]Duplicate entry '1' for key 't.i'",
+			"[kv:1062]Duplicate entry '?' for key 't.i'",
 		},
 	}
 
@@ -441,6 +436,12 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			require.NoError(tt, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
 			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
 			checkSubtaskStepAndReset(tt, proto.BackfillStepWriteAndIngest)
+
+			// redact
+			tk.MustExec("set session tidb_redact_log = on;")
+			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.redactErrMsg)
+			tk.MustExec("set session tidb_redact_log = off;")
+			testErrStep = proto.StepInit
 		})
 	}
 }
