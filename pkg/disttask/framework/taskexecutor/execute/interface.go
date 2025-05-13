@@ -72,7 +72,6 @@ type SubtaskSummary struct {
 }
 
 // RunningSubtaskSummary is used to store the summary of a running subtask.
-// It uses atomic operations to avoid lock contention.
 type RunningSubtaskSummary struct {
 	InputRowCnt  atomic.Int64
 	InputBytes   atomic.Int64
@@ -81,7 +80,7 @@ type RunningSubtaskSummary struct {
 }
 
 // Reset resets the summary to the given row count and bytes.
-func (s *RunningSubtaskSummary) Reset(rowCount, bytes int64) {
+func (s *RunningSubtaskSummary) ResetMetrics() {
 	s.InputRowCnt.Store(0)
 	s.InputBytes.Store(0)
 	s.OutputRowCnt.Store(0)

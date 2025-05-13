@@ -261,11 +261,10 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	nextStep proto.Step,
 ) (
 	resSubtaskMeta [][]byte, err error) {
-	currStep := task.Step
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
-		zap.String("curr-step", proto.Step2Str(task.Type, currStep)),
+		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
 	)
 	taskMeta := &TaskMeta{}
@@ -365,7 +364,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		return nil, err
 	}
 
-	if err := updateTaskSummary(taskHandle, task, taskMeta, currStep, nextStep, logicalPlan); err != nil {
+	if err := updateTaskSummary(taskHandle, task, taskMeta, task.Step, nextStep, logicalPlan); err != nil {
 		return nil, err
 	}
 
@@ -565,7 +564,8 @@ func getStepOfEncode(globalSort bool) proto.Step {
 	return proto.ImportStepImport
 }
 
-// we will update taskMeta in place and make task.Meta point to the new taskMeta.
+// Update task summary in task meta.
+// We will update it in place and make task.Meta point to the new taskMeta.
 func updateTaskSummary(
 	handle storage.TaskHandle,
 	task *proto.Task, taskMeta *TaskMeta,
@@ -651,8 +651,8 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 	taskHandle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta) error {
 
-	var summary importer.Summary
-	if err := json.Unmarshal(taskMeta.TaskResult, &summary); err != nil {
+	summary := &importer.Summary{}
+	if err := json.Unmarshal(taskMeta.TaskResult, summary); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -669,7 +669,7 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 					logger.Warn("flush table stats failed", zap.Error(err))
 				}
 				exec := se.GetSQLExecutor()
-				return importer.FinishJob(ctx, exec, taskMeta.JobID, &summary)
+				return importer.FinishJob(ctx, exec, taskMeta.JobID, summary)
 			})
 		},
 	)

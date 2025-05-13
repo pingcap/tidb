@@ -646,12 +646,9 @@ func (mgr *TaskManager) UpdateSubtaskSummary(ctx context.Context, subtaskID int6
 	if err != nil {
 		return errors.Trace(err)
 	}
-	summaryStr := hack.String(summaryBytes)
-
-	// TODO(joechenrh): remove this when we find a more generalized way to update the summary.
 	_, err = mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_background_subtask set summary = %? where id = %?`,
-		summaryStr, subtaskID)
+		hack.String(summaryBytes), subtaskID)
 	return err
 }
 

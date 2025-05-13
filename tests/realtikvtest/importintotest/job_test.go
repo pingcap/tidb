@@ -62,7 +62,7 @@ func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row 
 	if jobInfo.Summary == nil {
 		s.Equal("<nil>", row[7].(string))
 	} else {
-		s.Equal(strconv.Itoa(int(jobInfo.Summary.ImportedRows)), row[7])
+		s.Equal(strconv.Itoa(int(jobInfo.Summary.PostProcessSummary.RowCnt)), row[7])
 	}
 	s.Regexp(jobInfo.ErrorMessage, row[8])
 	s.Equal(jobInfo.CreatedBy, row[12])
@@ -123,8 +123,10 @@ func (s *mockGCSSuite) TestShowJob() {
 		SourceFileSize: 3,
 		Status:         "finished",
 		Step:           "",
-		Summary: &importer.JobSummary{
-			ImportedRows: 2,
+		Summary: &importer.Summary{
+			PostProcessSummary: importer.StepSummary{
+				RowCnt: 2,
+			},
 		},
 		ErrorMessage: "",
 	}
@@ -203,8 +205,10 @@ func (s *mockGCSSuite) TestShowJob() {
 					SourceFileSize: 6,
 					Status:         "running",
 					Step:           "importing",
-					Summary: &importer.JobSummary{
-						ImportedRows: 2,
+					Summary: &importer.Summary{
+						PostProcessSummary: importer.StepSummary{
+							RowCnt: 2,
+						},
 					},
 					ErrorMessage: "",
 				}
@@ -230,7 +234,7 @@ func (s *mockGCSSuite) TestShowJob() {
 			} else if newVal == 2 {
 				rows = tk2.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
 				s.Len(rows, 1)
-				jobInfo.Summary.ImportedRows = 4
+				jobInfo.Summary.PostProcessSummary.RowCnt = 4
 				s.compareJobInfoWithoutTime(jobInfo, rows[0])
 				// resume the taskexecutor, need disable failpoint first, otherwise the post-process subtask will be blocked
 				s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/syncAfterSubtaskFinish"))
@@ -293,8 +297,10 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID1)).Rows()
 	s.Len(rows, 1)
 	jobInfo.Status = "finished"
-	jobInfo.Summary = &importer.JobSummary{
-		ImportedRows: 2,
+	jobInfo.Summary = &importer.Summary{
+		PostProcessSummary: importer.StepSummary{
+			RowCnt: 2,
+		},
 	}
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1", "2"))

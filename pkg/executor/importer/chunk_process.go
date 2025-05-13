@@ -283,8 +283,8 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 			return err
 		}
 
-		dataKVS, _ := kvGroupBatch.groupChecksum.DataAndIndexSumKVS()
 		if p.collector != nil {
+			dataKVS, _ := kvGroupBatch.groupChecksum.DataAndIndexSumKVS()
 			p.collector.OnRead(delta, int64(dataKVS))
 		}
 

@@ -60,9 +60,6 @@ type OneFileWriter struct {
 	onClose OnCloseFunc
 	closed  bool
 
-	outSize   uint64
-	outRowCnt uint64
-
 	// for duplicate detection.
 	onDup      engineapi.OnDuplicateKey
 	pivotKey   []byte

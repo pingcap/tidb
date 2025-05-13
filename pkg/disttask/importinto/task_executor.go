@@ -132,7 +132,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		task.End(zapcore.ErrorLevel, err)
 	}()
 
-	s.Reset(0, 0)
+	s.ResetMetrics()
 
 	bs := subtask.Meta
 	var subtaskMeta ImportStepMeta
@@ -178,20 +178,16 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 
 	collector := external.NewCollector(
 		func(bytes, rows int64) {
-			s.InputBytes.Add(bytes)
-			s.InputRowCnt.Add(rows)
+			if s.tableImporter.IsLocalSort() {
+				s.OutputBytes.Add(bytes)
+				s.OutputRowCnt.Add(rows)
+			} else {
+				s.InputBytes.Add(bytes)
+				s.InputRowCnt.Add(rows)
+			}
 		},
 		nil,
 	)
-	if s.tableImporter.IsLocalSort() {
-		collector = external.NewCollector(
-			func(bytes, rows int64) {
-				s.OutputBytes.Add(bytes)
-				s.OutputRowCnt.Add(rows)
-			},
-			nil,
-		)
-	}
 
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
 	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID, int(s.GetResource().CPU.Capacity()), collector)
@@ -249,6 +245,15 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 	}
 
 	if s.tableImporter.IsLocalSort() {
+		// TODO: we should close and cleanup engine in all case, since there's no checkpoint.
+		s.logger.Info("import data engine", zap.Int32("engine-id", subtaskMeta.ID))
+		closedDataEngine, err := sharedVars.DataEngine.Close(ctx)
+		if err != nil {
+			return err
+		}
+		if _, err := s.tableImporter.ImportAndCleanup(ctx, closedDataEngine); err != nil {
+			return err
+		}
 		s.logger.Info("import index engine", zap.Int32("engine-id", subtaskMeta.ID))
 		if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
 			return err
@@ -346,7 +351,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		return errors.Trace(err)
 	}
 
-	m.Reset(int64(sm.TotalKVCnt), int64(sm.TotalKVSize))
+	m.ResetMetrics()
 
 	// read merge sort step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {
@@ -395,8 +400,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		onClose,
 		collector,
 		int(m.GetResource().CPU.Capacity()),
-		false,
-	)
+		false)
 	logger.Info(
 		"merge sort finished",
 		zap.Uint64("total-kv-size", m.subtaskSortedKVMeta.TotalKVSize),
@@ -473,7 +477,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		return errors.Trace(err)
 	}
 
-	e.Reset(int64(sm.TotalKVCnt), int64(sm.TotalKVSize))
+	e.ResetMetrics()
 
 	// read write and ingest step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {
