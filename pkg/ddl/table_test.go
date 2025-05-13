@@ -865,4 +865,18 @@ func TestRefreshMetaBasic(t *testing.T) {
 	require.Equal(t, oldSchemaVer+1, newSchemaVer)
 	_, err = domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
+
+	// drop table t3 by txn
+	tk.MustExec("create table t3(id int)")
+	require.True(t, ok)
+	t3TableInfo := getClonedTableInfoFromDomain(t, "test", "t3", domain)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	err = meta.NewMutator(txn).DropTableOrView(dbInfo.ID, t3TableInfo.ID)
+	require.NoError(t, err)
+	_, ok = domain.InfoSchema().TableByID(context.Background(), t3TableInfo.ID)
+	require.True(t, ok)
+	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, t3TableInfo.ID)
+	_, ok = domain.InfoSchema().TableByID(context.Background(), t3TableInfo.ID)
+	require.False(t, ok)
 }
