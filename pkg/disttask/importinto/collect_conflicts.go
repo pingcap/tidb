@@ -102,7 +102,8 @@ func (e *collectConflictsStepExecutor) RunSubtask(ctx context.Context, subtask *
 	e.resetForNewSubtask(subtask.ID)
 
 	for kvGroup, ci := range stepMeta.Infos.ConflictInfos {
-		result, err := handleKVGroupConflicts(ctx, e.logger, subtask.Concurrency, e.getHandler,
+		collectCon := subtask.Concurrency * 2
+		result, err := handleKVGroupConflicts(ctx, e.logger, collectCon, e.getHandler,
 			e.tableImporter.GlobalSortStore, kvGroup, ci)
 		failpoint.InjectCall("afterCollectOneKVGroup", &err)
 		if err != nil {

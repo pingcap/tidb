@@ -311,6 +311,7 @@ func handleKVGroupConflicts(
 		zap.String("kvGroup", kvGroup),
 		zap.Uint64("duplicates", ci.Count),
 		zap.Int("file-count", len(ci.Files)),
+		zap.Int("concurrency", concurrency),
 	), "handle kv group conflicts")
 
 	defer func() {
