@@ -4446,10 +4446,21 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-	hasGlobal := slices.ContainsFunc(tableInfo.Indices, func(idx *model.IndexInfo) bool {
-		return idx.Global
-	})
 	if tableInfo.GetPartitionInfo() != nil {
+		// When table has global index in the partiton, we disable the partition prune mode.
+		// Global index willn't deal with the partition prune.
+		// You can see the test case in the tests/integrationtest/r/globalindex/aggregate.result
+		// explain format='brief' select avg(id), max(id), min(id) from p partition(p0) use index(idx) group by c;
+		// id	estRows	task	access object	operator info
+		// HashAgg	8000.00	root	NULL	group by:globalindex__aggregate.p.c, funcs:avg(Column#9, Column#10)->Column#4, funcs:max(Column#11)->Column#5, funcs:min(Column#12)->Column#6
+		// └─IndexLookUp	8000.00	root	partition:p0	NULL
+		//   ├─Selection(Build)	10000.00	cop[tikv]	NULL	in(_tidb_tid, tid0)
+		//   │ └─IndexFullScan	10000.00	cop[tikv]	table:p, index:idx(id)	keep order:false, stats:pseudo
+		//   └─HashAgg(Probe)	8000.00	cop[tikv]	NULL	group by:globalindex__aggregate.p.c, funcs:count(globalindex__aggregate.p.id)->Column#9, funcs:sum(globalindex__aggregate.p.id)->Column#10, funcs:max(globalindex__aggregate.p.id)->Column#11, funcs:min(globalindex__aggregate.p.id)->Column#12
+		//     └─TableRowIDScan	10000.00	cop[tikv]	table:p	keep order:false, stats:pseudo
+		hasGlobal := slices.ContainsFunc(tableInfo.Indices, func(idx *model.IndexInfo) bool {
+			return idx.Global
+		})
 		// If `UseDynamicPruneMode` already been false, then we don't need to check whether execute `flagPartitionProcessor`
 		// otherwise we need to check global stats initialized for each partition table
 		if !b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() && !hasGlobal {
@@ -4467,19 +4478,19 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				allowDynamicWithoutStats := fixcontrol.GetBoolWithDefault(b.ctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44262, skipMissingPartition)
 
 				// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
-				usePartitionProcessor := !isDynamicEnabled || (!globalStatsReady && !allowDynamicWithoutStats)
+				enableStaticPrune := !isDynamicEnabled || (!globalStatsReady && !allowDynamicWithoutStats)
 
 				failpoint.Inject("forceDynamicPrune", func(val failpoint.Value) {
 					if val.(bool) {
 						if isDynamicEnabled {
-							usePartitionProcessor = false
+							enableStaticPrune = false
 						}
 					}
 				})
 				if !hasGlobal {
 					b.optFlag = b.optFlag | rule.FlagPartitionProcessor
 				}
-				if usePartitionProcessor {
+				if enableStaticPrune {
 					b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
 					if isDynamicEnabled {
 						b.ctx.GetSessionVars().StmtCtx.AppendWarning(
@@ -4766,7 +4777,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if dirty || tableInfo.TempTableType == model.TempTableLocal || tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
 		us := logicalop.LogicalUnionScan{HandleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
-		if tableInfo.Partition != nil && !hasGlobal {
+		if tableInfo.Partition != nil {
 			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)
 			// Not using old static prune mode
 			// Single TableReader for all partitions, needs the PhysTblID from storage
