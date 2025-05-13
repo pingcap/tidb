@@ -72,7 +72,7 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 			Decimal:      int32(tblInfo.Columns[offset].GetDecimal()),
 			DefaultVal:   tblInfo.Columns[offset].DefaultValueBit,
 			IsPrimaryKey: pkName == tblInfo.Columns[offset].Name,
-			IsArray:      false,
+			IsArray:      len(indexInfo.Columns) > 1,
 		})
 	}
 	tableColumns := make([]*indexer.ColumnInfo, 0)
@@ -85,7 +85,7 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 			Decimal:      int32(tblInfo.Columns[i].GetDecimal()),
 			DefaultVal:   tblInfo.Columns[i].DefaultValueBit,
 			IsPrimaryKey: pkName == tblInfo.Columns[i].Name,
-			IsArray:      false,
+			IsArray:      len(tblInfo.Columns) > 1,
 		})
 	}
 	req := &indexer.CreateIndexRequest{
