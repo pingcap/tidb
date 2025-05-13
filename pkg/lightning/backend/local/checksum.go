@@ -306,7 +306,7 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 	}
 
 	distSQLScanConcurrency := int(e.distSQLScanConcurrency)
-	for i := 0; i < maxErrorRetryCount; i++ {
+	for i := range maxErrorRetryCount {
 		_ = executor.Each(func(request *kv.Request) error {
 			request.Concurrency = distSQLScanConcurrency
 			return nil
@@ -447,7 +447,7 @@ func (m *gcTTLManager) removeOneJob(table string) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	idx := -1
-	for i := 0; i < len(m.tableGCSafeTS); i++ {
+	for i := range m.tableGCSafeTS {
 		if m.tableGCSafeTS[i].table == table {
 			idx = i
 			break

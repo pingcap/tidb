@@ -115,7 +115,7 @@ func (s *sortPartition) add(chk *chunk.Chunk) bool {
 	}
 
 	// Convert chunk to rows
-	for i := 0; i < rowNum; i++ {
+	for i := range rowNum {
 		s.savedRows = append(s.savedRows, chk.GetRow(i))
 	}
 

@@ -415,7 +415,7 @@ func (c *RangePropertiesCollector) keysInLastRange() uint64 {
 
 func (c *RangePropertiesCollector) insertNewPoint(key []byte) {
 	c.lastOffsets = c.currentOffsets
-	c.props = append(c.props, rangeProperty{Key: append([]byte{}, key...), rangeOffsets: c.currentOffsets})
+	c.props = append(c.props, rangeProperty{Key: slices.Clone(key), rangeOffsets: c.currentOffsets})
 }
 
 // Add implements `pebble.TablePropertyCollector`.
@@ -644,7 +644,7 @@ func (e *Engine) ingestSSTLoop() {
 		concurrency = 1
 	}
 	metaChan := make(chan metaAndSeq, concurrency)
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		e.wg.Add(1)
 		go func() {
 			defer func() {
@@ -1059,12 +1059,12 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) (firstKey, la
 	if !hasKey {
 		return nil, nil, nil
 	}
-	firstKey = append([]byte{}, iter.Key()...)
+	firstKey = slices.Clone(iter.Key())
 	iter.Last()
 	if iter.Error() != nil {
 		return nil, nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
 	}
-	lastKey = append([]byte{}, iter.Key()...)
+	lastKey = slices.Clone(iter.Key())
 	return firstKey, lastKey, nil
 }
 
@@ -1184,7 +1184,7 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) (err error) {
 
 	keyAdapter := w.engine.keyAdapter
 	totalKeySize := 0
-	for i := 0; i < len(kvs); i++ {
+	for i := range kvs {
 		keySize := keyAdapter.EncodedLen(kvs[i].Key, kvs[i].RowID)
 		w.batchSize.Add(int64(keySize + len(kvs[i].Val)))
 		totalKeySize += keySize
@@ -1198,7 +1198,7 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) (err error) {
 		}
 		buf := w.sortedKeyBuf[:0]
 		newKvs := make([]common.KvPair, len(kvs))
-		for i := 0; i < len(kvs); i++ {
+		for i := range kvs {
 			buf = keyAdapter.Encode(buf, kvs[i].Key, kvs[i].RowID)
 			newKvs[i] = common.KvPair{Key: buf, Val: kvs[i].Val}
 			buf = buf[len(buf):]
@@ -1449,7 +1449,7 @@ func (sw *sstWriter) writeKVs(kvs []common.KvPair) error {
 		return nil
 	}
 	if len(sw.minKey) == 0 {
-		sw.minKey = append([]byte{}, kvs[0].Key...)
+		sw.minKey = slices.Clone(kvs[0].Key)
 	}
 	if bytes.Compare(kvs[0].Key, sw.maxKey) <= 0 {
 		return errorUnorderedSSTInsertion

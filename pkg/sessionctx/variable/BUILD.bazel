@@ -20,6 +20,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/errno",
         "//pkg/executor/join/joinversion",
         "//pkg/keyspace",

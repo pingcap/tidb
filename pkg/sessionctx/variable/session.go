@@ -472,7 +472,7 @@ func (tc *TransactionContext) DeleteSavepoint(name string) bool {
 	name = strings.ToLower(name)
 	for i, sp := range tc.Savepoints {
 		if sp.Name == name {
-			tc.Savepoints = append(tc.Savepoints[:i], tc.Savepoints[i+1:]...)
+			tc.Savepoints = slices.Delete(tc.Savepoints, i, i+1)
 			return true
 		}
 	}
@@ -513,9 +513,7 @@ func (tc *TransactionContext) FlushStmtPessimisticLockCache() {
 	if tc.pessimisticLockCache == nil {
 		tc.pessimisticLockCache = make(map[string][]byte)
 	}
-	for key, val := range tc.CurrentStmtPessimisticLockCache {
-		tc.pessimisticLockCache[key] = val
-	}
+	maps.Copy(tc.pessimisticLockCache, tc.CurrentStmtPessimisticLockCache)
 	tc.CurrentStmtPessimisticLockCache = nil
 }
 

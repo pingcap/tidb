@@ -3010,16 +3010,16 @@ a	b
 1	1
 explain format='brief' select * from t where a in (1) and b in (1);
 id	estRows	task	access object	operator info
-TableReader	0.86	root	partition:p1,pDef	data:Selection
-└─Selection	0.86	cop[tikv]		eq(listdefaultprune.t.a, 1), eq(listdefaultprune.t.b, 1)
+TableReader	1.00	root	partition:p1,pDef	data:Selection
+└─Selection	1.00	cop[tikv]		eq(listdefaultprune.t.a, 1), eq(listdefaultprune.t.b, 1)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 select * from t where a = 1 and b = 1;
 a	b
 1	1
 explain format='brief' select * from t where a = 1 and b = 1;
 id	estRows	task	access object	operator info
-TableReader	0.86	root	partition:p1,pDef	data:Selection
-└─Selection	0.86	cop[tikv]		eq(listdefaultprune.t.a, 1), eq(listdefaultprune.t.b, 1)
+TableReader	1.00	root	partition:p1,pDef	data:Selection
+└─Selection	1.00	cop[tikv]		eq(listdefaultprune.t.a, 1), eq(listdefaultprune.t.b, 1)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 drop table t;
 create table t (a int, b int) partition by list columns (a,b) (partition p1 values in ((1,1), (1,2)), partition p2 values in ((2,2),(2,1)), partition pDef default);
@@ -3247,8 +3247,8 @@ TableReader_7	250.00	root	partition:p0	data:Selection_6
   └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc select * from t where a > 9223372036854775808;
 id	estRows	task	access object	operator info
-TableReader_7	0.00	root	partition:dual	data:Selection_6
-└─Selection_6	0.00	cop[tikv]		gt(planner__core__partition_pruner.t.a, 9223372036854775808)
+TableReader_7	1.00	root	partition:dual	data:Selection_6
+└─Selection_6	1.00	cop[tikv]		gt(planner__core__partition_pruner.t.a, 9223372036854775808)
   └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc select * from t where a in (-6895222, 3125507, 9223372036854775809);
 id	estRows	task	access object	operator info

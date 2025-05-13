@@ -224,7 +224,7 @@ func (mgr *StoreManager) ResetBackupClient(ctx context.Context, storeID uint64) 
 	mgr.grpcClis.mu.Lock()
 	defer mgr.grpcClis.mu.Unlock()
 
-	for retry := 0; retry < resetRetryTimes; retry++ {
+	for retry := range resetRetryTimes {
 		conn, err = mgr.getGrpcConnLocked(ctx, storeID)
 		if err != nil {
 			log.Warn("failed to reset grpc connection, retry it",

@@ -576,3 +576,8 @@ select json_search('{"h": "i"}', 'all', 'i', '\\', NULL);
 set tidb_enable_vectorized_expression = 'OFF';
 select json_search('{"h": "i"}', 'all', 'i', '\\', NULL);
 set tidb_enable_vectorized_expression = default;
+
+# TestIssue60906
+--error 1582
+select json_memberof();
+

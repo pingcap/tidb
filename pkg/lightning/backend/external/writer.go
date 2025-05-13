@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -163,14 +164,14 @@ func dummyOnCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
-	groupOffset     int
-	memSizeLimit    uint64
-	blockSize       int
-	propSizeDist    uint64
-	propKeysDist    uint64
-	onClose         OnCloseFunc
-	keyDupeEncoding bool
-	onDup           engineapi.OnDuplicateKey
+	groupOffset  int
+	memSizeLimit uint64
+	blockSize    int
+	propSizeDist uint64
+	propKeysDist uint64
+	onClose      OnCloseFunc
+	tikvCodec    tikv.Codec
+	onDup        engineapi.OnDuplicateKey
 }
 
 // NewWriterBuilder creates a WriterBuilder.
@@ -214,12 +215,6 @@ func (b *WriterBuilder) SetOnCloseFunc(onClose OnCloseFunc) *WriterBuilder {
 	return b
 }
 
-// SetKeyDuplicationEncoding sets if the writer can distinguish duplicate key.
-func (b *WriterBuilder) SetKeyDuplicationEncoding(val bool) *WriterBuilder {
-	b.keyDupeEncoding = val
-	return b
-}
-
 // SetBlockSize sets the block size of pre-allocated buf in the writer.
 func (b *WriterBuilder) SetBlockSize(blockSize int) *WriterBuilder {
 	b.blockSize = blockSize
@@ -235,7 +230,13 @@ func (b *WriterBuilder) SetGroupOffset(offset int) *WriterBuilder {
 	return b
 }
 
-// SetOnDup set the action when checkDup enabled and a duplicate key is found.
+// SetTiKVCodec sets the tikv codec of the writer.
+func (b *WriterBuilder) SetTiKVCodec(codec tikv.Codec) *WriterBuilder {
+	b.tikvCodec = codec
+	return b
+}
+
+// SetOnDup sets the action when checkDup enabled and a duplicate key is found.
 func (b *WriterBuilder) SetOnDup(onDup engineapi.OnDuplicateKey) *WriterBuilder {
 	b.onDup = onDup
 	return b
@@ -249,10 +250,6 @@ func (b *WriterBuilder) Build(
 	writerID string,
 ) *Writer {
 	filenamePrefix := filepath.Join(prefix, writerID)
-	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
-	if b.keyDupeEncoding {
-		keyAdapter = common.DupDetectKeyAdapter{}
-	}
 	p := membuf.NewPool(
 		membuf.WithBlockNum(0),
 		membuf.WithBlockSize(b.blockSize),
@@ -269,7 +266,6 @@ func (b *WriterBuilder) Build(
 		kvBuffer:       p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
 		currentSeq:     0,
 		filenamePrefix: filenamePrefix,
-		keyAdapter:     keyAdapter,
 		writerID:       writerID,
 		groupOffset:    b.groupOffset,
 		onClose:        b.onClose,
@@ -278,6 +274,7 @@ func (b *WriterBuilder) Build(
 		multiFileStats: make([]MultipleFilesStat, 0),
 		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
 		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
+		tikvCodec:      b.tikvCodec,
 	}
 
 	return ret
@@ -391,7 +388,6 @@ type Writer struct {
 	groupOffset    int
 	currentSeq     int
 	filenamePrefix string
-	keyAdapter     common.KeyAdapter
 
 	rc *rangePropertiesCollector
 
@@ -418,20 +414,20 @@ type Writer struct {
 	maxKey    tidbkv.Key
 	totalSize uint64
 	totalCnt  uint64
+
+	tikvCodec tikv.Codec
 	// duplicate key's statistics.
 	conflictInfo engineapi.ConflictInfo
 }
 
 // WriteRow implements ingest.Writer.
 func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Handle) error {
-	keyAdapter := w.keyAdapter
-
-	var rowID []byte
-	if handle != nil {
-		rowID = handle.Encoded()
+	if w.tikvCodec != nil {
+		key = w.tikvCodec.EncodeKey(key)
 	}
-	encodedKeyLen := keyAdapter.EncodedLen(key, rowID)
-	length := encodedKeyLen + len(val) + lengthBytes*2
+
+	keyLen := len(key)
+	length := keyLen + len(val) + lengthBytes*2
 	dataBuf, loc := w.kvBuffer.AllocBytesWithSliceLocation(length)
 	if dataBuf == nil {
 		if err := w.flushKVs(ctx, false); err != nil {
@@ -443,14 +439,14 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 			return errors.Errorf("failed to allocate kv buffer: %d", length)
 		}
 	}
-	binary.BigEndian.AppendUint64(dataBuf[:0], uint64(encodedKeyLen))
+	binary.BigEndian.AppendUint64(dataBuf[:0], uint64(keyLen))
 	binary.BigEndian.AppendUint64(dataBuf[:lengthBytes], uint64(len(val)))
-	keyAdapter.Encode(dataBuf[2*lengthBytes:2*lengthBytes:2*lengthBytes+encodedKeyLen], key, rowID)
-	copy(dataBuf[2*lengthBytes+encodedKeyLen:], val)
+	copy(dataBuf[2*lengthBytes:], key)
+	copy(dataBuf[2*lengthBytes+keyLen:], val)
 
 	w.kvLocations = append(w.kvLocations, loc)
 	// TODO: maybe we can unify the size calculation during write to store.
-	w.kvSize += int64(encodedKeyLen + len(val))
+	w.kvSize += int64(keyLen + len(val))
 	w.batchSize += uint64(length)
 	return nil
 }
@@ -517,11 +513,15 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		zap.Int("sequence-number", w.currentSeq),
 	)
 	sortStart := time.Now()
-	var dupFound bool
+	var (
+		dupFound bool
+		dupLoc   *membuf.SliceLocation
+	)
 	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
 		res := bytes.Compare(w.getKeyByLoc(&i), w.getKeyByLoc(&j))
-		if res == 0 {
+		if res == 0 && !dupFound {
 			dupFound = true
+			dupLoc = &i
 		}
 		return res
 	})
@@ -546,8 +546,9 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
 			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyError:
-			// not implemented yet, same as ignore.
-			// add-index might need this one later.
+			dupKey := slices.Clone(w.getKeyByLoc(dupLoc))
+			dupValue := slices.Clone(w.getValueByLoc(dupLoc))
+			return common.ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupValue)
 		}
 	}
 
@@ -738,6 +739,12 @@ func (w *Writer) getKeyByLoc(loc *membuf.SliceLocation) []byte {
 	block := w.kvBuffer.GetSlice(loc)
 	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
 	return block[2*lengthBytes : 2*lengthBytes+keyLen]
+}
+
+func (w *Writer) getValueByLoc(loc *membuf.SliceLocation) []byte {
+	block := w.kvBuffer.GetSlice(loc)
+	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
+	return block[2*lengthBytes+keyLen:]
 }
 
 func (w *Writer) reCalculateKVSize() int64 {
