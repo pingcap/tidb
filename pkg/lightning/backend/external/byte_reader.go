@@ -299,7 +299,7 @@ func (r *byteReader) reload() error {
 		return nil
 	}
 	// when not using concurrentReader, len(curBuf) == 1
-	n, err := io.ReadFull(r.storageReader, r.curBuf[0][0:])
+	n, err := io.ReadFull(r.storageReader, r.curBuf[0])
 	//if prefetch.PrintLog {
 	//	prefetch.PrintLog = false
 	//	r.logger.Info("read data from external storage", zap.Int("n", n), zap.Error(err), zap.Int("bufSize", len(r.curBuf[0][0:])))
