@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -325,10 +326,19 @@ func handleKVGroupConflicts(
 		}
 		return nil
 	})
+	var initMu sync.Mutex
+	initHandlerWithLockFn := func(handler conflictKVHandler) error {
+		initMu.Lock()
+		defer initMu.Unlock()
+		// when create encoder, if the table have generated column, when calling
+		// backend/kv.CollectGeneratedColumns(), buildSimpleExpr will rewrite the
+		// AST node, and data race.
+		return handler.init()
+	}
 	for i := 0; i < concurrency; i++ {
 		handler := newHandlerFn(kvGroup)
 		eg.Go(func() error {
-			if err := handler.init(); err != nil {
+			if err := initHandlerWithLockFn(handler); err != nil {
 				return errors.Trace(err)
 			}
 			if err := handler.run(egCtx, pairCh); err != nil {
