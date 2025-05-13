@@ -101,6 +101,7 @@ func AppendRangesForRestore(
 	})
 }
 
+//TODO: (ris)change this
 type CheckpointMetadataForSnapshotRestore struct {
 	UpstreamClusterID uint64                `json:"upstream-cluster-id"`
 	RestoredTS        uint64                `json:"restored-ts"`
