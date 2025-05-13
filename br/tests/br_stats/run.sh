@@ -91,7 +91,9 @@ run_sql "DROP DATABASE ${DB}1;"
 rm -f $LOG
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB" --log-file $LOG --load-stats=false --filter "${DB}1.br_stats_partition" || cat $LOG
 run_sql "SELECT meta.count as count FROM mysql.stats_meta meta JOIN INFORMATION_SCHEMA.TABLES tables ON meta.table_id = tables.TIDB_TABLE_ID WHERE tables.TABLE_SCHEMA = '${DB}1' and modify_count = count and count > 0;"
+cat $LOG
 check_not_contains "count"
 
 run_sql "SELECT meta.count as count FROM mysql.stats_meta meta JOIN INFORMATION_SCHEMA.PARTITIONS parts ON meta.table_id = parts.TIDB_PARTITION_ID WHERE parts.TABLE_SCHEMA = '${DB}1' and modify_count = count and count > 0;"
+cat $LOG
 check_not_contains "count"
