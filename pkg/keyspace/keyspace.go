@@ -57,13 +57,17 @@ func GetKeyspaceNameBySettings() (keyspaceName string) {
 }
 
 // GetKeyspaceIDBySettings is used to get Keyspace ID setting.
-func GetKeyspaceIDBySettings() (keyspaceID uint32) {
+func GetKeyspaceIDBySettings() (keyspaceID *uint32) {
 	keyspaceName := config.GetGlobalKeyspaceName()
 	if !IsKeyspaceNameEmpty(keyspaceName) && kerneltype.IsNextGen() {
-		keyspaceIDU64, _ := strconv.ParseUint(keyspaceName, 10, 32) //nolint:errcheck
-		return uint32(keyspaceIDU64)
+		keyspaceIDU64, err := strconv.ParseUint(keyspaceName, 10, 32) //nolint:errcheck
+		if err != nil {
+			return nil
+		}
+		keyspaceIDU32 := uint32(keyspaceIDU64)
+		return &keyspaceIDU32
 	}
-	return uint32(0)
+	return nil
 }
 
 // IsKeyspaceNameEmpty is used to determine whether keyspaceName is set.

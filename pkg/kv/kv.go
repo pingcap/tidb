@@ -785,12 +785,12 @@ const (
 type ResourceGroupTagBuilder struct {
 	sqlDigest  *parser.Digest
 	planDigest *parser.Digest
-	keyspaceID uint32
+	keyspaceID *uint32
 	accessKey  []byte
 }
 
 // NewResourceGroupTagBuilder creates a new ResourceGroupTagBuilder.
-func NewResourceGroupTagBuilder(keyspaceID uint32) *ResourceGroupTagBuilder {
+func NewResourceGroupTagBuilder(keyspaceID *uint32) *ResourceGroupTagBuilder {
 	return &ResourceGroupTagBuilder{keyspaceID: keyspaceID}
 }
 
