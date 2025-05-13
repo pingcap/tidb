@@ -23,6 +23,7 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -51,11 +52,15 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://global-sort-files/t.*.csv?endpoint=%s'
 		with __force_merge_step, cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
-	s.tk.MustQuery(importSQL)
+	rs := s.tk.MustQuery(importSQL).Rows()
+	jobID, err := strconv.Atoi(rs[0][0].(string))
+	require.NoError(s.T(), err)
+
+	// Check the result
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
 
 	// Check summaries of subtasks
-	rs := s.tk.MustQuery("select summary from mysql.tidb_import_jobs").Rows()
+	rs = s.tk.MustQuery("select summary from mysql.tidb_import_jobs where id = ?", jobID).Rows()
 	var summaries importer.Summary
 	require.NoError(s.T(), json.Unmarshal([]byte(rs[0][0].(string)), &summaries))
 
@@ -65,13 +70,14 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 	require.EqualValues(s.T(), 10000, summaries.IngestSummary.RowCnt)
 	require.EqualValues(s.T(), 10000, summaries.PostProcessSummary.RowCnt)
 
-	rs = s.tk.MustQuery("show import jobs").Rows()
+	rs = s.tk.MustQuery("show import jobs where Job_ID = ?", jobID).Rows()
 	importedRows, err := strconv.Atoi(rs[0][7].(string))
 	require.NoError(s.T(), err)
 	require.EqualValues(s.T(), 10000, importedRows)
 
 	// One encode/postprocess task plus four merge/ingest tasks, total 10 subtasks
-	rs = s.tk.MustQuery("select step, summary from mysql.tidb_background_subtask_history").Rows()
+	rs = s.tk.MustQuery("select step, summary from mysql.tidb_background_subtask_history where task_key = (select id from mysql.tidb_global_task_history where task_key = ? )",
+		importinto.TaskKey(int64(jobID))).Rows()
 	require.Len(s.T(), rs, 10)
 
 	for _, r := range rs {
@@ -85,7 +91,7 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 		case proto.ImportStepEncodeAndSort, proto.ImportStepMergeSort, proto.ImportStepWriteAndIngest:
 			require.EqualValues(s.T(), 10000, summary.InputRowCnt)
 		case proto.ImportStepPostProcess:
-			require.EqualValues(s.T(), 10000, summary.OutputRowCnt)
+			require.EqualValues(s.T(), 0, summary.InputRowCnt)
 		}
 	}
 }
@@ -108,11 +114,15 @@ func (s *mockGCSSuite) TestLocallSortSummary() {
 	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), key(b), key(a, b), key(b, a))")
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://local-sort-file/t.csv?endpoint=%s'
 		with __force_merge_step`, gcsEndpoint)
-	s.tk.MustQuery(importSQL)
+	rs := s.tk.MustQuery(importSQL).Rows()
+	jobID, err := strconv.Atoi(rs[0][0].(string))
+	require.NoError(s.T(), err)
+
+	// Check the result
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
 
 	// Check summaries of subtasks
-	rs := s.tk.MustQuery("select summary from mysql.tidb_import_jobs").Rows()
+	rs = s.tk.MustQuery("select summary from mysql.tidb_import_jobs where id = ?", jobID).Rows()
 	var summaries importer.Summary
 	require.NoError(s.T(), json.Unmarshal([]byte(rs[0][0].(string)), &summaries))
 
@@ -122,7 +132,7 @@ func (s *mockGCSSuite) TestLocallSortSummary() {
 	require.EqualValues(s.T(), 0, summaries.IngestSummary.RowCnt)
 	require.EqualValues(s.T(), 10000, summaries.PostProcessSummary.RowCnt)
 
-	rs = s.tk.MustQuery("show import jobs").Rows()
+	rs = s.tk.MustQuery("show import jobs where Job_ID = ?", jobID).Rows()
 	importedRows, err := strconv.Atoi(rs[0][7].(string))
 	require.NoError(s.T(), err)
 	require.EqualValues(s.T(), 10000, importedRows)
