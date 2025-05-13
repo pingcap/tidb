@@ -1171,30 +1171,29 @@ func wrapWithIsTrue(ctx BuildContext, keepNull bool, arg Expression, wrapForInt 
 		}
 	}
 	var fc *isTrueOrFalseFunctionClass
+	var fn ast.CIStr
 	if keepNull {
 		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithNull, 1, 1}, opcode.IsTruth, keepNull}
+		fn = ast.NewCIStr(ast.IsTruthWithNull)
 	} else {
 		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithoutNull, 1, 1}, opcode.IsTruth, keepNull}
+		fn = ast.NewCIStr(ast.IsTruthWithoutNull)
 	}
 	f, err := fc.getFunction(ctx, []Expression{simpleExpression(arg)})
 	if err != nil {
 		return nil, err
 	}
 	sf := &ScalarFunction{
-		FuncName: ast.NewCIStr(ast.IsTruthWithoutNull),
+		FuncName: fn,
 		Function: f,
 		RetType:  f.getRetTp(),
-	}
-	if keepNull {
-		sf.FuncName = ast.NewCIStr(ast.IsTruthWithNull)
 	}
 	return FoldConstant(ctx, sf), nil
 }
 
 func simpleExpression(arg Expression) Expression {
-	switch arg.(type) {
+	switch fn := arg.(type) {
 	case *ScalarFunction:
-		fn := arg.(*ScalarFunction)
 		if fn.FuncName.L == ast.Cast {
 			return simpleExpression(fn.GetArgs()[0])
 		}
