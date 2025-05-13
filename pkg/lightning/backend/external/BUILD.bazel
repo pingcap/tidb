@@ -81,6 +81,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//br/pkg/storage",
+        "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/ingestor/engineapi",
         "//pkg/kv",
         "//pkg/lightning/backend/kv",

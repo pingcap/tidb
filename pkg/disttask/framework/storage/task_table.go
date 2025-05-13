@@ -941,7 +941,7 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 	return subtasks, nil
 }
 
-// summaries gets summary of subtasks from tidb_global_task and tidb_global_task_history.
+// GetSubtaskSummarysWithHistory gets summary of subtasks from tidb_global_task and tidb_global_task_history.
 func (mgr *TaskManager) GetSubtaskSummarysWithHistory(ctx context.Context, taskID int64, step proto.Step) ([]*execute.SubtaskSummary, error) {
 	var (
 		rs  []chunk.Row
