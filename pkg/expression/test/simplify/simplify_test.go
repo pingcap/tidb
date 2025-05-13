@@ -78,5 +78,15 @@ SELECT t0.c0, t1.c0 FROM t0 RIGHT JOIN t1 ON true WHERE (NOT (CAST(t0.c0 AS DATE
 	tk.MustQuery(`SELECT t0.c0 FROM v0, t0 WHERE (SUBTIME('2001-11-28 06', '252 10') OR ('' IS NOT NULL)) AND v0.c0;`).
 		Check(testkit.Rows("0", "1"))
 	tk.MustQuery(`explain format='brief' SELECT t0.c0 FROM v0, t0 WHERE (SUBTIME('2001-11-28 06', '252 10') OR ('' IS NOT NULL)) AND v0.c0;`).
-		Check(testkit.Rows())
+		Check(testkit.Rows(
+			"HashJoin 27265706.67 root  CARTESIAN inner join",
+			"├─Selection(Build) 3408.21 root  or(istrue_with_null(cast(subtime(\"2001-11-28 06\", \"252 10\"), double BINARY)), 1)",
+			"│ └─HashAgg 4260.27 root  group by:test.t0.c0, funcs:firstrow(Column#9)->Column#8",
+			"│   └─TableReader 4260.27 root  data:HashAgg",
+			"│     └─HashAgg 4260.27 cop[tikv]  group by:test.t0.c0, funcs:firstrow(1)->Column#9",
+			"│       └─Selection 5325.33 cop[tikv]  regexp_like(cast(test.t0.c0, var_string(20)), cast(test.t0.c0, var_string(20))), test.t0.c0",
+			"│         └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo",
+			"└─Selection(Probe) 8000.00 root  or(istrue_with_null(cast(subtime(\"2001-11-28 06\", \"252 10\"), double BINARY)), 1)",
+			"  └─TableReader 10000.00 root  data:TableFullScan",
+			"    └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo"))
 }
