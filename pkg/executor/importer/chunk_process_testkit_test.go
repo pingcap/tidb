@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -100,6 +101,16 @@ func TestFileChunkProcess(t *testing.T) {
 	diskQuotaLock := &syncutil.RWMutex{}
 
 	t.Run("process success", func(t *testing.T) {
+		readRowCnt := int64(0)
+		readBytes := int64(0)
+		collector := external.NewCollector(
+			func(bytes, rows int64) {
+				readBytes += bytes
+				readRowCnt += rows
+			},
+			nil,
+		)
+
 		var dataKVCnt, indexKVCnt int
 		fileName := path.Join(tempDir, "test.csv")
 		sourceData := []byte("1,2,3\n4,5,6\n7,8,9\n")
@@ -144,13 +155,15 @@ func TestFileChunkProcess(t *testing.T) {
 		checksum := verify.NewKVGroupChecksumWithKeyspace(nil)
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, checksum, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, checksum, collector,
 		)
 		require.NoError(t, processor.Process(ctx))
 		require.True(t, ctrl.Satisfied())
 		checksumDataKVCnt, checksumIndexKVCnt := checksum.DataAndIndexSumKVS()
-		require.Equal(t, uint64(3), checksumDataKVCnt)
-		require.Equal(t, uint64(6), checksumIndexKVCnt)
+		require.EqualValues(t, 3, checksumDataKVCnt)
+		require.EqualValues(t, 6, checksumIndexKVCnt)
+		require.EqualValues(t, 3, readRowCnt)
+		require.EqualValues(t, len(sourceData), readBytes)
 		dataKVSize, indexKVSize := checksum.DataAndIndexSumSize()
 		require.Equal(t, uint64(348), dataKVSize+indexKVSize)
 		require.Equal(t, 3, dataKVCnt)
@@ -180,7 +193,7 @@ func TestFileChunkProcess(t *testing.T) {
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil,
 		)
 		require.ErrorIs(t, processor.Process(ctx), common.ErrEncodeKV)
 		require.True(t, ctrl.Satisfied())
@@ -205,7 +218,7 @@ func TestFileChunkProcess(t *testing.T) {
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil,
 		)
 		require.ErrorIs(t, processor.Process(ctx), common.ErrEncodeKV)
 		require.True(t, ctrl.Satisfied())
@@ -229,7 +242,7 @@ func TestFileChunkProcess(t *testing.T) {
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil,
 		)
 		require.ErrorContains(t, processor.Process(ctx), "data write error")
 		require.True(t, ctrl.Satisfied())
@@ -254,7 +267,7 @@ func TestFileChunkProcess(t *testing.T) {
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil,
 		)
 		require.ErrorContains(t, processor.Process(ctx), "index write error")
 		require.True(t, ctrl.Satisfied())

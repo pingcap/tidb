@@ -308,6 +308,15 @@ type Summary struct {
 	PostProcessSummary StepSummary `json:"post-process-summary,omitempty"`
 }
 
+// MockSummary creates a mock summary for testing.
+func MockSummary(rowCnt int64) *Summary {
+	return &Summary{
+		PostProcessSummary: StepSummary{
+			RowCnt: uint64(rowCnt),
+		},
+	}
+}
+
 // LoadDataController load data controller.
 // todo: need a better name
 type LoadDataController struct {

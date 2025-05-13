@@ -43,16 +43,16 @@ func TestJobHappyPath(t *testing.T) {
 		action          func(jobID int64)
 		expectStatus    string
 		expectStep      string
-		expectedSummary *importer.JobSummary
+		expectedSummary *importer.Summary
 		expectedErrMsg  string
 	}{
 		{
 			action: func(jobID int64) {
-				require.NoError(t, importer.FinishJob(ctx, conn, jobID, &importer.JobSummary{ImportedRows: 111}))
+				require.NoError(t, importer.FinishJob(ctx, conn, jobID, importer.MockSummary(111)))
 			},
 			expectStatus:    "finished",
 			expectStep:      "",
-			expectedSummary: &importer.JobSummary{ImportedRows: 111},
+			expectedSummary: importer.MockSummary(111),
 		},
 		{
 			action: func(jobID int64) {

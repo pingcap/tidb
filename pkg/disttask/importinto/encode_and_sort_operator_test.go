@@ -88,7 +88,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 
 	// cancel on error
 	mockErr := errors.New("mock err")
-	executor.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockErr)
+	executor.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(mockErr)
 	source.Channel() <- &importStepMinimalTask{}
 	require.Eventually(t, func() bool {
 		return op.hasError()
@@ -101,7 +101,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	// cancel on error and log other errors
 	mockErr2 := errors.New("mock err 2")
 	source = operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op = newEncodeAndSortOperator(context.Background(), executorForParam, nil, 2, 2)
+	op = newEncodeAndSortOperator(context.Background(), executorForParam, nil, 2, 2, nil)
 	op.SetSource(source)
 	executor1 := mock.NewMockMiniTaskExecutor(ctrl)
 	executor2 := mock.NewMockMiniTaskExecutor(ctrl)
@@ -115,13 +115,13 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	// wait until 2 executor start running, else workerpool will be cancelled.
-	executor1.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+	executor1.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(context.Context, backend.EngineWriter, backend.EngineWriter) error {
 			wg.Done()
 			wg.Wait()
 			return mockErr2
 		})
-	executor2.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+	executor2.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(context.Context, backend.EngineWriter, backend.EngineWriter) error {
 			wg.Done()
 			wg.Wait()

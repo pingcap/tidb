@@ -123,12 +123,8 @@ func (s *mockGCSSuite) TestShowJob() {
 		SourceFileSize: 3,
 		Status:         "finished",
 		Step:           "",
-		Summary: &importer.Summary{
-			PostProcessSummary: importer.StepSummary{
-				RowCnt: 2,
-			},
-		},
-		ErrorMessage: "",
+		Summary:        importer.MockSummary(3),
+		ErrorMessage:   "",
 	}
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 
@@ -205,12 +201,8 @@ func (s *mockGCSSuite) TestShowJob() {
 					SourceFileSize: 6,
 					Status:         "running",
 					Step:           "importing",
-					Summary: &importer.Summary{
-						PostProcessSummary: importer.StepSummary{
-							RowCnt: 2,
-						},
-					},
-					ErrorMessage: "",
+					Summary:        importer.MockSummary(2),
+					ErrorMessage:   "",
 				}
 				rows = tk2.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
 				s.Len(rows, 1)
@@ -297,11 +289,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID1)).Rows()
 	s.Len(rows, 1)
 	jobInfo.Status = "finished"
-	jobInfo.Summary = &importer.Summary{
-		PostProcessSummary: importer.StepSummary{
-			RowCnt: 2,
-		},
-	}
+	jobInfo.Summary = importer.MockSummary(2)
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1", "2"))
 

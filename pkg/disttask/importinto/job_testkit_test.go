@@ -58,10 +58,10 @@ func TestGetTaskImportedRows(t *testing.T) {
 	require.NoError(t, err)
 	importStepSummaries := []*execute.SubtaskSummary{
 		{
-			ProcessedRowCount: 1,
+			OutputRowCnt: 1,
 		},
 		{
-			ProcessedRowCount: 2,
+			OutputRowCnt: 2,
 		},
 	}
 	for _, m := range importStepSummaries {
@@ -84,10 +84,10 @@ func TestGetTaskImportedRows(t *testing.T) {
 	require.NoError(t, err)
 	ingestStepSummaries := []*execute.SubtaskSummary{
 		{
-			ProcessedRowCount: 11,
+			OutputRowCnt: 11,
 		},
 		{
-			ProcessedRowCount: 22,
+			OutputRowCnt: 22,
 		},
 	}
 	for _, m := range ingestStepSummaries {
