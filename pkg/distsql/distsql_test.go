@@ -246,13 +246,13 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 			numRows -= rows
 
 			colTypes := make([]*types.FieldType, 4)
-			for i := 0; i < 4; i++ {
+			for i := range 4 {
 				colTypes[i] = types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP()
 			}
 			chk := chunk.New(colTypes, numRows, numRows)
 
-			for rowOrdinal := 0; rowOrdinal < rows; rowOrdinal++ {
-				for colOrdinal := 0; colOrdinal < 4; colOrdinal++ {
+			for range rows {
+				for colOrdinal := range 4 {
 					chk.AppendInt64(colOrdinal, 123)
 				}
 			}

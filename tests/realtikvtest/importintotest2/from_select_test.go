@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -166,6 +167,9 @@ func (s *mockGCSSuite) TestCastNegativeToUnsigned() {
 }
 
 func (s *mockGCSSuite) TestDiskFullOnIngestFailFast() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("this test is for classic kernel only, skip it in nextgen")
+	}
 	s.prepareAndUseDB("from_select")
 	s.tk.MustExec("create table dt(id int unsigned)")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/diskFullOnIngest", `return(true)`)

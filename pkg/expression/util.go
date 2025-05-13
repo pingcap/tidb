@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -91,7 +92,7 @@ func FilterOutInPlace(input []Expression, filter func(Expression) bool) (remaine
 	for i := len(input) - 1; i >= 0; i-- {
 		if filter(input[i]) {
 			filteredOut = append(filteredOut, input[i])
-			input = append(input[:i], input[i+1:]...)
+			input = slices.Delete(input, i, i+1)
 		}
 	}
 	return input, filteredOut
@@ -568,10 +569,8 @@ func checkCollationStrictness(coll, newFuncColl string) bool {
 			return true
 		}
 
-		for _, id := range CollationStrictness[collGroupID] {
-			if newFuncCollGroupID == id {
-				return true
-			}
+		if slices.Contains(CollationStrictness[collGroupID], newFuncCollGroupID) {
+			return true
 		}
 	}
 
@@ -593,7 +592,7 @@ func getValidPrefix(s string, base int64) string {
 		return ""
 	}
 Loop:
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		c := rune(s[i])
 		switch {
 		case unicode.IsDigit(c) || unicode.IsLower(c) || unicode.IsUpper(c):
@@ -1042,7 +1041,7 @@ func ExtractFiltersFromDNFs(ctx BuildContext, conditions []Expression) []Express
 			extracted, remained := extractFiltersFromDNF(ctx, sf)
 			allExtracted = append(allExtracted, extracted...)
 			if remained == nil {
-				conditions = append(conditions[:i], conditions[i+1:]...)
+				conditions = slices.Delete(conditions, i, i+1)
 			} else {
 				conditions[i] = remained
 			}
@@ -1335,10 +1334,8 @@ func CheckNonDeterministic(e Expression) bool {
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return true
 		}
-		for _, arg := range x.GetArgs() {
-			if CheckNonDeterministic(arg) {
-				return true
-			}
+		if slices.ContainsFunc(x.GetArgs(), CheckNonDeterministic) {
+			return true
 		}
 	}
 	return false
@@ -1369,10 +1366,8 @@ func IsMutableEffectsExpr(expr Expression) bool {
 		if _, ok := mutableEffectsFunctions[x.FuncName.L]; ok {
 			return true
 		}
-		for _, arg := range x.GetArgs() {
-			if IsMutableEffectsExpr(arg) {
-				return true
-			}
+		if slices.ContainsFunc(x.GetArgs(), IsMutableEffectsExpr) {
+			return true
 		}
 	case *Column:
 	case *Constant:
@@ -1923,12 +1918,7 @@ func ConstExprConsiderPlanCache(expr Expression, inPlanCache bool) bool {
 
 // ExprsHasSideEffects checks if any of the expressions has side effects.
 func ExprsHasSideEffects(exprs []Expression) bool {
-	for _, expr := range exprs {
-		if ExprHasSetVarOrSleep(expr) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(exprs, ExprHasSetVarOrSleep)
 }
 
 // ExprHasSetVarOrSleep checks if the expression has SetVar function or Sleep function.
@@ -1940,12 +1930,7 @@ func ExprHasSetVarOrSleep(expr Expression) bool {
 	if scalaFunc.FuncName.L == ast.SetVar || scalaFunc.FuncName.L == ast.Sleep {
 		return true
 	}
-	for _, arg := range scalaFunc.GetArgs() {
-		if ExprHasSetVarOrSleep(arg) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(scalaFunc.GetArgs(), ExprHasSetVarOrSleep)
 }
 
 // ExecBinaryParam parse execute binary param arguments to datum slice.
@@ -1956,7 +1941,7 @@ func ExecBinaryParam(typectx types.Context, binaryParams []param.BinaryParam) (p
 
 	params = make([]Expression, len(binaryParams))
 	args := make([]types.Datum, len(binaryParams))
-	for i := 0; i < len(args); i++ {
+	for i := range args {
 		tp := binaryParams[i].Tp
 		isUnsigned := binaryParams[i].IsUnsigned
 

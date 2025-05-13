@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -61,6 +62,8 @@ type readIndexStepExecutor struct {
 	backend        *local.Backend
 	// pipeline of current running subtask, it's nil when no subtask is running.
 	currPipe atomic.Pointer[operator.AsyncPipeline]
+
+	metric *lightningmetric.Common
 }
 
 type readIndexSummary struct {
@@ -93,6 +96,10 @@ func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
 	cfg := config.GetGlobalConfig()
 	if cfg.Store == config.StoreTypeTiKV {
+		if !r.isGlobalSort() {
+			r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
+			ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
+		}
 		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, false, 0)
 		if err != nil {
 			return errors.Trace(err)
@@ -200,6 +207,9 @@ func (r *readIndexStepExecutor) Cleanup(ctx context.Context) error {
 	tidblogutil.Logger(ctx).Info("read index executor cleanup subtask exec env")
 	if r.backend != nil {
 		r.backend.Close()
+	}
+	if !r.isGlobalSort() {
+		metrics.UnregisterLightningCommonMetricsForDDL(r.job.ID, r.metric)
 	}
 	return nil
 }

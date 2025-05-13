@@ -144,7 +144,7 @@ func TestGetAllFileNames(t *testing.T) {
 
 	keys := make([][]byte, 0, 30)
 	values := make([][]byte, 0, 30)
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		keys = append(keys, []byte{byte(i)})
 		values = append(values, []byte{byte(i)})
 	}
@@ -208,7 +208,7 @@ func TestCleanUpFiles(t *testing.T) {
 		Build(store, "/subtask", "0")
 	keys := make([][]byte, 0, 30)
 	values := make([][]byte, 0, 30)
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		keys = append(keys, []byte{byte(i)})
 		values = append(values, []byte{byte(i)})
 	}
@@ -311,7 +311,7 @@ func TestSortedKVMeta(t *testing.T) {
 	require.Equal(t, []byte("a"), meta0.StartKey)
 	require.Equal(t, []byte{'y', 0}, meta0.EndKey)
 	require.Equal(t, uint64(300), meta0.TotalKVSize)
-	mergedStats := append([]MultipleFilesStat{}, summary[0].MultipleFilesStats...)
+	mergedStats := slices.Clone(summary[0].MultipleFilesStats)
 	mergedStats = append(mergedStats, summary[1].MultipleFilesStats...)
 	require.Equal(t, mergedStats, meta0.MultipleFilesStats)
 

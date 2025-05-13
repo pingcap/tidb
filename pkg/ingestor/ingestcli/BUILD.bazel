@@ -11,11 +11,14 @@ go_library(
     deps = [
         "//br/pkg/restore/split",
         "//pkg/util",
+        "//pkg/util/logutil",
+        "//pkg/util/redact",
         "@com_github_gogo_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/errorpb",
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
         "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -25,7 +28,7 @@ go_test(
     srcs = ["client_test.go"],
     embed = [":ingestcli"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 5,
     deps = [
         "//br/pkg/restore/split",
         "@com_github_pingcap_kvproto//pkg/errorpb",

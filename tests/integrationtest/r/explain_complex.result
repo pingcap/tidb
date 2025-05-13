@@ -117,14 +117,14 @@ Projection	53.00	root		explain_complex.dt.ds, explain_complex.dt.p1, explain_com
           └─TableRowIDScan	2650.00	cop[tikv]	table:dt	keep order:false, stats:pseudo
 explain format = 'brief' select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext, gad.t as gtime from st gad join (select id, aid, pt, dic, ip, t from dd where pt = 'android' and bm = 0 and t > 1478143908) sdk on  gad.aid = sdk.aid and gad.ip = sdk.ip and sdk.t > gad.t where gad.t > 1478143908 and gad.pt = 'android' group by gad.aid, sdk.dic limit 2500;
 id	estRows	task	access object	operator info
-Projection	1.00	root		explain_complex.st.id, explain_complex.dd.id, explain_complex.st.aid, explain_complex.st.cm, explain_complex.dd.dic, explain_complex.dd.ip, explain_complex.dd.t, explain_complex.st.p1, explain_complex.st.p2, explain_complex.st.p3, explain_complex.st.p4, explain_complex.st.p5, explain_complex.st.p6_md5, explain_complex.st.p7_md5, explain_complex.st.ext, explain_complex.st.t
-└─Limit	1.00	root		offset:0, count:2500
-  └─HashAgg	1.00	root		group by:explain_complex.dd.dic, explain_complex.st.aid, funcs:firstrow(explain_complex.st.id)->explain_complex.st.id, funcs:firstrow(explain_complex.st.aid)->explain_complex.st.aid, funcs:firstrow(explain_complex.st.cm)->explain_complex.st.cm, funcs:firstrow(explain_complex.st.p1)->explain_complex.st.p1, funcs:firstrow(explain_complex.st.p2)->explain_complex.st.p2, funcs:firstrow(explain_complex.st.p3)->explain_complex.st.p3, funcs:firstrow(explain_complex.st.p4)->explain_complex.st.p4, funcs:firstrow(explain_complex.st.p5)->explain_complex.st.p5, funcs:firstrow(explain_complex.st.p6_md5)->explain_complex.st.p6_md5, funcs:firstrow(explain_complex.st.p7_md5)->explain_complex.st.p7_md5, funcs:firstrow(explain_complex.st.ext)->explain_complex.st.ext, funcs:firstrow(explain_complex.st.t)->explain_complex.st.t, funcs:firstrow(explain_complex.dd.id)->explain_complex.dd.id, funcs:firstrow(explain_complex.dd.dic)->explain_complex.dd.dic, funcs:firstrow(explain_complex.dd.ip)->explain_complex.dd.ip, funcs:firstrow(explain_complex.dd.t)->explain_complex.dd.t
-    └─Projection	0.00	root		explain_complex.st.id, explain_complex.st.aid, explain_complex.st.cm, explain_complex.st.p1, explain_complex.st.p2, explain_complex.st.p3, explain_complex.st.p4, explain_complex.st.p5, explain_complex.st.p6_md5, explain_complex.st.p7_md5, explain_complex.st.ext, explain_complex.st.t, explain_complex.dd.id, explain_complex.dd.dic, explain_complex.dd.ip, explain_complex.dd.t
-      └─HashJoin	0.00	root		inner join, equal:[eq(explain_complex.dd.aid, explain_complex.st.aid) eq(explain_complex.dd.ip, explain_complex.st.ip)], other cond:gt(explain_complex.dd.t, explain_complex.st.t)
-        ├─IndexLookUp(Build)	0.00	root		
+Projection	1.25	root		explain_complex.st.id, explain_complex.dd.id, explain_complex.st.aid, explain_complex.st.cm, explain_complex.dd.dic, explain_complex.dd.ip, explain_complex.dd.t, explain_complex.st.p1, explain_complex.st.p2, explain_complex.st.p3, explain_complex.st.p4, explain_complex.st.p5, explain_complex.st.p6_md5, explain_complex.st.p7_md5, explain_complex.st.ext, explain_complex.st.t
+└─Limit	1.25	root		offset:0, count:2500
+  └─HashAgg	1.25	root		group by:explain_complex.dd.dic, explain_complex.st.aid, funcs:firstrow(explain_complex.st.id)->explain_complex.st.id, funcs:firstrow(explain_complex.st.aid)->explain_complex.st.aid, funcs:firstrow(explain_complex.st.cm)->explain_complex.st.cm, funcs:firstrow(explain_complex.st.p1)->explain_complex.st.p1, funcs:firstrow(explain_complex.st.p2)->explain_complex.st.p2, funcs:firstrow(explain_complex.st.p3)->explain_complex.st.p3, funcs:firstrow(explain_complex.st.p4)->explain_complex.st.p4, funcs:firstrow(explain_complex.st.p5)->explain_complex.st.p5, funcs:firstrow(explain_complex.st.p6_md5)->explain_complex.st.p6_md5, funcs:firstrow(explain_complex.st.p7_md5)->explain_complex.st.p7_md5, funcs:firstrow(explain_complex.st.ext)->explain_complex.st.ext, funcs:firstrow(explain_complex.st.t)->explain_complex.st.t, funcs:firstrow(explain_complex.dd.id)->explain_complex.dd.id, funcs:firstrow(explain_complex.dd.dic)->explain_complex.dd.dic, funcs:firstrow(explain_complex.dd.ip)->explain_complex.dd.ip, funcs:firstrow(explain_complex.dd.t)->explain_complex.dd.t
+    └─Projection	1.25	root		explain_complex.st.id, explain_complex.st.aid, explain_complex.st.cm, explain_complex.st.p1, explain_complex.st.p2, explain_complex.st.p3, explain_complex.st.p4, explain_complex.st.p5, explain_complex.st.p6_md5, explain_complex.st.p7_md5, explain_complex.st.ext, explain_complex.st.t, explain_complex.dd.id, explain_complex.dd.dic, explain_complex.dd.ip, explain_complex.dd.t
+      └─HashJoin	1.25	root		inner join, equal:[eq(explain_complex.dd.aid, explain_complex.st.aid) eq(explain_complex.dd.ip, explain_complex.st.ip)], other cond:gt(explain_complex.dd.t, explain_complex.st.t)
+        ├─IndexLookUp(Build)	1.00	root		
         │ ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:dd, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
-        │ └─Selection(Probe)	0.00	cop[tikv]		eq(explain_complex.dd.bm, 0), eq(explain_complex.dd.pt, "android"), not(isnull(explain_complex.dd.ip))
+        │ └─Selection(Probe)	1.00	cop[tikv]		eq(explain_complex.dd.bm, 0), eq(explain_complex.dd.pt, "android"), not(isnull(explain_complex.dd.ip))
         │   └─TableRowIDScan	3333.33	cop[tikv]	table:dd	keep order:false, stats:pseudo
         └─IndexLookUp(Probe)	3.33	root		
           ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:gad, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
@@ -132,46 +132,46 @@ Projection	1.00	root		explain_complex.st.id, explain_complex.dd.id, explain_comp
             └─TableRowIDScan	3333.33	cop[tikv]	table:gad	keep order:false, stats:pseudo
 explain format = 'brief' select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext from st gad join dd sdk on gad.aid = sdk.aid and gad.dic = sdk.mac and gad.t < sdk.t where gad.t > 1477971479 and gad.bm = 0 and gad.pt = 'ios' and gad.dit = 'mac' and sdk.t > 1477971479 and sdk.bm = 0 and sdk.pt = 'ios' limit 3000;
 id	estRows	task	access object	operator info
-Projection	0.00	root		explain_complex.st.id, explain_complex.dd.id, explain_complex.st.aid, explain_complex.st.cm, explain_complex.dd.dic, explain_complex.dd.ip, explain_complex.dd.t, explain_complex.st.p1, explain_complex.st.p2, explain_complex.st.p3, explain_complex.st.p4, explain_complex.st.p5, explain_complex.st.p6_md5, explain_complex.st.p7_md5, explain_complex.st.ext
-└─Limit	0.00	root		offset:0, count:3000
-  └─IndexJoin	0.00	root		inner join, inner:IndexLookUp, outer key:explain_complex.st.aid, inner key:explain_complex.dd.aid, equal cond:eq(explain_complex.st.aid, explain_complex.dd.aid), eq(explain_complex.st.dic, explain_complex.dd.mac), other cond:lt(explain_complex.st.t, explain_complex.dd.t)
-    ├─IndexLookUp(Build)	0.00	root		
-    │ ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:gad, index:t(t)	range:(1477971479,+inf], keep order:false, stats:pseudo
-    │ └─Selection(Probe)	0.00	cop[tikv]		eq(explain_complex.st.bm, 0), eq(explain_complex.st.dit, "mac"), eq(explain_complex.st.pt, "ios"), not(isnull(explain_complex.st.dic))
-    │   └─TableRowIDScan	3333.33	cop[tikv]	table:gad	keep order:false, stats:pseudo
-    └─IndexLookUp(Probe)	0.00	root		
-      ├─IndexRangeScan(Build)	0.03	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(explain_complex.dd.aid, explain_complex.st.aid)], keep order:false, stats:pseudo
-      └─Selection(Probe)	0.00	cop[tikv]		eq(explain_complex.dd.bm, 0), eq(explain_complex.dd.pt, "ios"), gt(explain_complex.dd.t, 1477971479), not(isnull(explain_complex.dd.mac)), not(isnull(explain_complex.dd.t))
-        └─TableRowIDScan	0.03	cop[tikv]	table:sdk	keep order:false, stats:pseudo
+Projection	1.00	root		explain_complex.st.id, explain_complex.dd.id, explain_complex.st.aid, explain_complex.st.cm, explain_complex.dd.dic, explain_complex.dd.ip, explain_complex.dd.t, explain_complex.st.p1, explain_complex.st.p2, explain_complex.st.p3, explain_complex.st.p4, explain_complex.st.p5, explain_complex.st.p6_md5, explain_complex.st.p7_md5, explain_complex.st.ext
+└─Limit	1.00	root		offset:0, count:3000
+  └─HashJoin	1.00	root		inner join, equal:[eq(explain_complex.st.aid, explain_complex.dd.aid) eq(explain_complex.st.dic, explain_complex.dd.mac)], other cond:lt(explain_complex.st.t, explain_complex.dd.t)
+    ├─IndexLookUp(Build)	1.00	root		
+    │ ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:sdk, index:t(t)	range:(1477971479,+inf], keep order:false, stats:pseudo
+    │ └─Selection(Probe)	1.00	cop[tikv]		eq(explain_complex.dd.bm, 0), eq(explain_complex.dd.pt, "ios"), not(isnull(explain_complex.dd.mac))
+    │   └─TableRowIDScan	3333.33	cop[tikv]	table:sdk	keep order:false, stats:pseudo
+    └─IndexLookUp(Probe)	1.00	root		
+      ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:gad, index:t(t)	range:(1477971479,+inf], keep order:false, stats:pseudo
+      └─Selection(Probe)	1.00	cop[tikv]		eq(explain_complex.st.bm, 0), eq(explain_complex.st.dit, "mac"), eq(explain_complex.st.pt, "ios"), not(isnull(explain_complex.st.dic))
+        └─TableRowIDScan	3333.33	cop[tikv]	table:gad	keep order:false, stats:pseudo
 explain format = 'brief' SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	estRows	task	access object	operator info
 Projection	1.00	root		explain_complex.st.cm, explain_complex.st.p1, explain_complex.st.p2, explain_complex.st.p3, explain_complex.st.p4, explain_complex.st.p5, explain_complex.st.p6_md5, explain_complex.st.p7_md5, Column#20, Column#21
 └─HashAgg	1.00	root		group by:explain_complex.st.cm, explain_complex.st.p1, explain_complex.st.p2, explain_complex.st.p3, explain_complex.st.p4, explain_complex.st.p5, explain_complex.st.p6_md5, explain_complex.st.p7_md5, funcs:count(1)->Column#20, funcs:count(distinct explain_complex.st.ip)->Column#21, funcs:firstrow(explain_complex.st.cm)->explain_complex.st.cm, funcs:firstrow(explain_complex.st.p1)->explain_complex.st.p1, funcs:firstrow(explain_complex.st.p2)->explain_complex.st.p2, funcs:firstrow(explain_complex.st.p3)->explain_complex.st.p3, funcs:firstrow(explain_complex.st.p4)->explain_complex.st.p4, funcs:firstrow(explain_complex.st.p5)->explain_complex.st.p5, funcs:firstrow(explain_complex.st.p6_md5)->explain_complex.st.p6_md5, funcs:firstrow(explain_complex.st.p7_md5)->explain_complex.st.p7_md5
-  └─IndexLookUp	0.00	root		
+  └─IndexLookUp	1.00	root		
     ├─IndexRangeScan(Build)	250.00	cop[tikv]	table:st, index:t(t)	range:[1478188800,1478275200], keep order:false, stats:pseudo
-    └─Selection(Probe)	0.00	cop[tikv]		eq(explain_complex.st.aid, "cn.sbkcq"), eq(explain_complex.st.pt, "android")
+    └─Selection(Probe)	1.00	cop[tikv]		eq(explain_complex.st.aid, "cn.sbkcq"), eq(explain_complex.st.pt, "android")
       └─TableRowIDScan	250.00	cop[tikv]	table:st	keep order:false, stats:pseudo
 explain format = 'brief' select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic as dic, dt.cm as cm, rr.gid as gid, rr.acd as acd, rr.t as t,dt.p1 as p1, dt.p2 as p2, dt.p3 as p3, dt.p4 as p4, dt.p5 as p5, dt.p6_md5 as p6, dt.p7_md5 as p7 from dt dt join rr rr on (rr.pt = 'ios' and rr.t > 1478185592 and dt.aid = rr.aid and dt.dic = rr.dic) where dt.pt = 'ios' and dt.t > 1478185592 and dt.bm = 0 limit 2000;
 id	estRows	task	access object	operator info
-Projection	0.01	root		explain_complex.dt.id, explain_complex.dt.aid, explain_complex.dt.pt, explain_complex.dt.dic, explain_complex.dt.cm, explain_complex.rr.gid, explain_complex.rr.acd, explain_complex.rr.t, explain_complex.dt.p1, explain_complex.dt.p2, explain_complex.dt.p3, explain_complex.dt.p4, explain_complex.dt.p5, explain_complex.dt.p6_md5, explain_complex.dt.p7_md5
-└─Limit	0.01	root		offset:0, count:2000
-  └─IndexJoin	0.01	root		inner join, inner:IndexLookUp, outer key:explain_complex.rr.aid, explain_complex.rr.dic, inner key:explain_complex.dt.aid, explain_complex.dt.dic, equal cond:eq(explain_complex.rr.aid, explain_complex.dt.aid), eq(explain_complex.rr.dic, explain_complex.dt.dic)
+Projection	3.33	root		explain_complex.dt.id, explain_complex.dt.aid, explain_complex.dt.pt, explain_complex.dt.dic, explain_complex.dt.cm, explain_complex.rr.gid, explain_complex.rr.acd, explain_complex.rr.t, explain_complex.dt.p1, explain_complex.dt.p2, explain_complex.dt.p3, explain_complex.dt.p4, explain_complex.dt.p5, explain_complex.dt.p6_md5, explain_complex.dt.p7_md5
+└─Limit	3.33	root		offset:0, count:2000
+  └─IndexJoin	3.33	root		inner join, inner:IndexLookUp, outer key:explain_complex.rr.aid, explain_complex.rr.dic, inner key:explain_complex.dt.aid, explain_complex.dt.dic, equal cond:eq(explain_complex.rr.aid, explain_complex.dt.aid), eq(explain_complex.rr.dic, explain_complex.dt.dic)
     ├─TableReader(Build)	3.33	root		data:Selection
     │ └─Selection	3.33	cop[tikv]		eq(explain_complex.rr.pt, "ios"), gt(explain_complex.rr.t, 1478185592)
     │   └─TableFullScan	10000.00	cop[tikv]	table:rr	keep order:false, stats:pseudo
-    └─IndexLookUp(Probe)	0.01	root		
+    └─IndexLookUp(Probe)	3.33	root		
       ├─Selection(Build)	3.33	cop[tikv]		not(isnull(explain_complex.dt.dic))
       │ └─IndexRangeScan	3.33	cop[tikv]	table:dt, index:aid(aid, dic)	range: decided by [eq(explain_complex.dt.aid, explain_complex.rr.aid) eq(explain_complex.dt.dic, explain_complex.rr.dic)], keep order:false, stats:pseudo
-      └─Selection(Probe)	0.01	cop[tikv]		eq(explain_complex.dt.bm, 0), eq(explain_complex.dt.pt, "ios"), gt(explain_complex.dt.t, 1478185592)
+      └─Selection(Probe)	3.33	cop[tikv]		eq(explain_complex.dt.bm, 0), eq(explain_complex.dt.pt, "ios"), gt(explain_complex.dt.t, 1478185592)
         └─TableRowIDScan	3.33	cop[tikv]	table:dt	keep order:false, stats:pseudo
 explain format = 'brief' select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
 id	estRows	task	access object	operator info
 Projection	1.00	root		explain_complex.pp.pc, explain_complex.pp.cr, Column#22, Column#23, Column#24
 └─HashAgg	1.00	root		group by:explain_complex.pp.cr, explain_complex.pp.pc, funcs:count(distinct explain_complex.pp.uid)->Column#22, funcs:count(explain_complex.pp.oid)->Column#23, funcs:sum(explain_complex.pp.am)->Column#24, funcs:firstrow(explain_complex.pp.pc)->explain_complex.pp.pc, funcs:firstrow(explain_complex.pp.cr)->explain_complex.pp.cr
-  └─IndexLookUp	0.00	root		
-    ├─IndexRangeScan(Build)	0.40	cop[tikv]	table:pp, index:sp(uid, pi)	range:[18089709 510017,18089709 510017], [18089709 520017,18089709 520017], [18090780 510017,18090780 510017], [18090780 520017,18090780 520017], keep order:false, stats:pseudo
-    └─Selection(Probe)	0.00	cop[tikv]		eq(explain_complex.pp.ps, 2), ge(explain_complex.pp.ppt, 1478188800), lt(explain_complex.pp.ppt, 1478275200)
-      └─TableRowIDScan	0.40	cop[tikv]	table:pp	keep order:false, stats:pseudo
+  └─IndexLookUp	1.00	root		
+    ├─IndexRangeScan(Build)	1.25	cop[tikv]	table:pp, index:sp(uid, pi)	range:[18089709 510017,18089709 510017], [18089709 520017,18089709 520017], [18090780 510017,18090780 510017], [18090780 520017,18090780 520017], keep order:false, stats:pseudo
+    └─Selection(Probe)	1.00	cop[tikv]		eq(explain_complex.pp.ps, 2), ge(explain_complex.pp.ppt, 1478188800), lt(explain_complex.pp.ppt, 1478275200)
+      └─TableRowIDScan	1.25	cop[tikv]	table:pp	keep order:false, stats:pseudo
 CREATE TABLE `tbl_001` (`a` int, `b` int);
 CREATE TABLE `tbl_002` (`a` int, `b` int);
 CREATE TABLE `tbl_003` (`a` int, `b` int);
@@ -249,21 +249,21 @@ explain format = 'brief' SELECT d.id, d.ctx, d.name, d.left_value, d.right_value
 id	estRows	task	access object	operator info
 Sort	1.00	root		explain_complex.org_department.left_value
 └─HashAgg	1.00	root		group by:explain_complex.org_department.id, funcs:firstrow(explain_complex.org_department.id)->explain_complex.org_department.id, funcs:firstrow(explain_complex.org_department.ctx)->explain_complex.org_department.ctx, funcs:firstrow(explain_complex.org_department.name)->explain_complex.org_department.name, funcs:firstrow(explain_complex.org_department.left_value)->explain_complex.org_department.left_value, funcs:firstrow(explain_complex.org_department.right_value)->explain_complex.org_department.right_value, funcs:firstrow(explain_complex.org_department.depth)->explain_complex.org_department.depth, funcs:firstrow(explain_complex.org_department.leader_id)->explain_complex.org_department.leader_id, funcs:firstrow(explain_complex.org_department.status)->explain_complex.org_department.status, funcs:firstrow(explain_complex.org_department.created_on)->explain_complex.org_department.created_on, funcs:firstrow(explain_complex.org_department.updated_on)->explain_complex.org_department.updated_on
-  └─Selection	0.01	root		or(eq(explain_complex.org_employee_position.user_id, 62), or(eq(explain_complex.org_department.id, 20), eq(explain_complex.org_department.id, 20)))
-    └─HashJoin	0.02	root		left outer join, left side:IndexJoin, equal:[eq(explain_complex.org_position.id, explain_complex.org_employee_position.position_id)]
-      ├─TableReader(Build)	9.99	root		data:Selection
-      │ └─Selection	9.99	cop[tikv]		eq(explain_complex.org_employee_position.status, 1000), not(isnull(explain_complex.org_employee_position.position_id))
-      │   └─TableFullScan	10000.00	cop[tikv]	table:ep	keep order:false, stats:pseudo
-      └─IndexJoin(Probe)	0.01	root		left outer join, inner:IndexLookUp, left side:IndexLookUp, outer key:explain_complex.org_department.id, inner key:explain_complex.org_position.department_id, equal cond:eq(explain_complex.org_department.id, explain_complex.org_position.department_id)
-        ├─IndexLookUp(Build)	0.01	root		
-        │ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:d, index:org_department_ctx_index(ctx)	range:[1,1], keep order:false, stats:pseudo
-        │ └─Selection(Probe)	0.01	cop[tikv]		eq(explain_complex.org_department.status, 1000)
-        │   └─TableRowIDScan	10.00	cop[tikv]	table:d	keep order:false, stats:pseudo
-        └─IndexLookUp(Probe)	0.01	root		
-          ├─Selection(Build)	12.50	cop[tikv]		not(isnull(explain_complex.org_position.department_id))
-          │ └─IndexRangeScan	12.51	cop[tikv]	table:p, index:org_position_department_id_index(department_id)	range: decided by [eq(explain_complex.org_position.department_id, explain_complex.org_department.id)], keep order:false, stats:pseudo
-          └─Selection(Probe)	0.01	cop[tikv]		eq(explain_complex.org_position.status, 1000)
-            └─TableRowIDScan	12.50	cop[tikv]	table:p	keep order:false, stats:pseudo
+  └─Selection	1.25	root		or(eq(explain_complex.org_employee_position.user_id, 62), or(eq(explain_complex.org_department.id, 20), eq(explain_complex.org_department.id, 20)))
+    └─HashJoin	1.56	root		left outer join, left side:IndexJoin, equal:[eq(explain_complex.org_position.id, explain_complex.org_employee_position.position_id)]
+      ├─IndexJoin(Build)	1.25	root		left outer join, inner:IndexLookUp, left side:IndexLookUp, outer key:explain_complex.org_department.id, inner key:explain_complex.org_position.department_id, equal cond:eq(explain_complex.org_department.id, explain_complex.org_position.department_id)
+      │ ├─IndexLookUp(Build)	1.00	root		
+      │ │ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:d, index:org_department_ctx_index(ctx)	range:[1,1], keep order:false, stats:pseudo
+      │ │ └─Selection(Probe)	1.00	cop[tikv]		eq(explain_complex.org_department.status, 1000)
+      │ │   └─TableRowIDScan	10.00	cop[tikv]	table:d	keep order:false, stats:pseudo
+      │ └─IndexLookUp(Probe)	1.25	root		
+      │   ├─Selection(Build)	1250.00	cop[tikv]		not(isnull(explain_complex.org_position.department_id))
+      │   │ └─IndexRangeScan	1251.25	cop[tikv]	table:p, index:org_position_department_id_index(department_id)	range: decided by [eq(explain_complex.org_position.department_id, explain_complex.org_department.id)], keep order:false, stats:pseudo
+      │   └─Selection(Probe)	1.25	cop[tikv]		eq(explain_complex.org_position.status, 1000)
+      │     └─TableRowIDScan	1250.00	cop[tikv]	table:p	keep order:false, stats:pseudo
+      └─TableReader(Probe)	9.99	root		data:Selection
+        └─Selection	9.99	cop[tikv]		eq(explain_complex.org_employee_position.status, 1000), not(isnull(explain_complex.org_employee_position.position_id))
+          └─TableFullScan	10000.00	cop[tikv]	table:ep	keep order:false, stats:pseudo
 set tidb_cost_model_version=1;
 create table Tab_A (id int primary key,bid int,cid int,name varchar(20),type varchar(20),num int,amt decimal(11,2));
 create table Tab_B (id int primary key,name varchar(20));
@@ -274,20 +274,53 @@ insert into Tab_B values(2,'B01');
 insert into Tab_B values(4,'B02');
 insert into Tab_C values(2,'C01',22);
 insert into Tab_C values(4,'C01',5);
-explain select Tab_A.name AAA,Tab_B.name BBB,Tab_A.amt Aamt, Tab_C.amt Bamt,IFNULL(Tab_C.amt, 0) FROM Tab_A left join Tab_B on Tab_A.bid=Tab_B.id left join Tab_C on Tab_A.cid=Tab_C.id and Tab_A.type='01' where Tab_A.num=112;
+explain format = 'brief' select Tab_A.name AAA,Tab_B.name BBB,Tab_A.amt Aamt, Tab_C.amt Bamt,IFNULL(Tab_C.amt, 0) FROM Tab_A left join Tab_B on Tab_A.bid=Tab_B.id left join Tab_C on Tab_A.cid=Tab_C.id and Tab_A.type='01' where Tab_A.num=112;
 id	estRows	task	access object	operator info
-Projection_11	15.62	root		explain_complex.tab_a.name, explain_complex.tab_b.name, explain_complex.tab_a.amt, explain_complex.tab_c.amt, ifnull(explain_complex.tab_c.amt, 0.00)->Column#13
-└─IndexJoin_16	15.62	root		left outer join, inner:TableReader_13, left side:IndexJoin_27, outer key:explain_complex.tab_a.cid, inner key:explain_complex.tab_c.id, equal cond:eq(explain_complex.tab_a.cid, explain_complex.tab_c.id), left cond:eq(explain_complex.tab_a.type, "01")
-  ├─IndexJoin_27(Build)	12.50	root		left outer join, inner:TableReader_24, left side:TableReader_36, outer key:explain_complex.tab_a.bid, inner key:explain_complex.tab_b.id, equal cond:eq(explain_complex.tab_a.bid, explain_complex.tab_b.id)
-  │ ├─TableReader_36(Build)	10.00	root		data:Selection_35
-  │ │ └─Selection_35	10.00	cop[tikv]		eq(explain_complex.tab_a.num, 112)
-  │ │   └─TableFullScan_34	10000.00	cop[tikv]	table:Tab_A	keep order:false, stats:pseudo
-  │ └─TableReader_24(Probe)	10.00	root		data:TableRangeScan_23
-  │   └─TableRangeScan_23	10.00	cop[tikv]	table:Tab_B	range: decided by [explain_complex.tab_a.bid], keep order:false, stats:pseudo
-  └─TableReader_13(Probe)	12.50	root		data:TableRangeScan_12
-    └─TableRangeScan_12	12.50	cop[tikv]	table:Tab_C	range: decided by [explain_complex.tab_a.cid], keep order:false, stats:pseudo
+Projection	15.62	root		explain_complex.tab_a.name, explain_complex.tab_b.name, explain_complex.tab_a.amt, explain_complex.tab_c.amt, ifnull(explain_complex.tab_c.amt, 0.00)->Column#13
+└─IndexJoin	15.62	root		left outer join, inner:TableReader, left side:IndexJoin, outer key:explain_complex.tab_a.cid, inner key:explain_complex.tab_c.id, equal cond:eq(explain_complex.tab_a.cid, explain_complex.tab_c.id), left cond:eq(explain_complex.tab_a.type, "01")
+  ├─IndexJoin(Build)	12.50	root		left outer join, inner:TableReader, left side:TableReader, outer key:explain_complex.tab_a.bid, inner key:explain_complex.tab_b.id, equal cond:eq(explain_complex.tab_a.bid, explain_complex.tab_b.id)
+  │ ├─TableReader(Build)	10.00	root		data:Selection
+  │ │ └─Selection	10.00	cop[tikv]		eq(explain_complex.tab_a.num, 112)
+  │ │   └─TableFullScan	10000.00	cop[tikv]	table:Tab_A	keep order:false, stats:pseudo
+  │ └─TableReader(Probe)	10.00	root		data:TableRangeScan
+  │   └─TableRangeScan	10.00	cop[tikv]	table:Tab_B	range: decided by [explain_complex.tab_a.bid], keep order:false, stats:pseudo
+  └─TableReader(Probe)	12.50	root		data:TableRangeScan
+    └─TableRangeScan	12.50	cop[tikv]	table:Tab_C	range: decided by [explain_complex.tab_a.cid], keep order:false, stats:pseudo
 select Tab_A.name AAA,Tab_B.name BBB,Tab_A.amt Aamt, Tab_C.amt Bamt,IFNULL(Tab_C.amt, 0) FROM Tab_A left join Tab_B on Tab_A.bid=Tab_B.id left join Tab_C on Tab_A.cid=Tab_C.id and Tab_A.type='01' where Tab_A.num=112;
 AAA	BBB	Aamt	Bamt	IFNULL(Tab_C.amt, 0)
 A01	B01	111.00	22.00	22.00
 A02	B02	111.00	NULL	0.00
 set @@sql_mode=default;
+use test;
+drop table if exists test;
+CREATE TABLE `test` (
+`ecif_party_no` varchar(20) DEFAULT NULL,
+`busi_cust_no` varchar(20) DEFAULT NULL,
+`busi_series_cd` varchar(2) DEFAULT NULL,
+`org_belong` varchar(15) DEFAULT NULL,
+`party_no` varchar(20) DEFAULT NULL,
+`rela_status_cd` varchar(2) DEFAULT NULL,
+`rela_status_desc` varchar(20) DEFAULT NULL,
+`created_by` varchar(100) DEFAULT 'ecifdata',
+`created_date` datetime DEFAULT CURRENT_TIMESTAMP,
+`updated_by` varchar(100) DEFAULT 'ecifdata',
+`updated_date` datetime DEFAULT CURRENT_TIMESTAMP,
+`id_tp00_cust_no_rela` varchar(40) NOT NULL DEFAULT uuid(),
+KEY `IX_CUST_RELA_DATE` (`updated_date`),
+KEY `IX_TPCNR_BCN` (`busi_cust_no`),
+KEY `IX_TPCNR_EPN` (`ecif_party_no`),
+KEY `IX_TPCNR_PAN` (`party_no`),
+PRIMARY KEY (`id_tp00_cust_no_rela`) /*T![clustered_index] NONCLUSTERED */
+);
+analyze table test all columns;
+load stats 's/issue_50080.json';
+explain format='brief' select * from test where updated_date > '2023-12-31 23:50:00' and updated_date < '2023-12-31 23:59:59';
+id	estRows	task	access object	operator info
+IndexLookUp	2230.84	root		
+├─IndexRangeScan(Build)	2230.84	cop[tikv]	table:test, index:IX_CUST_RELA_DATE(updated_date)	range:(2023-12-31 23:50:00,2023-12-31 23:59:59), keep order:false
+└─TableRowIDScan(Probe)	2230.84	cop[tikv]	table:test	keep order:false
+explain format='brief' select * from test where updated_date > '2023-12-31 23:50:00' and updated_date < '2024-01-01 00:00:00';
+id	estRows	task	access object	operator info
+IndexLookUp	2234.56	root		
+├─IndexRangeScan(Build)	2234.56	cop[tikv]	table:test, index:IX_CUST_RELA_DATE(updated_date)	range:(2023-12-31 23:50:00,2024-01-01 00:00:00), keep order:false
+└─TableRowIDScan(Probe)	2234.56	cop[tikv]	table:test	keep order:false

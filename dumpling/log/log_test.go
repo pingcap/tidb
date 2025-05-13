@@ -36,6 +36,14 @@ func TestInitLogNoPermission(t *testing.T) {
 	err = os.Chmod(tmpDir, 0)
 	require.NoError(t, err)
 
-	_, _, err = InitAppLogger(conf)
+	l, _, err := InitAppLogger(conf)
+	if err == nil && os.Geteuid() == 0 {
+		// current user is root, so we can write to the file
+		l.Info("test")
+		err = l.Sync()
+		require.NoError(t, err)
+		require.FileExists(t, tmpDir+"/test.log")
+		return
+	}
 	require.ErrorContains(t, err, "permission denied")
 }

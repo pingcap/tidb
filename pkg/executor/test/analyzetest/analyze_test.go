@@ -147,7 +147,7 @@ func TestAnalyzeParameters(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 	}
 	tk.MustExec("insert into t values (19), (19), (19)")
@@ -245,10 +245,10 @@ func TestExtractTopN(t *testing.T) {
 	tk.MustExec("drop table if exists test_extract_topn")
 	tk.MustExec("create table test_extract_topn(a int primary key, b int, index index_b(b))")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		tk.MustExec(fmt.Sprintf("insert into test_extract_topn values (%d, %d)", i, i))
 	}
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		tk.MustExec(fmt.Sprintf("insert into test_extract_topn values (%d, 0)", i+10))
 	}
 	tk.MustExec("analyze table test_extract_topn")
@@ -356,7 +356,7 @@ func TestDefaultValForAnalyze(t *testing.T) {
 	tk.MustExec("use test_default_val_for_analyze")
 
 	tk.MustExec("create table t (a int, key(a));")
-	for i := 0; i < 256; i++ {
+	for range 256 {
 		tk.MustExec("insert into t values (0),(0),(0),(0),(0),(0),(0),(0)")
 	}
 	for i := 1; i < 4; i++ {
@@ -371,12 +371,12 @@ func TestDefaultValForAnalyze(t *testing.T) {
 	tk.MustExec("analyze table t with 0 topn, 2 buckets, 10000 samples")
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows("IndexReader 512.00 root  index:IndexRangeScan",
 		"└─IndexRangeScan 512.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
-	tk.MustQuery("explain format = 'brief' select * from t where a = 999").Check(testkit.Rows("IndexReader 0.00 root  index:IndexRangeScan",
-		"└─IndexRangeScan 0.00 cop[tikv] table:t, index:a(a) range:[999,999], keep order:false"))
+	tk.MustQuery("explain format = 'brief' select * from t where a = 999").Check(testkit.Rows("IndexReader 1.25 root  index:IndexRangeScan",
+		"└─IndexRangeScan 1.25 cop[tikv] table:t, index:a(a) range:[999,999], keep order:false"))
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int, key(a));")
-	for i := 0; i < 256; i++ {
+	for range 256 {
 		tk.MustExec("insert into t values (0),(0),(0),(0),(0),(0),(0),(0)")
 	}
 	for i := 1; i < 2049; i += 8 {
@@ -2923,7 +2923,7 @@ func TestAnalyzeMVIndex(t *testing.T) {
 			"char":     []string{"aaa", "cccccc", "eee", "asdf", "k!@cvd", "yuiop", "%*$%#@qwe"},
 		},
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		jsonValue := jsonData[i]
 		jsonValueStr, err := json.Marshal(jsonValue)
 		require.NoError(t, err)

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -515,7 +517,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 		if totalSize >= regionMaxSize || totalCount >= j.regionSplitKeys {
 			// we will shrink the key range of this job to real written range
 			if iter.Next() {
-				remainingStartKey = append([]byte{}, iter.Key()...)
+				remainingStartKey = slices.Clone(iter.Key())
 				log.FromContext(ctx).Info("write to tikv partial finish",
 					zap.Int64("count", totalCount),
 					zap.Int64("size", totalSize),
@@ -614,7 +616,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 	}
 
 	var lastRetriedErr error
-	for retry := 0; retry < maxRetryTimes; retry++ {
+	for retry := range maxRetryTimes {
 		resp, err := local.doIngest(ctx, j)
 		if err != nil {
 			if common.IsContextCanceledError(err) {
@@ -804,7 +806,6 @@ func (e *ingestAPIError) Unwrap() error {
 }
 
 func convertPBError2Error(job *regionJob, errPb *errorpb.Error) *ingestAPIError {
-	var newRegion *split.RegionInfo
 	res := &ingestAPIError{}
 	switch {
 	case errPb.NotLeader != nil:
@@ -813,34 +814,7 @@ func convertPBError2Error(job *regionJob, errPb *errorpb.Error) *ingestAPIError 
 		res.err = common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
 	case errPb.EpochNotMatch != nil:
 		res.err = common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
-
-		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
-			var currentRegion *metapb.Region
-			for _, r := range currentRegions {
-				if insideRegion(r, job.writeResult.sstMeta) {
-					currentRegion = r
-					break
-				}
-			}
-			if currentRegion != nil {
-				var newLeader *metapb.Peer
-				for _, p := range currentRegion.Peers {
-					if p.GetStoreId() == job.region.Leader.GetStoreId() {
-						newLeader = p
-						break
-					}
-				}
-				if newLeader != nil {
-					newRegion = &split.RegionInfo{
-						Leader: newLeader,
-						Region: currentRegion,
-					}
-				}
-			}
-		}
-		if newRegion != nil {
-			res.newRegion = newRegion
-		}
+		res.newRegion = extractRegionFromErr(job, errPb.GetEpochNotMatch().GetCurrentRegions())
 	case strings.Contains(errPb.Message, "raft: proposal dropped"):
 		res.err = common.ErrKVRaftProposalDropped.GenWithStack(errPb.GetMessage())
 	case errPb.ServerIsBusy != nil:
@@ -862,6 +836,42 @@ func convertPBError2Error(job *regionJob, errPb *errorpb.Error) *ingestAPIError 
 		res.err = common.ErrKVIngestFailed.GenWithStack(errPb.GetMessage())
 	}
 	return res
+}
+
+func extractRegionFromErr(job *regionJob, currentRegions []*metapb.Region) *split.RegionInfo {
+	// unlike classic kernel, nextgen cannot return the full current region infos
+	// for the range of the region which is used for ingest, it can only return
+	// region info of the same region ID.
+	if kerneltype.IsNextGen() || len(currentRegions) == 0 {
+		return nil
+	}
+
+	intest.Assert(len(job.writeResult.sstMeta) > 0)
+	var currentRegion *metapb.Region
+	for _, r := range currentRegions {
+		// nextgen doesn't have job.writeResult.sstMeta, be careful when modify it
+		// when nextgen can return correct current region infos.
+		if insideRegion(r, job.writeResult.sstMeta) {
+			currentRegion = r
+			break
+		}
+	}
+	if currentRegion != nil {
+		var newLeader *metapb.Peer
+		for _, p := range currentRegion.Peers {
+			if p.GetStoreId() == job.region.Leader.GetStoreId() {
+				newLeader = p
+				break
+			}
+		}
+		if newLeader != nil {
+			return &split.RegionInfo{
+				Leader: newLeader,
+				Region: currentRegion,
+			}
+		}
+	}
+	return nil
 }
 
 // the input error must be an retryable error
@@ -1155,7 +1165,7 @@ func (b *storeBalancer) runSendToWorker(workerCtx context.Context) {
 		}
 
 		remainJobCnt := b.jobLen()
-		for i := 0; i < remainJobCnt; i++ {
+		for range remainJobCnt {
 			j := b.pickJob()
 			if j == nil {
 				// j can be nil if it's executed after the jobs.Store of runReadToWorkerCh

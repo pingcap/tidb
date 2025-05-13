@@ -500,7 +500,7 @@ func (p *cteProducer) setupTblsForNewIteration() (err error) {
 	num := p.iterOutTbl.NumChunks()
 	chks := make([]*chunk.Chunk, 0, num)
 	// Setup resTbl's data.
-	for i := 0; i < num; i++ {
+	for i := range num {
 		chk, err := p.iterOutTbl.GetChunk(i)
 		if err != nil {
 			return err
@@ -629,7 +629,7 @@ func (p *cteProducer) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) 
 		// So needs to handle here to make sure len(p.sel) == chk.NumRows().
 		if len(p.sel) < numRows {
 			tmpSel := make([]int, numRows-len(p.sel))
-			for i := 0; i < len(tmpSel); i++ {
+			for i := range tmpSel {
 				tmpSel[i] = i + len(p.sel)
 			}
 			p.sel = append(p.sel, tmpSel...)
@@ -640,7 +640,7 @@ func (p *cteProducer) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) 
 		sel = p.sel
 	}
 
-	for i := 0; i < chk.NumCols(); i++ {
+	for i := range chk.NumCols() {
 		if err = codec.HashChunkSelected(p.ctx.GetSessionVars().StmtCtx.TypeCtx(), p.hCtx.HashVals,
 			chk, p.hCtx.AllTypes[i], i, p.hCtx.Buf, p.hCtx.HasNull,
 			hashBitMap, false); err != nil {
@@ -670,7 +670,7 @@ func (p *cteProducer) deduplicate(chk *chunk.Chunk,
 	// 2. Filter rows duplicated in input chunk.
 	// This sel is for filtering rows duplicated in cur chk.
 	selChk := make([]int, 0, numRows)
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		key := p.hCtx.HashVals[selOri[i]].Sum64()
 		row := chk.GetRow(i)
 
@@ -693,7 +693,7 @@ func (p *cteProducer) deduplicate(chk *chunk.Chunk,
 	// 3. Filter rows duplicated in RowContainer.
 	// This sel is for filtering rows duplicated in cteutil.Storage.
 	selStorage := make([]int, 0, len(selChk))
-	for i := 0; i < len(selChk); i++ {
+	for i := range selChk {
 		key := p.hCtx.HashVals[selChk[i]].Sum64()
 		row := chk.GetRow(i)
 

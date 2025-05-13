@@ -30,8 +30,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestJsonByteSlice(t *testing.T) {
+	slice := jsonByteSlice("\x03\x02\x00\x02\xff")
+	data, err := json.Marshal(slice)
+	require.NoError(t, err)
+	require.Equal(t, `[3,2,0,2,255]`, string(data))
+}
+
 func TestWriteClientWriteChunk(t *testing.T) {
-	sstMeta := nextGenResp{nextGenSSTMeta{ID: 1, Smallest: []int{0}, Biggest: []int{1}, MetaOffset: 1, CommitTs: 1}}
+	sstMeta := nextGenResp{nextGenSSTMeta{ID: 1, Smallest: []byte{0}, Biggest: []byte{1}, MetaOffset: 1, CommitTs: 1}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
@@ -123,7 +130,7 @@ func TestClientIngestError(t *testing.T) {
 	req := &IngestRequest{
 		WriteResp: &WriteResponse{
 			nextGenSSTMeta: &nextGenSSTMeta{
-				ID: 1,
+				ID: 123456,
 			},
 		},
 		Region: &split.RegionInfo{Region: &metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 1}}},
@@ -131,6 +138,7 @@ func TestClientIngestError(t *testing.T) {
 	err := client.Ingest(context.Background(), req)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "test error")
+	require.Contains(t, err.Error(), "ingest SST ID 123456")
 }
 
 type storeClient struct {
