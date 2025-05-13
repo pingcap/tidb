@@ -237,16 +237,16 @@ func (n *ExplainStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.Analyze {
 		ctx.WriteKeyWord("ANALYZE ")
 	}
-	if (!n.Analyze || strings.ToLower(n.Format) != "row") && !n.Explore {
-		ctx.WriteKeyWord("FORMAT ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.Format)
-		ctx.WritePlain(" ")
-	} else {
+	if n.Explore {
 		ctx.WriteKeyWord("EXPLORE ")
 		if n.SQLDigest != "" {
 			ctx.WriteString(n.SQLDigest)
 		}
+	} else if !n.Analyze || strings.ToLower(n.Format) != "row" {
+		ctx.WriteKeyWord("FORMAT ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.Format)
+		ctx.WritePlain(" ")
 	}
 	if n.Stmt != nil {
 		if err := n.Stmt.Restore(ctx); err != nil {
