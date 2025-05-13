@@ -4793,7 +4793,7 @@ func (b *PlanBuilder) buildDistributeTable(node *ast.DistributeTableStmt) (base.
 	}
 
 	if node.Engine.L == "tiflash" && node.Rule.L != "learner-scatter" {
-		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("the rule of tiflash must be learner")
+		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("the rule of tiflash must be learner-scatter")
 	}
 	plan := &DistributeTable{
 		TableInfo:      tblInfo,
