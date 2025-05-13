@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -43,6 +44,11 @@ func (l *Limiter) Acquire(n int) {
 	l.mu.Lock()
 
 	if l.limit >= n {
+		logutil.BgLogger().Info("limiter allocate",
+			zap.Int("init limit", l.initLimit),
+			zap.Int("current limit", l.limit),
+			zap.Int("current allocate size", n),
+			zap.Int("total allocate size", l.initLimit-l.limit))
 		l.limit -= n
 		l.mu.Unlock()
 		return
@@ -52,6 +58,7 @@ func (l *Limiter) Acquire(n int) {
 	l.waitNums = append(l.waitNums, n)
 	l.waitChs = append(l.waitChs, waitCh)
 	l.mu.Unlock()
+	logutil.BgLogger().Info("limiter allocate wait", zap.Int("allocate size", n))
 
 	<-waitCh
 }
