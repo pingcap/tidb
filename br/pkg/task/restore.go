@@ -60,6 +60,7 @@ const (
 	flagNoSchema                 = "no-schema"
 	flagLoadStats                = "load-stats"
 	flagLoadStatsPhysical        = "load-stats-physical"
+	flagLoadSysTablePhysical     = "load-sys-table-physical"
 	flagGranularity              = "granularity"
 	flagConcurrencyPerStore      = "tikv-max-restore-concurrency"
 	flagAllowPITRFromIncremental = "allow-pitr-from-incremental"
@@ -238,13 +239,14 @@ type RestoreConfig struct {
 	Config
 	RestoreCommonConfig
 
-	NoSchema           bool          `json:"no-schema" toml:"no-schema"`
-	LoadStats          bool          `json:"load-stats" toml:"load-stats"`
-	LoadStatsPhysical  bool          `json:"load-stats-physical" toml:"load-stats-physical"`
-	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
-	StatsConcurrency   uint          `json:"stats-concurrency" toml:"stats-concurrency"`
-	AutoAnalyze        bool          `json:"auto-analyze" toml:"auto-analyze"`
-	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
+	NoSchema             bool          `json:"no-schema" toml:"no-schema"`
+	LoadStats            bool          `json:"load-stats" toml:"load-stats"`
+	LoadStatsPhysical    bool          `json:"load-stats-physical" toml:"load-stats-physical"`
+	LoadSysTablePhysical bool          `json:"load-sys-table-physical" toml:"load-sys-table-physical"`
+	PDConcurrency        uint          `json:"pd-concurrency" toml:"pd-concurrency"`
+	StatsConcurrency     uint          `json:"stats-concurrency" toml:"stats-concurrency"`
+	AutoAnalyze          bool          `json:"auto-analyze" toml:"auto-analyze"`
+	BatchFlushInterval   time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
 	// DdlBatchSize use to define the size of batch ddl to create tables
 	DdlBatchSize uint `json:"ddl-batch-size" toml:"ddl-batch-size"`
 
@@ -299,7 +301,8 @@ func (cfg *RestoreConfig) LocalEncryptionEnabled() bool {
 func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagNoSchema, false, "skip creating schemas and tables, reuse existing empty ones")
 	flags.Bool(flagLoadStats, true, "Run load stats at end of snapshot restore task")
-	flags.Bool(flagLoadStatsPhysical, false, "load stats by rename the temporary stats table")
+	flags.Bool(flagLoadStatsPhysical, false, "load stats by rename the temporary stats tables")
+	flags.Bool(flagLoadSysTablePhysical, false, "load system tables by rename the temporary system tables")
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
@@ -382,6 +385,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 		return errors.Trace(err)
 	}
 	cfg.LoadStatsPhysical, err = flags.GetBool(flagLoadStatsPhysical)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.LoadSysTablePhysical, err = flags.GetBool(flagLoadSysTablePhysical)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -899,7 +906,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
 	}
 	schemaVersionPair := snapclient.SchemaVersionPairT{}
-	if cfg.LoadStatsPhysical {
+	if cfg.LoadStatsPhysical || cfg.LoadSysTablePhysical {
 		upstreamClusterVersion, err := semver.NewVersion(backupMeta.ClusterVersion)
 		if err != nil {
 			return errors.Annotatef(berrors.ErrVersionMismatch, "%s: cluster version %s from backupmeta is invalid", err.Error(), backupMeta.ClusterVersion)
@@ -1321,10 +1328,11 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	plCtx := snapclient.PipelineContext{
 		// pipeline checksum only when enabled and is not incremental snapshot repair mode cuz incremental doesn't have
 		// enough information in backup meta to validate checksum
-		Checksum:          cfg.Checksum && !client.IsIncremental(),
-		LoadStats:         cfg.LoadStats,
-		LoadStatsPhysical: cfg.LoadStatsPhysical,
-		WaitTiflashReady:  cfg.WaitTiflashReady,
+		Checksum:             cfg.Checksum && !client.IsIncremental(),
+		LoadStats:            cfg.LoadStats,
+		LoadStatsPhysical:    cfg.LoadStatsPhysical,
+		LoadSysTablePhysical: cfg.LoadSysTablePhysical,
+		WaitTiflashReady:     cfg.WaitTiflashReady,
 
 		LogProgress:         cfg.LogProgress,
 		ChecksumConcurrency: cfg.ChecksumConcurrency,

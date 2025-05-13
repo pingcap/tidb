@@ -234,28 +234,18 @@ func updateStatsTableSchema(
 	versionPair SchemaVersionPairT,
 	execution func(context.Context, string) error,
 ) error {
-	if versionPair.DownstreamVersionMajor > versionPair.UpstreamVersionMajor {
+	if versionPair.DownstreamVersionMajor == versionPair.UpstreamVersionMajor &&
+		versionPair.DownstreamVersionMinor == versionPair.UpstreamVersionMinor {
+		return nil
+	}
+	if versionPair.DownstreamVersionMajor > versionPair.UpstreamVersionMajor ||
+		(versionPair.DownstreamVersionMajor == versionPair.UpstreamVersionMajor &&
+			versionPair.DownstreamVersionMinor > versionPair.UpstreamVersionMinor) {
 		return upgradeStatsTableSchema(ctx, statisticTables,
 			versionPair.UpstreamVersionMajor, versionPair.UpstreamVersionMinor,
 			versionPair.DownstreamVersionMajor, versionPair.DownstreamVersionMinor,
 			execution,
 		)
-	} else if versionPair.DownstreamVersionMajor == versionPair.UpstreamVersionMajor {
-		if versionPair.DownstreamVersionMinor == versionPair.UpstreamVersionMinor {
-			return nil
-		} else if versionPair.DownstreamVersionMinor > versionPair.UpstreamVersionMinor {
-			return upgradeStatsTableSchema(ctx, statisticTables,
-				versionPair.UpstreamVersionMajor, versionPair.UpstreamVersionMinor,
-				versionPair.DownstreamVersionMajor, versionPair.DownstreamVersionMinor,
-				execution,
-			)
-		} else {
-			return downgradeStatsTableSchema(ctx, statisticTables,
-				versionPair.UpstreamVersionMajor, versionPair.UpstreamVersionMinor,
-				versionPair.DownstreamVersionMajor, versionPair.DownstreamVersionMinor,
-				execution,
-			)
-		}
 	}
 	return downgradeStatsTableSchema(ctx, statisticTables,
 		versionPair.UpstreamVersionMajor, versionPair.UpstreamVersionMinor,

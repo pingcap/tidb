@@ -122,18 +122,22 @@ func (rc *SnapClient) moveStatsTable(ctx context.Context, restoreTS uint64, stat
 	return errors.Trace(err)
 }
 
-func (rc *SnapClient) replaceStatsTables(
+func (rc *SnapClient) replaceTables(
 	ctx context.Context,
 	createdTables []*CreatedTable,
 	schemaVersionPair SchemaVersionPairT,
 	restoreTS uint64,
+	loadStatsPhysical, loadSysTablePhysical bool,
 	kvClient kv.Client,
 	checksum bool,
 	checksumConcurrency uint,
 ) (int, error) {
-	statisticTables, statisticTableCount, err := rc.filterAndValidateStatisticTables(ctx, createdTables, kvClient, checksum, checksumConcurrency)
-	if err != nil {
-		return 0, errors.Trace(err)
+	renameTables := make(map[string]map[string]struct{})
+	if loadStatsPhysical {
+		statisticTables, statisticTableCount, err := rc.filterAndValidateStatisticTables(ctx, createdTables, kvClient, checksum, checksumConcurrency)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
 	}
 
 	if err := rc.moveStatsTable(ctx, restoreTS, statisticTables); err != nil {
@@ -149,10 +153,11 @@ func (rc *SnapClient) replaceStatsTables(
 
 type PipelineContext struct {
 	// pipeline item switch
-	Checksum          bool
-	LoadStats         bool
-	LoadStatsPhysical bool
-	WaitTiflashReady  bool
+	Checksum             bool
+	LoadStats            bool
+	LoadStatsPhysical    bool
+	LoadSysTablePhysical bool
+	WaitTiflashReady     bool
 
 	// pipeline item configuration
 	LogProgress         bool
@@ -183,8 +188,8 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 		pipelineNum += 1
 	}
 	progressLen := int64(pipelineNum * len(createdTables))
-	if plCtx.LoadStatsPhysical {
-		statsTableCount, err := rc.replaceStatsTables(ctx, createdTables, plCtx.SchemaVersionPair, plCtx.RestoreTS, plCtx.KvClient, plCtx.Checksum, plCtx.ChecksumConcurrency)
+	if plCtx.LoadStatsPhysical || plCtx.LoadSysTablePhysical {
+		statsTableCount, err := rc.replaceTables(ctx, createdTables, plCtx.SchemaVersionPair, plCtx.RestoreTS, plCtx.LoadStatsPhysical, plCtx.LoadSysTablePhysical, plCtx.KvClient, plCtx.Checksum, plCtx.ChecksumConcurrency)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -225,7 +230,8 @@ type pipelineFunction struct {
 type PipelineConcurrentBuilder struct {
 	pipelineFunctions []pipelineFunction
 
-	loadStatsPhysical bool
+	loadStatsPhysical    bool
+	loadSysTablePhysical bool
 }
 
 func (builder *PipelineConcurrentBuilder) RegisterPipelineTask(
