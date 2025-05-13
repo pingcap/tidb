@@ -3,6 +3,7 @@
 package task
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"fmt"
@@ -971,7 +972,20 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if err != nil {
 			return errors.Trace(err)
 		}
-		checkpointFirstRun = !existsCheckpointMetadata
+		if !existsCheckpointMetadata {
+			checkpointFirstRun = true
+		}
+		checkpointMeta, err := cfg.snapshotCheckpointMetaManager.LoadCheckpointMetadata(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		hash, err := checkpoint.Hash()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if bytes.Equal(checkpointMeta.Hash, hash) {
+			return errors.Trace(errors.Annotatef(berrors.ErrRestoreCheckpointMismatch, "checkpoint hash mismatch, failed"))
+		}
 	}
 	if err = VerifyDBAndTableInBackup(client.GetDatabases(), cfg.RestoreConfig); err != nil {
 		return err
