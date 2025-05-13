@@ -975,7 +975,7 @@ func (s *session) RollbackTxn(ctx context.Context) {
 
 // setLastTxnInfoBeforeTxnEnd sets the @@last_txn_info variable before commit/rollback the transaction.
 // The `LastTxnInfo` updated with a JSON string that contains start_ts, for_update_ts, etc.
-// It updated `LastTxnInfo` does not contain the `commit_ts` fields because it is unknown
+// The `LastTxnInfo` is updated without the `commit_ts` fields because it is unknown
 // until the commit is done (or do not need to commit for readonly or a rollback transaction).
 // The non-readonly transaction will overwrite the `LastTxnInfo` again after commit to update the `commit_ts` field.
 func (s *session) setLastTxnInfoBeforeTxnEnd() {
