@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
@@ -897,6 +898,25 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if backupMeta.IsRawKv || backupMeta.IsTxnKv {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
 	}
+	schemaVersionPair := snapclient.SchemaVersionPairT{}
+	if cfg.LoadStatsPhysical {
+		upstreamClusterVersion, err := semver.NewVersion(backupMeta.ClusterVersion)
+		if err != nil {
+			return errors.Annotatef(berrors.ErrVersionMismatch, "%s: cluster version %s from backupmeta is invalid", err.Error(), backupMeta.ClusterVersion)
+		}
+		downstreamClusterVersionStr, err := mgr.GetClusterVersion(ctx)
+		if err != nil {
+			return errors.Annotatef(berrors.ErrVersionMismatch, "%s: failed to get the downstream cluster version", err.Error())
+		}
+		downstreamClusterVersion, err := semver.NewVersion(downstreamClusterVersionStr)
+		if err != nil {
+			return errors.Annotatef(berrors.ErrVersionMismatch, "%s: the downstream cluster version %s is invalid", err.Error(), downstreamClusterVersionStr)
+		}
+		schemaVersionPair.UpstreamVersionMajor = upstreamClusterVersion.Major
+		schemaVersionPair.UpstreamVersionMinor = upstreamClusterVersion.Minor
+		schemaVersionPair.DownstreamVersionMajor = downstreamClusterVersion.Major
+		schemaVersionPair.DownstreamVersionMinor = downstreamClusterVersion.Minor
+	}
 	if cfg.CheckRequirements {
 		log.Info("Checking incompatible TiCDC changefeeds before restoring.",
 			logutil.ShortError(err), zap.Uint64("restore-ts", backupMeta.EndVersion))
@@ -1310,6 +1330,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		ChecksumConcurrency: cfg.ChecksumConcurrency,
 		StatsConcurrency:    cfg.StatsConcurrency,
 		AutoAnalyze:         cfg.AutoAnalyze,
+		SchemaVersionPair:   schemaVersionPair,
+		RestoreTS:           restoreTS,
 
 		KvClient:   mgr.GetStorage().GetClient(),
 		ExtStorage: s,
@@ -1555,7 +1577,7 @@ func filterRestoreFiles(
 			if table.Info == nil {
 				continue
 			}
-			if !(cfg.WithSysTable && cfg.LoadStatsPhysical && snapclient.IsStatsTemporaryTable(dbName, table.Info.Name.O)) {
+			if !(cfg.LoadStatsPhysical && snapclient.IsStatsTemporaryTable(dbName, table.Info.Name.O)) {
 				if !utils.MatchTable(cfg.TableFilter, dbName, table.Info.Name.O, cfg.WithSysTable) {
 					continue
 				}

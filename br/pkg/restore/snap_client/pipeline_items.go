@@ -84,9 +84,10 @@ func (rc *SnapClient) filterAndValidateStatisticTables(
 	ctx context.Context,
 	createdTables []*CreatedTable,
 	kvClient kv.Client,
+	checksum bool,
 	checksumConcurrency uint,
-) (map[string][]string, int, error) {
-	statisticTables := make(map[string][]string)
+) (map[string]map[string]struct{}, int, error) {
+	statisticTables := make(map[string]map[string]struct{})
 	statisticTableCount := 0
 	workerpool := tidbutil.NewWorkerPool(defaultChecksumConcurrency, "Restore Statistic Checksum")
 	eg, ectx := errgroup.WithContext(ctx)
@@ -94,10 +95,17 @@ func (rc *SnapClient) filterAndValidateStatisticTables(
 		tempSchemaName := createdTable.OldTable.DB.Name.O
 		tableName := createdTable.OldTable.Info.Name.O
 		if dbName, ok := GetDBNameIfStatsTemporaryTable(tempSchemaName, tableName); ok {
-			statisticTables[dbName] = append(statisticTables[dbName], tableName)
-			workerpool.ApplyOnErrorGroup(eg, func() error {
-				return rc.execAndValidateChecksum(ectx, createdTable, kvClient, checksumConcurrency)
-			})
+			statisticTableMap, ok := statisticTables[dbName]
+			if !ok {
+				statisticTableMap = make(map[string]struct{})
+				statisticTables[dbName] = statisticTableMap
+			}
+			statisticTableMap[tableName] = struct{}{}
+			if checksum {
+				workerpool.ApplyOnErrorGroup(eg, func() error {
+					return rc.execAndValidateChecksum(ectx, createdTable, kvClient, checksumConcurrency)
+				})
+			}
 			statisticTableCount += 1
 		}
 	}
@@ -107,24 +115,32 @@ func (rc *SnapClient) filterAndValidateStatisticTables(
 	return statisticTables, statisticTableCount, nil
 }
 
-func (rc *SnapClient) moveStatsTable(ctx context.Context, statisticTables map[string][]string) error {
-	renameSQL, dropSQL := GenerateMoveStatsTableSQLPair(statisticTables)
-	if err := rc.db.Session().Execute(ctx, renameSQL); err != nil {
-		return errors.Trace(err)
-	}
-	if err := rc.db.Session().Execute(ctx, dropSQL); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+func (rc *SnapClient) moveStatsTable(ctx context.Context, restoreTS uint64, statisticTables map[string]map[string]struct{}) error {
+	// the renamed tables will be deleted by DROP DATABASE in the function cleanTemporaryDatabase later
+	renameSQL := GenerateMoveStatsTableSQLPair(restoreTS, statisticTables)
+	err := rc.db.Session().Execute(ctx, renameSQL)
+	return errors.Trace(err)
 }
 
-func (rc *SnapClient) replaceStatsTables(ctx context.Context, createdTables []*CreatedTable, kvClient kv.Client, checksumConcurrency uint) (int, error) {
-	statisticTables, statisticTableCount, err := rc.filterAndValidateStatisticTables(ctx, createdTables, kvClient, checksumConcurrency)
+func (rc *SnapClient) replaceStatsTables(
+	ctx context.Context,
+	createdTables []*CreatedTable,
+	schemaVersionPair SchemaVersionPairT,
+	restoreTS uint64,
+	kvClient kv.Client,
+	checksum bool,
+	checksumConcurrency uint,
+) (int, error) {
+	statisticTables, statisticTableCount, err := rc.filterAndValidateStatisticTables(ctx, createdTables, kvClient, checksum, checksumConcurrency)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 
-	if err := rc.moveStatsTable(ctx, statisticTables); err != nil {
+	if err := rc.moveStatsTable(ctx, restoreTS, statisticTables); err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	if err := updateStatsTableSchema(ctx, statisticTables, schemaVersionPair, rc.db.Session().Execute); err != nil {
 		return 0, errors.Trace(err)
 	}
 
@@ -143,6 +159,8 @@ type PipelineContext struct {
 	ChecksumConcurrency uint
 	StatsConcurrency    uint
 	AutoAnalyze         bool
+	SchemaVersionPair   SchemaVersionPairT
+	RestoreTS           uint64
 
 	// pipeline item tool client
 	KvClient   kv.Client
@@ -166,7 +184,7 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 	}
 	progressLen := int64(pipelineNum * len(createdTables))
 	if plCtx.LoadStatsPhysical {
-		statsTableCount, err := rc.replaceStatsTables(ctx, createdTables, plCtx.KvClient, plCtx.ChecksumConcurrency)
+		statsTableCount, err := rc.replaceStatsTables(ctx, createdTables, plCtx.SchemaVersionPair, plCtx.RestoreTS, plCtx.KvClient, plCtx.Checksum, plCtx.ChecksumConcurrency)
 		if err != nil {
 			return errors.Trace(err)
 		}

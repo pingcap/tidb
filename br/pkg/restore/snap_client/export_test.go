@@ -41,6 +41,7 @@ var (
 	GetFileRangeKey         = getFileRangeKey
 	GetSortedPhysicalTables = getSortedPhysicalTables
 	GetMinUserTableID       = getMinUserTableID
+	UpdateStatsTableSchema  = updateStatsTableSchema
 )
 
 // MockClient create a fake Client used to test.

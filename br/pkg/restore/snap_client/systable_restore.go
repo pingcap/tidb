@@ -133,6 +133,137 @@ var unRecoverableSchema = map[string]struct{}{
 	mysql.WorkloadSchema: {},
 }
 
+type SchemaVersionPairT struct {
+	UpstreamVersionMajor   int64
+	UpstreamVersionMinor   int64
+	DownstreamVersionMajor int64
+	DownstreamVersionMinor int64
+}
+
+type schemaUpdateSQL struct {
+	schemaName string
+	tableName  string
+	sql        string
+}
+
+type versionSchemaUpdateSQL struct {
+	versionMajor int64
+	versionMinor int64
+	updateSQLs   []schemaUpdateSQL
+}
+
+var upgradeStatsTableSchemaList = []versionSchemaUpdateSQL{
+	// upgrade from v8.1.0 to v8.5.0, update stats table schema
+	{versionMajor: 8, versionMinor: 1, updateSQLs: []schemaUpdateSQL{
+		{
+			schemaName: "mysql",
+			tableName:  "stats_meta",
+			sql:        "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL",
+		},
+	}},
+	// TODO: add new update here if version > 8.1.0
+}
+
+var downgradeStatsTableSchemaList = []versionSchemaUpdateSQL{
+	// TODO: add new update here if version > 8.5.0
+	// downgrade from v8.5.0 to v8.1.0, update stats table schema
+	{versionMajor: 8, versionMinor: 5, updateSQLs: []schemaUpdateSQL{
+		{
+			schemaName: "mysql",
+			tableName:  "stats_meta",
+			sql:        "ALTER TABLE mysql.stats_meta DROP COLUMN last_stats_histograms_version",
+		},
+	}},
+}
+
+func upgradeStatsTableSchema(
+	ctx context.Context,
+	statisticTables map[string]map[string]struct{},
+	fromMajor, fromMinor, toMajor, toMinor int64,
+	execution func(context.Context, string) error,
+) error {
+	for _, updateSQL := range upgradeStatsTableSchemaList {
+		if fromMajor > updateSQL.versionMajor || (fromMajor == updateSQL.versionMajor && fromMinor > updateSQL.versionMinor) {
+			continue
+		}
+		if toMajor < updateSQL.versionMajor || (toMajor == updateSQL.versionMajor && toMinor <= updateSQL.versionMinor) {
+			break
+		}
+		for _, sql := range updateSQL.updateSQLs {
+			if tables, ok := statisticTables[sql.schemaName]; ok {
+				if _, ok := tables[sql.tableName]; ok {
+					if err := execution(ctx, sql.sql); err != nil {
+						return errors.Trace(err)
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func downgradeStatsTableSchema(
+	ctx context.Context,
+	statisticTables map[string]map[string]struct{},
+	fromMajor, fromMinor, toMajor, toMinor int64,
+	execution func(context.Context, string) error,
+) error {
+	for _, updateSQL := range downgradeStatsTableSchemaList {
+		if fromMajor < updateSQL.versionMajor || (fromMajor == updateSQL.versionMajor && fromMinor < updateSQL.versionMinor) {
+			continue
+		}
+		if toMajor > updateSQL.versionMajor || (toMajor == updateSQL.versionMajor && toMinor >= updateSQL.versionMinor) {
+			break
+		}
+		for _, sql := range updateSQL.updateSQLs {
+			if tables, ok := statisticTables[sql.schemaName]; ok {
+				if _, ok := tables[sql.tableName]; ok {
+					if err := execution(ctx, sql.sql); err != nil {
+						return errors.Trace(err)
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func updateStatsTableSchema(
+	ctx context.Context,
+	statisticTables map[string]map[string]struct{},
+	versionPair SchemaVersionPairT,
+	execution func(context.Context, string) error,
+) error {
+	if versionPair.DownstreamVersionMajor > versionPair.UpstreamVersionMajor {
+		return upgradeStatsTableSchema(ctx, statisticTables,
+			versionPair.UpstreamVersionMajor, versionPair.UpstreamVersionMinor,
+			versionPair.DownstreamVersionMajor, versionPair.DownstreamVersionMinor,
+			execution,
+		)
+	} else if versionPair.DownstreamVersionMajor == versionPair.UpstreamVersionMajor {
+		if versionPair.DownstreamVersionMinor == versionPair.UpstreamVersionMinor {
+			return nil
+		} else if versionPair.DownstreamVersionMinor > versionPair.UpstreamVersionMinor {
+			return upgradeStatsTableSchema(ctx, statisticTables,
+				versionPair.UpstreamVersionMajor, versionPair.UpstreamVersionMinor,
+				versionPair.DownstreamVersionMajor, versionPair.DownstreamVersionMinor,
+				execution,
+			)
+		} else {
+			return downgradeStatsTableSchema(ctx, statisticTables,
+				versionPair.UpstreamVersionMajor, versionPair.UpstreamVersionMinor,
+				versionPair.DownstreamVersionMajor, versionPair.DownstreamVersionMinor,
+				execution,
+			)
+		}
+	}
+	return downgradeStatsTableSchema(ctx, statisticTables,
+		versionPair.UpstreamVersionMajor, versionPair.UpstreamVersionMinor,
+		versionPair.DownstreamVersionMajor, versionPair.DownstreamVersionMinor,
+		execution,
+	)
+}
+
 func isUnrecoverableTable(schemaName string, tableName string) bool {
 	if _, ok := unRecoverableSchema[schemaName]; ok {
 		return true
@@ -157,21 +288,16 @@ func GetDBNameIfStatsTemporaryTable(tempSchemaName, tableName string) (string, b
 	return "", false
 }
 
-func GenerateMoveStatsTableSQLPair(statisticTables map[string][]string) (renameSQL, dropSQL string) {
+func GenerateMoveStatsTableSQLPair(restoreTS uint64, statisticTables map[string]map[string]struct{}) string {
 	renameBuffer := make([]string, 0, 32)
-	dropBuffer := make([]string, 0, 16)
 	for dbName, tableNames := range statisticTables {
-		for _, tableName := range tableNames {
-			renameToTemp := fmt.Sprintf("%s.%s TO %s.%s_deleted", dbName, tableName, utils.TemporaryDBName(dbName), tableName)
+		for tableName := range tableNames {
+			renameToTemp := fmt.Sprintf("%s.%s TO %s.%s_deleted_%d", dbName, tableName, utils.TemporaryDBName(dbName), tableName, restoreTS)
 			renameFromTemp := fmt.Sprintf("%s.%s TO %s.%s", utils.TemporaryDBName(dbName), tableName, dbName, tableName)
-			drop := fmt.Sprintf("%s.%s_deleted", utils.TemporaryDBName(dbName), tableName)
 			renameBuffer = append(renameBuffer, renameToTemp, renameFromTemp)
-			dropBuffer = append(dropBuffer, drop)
 		}
 	}
-	renameSQL = fmt.Sprintf("RENAME TABLE %s", strings.Join(renameBuffer, ","))
-	dropSQL = fmt.Sprintf("DROP TABLE %s", strings.Join(dropBuffer, ","))
-	return renameSQL, dropSQL
+	return fmt.Sprintf("RENAME TABLE %s", strings.Join(renameBuffer, ","))
 }
 
 func isStatsTable(schemaName string, tableName string) bool {

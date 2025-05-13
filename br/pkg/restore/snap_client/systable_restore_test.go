@@ -15,6 +15,7 @@
 package snapclient_test
 
 import (
+	"context"
 	"math"
 	"testing"
 
@@ -114,7 +115,9 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 // - IF it is an system privilege table, please add the table name into `sysPrivilegeTableMap`.
 // - IF it is an statistics table, please add the table name into `statsTables`.
 //
-
+// NOTICE: Once the schema of the statistics table updates, please update the `upgradeStatsTableSchemaList`
+// and `downgradeStatsTableSchemaList`.
+//
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
 	require.Equal(t, int64(247), session.CurrentBootstrapVersion)
@@ -146,18 +149,158 @@ func TestGetDBNameIfStatsTemporaryTable(t *testing.T) {
 }
 
 func TestGenerateMoveStatsTableSQLPair(t *testing.T) {
-	renameSQL, dropSQL := snapclient.GenerateMoveStatsTableSQLPair(map[string][]string{
-		"mysql": {"stats_meta", "stats_buckets", "stats_top_n"},
+	renameSQL := snapclient.GenerateMoveStatsTableSQLPair(123, map[string]map[string]struct{}{
+		"mysql": {"stats_meta": struct{}{}, "stats_buckets": struct{}{}, "stats_top_n": struct{}{}},
 	})
 	require.Equal(t, "RENAME TABLE "+
-		"mysql.stats_meta TO __TiDB_BR_Temporary_mysql.stats_meta_deleted,"+
+		"mysql.stats_meta TO __TiDB_BR_Temporary_mysql.stats_meta_deleted_123,"+
 		"__TiDB_BR_Temporary_mysql.stats_meta TO mysql.stats_meta,"+
-		"mysql.stats_buckets TO __TiDB_BR_Temporary_mysql.stats_buckets_deleted,"+
+		"mysql.stats_buckets TO __TiDB_BR_Temporary_mysql.stats_buckets_deleted_123,"+
 		"__TiDB_BR_Temporary_mysql.stats_buckets TO mysql.stats_buckets,"+
-		"mysql.stats_top_n TO __TiDB_BR_Temporary_mysql.stats_top_n_deleted,"+
+		"mysql.stats_top_n TO __TiDB_BR_Temporary_mysql.stats_top_n_deleted_123,"+
 		"__TiDB_BR_Temporary_mysql.stats_top_n TO mysql.stats_top_n", renameSQL)
-	require.Equal(t, "DROP TABLE "+
-		"__TiDB_BR_Temporary_mysql.stats_meta_deleted,"+
-		"__TiDB_BR_Temporary_mysql.stats_buckets_deleted,"+
-		"__TiDB_BR_Temporary_mysql.stats_top_n_deleted", dropSQL)
+}
+
+func TestUpdateStatsTableSchema(t *testing.T) {
+	ctx := context.Background()
+	expectedSQLs := []string{}
+	execution := func(_ context.Context, sql string) error {
+		require.Equal(t, expectedSQLs[0], sql)
+		expectedSQLs = expectedSQLs[1:]
+		return nil
+	}
+
+	// schema name is mismatch
+	err := snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
+		"test": {"stats_meta": struct{}{}},
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   7,
+		UpstreamVersionMinor:   5,
+		DownstreamVersionMajor: 8,
+		DownstreamVersionMinor: 5,
+	}, execution)
+	require.NoError(t, err)
+	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
+		"test": {"stats_meta": struct{}{}},
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   8,
+		UpstreamVersionMinor:   5,
+		DownstreamVersionMajor: 7,
+		DownstreamVersionMinor: 5,
+	}, execution)
+	require.NoError(t, err)
+
+	// table name is mismatch
+	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
+		"mysql": {"stats_meta2": struct{}{}},
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   7,
+		UpstreamVersionMinor:   5,
+		DownstreamVersionMajor: 8,
+		DownstreamVersionMinor: 5,
+	}, execution)
+	require.NoError(t, err)
+	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
+		"mysql": {"stats_meta2": struct{}{}},
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   8,
+		UpstreamVersionMinor:   5,
+		DownstreamVersionMajor: 7,
+		DownstreamVersionMinor: 5,
+	}, execution)
+	require.NoError(t, err)
+
+	// version range is mismatch
+	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
+		"mysql": {"stats_meta": struct{}{}},
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   7,
+		UpstreamVersionMinor:   5,
+		DownstreamVersionMajor: 8,
+		DownstreamVersionMinor: 1,
+	}, execution)
+	require.NoError(t, err)
+	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
+		"mysql": {"stats_meta": struct{}{}},
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   8,
+		UpstreamVersionMinor:   1,
+		DownstreamVersionMajor: 7,
+		DownstreamVersionMinor: 5,
+	}, execution)
+	require.NoError(t, err)
+	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
+		"mysql": {"stats_meta": struct{}{}},
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   9,
+		UpstreamVersionMinor:   1,
+		DownstreamVersionMajor: 9,
+		DownstreamVersionMinor: 5,
+	}, execution)
+	require.NoError(t, err)
+	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
+		"mysql": {"stats_meta": struct{}{}},
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   9,
+		UpstreamVersionMinor:   5,
+		DownstreamVersionMajor: 9,
+		DownstreamVersionMinor: 1,
+	}, execution)
+	require.NoError(t, err)
+
+	// match
+	expectedSQLs = []string{
+		"ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL",
+		"ALTER TABLE mysql.stats_meta DROP COLUMN last_stats_histograms_version",
+		"ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL",
+		"ALTER TABLE mysql.stats_meta DROP COLUMN last_stats_histograms_version",
+	}
+	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
+		"mysql": {"stats_meta": struct{}{}},
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   7,
+		UpstreamVersionMinor:   5,
+		DownstreamVersionMajor: 8,
+		DownstreamVersionMinor: 5,
+	}, execution)
+	require.NoError(t, err)
+	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
+		"mysql": {"stats_meta": struct{}{}},
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   8,
+		UpstreamVersionMinor:   5,
+		DownstreamVersionMajor: 8,
+		DownstreamVersionMinor: 1,
+	}, execution)
+	require.NoError(t, err)
+	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
+		"mysql": {"stats_meta": struct{}{}, "test": struct{}{}},
+		"test":  {"stats_meta": struct{}{}},
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   8,
+		UpstreamVersionMinor:   1,
+		DownstreamVersionMajor: 8,
+		DownstreamVersionMinor: 5,
+	}, execution)
+	require.NoError(t, err)
+	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
+		"mysql": {"stats_meta": struct{}{}, "test": struct{}{}},
+		"test":  {"stats_meta": struct{}{}},
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   8,
+		UpstreamVersionMinor:   5,
+		DownstreamVersionMajor: 7,
+		DownstreamVersionMinor: 5,
+	}, execution)
+	require.NoError(t, err)
+	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
+		"mysql": {"stats_meta": struct{}{}, "test": struct{}{}},
+		"test":  {"stats_meta": struct{}{}},
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   8,
+		UpstreamVersionMinor:   5,
+		DownstreamVersionMajor: 8,
+		DownstreamVersionMinor: 5,
+	}, execution)
+	require.NoError(t, err)
 }
