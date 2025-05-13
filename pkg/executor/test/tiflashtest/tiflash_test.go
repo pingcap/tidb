@@ -2217,10 +2217,10 @@ func TestIndexMergeCarePreferTiflash(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustQuery("explain format=\"brief\" SELECT" +
 		"      /*+ read_from_storage(tiflash[a]) */ a.i FROM t a WHERE a.s = 0 AND a.a NOT IN (-1, 0) AND m >= 1726910326 AND m <= 1726910391 AND ( a.w IN ('1123') OR a.l IN ('1123'))").Check(
-		testkit.Rows("TableReader 0.00 root  MppVersion: 3, data:ExchangeSender",
-			"└─ExchangeSender 0.00 mpp[tiflash]  ExchangeType: PassThrough",
-			"  └─Projection 0.00 mpp[tiflash]  test.t.i",
-			"    └─Selection 0.00 mpp[tiflash]  ge(test.t.m, 1726910326), le(test.t.m, 1726910391), not(in(test.t.a, -1, 0)), or(eq(test.t.w, \"1123\"), eq(test.t.l, \"1123\"))",
+		testkit.Rows("TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+			"└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+			"  └─Projection 1.00 mpp[tiflash]  test.t.i",
+			"    └─Selection 1.00 mpp[tiflash]  ge(test.t.m, 1726910326), le(test.t.m, 1726910391), not(in(test.t.a, -1, 0)), or(eq(test.t.w, \"1123\"), eq(test.t.l, \"1123\"))",
 			"      └─TableFullScan 10.00 mpp[tiflash] table:a pushed down filter:eq(test.t.s, 0), keep order:false, stats:pseudo"))
 }
 

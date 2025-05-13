@@ -1573,9 +1573,9 @@ drop table if exists t;
 create table t(id int primary key, a int, b int, c int, key(a), key(b), key(c));
 explain format = 'brief' select * from t where b = 1 and (a = 1 or c = 1);
 id	estRows	task	access object	operator info
-IndexLookUp	0.02	root		
+IndexLookUp	1.00	root		
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:b(b)	range:[1,1], keep order:false, stats:pseudo
-└─Selection(Probe)	0.02	cop[tikv]		or(eq(planner__core__casetest__hint__hint.t.a, 1), eq(planner__core__casetest__hint__hint.t.c, 1))
+└─Selection(Probe)	1.00	cop[tikv]		or(eq(planner__core__casetest__hint__hint.t.a, 1), eq(planner__core__casetest__hint__hint.t.c, 1))
   └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ USE_INDEX_MERGE(t, a, c) */ * from t where b = 1 and (a = 1 or c = 1);
 id	estRows	task	access object	operator info

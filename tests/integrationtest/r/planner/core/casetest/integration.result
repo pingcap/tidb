@@ -433,21 +433,21 @@ IndexReader	3.33	root		index:Selection
   └─IndexRangeScan	3333.33	cop[tikv]	table:t1, index:idx_a_b_c(a, b, c)	range:(3,+inf], keep order:true, stats:pseudo
 explain format = 'brief' select * from t2 where a = 1 and c = 2 order by b, d;
 id	estRows	task	access object	operator info
-IndexReader	0.01	root		index:Selection
-└─Selection	0.01	cop[tikv]		eq(planner__core__casetest__integration.t2.c, 2)
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.t2.c, 2)
   └─IndexRangeScan	10.00	cop[tikv]	table:t2, index:idx_a_b_c_d(a, b, c, d)	range:[1,1], keep order:true, stats:pseudo
 explain format = 'brief' select a, b, c from t1 where (a = 1 and b = 1 and c = 1) or (a = 1 and b = 1 and c = 2) order by c;
 id	estRows	task	access object	operator info
-IndexReader	0.03	root		index:IndexRangeScan
-└─IndexRangeScan	0.03	cop[tikv]	table:t1, index:idx_a_b_c(a, b, c)	range:[1 1 1,1 1 2], keep order:true, stats:pseudo
+IndexReader	1.25	root		index:IndexRangeScan
+└─IndexRangeScan	1.25	cop[tikv]	table:t1, index:idx_a_b_c(a, b, c)	range:[1 1 1,1 1 2], keep order:true, stats:pseudo
 explain format = 'brief' select a, b, c from t1 where (a = 1 and b = 1 and c < 3) or (a = 1 and b = 1 and c > 6) order by c;
 id	estRows	task	access object	operator info
-IndexReader	0.67	root		index:IndexRangeScan
-└─IndexRangeScan	0.67	cop[tikv]	table:t1, index:idx_a_b_c(a, b, c)	range:[1 1 -inf,1 1 3), (1 1 6,1 1 +inf], keep order:true, stats:pseudo
+IndexReader	1.25	root		index:IndexRangeScan
+└─IndexRangeScan	1.25	cop[tikv]	table:t1, index:idx_a_b_c(a, b, c)	range:[1 1 -inf,1 1 3), (1 1 6,1 1 +inf], keep order:true, stats:pseudo
 explain format = 'brief' select * from t2 where ((a = 1 and b = 1 and d < 3) or (a = 1 and b = 1 and d > 6)) and c = 3 order by d;
 id	estRows	task	access object	operator info
-IndexReader	0.00	root		index:Selection
-└─Selection	0.00	cop[tikv]		eq(planner__core__casetest__integration.t2.c, 3), or(and(eq(planner__core__casetest__integration.t2.a, 1), and(eq(planner__core__casetest__integration.t2.b, 1), lt(planner__core__casetest__integration.t2.d, 3))), and(eq(planner__core__casetest__integration.t2.a, 1), and(eq(planner__core__casetest__integration.t2.b, 1), gt(planner__core__casetest__integration.t2.d, 6))))
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.t2.c, 3), or(and(eq(planner__core__casetest__integration.t2.a, 1), and(eq(planner__core__casetest__integration.t2.b, 1), lt(planner__core__casetest__integration.t2.d, 3))), and(eq(planner__core__casetest__integration.t2.a, 1), and(eq(planner__core__casetest__integration.t2.b, 1), gt(planner__core__casetest__integration.t2.d, 6))))
   └─IndexRangeScan	10.00	cop[tikv]	table:t2, index:idx_a_b_c_d(a, b, c, d)	range:[1,1], keep order:true, stats:pseudo
 drop table if exists t;
 create table t(a int not null, b int not null);
@@ -585,8 +585,8 @@ Limit	2.00	root		offset:0, count:2
     └─IndexRangeScan	2.50	cop[tikv]	table:t0, index:a(a, b)	range:[2,2], keep order:true, stats:pseudo
 explain format = 'brief' select * from t1 where a >= 2 and a <= 2 and b = 2 and c > 2;
 id	estRows	task	access object	operator info
-IndexReader	0.33	root		index:IndexRangeScan
-└─IndexRangeScan	0.33	cop[tikv]	table:t1, index:a(a, b, c)	range:(2 2 2,2 2 +inf], keep order:false, stats:pseudo
+IndexReader	1.25	root		index:IndexRangeScan
+└─IndexRangeScan	1.25	cop[tikv]	table:t1, index:a(a, b, c)	range:(2 2 2,2 2 +inf], keep order:false, stats:pseudo
 explain format = 'brief' select * from t2 where a >= 2.5 and a <= 2.5 order by b limit 2;
 id	estRows	task	access object	operator info
 Limit	2.00	root		offset:0, count:2
@@ -595,8 +595,8 @@ Limit	2.00	root		offset:0, count:2
     └─IndexRangeScan	2.00	cop[tikv]	table:t2, index:a(a, b)	range:[2.5,2.5], keep order:true, stats:pseudo
 explain format = 'brief' select * from t3 where a >= 'a' and a <= 'a' and b = 'b' and c > 'c';
 id	estRows	task	access object	operator info
-IndexReader	0.33	root		index:IndexRangeScan
-└─IndexRangeScan	0.33	cop[tikv]	table:t3, index:a(a, b, c)	range:("a" "b" "c","a" "b" +inf], keep order:false, stats:pseudo
+IndexReader	1.25	root		index:IndexRangeScan
+└─IndexRangeScan	1.25	cop[tikv]	table:t3, index:a(a, b, c)	range:("a" "b" "c","a" "b" +inf], keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 where a is null or a in (1, 2, 3);
 id	estRows	task	access object	operator info
 IndexReader	260.00	root		index:IndexRangeScan
@@ -665,8 +665,8 @@ insert into tik values (1, 1, 1);
 set @@session.tidb_regard_null_as_point=true;
 explain format='brief' select * from tuk where a<=>null and b=1;
 id	estRows	task	access object	operator info
-IndexReader	0.10	root		index:IndexRangeScan
-└─IndexRangeScan	0.10	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
+IndexReader	1.25	root		index:IndexRangeScan
+└─IndexRangeScan	1.25	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
 select * from tuk where a<=>null and b=1;
 a	b	c
 NULL	1	NULL
@@ -676,8 +676,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=false;
 explain format='brief' select * from tuk where a<=>null and b=1;
 id	estRows	task	access object	operator info
-IndexReader	0.01	root		index:Selection
-└─Selection	0.01	cop[tikv]		eq(planner__core__casetest__integration.tuk.b, 1)
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.b, 1)
   └─IndexRangeScan	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
 select * from tuk where a<=>null and b=1;
 a	b	c
@@ -688,8 +688,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=true;
 explain format='brief' select * from tik where a<=>null and b=1;
 id	estRows	task	access object	operator info
-IndexReader	0.10	root		index:IndexRangeScan
-└─IndexRangeScan	0.10	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
+IndexReader	1.25	root		index:IndexRangeScan
+└─IndexRangeScan	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
 select * from tik where a<=>null and b=1;
 a	b	c
 NULL	1	NULL
@@ -699,8 +699,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=false;
 explain format='brief' select * from tik where a<=>null and b=1;
 id	estRows	task	access object	operator info
-IndexReader	0.01	root		index:Selection
-└─Selection	0.01	cop[tikv]		eq(planner__core__casetest__integration.tik.b, 1)
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tik.b, 1)
   └─IndexRangeScan	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
 select * from tik where a<=>null and b=1;
 a	b	c
@@ -711,8 +711,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=true;
 explain select * from tuk where a<=>null and b>0 and b<2;
 id	estRows	task	access object	operator info
-IndexReader_6	0.10	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	0.10	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
+IndexReader_6	1.25	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	1.25	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
 select * from tuk where a<=>null and b>0 and b<2;
 a	b	c
 NULL	1	NULL
@@ -722,8 +722,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=false;
 explain format='brief' select * from tuk where a<=>null and b>0 and b<2;
 id	estRows	task	access object	operator info
-IndexReader	0.25	root		index:Selection
-└─Selection	0.25	cop[tikv]		eq(planner__core__casetest__integration.tuk.b, 1)
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.b, 1)
   └─IndexRangeScan	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
 select * from tuk where a<=>null and b>0 and b<2;
 a	b	c
@@ -734,8 +734,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=true;
 explain format='brief' select * from tik where a<=>null and b>0 and b<2;
 id	estRows	task	access object	operator info
-IndexReader	0.10	root		index:IndexRangeScan
-└─IndexRangeScan	0.10	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
+IndexReader	1.25	root		index:IndexRangeScan
+└─IndexRangeScan	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
 select * from tik where a<=>null and b>0 and b<2;
 a	b	c
 NULL	1	NULL
@@ -745,8 +745,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=false;
 explain format='brief' select * from tik where a<=>null and b>0 and b<2;
 id	estRows	task	access object	operator info
-IndexReader	0.25	root		index:Selection
-└─Selection	0.25	cop[tikv]		eq(planner__core__casetest__integration.tik.b, 1)
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tik.b, 1)
   └─IndexRangeScan	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
 select * from tik where a<=>null and b>0 and b<2;
 a	b	c
@@ -757,8 +757,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=true;
 explain format='brief' select * from tuk where a<=>null and b>=1 and b<2;
 id	estRows	task	access object	operator info
-IndexReader	0.10	root		index:IndexRangeScan
-└─IndexRangeScan	0.10	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
+IndexReader	1.25	root		index:IndexRangeScan
+└─IndexRangeScan	1.25	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
 select * from tuk where a<=>null and b>=1 and b<2;
 a	b	c
 NULL	1	NULL
@@ -768,8 +768,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=false;
 explain format='brief' select * from tuk where a<=>null and b>=1 and b<2;
 id	estRows	task	access object	operator info
-IndexReader	0.25	root		index:Selection
-└─Selection	0.25	cop[tikv]		eq(planner__core__casetest__integration.tuk.b, 1)
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.b, 1)
   └─IndexRangeScan	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
 select * from tuk where a<=>null and b>=1 and b<2;
 a	b	c
@@ -780,8 +780,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=true;
 explain select * from tik where a<=>null and b>=1 and b<2;
 id	estRows	task	access object	operator info
-IndexReader_6	0.10	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	0.10	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
+IndexReader_6	1.25	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
 select * from tik where a<=>null and b>=1 and b<2;
 a	b	c
 NULL	1	NULL
@@ -791,8 +791,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=false;
 explain format='brief' select * from tik where a<=>null and b>=1 and b<2;
 id	estRows	task	access object	operator info
-IndexReader	0.25	root		index:Selection
-└─Selection	0.25	cop[tikv]		eq(planner__core__casetest__integration.tik.b, 1)
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tik.b, 1)
   └─IndexRangeScan	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
 select * from tik where a<=>null and b>=1 and b<2;
 a	b	c
@@ -812,8 +812,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=false;
 explain format='brief' select * from tuk where a<=>null and b=1 and c=1;
 id	estRows	task	access object	operator info
-IndexReader	0.00	root		index:Selection
-└─Selection	0.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.b, 1), eq(planner__core__casetest__integration.tuk.c, 1)
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.b, 1), eq(planner__core__casetest__integration.tuk.c, 1)
   └─IndexRangeScan	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
 select * from tuk where a<=>null and b=1 and c=1;
 a	b	c
@@ -822,8 +822,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=true;
 explain format='brief' select * from tik where a<=>null and b=1 and c=1;
 id	estRows	task	access object	operator info
-IndexReader	0.00	root		index:IndexRangeScan
-└─IndexRangeScan	0.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1 1,NULL 1 1], keep order:false, stats:pseudo
+IndexReader	1.25	root		index:IndexRangeScan
+└─IndexRangeScan	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1 1,NULL 1 1], keep order:false, stats:pseudo
 select * from tik where a<=>null and b=1 and c=1;
 a	b	c
 NULL	1	1
@@ -831,8 +831,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=false;
 explain format='brief' select * from tik where a<=>null and b=1 and c=1;
 id	estRows	task	access object	operator info
-IndexReader	0.00	root		index:Selection
-└─Selection	0.00	cop[tikv]		eq(planner__core__casetest__integration.tik.b, 1), eq(planner__core__casetest__integration.tik.c, 1)
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tik.b, 1), eq(planner__core__casetest__integration.tik.c, 1)
   └─IndexRangeScan	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
 select * from tik where a<=>null and b=1 and c=1;
 a	b	c
@@ -850,9 +850,9 @@ a	b	c
 set @@session.tidb_regard_null_as_point=false;
 explain format='brief' select * from tuk where a=1 and b<=>null and c=1;
 id	estRows	task	access object	operator info
-IndexReader	0.00	root		index:Selection
-└─Selection	0.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.c, 1)
-  └─IndexRangeScan	0.10	cop[tikv]	table:tuk, index:a(a, b, c)	range:[1 NULL,1 NULL], keep order:false, stats:pseudo
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.c, 1)
+  └─IndexRangeScan	1.25	cop[tikv]	table:tuk, index:a(a, b, c)	range:[1 NULL,1 NULL], keep order:false, stats:pseudo
 select * from tuk where a=1 and b<=>null and c=1;
 a	b	c
 1	NULL	1
@@ -860,8 +860,8 @@ a	b	c
 set @@session.tidb_regard_null_as_point=true;
 explain format='brief' select * from tik where a=1 and b<=>null and c=1;
 id	estRows	task	access object	operator info
-IndexReader	0.00	root		index:IndexRangeScan
-└─IndexRangeScan	0.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[1 NULL 1,1 NULL 1], keep order:false, stats:pseudo
+IndexReader	1.25	root		index:IndexRangeScan
+└─IndexRangeScan	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[1 NULL 1,1 NULL 1], keep order:false, stats:pseudo
 select * from tik where a=1 and b<=>null and c=1;
 a	b	c
 1	NULL	1
@@ -869,9 +869,9 @@ a	b	c
 set @@session.tidb_regard_null_as_point=false;
 explain format='brief' select * from tik where a=1 and b<=>null and c=1;
 id	estRows	task	access object	operator info
-IndexReader	0.00	root		index:Selection
-└─Selection	0.00	cop[tikv]		eq(planner__core__casetest__integration.tik.c, 1)
-  └─IndexRangeScan	0.10	cop[tikv]	table:tik, index:a(a, b, c)	range:[1 NULL,1 NULL], keep order:false, stats:pseudo
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tik.c, 1)
+  └─IndexRangeScan	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[1 NULL,1 NULL], keep order:false, stats:pseudo
 select * from tik where a=1 and b<=>null and c=1;
 a	b	c
 1	NULL	1
@@ -888,8 +888,8 @@ NULL	NULL	1
 set @@session.tidb_regard_null_as_point=false;
 explain format='brief' select * from tuk where a<=>null and b<=>null and c=1;
 id	estRows	task	access object	operator info
-IndexReader	0.00	root		index:Selection
-└─Selection	0.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.c, 1), nulleq(planner__core__casetest__integration.tuk.b, NULL)
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.c, 1), nulleq(planner__core__casetest__integration.tuk.b, NULL)
   └─IndexRangeScan	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
 select * from tuk where a<=>null and b<=>null and c=1;
 a	b	c
@@ -898,8 +898,8 @@ NULL	NULL	1
 set @@session.tidb_regard_null_as_point=true;
 explain format='brief' select * from tik where a<=>null and b<=>null and c=1;
 id	estRows	task	access object	operator info
-IndexReader	0.00	root		index:IndexRangeScan
-└─IndexRangeScan	0.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL NULL 1,NULL NULL 1], keep order:false, stats:pseudo
+IndexReader	1.25	root		index:IndexRangeScan
+└─IndexRangeScan	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL NULL 1,NULL NULL 1], keep order:false, stats:pseudo
 select * from tik where a<=>null and b<=>null and c=1;
 a	b	c
 NULL	NULL	1
@@ -907,8 +907,8 @@ NULL	NULL	1
 set @@session.tidb_regard_null_as_point=false;
 explain format='brief' select * from tik where a<=>null and b<=>null and c=1;
 id	estRows	task	access object	operator info
-IndexReader	0.00	root		index:Selection
-└─Selection	0.00	cop[tikv]		eq(planner__core__casetest__integration.tik.c, 1), nulleq(planner__core__casetest__integration.tik.b, NULL)
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tik.c, 1), nulleq(planner__core__casetest__integration.tik.b, NULL)
   └─IndexRangeScan	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
 select * from tik where a<=>null and b<=>null and c=1;
 a	b	c
@@ -926,8 +926,8 @@ NULL	NULL	NULL
 set @@session.tidb_regard_null_as_point=false;
 explain format='brief' select * from tuk where a<=>null and b<=>null and c<=>null;
 id	estRows	task	access object	operator info
-IndexReader	0.00	root		index:Selection
-└─Selection	0.00	cop[tikv]		nulleq(planner__core__casetest__integration.tuk.b, NULL), nulleq(planner__core__casetest__integration.tuk.c, NULL)
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		nulleq(planner__core__casetest__integration.tuk.b, NULL), nulleq(planner__core__casetest__integration.tuk.c, NULL)
   └─IndexRangeScan	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
 select * from tuk where a<=>null and b<=>null and c<=>null;
 a	b	c
@@ -936,8 +936,8 @@ NULL	NULL	NULL
 set @@session.tidb_regard_null_as_point=true;
 explain format='brief' select * from tik where a<=>null and b<=>null and c<=>null;
 id	estRows	task	access object	operator info
-IndexReader	0.00	root		index:IndexRangeScan
-└─IndexRangeScan	0.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL NULL NULL,NULL NULL NULL], keep order:false, stats:pseudo
+IndexReader	1.25	root		index:IndexRangeScan
+└─IndexRangeScan	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL NULL NULL,NULL NULL NULL], keep order:false, stats:pseudo
 select * from tik where a<=>null and b<=>null and c<=>null;
 a	b	c
 NULL	NULL	NULL
@@ -945,8 +945,8 @@ NULL	NULL	NULL
 set @@session.tidb_regard_null_as_point=false;
 explain format='brief' select * from tik where a<=>null and b<=>null and c<=>null;
 id	estRows	task	access object	operator info
-IndexReader	0.00	root		index:Selection
-└─Selection	0.00	cop[tikv]		nulleq(planner__core__casetest__integration.tik.b, NULL), nulleq(planner__core__casetest__integration.tik.c, NULL)
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		nulleq(planner__core__casetest__integration.tik.b, NULL), nulleq(planner__core__casetest__integration.tik.c, NULL)
   └─IndexRangeScan	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
 select * from tik where a<=>null and b<=>null and c<=>null;
 a	b	c
@@ -1053,10 +1053,10 @@ Projection	10000.00	root		planner__core__casetest__integration.t2.c
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	10000.00	root		
-    └─IndexLookUp	200.00	root		
-      ├─Selection(Build)	200.00	cop[tikv]		or(eq(planner__core__casetest__integration.t2.b, 1), eq(planner__core__casetest__integration.t2.b, 2))
+    └─IndexLookUp	10000.00	root		
+      ├─Selection(Build)	10000.00	cop[tikv]		or(eq(planner__core__casetest__integration.t2.b, 1), eq(planner__core__casetest__integration.t2.b, 2))
       │ └─IndexRangeScan	100000.00	cop[tikv]	table:t2, index:PRIMARY(a, b)	range: decided by [eq(planner__core__casetest__integration.t2.a, planner__core__casetest__integration.t1.a)], keep order:false, stats:pseudo
-      └─TableRowIDScan(Probe)	200.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+      └─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 set tidb_cost_model_version=2;
 drop sequence if exists s1, s2;
 create sequence s1;
