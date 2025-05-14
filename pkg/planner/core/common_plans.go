@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/texttree"
@@ -943,7 +942,7 @@ func (e *Explain) renderResultForExplore() error {
 
 	sqlOrDigest := e.SQLDigest
 	if sqlOrDigest == "" {
-		sqlOrDigest = parser.RestoreWithDefaultDB(e.ExecStmt, currentDB, "")
+		sqlOrDigest = e.ExecStmt.Text()
 	}
 	plans, err := bindingHandle.ShowPlansForSQL(currentDB, sqlOrDigest, charset, collation)
 	if err != nil {

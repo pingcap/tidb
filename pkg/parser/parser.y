@@ -5532,8 +5532,11 @@ ExplainSym:
 ExplainStmt:
 	ExplainSym "EXPLORE" SelectStmt
 	{
+		startOffset := parser.startOffset(&yyS[yypt])
+		stmt := $3
+		stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 		$$ = &ast.ExplainStmt{
-			Stmt:    $3,
+			Stmt:    stmt,
 			Explore: true,
 		}
 	}
