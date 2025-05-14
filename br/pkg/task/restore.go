@@ -1076,7 +1076,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return cfg.piTRTaskInfo.FullRestoreCheckErr
 	}
 
-	//TODO: (ris)move scheduler here
+
 
 	if isFullRestore(cmdName) {
 		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointFirstRun) {
@@ -1103,12 +1103,106 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	//TODO: (ris)move checkpoint here
-
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
 	if err = client.AllocTableIDs(ctx, tables, reusePreallocID); err != nil {
 		return errors.Trace(err)
 	}
+
+	//TODO: (ris)move scheduler here
+	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
+	var restoreSchedulersFunc pdutil.UndoFunc
+	var schedulersConfig *pdutil.ClusterConfig
+	if (isFullRestore(cmdName) && !cfg.ExplicitFilter) || client.IsIncremental() {
+		restoreSchedulersFunc, schedulersConfig, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
+	} else {
+		//TODO: (ris)refactor this part
+		var preAllocRange [2]int64
+		preAllocRange, err = client.GetPreAllocedTableIDRange()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		var tableIDs []int64
+		for _, table := range createdTables {
+			tableIDs = append(tableIDs, table.Table.ID)
+			if table.Table.Partition != nil {
+				for _, p := range table.Table.Partition.Definitions {
+					tableIDs = append(tableIDs, p.ID)
+				}
+			}
+		}
+		keyRange := SortKeyRanges(tableIDs, preAllocRange)
+		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// need to know whether restore has been completed so can restore schedulers
+	canRestoreSchedulers := false
+	defer func() {
+		cancel()
+		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
+		if cfg.UseCheckpoint && !canRestoreSchedulers {
+			log.Info("skip removing pd scheduler for next retry")
+			return
+		}
+		log.Info("start to restore pd scheduler")
+		// run the post-work to avoid being stuck in the import
+		// mode or emptied schedulers.
+		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
+		log.Info("finish restoring pd scheduler")
+	}()
+
+	// reload or register the checkpoint
+	var checkpointSetWithTableID map[int64]map[string]struct{}
+	if cfg.UseCheckpoint {
+		logRestoredTS := uint64(0)
+		if cfg.piTRTaskInfo != nil {
+			logRestoredTS = cfg.piTRTaskInfo.RestoreTS
+		}
+		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(
+			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, checkpointFirstRun)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if restoreSchedulersConfigFromCheckpoint != nil {
+			// The last range rule will be dropped when the last restore quits.
+			restoreSchedulersConfigFromCheckpoint.RuleID = schedulersConfig.RuleID
+			restoreSchedulersFunc = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
+		}
+		checkpointSetWithTableID = sets
+
+		defer func() {
+			// need to flush the whole checkpoint data so that br can quickly jump to
+			// the log kv restore step when the next retry.
+			log.Info("wait for flush checkpoint...")
+			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !canRestoreSchedulers)
+		}()
+	}
+
+	failpoint.Inject("sleep_for_check_scheduler_status", func(val failpoint.Value) {
+		fileName, ok := val.(string)
+		func() {
+			if !ok {
+				return
+			}
+			_, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+			if osErr != nil {
+				log.Warn("failed to create file", zap.Error(osErr))
+				return
+			}
+		}()
+		for {
+			_, statErr := os.Stat(fileName)
+			if os.IsNotExist(statErr) {
+				break
+			} else if statErr != nil {
+				log.Warn("error checking file", zap.Error(statErr))
+				break
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+	})
 
 	err = client.InstallPiTRSupport(ctx, snapclient.PiTRCollDep{
 		PDCli:   mgr.GetPDClient(),
@@ -1253,102 +1347,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			}
 		}
 	}
-
-	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
-	var restoreSchedulersFunc pdutil.UndoFunc
-	var schedulersConfig *pdutil.ClusterConfig
-	if (isFullRestore(cmdName) && !cfg.ExplicitFilter) || client.IsIncremental() {
-		restoreSchedulersFunc, schedulersConfig, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
-	} else {
-		//TODO: (ris)refactor this part
-		var preAllocRange [2]int64
-		preAllocRange, err = client.GetPreAllocedTableIDRange()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		var tableIDs []int64
-		for _, table := range createdTables {
-			tableIDs = append(tableIDs, table.Table.ID)
-			if table.Table.Partition != nil {
-				for _, p := range table.Table.Partition.Definitions {
-					tableIDs = append(tableIDs, p.ID)
-				}
-			}
-		}
-		keyRange := SortKeyRanges(tableIDs, preAllocRange)
-		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
-	}
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// need to know whether restore has been completed so can restore schedulers
-	canRestoreSchedulers := false
-	defer func() {
-		cancel()
-		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
-		if cfg.UseCheckpoint && !canRestoreSchedulers {
-			log.Info("skip removing pd scheduler for next retry")
-			return
-		}
-		log.Info("start to restore pd scheduler")
-		// run the post-work to avoid being stuck in the import
-		// mode or emptied schedulers.
-		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
-		log.Info("finish restoring pd scheduler")
-	}()
-
-	// reload or register the checkpoint
-	//TODO: (ris)move it before create table
-	var checkpointSetWithTableID map[int64]map[string]struct{}
-	if cfg.UseCheckpoint {
-		logRestoredTS := uint64(0)
-		if cfg.piTRTaskInfo != nil {
-			logRestoredTS = cfg.piTRTaskInfo.RestoreTS
-		}
-		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(
-			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, checkpointFirstRun)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if restoreSchedulersConfigFromCheckpoint != nil {
-			// The last range rule will be dropped when the last restore quits.
-			restoreSchedulersConfigFromCheckpoint.RuleID = schedulersConfig.RuleID
-			restoreSchedulersFunc = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
-		}
-		checkpointSetWithTableID = sets
-
-		defer func() {
-			// need to flush the whole checkpoint data so that br can quickly jump to
-			// the log kv restore step when the next retry.
-			log.Info("wait for flush checkpoint...")
-			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !canRestoreSchedulers)
-		}()
-	}
-
-	failpoint.Inject("sleep_for_check_scheduler_status", func(val failpoint.Value) {
-		fileName, ok := val.(string)
-		func() {
-			if !ok {
-				return
-			}
-			_, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
-			if osErr != nil {
-				log.Warn("failed to create file", zap.Error(osErr))
-				return
-			}
-		}()
-		for {
-			_, statErr := os.Stat(fileName)
-			if os.IsNotExist(statErr) {
-				break
-			} else if statErr != nil {
-				log.Warn("error checking file", zap.Error(statErr))
-				break
-			}
-			time.Sleep(300 * time.Millisecond)
-		}
-	})
 
 	if cfg.tiflashRecorder != nil {
 		for _, createdTable := range createdTables {
