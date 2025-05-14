@@ -52,7 +52,7 @@ const (
 	// we define those limit to be within how client define big transaction, see
 	// https://github.com/tikv/client-go/blob/3150e385e39fbbb324fe975d68abe4fdf5dbd6ba/txnkv/transaction/2pc.go#L695-L696
 	bufferedKeySizeLimit  = 2 * units.MiB
-	bufferedKeyCountLimit = 96_000
+	bufferedKeyCountLimit = 9600
 	bufferedHandleLimit   = 128
 )
 
