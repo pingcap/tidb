@@ -17,6 +17,7 @@ package importinto
 import (
 	"bytes"
 	"context"
+	"github.com/docker/go-units"
 	"io"
 	"sync"
 	"time"
@@ -47,6 +48,7 @@ const (
 	storeOpMaxBackoff       = time.Second
 	storeOpMaxRetryCnt      = 10
 	snapshotRefreshInterval = 15 * time.Second
+	bufferedKeySizeLimit    = 2 * units.MiB
 )
 
 type conflictKVHandler interface {
@@ -70,6 +72,10 @@ type baseConflictKVHandler struct {
 	snapshot        tidbkv.Snapshot
 
 	handleFn func(context.Context, *external.KVPair) error
+
+	// we delete keys in batch
+	bufferedKeys []tidbkv.Key
+	bufSize      int
 }
 
 func (h *baseConflictKVHandler) init() error {
@@ -106,6 +112,8 @@ func (h *baseConflictKVHandler) close(ctx context.Context) error {
 		firstErr.Set(h.collector.close(ctx))
 	}
 	firstErr.Set(h.encoder.Close())
+	firstErr.Set(h.deleteKeysWithRetry(ctx))
+
 	return firstErr.Get()
 }
 
@@ -153,7 +161,7 @@ func (h *baseConflictKVHandler) encodeAndHandleRow(ctx context.Context,
 	if h.collector != nil {
 		err = h.collector.recordConflictRow(ctx, h.kvGroup, handle, decodedData, kvPairs)
 	} else {
-		err = h.deleteKeysWithRetry(ctx, kvPairs.Pairs)
+		err = h.gatherAndDeleteKeysWithRetry(ctx, kvPairs.Pairs)
 	}
 	kvPairs.Clear()
 	if err != nil {
@@ -162,15 +170,42 @@ func (h *baseConflictKVHandler) encodeAndHandleRow(ctx context.Context,
 	return nil
 }
 
-func (h *baseConflictKVHandler) deleteKeysWithRetry(ctx context.Context, pairs []common.KvPair) error {
+func (h *baseConflictKVHandler) gatherAndDeleteKeysWithRetry(ctx context.Context, pairs []common.KvPair) error {
 	backoffer := backoff.NewExponential(storeOpMinBackoff, 2, storeOpMaxBackoff)
-	return dxfhandle.RunWithRetry(ctx, storeOpMaxRetryCnt, backoffer, h.logger, func(ctx context.Context) (bool, error) {
-		err := h.deleteKeys(ctx, pairs)
+	if err := dxfhandle.RunWithRetry(ctx, storeOpMaxRetryCnt, backoffer, h.logger, func(ctx context.Context) (bool, error) {
+		err := h.gatherKeysToDelete(ctx, pairs)
 		if err != nil {
 			return common.IsRetryableError(err), err
 		}
 		return true, nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	if h.bufSize > bufferedKeySizeLimit {
+		return h.deleteKeysWithRetry(ctx)
+	}
+	return nil
+}
+
+func (h *baseConflictKVHandler) deleteKeysWithRetry(ctx context.Context) error {
+	if len(h.bufferedKeys) == 0 {
+		return nil
+	}
+	backoffer := backoff.NewExponential(storeOpMinBackoff, 2, storeOpMaxBackoff)
+	if err := dxfhandle.RunWithRetry(ctx, storeOpMaxRetryCnt, backoffer, h.logger, func(ctx context.Context) (bool, error) {
+		err := h.deleteBufferedKeys(ctx)
+		if err != nil {
+			return common.IsRetryableError(err), err
+		}
+		return true, nil
+	}); err != nil {
+		return err
+	}
+
+	h.bufferedKeys = h.bufferedKeys[:0]
+	h.bufSize = 0
+	return nil
 }
 
 // we are deleting keys related to a single row in one transaction, and a normal
@@ -181,7 +216,7 @@ func (h *baseConflictKVHandler) deleteKeysWithRetry(ctx context.Context, pairs [
 // for any 2 conflict KVs in a single KV group, it's safe to resolve a single KV
 // group in multiple routines, and we can use a relatively stale snapshot to check
 // existence of the KVs to be deleted.
-func (h *baseConflictKVHandler) deleteKeys(ctx context.Context, pairs []common.KvPair) (err error) {
+func (h *baseConflictKVHandler) gatherKeysToDelete(ctx context.Context, pairs []common.KvPair) (err error) {
 	if err = h.refreshSnapshotAsNeeded(); err != nil {
 		return errors.Trace(err)
 	}
@@ -203,6 +238,15 @@ func (h *baseConflictKVHandler) deleteKeys(ctx context.Context, pairs []common.K
 		return nil
 	}
 
+	for _, p := range existingPairs {
+		h.bufferedKeys = append(h.bufferedKeys, p.Key)
+		h.bufSize += len(p.Key)
+	}
+
+	return nil
+}
+
+func (h *baseConflictKVHandler) deleteBufferedKeys(ctx context.Context) error {
 	txn, err := h.store.Begin()
 	if err != nil {
 		return errors.Trace(err)
@@ -217,8 +261,8 @@ func (h *baseConflictKVHandler) deleteKeys(ctx context.Context, pairs []common.K
 		}
 	}()
 
-	for _, p := range existingPairs {
-		if err = txn.Delete(p.Key); err != nil {
+	for _, k := range h.bufferedKeys {
+		if err = txn.Delete(k); err != nil {
 			return errors.Trace(err)
 		}
 	}
