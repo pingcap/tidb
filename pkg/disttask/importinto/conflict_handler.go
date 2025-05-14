@@ -48,8 +48,8 @@ const (
 	storeOpMaxBackoff       = time.Second
 	storeOpMaxRetryCnt      = 10
 	snapshotRefreshInterval = 15 * time.Second
-	bufferedKeySizeLimit    = 2 * units.MiB
-	bufferedHandleLimit     = 16
+	bufferedKeySizeLimit    = 4 * units.MiB
+	bufferedHandleLimit     = 64
 )
 
 type conflictKVHandler interface {
