@@ -4446,8 +4446,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-	hasGlobal := false
 	if tableInfo.GetPartitionInfo() != nil {
+		// When table has global index in the partiton, we disable the partition prune mode.
 		hasGlobal := slices.ContainsFunc(tableInfo.Indices, func(idx *model.IndexInfo) bool {
 			return idx.Global
 		})
@@ -4767,7 +4767,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if dirty || tableInfo.TempTableType == model.TempTableLocal || tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
 		us := logicalop.LogicalUnionScan{HandleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
-		if tableInfo.Partition != nil && !hasGlobal {
+		if tableInfo.Partition != nil {
 			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)
 			// Not using old static prune mode
 			// Single TableReader for all partitions, needs the PhysTblID from storage
