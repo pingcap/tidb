@@ -357,6 +357,7 @@ func (h *conflictIndexKVHandler) handleBufferedHandles(ctx context.Context) erro
 			return errors.Trace(err)
 		}
 	}
+	h.bufferedHandles = h.bufferedHandles[:0]
 	return nil
 }
 
