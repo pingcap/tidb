@@ -351,13 +351,17 @@ func TestIssue51873(t *testing.T) {
   UNIQUE KEY uidx_posi_asset_balance_key (position_date,portfolio_code,asset_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=30002
 PARTITION BY RANGE COLUMNS(position_date)
-(PARTITION p202401 VALUES LESS THAN ('2024-02-01'))`)
+(
+    PARTITION p202401 VALUES LESS THAN ('2024-02-01'),
+    PARTITION p202402 VALUES LESS THAN ('2024-03-01'))`)
 	tk.MustExec(`create table h2 like h1`)
 	tk.MustExec(`insert into h1 values(1,'2024-01-01',1,1)`)
+	tk.MustExec(`insert into h1 values(2,'2024-02-01',1,2)`)
 	tk.MustExec(`insert into h2 values(1,'2024-01-01',1,1)`)
+	tk.MustExec(`insert into h2 values(2,'2024-02-01',1,2)`)
 	tk.MustExec(`analyze table h1`)
 	tk.MustExec(`set @@tidb_skip_missing_partition_stats=0`)
-	tk.MustQuery(`with assetBalance AS
+	sqlWithOnePartion := `with assetBalance AS
     (SELECT asset_id, portfolio_code FROM h1 pab WHERE pab.position_date = '2024-01-01' ),
 cashBalance AS (SELECT portfolio_code, asset_id
     FROM h2 pcb WHERE pcb.position_date = '2024-01-01' ),
@@ -367,7 +371,58 @@ SELECT main.portfolioCode
 FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
     FROM assetBalance balance
     LEFT JOIN assetIdList
-        ON balance.asset_id = assetIdList.assetId ) main`).Check(testkit.Rows("1"))
+        ON balance.asset_id = assetIdList.assetId ) main`
+	sqlWithAllPartition := `with assetBalance AS
+    (SELECT asset_id, portfolio_code FROM h1 pab WHERE pab.position_date > '2023-01-01' ),
+cashBalance AS (SELECT portfolio_code, asset_id
+    FROM h2 pcb WHERE pcb.position_date > '2023-01-01' ),
+assetIdList AS (SELECT DISTINCT asset_id AS assetId
+    FROM assetBalance )
+SELECT main.portfolioCode
+FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
+    FROM assetBalance balance
+    LEFT JOIN assetIdList
+        ON balance.asset_id = assetIdList.assetId ) main`
+	tk.MustQuery(sqlWithOnePartion).Check(testkit.Rows("1"))
+	tk.MustQuery(`explain format='brief' ` + sqlWithOnePartion).Check(testkit.Rows(
+		"HashAgg 1.00 root  group by:test.h1.portfolio_code, funcs:firstrow(test.h1.portfolio_code)->test.h1.portfolio_code",
+		"└─CTEFullScan 1.00 root CTE:assetbalance AS balance data:CTE_0",
+		"CTE_0 1.00 root  Non-Recursive CTE",
+		"└─Projection(Seed Part) 1.00 root  test.h1.asset_id, test.h1.portfolio_code",
+		"  └─IndexReader 1.00 root  index:IndexRangeScan",
+		"    └─IndexRangeScan 1.00 cop[tikv] table:pab, partition:p202401, index:uidx_posi_asset_balance_key(position_date, portfolio_code, asset_id) range:[2024-01-01,2024-01-01], keep order:false",
+	))
+	tk.MustQuery(sqlWithAllPartition).Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery(`explain format='brief' ` + sqlWithAllPartition).Check(testkit.Rows(
+		"HashAgg 2.00 root  group by:test.h1.portfolio_code, funcs:firstrow(test.h1.portfolio_code)->test.h1.portfolio_code",
+		"└─CTEFullScan 2.00 root CTE:assetbalance AS balance data:CTE_0",
+		"CTE_0 2.00 root  Non-Recursive CTE",
+		"└─PartitionUnion(Seed Part) 2.00 root  ",
+		"  ├─Projection 1.00 root  test.h1.asset_id, test.h1.portfolio_code",
+		"  │ └─IndexReader 1.00 root  index:IndexRangeScan",
+		"  │   └─IndexRangeScan 1.00 cop[tikv] table:pab, partition:p202401, index:uidx_posi_asset_balance_key(position_date, portfolio_code, asset_id) range:(2023-01-01,+inf], keep order:false",
+		"  └─Projection 1.00 root  test.h1.asset_id, test.h1.portfolio_code",
+		"    └─IndexReader 1.00 root  index:IndexRangeScan",
+		"      └─IndexRangeScan 1.00 cop[tikv] table:pab, partition:p202402, index:uidx_posi_asset_balance_key(position_date, portfolio_code, asset_id) range:(2023-01-01,+inf], keep order:false",
+	))
+	tk.MustExec(`set @@tidb_skip_missing_partition_stats=1`)
+	tk.MustQuery(sqlWithOnePartion).Check(testkit.Rows("1"))
+	tk.MustQuery(`explain format='brief' ` + sqlWithOnePartion).Check(testkit.Rows(
+		"HashAgg 1.00 root  group by:test.h1.portfolio_code, funcs:firstrow(test.h1.portfolio_code)->test.h1.portfolio_code",
+		"└─CTEFullScan 1.00 root CTE:assetbalance AS balance data:CTE_0",
+		"CTE_0 1.00 root  Non-Recursive CTE",
+		"└─Projection(Seed Part) 1.00 root  test.h1.asset_id, test.h1.portfolio_code",
+		"  └─IndexReader 1.00 root partition:p202401 index:IndexRangeScan",
+		"    └─IndexRangeScan 1.00 cop[tikv] table:pab, partition:p202401, index:uidx_posi_asset_balance_key(position_date, portfolio_code, asset_id) range:[2024-01-01,2024-01-01], keep order:false",
+	))
+	tk.MustQuery(sqlWithAllPartition).Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery(`explain format='brief' ` + sqlWithAllPartition).Check(testkit.Rows(
+		"HashAgg 2.00 root  group by:test.h1.portfolio_code, funcs:firstrow(test.h1.portfolio_code)->test.h1.portfolio_code",
+		"└─CTEFullScan 2.00 root CTE:assetbalance AS balance data:CTE_0",
+		"CTE_0 2.00 root  Non-Recursive CTE",
+		"└─Projection(Seed Part) 2.00 root  test.h1.asset_id, test.h1.portfolio_code",
+		"  └─IndexReader 2.00 root partition:all index:IndexRangeScan",
+		"    └─IndexRangeScan 2.00 cop[tikv] table:pab, index:uidx_posi_asset_balance_key(position_date, portfolio_code, asset_id) range:(2023-01-01,+inf], keep order:false"))
 }
 
 func TestIssue50926(t *testing.T) {
