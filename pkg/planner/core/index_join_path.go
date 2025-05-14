@@ -646,8 +646,9 @@ func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.Ph
 	var innerCopTask base.Task
 	if prop.IndexJoinProp.TableRangeScan {
 		innerCopTask = buildDataSource2TableScanByIndexJoinProp(ds, prop)
+	} else {
+		innerCopTask = buildDataSource2IndexScanByIndexJoinProp(ds, prop)
 	}
-	innerCopTask = buildDataSource2IndexScanByIndexJoinProp(ds, prop)
 	if innerCopTask.Invalid() {
 		return base.InvalidTask, 0, nil
 	}
