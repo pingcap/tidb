@@ -49,6 +49,7 @@ const (
 	storeOpMaxRetryCnt      = 10
 	snapshotRefreshInterval = 15 * time.Second
 	bufferedKeySizeLimit    = 2 * units.MiB
+	bufferedHandleLimit     = 16
 )
 
 type conflictKVHandler interface {
@@ -275,11 +276,17 @@ func (h *conflictDataKVHandler) handle(ctx context.Context, kv *external.KVPair)
 	return h.encodeAndHandleRow(ctx, handle, kv.Value)
 }
 
+type handleOfTable struct {
+	tableID int64
+	handle  tidbkv.Handle
+}
+
 type conflictIndexKVHandler struct {
 	*baseConflictKVHandler
 	targetIdx *model.IndexInfo
 
-	isRowHandledFn func(handle tidbkv.Handle) bool
+	bufferedHandles []handleOfTable
+	isRowHandledFn  func(handle tidbkv.Handle) bool
 }
 
 func (h *conflictIndexKVHandler) init() error {
@@ -313,24 +320,51 @@ func (h *conflictIndexKVHandler) handle(ctx context.Context, kv *external.KVPair
 	if err != nil {
 		return err
 	}
-	rowKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
-
-	if err = h.refreshSnapshotAsNeeded(); err != nil {
-		return errors.Trace(err)
-	}
-	val, err := h.snapshot.Get(ctx, rowKey)
-	// either the data KV is deleted by handing conflicts in other KV group or the
-	// data KV itself is conflicted and not ingested.
-	if err != nil {
-		if isKeyNotFoundErr(err) {
-			return nil
-		}
-		return errors.Trace(err)
-	}
 	if h.isRowHandledFn != nil && h.isRowHandledFn(handle) {
 		return nil
 	}
-	return h.encodeAndHandleRow(ctx, handle, val)
+
+	h.bufferedHandles = append(h.bufferedHandles, handleOfTable{handle: handle, tableID: tableID})
+
+	if len(h.bufferedHandles) >= bufferedHandleLimit {
+		return h.handleBufferedHandles(ctx)
+	}
+	return nil
+}
+
+func (h *conflictIndexKVHandler) handleBufferedHandles(ctx context.Context) error {
+	if len(h.bufferedHandles) == 0 {
+		return nil
+	}
+	rowKeys := make([]tidbkv.Key, 0, len(h.bufferedHandles))
+	rowKeys2Handle := make(map[string]tidbkv.Handle, len(h.bufferedHandles))
+	for _, hdl := range h.bufferedHandles {
+		rowKey := tablecodec.EncodeRowKeyWithHandle(hdl.tableID, hdl.handle)
+		rowKeys = append(rowKeys, rowKey)
+		rowKeys2Handle[string(rowKey)] = hdl.handle
+	}
+
+	if err := h.refreshSnapshotAsNeeded(); err != nil {
+		return errors.Trace(err)
+	}
+	res, err := h.snapshot.BatchGet(ctx, rowKeys)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for rowKey, val := range res {
+		handle := rowKeys2Handle[rowKey]
+		if err := h.encodeAndHandleRow(ctx, handle, val); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func (h *conflictIndexKVHandler) close(ctx context.Context) error {
+	var firstErr common.OnceError
+	firstErr.Set(h.handleBufferedHandles(ctx))
+	firstErr.Set(h.baseConflictKVHandler.close(ctx))
+	return firstErr.Get()
 }
 
 func handleKVGroupConflicts(
