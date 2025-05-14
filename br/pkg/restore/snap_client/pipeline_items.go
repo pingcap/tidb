@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -367,16 +368,18 @@ func (buffer *statsMetaItemBuffer) TryUpdateMetas(ctx context.Context, statsHand
 	return statsHandler.SaveMetaToStorage("br restore", false, metaUpdates...)
 }
 
-func calculateRowCountForPhysicalTable(files []*backuppb.File, availableIndexCount int) int64 {
+func calculateRowCountForPhysicalTable(files []*backuppb.File) int64 {
 	totalKvs := uint64(0)
 	for _, file := range files {
-		totalKvs += file.TotalKvs
+		if tablecodec.IsRecordKey(file.StartKey) {
+			totalKvs += file.TotalKvs
+		}
 	}
-	return int64(totalKvs / uint64(availableIndexCount+1))
+	return int64(totalKvs)
 }
 
 func updateStatsMetaForNonPartitionTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle, tbl *CreatedTable) error {
-	count := calculateRowCountForPhysicalTable(tbl.OldTable.FilesOfPhysicals[tbl.OldTable.Info.ID], len(tbl.OldTable.Info.Indices))
+	count := calculateRowCountForPhysicalTable(tbl.OldTable.FilesOfPhysicals[tbl.OldTable.Info.ID])
 	if statsErr := buffer.TryUpdateMetas(ctx, statsHandler, tbl.Table.ID, count); statsErr != nil {
 		log.Error("update stats meta failed", zap.Error(statsErr))
 		return statsErr
@@ -385,20 +388,13 @@ func updateStatsMetaForNonPartitionTable(ctx context.Context, buffer *statsMetaI
 }
 
 func updateStatsMetaForPartitionTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle, tbl *CreatedTable) error {
-	availableIndexCount := 0
-	for _, indexInfo := range tbl.OldTable.Info.Indices {
-		if indexInfo.Global {
-			continue
-		}
-		availableIndexCount += 1
-	}
 	totalCount := int64(0)
 	physicalRowCountMap := make(map[int64]int64)
 	for physicalID, files := range tbl.OldTable.FilesOfPhysicals {
 		if physicalID == tbl.OldTable.Info.ID {
 			continue
 		}
-		count := calculateRowCountForPhysicalTable(files, availableIndexCount)
+		count := calculateRowCountForPhysicalTable(files)
 		totalCount += count
 		physicalRowCountMap[physicalID] = count
 	}
