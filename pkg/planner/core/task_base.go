@@ -116,7 +116,7 @@ type RootTask struct {
 	IndexJoinInfo *IndexJoinInfo
 
 	// warnings passed through different task copy attached with more upper operator specific warnings. (not concurrent safe)
-	simpleWarnings
+	warnings simpleWarnings
 }
 
 // GetPlan returns the root task's plan.
@@ -149,7 +149,7 @@ func (t *RootTask) Copy() base.Task {
 	}
 	// since *t will reuse the same warnings slice, we need to copy it out.
 	// because different task instance should have different warning slice.
-	nt.simpleWarnings.Copy(&t.simpleWarnings)
+	nt.warnings.Copy(&t.warnings)
 	return nt
 }
 
@@ -218,7 +218,7 @@ type MppTask struct {
 	tblColHists   *statistics.HistColl
 
 	// warnings passed through different task copy attached with more upper operator specific warnings. (not concurrent safe)
-	simpleWarnings
+	warnings simpleWarnings
 }
 
 // Count implements Task interface.
@@ -231,7 +231,7 @@ func (t *MppTask) Copy() base.Task {
 	nt := *t
 	// since *t will reuse the same warnings slice, we need to copy it out.
 	// cause different task instance should have different warning slice.
-	nt.simpleWarnings.Copy(&t.simpleWarnings)
+	nt.warnings.Copy(&t.warnings)
 	return &nt
 }
 
@@ -268,8 +268,8 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	defer func() {
 		// mppTask should inherit the indexJoinInfo upward.
 		// because mpp task bottom doesn't form the indexJoin related cop task.
-		if t.WarningCount() > 0 {
-			rt.simpleWarnings.CopyFrom(&t.simpleWarnings)
+		if t.warnings.WarningCount() > 0 {
+			rt.warnings.CopyFrom(&t.warnings)
 		}
 	}()
 	// In disaggregated-tiflash mode, need to consider generated column.
@@ -364,7 +364,7 @@ type CopTask struct {
 	IndexJoinInfo *IndexJoinInfo
 
 	// warnings passed through different task copy attached with more upper operator specific warnings. (not concurrent safe)
-	simpleWarnings
+	warnings simpleWarnings
 }
 
 // Invalid implements Task interface.
@@ -385,7 +385,7 @@ func (t *CopTask) Copy() base.Task {
 	nt := *t
 	// since *t will reuse the same warnings slice, we need to copy it out.
 	// cause different task instance should have different warning slice.
-	nt.simpleWarnings.Copy(&t.simpleWarnings)
+	nt.warnings.Copy(&t.warnings)
 	return &nt
 }
 
@@ -447,8 +447,8 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 			// return indexJoinInfo upward, when copTask is converted to rootTask.
 			rt.IndexJoinInfo = t.IndexJoinInfo
 		}
-		if t.WarningCount() > 0 {
-			rt.CopyFrom(&t.simpleWarnings)
+		if t.warnings.WarningCount() > 0 {
+			rt.warnings.CopyFrom(&t.warnings)
 		}
 	}()
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize
