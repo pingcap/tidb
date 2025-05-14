@@ -54,7 +54,7 @@ const (
 	// https://github.com/tikv/client-go/blob/3150e385e39fbbb324fe975d68abe4fdf5dbd6ba/txnkv/transaction/2pc.go#L695-L696
 	bufferedKeySizeLimit  = 2 * units.MiB
 	bufferedKeyCountLimit = 9600
-	bufferedHandleLimit   = 128
+	bufferedHandleLimit   = 256
 )
 
 type conflictKVHandler interface {
