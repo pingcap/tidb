@@ -64,6 +64,7 @@ func TestResourceGroupTagEncoding(t *testing.T) {
 	require.Equal(t, sqlDigest.Bytes(), decodedSQLDigest)
 	resTag = &tipb.ResourceGroupTag{}
 	err = resTag.Unmarshal(tag)
+	require.NoError(t, err)
 	require.NotNil(t, resTag.KeyspaceId)
 	require.Equal(t, resTag.KeyspaceId, &keyspaceID)
 
