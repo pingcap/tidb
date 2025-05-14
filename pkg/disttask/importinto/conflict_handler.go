@@ -239,7 +239,8 @@ func (h *baseConflictKVHandler) gatherKeysToDelete(ctx context.Context, pairs []
 	}
 
 	for _, p := range existingPairs {
-		h.bufferedKeys = append(h.bufferedKeys, p.Key)
+		// clone as the key is allocated on a shared memory
+		h.bufferedKeys = append(h.bufferedKeys, bytes.Clone(p.Key))
 		h.bufSize += len(p.Key)
 	}
 
