@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -55,6 +56,8 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 	rs := s.tk.MustQuery(importSQL).Rows()
 	jobID, err := strconv.Atoi(rs[0][0].(string))
 	require.NoError(s.T(), err)
+
+	time.Sleep(time.Second)
 
 	// Check the result
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))

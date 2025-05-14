@@ -696,6 +696,7 @@ func NewBackendForTest(ctx context.Context, config BackendConfig, storeHelper St
 	return local, nil
 }
 
+// SetCollector sets the collector for the local backend
 func (local *Backend) SetCollector(c execute.Collector) {
 	local.collector = c
 }

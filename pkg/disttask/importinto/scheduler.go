@@ -650,7 +650,6 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 
 func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 	taskHandle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta) error {
-
 	summary := &importer.Summary{}
 	if err := json.Unmarshal(taskMeta.TaskResult, summary); err != nil {
 		return errors.Trace(err)

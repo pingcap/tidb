@@ -63,7 +63,7 @@ func CreateSubTaskWithSummary(t *testing.T, gm *storage.TaskManager, taskID int6
 	return InsertSubtaskWithSummary(t, gm, taskID, step, execID, meta, summary, proto.SubtaskStatePending, tp, concurrency)
 }
 
-// InsertSubtask adds a new subtask of any state to subtask table.
+// InsertSubtaskWithSummary adds a new subtask of any state to subtask table.
 func InsertSubtaskWithSummary(t *testing.T, gm *storage.TaskManager, taskID int64, step proto.Step, execID string, meta []byte, summary *execute.SubtaskSummary, state proto.SubtaskState, tp proto.TaskType, concurrency int) int64 {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")

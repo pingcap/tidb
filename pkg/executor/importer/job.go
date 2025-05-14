@@ -245,7 +245,7 @@ func Job2Step(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, step s
 	return err
 }
 
-// FinishJob tries to finish a running job with jobID, change its status to finished, clear its step.
+// FinishJob tries to finish a running job with jobID, change its status to finished, clear its step and update summary.
 // It will not return error when there's no matched job.
 func FinishJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, summary *Summary) error {
 	bytes, err := json.Marshal(summary)

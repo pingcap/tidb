@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
-	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -379,7 +378,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 			m.InputBytes.Add(bytes)
 			m.InputRowCnt.Add(rows)
 			if me, ok := metric.GetCommonMetric(ctx); ok {
-				me.BytesCounter.WithLabelValues(lightningmetric.StateMerged).Add(float64(bytes))
+				me.BytesCounter.WithLabelValues(metric.StateMerged).Add(float64(bytes))
 			}
 		},
 		nil,
