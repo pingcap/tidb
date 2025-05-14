@@ -48,8 +48,11 @@ const (
 	storeOpMaxBackoff       = time.Second
 	storeOpMaxRetryCnt      = 10
 	snapshotRefreshInterval = 15 * time.Second
-	bufferedKeySizeLimit    = 4 * units.MiB
-	bufferedHandleLimit     = 64
+	// we define those limit to be within how client define big transaction, see
+	// https://github.com/tikv/client-go/blob/3150e385e39fbbb324fe975d68abe4fdf5dbd6ba/txnkv/transaction/2pc.go#L695-L696
+	bufferedKeySizeLimit  = 2 * units.MiB
+	bufferedKeyCountLimit = 96_000
+	bufferedHandleLimit   = 128
 )
 
 type conflictKVHandler interface {
@@ -183,7 +186,7 @@ func (h *baseConflictKVHandler) gatherAndDeleteKeysWithRetry(ctx context.Context
 		return err
 	}
 
-	if h.bufSize > bufferedKeySizeLimit {
+	if h.bufSize >= bufferedKeySizeLimit || len(h.bufferedKeys) >= bufferedKeyCountLimit {
 		return h.deleteKeysWithRetry(ctx)
 	}
 	return nil
