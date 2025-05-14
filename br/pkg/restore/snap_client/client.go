@@ -297,17 +297,26 @@ func (rc *SnapClient) SetPlacementPolicyMode(withPlacementPolicy string) {
 
 // AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
 // the download stage.
-func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table) error {
-	preallocedTableIDs := tidalloc.New(tables)
-	if preallocedTableIDs == nil {
-		return errors.Errorf("failed to pre-alloc table IDs")
-	}
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
-		return preallocedTableIDs.Alloc(meta.NewMutator(txn))
-	})
-	if err != nil {
-		return err
+func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table, reusePreallocID *checkpoint.PreallocIDs) error {
+	var preallocedTableIDs *tidalloc.PreallocIDs
+	var err error
+	if reusePreallocID != nil {
+		preallocedTableIDs, err = tidalloc.New(tables)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+		err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
+			return preallocedTableIDs.Alloc(meta.NewMutator(txn))
+		})
+		if err != nil {
+			return err
+		}
+	} else {
+		preallocedTableIDs, err = tidalloc.Reuse(reusePreallocID, tables)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	log.Info("registering the table IDs", zap.Stringer("ids", preallocedTableIDs))

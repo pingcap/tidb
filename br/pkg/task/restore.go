@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"slices"
@@ -295,6 +297,32 @@ type RestoreConfig struct {
 
 func (cfg *RestoreConfig) LocalEncryptionEnabled() bool {
 	return cfg.CipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT
+}
+
+type immutableRestoreConfig struct {
+	cmdName string
+	upstreamClusterID uint64
+	storage string
+	explictFlter bool
+    filterStr   []string
+	withSysTable bool
+}
+
+func Hash(cmdName string, cfg *RestoreConfig) ([]byte, error) {
+	config := &immutableRestoreConfig{
+		cmdName:           cmdName,
+		upstreamClusterID: cfg.upstreamClusterID,
+		storage:           cfg.Storage,
+		explictFlter:      cfg.ExplicitFilter,
+		filterStr:         cfg.FilterStr,
+		withSysTable:      cfg.WithSysTable,
+	}
+	data, err := json.Marshal(config)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	hash := sha256.Sum256(data)
+	return hash[:], nil
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -956,6 +984,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	var checkpointFirstRun = true
+	var reusePreallocID *checkpoint.PreallocIDs
 	if cfg.UseCheckpoint {
 		if len(cfg.CheckpointStorage) > 0 {
 			clusterID := mgr.PDClient().GetClusterID(ctx)
@@ -977,18 +1006,19 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			checkpointFirstRun = true
 		}
 
-		//TODO: (ris)change this
 		checkpointMeta, err := cfg.snapshotCheckpointMetaManager.LoadCheckpointMetadata(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		hash, err := checkpoint.Hash()
+		hash, err := Hash(cmdName, cfg.RestoreConfig)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if !bytes.Equal(checkpointMeta.Hash, hash) {
 			return errors.Trace(errors.Annotatef(berrors.ErrRestoreCheckpointMismatch, "checkpoint hash mismatch, failed"))
 		}
+		//TODO: (ris)handle reuse prealloc id
+		reusePreallocID = checkpointMeta.PreallocIDs
 	}
 	if err = VerifyDBAndTableInBackup(client.GetDatabases(), cfg.RestoreConfig); err != nil {
 		return err
@@ -1072,7 +1102,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
-	if err = client.AllocTableIDs(ctx, tables); err != nil {
+	if err = client.AllocTableIDs(ctx, tables, reusePreallocID); err != nil {
 		return errors.Trace(err)
 	}
 

@@ -7,6 +7,7 @@ import (
 	"math"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pkg/errors"
@@ -40,11 +41,11 @@ type PreallocIDs struct {
 
 // New collects the requirement of prealloc IDs and return a
 // not-yet-allocated PreallocIDs.
-func New(tables []*metautil.Table) *PreallocIDs {
+func New(tables []*metautil.Table) (*PreallocIDs, error) {
 	if len(tables) == 0 {
 		return &PreallocIDs{
 			start: math.MaxInt64,
-		}
+		}, nil
 	}
 
 	maxID := int64(0)
@@ -65,14 +66,56 @@ func New(tables []*metautil.Table) *PreallocIDs {
 		}
 	}
 	if maxID+count+1 > InsaneTableIDThreshold {
-		return nil
+		return nil, errors.Errorf("table ID %d is too large", maxID)
 	}
 	return &PreallocIDs{
 		start:          math.MaxInt64,
 		reusableBorder: maxID + 1,
 		count:          count,
 		next:           atomic.Int64{},
+	}, nil
+}
+
+func Reuse(lagacy *checkpoint.PreallocIDs, tables []*metautil.Table)(*PreallocIDs, error) {
+	if lagacy == nil {
+		return nil, errors.Errorf("no prealloc IDs to be reused")
 	}
+	count := int64(len(tables))
+	maxID := int64(0)
+
+	for _, t := range tables {
+		if t.Info.ID > maxID && t.Info.ID < InsaneTableIDThreshold {
+			maxID = t.Info.ID
+		}
+
+		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
+			count += int64(len(t.Info.Partition.Definitions))
+			for _, part := range t.Info.Partition.Definitions {
+				if part.ID > maxID && part.ID < InsaneTableIDThreshold {
+					maxID = part.ID
+				}
+			}
+		}
+	}
+	if maxID+count+1 > InsaneTableIDThreshold {
+		return nil, errors.Errorf("table ID %d is too large", maxID)
+	}
+
+	if count != lagacy.Count {
+		return nil, errors.Errorf("prealloc IDs count %d are not match with the tables count %d", lagacy.Count, count)
+	}
+	if lagacy.ReusableBorder != maxID+1 {
+		return nil, errors.Errorf("prealloc IDs reusable border %d are not match with the tables max ID %d", lagacy.ReusableBorder, maxID+1)
+	}
+	ret := PreallocIDs{
+		start:          lagacy.Start,
+		reusableBorder: lagacy.ReusableBorder,
+		end:            lagacy.End,
+		count:          lagacy.Count,
+		next:           atomic.Int64{},
+	}
+	ret.next.Store(lagacy.Next)
+	return &ret, nil
 }
 
 // String implements fmt.Stringer.
