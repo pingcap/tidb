@@ -178,6 +178,10 @@ func (e *collectConflictsStepExecutor) resetForNewSubtask(subtaskID int64) {
 }
 
 func (e *collectConflictsStepExecutor) isRowFromIndexHandled(handle tidbkv.Handle) bool {
+	// during handling the first kv group, this map is empty
+	if len(e.result.savedHandles) == 0 {
+		return false
+	}
 	return e.result.savedHandles[handle.String()]
 }
 
@@ -229,7 +233,11 @@ func (r *collectConflictResult) merge(other *collectConflictResult) {
 	r.skipSaveHandle = r.skipSaveHandle || other.skipSaveHandle
 	// we still merge the saved handles even when skipSaveHandle=true, so we can
 	// avoid handling conflicted rows twice as much as possible.
-	maps.Copy(r.savedHandles, other.savedHandles)
+	if len(r.savedHandles) == 0 {
+		r.savedHandles = other.savedHandles
+	} else {
+		maps.Copy(r.savedHandles, other.savedHandles)
+	}
 	r.filenames = append(r.filenames, other.filenames...)
 }
 
