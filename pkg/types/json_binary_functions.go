@@ -172,8 +172,7 @@ func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
 
 	r1 := rune(binary.BigEndian.Uint16(char[0:2]))
 	if size == 4 {
-		r2 := binary.BigEndian.Uint16(char[2:4])
-		r1 = utf16.DecodeRune(rune(r1), rune(r2))
+		r1 = utf16.DecodeRune(r1, rune(binary.BigEndian.Uint16(char[2:4])))
 	}
 	size = utf8.RuneLen(r1)
 	if size < 0 {
