@@ -122,13 +122,21 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 	}
 	// Schema doesn't exist in kv, drop it from infoschema.
 	if dbInfo == nil {
-		diff.Type = model.ActionDropSchema
-		return applyDropSchema(b, diff), nil
+		schemaDiff := &model.SchemaDiff{
+			Version:  diff.Version,
+			Type:     model.ActionDropSchema,
+			SchemaID: schemaID,
+		}
+		return applyDropSchema(b, schemaDiff), nil
 	}
 	// Schema exists in kv but not in infoschema, drop it from infoschema.
 	if _, ok := b.SchemaByID(schemaID); !ok {
-		diff.Type = model.ActionCreateSchema
-		if err := applyCreateSchema(b, m, diff); err != nil {
+		schemaDiff := &model.SchemaDiff{
+			Version:  diff.Version,
+			Type:     model.ActionCreateSchema,
+			SchemaID: schemaID,
+		}
+		if err := applyCreateSchema(b, m, schemaDiff); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -144,12 +152,22 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 	}
 	// Table not exists in kv, drop it from infoschema.
 	if tableInfo == nil {
-		diff.Type = model.ActionDropTable
-		return applyDropTableOrPartition(b, m, diff)
+		schemaDiff := &model.SchemaDiff{
+			Version:  diff.Version,
+			Type:     model.ActionDropTable,
+			SchemaID: schemaID,
+			TableID:  tableID,
+		}
+		return applyDropTableOrPartition(b, m, schemaDiff)
 	}
 	// default table not exists in infoschema, add it to infoschema.
-	diff.Type = model.ActionCreateTable
-	return applyDefaultAction(b, m, diff)
+	schemaDiff := &model.SchemaDiff{
+		Version:  diff.Version,
+		Type:     model.ActionCreateTable,
+		SchemaID: schemaID,
+		TableID:  tableID,
+	}
+	return applyDefaultAction(b, m, schemaDiff)
 }
 
 func applyTruncateTableOrPartition(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
