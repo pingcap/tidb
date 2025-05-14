@@ -29,6 +29,7 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"golang.org/x/exp/slices"
@@ -118,4 +119,31 @@ func (rc *SnapClient) RegisterUpdateMetaAndLoadStats(
 	statsConcurrency uint,
 ) {
 	rc.registerUpdateMetaAndLoadStats(builder, s, updateCh, statsConcurrency)
+}
+
+func (rc *SnapClient) ReplaceTables(
+	ctx context.Context,
+	createdTables []*CreatedTable,
+	schemaVersionPair SchemaVersionPairT,
+	restoreTS uint64,
+	loadStatsPhysical, loadSysTablePhysical bool,
+	kvClient kv.Client,
+	checksum bool,
+	checksumConcurrency uint,
+) (int, error) {
+	return rc.replaceTables(
+		ctx,
+		createdTables,
+		schemaVersionPair,
+		restoreTS,
+		loadStatsPhysical,
+		loadSysTablePhysical,
+		kvClient,
+		checksum,
+		checksumConcurrency,
+	)
+}
+
+func NewTemporaryTableChecker(loadStatsPhysical, loadSysTablePhysical bool) *TemporaryTableChecker {
+	return &TemporaryTableChecker{loadStatsPhysical: loadStatsPhysical, loadSysTablePhysical: loadSysTablePhysical}
 }

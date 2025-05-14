@@ -893,6 +893,11 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	if cfg.LoadSysTablePhysical && !cfg.WithSysTable {
+		return errors.Errorf("cannot set --load-stats-physical when --with-sys-table is unset. " +
+			"Please also set --with-sys-table.")
+	}
+
 	// reads out information from backup meta file and do requirement checking if needed
 	u, s, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
 	if err != nil {

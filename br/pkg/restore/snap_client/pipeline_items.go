@@ -204,7 +204,7 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 	updateCh := plCtx.Glue.StartProgress(ctx, "Restore Pipeline", progressLen, !plCtx.LogProgress)
 	defer updateCh.Close()
 
-	handlerBuilder := &PipelineConcurrentBuilder{loadStatsPhysical: plCtx.LoadStatsPhysical}
+	handlerBuilder := &PipelineConcurrentBuilder{loadStatsPhysical: plCtx.LoadStatsPhysical, loadSysTablePhysical: plCtx.LoadSysTablePhysical}
 	// pipeline checksum
 	if plCtx.Checksum {
 		rc.registerValidateChecksum(handlerBuilder, plCtx.KvClient, updateCh, plCtx.ChecksumConcurrency)
@@ -290,7 +290,7 @@ func (handler *PipelineConcurrentHandler) afterTableRestoredCh(createdTables []*
 			if loadStatsPhysical && IsStatsTemporaryTable(createdTable.OldTable.DB.Name.O, createdTable.OldTable.Info.Name.O) {
 				continue
 			}
-			if loadSysTablePhysical && IsSysTemporaryTable(createdTable.OldTable.DB.Name.O, createdTable.OldTable.Info.Name.O) {
+			if loadSysTablePhysical && IsRenameableSysTemporaryTable(createdTable.OldTable.DB.Name.O, createdTable.OldTable.Info.Name.O) {
 				continue
 			}
 			select {

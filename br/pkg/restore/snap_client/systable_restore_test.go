@@ -148,6 +148,116 @@ func TestGetDBNameIfStatsTemporaryTable(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestTemporaryTableCheckerForStatsTemporaryTable(t *testing.T) {
+	checker := snapclient.NewTemporaryTableChecker(true, false)
+	_, ok := checker.CheckTemporaryTables("", "")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("", "stats_meta")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("mysql", "stats_meta")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("__TiDB_BR_Temporary_test", "stats_meta")
+	require.False(t, ok)
+	name, ok := checker.CheckTemporaryTables("__TiDB_BR_Temporary_mysql", "stats_meta")
+	require.True(t, ok)
+	require.Equal(t, "mysql", name)
+	_, ok = checker.CheckTemporaryTables("__TiDB_BR_Temporary_mysql", "test")
+	require.False(t, ok)
+
+	_, ok = checker.CheckTemporaryTables("", "user")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("mysql", "user")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("__TiDB_BR_Temporary_test", "user")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("__TiDB_BR_Temporary_mysql", "user")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("__TiDB_BR_Temporary_mysql", "test")
+	require.False(t, ok)
+}
+
+func TestIsRenameableSysTemporaryTable(t *testing.T) {
+	require.False(t, snapclient.IsRenameableSysTemporaryTable("", ""))
+	require.False(t, snapclient.IsRenameableSysTemporaryTable("", "user"))
+	require.False(t, snapclient.IsRenameableSysTemporaryTable("mysql", "user"))
+	require.False(t, snapclient.IsRenameableSysTemporaryTable("__TiDB_BR_Temporary_test", "user"))
+	require.True(t, snapclient.IsRenameableSysTemporaryTable("__TiDB_BR_Temporary_mysql", "user"))
+	require.False(t, snapclient.IsRenameableSysTemporaryTable("__TiDB_BR_Temporary_mysql", "test"))
+}
+
+func TestGetDBNameIfRenameableSysTemporaryTable(t *testing.T) {
+	_, ok := snapclient.GetDBNameIfRenameableSysTemporaryTable("", "")
+	require.False(t, ok)
+	_, ok = snapclient.GetDBNameIfRenameableSysTemporaryTable("", "user")
+	require.False(t, ok)
+	_, ok = snapclient.GetDBNameIfRenameableSysTemporaryTable("mysql", "user")
+	require.False(t, ok)
+	_, ok = snapclient.GetDBNameIfRenameableSysTemporaryTable("__TiDB_BR_Temporary_test", "user")
+	require.False(t, ok)
+	name, ok := snapclient.GetDBNameIfRenameableSysTemporaryTable("__TiDB_BR_Temporary_mysql", "user")
+	require.True(t, ok)
+	require.Equal(t, "mysql", name)
+	_, ok = snapclient.GetDBNameIfRenameableSysTemporaryTable("__TiDB_BR_Temporary_mysql", "test")
+	require.False(t, ok)
+}
+
+func TestTemporaryTableCheckerForRenameableSysTemporaryTable(t *testing.T) {
+	checker := snapclient.NewTemporaryTableChecker(false, true)
+	_, ok := checker.CheckTemporaryTables("", "")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("", "user")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("mysql", "user")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("__TiDB_BR_Temporary_test", "user")
+	require.False(t, ok)
+	name, ok := checker.CheckTemporaryTables("__TiDB_BR_Temporary_mysql", "user")
+	require.True(t, ok)
+	require.Equal(t, "mysql", name)
+	_, ok = checker.CheckTemporaryTables("__TiDB_BR_Temporary_mysql", "test")
+	require.False(t, ok)
+
+	_, ok = checker.CheckTemporaryTables("", "stats_meta")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("mysql", "stats_meta")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("__TiDB_BR_Temporary_test", "stats_meta")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("__TiDB_BR_Temporary_mysql", "stats_meta")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("__TiDB_BR_Temporary_mysql", "test")
+	require.False(t, ok)
+}
+
+func TestTemporaryTableChecker(t *testing.T) {
+	checker := snapclient.NewTemporaryTableChecker(true, true)
+	_, ok := checker.CheckTemporaryTables("", "")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("", "user")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("mysql", "user")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("__TiDB_BR_Temporary_test", "user")
+	require.False(t, ok)
+	name, ok := checker.CheckTemporaryTables("__TiDB_BR_Temporary_mysql", "user")
+	require.True(t, ok)
+	require.Equal(t, "mysql", name)
+	_, ok = checker.CheckTemporaryTables("__TiDB_BR_Temporary_mysql", "test")
+	require.False(t, ok)
+
+	_, ok = checker.CheckTemporaryTables("", "stats_meta")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("mysql", "stats_meta")
+	require.False(t, ok)
+	_, ok = checker.CheckTemporaryTables("__TiDB_BR_Temporary_test", "stats_meta")
+	require.False(t, ok)
+	name, ok = checker.CheckTemporaryTables("__TiDB_BR_Temporary_mysql", "stats_meta")
+	require.True(t, ok)
+	require.Equal(t, "mysql", name)
+	_, ok = checker.CheckTemporaryTables("__TiDB_BR_Temporary_mysql", "test")
+	require.False(t, ok)
+}
+
 func TestGenerateMoveStatsTableSQLPair(t *testing.T) {
 	renameSQL := snapclient.GenerateMoveStatsTableSQLPair(123, map[string]map[string]struct{}{
 		"mysql": {"stats_meta": struct{}{}, "stats_buckets": struct{}{}, "stats_top_n": struct{}{}},

@@ -192,7 +192,7 @@ var downgradeStatsTableSchemaList = []versionSchemaUpdateSQL{
 
 func upgradeStatsTableSchema(
 	ctx context.Context,
-	statisticTables map[string]map[string]struct{},
+	renamedTables map[string]map[string]struct{},
 	fromMajor, fromMinor, toMajor, toMinor int64,
 	execution func(context.Context, string) error,
 ) error {
@@ -204,7 +204,7 @@ func upgradeStatsTableSchema(
 			break
 		}
 		for _, sql := range updateSQL.updateSQLs {
-			if tables, ok := statisticTables[sql.schemaName]; ok {
+			if tables, ok := renamedTables[sql.schemaName]; ok {
 				if _, ok := tables[sql.tableName]; ok {
 					if err := execution(ctx, sql.sql); err != nil {
 						return errors.Trace(err)
@@ -244,7 +244,7 @@ func downgradeStatsTableSchema(
 
 func updateStatsTableSchema(
 	ctx context.Context,
-	statisticTables map[string]map[string]struct{},
+	renamedTables map[string]map[string]struct{},
 	versionPair SchemaVersionPairT,
 	execution func(context.Context, string) error,
 ) error {
@@ -255,13 +255,13 @@ func updateStatsTableSchema(
 	if versionPair.DownstreamVersionMajor > versionPair.UpstreamVersionMajor ||
 		(versionPair.DownstreamVersionMajor == versionPair.UpstreamVersionMajor &&
 			versionPair.DownstreamVersionMinor > versionPair.UpstreamVersionMinor) {
-		return upgradeStatsTableSchema(ctx, statisticTables,
+		return upgradeStatsTableSchema(ctx, renamedTables,
 			versionPair.UpstreamVersionMajor, versionPair.UpstreamVersionMinor,
 			versionPair.DownstreamVersionMajor, versionPair.DownstreamVersionMinor,
 			execution,
 		)
 	}
-	return downgradeStatsTableSchema(ctx, statisticTables,
+	return downgradeStatsTableSchema(ctx, renamedTables,
 		versionPair.UpstreamVersionMajor, versionPair.UpstreamVersionMinor,
 		versionPair.DownstreamVersionMajor, versionPair.DownstreamVersionMinor,
 		execution,
@@ -292,8 +292,8 @@ func GetDBNameIfStatsTemporaryTable(tempSchemaName, tableName string) (string, b
 	return "", false
 }
 
-func IsSysTemporaryTable(tempSchemaName, tableName string) bool {
-	_, ok := GetDBNameIfStatsTemporaryTable(tempSchemaName, tableName)
+func IsRenameableSysTemporaryTable(tempSchemaName, tableName string) bool {
+	_, ok := GetDBNameIfRenameableSysTemporaryTable(tempSchemaName, tableName)
 	return ok
 }
 
