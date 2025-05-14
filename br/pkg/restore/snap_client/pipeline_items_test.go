@@ -26,9 +26,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -141,11 +143,17 @@ func generateStatsPartition(partitionIDs []int64) (*model.PartitionInfo, *model.
 }
 
 func generateStatsFiles(tableID int64, partitionIDs []int64, hasGlobalIndex bool) map[int64][]*backuppb.File {
+	recordKey := tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(tableID+1000), kv.IntHandle(0))
+	indexKey := tablecodec.EncodeTableIndexPrefix(tableID+1000, 1)
 	if len(partitionIDs) == 0 {
 		return map[int64][]*backuppb.File{
 			tableID + 1000: {
-				{TotalKvs: uint64(tableID)}, {TotalKvs: uint64(tableID)}, {TotalKvs: uint64(tableID)},
-				{TotalKvs: uint64(tableID + 1)}, {TotalKvs: uint64(tableID + 1)}, {TotalKvs: uint64(tableID + 1)},
+				{StartKey: recordKey, TotalKvs: uint64(tableID)},
+				{StartKey: indexKey, TotalKvs: uint64(tableID)},
+				{StartKey: indexKey, TotalKvs: uint64(tableID)},
+				{StartKey: recordKey, TotalKvs: uint64(tableID + 1)},
+				{StartKey: indexKey, TotalKvs: uint64(tableID + 1)},
+				{StartKey: indexKey, TotalKvs: uint64(tableID + 1)},
 			},
 		}
 	}
@@ -154,15 +162,21 @@ func generateStatsFiles(tableID int64, partitionIDs []int64, hasGlobalIndex bool
 		files[tableID+1000] = []*backuppb.File{{TotalKvs: uint64(tableID)}, {TotalKvs: uint64(tableID + 1)}}
 		for _, partitionID := range partitionIDs {
 			files[partitionID+1000] = []*backuppb.File{
-				{TotalKvs: uint64(partitionID)}, {TotalKvs: uint64(partitionID)},
-				{TotalKvs: uint64(partitionID + 1)}, {TotalKvs: uint64(partitionID + 1)},
+				{StartKey: recordKey, TotalKvs: uint64(partitionID)},
+				{StartKey: indexKey, TotalKvs: uint64(partitionID)},
+				{StartKey: recordKey, TotalKvs: uint64(partitionID + 1)},
+				{StartKey: indexKey, TotalKvs: uint64(partitionID + 1)},
 			}
 		}
 	} else {
 		for _, partitionID := range partitionIDs {
 			files[partitionID+1000] = []*backuppb.File{
-				{TotalKvs: uint64(partitionID)}, {TotalKvs: uint64(partitionID)}, {TotalKvs: uint64(partitionID)},
-				{TotalKvs: uint64(partitionID + 1)}, {TotalKvs: uint64(partitionID + 1)}, {TotalKvs: uint64(partitionID + 1)},
+				{StartKey: recordKey, TotalKvs: uint64(partitionID)},
+				{StartKey: indexKey, TotalKvs: uint64(partitionID)},
+				{StartKey: indexKey, TotalKvs: uint64(partitionID)},
+				{StartKey: recordKey, TotalKvs: uint64(partitionID + 1)},
+				{StartKey: indexKey, TotalKvs: uint64(partitionID + 1)},
+				{StartKey: indexKey, TotalKvs: uint64(partitionID + 1)},
 			}
 		}
 	}
@@ -216,7 +230,7 @@ func TestUpdateStatsMeta(t *testing.T) {
 	client := snapclient.MockClient(nil)
 	client.SetDomain(dom)
 	builder := &snapclient.PipelineConcurrentBuilder{}
-	client.RegisterUpdateMetaAndLoadStats(builder, nil, MockUpdateCh{}, 1, true, false)
+	client.RegisterUpdateMetaAndLoadStats(builder, nil, MockUpdateCh{}, 1)
 	err = builder.StartPipelineTask(ctx, []*snapclient.CreatedTable{
 		generateStatsCreatedTables(false, 100, 101, 102, 103),
 		generateStatsCreatedTables(true, 104, 105, 106, 107),

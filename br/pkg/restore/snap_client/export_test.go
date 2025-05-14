@@ -114,8 +114,6 @@ func (rc *SnapClient) RegisterUpdateMetaAndLoadStats(
 	s storage.ExternalStorage,
 	updateCh glue.Progress,
 	statsConcurrency uint,
-	autoAnalyze bool,
-	loadStats bool,
 ) {
-	rc.registerUpdateMetaAndLoadStats(builder, s, updateCh, statsConcurrency, autoAnalyze, loadStats)
+	rc.registerUpdateMetaAndLoadStats(builder, s, updateCh, statsConcurrency)
 }
