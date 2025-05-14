@@ -2095,7 +2095,6 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 	}
 
 	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, is, nil)
-	virtualSchemas := []string{util.InformationSchemaName.L, util.PerformanceSchemaName.L, util.MetricSchemaName.L}
 	for i := range allRegionsInfo.Regions {
 		regionTableList := tableInfos[allRegionsInfo.Regions[i].ID]
 		if len(regionTableList) == 0 {
@@ -2103,7 +2102,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 		}
 		for j, regionTable := range regionTableList {
 			// Exclude virtual schemas
-			if slices.Contains(virtualSchemas, regionTable.DB.Name.L) {
+			if util.IsMemDB(regionTable.DB.Name.L) {
 				continue
 			}
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, regionTable.DB.Name.L, regionTable.Table.Name.L, "", mysql.AllPrivMask) {
