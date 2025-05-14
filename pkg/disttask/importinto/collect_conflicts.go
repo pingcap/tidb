@@ -179,10 +179,7 @@ func (e *collectConflictsStepExecutor) resetForNewSubtask(subtaskID int64) {
 }
 
 func (e *collectConflictsStepExecutor) isRowFromIndexHandled(handle tidbkv.Handle) bool {
-	if e.result.skipSaveHandle {
-		return false
-	}
-	return e.result.savedHandle[handle.String()]
+	return e.result.savedHandles[handle.String()]
 }
 
 func (e *collectConflictsStepExecutor) Cleanup(_ context.Context) (err error) {
@@ -199,7 +196,7 @@ type collectConflictResult struct {
 	// but we still need keep running this step to record all conflicted rows to
 	// let user resolve them manually.
 	skipSaveHandle bool
-	savedHandle    map[string]bool
+	savedHandles   map[string]bool
 	filenames      []string
 }
 
@@ -211,15 +208,15 @@ func newCollectConflictResult(keyspace []byte, skipSaveHandle bool) *collectConf
 	return &collectConflictResult{
 		checksum:       verification.NewKVChecksumWithKeyspace(keyspace),
 		skipSaveHandle: skipSaveHandle,
-		savedHandle:    make(map[string]bool, size),
+		savedHandles:   make(map[string]bool, size),
 		filenames:      make([]string, 0, 1),
 	}
 }
 
 func newCollectConflictResultForMerge() *collectConflictResult {
 	return &collectConflictResult{
-		checksum:    verification.NewKVChecksum(),
-		savedHandle: make(map[string]bool),
+		checksum:     verification.NewKVChecksum(),
+		savedHandles: make(map[string]bool),
 	}
 }
 
@@ -231,11 +228,9 @@ func (r *collectConflictResult) merge(other *collectConflictResult) {
 	r.size += other.size
 	r.checksum.Add(other.checksum)
 	r.skipSaveHandle = r.skipSaveHandle || other.skipSaveHandle
-	if r.skipSaveHandle {
-		r.savedHandle = make(map[string]bool)
-	} else {
-		maps.Copy(r.savedHandle, other.savedHandle)
-	}
+	// we still merge the saved handles even when skipSaveHandle=true, so we can
+	// avoid handling conflicted rows twice as much as possible.
+	maps.Copy(r.savedHandles, other.savedHandles)
 	r.filenames = append(r.filenames, other.filenames...)
 }
 
@@ -327,11 +322,11 @@ func (c *conflictRowCollector) trySaveHandledRowFromIndex(handle tidbkv.Handle) 
 		c.logger.Info("too many conflict rows from index, skip checking",
 			zap.String("handleSize", units.BytesSize(float64(c.savedHandleSize.Load()))))
 		c.skipSaveHandle = true
-		c.savedHandle = make(map[string]bool)
+		c.savedHandles = make(map[string]bool)
 		return
 	}
 
-	c.savedHandle[hdlStr] = true
+	c.savedHandles[hdlStr] = true
 }
 
 func (c *conflictRowCollector) close(ctx context.Context) error {
