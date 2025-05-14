@@ -123,7 +123,7 @@ func (s *mockGCSSuite) TestShowJob() {
 		SourceFileSize: 3,
 		Status:         "finished",
 		Step:           "",
-		Summary:        importer.MockSummary(3),
+		Summary:        importer.MockSummary(2),
 		ErrorMessage:   "",
 	}
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
