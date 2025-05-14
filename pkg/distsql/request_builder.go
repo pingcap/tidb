@@ -886,9 +886,10 @@ func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
 	return retRanges, nil
 }
 
+// FulltextIndexRangesToKVRanges converts fulltext index ranges to "KeyRange".
+// This is a temporary solution, and we should implement the fulltext index
+// ranges conversion in the future.
 func FulltextIndexRangesToKVRanges(dctx *distsqlctx.DistSQLContext, tids []int64, ranges []*ranger.Range) (*kv.KeyRanges, error) {
 	// Mocking the fulltext index ranges to be the same as the table ranges.
-	// This is a temporary solution, and we should implement the fulltext index
-	// ranges conversion in the future.
 	return CommonHandleRangesToKVRanges(dctx, tids, ranges)
 }
