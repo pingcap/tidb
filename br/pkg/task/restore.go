@@ -1002,9 +1002,15 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err = VerifyDBAndTableInBackup(client.GetDatabases(), cfg.RestoreConfig); err != nil {
 		return err
 	}
-	if cfg.LoadStatsPhysical && checkpointFirstRun && (client.IsIncremental() || cfg.ExplicitFilter) {
-		return errors.Errorf("cannot set --load-stats-physical when it is not full restore. " +
-			"Please unset --load-stats-physical or try to full restore.")
+	if checkpointFirstRun && (client.IsIncremental() || cfg.ExplicitFilter) {
+		if cfg.LoadStatsPhysical {
+			return errors.Errorf("cannot set --load-stats-physical when it is not full restore. " +
+				"Please unset --load-stats-physical or try to full restore.")
+		}
+		if cfg.LoadSysTablePhysical {
+			return errors.Errorf("cannot set --load-sys-table-physical when it is not full restore. " +
+				"Please unset --load-sys-table-physical or try to full restore.")
+		}
 	}
 
 	// filters out db/table/files using filter
@@ -1396,7 +1402,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// So leave it out of the pipeline for easier implementation.
 	log.Info("restoring system schemas", zap.Bool("withSys", cfg.WithSysTable),
 		zap.Strings("filter", cfg.FilterStr))
-	err = client.RestoreSystemSchemas(ctx, cfg.TableFilter)
+	err = client.RestoreSystemSchemas(ctx, cfg.TableFilter, cfg.LoadSysTablePhysical)
 	if err != nil {
 		return errors.Trace(err)
 	}

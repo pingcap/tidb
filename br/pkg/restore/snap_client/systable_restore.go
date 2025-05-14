@@ -51,6 +51,20 @@ var statsTables = map[string]map[string]struct{}{
 	},
 }
 
+var renameableSysTables = map[string]map[string]struct{}{
+	"mysql": {
+		"bind_info":     {},
+		"user":          {},
+		"db":            {},
+		"tables_priv":   {},
+		"columns_priv":  {},
+		"default_roles": {},
+		"role_edges":    {},
+		"global_priv":   {},
+		"global_grants": {},
+	},
+}
+
 // tables in this map is restored when fullClusterRestore=true
 var sysPrivilegeTableMap = map[string]string{
 	"user":          "(user = '%s' and host = '%%')",       // since v1.0.0
@@ -278,6 +292,37 @@ func GetDBNameIfStatsTemporaryTable(tempSchemaName, tableName string) (string, b
 	return "", false
 }
 
+func IsSysTemporaryTable(tempSchemaName, tableName string) bool {
+	_, ok := GetDBNameIfStatsTemporaryTable(tempSchemaName, tableName)
+	return ok
+}
+
+func GetDBNameIfRenameableSysTemporaryTable(tempSchemaName, tableName string) (string, bool) {
+	if name, ok := utils.StripTempDBPrefixIfNeeded(tempSchemaName); ok && isRenameableSysTable(name, tableName) {
+		return name, true
+	}
+	return "", false
+}
+
+type TemporaryTableChecker struct {
+	loadStatsPhysical    bool
+	loadSysTablePhysical bool
+}
+
+func (c *TemporaryTableChecker) CheckTemporaryTables(tempSchemaName, tableName string) (string, bool) {
+	if c.loadStatsPhysical {
+		if dbName, ok := GetDBNameIfStatsTemporaryTable(tempSchemaName, tableName); ok {
+			return dbName, true
+		}
+	}
+	if c.loadSysTablePhysical {
+		if dbName, ok := GetDBNameIfRenameableSysTemporaryTable(tempSchemaName, tableName); ok {
+			return dbName, true
+		}
+	}
+	return "", false
+}
+
 func GenerateMoveStatsTableSQLPair(restoreTS uint64, statisticTables map[string]map[string]struct{}) string {
 	renameBuffer := make([]string, 0, 32)
 	for dbName, tableNames := range statisticTables {
@@ -299,6 +344,15 @@ func isStatsTable(schemaName string, tableName string) bool {
 	return ok
 }
 
+func isRenameableSysTable(schemaName string, tableName string) bool {
+	tableMap, ok := renameableSysTables[schemaName]
+	if !ok {
+		return false
+	}
+	_, ok = tableMap[tableName]
+	return ok
+}
+
 func isPlanReplayerTables(schemaName string, tableName string) bool {
 	tableMap, ok := planPeplayerTables[schemaName]
 	if !ok {
@@ -310,10 +364,10 @@ func isPlanReplayerTables(schemaName string, tableName string) bool {
 
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
-func (rc *SnapClient) RestoreSystemSchemas(ctx context.Context, f filter.Filter) (rerr error) {
+func (rc *SnapClient) RestoreSystemSchemas(ctx context.Context, f filter.Filter, loadSysTablePhysical bool) (rerr error) {
 	sysDBs := []string{mysql.SystemDB, mysql.SysDB, mysql.WorkloadSchema}
 	for _, sysDB := range sysDBs {
-		err := rc.restoreSystemSchema(ctx, f, sysDB)
+		err := rc.restoreSystemSchema(ctx, f, sysDB, loadSysTablePhysical)
 		if err != nil {
 			return err
 		}
@@ -323,7 +377,7 @@ func (rc *SnapClient) RestoreSystemSchemas(ctx context.Context, f filter.Filter)
 
 // restoreSystemSchema restores a system schema(i.e. the `mysql` or `sys` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
-func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, sysDB string) (rerr error) {
+func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, sysDB string, loadSysTablePhysical bool) (rerr error) {
 	temporaryDB := utils.TemporaryDBName(sysDB)
 	defer func() {
 		// Don't clean the temporary database for next restore with checkpoint.
@@ -355,6 +409,9 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 	for _, table := range originDatabase.Tables {
 		tableName := table.Info.Name
 		if f.MatchTable(sysDB, tableName.O) {
+			if loadSysTablePhysical && isRenameableSysTable(sysDB, tableName.O) {
+				continue
+			}
 			if err := rc.replaceTemporaryTableToSystable(ctx, table.Info, db); err != nil {
 				log.Warn("error during merging temporary tables into system tables",
 					logutil.ShortError(err),

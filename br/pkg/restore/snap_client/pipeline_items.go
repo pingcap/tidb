@@ -80,39 +80,40 @@ func ExhaustErrors(ec <-chan error) []error {
 	}
 }
 
-func (rc *SnapClient) filterAndValidateStatisticTables(
+func (rc *SnapClient) filterAndValidateTemporaryTables(
 	ctx context.Context,
 	createdTables []*CreatedTable,
+	temporaryTablesCheckFn func(string, string) (string, bool),
 	kvClient kv.Client,
 	checksum bool,
 	checksumConcurrency uint,
 ) (map[string]map[string]struct{}, int, error) {
-	statisticTables := make(map[string]map[string]struct{})
-	statisticTableCount := 0
+	renamedTables := make(map[string]map[string]struct{})
+	renamedTableCount := 0
 	workerpool := tidbutil.NewWorkerPool(defaultChecksumConcurrency, "Restore Statistic Checksum")
 	eg, ectx := errgroup.WithContext(ctx)
 	for _, createdTable := range createdTables {
 		tempSchemaName := createdTable.OldTable.DB.Name.O
 		tableName := createdTable.OldTable.Info.Name.O
-		if dbName, ok := GetDBNameIfStatsTemporaryTable(tempSchemaName, tableName); ok {
-			statisticTableMap, ok := statisticTables[dbName]
+		if dbName, ok := temporaryTablesCheckFn(tempSchemaName, tableName); ok {
+			renamedTableMap, ok := renamedTables[dbName]
 			if !ok {
-				statisticTableMap = make(map[string]struct{})
-				statisticTables[dbName] = statisticTableMap
+				renamedTableMap = make(map[string]struct{})
+				renamedTables[dbName] = renamedTableMap
 			}
-			statisticTableMap[tableName] = struct{}{}
+			renamedTableMap[tableName] = struct{}{}
 			if checksum {
 				workerpool.ApplyOnErrorGroup(eg, func() error {
 					return rc.execAndValidateChecksum(ectx, createdTable, kvClient, checksumConcurrency)
 				})
 			}
-			statisticTableCount += 1
+			renamedTableCount += 1
 		}
 	}
 	if err := eg.Wait(); err != nil {
 		return nil, 0, errors.Trace(err)
 	}
-	return statisticTables, statisticTableCount, nil
+	return renamedTables, renamedTableCount, nil
 }
 
 func (rc *SnapClient) moveStatsTable(ctx context.Context, restoreTS uint64, statisticTables map[string]map[string]struct{}) error {
@@ -132,23 +133,24 @@ func (rc *SnapClient) replaceTables(
 	checksum bool,
 	checksumConcurrency uint,
 ) (int, error) {
-	renameTables := make(map[string]map[string]struct{})
-	if loadStatsPhysical {
-		statisticTables, statisticTableCount, err := rc.filterAndValidateStatisticTables(ctx, createdTables, kvClient, checksum, checksumConcurrency)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
+	temporaryTableChecker := &TemporaryTableChecker{
+		loadStatsPhysical:    loadStatsPhysical,
+		loadSysTablePhysical: loadSysTablePhysical,
 	}
-
-	if err := rc.moveStatsTable(ctx, restoreTS, statisticTables); err != nil {
+	renamedTables, renamedTableCount, err := rc.filterAndValidateTemporaryTables(ctx, createdTables, temporaryTableChecker.CheckTemporaryTables, kvClient, checksum, checksumConcurrency)
+	if err != nil {
 		return 0, errors.Trace(err)
 	}
 
-	if err := updateStatsTableSchema(ctx, statisticTables, schemaVersionPair, rc.db.Session().Execute); err != nil {
+	if err := rc.moveStatsTable(ctx, restoreTS, renamedTables); err != nil {
 		return 0, errors.Trace(err)
 	}
 
-	return statisticTableCount, nil
+	if err := updateStatsTableSchema(ctx, renamedTables, schemaVersionPair, rc.db.Session().Execute); err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	return renamedTableCount, nil
 }
 
 type PipelineContext struct {
@@ -190,11 +192,11 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 	}
 	progressLen := int64(pipelineNum * len(createdTables))
 	if plCtx.LoadStatsPhysical || plCtx.LoadSysTablePhysical {
-		statsTableCount, err := rc.replaceTables(ctx, createdTables, plCtx.SchemaVersionPair, plCtx.RestoreTS, plCtx.LoadStatsPhysical, plCtx.LoadSysTablePhysical, plCtx.KvClient, plCtx.Checksum, plCtx.ChecksumConcurrency)
+		renamedTableCount, err := rc.replaceTables(ctx, createdTables, plCtx.SchemaVersionPair, plCtx.RestoreTS, plCtx.LoadStatsPhysical, plCtx.LoadSysTablePhysical, plCtx.KvClient, plCtx.Checksum, plCtx.ChecksumConcurrency)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		progressLen -= int64(pipelineNum * statsTableCount)
+		progressLen -= int64(pipelineNum * renamedTableCount)
 	}
 
 	// Redirect to log if there is no log file to avoid unreadable output.
@@ -259,7 +261,7 @@ func (builder *PipelineConcurrentBuilder) StartPipelineTask(ctx context.Context,
 	}
 
 	// the first pipeline task
-	postHandleCh := handler.afterTableRestoredCh(createdTables, builder.loadStatsPhysical)
+	postHandleCh := handler.afterTableRestoredCh(createdTables, builder.loadStatsPhysical, builder.loadSysTablePhysical)
 
 	// the middle pipeline tasks
 	for _, f := range builder.pipelineFunctions {
@@ -277,7 +279,7 @@ type PipelineConcurrentHandler struct {
 	eg              *errgroup.Group
 }
 
-func (handler *PipelineConcurrentHandler) afterTableRestoredCh(createdTables []*CreatedTable, loadStatsPhysical bool) <-chan *CreatedTable {
+func (handler *PipelineConcurrentHandler) afterTableRestoredCh(createdTables []*CreatedTable, loadStatsPhysical, loadSysTablePhysical bool) <-chan *CreatedTable {
 	outCh := make(chan *CreatedTable)
 
 	handler.eg.Go(func() error {
@@ -285,6 +287,9 @@ func (handler *PipelineConcurrentHandler) afterTableRestoredCh(createdTables []*
 
 		for _, createdTable := range createdTables {
 			if loadStatsPhysical && IsStatsTemporaryTable(createdTable.OldTable.DB.Name.O, createdTable.OldTable.Info.Name.O) {
+				continue
+			}
+			if loadSysTablePhysical && IsSysTemporaryTable(createdTable.OldTable.DB.Name.O, createdTable.OldTable.Info.Name.O) {
 				continue
 			}
 			select {
