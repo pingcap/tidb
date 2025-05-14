@@ -336,16 +336,14 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 		initDataSQL     string
 		addUniqueKeySQL string
 		errMsg          string
-		redactErrMsg    string
 	}{
 		{
-			"int index",
-			"create table t (a int, b int, c int);",
+			"varchar index",
+			"create table t (id int, data varchar(255));",
 			"",
-			"insert into t values (1, 1, 1), (2, 1, 2);",
-			"alter table t add unique index idx(b);",
-			"[kv:1062]Duplicate entry '1' for key 't.idx",
-			"[kv:1062]Duplicate entry '?' for key 't.idx",
+			"insert into t values (1, '1'), (2, '1');",
+			"alter table t add unique index idx(data);",
+			"[kv:1062]Duplicate entry '1' for key 't.idx'",
 		},
 		{
 			"int index on multi regions",
@@ -354,48 +352,42 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			"insert into t values (1, 1), (1001, 1), (2001, 2001), (4001, 1);",
 			"alter table t add unique index idx(b);",
 			"[kv:1062]Duplicate entry '1' for key 't.idx'",
-			"[kv:1062]Duplicate entry '?' for key 't.idx'",
-		},
-		{
-			"varchar index",
-			"create table t (id int, data varchar(255));",
-			"",
-			"insert into t values (1, '1'), (2, '1');",
-			"alter table t add unique index i(data);",
-			"[kv:1062]Duplicate entry '1' for key 't.i'",
-			"[kv:1062]Duplicate entry '?' for key 't.i'",
 		},
 		{
 			"combined index",
 			"create table t (id int, data varchar(255));",
 			"",
 			"insert into t values (1, '1'), (1, '1');",
-			"alter table t add unique index i(id, data);",
-			"[kv:1062]Duplicate entry '1-1' for key 't.i'",
-			"[kv:1062]Duplicate entry '?' for key 't.i'",
+			"alter table t add unique index idx(id, data);",
+			"[kv:1062]Duplicate entry '1-1' for key 't.idx'",
 		},
 		{
 			"multi value index",
 			"create table t (id int, data json);",
 			"",
 			`insert into t values (1, '{"code":[1,1]}'), (2, '{"code":[1,1]}');`,
-			"alter table t add unique index zips( (CAST(data->'$.code' AS UNSIGNED ARRAY)));",
-			"[kv:1062]Duplicate entry '1' for key 't.zips'",
-			"[kv:1062]Duplicate entry '?' for key 't.zips'",
+			"alter table t add unique index idx( (CAST(data->'$.code' AS UNSIGNED ARRAY)));",
+			"[kv:1062]Duplicate entry '1' for key 't.idx'",
 		},
 		{
 			"global index",
 			"create table t (k int, c int) partition by list (k) (partition odd values in (1,3,5,7,9), partition even values in (2,4,6,8,10));",
 			"",
 			"insert into t values (1, 1), (2, 1)",
-			"alter table t add unique index i(c) global",
-			"[kv:1062]Duplicate entry '1' for key 't.i'",
-			"[kv:1062]Duplicate entry '?' for key 't.i'",
+			"alter table t add unique index idx(c) global",
+			"[kv:1062]Duplicate entry '1' for key 't.idx'",
 		},
 	}
 
 	checkSubtaskStepAndReset := func(t *testing.T, expectedStep proto.Step) {
 		require.Equal(t, expectedStep, testErrStep)
+		testErrStep = proto.StepInit
+	}
+
+	checkRedactMsgAndReset := func(addUniqueKeySQL string) {
+		tk.MustExec("set session tidb_redact_log = on;")
+		tk.MustContainErrMsg(addUniqueKeySQL, "[kv:1062]Duplicate entry '?' for key 't.idx'")
+		tk.MustExec("set session tidb_redact_log = off;")
 		testErrStep = proto.StepInit
 	}
 
@@ -425,6 +417,7 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			} else {
 				checkSubtaskStepAndReset(tt, proto.BackfillStepReadIndex)
 			}
+			checkRedactMsgAndReset(tc.addUniqueKeySQL)
 
 			// 2. merge sort
 			testfailpoint.Enable(tt, "github.com/pingcap/tidb/pkg/ddl/ignoreReadIndexDupKey", `return(true)`)
@@ -436,12 +429,6 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			require.NoError(tt, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
 			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
 			checkSubtaskStepAndReset(tt, proto.BackfillStepWriteAndIngest)
-
-			// redact
-			tk.MustExec("set session tidb_redact_log = on;")
-			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.redactErrMsg)
-			tk.MustExec("set session tidb_redact_log = off;")
-			testErrStep = proto.StepInit
 		})
 	}
 }
