@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -399,12 +400,19 @@ func handleKVGroupConflicts(
 
 	pairCh := make(chan *external.KVPair)
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
+
+	var finishedSender atomic.Int32
 	var start int
 	for _, size := range batches {
 		files := ci.Files[start : start+size]
 		start += size
 		eg.Go(func() error {
-			defer close(pairCh)
+			defer func() {
+				count := finishedSender.Add(1)
+				if len(batches) == int(count) {
+					close(pairCh)
+				}
+			}()
 			for _, file := range files {
 				if err := readOneFile(egCtx, store, file, pairCh); err != nil {
 					return errors.Trace(err)
