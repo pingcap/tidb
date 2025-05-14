@@ -7062,17 +7062,11 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 }
 
 // RefreshMeta is a internal DDL job. In some cases, BR log restore will
-// exchange table partition in meta kv directly, and table info in meta kv
-// is not consistent with info schema. So when BR call AlterTableMode for new
-// table will failure. RefreshMeta will reload schema diff to update info schema
-// by schema ID and table ID.
+// EXCHANGE PARTITION\DROP TABLE in meta kv directly, and table info in meta kv
+// is inconsistent with info schema. So when BR call AlterTableMode for new table
+// will failure. RefreshMeta will reload schema diff to update info schema by
+// schema ID and table ID to make sure data in meta kv and info schema is consistent.
 func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaArgs) error {
-	is := e.infoCache.GetLatest()
-	_, ok := is.SchemaByID(args.SchemaID)
-	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("SchemaID: %v", args.SchemaID))
-	}
-
 	job := &model.Job{
 		Version:        model.JobVersion2,
 		SchemaID:       args.SchemaID,

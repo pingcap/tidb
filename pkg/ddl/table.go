@@ -1711,13 +1711,7 @@ func onRefreshMeta(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-
-	var tbInfo *model.TableInfo
-	metaMut := jobCtx.metaMut
-	tbInfo, err = GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
-	if err != nil {
-		return ver, err
-	}
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+	job.State = model.JobStateDone
+	job.SchemaState = model.StatePublic
 	return ver, nil
 }
