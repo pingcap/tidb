@@ -160,7 +160,7 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 		}
 		return applyDropTableOrPartition(b, m, schemaDiff)
 	}
-	// default table not exists in infoschema, add it to infoschema.
+	// default update table
 	schemaDiff := &model.SchemaDiff{
 		Version:  diff.Version,
 		Type:     model.ActionCreateTable,
