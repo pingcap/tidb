@@ -20,9 +20,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/glue"
+>>>>>>> 19cc638d3af (br: fix stats meta count is zero if backup has no checksum (#60979))
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -43,6 +50,10 @@ var (
 // MockClient create a fake Client used to test.
 func MockClient(dbs map[string]*metautil.Database) *SnapClient {
 	return &SnapClient{databases: dbs}
+}
+
+func (rc *SnapClient) SetDomain(dom *domain.Domain) {
+	rc.dom = dom
 }
 
 // Mock the call of setSpeedLimit function
@@ -86,4 +97,13 @@ func (rc *SnapClient) CreateTablesTest(
 		return cmp.Compare(tbMapping[i.Name.String()], tbMapping[j.Name.String()])
 	})
 	return rewriteRules, newTables, nil
+}
+
+func (rc *SnapClient) RegisterUpdateMetaAndLoadStats(
+	builder *PipelineConcurrentBuilder,
+	s storage.ExternalStorage,
+	updateCh glue.Progress,
+	statsConcurrency uint,
+) {
+	rc.registerUpdateMetaAndLoadStats(builder, s, updateCh, statsConcurrency)
 }
