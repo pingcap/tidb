@@ -4480,7 +4480,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
 				var enableStaticPrune bool
 				if !isDynamicEnabled {
-					enableStaticPrune = true
+					enableStaticPrune = false
 				} else if globalStatsReady {
 					enableStaticPrune = false
 				} else if allowDynamicWithoutStats {
