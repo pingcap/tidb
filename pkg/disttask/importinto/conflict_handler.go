@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"io"
 	"sync"
 	"time"
@@ -383,11 +384,13 @@ func handleKVGroupConflicts(
 	failpoint.Inject("forceHandleConflictsBySingleThread", func() {
 		concurrency = 1
 	})
+	batches := mathutil.Divide2Batches(len(ci.Files), 2)
 	task := log.BeginTask(logger.With(
 		zap.String("kvGroup", kvGroup),
 		zap.Uint64("duplicates", ci.Count),
 		zap.Int("file-count", len(ci.Files)),
 		zap.Int("concurrency", concurrency),
+		zap.Int("batch-count", len(batches)),
 	), "handle kv group conflicts")
 
 	defer func() {
@@ -396,15 +399,20 @@ func handleKVGroupConflicts(
 
 	pairCh := make(chan *external.KVPair)
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
-	eg.Go(func() error {
-		defer close(pairCh)
-		for _, file := range ci.Files {
-			if err := readOneFile(egCtx, store, file, pairCh); err != nil {
-				return errors.Trace(err)
+	var start int
+	for _, size := range batches {
+		files := ci.Files[start : start+size]
+		start += size
+		eg.Go(func() error {
+			defer close(pairCh)
+			for _, file := range files {
+				if err := readOneFile(egCtx, store, file, pairCh); err != nil {
+					return errors.Trace(err)
+				}
 			}
-		}
-		return nil
-	})
+			return nil
+		})
+	}
 	var initMu sync.Mutex
 	initHandlerWithLockFn := func(handler conflictKVHandler) error {
 		initMu.Lock()
