@@ -22,6 +22,7 @@ import (
 	"math"
 	"slices"
 	"sort"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -134,6 +135,16 @@ func unquoteJSONString(s string) (string, error) {
 				}
 				char, size, err := decodeEscapedUnicode(hack.Slice(s[i+1 : i+5]))
 				if err != nil {
+					// For `surrogate pair`, it uses two `\\uxxx` to encode a character.
+					if size < 0 && len(s) >= i+10 && s[i+5] == '\\' && s[i+6] == 'u' {
+						char, size, err = decodeEscapedUnicode(append(hack.Slice(s[i+1:i+5]), hack.Slice(s[i+7:i+11])...))
+						if err != nil {
+							return "", errors.Trace(err)
+						}
+						ret.Write(char[0:size])
+						i += 10
+						continue
+					}
 					return "", errors.Trace(err)
 				}
 				ret.Write(char[0:size])
@@ -153,15 +164,22 @@ func unquoteJSONString(s string) (string, error) {
 // According RFC 3629, the max length of utf8 characters is 4 bytes.
 // And MySQL use 4 bytes to represent the unicode which must be in [0, 65536).
 func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
-	size, err = hex.Decode(char[0:2], s)
-	if err != nil || size != 2 {
-		// The unicode must can be represented in 2 bytes.
+	size, err = hex.Decode(char[0:4], s)
+	if err != nil || (size != 2 && size != 4) {
+		// The unicode must can be represented in 2 bytes or 4 bytes.
 		return char, 0, errors.Trace(err)
 	}
 
-	unicode := binary.BigEndian.Uint16(char[0:2])
-	size = utf8.RuneLen(rune(unicode))
-	utf8.EncodeRune(char[0:size], rune(unicode))
+	r1 := rune(binary.BigEndian.Uint16(char[0:2]))
+	if size == 4 {
+		r2 := binary.BigEndian.Uint16(char[2:4])
+		r1 = utf16.DecodeRune(rune(r1), rune(r2))
+	}
+	size = utf8.RuneLen(r1)
+	if size < 0 {
+		return char, size, errors.Errorf("not a valid Unicode character")
+	}
+	utf8.EncodeRune(char[0:size], r1)
 	return
 }
 

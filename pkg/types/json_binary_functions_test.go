@@ -25,6 +25,12 @@ func TestDecodeEscapedUnicode(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "好\x00", string(r[:]))
 	require.Equal(t, 3, size)
+
+	in = "d83edd21"
+	r, size, err = decodeEscapedUnicode([]byte(in))
+	require.NoError(t, err)
+	require.Equal(t, "🤡", string(r[:]))
+	require.Equal(t, 4, size)
 }
 
 func BenchmarkDecodeEscapedUnicode(b *testing.B) {
