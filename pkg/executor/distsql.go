@@ -611,6 +611,9 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 }
 
 func (e *IndexLookUpExecutor) open(_ context.Context) error {
+	if e.storeType == kv.TiFlash && !e.batchCop {
+		return errors.New("tici only support batchcop")
+	}
 	// We have to initialize "memTracker" and other execution resources in here
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that

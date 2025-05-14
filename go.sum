@@ -846,6 +846,8 @@ github.com/tidwall/pretty v1.2.1 h1:qjsOFOWWQl+N3RsoF5/ssm1pHmJJwhjlSbZ51I6wMl4=
 github.com/tidwall/pretty v1.2.1/go.mod h1:ITEVvHYasfjBbM0u2Pg8T2nJnzm8xPwvNhhsoaGGjNU=
 github.com/tidwall/sjson v1.2.5 h1:kLy8mja+1c9jlljvWTlSazM7cKDRfJuR/bOJhcY5NcY=
 github.com/tidwall/sjson v1.2.5/go.mod h1:Fvgq9kS/6ociJEDnK0Fk1cpYF4FIW6ZF7LAe+6jwd28=
+github.com/tikv/client-go/v2 v2.0.8-0.20250421022114-157f083989fa h1:acaMDRev8oAThQjt8lSJxQIJ9LDQtdeuC30AdcZmpWA=
+github.com/tikv/client-go/v2 v2.0.8-0.20250421022114-157f083989fa/go.mod h1:n6vvqQutq0LWvb7GdC5V01zcXso6S1adkfgCvF3jEgA=
 github.com/tikv/pd/client v0.0.0-20250421073700-f86063f60638 h1:yuL4QuGAjtBS4tQiG0Cr91sUb9yPt6HZFILjw6+oySc=
 github.com/tikv/pd/client v0.0.0-20250421073700-f86063f60638/go.mod h1:W9PluuNqolVcRUsw3bnfFRUMPXWkobJkGSpaGYgQk0Y=
 github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67 h1:9LPGD+jzxMlnk5r6+hJnar67cgpDIz/iyD+rfl5r2Vk=
@@ -869,8 +871,6 @@ github.com/vbauerster/mpb/v7 v7.5.3 h1:BkGfmb6nMrrBQDFECR/Q7RkKCw7ylMetCb4079CGs
 github.com/vbauerster/mpb/v7 v7.5.3/go.mod h1:i+h4QY6lmLvBNK2ah1fSreiw3ajskRlBp9AhY/PnuOE=
 github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f h1:9DDCDwOyEy/gId+IEMrFHLuQ5R/WV0KNxWLler8X2OY=
 github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f/go.mod h1:8sdOQnirw1PrcnTJYkmW1iOHtUmblMmGdUOHyWYycLI=
-github.com/wshwsh12/client-go/v2 v2.0.0-20250512085405-2f405b94318b h1:YrSShaD27Uzux5osne2W02+BZIbGrw2vjTrTMHsbuOg=
-github.com/wshwsh12/client-go/v2 v2.0.0-20250512085405-2f405b94318b/go.mod h1:BffXxRvCsWwngTbpUFhyGS6tB3OkGwgbppAQlE0MtGA=
 github.com/wshwsh12/tipb v0.0.0-20250416012447-175d273bffc4 h1:yQYWsl2ieRCwBx7g0d89tsKku8KH4vjoFqVqpdwGors=
 github.com/wshwsh12/tipb v0.0.0-20250416012447-175d273bffc4/go.mod h1:zrnYy8vReNODg8G0OiYaX9OK+kpq+rK1jHmvd1DnIWw=
 github.com/xiang90/probing v0.0.0-20221125231312-a49e3df8f510 h1:S2dVYn90KE98chqDkyE9Z4N61UnQd+KOfgp5Iu53llk=
