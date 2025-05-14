@@ -1076,6 +1076,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return cfg.piTRTaskInfo.FullRestoreCheckErr
 	}
 
+	//TODO: (ris)move scheduler here
+
 	if isFullRestore(cmdName) {
 		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointFirstRun) {
 			if err = client.CheckTargetClusterFresh(ctx); err != nil {
@@ -1100,6 +1102,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			return errors.Trace(err)
 		}
 	}
+
+	//TODO: (ris)move checkpoint here
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
 	if err = client.AllocTableIDs(ctx, tables, reusePreallocID); err != nil {
@@ -1256,6 +1260,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if (isFullRestore(cmdName) && !cfg.ExplicitFilter) || client.IsIncremental() {
 		restoreSchedulersFunc, schedulersConfig, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
 	} else {
+		//TODO: (ris)refactor this part
 		var preAllocRange [2]int64
 		preAllocRange, err = client.GetPreAllocedTableIDRange()
 		if err != nil {
@@ -1294,6 +1299,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}()
 
 	// reload or register the checkpoint
+	//TODO: (ris)move it before create table
 	var checkpointSetWithTableID map[int64]map[string]struct{}
 	if cfg.UseCheckpoint {
 		logRestoredTS := uint64(0)
@@ -1340,7 +1346,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 				log.Warn("error checking file", zap.Error(statErr))
 				break
 			}
-			time.Sleep(1 * time.Second)
+			time.Sleep(300 * time.Millisecond)
 		}
 	})
 
