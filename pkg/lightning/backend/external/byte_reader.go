@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -105,7 +106,8 @@ func newByteReader(
 		curBufOffset:  0,
 	}
 	r.curBuf = [][]byte{r.smallBuf}
-	r.logger = logutil.Logger(r.ctx)
+	r.logger = logutil.Logger(r.ctx).With(zap.String("byte reader id", fmt.Sprintf("%p", r)))
+	r.logger.Info("new byte reader")
 	return r, r.reload()
 }
 
@@ -208,6 +210,11 @@ func (r *byteReader) switchToConcurrentReader() error {
 // containing those bytes. The content of returned slice may be changed after
 // next call.
 func (r *byteReader) readNBytes(n int) ([]byte, error) {
+	r.logger.Info("start readNBytes()", zap.Int("n", n))
+	defer func() {
+		r.logger.Info("end readNBytes()", zap.Int("n", n))
+	}()
+	var loopCnt uint64
 	if n <= 0 {
 		return nil, errors.Errorf("illegal n (%d) when reading from external storage", n)
 	}
@@ -228,6 +235,9 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 	hasRead := readLen > 0
 	for n > 0 {
 		err := r.reload()
+		if err != nil {
+			r.logger.Error("readNBytes reload error", zap.Uint64("loopCnt", loopCnt), zap.Error(err))
+		}
 		switch err {
 		case nil:
 		case io.EOF:
@@ -240,20 +250,33 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 			return nil, err
 		}
 		readLen, bs = r.next(n)
+		if rand.Intn(10) == 0 {
+			r.logger.Info("readNBytes", zap.Uint64("loopCnt", loopCnt), zap.Int("readLen", readLen), zap.Bool("hasRead", hasRead))
+		}
 		hasRead = hasRead || readLen > 0
 		for _, b := range bs {
 			copy(auxBuf[len(auxBuf)-n:], b)
 			n -= len(b)
 		}
+		loopCnt += 1
 	}
 	return auxBuf, nil
 }
 
 func (r *byteReader) next(n int) (int, [][]byte) {
+	r.logger.Info("start next()", zap.Int("n", n))
 	retCnt := 0
 	// TODO(lance6716): heap escape performance?
 	ret := make([][]byte, 0, len(r.curBuf)-r.curBufIdx+1)
+	defer func() {
+		r.logger.Info("end next()", zap.Int("n", n), zap.Int("retCnt", retCnt), zap.Int("len(ret)", len(ret)), zap.Int("cap(ret)", cap(ret)))
+	}()
+	var loopCnt uint64
 	for r.curBufIdx < len(r.curBuf) && n > 0 {
+		if rand.Intn(10) == 0 {
+			r.logger.Info("next loop", zap.Uint64("loopCnt", loopCnt),
+				zap.Int("n", n), zap.Int("retCnt", retCnt), zap.Int("len(ret)", len(ret)), zap.Int("cap(ret)", cap(ret)))
+		}
 		cur := r.curBuf[r.curBufIdx]
 		if r.curBufOffset+n <= len(cur) {
 			ret = append(ret, cur[r.curBufOffset:r.curBufOffset+n])
@@ -270,12 +293,17 @@ func (r *byteReader) next(n int) (int, [][]byte) {
 		n -= len(cur) - r.curBufOffset
 		r.curBufIdx++
 		r.curBufOffset = 0
+		loopCnt += 1
 	}
 
 	return retCnt, ret
 }
 
 func (r *byteReader) reload() error {
+	r.logger.Info("start reload()")
+	defer func() {
+		r.logger.Info("end reload()")
+	}()
 	to := r.concurrentReader.expected
 	now := r.concurrentReader.now
 	// in read only false -> true is possible

@@ -55,17 +55,22 @@ func NewReader(r io.ReadCloser, prefetchSize int) io.ReadCloser {
 	ret.buf[0] = make([]byte, prefetchSize/2)
 	ret.buf[1] = make([]byte, prefetchSize/2)
 	ret.wg.Add(1)
+	ret.logger.Info("New prefetch reader")
 	go ret.run()
 	return ret
 }
 
 func (r *Reader) run() {
+	var loopCnt uint64
 	defer r.wg.Done()
 	r.logger.Info("start run()")
 	defer func() {
 		r.logger.Info("end run()")
 	}()
 	for {
+		if rand.Intn(10) == 0 {
+			r.logger.Info("run loop", zap.Int("loopCnt", int(loopCnt)))
+		}
 		r.bufIdx = (r.bufIdx + 1) % 2
 		buf := r.buf[r.bufIdx]
 		n, err := r.r.Read(buf) // Clue1: may return (0, EOF) ?
@@ -87,30 +92,37 @@ func (r *Reader) run() {
 			close(r.bufCh)
 			return
 		}
+		loopCnt += 1
 	}
 }
 
 // Read implements io.Reader. Read should not be called concurrently with Close.
 func (r *Reader) Read(data []byte) (int, error) {
 	total := 0
+	var loopCnt uint64
 	r.logger.Info("start Read()", zap.Int("len(data)", len(data)))
 	defer func() {
 		r.logger.Info("end Read()")
 	}()
 	for {
+		if rand.Intn(10) == 0 {
+			r.logger.Info("Read loop", zap.Int("loopCnt", int(loopCnt)))
+		}
 		if r.curBufReader == nil {
 			b, ok := <-r.bufCh
 			if !ok {
 				if total > 0 {
 					//PrintLog = true
 					//logutil.BgLogger().Error("set printlog = true", zap.Error(r.err), zap.Int("total", total), zap.Any("data-buf-len", len(data)))
+					r.logger.Info("Read() return", zap.Int("total", total))
 					return total, nil
 				}
+				r.logger.Info("Read() return", zap.Error(r.err))
 				return 0, r.err
 			}
 
 			r.curBufReader = bytes.NewReader(b) // Clue1: len(b) == 0 ?
-			r.logger.Info(fmt.Sprintf("reset curBufReader %p", r.curBufReader))
+			r.logger.Info(fmt.Sprintf("renew curBufReader %p", r.curBufReader))
 		}
 
 		expected := len(data)
@@ -120,26 +132,33 @@ func (r *Reader) Read(data []byte) (int, error) {
 		}
 		total += n
 		if n == expected {
+			r.logger.Info("Read() return", zap.Int("total", total), zap.Int("n", n))
 			return total, nil
 		}
 
 		data = data[n:]
+		if rand.Intn(10) == 0 {
+			r.logger.Info("normal process", zap.Int("n", n))
+		}
 		if err == io.EOF || r.curBufReader.Len() == 0 {
 			r.curBufReader = nil
-			continue
+			r.logger.Info("reset curBufReader")
 		}
+		loopCnt += 1
 	}
 }
 
 // Close implements io.Closer. Close should not be called concurrently with Read.
 func (r *Reader) Close() error {
-	r.logger.Info("Close reader")
 	if r.closed {
+		r.logger.Info("Close closed reader")
 		return nil
 	}
+	r.logger.Info("Close open reader start")
 	ret := r.r.Close()
 	close(r.closedCh)
 	r.wg.Wait()
 	r.closed = true
+	r.logger.Info("Close open reader done")
 	return ret
 }

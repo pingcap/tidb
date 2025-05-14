@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
@@ -70,6 +71,10 @@ func (r *kvReader) nextKV() (key, val []byte, err error) {
 	valLen := int(binary.BigEndian.Uint64(lenBytes))
 	keyAndValue, err := r.byteReader.readNBytes(keyLen + valLen)
 	if err != nil {
+		r.byteReader.logger.Error("nextKV encounter error", zap.Error(err))
+		if keyLen+valLen <= 0 || keyLen+valLen > int(size.GB) {
+			r.byteReader.logger.Error("invalid length", zap.Int("keyLen", keyLen), zap.Int("valLen", valLen))
+		}
 		return nil, nil, noEOF(err)
 	}
 	return keyAndValue[:keyLen], keyAndValue[keyLen:], nil
