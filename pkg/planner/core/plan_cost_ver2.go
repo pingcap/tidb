@@ -155,6 +155,10 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		columns = p.schema.Columns
 	}
 	rows := getCardinality(p, option.CostFlag)
+	if rows == 1 || rows == 10000 {
+		fmt.Println("wwz")
+		rows = getCardinality(p, option.CostFlag)
+	}
 	rowSize := getAvgRowSize(p.StatsInfo(), columns)
 	// Ensure rows and rowSize have a reasonable minimum value to avoid underestimation
 	if !p.isChildOfIndexLookUp {
@@ -896,6 +900,9 @@ func (p *PhysicalCTE) GetPlanCostVer2(taskType property.TaskType, option *optimi
 func scanCostVer2(option *optimizetrace.PlanCostOption, rows, rowSize float64, scanFactor costusage.CostVer2Factor) costusage.CostVer2 {
 	if rowSize < 1 {
 		rowSize = 1
+	}
+	if rows == 1 {
+		fmt.Println("wwz")
 	}
 	return costusage.NewCostVer2(option, scanFactor,
 		// rows * log(row-size) * scanFactor, log2 from experiments
