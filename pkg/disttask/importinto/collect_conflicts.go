@@ -252,8 +252,6 @@ type conflictRowCollector struct {
 func (c *conflictRowCollector) recordConflictRow(ctx context.Context, kvGroup string,
 	handle tidbkv.Handle, row []types.Datum, kvPairs *kv.Pairs) error {
 	if c.writer == nil || c.currFileSize >= MaxConflictRowFileSize {
-		c.logger.Info("switch to a new file for conflicted rows",
-			zap.String("currSize", units.BytesSize(float64(c.currFileSize))))
 		if err := c.switchConflictRowFile(ctx); err != nil {
 			return errors.Trace(err)
 		}
@@ -296,7 +294,8 @@ func (c *conflictRowCollector) switchConflictRowFile(ctx context.Context) error 
 	}
 	c.fileSeq++
 	filename := getConflictRowFileName(c.filenamePrefix, c.fileSeq)
-	c.logger.Info("switch conflict row file", zap.String("filename", filename))
+	c.logger.Info("switch conflict row file", zap.String("filename", filename),
+		zap.String("lastFileSize", units.BytesSize(float64(c.currFileSize))))
 	writer, err := c.store.Create(ctx, filename, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    external.MinUploadPartSize,
