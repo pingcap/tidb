@@ -557,17 +557,9 @@ func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
 
 // GetRegionSplitKeys implements common.Engine.
 func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
-	splitKeys := make([][]byte, len(e.splitKeys))
-	var (
-		err      error
-		splitKey []byte
-	)
-	for i, k := range e.splitKeys {
-		splitKey = slices.Clone(k)
-		if err != nil {
-			return nil, err
-		}
-		splitKeys[i] = splitKey
+	splitKeys := make([][]byte, 0, len(e.splitKeys))
+	for _, k := range e.splitKeys {
+		splitKeys = append(splitKeys, slices.Clone(k))
 	}
 	return splitKeys, nil
 }
