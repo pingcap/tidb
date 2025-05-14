@@ -7061,8 +7061,8 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 	}
 }
 
-// RefreshMeta is a internal DDL job. In some cases, BR log restore will
-// EXCHANGE PARTITION\DROP TABLE in meta kv directly, and table info in meta kv
+// RefreshMeta is a internal DDL job. In some cases, BR log restore will EXCHANGE
+// PARTITION\DROP TABLE by write meta kv directly, and table info in meta kv
 // is inconsistent with info schema. So when BR call AlterTableMode for new table
 // will failure. RefreshMeta will reload schema diff to update info schema by
 // schema ID and table ID to make sure data in meta kv and info schema is consistent.
