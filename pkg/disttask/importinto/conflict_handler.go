@@ -220,28 +220,21 @@ func (h *baseConflictKVHandler) gatherKeysToDelete(ctx context.Context, pairs []
 	if err = h.refreshSnapshotAsNeeded(); err != nil {
 		return errors.Trace(err)
 	}
-	existingPairs := make([]common.KvPair, 0, len(pairs))
+	allKeys := make([]tidbkv.Key, 0, len(pairs))
 	for _, p := range pairs {
-		// TODO test if BatchGet performs better
-		_, err = h.snapshot.Get(ctx, p.Key)
-		if err != nil {
-			if isKeyNotFoundErr(err) {
-				// not ingested, or already deleted when resolving other KV groups.
-				continue
-			}
-			return errors.Trace(err)
-		}
-		existingPairs = append(existingPairs, p)
+		allKeys = append(allKeys, p.Key)
 	}
-
-	if len(existingPairs) == 0 {
+	res, err := h.snapshot.BatchGet(ctx, allKeys)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(res) == 0 {
 		return nil
 	}
 
-	for _, p := range existingPairs {
-		// clone as the key is allocated on a shared memory
-		h.bufferedKeys = append(h.bufferedKeys, bytes.Clone(p.Key))
-		h.bufSize += len(p.Key)
+	for k := range res {
+		h.bufferedKeys = append(h.bufferedKeys, []byte(k))
+		h.bufSize += len(k)
 	}
 
 	return nil
