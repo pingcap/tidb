@@ -41,6 +41,7 @@ import (
 	"os"
 	"os/user"
 	"reflect"
+	"runtime/coverage"
 	"strconv"
 	"strings"
 	"sync"
@@ -669,6 +670,8 @@ func (s *Server) Close() {
 	defer s.rwlock.Unlock()
 	s.inShutdownMode.Store(true)
 	s.closeListener()
+	_ = coverage.WriteMetaDir(s.cfg.Path)
+	_ = coverage.WriteCountersDir(s.cfg.Path)
 }
 
 func (s *Server) registerConn(conn *clientConn) bool {
