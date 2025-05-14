@@ -73,7 +73,7 @@ func TestUserVars(t *testing.T) {
 		tk2 := testkit.NewTestKit(t, store)
 		namesNum := strings.Count(tt, "%s")
 		names := make([]any, 0, namesNum)
-		for i := 0; i < namesNum; i++ {
+		for i := range namesNum {
 			names = append(names, fmt.Sprintf("a%d", i))
 		}
 		var sql string
@@ -1691,7 +1691,7 @@ func getExecuteBytes(stmtID uint32, useCursor bool, newParam bool, params ...par
 	if newParam {
 		buf[pos] = 1
 		pos++
-		for i := 0; i < len(params); i++ {
+		for range params {
 			buf[pos] = mysql.TypeLong
 			pos++
 			buf[pos] = 0

@@ -26,7 +26,7 @@ func TestMultiStatementInTk(t *testing.T) {
 	tk := NewTestKit(t, store)
 	tk.MustExec("use test")
 	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		// should return the first result set
 		tk.MustQuery("select 1;select 2;").Check(Rows("1"))
 		require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)

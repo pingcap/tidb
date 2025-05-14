@@ -132,13 +132,13 @@ func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
 		e.BuildKeyTypes, e.ProbeKeyTypes = leftTypes, rightTypes
 	}
 
-	for i := uint(0); i < uint(concurrency); i++ {
+	for i := range concurrency {
 		e.ProbeWorkers[i] = &ProbeWorkerV2{
 			HashJoinCtx: e.HashJoinCtxV2,
-			JoinProbe:   NewJoinProbe(e.HashJoinCtxV2, i, info.joinType, probeKeyColIdx, joinedTypes, e.ProbeKeyTypes, e.RightAsBuildSide),
+			JoinProbe:   NewJoinProbe(e.HashJoinCtxV2, uint(i), info.joinType, probeKeyColIdx, joinedTypes, e.ProbeKeyTypes, e.RightAsBuildSide),
 		}
-		e.ProbeWorkers[i].WorkerID = i
-		e.BuildWorkers[i] = NewJoinBuildWorkerV2(e.HashJoinCtxV2, i, buildSideExec, buildKeyColIdx, exec.RetTypes(buildSideExec))
+		e.ProbeWorkers[i].WorkerID = uint(i)
+		e.BuildWorkers[i] = NewJoinBuildWorkerV2(e.HashJoinCtxV2, uint(i), buildSideExec, buildKeyColIdx, exec.RetTypes(buildSideExec))
 	}
 
 	return e
@@ -322,7 +322,7 @@ func checkResults(t *testing.T, fieldTypes []*types.FieldType, actualResult []ch
 	require.Equal(t, len(expectedResult), len(actualResult))
 	cmp := generateCMPFunc(fieldTypes)
 
-	for i := 0; i < len(actualResult); i++ {
+	for i := range actualResult {
 		x := cmp(actualResult[i], expectedResult[i])
 		require.Equal(t, 0, x, "result index = "+strconv.Itoa(i))
 	}

@@ -16,6 +16,7 @@ package executor
 
 import (
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 
@@ -47,10 +48,8 @@ func setToString(set []string) string {
 // addToSet add a value to the set, e.g:
 // addToSet("Select,Insert,Update", "Update") returns "Select,Insert,Update".
 func addToSet(set []string, value string) []string {
-	for _, v := range set {
-		if v == value {
-			return set
-		}
+	if slices.Contains(set, value) {
+		return set
 	}
 	return append(set, value)
 }
@@ -88,10 +87,7 @@ func (b *batchRetrieverHelper) nextBatch(retrieveRange func(start, end int) erro
 		return nil
 	}
 	start := b.retrievedIdx
-	end := b.retrievedIdx + b.batchSize
-	if end > b.totalRows {
-		end = b.totalRows
-	}
+	end := min(b.retrievedIdx+b.batchSize, b.totalRows)
 
 	err := retrieveRange(start, end)
 	if err != nil {

@@ -742,10 +742,7 @@ func getMaxRunningTasksLimit(store kv.Storage) int {
 		return vardef.MaxConfigurableConcurrency
 	}
 
-	limit := len(regionCache.GetStoresByType(tikvrpc.TiKV))
-	if limit > vardef.MaxConfigurableConcurrency {
-		limit = vardef.MaxConfigurableConcurrency
-	}
+	limit := min(len(regionCache.GetStoresByType(tikvrpc.TiKV)), vardef.MaxConfigurableConcurrency)
 
 	return limit
 }

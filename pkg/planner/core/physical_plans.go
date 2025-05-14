@@ -1678,9 +1678,11 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 		return nil, err
 	}
 	cloned.basePhysicalJoin = *base
-	cloned.innerPlan, err = p.innerPlan.Clone(newCtx)
-	if err != nil {
-		return nil, err
+	if p.innerPlan != nil {
+		cloned.innerPlan, err = p.innerPlan.Clone(newCtx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	cloned.Ranges = p.Ranges.CloneForPlanCache() // this clone is deep copy
 	cloned.KeyOff2IdxOff = make([]int, len(p.KeyOff2IdxOff))
