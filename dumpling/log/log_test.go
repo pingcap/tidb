@@ -45,14 +45,11 @@ func TestInitLogNoPermission(t *testing.T) {
 	require.Contains(t, err.Error(), "permission denied")
 	require.NoError(t, os.Chmod(tmpDir, 0755))
 
-<<<<<<< HEAD
-=======
 	// Directory exists but doesn't allow file creation
 	readOnlyDirPath := filepath.Join(tmpDir, "readonly-dir")
 	require.NoError(t, os.Mkdir(readOnlyDirPath, 0755))
 	require.NoError(t, os.Chmod(readOnlyDirPath, 0555)) // Read-only directory
 	conf.File = readOnlyDirPath + "/test.log"
->>>>>>> df4600cde2f (dumpling: precheck log file permisssion (#61101))
 	_, _, err = InitAppLogger(conf)
 	require.ErrorContains(t, err, "permission denied")
 	require.NoError(t, os.Chmod(readOnlyDirPath, 0755))
