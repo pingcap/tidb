@@ -1640,6 +1640,12 @@ type SessionVars struct {
 	// 0 > value <= 1 applies that percentage as the estimate when rows are found. For example 0.1 = 10%.
 	OptOrderingIdxSelRatio float64
 
+	// RecordRelevantOptVars indicates whether to record optimizer variables relevant to this query.
+	RecordRelevantOptVars bool
+
+	// RelevantOptVars is a map of relevant optimizer variables to be recorded.
+	RelevantOptVars map[string]struct{}
+
 	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
 	EnableMPPSharedCTEExecution bool
 
@@ -1721,6 +1727,17 @@ type SessionVars struct {
 
 	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
 	BulkDMLEnabled bool
+}
+
+// RecordRelevantOptVar records the optimizer variable that is relevant to the current query.
+func (s *SessionVars) RecordRelevantOptVar(varName string) {
+	if !s.RecordRelevantOptVars {
+		return
+	}
+	if s.RelevantOptVars == nil {
+		s.RelevantOptVars = make(map[string]struct{})
+	}
+	s.RelevantOptVars[varName] = struct{}{}
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.

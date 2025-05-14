@@ -18,6 +18,7 @@ import (
 	"context"
 	"math"
 	"math/rand"
+	"sort"
 	"sync"
 	"time"
 
@@ -654,6 +655,38 @@ func planDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest stri
 	return digest.String(), nil
 }
 
+func relevantOptVars(sctx sessionctx.Context, stmt ast.StmtNode) (varNames []string, err error) {
+	sctx.GetSessionVars().RecordRelevantOptVars = true
+	defer func() {
+		sctx.GetSessionVars().RecordRelevantOptVars = false
+		sctx.GetSessionVars().RelevantOptVars = nil
+	}()
+
+	ret := &core.PreprocessorReturn{}
+	nodeW := resolve.NewNodeW(stmt)
+	err = core.Preprocess(
+		context.Background(),
+		sctx,
+		nodeW,
+		core.WithPreprocessorReturn(ret),
+		core.InitTxnContextProvider,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	_, _, err = Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return nil, err
+	}
+
+	for varName := range sctx.GetSessionVars().RelevantOptVars {
+		varNames = append(varNames, varName)
+	}
+	sort.Strings(varNames)
+	return
+}
+
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
@@ -662,4 +695,5 @@ func init() {
 		return domain.GetDomain(sctx).BindingHandle()
 	}
 	bindinfo.PlanDigestFunc = planDigestFunc
+	bindinfo.RelevantOptVars = relevantOptVars
 }

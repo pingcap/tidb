@@ -15,9 +15,11 @@
 package bindinfo_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -81,4 +83,45 @@ func TestIsSimplePointPlan(t *testing.T) {
 	require.False(t, bindinfo.IsSimplePointPlan(`       id  task    estRows operator info  actRows execution info  memory          disk
         HashJoin    root    1       plus(test.t.a, 1)->Column#3     0       time:173µs, open:24.9µs, close:8.92µs, loops:1, Concurrency:OFF                         380 Bytes       N/A
         └─Point_Get_5   root    1       table:t, handle:2               0       time:143.2µs, open:1.71µs, close:5.92µs, loops:1, Get:{num_rpc:1, total_time:40µs}      N/A             N/A`))
+}
+
+func TestRelevantOptVars(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t1 (a int, b int, c varchar(10), key(a), key(b))`)
+	tk.MustExec(`create table t2 (a int, b int, c varchar(10), key(a), key(b))`)
+
+	type testCase struct {
+		query  string
+		result string
+	}
+	cases := []testCase{
+		{"select 1 from t1", "[Fix45132 Fix52869 tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_table_full_scan_cost_factor tidb_opt_table_reader_cost_factor]"},
+		{"select 1 from t1 where a=1", "[Fix52869 tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor]"},
+		{"select * from t1 where a=1", "[Fix52869 tidb_opt_index_lookup_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_table_rowid_scan_cost_factor]"},
+		{"select * from t1 where a>1", "[Fix45132 Fix52869 tidb_opt_index_lookup_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_table_full_scan_cost_factor tidb_opt_table_reader_cost_factor tidb_opt_table_rowid_scan_cost_factor]"},
+		{"select a from t1 where a=1", "[Fix52869 tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor]"},
+		{"select max(a) from t1 where a=1", "[Fix52869 tidb_opt_hash_agg_cost_factor tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_ordering_index_selectivity_ratio tidb_opt_stream_agg_cost_factor tidb_opt_topn_cost_factor]"},
+		{"select sum(b) from t1 where a=1", "[Fix52869 tidb_opt_hash_agg_cost_factor tidb_opt_index_lookup_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_stream_agg_cost_factor tidb_opt_table_rowid_scan_cost_factor]"},
+		{"select a from t1 where a=1 order by b", "[Fix45132 Fix52869 tidb_opt_index_lookup_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_sort_cost_factor tidb_opt_table_rowid_scan_cost_factor]"},
+		{"select a from t1 where a=1 order by b limit 10", "[Fix52869 tidb_opt_index_lookup_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_table_range_scan_cost_factor tidb_opt_table_rowid_scan_cost_factor tidb_opt_topn_cost_factor]"},
+		{"select 1 from t1, t2 where t1.a=t2.a", "[Fix44855 Fix45132 Fix52869 tidb_opt_hash_join_cost_factor tidb_opt_index_join_cost_factor tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_merge_join_cost_factor]"},
+		{"select 1 from t1, t2 where t1.a=t2.b", "[Fix44855 Fix45132 Fix52869 tidb_opt_hash_join_cost_factor tidb_opt_index_join_cost_factor tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_merge_join_cost_factor]"},
+		{"select 1 from t1, t2 where t1.c=t2.c", "[Fix52869 tidb_opt_hash_join_cost_factor tidb_opt_table_full_scan_cost_factor tidb_opt_table_reader_cost_factor]"},
+	}
+
+	for _, c := range cases {
+		p := parser.New()
+		stmt, err := p.ParseOneStmt(c.query, "", "")
+		require.NoError(t, err)
+		names, err := bindinfo.RelevantOptVars(tk.Session(), stmt)
+		require.NoError(t, err)
+		if c.result == "" {
+			require.Empty(t, names)
+		} else {
+			require.Equal(t, fmt.Sprintf("%v", names), c.result)
+		}
+	}
 }
