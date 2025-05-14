@@ -59,12 +59,20 @@ func InsertSubtask(t *testing.T, gm *storage.TaskManager, taskID int64, step pro
 
 // CreateSubTaskWithSummary adds a new task to subtask table with given summary.
 // used for testing.
-func CreateSubTaskWithSummary(t *testing.T, gm *storage.TaskManager, taskID int64, step proto.Step, execID string, meta []byte, summary *execute.SubtaskSummary, tp proto.TaskType, concurrency int) int64 {
-	return InsertSubtaskWithSummary(t, gm, taskID, step, execID, meta, summary, proto.SubtaskStatePending, tp, concurrency)
+func CreateSubTaskWithSummary(
+	t *testing.T, gm *storage.TaskManager,
+	taskID int64, step proto.Step, execID string, meta []byte,
+	summary *execute.SubtaskSummary, state proto.SubtaskState, tp proto.TaskType, concurrency int,
+) int64 {
+	return InsertSubtaskWithSummary(t, gm, taskID, step, execID, meta, summary, state, tp, concurrency)
 }
 
 // InsertSubtaskWithSummary adds a new subtask of any state to subtask table.
-func InsertSubtaskWithSummary(t *testing.T, gm *storage.TaskManager, taskID int64, step proto.Step, execID string, meta []byte, summary *execute.SubtaskSummary, state proto.SubtaskState, tp proto.TaskType, concurrency int) int64 {
+func InsertSubtaskWithSummary(
+	t *testing.T, gm *storage.TaskManager,
+	taskID int64, step proto.Step, execID string, meta []byte,
+	summary *execute.SubtaskSummary, state proto.SubtaskState, tp proto.TaskType, concurrency int,
+) int64 {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")
 	var id int64
@@ -74,8 +82,8 @@ func InsertSubtaskWithSummary(t *testing.T, gm *storage.TaskManager, taskID int6
 
 	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
 		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
-			insert into mysql.tidb_background_subtask(`+storage.InsertSubtaskColumns+`) values`+
-			`(%?, %?, %?, %?, %?, %?, %?, NULL, CURRENT_TIMESTAMP(), '{}', %?)`,
+			insert into mysql.tidb_background_subtask(`+storage.InsertSubtaskColumns+",start_time"+`) values`+
+			`(%?, %?, %?, %?, %?, %?, %?, NULL, CURRENT_TIMESTAMP(), '{}', %?, CURRENT_TIMESTAMP())`,
 			step, taskID, execID, meta, state, proto.Type2Int(tp), concurrency, summaryBytes)
 		if err != nil {
 			return err

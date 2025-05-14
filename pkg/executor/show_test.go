@@ -48,21 +48,23 @@ func Test_fillOneImportJobInfo(t *testing.T) {
 	jobInfo := &importer.JobInfo{
 		Parameters: importer.ImportParameters{},
 	}
-	executor.FillOneImportJobInfo(c, jobInfo, -1)
+	jobInfo.ImportedRows = -1
+	executor.FillOneImportJobInfo(c, jobInfo)
 	require.True(t, c.GetRow(0).IsNull(7))
 	require.True(t, c.GetRow(0).IsNull(10))
 	require.True(t, c.GetRow(0).IsNull(11))
 
-	executor.FillOneImportJobInfo(c, jobInfo, 0)
+	jobInfo.ImportedRows = 0
+	executor.FillOneImportJobInfo(c, jobInfo)
 	require.False(t, c.GetRow(1).IsNull(7))
 	require.Equal(t, uint64(0), c.GetRow(1).GetUint64(7))
 	require.True(t, c.GetRow(1).IsNull(10))
 	require.True(t, c.GetRow(1).IsNull(11))
 
-	jobInfo.Summary = importer.MockSummary(123)
+	jobInfo.ImportedRows = 123
 	jobInfo.StartTime = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	jobInfo.EndTime = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
-	executor.FillOneImportJobInfo(c, jobInfo, 0)
+	executor.FillOneImportJobInfo(c, jobInfo)
 	require.False(t, c.GetRow(2).IsNull(7))
 	require.Equal(t, uint64(123), c.GetRow(2).GetUint64(7))
 	require.False(t, c.GetRow(2).IsNull(10))

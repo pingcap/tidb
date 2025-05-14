@@ -178,12 +178,11 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 
 	collector := execute.NewCollector(
 		func(bytes, rows int64) {
+			s.InputBytes.Add(bytes)
+			s.InputRowCnt.Add(rows)
 			if s.tableImporter.IsLocalSort() {
 				s.OutputBytes.Add(bytes)
 				s.OutputRowCnt.Add(rows)
-			} else {
-				s.InputBytes.Add(bytes)
-				s.InputRowCnt.Add(rows)
 			}
 		},
 		nil,

@@ -941,39 +941,43 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 	return subtasks, nil
 }
 
-// GetSubtaskSummaries gets summaries from tidb_background_subtask
-func (mgr *TaskManager) GetSubtaskSummaries(ctx context.Context, taskID int64, step proto.Step) ([]*execute.SubtaskSummary, error) {
+// GetSubtaskSummaries gets summaries from tidb_background_subtask.
+func (mgr *TaskManager) GetSubtaskSummaries(
+	ctx context.Context, taskID int64, step proto.Step,
+) ([]string, []*execute.SubtaskSummary, int64, error) {
 	var (
 		rs  []chunk.Row
 		err error
 	)
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
-		return nil, err
+		return nil, nil, -1, err
 	}
 	err = mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
-			`select summary from mysql.tidb_background_subtask where task_key = %? and step = %?`,
+			`select state, summary, unix_timestamp() - start_time from mysql.tidb_background_subtask where task_key = %? and step = %?`,
 			taskID, step,
 		)
 		return err
 	})
 
 	if err != nil {
-		return nil, err
-	}
-	if len(rs) == 0 {
-		return nil, nil
+		return nil, nil, -1, err
 	}
 	summaries := make([]*execute.SubtaskSummary, 0, len(rs))
+	states := make([]string, 0, len(rs))
+	duration := int64(0)
+
 	for _, r := range rs {
 		subtaskSummary := &execute.SubtaskSummary{}
-		if err := json.Unmarshal([]byte(r.GetJSON(0).String()), subtaskSummary); err != nil {
-			return nil, errors.Trace(err)
+		if err := json.Unmarshal([]byte(r.GetJSON(1).String()), subtaskSummary); err != nil {
+			return nil, nil, -1, errors.Trace(err)
 		}
 
 		summaries = append(summaries, subtaskSummary)
+		states = append(states, r.GetString(0))
+		duration = max(duration, r.GetInt64(2))
 	}
-	return summaries, nil
+	return states, summaries, duration, nil
 }
 
 // GetAllTasks gets all tasks with basic columns.

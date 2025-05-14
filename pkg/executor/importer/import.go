@@ -287,8 +287,8 @@ type ASTArgs struct {
 
 // StepSummary records the output data size and row count of each step.
 type StepSummary struct {
-	Bytes  uint64 `json:"input-bytes,omitempty"`
-	RowCnt uint64 `json:"input-rows,omitempty"`
+	Bytes  int64 `json:"input-bytes,omitempty"`
+	RowCnt int64 `json:"input-rows,omitempty"`
 }
 
 // Summary records the metrics information, which is stored in the TaskMeta.
@@ -312,7 +312,7 @@ type Summary struct {
 func MockSummary(rowCnt int64) *Summary {
 	return &Summary{
 		PostProcessSummary: StepSummary{
-			RowCnt: uint64(rowCnt),
+			RowCnt: rowCnt,
 		},
 	}
 }
@@ -1459,7 +1459,7 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 
 // JobImportResult is the result of the job import.
 type JobImportResult struct {
-	Affected uint64
+	Affected int64
 	Warnings []contextutil.SQLWarn
 }
 

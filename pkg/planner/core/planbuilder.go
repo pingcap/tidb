@@ -4506,10 +4506,10 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 
 var (
 	importIntoSchemaNames = []string{"Job_ID", "Data_Source", "Target_Table", "Table_ID",
-		"Phase", "Status", "Source_File_Size", "Imported_Rows",
+		"Phase", "Status", "Source_File_Size", "Imported_Rows", "Progress",
 		"Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
 	importIntoSchemaFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
-		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
+		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong, mysql.TypeString,
 		mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString}
 
 	// ImportIntoDataSource used inplannererrors.ErrLoadDataInvalidURI.

@@ -114,15 +114,8 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	return jobID, task, nil
 }
 
-// RuntimeInfo is the runtime information of the task for corresponding job.
-type RuntimeInfo struct {
-	Status     proto.TaskState
-	ImportRows uint64
-	ErrorMsg   string
-}
-
 // GetRuntimeInfoForJob get the corresponding DXF task runtime info for the job.
-func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error) {
+func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*importer.RuntimeInfo, error) {
 	taskManager, err := storage.GetTaskManager()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
@@ -133,35 +126,100 @@ func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error
 	if err != nil {
 		return nil, err
 	}
-	taskMeta := TaskMeta{}
+
+	var (
+		taskMeta TaskMeta
+		summary  importer.Summary
+
+		processedBytes  int64
+		processedRowCnt int64
+		totalBytes      int64
+		totalRowCnt     int64
+		importedRows    int64
+	)
+
 	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
 	}
-	var importedRows uint64
 
-	step := proto.ImportStepImport
-	if taskMeta.Plan.IsGlobalSort() {
-		step = proto.ImportStepWriteAndIngest
+	if task.Error != nil {
+		return &importer.RuntimeInfo{
+			Status:   task.State,
+			ErrorMsg: task.Error.Error(),
+		}, nil
 	}
 
-	summaries, err := taskManager.GetSubtaskSummaries(ctx, task.ID, step)
+	// Not started yet
+	if len(taskMeta.TaskResult) == 0 {
+		return nil, nil
+	}
+
+	// Calculate the progress of the task if no error.
+	if err = json.Unmarshal(taskMeta.TaskResult, &summary); err != nil {
+		return nil, errors.Trace(err)
+	}
+	states, summaries, duration, err := taskManager.GetSubtaskSummaries(ctx, task.ID, task.Step)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, summary := range summaries {
-		importedRows += uint64(summary.OutputRowCnt)
+	numSubtasks := len(states)
+	finshedSubtasks := 0
+	for _, state := range states {
+		if state == proto.SubtaskStateSucceed.String() {
+			finshedSubtasks++
+		}
 	}
 
-	var errMsg string
-	if task.Error != nil {
-		errMsg = task.Error.Error()
+	for _, s := range summaries {
+		processedBytes += s.InputBytes
+		processedRowCnt += s.InputRowCnt
+		importedRows += s.OutputRowCnt
 	}
-	return &RuntimeInfo{
-		Status:     task.State,
-		ImportRows: importedRows,
-		ErrorMsg:   errMsg,
-	}, nil
+	if task.Step == proto.ImportStepPostProcess {
+		importedRows = summary.IngestSummary.RowCnt
+	} else if task.Step != proto.ImportStepWriteAndIngest && task.Step != proto.ImportStepImport {
+		importedRows = 0
+	}
+
+	switch task.Step {
+	case proto.ImportStepImport:
+		totalBytes = summary.IngestSummary.Bytes
+		totalRowCnt = summary.IngestSummary.RowCnt
+	case proto.ImportStepEncodeAndSort:
+		totalBytes = summary.EncodeSummary.Bytes
+		totalRowCnt = summary.EncodeSummary.RowCnt
+	case proto.ImportStepMergeSort:
+		totalBytes = summary.MergeSummary.Bytes
+		totalRowCnt = summary.MergeSummary.RowCnt
+	case proto.ImportStepWriteAndIngest:
+		totalBytes = summary.IngestSummary.Bytes
+		totalRowCnt = summary.IngestSummary.RowCnt
+	case proto.ImportStepPostProcess:
+		// TODO(joechenrh): add progress for post process
+	}
+
+	info := &importer.RuntimeInfo{
+		Status:             task.State,
+		Step:               task.Step,
+		TotalSubtaskCnt:    numSubtasks,
+		FinishedSubtaskCnt: finshedSubtasks,
+		Duration:           duration,
+		ImportRows:         importedRows,
+	}
+
+	// TODO(joechenrh): use bytes instead of rows for parquet.
+	if (task.Step == proto.ImportStepImport || task.Step == proto.ImportStepWriteAndIngest) &&
+		taskMeta.Plan.Format == importer.DataFormatParquet {
+		info.Total = totalRowCnt
+		info.Processed = processedRowCnt
+		info.Unit = " rows"
+	} else {
+		info.Total = totalBytes
+		info.Processed = processedBytes
+	}
+
+	return info, nil
 }
 
 // TaskKey returns the task key for a job.

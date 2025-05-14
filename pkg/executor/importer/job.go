@@ -19,9 +19,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync/atomic"
+	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
@@ -62,6 +65,7 @@ const (
 	// JobStepGlobalSorting is the first step when using global sort,
 	// step goes from none -> global-sorting -> importing -> validating -> none.
 	JobStepGlobalSorting = "global-sorting"
+	JobStepMerging       = "merging"
 	// JobStepImporting is the first step when using local sort,
 	// step goes from none -> importing -> validating -> none.
 	// when used in global sort, it means importing the sorted data.
@@ -97,6 +101,56 @@ func (ip *ImportParameters) String() string {
 	return string(b)
 }
 
+// RuntimeInfo is the runtime information of the task for corresponding job.
+type RuntimeInfo struct {
+	Status     proto.TaskState
+	ImportRows int64
+	ErrorMsg   string
+
+	Step               proto.Step
+	FinishedSubtaskCnt int
+	TotalSubtaskCnt    int
+	Processed          int64
+	Total              int64
+	Unit               string
+	Duration           int64
+}
+
+// String returns the string representation of the runtime info
+func (r *RuntimeInfo) String() string {
+	stepStr := proto.Step2Str(proto.ImportInto, r.Step)
+
+	// Currently, we can't track the progress of post process
+	if r.Step == proto.ImportStepPostProcess || r.Step == proto.StepInit {
+		return fmt.Sprintf("[%s] N/A", stepStr)
+	}
+
+	percentage := 0.0
+	if r.Total > 0 {
+		percentage = float64(r.Processed) / float64(r.Total)
+		percentage = min(percentage, 1.0)
+	}
+
+	speed := 0.0
+	if r.Duration > 0 && r.Processed > 0 {
+		speed = float64(r.Processed) / float64(r.Duration)
+	}
+
+	elapsed := time.Duration(r.Duration) * time.Second
+	remainTime := "N/A"
+	if int64(speed) > 0 {
+		remainSecond := max((r.Total-r.Processed)/int64(speed), 0)
+		remain := time.Duration(remainSecond) * time.Second
+		remainTime = remain.String()
+	}
+
+	return fmt.Sprintf("[%s] subtasks: %d/%d, progress: %.2f%%, speed: %s%s/s, elapsed: %s, ETA: %s",
+		stepStr, r.FinishedSubtaskCnt, r.TotalSubtaskCnt,
+		percentage*100, units.HumanSize(speed), r.Unit,
+		elapsed, remainTime,
+	)
+}
+
 // JobInfo is the information of import into job.
 type JobInfo struct {
 	ID             int64
@@ -112,10 +166,9 @@ type JobInfo struct {
 	Status         string
 	// in SHOW IMPORT JOB, we name it as phase.
 	// here, we use the same name as in distributed framework.
-	Step string
-	// the summary info of the job, it's updated only when the job is finished.
-	// for running job, we should query the progress from the distributed framework.
-	Summary      *Summary
+	Step         string
+	ImportedRows int64
+	Progress     string
 	ErrorMessage string
 }
 
@@ -273,7 +326,11 @@ func FailJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, errorMs
 
 func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 	// start_time, end_time, summary, error_message can be NULL, need to use row.IsNull() to check.
-	startTime, endTime := types.ZeroTime, types.ZeroTime
+	var (
+		startTime = types.ZeroTime
+		endTime   = types.ZeroTime
+	)
+
 	if !row.IsNull(2) {
 		startTime = row.GetTime(2)
 	}
@@ -287,15 +344,15 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 		return nil, errors.Trace(err)
 	}
 
-	var summary *Summary
-	var summaryStr string
+	importedRows := int64(-1)
 	if !row.IsNull(12) {
-		summaryStr = row.GetString(12)
-	}
-	if len(summaryStr) > 0 {
-		summary = &Summary{}
-		if err := json.Unmarshal([]byte(summaryStr), summary); err != nil {
-			return nil, errors.Trace(err)
+		summaryStr := row.GetString(12)
+		if len(summaryStr) > 0 {
+			summary := &Summary{}
+			if err := json.Unmarshal([]byte(summaryStr), summary); err != nil {
+				return nil, errors.Trace(err)
+			}
+			importedRows = summary.PostProcessSummary.RowCnt
 		}
 	}
 
@@ -316,7 +373,7 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 		SourceFileSize: row.GetInt64(9),
 		Status:         row.GetString(10),
 		Step:           row.GetString(11),
-		Summary:        summary,
+		ImportedRows:   importedRows,
 		ErrorMessage:   errMsg,
 	}, nil
 }

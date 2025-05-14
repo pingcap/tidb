@@ -200,7 +200,7 @@ func mergeOverlappingFilesInternal(
 			return err
 		}
 
-		bytes += int64(len(key) + len(value) + lengthBytes*2)
+		bytes += int64(len(key) + len(value))
 		rowCnt++
 		if bytes > 104857600 && collector != nil { // update metrics every 100MB
 			collector.OnRead(bytes, rowCnt)

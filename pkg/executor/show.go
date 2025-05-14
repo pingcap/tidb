@@ -2434,7 +2434,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 }
 
 // FillOneImportJobInfo is exported for testing.
-func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, importedRowCount int64) {
+func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
 	result.AppendInt64(0, info.ID)
 	result.AppendString(1, info.Parameters.FileLocation)
@@ -2443,43 +2443,46 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, importedR
 	result.AppendString(4, info.Step)
 	result.AppendString(5, info.Status)
 	result.AppendString(6, units.BytesSize(float64(info.SourceFileSize)))
-	if info.Summary != nil {
-		result.AppendUint64(7, info.Summary.PostProcessSummary.RowCnt)
-	} else if importedRowCount >= 0 {
-		result.AppendUint64(7, uint64(importedRowCount))
+	if info.ImportedRows >= 0 {
+		result.AppendInt64(7, info.ImportedRows)
 	} else {
 		result.AppendNull(7)
 	}
-	result.AppendString(8, info.ErrorMessage)
-	result.AppendTime(9, info.CreateTime)
+
+	result.AppendString(8, info.Progress)
+	result.AppendString(9, info.ErrorMessage)
+	result.AppendTime(10, info.CreateTime)
 	if info.StartTime.IsZero() {
-		result.AppendNull(10)
-	} else {
-		result.AppendTime(10, info.StartTime)
-	}
-	if info.EndTime.IsZero() {
 		result.AppendNull(11)
 	} else {
-		result.AppendTime(11, info.EndTime)
+		result.AppendTime(11, info.StartTime)
 	}
-	result.AppendString(12, info.CreatedBy)
+	if info.EndTime.IsZero() {
+		result.AppendNull(12)
+	} else {
+		result.AppendTime(12, info.EndTime)
+	}
+	result.AppendString(13, info.CreatedBy)
 }
 
 func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *chunk.Chunk) error {
-	var importedRowCount int64 = -1
-	if info.Summary == nil && info.Status == importer.JobStatusRunning {
-		// for running jobs, need get from distributed framework.
+	info.Progress = "[Not Running]"
+	if info.Status == importer.JobStatusRunning {
+		// for running jobs, we need more information from distributed framework.
 		runInfo, err := importinto.GetRuntimeInfoForJob(ctx, info.ID)
 		if err != nil {
 			return err
 		}
-		importedRowCount = int64(runInfo.ImportRows)
-		if runInfo.Status == proto.TaskStateAwaitingResolution {
-			info.Status = string(runInfo.Status)
-			info.ErrorMessage = runInfo.ErrorMsg
+		if runInfo != nil {
+			info.Progress = runInfo.String()
+			info.ImportedRows = runInfo.ImportRows
+			if runInfo.Status == proto.TaskStateAwaitingResolution {
+				info.Status = string(runInfo.Status)
+				info.ErrorMessage = runInfo.ErrorMsg
+			}
 		}
 	}
-	FillOneImportJobInfo(result, info, importedRowCount)
+	FillOneImportJobInfo(result, info)
 	return nil
 }
 
@@ -2590,20 +2593,19 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	var infos []*importer.JobInfo
+
 	if e.ImportJobID != nil {
-		var info *importer.JobInfo
 		if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 			exec := se.GetSQLExecutor()
-			var err2 error
-			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
+			info, err2 := importer.GetJob(ctx, exec, *e.ImportJobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
+			infos = []*importer.JobInfo{info}
 			return err2
 		}); err != nil {
 			return err
 		}
-		return handleImportJobInfo(ctx, info, e.result)
-	}
-	var infos []*importer.JobInfo
-	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+	} else if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.GetSQLExecutor()
 		var err2 error
 		infos, err2 = importer.GetAllViewableJobs(ctx, exec, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
@@ -2611,11 +2613,13 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+
 	for _, info := range infos {
 		if err2 := handleImportJobInfo(ctx, info, e.result); err2 != nil {
 			return err2
 		}
 	}
+
 	// TODO: does not support filtering for now
 	return nil
 }

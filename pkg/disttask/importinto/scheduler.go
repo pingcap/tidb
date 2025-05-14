@@ -293,6 +293,10 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 			return nil, err
 		}
 		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = sortAndEncodeMeta
+		// Update timestamp
+		if err = job2Step(ctx, logger, taskMeta, importer.JobStepGlobalSorting); err != nil {
+			return nil, err
+		}
 	case proto.ImportStepWriteAndIngest:
 		failpoint.Inject("failWhenDispatchWriteIngestSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error"))
@@ -585,21 +589,24 @@ func updateTaskSummary(
 
 	// Process output row count and data size
 	switch nextStep {
-	case proto.ImportStepMergeSort:
+	case proto.ImportStepEncodeAndSort:
 		importSummary.EncodeSummary = p.summary.EncodeSummary
+	case proto.ImportStepMergeSort:
 		importSummary.MergeSummary = p.summary.MergeSummary
 	case proto.ImportStepWriteAndIngest:
 		importSummary.IngestSummary = p.summary.IngestSummary
+	case proto.ImportStepImport:
+		importSummary.IngestSummary = p.summary.EncodeSummary
 	case proto.ImportStepPostProcess:
 		// For ingest step, we need to sum up the output row count and data size from subtasks summary.
-		// Only summaries of data kv groups will record row count.
+		// Only data kv groups will record row count.
 		summaries, err := handle.GetPreviousSubtaskSummary(task.ID, currStep)
 		if err != nil {
 			return err
 		}
 		for _, summary := range summaries {
-			importSummary.PostProcessSummary.RowCnt += uint64(summary.OutputRowCnt)
-			importSummary.PostProcessSummary.Bytes += uint64(summary.OutputBytes)
+			importSummary.PostProcessSummary.RowCnt += summary.OutputRowCnt
+			importSummary.PostProcessSummary.Bytes += summary.OutputBytes
 		}
 	}
 
