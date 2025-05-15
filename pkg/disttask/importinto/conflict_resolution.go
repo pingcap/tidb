@@ -17,18 +17,18 @@ package importinto
 import (
 	"context"
 	"encoding/json"
-	dxfhandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/util/backoff"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	dxfhandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/util/backoff"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )

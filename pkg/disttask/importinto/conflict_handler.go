@@ -17,13 +17,12 @@ package importinto
 import (
 	"bytes"
 	"context"
-	"github.com/docker/go-units"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"io"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
