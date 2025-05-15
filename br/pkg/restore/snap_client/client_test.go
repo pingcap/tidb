@@ -154,10 +154,10 @@ func TestCheckTargetClusterFresh(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	require.NoError(t, client.CheckTargetClusterFresh(ctx))
+	require.NoError(t, client.EnsureNoUserTables())
 
 	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: ast.NewCIStr("user_db")}}}))
-	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
+	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.EnsureNoUserTables()))
 }
 
 func TestCheckTargetClusterFreshWithTable(t *testing.T) {
@@ -170,7 +170,6 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 	err := client.InitConnections(g, cluster.Storage)
 	require.NoError(t, err)
 
-	ctx := context.Background()
 	info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
 	dbSchema, isExist := info.SchemaByName(ast.NewCIStr("test"))
@@ -195,7 +194,7 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 	_, _, err = client.CreateTablesTest(cluster.Domain, []*metautil.Table{table}, 0)
 	require.NoError(t, err)
 
-	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
+	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.EnsureNoUserTables()))
 }
 
 func TestInitFullClusterRestore(t *testing.T) {
@@ -206,20 +205,20 @@ func TestInitFullClusterRestore(t *testing.T) {
 	require.NoError(t, err)
 
 	// explicit filter
-	client.InitFullClusterRestore(true)
+	client.InitFullClusterRestore(true, true, true)
 	require.False(t, client.IsFullClusterRestore())
 
-	client.InitFullClusterRestore(false)
+	client.InitFullClusterRestore(false, true, true)
 	require.True(t, client.IsFullClusterRestore())
 	// set it to false again
-	client.InitFullClusterRestore(true)
+	client.InitFullClusterRestore(false, true, false)
 	require.False(t, client.IsFullClusterRestore())
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/snap_client/mock-incr-backup-data", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/snap_client/mock-incr-backup-data"))
 	}()
-	client.InitFullClusterRestore(false)
+	client.InitFullClusterRestore(false, true, true)
 	require.False(t, client.IsFullClusterRestore())
 }
 

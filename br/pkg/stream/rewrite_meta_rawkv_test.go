@@ -32,6 +32,7 @@ func MockEmptySchemasReplace(midr *mockInsertDeleteRange, dbMap map[UpstreamID]*
 		nil,
 		9527,
 		midr.mockRecordDeleteRange,
+		false,
 	)
 }
 

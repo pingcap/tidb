@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"go.uber.org/zap"
 )
 
@@ -64,6 +65,7 @@ type SchemasReplace struct {
 	RewriteTS        uint64 // used to rewrite commit ts in meta kv.
 
 	AfterTableRewrittenFn func(deleted bool, tableInfo *model.TableInfo)
+	setRestoreTableMode   bool
 }
 
 // NewTableReplace creates a TableReplace struct.
@@ -93,6 +95,7 @@ func NewSchemasReplace(
 	tiflashRecorder *tiflashrec.TiFlashRecorder,
 	restoreTS uint64,
 	recordDeleteRange func(*PreDelRangeQuery),
+	setRestoreTableMode bool,
 ) *SchemasReplace {
 	globalTableIdMap := make(map[UpstreamID]DownstreamID)
 	for _, dr := range dbReplaceMap {
@@ -109,11 +112,12 @@ func NewSchemasReplace(
 	}
 
 	return &SchemasReplace{
-		DbReplaceMap:     dbReplaceMap,
-		delRangeRecorder: newDelRangeExecWrapper(globalTableIdMap, recordDeleteRange),
-		ingestRecorder:   ingestrec.New(),
-		TiflashRecorder:  tiflashRecorder,
-		RewriteTS:        restoreTS,
+		DbReplaceMap:        dbReplaceMap,
+		delRangeRecorder:    newDelRangeExecWrapper(globalTableIdMap, recordDeleteRange),
+		ingestRecorder:      ingestrec.New(),
+		TiflashRecorder:     tiflashRecorder,
+		RewriteTS:           restoreTS,
+		setRestoreTableMode: setRestoreTableMode,
 	}
 }
 
@@ -286,6 +290,14 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 	// Force to disable TTL_ENABLE when restore
 	if tableInfo.TTLInfo != nil {
 		tableInfo.TTLInfo.Enable = false
+	}
+	// Set TableInfo to be restore mode during log replay, will release the mode after PiTR finishes
+	if sr.setRestoreTableMode {
+		tableInfo.Mode = model.TableModeRestore
+	}
+	// Set Table Name directly to be the name at the end of the restore to avoid potential name conflicts
+	if tableReplace.Name != "" {
+		tableInfo.Name = ast.NewCIStr(tableReplace.Name)
 	}
 	if sr.AfterTableRewrittenFn != nil {
 		sr.AfterTableRewrittenFn(false, &tableInfo)
