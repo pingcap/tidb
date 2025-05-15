@@ -27,4 +27,4 @@ wait_for_tidb
 wait_for_tiflash
 
 echo "+ Running /root/python_testers/vector_recall.py"
-python3 ./python_testers/vector_recall.py
+uv run ./python_testers/vector_recall.py
