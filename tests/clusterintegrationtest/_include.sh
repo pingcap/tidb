@@ -101,22 +101,22 @@ function print_versions() {
     ../../bin/tidb-server -V
     echo
     echo "+ TiKV Version"
-    ~/.tiup/components/tikv/*-nightly/tikv-server --version
+    tiup tikv:nightly --version
     echo
     echo "+ TiFlash Version"
-    ~/.tiup/components/tiflash/*-nightly/tiflash/tiflash version
+    tiup tiflash:nightly --version
     echo
     echo "+ TiUP Version"
     ~/.tiup/bin/tiup playground -v
   else
     echo "+ TiDB Version"
-    ~/.tiup/components/tikv/v8.5.1/tidb-server -V
+    tiup tidb:v8.5.1 -V
     echo
     echo "+ TiKV Version"
-    ~/.tiup/components/tikv/v8.5.1/tikv-server --version
+    tiup tikv:v8.5.1 --version
     echo
     echo "+ TiFlash Version"
-    ~/.tiup/components/tiflash/v8.5.1/tiflash/tiflash version
+    tiup tiflash:v8.5.1 --version
     echo
     echo "+ TiUP Version"
     ~/.tiup/bin/tiup playground -v
