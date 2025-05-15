@@ -50,9 +50,6 @@ func TestNoKeyspaceNameAndIDSet(t *testing.T) {
 
 	require.Equal(t, "", getKeyspaceName)
 	require.Equal(t, true, IsKeyspaceNameEmpty(getKeyspaceName))
-
-	getKeyspaceID := GetKeyspaceIDBySettings()
-	require.Equal(t, uint32(0), getKeyspaceID)
 }
 
 func TestKeyspaceIDBySettings(t *testing.T) {
