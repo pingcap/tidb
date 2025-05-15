@@ -906,8 +906,6 @@ func TestBatchInsertDelete(t *testing.T) {
 	defer func() {
 		kv.TxnTotalSizeLimit.Store(originLimit)
 	}()
-	// Set the limitation to a small value, make it easier to reach the limitation.
-	kv.TxnTotalSizeLimit.Store(8000)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -915,6 +913,13 @@ func TestBatchInsertDelete(t *testing.T) {
 	tk.MustExec("create table batch_insert (c int)")
 	tk.MustExec("drop table if exists batch_insert_on_duplicate")
 	tk.MustExec("create table batch_insert_on_duplicate (id int primary key, c int)")
+	tk.MustExec("drop table if exists com_batch_insert")
+	tk.MustExec("create table com_batch_insert (c int)")
+
+	// Set the limitation to a small value, make it easier to reach the limitation.
+	// Set the value after running DDLs to avoid the error "Transaction is too large" in DDL.
+	kv.TxnTotalSizeLimit.Store(8000)
+
 	// Insert 10 rows.
 	tk.MustExec("insert into batch_insert values (1),(1),(1),(1),(1),(1),(1),(1),(1),(1)")
 	r := tk.MustQuery("select count(*) from batch_insert;")
@@ -997,8 +1002,6 @@ func TestBatchInsertDelete(t *testing.T) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("640"))
 
-	tk.MustExec("drop table if exists com_batch_insert")
-	tk.MustExec("create table com_batch_insert (c int)")
 	sql := "insert into com_batch_insert values "
 	values := make([]string, 0, 200)
 	for i := 0; i < 200; i++ {
