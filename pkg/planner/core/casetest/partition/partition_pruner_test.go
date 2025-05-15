@@ -640,12 +640,12 @@ func TestIssue61134(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (" +
-		"a int," +
+		"a varchar(291)," +
 		"b int," +
 		"primary key(a)) partition by list columns (a)" +
-		"(partition p0 values in (1, 2))")
+		"(partition p0 values in ('', '1'))")
 
-	tk.MustExec("insert into t values (1, 1)")
-	tk.MustQuery("explain select* from t where a = 1").CheckContain("Point_Get")
-	tk.MustQuery("select* from t where a = 1").Check(testkit.Rows("1 1"))
+	tk.MustExec("insert into t values ('', 1)")
+	tk.MustQuery("explain select * from t where a in ('')").CheckContain("Point_Get")
+	tk.MustQuery("select * from t where a in ('')").Check(testkit.Rows("  1"))
 }
