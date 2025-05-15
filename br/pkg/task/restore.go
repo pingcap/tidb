@@ -1271,9 +1271,19 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	createdTables, err := client.CreateTables(ctx, tables, newTS)
+	if cfg.UseCheckpoint {
+		checkpointMeta, err := cfg.snapshotCheckpointMetaManager.LoadCheckpointMetadata(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		checkpointMeta.PreallocIDs = client.CreatePreallocIDCheckpoint()
+		cfg.snapshotCheckpointMetaManager.SaveCheckpointMetadata(ctx, checkpointMeta)
+	}
+	// We need to record the checkpoint even if create table failed
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 
 	anyFileKey := getAnyFileKeyFromTables(tables)
 	if len(anyFileKey) == 0 {
@@ -1410,6 +1420,7 @@ func checkRestorefirstRun(ctx context.Context, mgr *conn.Mgr, g glue.Glue, cfg *
 		return nil, true, nil
 	}
 
+	log.Info("checkpoint metadata exists, restore is not the first time")
 	checkpointMeta, err := cfg.snapshotCheckpointMetaManager.LoadCheckpointMetadata(ctx)
 	if err != nil {
 		return nil, false, errors.Trace(err)

@@ -195,3 +195,17 @@ func (p *PreallocIDs) RewriteTableInfo(info *model.TableInfo) (*model.TableInfo,
 
 	return infoCopy, nil
 }
+
+func (p *PreallocIDs) CreateCheckpoint() *checkpoint.PreallocIDs {
+	if p == nil || p.start >= p.end {
+		return nil
+	}
+
+	return &checkpoint.PreallocIDs{
+		Start:          p.start,
+		ReusableBorder: p.reusableBorder,
+		End:            p.end,
+		Count:          p.count,
+		Next:           p.next.Load(),
+	}
+}

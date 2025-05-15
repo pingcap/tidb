@@ -189,6 +189,14 @@ func (rc *SnapClient) GetRestorer(checkpointRunner *checkpoint.CheckpointRunner[
 	return rc.restorer
 }
 
+func (rc *SnapClient) CreatePreallocIDCheckpoint() *checkpoint.PreallocIDs {
+	if rc.preallocedIDs == nil {
+		return nil
+	}
+
+	return rc.preallocedIDs.CreateCheckpoint()
+}
+
 func (rc *SnapClient) closeConn() {
 	// rc.db can be nil in raw kv mode.
 	if rc.db != nil {
@@ -446,6 +454,7 @@ func (rc *SnapClient) InitCheckpoint(
 			RestoredTS:        rc.backupMeta.EndVersion,
 			LogRestoredTS:     logRestoredTS,
 			Hash:              hash,
+			PreallocIDs: 	   rc.CreatePreallocIDCheckpoint(),
 			RestoreUUID:       restoreID,
 		}
 		rc.restoreUUID = restoreID
