@@ -516,7 +516,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
+		") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000))"))
@@ -527,7 +527,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
+		") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000))"))
@@ -545,7 +545,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
+		") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000))"))
@@ -563,7 +563,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000))"))
@@ -581,7 +581,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
+		") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000))"))
@@ -599,7 +599,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000))"))
