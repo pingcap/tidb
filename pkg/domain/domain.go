@@ -21,8 +21,6 @@ import (
 	"maps"
 	"math"
 	"math/rand"
-	"os"
-	"runtime/coverage"
 	"slices"
 	"sort"
 	"strconv"
@@ -1562,7 +1560,6 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
 	do.wg.Run(do.runawayStartLoop, "runawayStartLoop")
 	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
-	do.wg.Run(do.WriteCoverDataLoop, "WriteCoverDataLoop")
 	skipRegisterToDashboard := gCfg.SkipRegisterToDashboard
 	if !skipRegisterToDashboard {
 		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
@@ -3536,37 +3533,6 @@ func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle,
 			if vardef.EnableWorkloadBasedLearning.Load() && do.statsOwner.IsOwner() {
 				wbLearningHandle.HandleTableReadCost(do.InfoSchema())
 				wbCacheWorker.UpdateTableReadCostCache()
-			}
-		case <-do.exit:
-			return
-		}
-	}
-}
-
-func (do *Domain) WriteCoverDataLoop() {
-	dir := os.Getenv("TIDB_GOCOVERDIR")
-	if len(dir) == 0 {
-		return
-	}
-	defer util.Recover(metrics.LabelDomain, "WriteCoverDataLoop", nil, false)
-	ticker := time.NewTicker(time.Minute)
-	defer func() {
-		ticker.Stop()
-		logutil.BgLogger().Info("WriteCoverDataLoop exited.")
-	}()
-
-	err := coverage.WriteMetaDir(dir)
-	if err != nil {
-		logutil.BgLogger().Warn("WriteMetaDir failed", zap.Error(err))
-		return
-	}
-
-	for {
-		select {
-		case <-ticker.C:
-			err = coverage.WriteCountersDir(dir)
-			if err != nil {
-				logutil.BgLogger().Warn("WriteCountersDir failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return

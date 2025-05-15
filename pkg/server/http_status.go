@@ -27,7 +27,10 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"net/url"
+	"os"
+	"path/filepath"
 	"runtime"
+	"runtime/coverage"
 	rpprof "runtime/pprof"
 	"strconv"
 	"strings"
@@ -304,6 +307,57 @@ func (s *Server) startHTTPServer() {
 	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
 	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
+
+	router.HandleFunc("/covdata", func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/zip")
+		writer.Header().Set("Content-Disposition", "attachment; filename=files.zip")
+
+		dir := os.Getenv("TIDB_GOCOVERDIR")
+		if dir == "" {
+			serveError(writer, http.StatusInternalServerError, "TIDB_GOCOVERDIR is not set")
+			return
+		}
+		err := coverage.WriteMetaDir(dir)
+		if err != nil {
+			logutil.BgLogger().Warn("write coverage meta failed", zap.Error(err))
+		}
+		err = coverage.WriteCountersDir(dir)
+		if err != nil {
+			logutil.BgLogger().Warn("write coverage counters failed", zap.Error(err))
+		}
+
+		zipWriter := zip.NewWriter(writer)
+		defer zipWriter.Close()
+
+		err = filepath.Walk(dir, func(file string, fi os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if fi.IsDir() {
+				return nil
+			}
+			relPath, err := filepath.Rel(dir, file)
+			if err != nil {
+				return err
+			}
+			writer, err := zipWriter.Create(relPath)
+			if err != nil {
+				return err
+			}
+			srcFile, err := os.Open(file)
+			if err != nil {
+				return err
+			}
+			defer srcFile.Close()
+			_, err = io.Copy(writer, srcFile)
+			return err
+		})
+		if err != nil {
+			logutil.BgLogger().Warn("zip coverage files failed", zap.Error(err))
+			serveError(writer, http.StatusInternalServerError, "zip coverage files failed")
+			return
+		}
+	})
 
 	ballast := newBallast(s.cfg.MaxBallastObjectSize)
 	{
