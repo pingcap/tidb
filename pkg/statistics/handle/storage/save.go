@@ -500,13 +500,15 @@ func InsertTableStats2KV(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if _, err = util.ExecWithCtx(
-		ctx, sctx,
-		"insert ignore into mysql.stats_meta (version, table_id, last_stats_histograms_version) values(%?, %?, %?)",
-		startTS, physicalID, startTS,
-	); err != nil {
-		return 0, errors.Trace(err)
-	}
+	/*
+		if _, err = util.ExecWithCtx(
+			ctx, sctx,
+			"insert ignore into mysql.stats_meta (version, table_id, last_stats_histograms_version) values(%?, %?, %?)",
+			startTS, physicalID, startTS,
+		); err != nil {
+			return 0, errors.Trace(err)
+		}
+	*/
 	for _, col := range info.Columns {
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
