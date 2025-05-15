@@ -986,6 +986,12 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
+	// 打印所有的表选项
+	fmt.Println("Table Options:")
+	for _, option := range s.Options {
+		fmt.Printf("Option Type: %v, StrValue: %v\n", option.Tp, option.StrValue)
+	}
+
 	var (
 		referTbl     table.Table
 		involvingRef []model.InvolvingSchemaInfo

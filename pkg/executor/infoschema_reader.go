@@ -629,7 +629,20 @@ func (e *memtableRetriever) setDataFromOneTable(
 		if table.GetPartitionInfo() != nil {
 			createOptions = "partitioned"
 		} else if table.TableCacheStatusType == model.TableCacheStatusEnable {
-			createOptions = "cached=on"
+			if createOptions != "" {
+				createOptions += " "
+			}
+			createOptions += "cached=on"
+		}
+
+		// 添加 ENCRYPTION 选项
+		if createOptions != "" {
+			createOptions += " "
+		}
+		if table.Encryption {
+			createOptions += "ENCRYPTION='Y'"
+		} else {
+			createOptions += "ENCRYPTION=''"
 		}
 		var autoIncID any
 		hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
