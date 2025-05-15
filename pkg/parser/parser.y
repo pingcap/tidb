@@ -429,6 +429,7 @@ import (
 	execute                  "EXECUTE"
 	expansion                "EXPANSION"
 	expire                   "EXPIRE"
+	explore                  "EXPLORE"
 	extended                 "EXTENDED"
 	failedLoginAttempts      "FAILED_LOGIN_ATTEMPTS"
 	faultsSym                "FAULTS"
@@ -5529,7 +5530,24 @@ ExplainSym:
 |	"DESC"
 
 ExplainStmt:
-	ExplainSym TableName
+	ExplainSym "EXPLORE" SelectStmt
+	{
+		startOffset := parser.startOffset(&yyS[yypt])
+		stmt := $3
+		stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		$$ = &ast.ExplainStmt{
+			Stmt:    stmt,
+			Explore: true,
+		}
+	}
+|	ExplainSym "EXPLORE" stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			SQLDigest: $3,
+			Explore:   true,
+		}
+	}
+|	ExplainSym TableName
 	{
 		$$ = &ast.ExplainStmt{
 			Stmt: &ast.ShowStmt{
@@ -6886,6 +6904,7 @@ UnReservedKeyword:
 |	"ESCAPE"
 |	"EVOLVE"
 |	"EXECUTE"
+|	"EXPLORE"
 |	"EXTENDED"
 |	"FIELDS"
 |	"FILE"
