@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/importinto/mock"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -116,13 +117,13 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	wg.Add(2)
 	// wait until 2 executor start running, else workerpool will be cancelled.
 	executor1.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(context.Context, backend.EngineWriter, backend.EngineWriter) error {
+		func(context.Context, backend.EngineWriter, backend.EngineWriter, execute.Collector) error {
 			wg.Done()
 			wg.Wait()
 			return mockErr2
 		})
 	executor2.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(context.Context, backend.EngineWriter, backend.EngineWriter) error {
+		func(context.Context, backend.EngineWriter, backend.EngineWriter, execute.Collector) error {
 			wg.Done()
 			wg.Wait()
 			// wait error in executor1 has been processed

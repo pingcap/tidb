@@ -941,8 +941,8 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 	return subtasks, nil
 }
 
-// GetSubtaskSummarysWithHistory gets summary of subtasks from tidb_global_task and tidb_global_task_history.
-func (mgr *TaskManager) GetSubtaskSummarysWithHistory(ctx context.Context, taskID int64, step proto.Step) ([]*execute.SubtaskSummary, error) {
+// GetSubtaskSummaries gets summaries from tidb_background_subtask
+func (mgr *TaskManager) GetSubtaskSummaries(ctx context.Context, taskID int64, step proto.Step) ([]*execute.SubtaskSummary, error) {
 	var (
 		rs  []chunk.Row
 		err error
@@ -955,22 +955,7 @@ func (mgr *TaskManager) GetSubtaskSummarysWithHistory(ctx context.Context, taskI
 			`select summary from mysql.tidb_background_subtask where task_key = %? and step = %?`,
 			taskID, step,
 		)
-		if err != nil {
-			return err
-		}
-
-		// To avoid the situation that the subtasks has been `TransferTasks2History`
-		// when the user show import jobs, we need to check the history table.
-		rsFromHistory, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
-			`select summary from mysql.tidb_background_subtask_history where task_key = %? and step = %?`,
-			taskID, step,
-		)
-		if err != nil {
-			return err
-		}
-
-		rs = append(rs, rsFromHistory...)
-		return nil
+		return err
 	})
 
 	if err != nil {
