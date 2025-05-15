@@ -454,7 +454,7 @@ func (rc *SnapClient) InitCheckpoint(
 			RestoredTS:        rc.backupMeta.EndVersion,
 			LogRestoredTS:     logRestoredTS,
 			Hash:              hash,
-			PreallocIDs: 	   rc.CreatePreallocIDCheckpoint(),
+			PreallocIDs:       rc.CreatePreallocIDCheckpoint(),
 			RestoreUUID:       restoreID,
 		}
 		rc.restoreUUID = restoreID

@@ -49,6 +49,7 @@ func New(tables []*metautil.Table) (*PreallocIDs, error) {
 	maxID := int64(0)
 	count := int64(len(tables))
 
+	//TODO: (ris) sort all tables by ID, also in createTables
 	for _, t := range tables {
 		if t.Info.ID > maxID && t.Info.ID < InsaneTableIDThreshold {
 			maxID = t.Info.ID
@@ -78,6 +79,7 @@ func Reuse(lagacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocI
 		return nil, errors.Errorf("no prealloc IDs to be reused")
 	}
 
+	//TODO: (ris) sort all tables by ID, also in createTables
 	count := int64(len(tables))
 	maxID := int64(0)
 	for _, t := range tables {

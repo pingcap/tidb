@@ -866,141 +866,140 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 }
 
 func TestHash(t *testing.T) {
-    baseConfig := task.RestoreConfig{
-        UpstreamClusterID: 1,
-        Config: task.Config{
-            Storage:        "default-storage",
-            ExplicitFilter: true,
-            FilterStr:      []string{"filter1", "filter2"},
-        },
-        RestoreCommonConfig: task.RestoreCommonConfig{
-            WithSysTable: true,
-        },
-    }
+	baseConfig := task.RestoreConfig{
+		UpstreamClusterID: 1,
+		Config: task.Config{
+			Storage:        "default-storage",
+			ExplicitFilter: true,
+			FilterStr:      []string{"filter1", "filter2"},
+		},
+		RestoreCommonConfig: task.RestoreCommonConfig{
+			WithSysTable: true,
+		},
+	}
 
-    testCases := []struct {
-        name         string
-        modifyFunc   func(*task.RestoreConfig)
-        changeTask   bool                     
-        expectEqual  bool     
-    }{
-        {
-            name:        "identical_configuration",
-            modifyFunc:  func(*task.RestoreConfig) {},
-            expectEqual: true,
-        },
-        {
-            name: "change_upstream_cluster_id",
-            modifyFunc: func(cfg *task.RestoreConfig) {
-                cfg.UpstreamClusterID = 999
-            },
-            expectEqual: false,
-        },
-        {
-            name: "change_storage",
-            modifyFunc: func(cfg *task.RestoreConfig) {
-                cfg.Config.Storage = "new-storage"
-            },
-            expectEqual: false,
-        },
-        {
-            name: "toggle_explicit_filter",
-            modifyFunc: func(cfg *task.RestoreConfig) {
-                cfg.Config.ExplicitFilter = !cfg.Config.ExplicitFilter
-            },
-            expectEqual: false,
-        },
-        {
-            name: "modify_filter_strings",
-            modifyFunc: func(cfg *task.RestoreConfig) {
-                cfg.Config.FilterStr = append(cfg.Config.FilterStr, "new-filter")
-            },
-            expectEqual: false,
-        },
-        {
-            name: "reorder_filter_strings",
-            modifyFunc: func(cfg *task.RestoreConfig) {
-                cfg.Config.FilterStr = []string{cfg.Config.FilterStr[1], cfg.Config.FilterStr[0]}
-            },
-            expectEqual: false,
-        },
-        {
-            name: "toggle_system_tables",
-            modifyFunc: func(cfg *task.RestoreConfig) {
-                cfg.WithSysTable = !cfg.WithSysTable
-            },
-            expectEqual: false,
-        },
-        {
-            name: "empty_vs_base_config",
-            modifyFunc: func(cfg *task.RestoreConfig) {
-                *cfg = task.RestoreConfig{}
-            },
-            expectEqual: false,
-        },
-        {
-            name: "nil_configuration",
-            modifyFunc: func(cfg *task.RestoreConfig) {
-                *cfg = task.RestoreConfig{}
-            },
-            expectEqual: false,
-        },
-        {
-            name: "multiple_changes",
-            modifyFunc: func(cfg *task.RestoreConfig) {
-                cfg.UpstreamClusterID = 2
-                cfg.Config.Storage = "multi-change-storage"
-            },
-            expectEqual: false,
-        },
-        {
-            name:        "change_task_type",
-            changeTask:  true,
-            modifyFunc:  func(*task.RestoreConfig) {},
-            expectEqual: false,
-        },
-    }
+	testCases := []struct {
+		name        string
+		modifyFunc  func(*task.RestoreConfig)
+		changeTask  bool
+		expectEqual bool
+	}{
+		{
+			name:        "identical_configuration",
+			modifyFunc:  func(*task.RestoreConfig) {},
+			expectEqual: true,
+		},
+		{
+			name: "change_upstream_cluster_id",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.UpstreamClusterID = 999
+			},
+			expectEqual: false,
+		},
+		{
+			name: "change_storage",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.Config.Storage = "new-storage"
+			},
+			expectEqual: false,
+		},
+		{
+			name: "toggle_explicit_filter",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.Config.ExplicitFilter = !cfg.Config.ExplicitFilter
+			},
+			expectEqual: false,
+		},
+		{
+			name: "modify_filter_strings",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.Config.FilterStr = append(cfg.Config.FilterStr, "new-filter")
+			},
+			expectEqual: false,
+		},
+		{
+			name: "reorder_filter_strings",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.Config.FilterStr = []string{cfg.Config.FilterStr[1], cfg.Config.FilterStr[0]}
+			},
+			expectEqual: false,
+		},
+		{
+			name: "toggle_system_tables",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.WithSysTable = !cfg.WithSysTable
+			},
+			expectEqual: false,
+		},
+		{
+			name: "empty_vs_base_config",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				*cfg = task.RestoreConfig{}
+			},
+			expectEqual: false,
+		},
+		{
+			name: "nil_configuration",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				*cfg = task.RestoreConfig{}
+			},
+			expectEqual: false,
+		},
+		{
+			name: "multiple_changes",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.UpstreamClusterID = 2
+				cfg.Config.Storage = "multi-change-storage"
+			},
+			expectEqual: false,
+		},
+		{
+			name:        "change_task_type",
+			changeTask:  true,
+			modifyFunc:  func(*task.RestoreConfig) {},
+			expectEqual: false,
+		},
+	}
 
-    for _, tc := range testCases {
-        t.Run(tc.name, func(t *testing.T) {
-            originalCfg := baseConfig
-            modifiedCfg := baseConfig
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			originalCfg := baseConfig
+			modifiedCfg := baseConfig
 
-            if tc.modifyFunc != nil {
-                tc.modifyFunc(&modifiedCfg)
-            }
+			if tc.modifyFunc != nil {
+				tc.modifyFunc(&modifiedCfg)
+			}
 
-            var cfg1, cfg2 *task.RestoreConfig
-            if tc.name == "nil_configuration" {
-                cfg1 = &originalCfg
-                cfg2 = nil
-            } else {
-                cfg1 = &originalCfg
-                cfg2 = &modifiedCfg
-            }
+			var cfg1, cfg2 *task.RestoreConfig
+			if tc.name == "nil_configuration" {
+				cfg1 = &originalCfg
+				cfg2 = nil
+			} else {
+				cfg1 = &originalCfg
+				cfg2 = &modifiedCfg
+			}
 
-            taskType1 := "full"
-            taskType2 := "full"
-            if tc.changeTask {
-                taskType2 = "db"
-            }
+			taskType1 := "full"
+			taskType2 := "full"
+			if tc.changeTask {
+				taskType2 = "db"
+			}
 
-            hash1, err1 := task.Hash(taskType1, cfg1)
-            hash2, err2 := task.Hash(taskType2, cfg2)
+			hash1, err1 := task.Hash(taskType1, cfg1)
+			hash2, err2 := task.Hash(taskType2, cfg2)
 
-            if cfg2 == nil {
-                require.Error(t, err2, "Expected error for nil config")
-                return
-            }
-            require.NoError(t, err1)
-            require.NoError(t, err2)
+			if cfg2 == nil {
+				require.Error(t, err2, "Expected error for nil config")
+				return
+			}
+			require.NoError(t, err1)
+			require.NoError(t, err2)
 
-            if tc.expectEqual {
-                require.Equal(t, hash1, hash2, "Hashes should be equal for: %s", tc.name)
-            } else {
-                require.NotEqual(t, hash1, hash2, "Hashes should differ for: %s", tc.name)
-            }
-        })
-    }
+			if tc.expectEqual {
+				require.Equal(t, hash1, hash2, "Hashes should be equal for: %s", tc.name)
+			} else {
+				require.NotEqual(t, hash1, hash2, "Hashes should differ for: %s", tc.name)
+			}
+		})
+	}
 }
-

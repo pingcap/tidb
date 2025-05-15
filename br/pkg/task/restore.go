@@ -304,7 +304,7 @@ type immutableRestoreConfig struct {
 	CmdName           string
 	UpstreamClusterID uint64
 	Storage           string
-	ExplictFilter      bool
+	ExplictFilter     bool
 	FilterStr         []string
 	WithSysTable      bool
 }
@@ -313,12 +313,12 @@ func Hash(cmdName string, cfg *RestoreConfig) ([]byte, error) {
 	if cfg == nil {
 		return nil, errors.New("nil config")
 	}
-	
+
 	config := immutableRestoreConfig{
 		CmdName:           cmdName,
 		UpstreamClusterID: cfg.UpstreamClusterID,
 		Storage:           cfg.Storage,
-		ExplictFilter:      cfg.ExplicitFilter,
+		ExplictFilter:     cfg.ExplicitFilter,
 		FilterStr:         cfg.FilterStr,
 		WithSysTable:      cfg.WithSysTable,
 	}
@@ -1291,7 +1291,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	})
 	/* failpoint */
-
 
 	anyFileKey := getAnyFileKeyFromTables(tables)
 	if len(anyFileKey) == 0 {
