@@ -85,7 +85,7 @@ func TestIsSimplePointPlan(t *testing.T) {
         └─Point_Get_5   root    1       table:t, handle:2               0       time:143.2µs, open:1.71µs, close:5.92µs, loops:1, Get:{num_rpc:1, total_time:40µs}      N/A             N/A`))
 }
 
-func TestRelevantOptVars(t *testing.T) {
+func TestRelevantOptVarsAndFixes(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
