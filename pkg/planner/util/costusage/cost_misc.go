@@ -141,7 +141,7 @@ func SumCostVer2(costs ...CostVer2) (ret CostVer2) {
 			for factor, factorCost := range c.trace.factorCosts {
 				ret.trace.factorCosts[factor] += factorCost
 			}
-			if c.trace.formula != "" { // this trace is created NewZeroCostVer2 and no update happened,
+			if c.trace.formula != "" { // this empty formula is created NewZeroCostVer2 and no update happened,
 				if ret.trace.formula != "" {
 					ret.trace.formula += " + "
 				}
