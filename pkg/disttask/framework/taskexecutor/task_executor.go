@@ -63,6 +63,11 @@ var (
 	MockTiDBDown func(execID string, task *proto.TaskBase) bool
 )
 
+var (
+	// GetErrorSubtask4Test is used for UT to collect error
+	GetErrorSubtask4Test atomic.Pointer[proto.TaskBase]
+)
+
 // BaseTaskExecutor is the base implementation of TaskExecutor.
 type BaseTaskExecutor struct {
 	// id, it's the same as server id now, i.e. host:port.
@@ -537,6 +542,9 @@ func (e *BaseTaskExecutor) onError(err error) {
 	if err == nil {
 		return
 	}
+	failpoint.Inject("collectTaskError", func() {
+		GetErrorSubtask4Test.CompareAndSwap(nil, e.GetTaskBase())
+	})
 	err = errors.Trace(err)
 	e.logger.Error("onError", zap.Error(err), zap.Stack("stack"))
 	e.mu.Lock()
