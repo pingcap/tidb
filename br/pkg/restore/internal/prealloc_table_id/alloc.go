@@ -76,7 +76,7 @@ func New(tables []*metautil.Table) (*PreallocIDs, error) {
 	}, nil
 }
 
-func Reuse(lagacy *checkpoint.PreallocIDs, tables []*metautil.Table)(*PreallocIDs, error) {
+func Reuse(lagacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocIDs, error) {
 	if lagacy == nil {
 		return nil, errors.Errorf("no prealloc IDs to be reused")
 	}

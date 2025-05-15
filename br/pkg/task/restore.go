@@ -300,12 +300,12 @@ func (cfg *RestoreConfig) LocalEncryptionEnabled() bool {
 }
 
 type immutableRestoreConfig struct {
-	cmdName string
+	cmdName           string
 	upstreamClusterID uint64
-	storage string
-	explictFlter bool
-    filterStr   []string
-	withSysTable bool
+	storage           string
+	explictFlter      bool
+	filterStr         []string
+	withSysTable      bool
 }
 
 func Hash(cmdName string, cfg *RestoreConfig) ([]byte, error) {
@@ -1047,8 +1047,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return cfg.piTRTaskInfo.FullRestoreCheckErr
 	}
 
-
-
 	if isFullRestore(cmdName) {
 		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointFirstRun) {
 			if err = client.CheckTargetClusterFresh(ctx); err != nil {
@@ -1401,7 +1399,7 @@ func checkRestorefirstRun(ctx context.Context, mgr *conn.Mgr, g glue.Glue, cfg *
 			return nil, false, errors.Trace(err)
 		}
 	}
-	
+
 	// if the checkpoint metadata exists in the checkpoint storage, the restore is not
 	// for the first time.
 	existsCheckpointMetadata, err := cfg.snapshotCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
@@ -2024,7 +2022,7 @@ func rewriteKeyRanges(preAlloced [2]int64) [][2]kv.Key {
 	startKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(preAlloced[0]))
 	endKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(preAlloced[1]))
 
-	return  [][2]kv.Key{{startKey, endKey}}
+	return [][2]kv.Key{{startKey, endKey}}
 }
 
 type DDLJobFilterRule func(ddlJob *model.Job) bool
