@@ -30,11 +30,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// PlanDigestFunc is used to get the plan digest of this SQL.
-var PlanDigestFunc func(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error)
+// CalculatePlanDigest is used to get the plan digest of this SQL.
+// This function will call the optimizer.
+var CalculatePlanDigest func(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error)
 
-// RelevantOptVars is used to get the relevant optimizer variables for this SQL.
-var RelevantOptVars func(sctx sessionctx.Context, stmt ast.StmtNode) (varNames []string, err error)
+// RecordRelevantOptVars is used to get the relevant optimizer variables for this SQL.
+// This function will call the optimizer.
+var RecordRelevantOptVars func(sctx sessionctx.Context, stmt ast.StmtNode) (varNames []string, err error)
 
 // BindingPlanInfo contains the binding info and its corresponding plan execution info, which is used by
 // "SHOW PLAN FOR <SQL>" to help users understand the historical plans for a specific SQL.

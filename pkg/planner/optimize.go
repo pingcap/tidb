@@ -632,7 +632,7 @@ func queryPlanCost(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error) 
 	return core.GetPlanCost(pp, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 }
 
-func planDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error) {
+func calculatePlanDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error) {
 	ret := &core.PreprocessorReturn{}
 	nodeW := resolve.NewNodeW(stmt)
 	err = core.Preprocess(
@@ -655,8 +655,9 @@ func planDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest stri
 	return digest.String(), nil
 }
 
-func relevantOptVars(sctx sessionctx.Context, stmt ast.StmtNode) (varNames []string, err error) {
+func recordRelevantOptVars(sctx sessionctx.Context, stmt ast.StmtNode) (varNames []string, err error) {
 	sctx.GetSessionVars().RecordRelevantOptVars = true
+	sctx.GetSessionVars().RelevantOptVars = nil
 	defer func() {
 		sctx.GetSessionVars().RecordRelevantOptVars = false
 		sctx.GetSessionVars().RelevantOptVars = nil
@@ -694,6 +695,6 @@ func init() {
 	bindinfo.GetBindingHandle = func(sctx sessionctx.Context) bindinfo.BindingHandle {
 		return domain.GetDomain(sctx).BindingHandle()
 	}
-	bindinfo.PlanDigestFunc = planDigestFunc
-	bindinfo.RelevantOptVars = relevantOptVars
+	bindinfo.CalculatePlanDigest = calculatePlanDigestFunc
+	bindinfo.RecordRelevantOptVars = recordRelevantOptVars
 }
