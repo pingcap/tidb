@@ -1003,6 +1003,7 @@ import (
 	CreateStatisticsStmt       "CREATE STATISTICS statement"
 	DoStmt                     "Do statement"
 	DropDatabaseStmt           "DROP DATABASE statement"
+	DropFunctionStmt           "DROP FUNCTION statement"
 	DropIndexStmt              "DROP INDEX statement"
 	DropProcedureStmt          "DROP PROCEDURE statement"
 	DropQueryWatchStmt         "DROP QUERY WATCH statement"
@@ -12398,6 +12399,7 @@ Statement:
 |	DistributeTableStmt
 |	DoStmt
 |	DropDatabaseStmt
+|	DropFunctionStmt
 |	DropIndexStmt
 |	DropTableStmt
 |	DropProcedureStmt
@@ -16681,6 +16683,18 @@ LoadableFunctionReturnType:
 |	"DECIMAL"
 	{
 		$$ = types.ETDecimal
+	}
+
+/********************************************************************
+ * DROP FUNCTION [IF EXISTS] function_name
+ *******************************************************************/
+DropFunctionStmt:
+	"DROP" "FUNCTION" IfExists TableName
+	{
+		$$ = &ast.DropFunctionStmt{
+			IfExists: $3.(bool),
+			Name:     $4.(*ast.TableName),
+		}
 	}
 
 /********************************************************************
