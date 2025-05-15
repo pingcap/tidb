@@ -112,6 +112,7 @@ const (
 	ActionRemovePartitioning     ActionType = 72
 	ActionAddVectorIndex         ActionType = 73
 	ActionAlterTableMode         ActionType = 74
+	ActionRefreshMeta            ActionType = 75
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -185,6 +186,7 @@ var ActionMap = map[ActionType]string{
 	ActionRemovePartitioning:            "alter table remove partitioning",
 	ActionAddVectorIndex:                "add vector index",
 	ActionAlterTableMode:                "alter table mode",
+	ActionRefreshMeta:                   "refresh meta",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.

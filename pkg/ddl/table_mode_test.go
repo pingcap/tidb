@@ -16,19 +16,22 @@ package ddl_test
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -39,7 +42,7 @@ func getClonedTableInfoFromDomain(
 	tableName string,
 	dom *domain.Domain,
 ) *model.TableInfo {
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tableName))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))
 	require.NoError(t, err)
 	return tbl.Meta().Clone()
 }
@@ -103,11 +106,11 @@ func TestTableModeBasic(t *testing.T) {
 
 	// For testing create foreign key table as ModeImport
 	tblInfo := getClonedTableInfoFromDomain(t, "test", "t3", domain)
-	tblInfo.Name = ast.NewCIStr("t1_foreign_key")
+	tblInfo.Name = pmodel.NewCIStr("t1_foreign_key")
 	tblInfo.Mode = model.TableModeImport
-	err := de.CreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
+	err := de.CreateTableWithInfo(tk.Session(), pmodel.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
 	require.NoError(t, err)
-	dbInfo, ok := domain.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	dbInfo, ok := domain.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
 	require.True(t, ok)
 	checkTableModeTest(t, store, dbInfo, tblInfo, model.TableModeImport)
 	// not allow delete foreign key constraint
@@ -116,11 +119,11 @@ func TestTableModeBasic(t *testing.T) {
 
 	// For testing create table as ModeRestore
 	tblInfo = getClonedTableInfoFromDomain(t, "test", "t1", domain)
-	tblInfo.Name = ast.NewCIStr("t1_restore_import")
+	tblInfo.Name = pmodel.NewCIStr("t1_restore_import")
 	tblInfo.Mode = model.TableModeRestore
-	err = de.CreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
+	err = de.CreateTableWithInfo(tk.Session(), pmodel.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
 	require.NoError(t, err)
-	dbInfo, ok = domain.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	dbInfo, ok = domain.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
 	require.True(t, ok)
 	checkTableModeTest(t, store, dbInfo, tblInfo, model.TableModeRestore)
 
@@ -189,23 +192,23 @@ func TestTableModeBasic(t *testing.T) {
 	err = setTableModeTest(ctx, t, store, de, dbInfo, tblInfo, model.TableModeImport)
 	require.NoError(t, err)
 	tblInfo.Mode = model.TableModeRestore
-	err = de.CreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
+	err = de.CreateTableWithInfo(tk.Session(), pmodel.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
 	require.ErrorContains(t, err, "Invalid mode set from (or by default) Import to Restore for table t1_restore_import")
 
 	// For testing batch create tables with info
 	var tblInfo1, tblInfo2, tblInfo3 *model.TableInfo
 	tblInfo1 = getClonedTableInfoFromDomain(t, "test", "t1", domain)
-	tblInfo1.Name = ast.NewCIStr("t1_1")
+	tblInfo1.Name = pmodel.NewCIStr("t1_1")
 	tblInfo1.Mode = model.TableModeNormal
 	tblInfo2 = getClonedTableInfoFromDomain(t, "test", "t1", domain)
-	tblInfo2.Name = ast.NewCIStr("t1_2")
+	tblInfo2.Name = pmodel.NewCIStr("t1_2")
 	tblInfo2.Mode = model.TableModeImport
 	tblInfo3 = getClonedTableInfoFromDomain(t, "test", "t1", domain)
-	tblInfo3.Name = ast.NewCIStr("t1_3")
+	tblInfo3.Name = pmodel.NewCIStr("t1_3")
 	tblInfo3.Mode = model.TableModeRestore
 	err = de.BatchCreateTableWithInfo(
 		ctx,
-		ast.NewCIStr("test"),
+		pmodel.NewCIStr("test"),
 		[]*model.TableInfo{tblInfo1, tblInfo2, tblInfo3},
 		ddl.WithOnExist(ddl.OnExistIgnore),
 	)
@@ -223,7 +226,7 @@ func TestTableModeConcurrent(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id int)")
-	dbInfo, ok := domain.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	dbInfo, ok := domain.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
 	require.True(t, ok)
 
 	// Concurrency test1: concurrently alter t1 to ModeImport, expecting one success, one failure.
@@ -338,4 +341,67 @@ func TestTableModeConcurrent(t *testing.T) {
 	require.Equal(t, 1, successCount3)
 	require.NotNil(t, failedErr3)
 	checkErrorCode(t, failedErr3, errno.ErrInvalidTableModeSet)
+}
+
+// TestTableModeWithRefreshMeta tests update table meta by txn(exchange partition ID),
+// after RefreshMeta can modify TableMode.
+func TestTableModeWithRefreshMeta(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+	de := domain.DDLExecutor()
+	tk := testkit.NewTestKit(t, store)
+	sctx := testkit.NewTestKit(t, store).Session()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table nt(id int, c1 int)")
+	tk.MustExec("create table pt(id int, c1 int) partition by range (c1) (partition p10 values less than (10))")
+	tk.MustExec("insert into nt values(3, 3), (4, 4), (5, 5)")
+	tk.MustExec("insert into pt values(1, 1), (2, 2)")
+
+	dbInfo, ok := domain.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
+	require.True(t, ok)
+	require.NotNil(t, dbInfo)
+	ntInfo, ptInfo := getClonedTableInfoFromDomain(t, "test", "nt", domain), getClonedTableInfoFromDomain(t, "test", "pt", domain)
+	// change non-partition table ID to partition ID
+	partID := ptInfo.Partition.Definitions[0].ID
+	recreateTableWithPartitionID(t, &store, dbInfo.ID, ntInfo, ptInfo, "p10")
+	ntInfo = testutil.GetTableInfoByTxn(t, store, dbInfo.ID, ntInfo.ID)
+	require.Equal(t, partID, ntInfo.ID)
+	// set table mode failure before refresh meta
+	err := testutil.SetTableMode(sctx, t, store, de, dbInfo, ntInfo, model.TableModeImport)
+	require.ErrorContains(t, err, "doesn't exist")
+	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, ntInfo.ID)
+	// set table mode success after refresh meta
+	err = testutil.SetTableMode(sctx, t, store, de, dbInfo, ntInfo, model.TableModeImport)
+	require.NoError(t, err)
+	tk.MustGetErrCode("select * from nt", errno.ErrProtectedTableMode)
+	err = testutil.SetTableMode(sctx, t, store, de, dbInfo, ntInfo, model.TableModeNormal)
+	require.NoError(t, err)
+	tk.MustExec("select * from nt")
+}
+
+// recreateTableWithPartitionID update table ID to partition ID and recreate table.
+func recreateTableWithPartitionID(t *testing.T, store *kv.Storage, dbID int64, ntInfo, ptInfo *model.TableInfo, partName string) {
+	_, partDef, err := getPartitionDef(ptInfo, partName)
+	require.NoError(t, err)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, *store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		err := m.DropTableOrView(dbID, ntInfo.ID)
+		require.NoError(t, err)
+		ntInfo.ID = partDef.ID
+		err = m.CreateTableOrView(dbID, ntInfo)
+		require.NoError(t, err)
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def *model.PartitionDefinition, _ error) {
+	defs := tblInfo.Partition.Definitions
+	for i := 0; i < len(defs); i++ {
+		if strings.EqualFold(defs[i].Name.L, strings.ToLower(partName)) {
+			return i, &(defs[i]), nil
+		}
+	}
+	return index, nil, table.ErrUnknownPartition.GenWithStackByArgs(partName, tblInfo.Name.O)
 }
