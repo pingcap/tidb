@@ -6961,6 +6961,7 @@ UnReservedKeyword:
 |	"SONAME"
 |	"START"
 |	"STATUS"
+|	"STRING"
 |	"OPEN"
 |	"POINT"
 |	"SUBPARTITIONS"
