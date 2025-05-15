@@ -5,7 +5,6 @@ package prealloctableid
 import (
 	"fmt"
 	"math"
-	"sync/atomic"
 
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -36,7 +35,6 @@ type PreallocIDs struct {
 	reusableBorder int64
 	end            int64
 	count          int64
-	next           atomic.Int64
 }
 
 // New collects the requirement of prealloc IDs and return a
@@ -72,7 +70,6 @@ func New(tables []*metautil.Table) (*PreallocIDs, error) {
 		start:          math.MaxInt64,
 		reusableBorder: maxID + 1,
 		count:          count,
-		next:           atomic.Int64{},
 	}, nil
 }
 
@@ -80,9 +77,9 @@ func Reuse(lagacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocI
 	if lagacy == nil {
 		return nil, errors.Errorf("no prealloc IDs to be reused")
 	}
+
 	count := int64(len(tables))
 	maxID := int64(0)
-
 	for _, t := range tables {
 		if t.Info.ID > maxID && t.Info.ID < InsaneTableIDThreshold {
 			maxID = t.Info.ID
@@ -112,9 +109,7 @@ func Reuse(lagacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocI
 		reusableBorder: lagacy.ReusableBorder,
 		end:            lagacy.End,
 		count:          lagacy.Count,
-		next:           atomic.Int64{},
 	}
-	ret.next.Store(lagacy.Next)
 	return &ret, nil
 }
 
@@ -154,7 +149,6 @@ func (p *PreallocIDs) Alloc(m Allocator) error {
 	}
 
 	p.end = p.start + idRange
-	p.next.Store(p.reusableBorder)
 	return nil
 }
 
@@ -163,9 +157,9 @@ func (p *PreallocIDs) allocID(originalID int64) (int64, error) {
 		return originalID, nil
 	}
 
-	rewriteID := p.next.Add(1) - 1
+	rewriteID := originalID - p.start + p.reusableBorder
 	if rewriteID >= p.end {
-		return 0, errors.Errorf("no available IDs")
+		return 0, errors.Errorf("table ID can't rewrite (%d -> %d), out of range [%d, %d)", originalID, rewriteID, p.start, p.end)
 	}
 	return rewriteID, nil
 }
@@ -206,6 +200,5 @@ func (p *PreallocIDs) CreateCheckpoint() *checkpoint.PreallocIDs {
 		ReusableBorder: p.reusableBorder,
 		End:            p.end,
 		Count:          p.count,
-		Next:           p.next.Load(),
 	}
 }

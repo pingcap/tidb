@@ -106,7 +106,6 @@ type PreallocIDs struct {
 	ReusableBorder int64
 	End            int64
 	Count          int64
-	Next           int64
 }
 
 type CheckpointMetadataForSnapshotRestore struct {

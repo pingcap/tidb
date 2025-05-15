@@ -1434,7 +1434,7 @@ func checkRestorefirstRun(ctx context.Context, mgr *conn.Mgr, g glue.Glue, cfg *
 		return nil, false, errors.Trace(err)
 	}
 	if !bytes.Equal(checkpointMeta.Hash, hash) {
-		return nil, false, errors.Trace(errors.Annotatef(berrors.ErrRestoreCheckpointMismatch, "checkpoint hash mismatch, failed"))
+		return nil, false, errors.Trace(errors.Annotatef(berrors.ErrRestoreCheckpointMismatch, "checkpoint hash mismatch, please use the same setting as the previous restore"))
 	}
 	return checkpointMeta.PreallocIDs, false, nil
 }
