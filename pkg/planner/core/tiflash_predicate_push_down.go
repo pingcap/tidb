@@ -189,11 +189,6 @@ func withHeavyCostFunctionForTiFlashPrefetch(cond expression.Expression) bool {
 // @param: conds: the filter conditions
 // @param: ts: the PhysicalTableScan to be pushed down to
 func predicatePushDownToTableScan(sctx base.PlanContext, conds []expression.Expression, ts *PhysicalTableScan) {
-	// When the table is small, there is no need to push down the conditions.
-	if ts.tblColHists.RealtimeCount <= tiflashDataPackSize || ts.KeepOrder || len(conds) == 0 {
-		return
-	}
-
 	// group the conditions by columns and sort them by selectivity
 	sortedConds := groupByColumnsSortBySelectivity(sctx, conds, ts)
 
@@ -255,6 +250,11 @@ func isPredicateSimpleCompare(cond expression.Expression) bool {
 // 1. Whether to use the inverted index.
 // 2. Whether to push down the conditions to the table scan.
 func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan, indexHints []*ast.IndexHint) {
+	// When the table is small, there is no need to push down the conditions.
+	if ts.tblColHists.RealtimeCount <= tiflashDataPackSize || ts.KeepOrder || len(ts.filterCondition) == 0 {
+		return
+	}
+
 	// Consider use index hints
 	indexMap := make(map[string]int, len(ts.Table.Indices))
 	for _, hint := range indexHints {
@@ -320,7 +320,7 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 			continue
 		}
 		// 3. The selectivity of the predicate is less than 60%.
-		selectivity, _, err := cardinality.Selectivity(ts.SCtx(), ts.tblColHists, []expression.Expression{cond}, nil)
+		selectivity, _, err := cardinality.Selectivity(pctx, ts.tblColHists, []expression.Expression{cond}, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed", zap.Error(err))
 			continue
