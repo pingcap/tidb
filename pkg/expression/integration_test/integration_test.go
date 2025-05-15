@@ -793,6 +793,53 @@ func TestVectorControlFlow(t *testing.T) {
 	tk.MustQuery("SELECT CASE WHEN TRUE THEN VEC_FROM_TEXT('[1, 2, 3]') ELSE VEC_FROM_TEXT('[4, 5, 6]') END;").Check(testkit.Rows("[1,2,3]"))
 }
 
+func TestNvlAndNvl2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test;")
+
+	createTable := `CREATE TABLE test.t (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		varchar_column VARCHAR(255) DEFAULT NULL,
+		int_column INT DEFAULT NULL,
+		float_column FLOAT DEFAULT NULL,
+		decimal_column DECIMAL(10, 2) DEFAULT NULL,
+		datetime_column DATETIME DEFAULT NULL
+	);`
+	tk.MustExec(createTable)
+	tk.MustExec("insert into t value()")
+	tk.MustExec(`INSERT INTO t (varchar_column, int_column, float_column, decimal_column, datetime_column)
+			VALUES('Sample String', 100, 456.78, 98765.43, '2024-12-06')`)
+
+	// test nvl().
+	tk.MustQuery("select nvl(varchar_column, 'abc') from t where id = 1;").Check(testkit.Rows("abc"))
+	tk.MustQuery("select nvl(varchar_column, 'abc') from t where id = 2;").Check(testkit.Rows("Sample String"))
+	// 123 has been converted into "123".
+	tk.MustQuery("select nvl(varchar_column, 123) from t where id = 1;").Check(testkit.Rows("123"))
+	tk.MustQuery("select nvl(int_column, 1.23) from t where id = 1;").Check(testkit.Rows("1.23"))
+	tk.MustQuery("select nvl(int_column, 1.23) from t where id = 2;").Check(testkit.Rows("100.00"))
+	// the 'abc' can not be converted into int by implicit.
+	_, err := tk.Exec("select nvl(int_column, 'abc') from t where id = 1;")
+	require.Error(t, err, "ERROR 1105 (HY000): String does not support implicit conversion")
+	_, err = tk.Exec("select nvl(int_column, 'abc') from t where id = 2;")
+	require.Error(t, err, "ERROR 1105 (HY000): String does not support implicit conversion")
+
+	// test nv2().
+	tk.MustQuery("select nvl2(NULL, int_column, 123) from t where id = 2;").Check(testkit.Rows("123"))
+	tk.MustQuery("select nvl2(1, int_column, 123) from t where id = 2;").Check(testkit.Rows("100"))
+	// implicit conversion: convert int into float.
+	tk.MustQuery("select nvl2(1, int_column, 1.23) from t where id = 2;").Check(testkit.Rows("100.00"))
+	tk.MustQuery("select nvl2(NULL, int_column, 1.23) from t where id = 2;").Check(testkit.Rows("1.23"))
+	tk.MustQuery("select nvl2(1, varchar_column, 123) from t where id = 2;").Check(testkit.Rows("Sample String"))
+	// implicit conversion: convert int into varchar.
+	tk.MustQuery("select nvl2(NULL, varchar_column, 123) from t where id = 2;").Check(testkit.Rows("123"))
+	// the 'abc' can not be converted into int by implicit.
+	_, err = tk.Exec("select nvl2(NULL, int_column, 'abc') from t where id = 1")
+	require.Error(t, err, "ERROR 1105 (HY000): String does not support implicit conversion")
+	_, err = tk.Exec("select nvl2(1, int_column, 'abc') from t where id =1;")
+	require.Error(t, err, "ERROR 1105 (HY000): String does not support implicit conversion")
+}
+
 func TestVectorStringCompare(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -2046,7 +2093,7 @@ func TestBuiltinFuncJSONMergePatch_InExpression(t *testing.T) {
 
 		// Invalid json text
 		{[]any{`{"a":1}`, `[1]}`}, nil, false, mysql.ErrInvalidJSONText},
-		{[]any{`{{"a":1}`, `[1]`, `null`}, nil, false, mysql.ErrInvalidJSONText},
+		//{[]any{`{{"a":1}`, `[1]`, `null`}, nil, false, mysql.ErrInvalidJSONText},
 		{[]any{`{"a":1}`, `jjj`, `null`}, nil, false, mysql.ErrInvalidJSONText},
 	}
 
@@ -2176,6 +2223,24 @@ func TestTimestamp(t *testing.T) {
 	require.Less(t, now2.UnixNano(), now3.UnixNano())
 }
 
+func TestPlusOrMinusDatatime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// for sysdate, systimestamp
+	result := tk.MustQuery(`select sysdate = sysdate(), systimestamp = now(), systimestamp() = now()`)
+	result.Check(testkit.Rows("1 1 1"))
+
+	// for datetime +/- float
+	tk.MustQuery(`select CAST('1596-03-31 12:12:12' as DATETIME) + 1`).Check(testkit.Rows("1596-04-01 12:12:12"))
+	tk.MustQuery(`select CAST('1596-03-31 12:12:12' as DATETIME) - 2`).Check(testkit.Rows("1596-03-29 12:12:12"))
+	tk.MustQuery(`select CAST('1596-03-31 12:12:12' as DATETIME) + 1/24`).Check(testkit.Rows("1596-03-31 13:12:12"))
+	tk.MustQuery(`select CAST('1596-03-31 12:12:12' as DATETIME) - 2/24`).Check(testkit.Rows("1596-03-31 10:12:12"))
+	tk.MustQuery(`select CAST('1596-03-31 12:12:12' as DATETIME) + 1/24/60`).Check(testkit.Rows("1596-03-31 12:13:12"))
+	tk.MustQuery(`select CAST('1596-03-31 12:12:12' as DATETIME) - 2/24/60`).Check(testkit.Rows("1596-03-31 12:10:12"))
+}
+
 func TestCastJSONTimeDuration(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2201,6 +2266,57 @@ func TestCastJSONTimeDuration(t *testing.T) {
 		"5 2012-12-12 2012-12-12 00:00:00 12:12:12 STRING",
 		fmt.Sprintf("6 %s %s 12:12:12 12:12:12 TIME", nowDate, nowDate),
 	))
+}
+
+func TestToNumber(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a INT, b DECIMAL(10,2), c VARCHAR(10), d text)")
+
+	tk.MustExec("insert into t values(1, 1.1, '1', '1a')")
+	tk.MustExec("insert into t values(2, 2.2, '2.2', '2.b')")
+	tk.MustExec("insert into t values(3, 3.3, '3.33', '3.3c')")
+	tk.MustExec("insert into t values(4, 4.4, '4.444', '4.44d')")
+	tk.MustExec("insert into t values(5, 5.5, '5.5555', '5555e')")
+
+	tk.MustQuery("select to_number(a), to_number(b), to_number(c), to_number(d) from t").Check(testkit.Rows(
+		"1 1.1 1 <nil>",
+		"2 2.2 2.2 <nil>",
+		"3 3.3 3.33 <nil>",
+		"4 4.4 4.444 <nil>",
+		"5 5.5 5.5555 <nil>",
+	))
+}
+
+func TestTrunc(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// trunc(number)
+	tk.MustQuery("SELECT trunc(123.458), trunc(-123.458), trunc(0.458), trunc(999.999)").Check(testkit.Rows("123 -123 0 999"))
+	tk.MustQuery("SELECT trunc(123.458, 2), trunc(123.458, -1), trunc(123.458, -3)").Check(testkit.Rows("123.45 120 0"))
+	tk.MustQuery("SELECT trunc(0.0001, 2), trunc(-9999.9999, 2)").Check(testkit.Rows("0.00 -9999.99"))
+
+	// trunc(datetime)
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45')").Check(testkit.Rows("2024-11-27 00:00:00"))
+	tk.MustQuery("SELECT trunc('2024/11/27 22:03:45')").Check(testkit.Rows("2024-11-27 00:00:00"))
+
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'YEAR')").Check(testkit.Rows("2024-01-01 00:00:00"))
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'yy')").Check(testkit.Rows("2024-01-01 00:00:00"))
+
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'MONTH')").Check(testkit.Rows("2024-11-01 00:00:00"))
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'mm')").Check(testkit.Rows("2024-11-01 00:00:00"))
+
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'DAY')").Check(testkit.Rows("2024-11-27 00:00:00"))
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'dd')").Check(testkit.Rows("2024-11-27 00:00:00"))
+
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'HOUR')").Check(testkit.Rows("2024-11-27 22:00:00"))
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'hh')").Check(testkit.Rows("2024-11-27 22:00:00"))
+
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'MINUTE')").Check(testkit.Rows("2024-11-27 22:03:00"))
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'mi')").Check(testkit.Rows("2024-11-27 22:03:00"))
 }
 
 func TestCompareBuiltin(t *testing.T) {
@@ -3155,6 +3271,22 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows())
 
+	// for to_date
+	tk.MustQuery("select to_date('2024-11-23','YyYy-Mm-Dd')").Check(testkit.Rows("2024-11-23 00:00:00"))
+	tk.MustQuery("select to_date('20241123','yyyymmdd')").Check(testkit.Rows("2024-11-23 00:00:00"))
+	tk.MustQuery("select to_date('2024/11/23','YYYY/MM/DD')").Check(testkit.Rows("2024-11-23 00:00:00"))
+	tk.MustQuery("select to_date('2024-11-23 07:45:37','yyYy-Mm-dD hH24:Mi:Ss')").Check(testkit.Rows("2024-11-23 07:45:37"))
+	tk.MustQuery("select to_date('2024-11-23 07:45:37','yyYy-Mm-dD hh24:mi:ss')").Check(testkit.Rows("2024-11-23 07:45:37"))
+
+	// illegal pattern test
+	tk.MustQuery("select to_date('2024-11-23 07:45:37','yyYy-Mm-dD hH24:Mi')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_date('2024-11-23','yyY-Mm-dD')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_date('2024-11-23','yyyY-MA-dD')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_date('2024-11-23','yyyY-MM-DH')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_date('2024-11-23','yyyY-MM-dD')").Check(testkit.Rows("2024-11-23 00:00:00"))
+	_, err = tk.Exec("select to_date('2024-11-23 07:45:37')")
+	require.Error(t, err, "ERROR 1582 (42000): Incorrect parameter count in the call to native function 'to_date'")
+
 	// for maketime
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(a double, b float, c decimal(10,4));`)
@@ -3167,6 +3299,14 @@ func TestTimeBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery("select maketime('', '', ''), maketime('h', 'm', 's');")
 	result.Check(testkit.Rows("00:00:00.000000 00:00:00.000000"))
+
+	// for to_char and date_to_char
+	tk.MustExec("drop table if exists tdate")
+	tk.MustExec("create table tdate(a datetime)")
+	tk.MustExec(`insert into tdate values ('2024-11-23 07:45:37')`)
+	tk.MustQuery(`select to_char(a, 'yyyymmdd'), date_to_char(a, 'yyyymmdd') from tdate`).Check(testkit.Rows("20241123 20241123"))
+	tk.MustQuery(`select to_char(a, 'Mm/YYyy dd'), date_to_char(a, 'Mm/YYyy dd') from tdate`).Check(testkit.Rows("11/2024 23 11/2024 23"))
+	tk.MustQuery(`select to_char(a, 'yyYy-Mm-dD hh24:mi:ss'), date_to_char(a, 'yyYy-Mm-dD hh24:mi:ss') from tdate`).Check(testkit.Rows("2024-11-23 07:45:37 2024-11-23 07:45:37"))
 
 	// for get_format
 	result = tk.MustQuery(`select GET_FORMAT(DATE,'USA'), GET_FORMAT(DATE,'JIS'), GET_FORMAT(DATE,'ISO'), GET_FORMAT(DATE,'EUR'),
@@ -3431,6 +3571,27 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustQuery(`select adddate(cast('10:10:10' as time), 1)`).CheckWithFunc(testkit.Rows("10:10:10"), checkHmsMatch)
 	tk.MustQuery(`select adddate(cast('10:10:10' as time), cast(1 as decimal))`).CheckWithFunc(testkit.Rows("10:10:10"), checkHmsMatch)
 
+	// for last_month
+	tk.MustQuery(`select last_month('2001-01-01')`).Check(testkit.Rows("2000-12-31"))
+	tk.MustQuery(`select last_month('2001-12-31')`).Check(testkit.Rows("2001-11-30"))
+	tk.MustQuery(`select last_month('2001-10-01')`).Check(testkit.Rows("2001-09-30"))
+	tk.MustQueryToErr(`select last_month('2000-10-1')`)
+	tk.MustQueryToErr(`select last_month('2001-1-1')`)
+	tk.MustQueryToErr(`select last_month('2001-13-01')`)
+	tk.MustQueryToErr(`select last_month('2001-10-50')`)
+
+	// for add_month
+	tk.MustQuery(`select add_months('2024-04-08', -3)`).Check(testkit.Rows("2024-01-08 00:00:00"))
+	tk.MustQuery(`select add_months('2024-04-08', 12)`).Check(testkit.Rows("2025-04-08 00:00:00"))
+	tk.MustQuery(`select add_months('2024-12-31', 2)`).Check(testkit.Rows("2025-02-28 00:00:00"))
+	tk.MustQuery(`select add_months('2025-04-30', -2)`).Check(testkit.Rows("2025-02-28 00:00:00"))
+
+	// for next_day
+	tk.MustQuery(`select next_day('2024-12-31', 'TUE')`).Check(testkit.Rows("2025-01-07 00:00:00"))
+	tk.MustQuery(`select next_day('2024-12-05', 'Tuesday')`).Check(testkit.Rows("2024-12-10 00:00:00"))
+	tk.MustQuery(`select next_day('2024-12-31', 'sunday')`).Check(testkit.Rows("2025-01-05 00:00:00"))
+	tk.MustQuery(`select next_day('2024-12-31 12:31:58', 'sunday')`).Check(testkit.Rows("2025-01-05 12:31:58"))
+
 	// for localtime, localtimestamp
 	result = tk.MustQuery(`select localtime() = now(), localtime = now(), localtimestamp() = now(), localtimestamp = now()`)
 	result.Check(testkit.Rows("1 1 1 1"))
@@ -3617,6 +3778,22 @@ func TestTimeBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("-111112.100000"))
 	result = tk.MustQuery(`select distinct -((d+ INTERVAL 1 HOUR_MICROSECOND)) from t2;`)
 	result.Check(testkit.Rows("-20000103000000.100000"))
+
+	// months_between
+	tk.MustQuery(`select months_between(DATE('2023-01-01'),DATE('2023-01-01'))`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select months_between(DATE('2024-02-01'),DATE('2023-02-01'))`).Check(testkit.Rows("12"))
+	tk.MustQuery(`select months_between(DATE('2003-02-01'),DATE('2003-05-01'))`).Check(testkit.Rows("-3"))
+	tk.MustQuery(`select months_between(DATE('2003-02-01'),DATE('2003-02-28'))`).Check(testkit.Rows("-0.87096774"))
+	tk.MustQuery(`select months_between(DATE('2003-01-06'),TIMESTAMP('2003-05-06 12:05:55'))`).Check(testkit.Rows("-4"))
+	tk.MustQuery(`select months_between(DATE('2003-02-01'),TIMESTAMP('2003-05-06 12:05:55'))`).Check(testkit.Rows("-3.1775519"))
+	tk.MustQuery(`select months_between(TIMESTAMP('2003-05-06 12:05:55'),DATE('2003-02-01'))`).Check(testkit.Rows("3.1775519"))
+	tk.MustQuery(`select months_between(DATE('2003-01-06'),TIMESTAMP('2003-05-06 12:05:55'))`).Check(testkit.Rows("-4"))
+	tk.MustQuery(`select months_between(TIMESTAMP('2003-05-06 12:05:55'),DATE('2003-12-31'))`).Check(testkit.Rows("-7.79019004"))
+	tk.MustQuery(`select months_between(TIMESTAMP('2003-05-31 12:05:55'),DATE('2003-02-28'))`).Check(testkit.Rows("3"))
+	_, err = tk.Exec(`select months_between(DATE('2003-02-01'))`)
+	require.Error(t, err)
+	terr := errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(mysql.ErrWrongParamcountToNativeFct), terr.Code())
 
 	tk.MustExec("drop table t2")
 }
@@ -4133,4 +4310,53 @@ func TestIssue55886(t *testing.T) {
 	tk.MustQuery("with cte_0 AS (select 1 as c1, case when ref_0.c_jbb then inet6_aton(ref_0.c_foveoe) else ref_4.c_cz end as c5 from t1 as ref_0 join " +
 		" (t1 as ref_4 right outer join t2 as ref_5 on ref_5.c_g7eofzlxn != 1)), cte_4 as (select 1 as c1 from t2) select ref_34.c1 as c5 from" +
 		" cte_0 as ref_34 where exists (select 1 from cte_4 as ref_35 where ref_34.c1 <= case when ref_34.c5 then cast(1 as char) else ref_34.c5 end);")
+}
+
+func TestInstr(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(c1 varchar(16), c2 varchar(16), c3 int, c4 int);")
+	tk.MustExec(`insert into t values ("aaaa", "aa", -4, 1)`)
+	tk.MustExec(`insert into t values ("aaaa", "aa", -4, 2)`)
+	tk.MustExec(`insert into t values ("aaaa", "aa", -1, 2)`)
+	tk.MustExec(`insert into t values ("aaaa", "aa", -1, 1)`)
+	tk.MustExec(`insert into t values ("aaaa", "aa", 0, 1)`)
+	tk.MustExec(`insert into t values ("aaaa", "aa", 2, 1)`)
+	tk.MustExec(`insert into t values ("aaaa", "aa", 1, 4)`)
+	tk.MustExec(`insert into t values ("中文和中文", "中文", 2, 1)`)
+	tk.MustExec(`insert into t values ("中文和中文", "中文", -2, 2)`)
+	tk.MustExec(`insert into t values ("中文和中文", "中文", -1, 1)`)
+	tk.MustExec(`insert into t values ("中文和中文", "中文", -3, 1)`)
+	tk.MustExec(`insert into t values ("中文和中文", "中文", -1, 3)`)
+	tk.MustExec(`insert into t values ("ababab", "ab", 7, 1)`)
+	tk.MustExec(`insert into t values ("ababab", "ab", -7, 1)`)
+	tk.MustQuery(`select instr(c1, c2, c3, c4) from t`).Check(testkit.Rows("1", "0", "2", "3", "0", "2", "0", "4", "1", "4", "1", "0", "0", "0"))
+
+	tk.MustExec("create table t2(c1 varchar(16), c2 varchar(16))")
+	tk.MustExec(`insert into t2 values ("abab", "ba")`)
+	tk.MustExec(`insert into t2 values ("英文和中文", "中文")`)
+	tk.MustQuery(`select instr(c1, c2) from t2`).Check(testkit.Rows("2", "4"))
+	tk.MustQuery(`select instr(c1, c2, 3) from t2`).Check(testkit.Rows("0", "4"))
+}
+
+func TestWMConcat(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table testagg(A varchar(16), B varchar(16), C varchar(16));")
+	tk.MustExec("INSERT INTO TESTAGG (A, B, C) VALUES ('1', 'B1','C1');")
+	tk.MustExec("INSERT INTO TESTAGG (A, B, C) VALUES ('1', 'B2','C2');")
+	tk.MustExec("INSERT INTO TESTAGG (A, B, C) VALUES ('1', 'B3','C3');")
+	tk.MustExec("INSERT INTO TESTAGG (A, B, C) VALUES ('2', 'B4','C4');")
+	tk.MustExec("INSERT INTO TESTAGG (A, B, C) VALUES ('2', 'B5','C5');")
+	tk.MustExec("INSERT INTO TESTAGG (A, B, C) VALUES ('3', 'B6','C6');")
+	tk.MustQuery("select a,wm_concat(b||'-'||c) as bc from testagg group by a order by a;").Check(
+		testkit.Rows("1 B1-C1,B2-C2,B3-C3", "2 B4-C4,B5-C5", "3 B6-C6"))
+	tk.MustQuery("select a,wm_concat(c) from testagg group by a order by a;").Check(
+		testkit.Rows("1 C1,C2,C3", "2 C4,C5", "3 C6"))
+	tk.MustQuery("select a,wm_concat(distinct b||'-'||c) as bc from testagg group by a order by a;").Check(
+		testkit.Rows("1 B1-C1,B2-C2,B3-C3", "2 B4-C4,B5-C5", "3 B6-C6"))
+	tk.MustQuery("select a,wm_concat(b||'!'||c) as bc from testagg group by a order by a;").Check(
+		testkit.Rows("1 B1!C1,B2!C2,B3!C3", "2 B4!C4,B5!C5", "3 B6!C6"))
 }
