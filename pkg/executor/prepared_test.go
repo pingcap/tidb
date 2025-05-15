@@ -92,8 +92,8 @@ func TestIssue29850(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use PointGet
-		`Projection_7 0.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
-		`└─HashJoin_20 0.00 root  CARTESIAN inner join`,
+		`Projection_7 1.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
+		`└─HashJoin_20 1.00 root  CARTESIAN inner join`,
 		`  ├─Point_Get_23(Build) 1.00 root table:warehouse handle:1262`,
 		`  └─Point_Get_22(Probe) 1.00 root table:customer, clustered index:PRIMARY(c_w_id, c_d_id, c_id) `))
 	tk.MustQuery(`execute stmt using @w_id, @c_d_id, @c_id`).Check(testkit.Rows())
@@ -144,9 +144,9 @@ func TestIssue28064(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	rows.Check(testkit.Rows(
-		"IndexLookUp_7 0.00 root  ",
-		"├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
-		"└─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
+		"IndexLookUp_7 1.25 root  ",
+		"├─IndexRangeScan_5(Build) 1.25 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_6(Probe) 1.25 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
 
 	tk.MustExec("execute stmt1 using @a, @b, @c;")
 	rows = tk.MustQuery("select @@last_plan_from_cache")
@@ -155,9 +155,9 @@ func TestIssue28064(t *testing.T) {
 	tk.MustExec("execute stmt1 using @a, @b, @c;")
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	rows.Check(testkit.Rows(
-		"IndexLookUp_7 0.00 root  ",
-		"├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
-		"└─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
+		"IndexLookUp_7 1.25 root  ",
+		"├─IndexRangeScan_5(Build) 1.25 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_6(Probe) 1.25 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
 }
 
 func TestPreparePlanCache4Blacklist(t *testing.T) {

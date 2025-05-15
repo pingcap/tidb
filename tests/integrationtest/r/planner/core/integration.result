@@ -3698,37 +3698,37 @@ create table t4 (a int, b int, c int, index idx_a_b(a, b));
 set @@tidb_opt_range_max_size=0;
 explain format='brief' select * from t1 where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
 id	estRows	task	access object	operator info
-IndexLookUp	0.90	root		
-├─IndexRangeScan(Build)	0.90	cop[tikv]	table:t1, index:idx_a_b(a, b)	range:["aa" "dd","aa" "dd"], ["aa" "ee","aa" "ee"], ["aa" "ff","aa" "ff"], ["bb" "dd","bb" "dd"], ["bb" "ee","bb" "ee"], ["bb" "ff","bb" "ff"], ["cc" "dd","cc" "dd"], ["cc" "ee","cc" "ee"], ["cc" "ff","cc" "ff"], keep order:false, stats:pseudo
-└─Selection(Probe)	0.90	cop[tikv]		in(planner__core__integration.t1.a, "aaa", "bbb", "ccc"), in(planner__core__integration.t1.b, "ddd", "eee", "fff")
-  └─TableRowIDScan	0.90	cop[tikv]	table:t1	keep order:false, stats:pseudo
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t1, index:idx_a_b(a, b)	range:["aa" "dd","aa" "dd"], ["aa" "ee","aa" "ee"], ["aa" "ff","aa" "ff"], ["bb" "dd","bb" "dd"], ["bb" "ee","bb" "ee"], ["bb" "ff","bb" "ff"], ["cc" "dd","cc" "dd"], ["cc" "ee","cc" "ee"], ["cc" "ff","cc" "ff"], keep order:false, stats:pseudo
+└─Selection(Probe)	1.00	cop[tikv]		in(planner__core__integration.t1.a, "aaa", "bbb", "ccc"), in(planner__core__integration.t1.b, "ddd", "eee", "fff")
+  └─TableRowIDScan	1.25	cop[tikv]	table:t1	keep order:false, stats:pseudo
 set @@tidb_opt_range_max_size=1000;
 explain format='brief' select * from t1 where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
 id	estRows	task	access object	operator info
-IndexLookUp	0.09	root		
+IndexLookUp	1.00	root		
 ├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t1, index:idx_a_b(a, b)	range:["aa","aa"], ["bb","bb"], ["cc","cc"], keep order:false, stats:pseudo
-└─Selection(Probe)	0.09	cop[tikv]		in(planner__core__integration.t1.a, "aaa", "bbb", "ccc"), in(planner__core__integration.t1.b, "ddd", "eee", "fff")
+└─Selection(Probe)	1.00	cop[tikv]		in(planner__core__integration.t1.a, "aaa", "bbb", "ccc"), in(planner__core__integration.t1.b, "ddd", "eee", "fff")
   └─TableRowIDScan	30.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1105	Memory capacity of 1000 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen
 set @@tidb_opt_range_max_size=0;
 explain format='brief' select * from t1 join t2 on t1.c = t2.d where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
 id	estRows	task	access object	operator info
-HashJoin	1.12	root		inner join, equal:[eq(planner__core__integration.t1.c, planner__core__integration.t2.d)]
-├─IndexLookUp(Build)	0.90	root		
-│ ├─IndexRangeScan(Build)	0.90	cop[tikv]	table:t1, index:idx_a_b(a, b)	range:["aa" "dd","aa" "dd"], ["aa" "ee","aa" "ee"], ["aa" "ff","aa" "ff"], ["bb" "dd","bb" "dd"], ["bb" "ee","bb" "ee"], ["bb" "ff","bb" "ff"], ["cc" "dd","cc" "dd"], ["cc" "ee","cc" "ee"], ["cc" "ff","cc" "ff"], keep order:false, stats:pseudo
-│ └─Selection(Probe)	0.90	cop[tikv]		in(planner__core__integration.t1.a, "aaa", "bbb", "ccc"), in(planner__core__integration.t1.b, "ddd", "eee", "fff"), not(isnull(planner__core__integration.t1.c))
-│   └─TableRowIDScan	0.90	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashJoin	1.25	root		inner join, equal:[eq(planner__core__integration.t1.c, planner__core__integration.t2.d)]
+├─IndexLookUp(Build)	1.00	root		
+│ ├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t1, index:idx_a_b(a, b)	range:["aa" "dd","aa" "dd"], ["aa" "ee","aa" "ee"], ["aa" "ff","aa" "ff"], ["bb" "dd","bb" "dd"], ["bb" "ee","bb" "ee"], ["bb" "ff","bb" "ff"], ["cc" "dd","cc" "dd"], ["cc" "ee","cc" "ee"], ["cc" "ff","cc" "ff"], keep order:false, stats:pseudo
+│ └─Selection(Probe)	1.00	cop[tikv]		in(planner__core__integration.t1.a, "aaa", "bbb", "ccc"), in(planner__core__integration.t1.b, "ddd", "eee", "fff"), not(isnull(planner__core__integration.t1.c))
+│   └─TableRowIDScan	1.25	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─TableReader(Probe)	9990.00	root		data:Selection
   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__integration.t2.d))
     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 set @@tidb_opt_range_max_size=1000;
 explain format='brief' select * from t1 join t2 on t1.c = t2.d where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
 id	estRows	task	access object	operator info
-HashJoin	0.11	root		inner join, equal:[eq(planner__core__integration.t1.c, planner__core__integration.t2.d)]
-├─IndexLookUp(Build)	0.09	root		
+HashJoin	1.25	root		inner join, equal:[eq(planner__core__integration.t1.c, planner__core__integration.t2.d)]
+├─IndexLookUp(Build)	1.00	root		
 │ ├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t1, index:idx_a_b(a, b)	range:["aa","aa"], ["bb","bb"], ["cc","cc"], keep order:false, stats:pseudo
-│ └─Selection(Probe)	0.09	cop[tikv]		in(planner__core__integration.t1.a, "aaa", "bbb", "ccc"), in(planner__core__integration.t1.b, "ddd", "eee", "fff"), not(isnull(planner__core__integration.t1.c))
+│ └─Selection(Probe)	1.00	cop[tikv]		in(planner__core__integration.t1.a, "aaa", "bbb", "ccc"), in(planner__core__integration.t1.b, "ddd", "eee", "fff"), not(isnull(planner__core__integration.t1.c))
 │   └─TableRowIDScan	30.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─TableReader(Probe)	9990.00	root		data:Selection
   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__integration.t2.d))
@@ -3738,29 +3738,29 @@ Warning	1105	Memory capacity of 1000 bytes for 'tidb_opt_range_max_size' exceede
 set @@tidb_opt_range_max_size=0;
 explain format='brief' select /*+ use_index(t3, a) */ * from t3 where a in (1, 3, 5) and pk in (2, 4, 6);
 id	estRows	task	access object	operator info
-IndexReader	0.90	root		index:IndexRangeScan
-└─IndexRangeScan	0.90	cop[tikv]	table:t3, index:a(a)	range:[1 2,1 2], [1 4,1 4], [1 6,1 6], [3 2,3 2], [3 4,3 4], [3 6,3 6], [5 2,5 2], [5 4,5 4], [5 6,5 6], keep order:false, stats:pseudo
+IndexReader	1.25	root		index:IndexRangeScan
+└─IndexRangeScan	1.25	cop[tikv]	table:t3, index:a(a)	range:[1 2,1 2], [1 4,1 4], [1 6,1 6], [3 2,3 2], [3 4,3 4], [3 6,3 6], [5 2,5 2], [5 4,5 4], [5 6,5 6], keep order:false, stats:pseudo
 set @@tidb_opt_range_max_size=1000;
 explain format='brief' select /*+ use_index(t3, a) */ * from t3 where a in (1, 3, 5) and pk in (2, 4, 6);
 id	estRows	task	access object	operator info
-IndexReader	0.01	root		index:Selection
-└─Selection	0.01	cop[tikv]		in(planner__core__integration.t3.pk, 2, 4, 6)
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		in(planner__core__integration.t3.pk, 2, 4, 6)
   └─IndexRangeScan	30.00	cop[tikv]	table:t3, index:a(a)	range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1105	Memory capacity of 1000 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen
 set @@tidb_opt_range_max_size=0;
 explain format='brief' select /*+ use_index(t4, idx_a_b) */ * from t4 where a in (1, 3, 5) and b = 2;
 id	estRows	task	access object	operator info
-IndexLookUp	0.30	root		
-├─IndexRangeScan(Build)	0.30	cop[tikv]	table:t4, index:idx_a_b(a, b)	range:[1 2,1 2], [3 2,3 2], [5 2,5 2], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	0.30	cop[tikv]	table:t4	keep order:false, stats:pseudo
+IndexLookUp	1.25	root		
+├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t4, index:idx_a_b(a, b)	range:[1 2,1 2], [3 2,3 2], [5 2,5 2], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	1.25	cop[tikv]	table:t4	keep order:false, stats:pseudo
 set @@tidb_opt_range_max_size=1000;
 explain format='brief' select /*+ use_index(t4, idx_a_b) */ * from t4 where a in (1, 3, 5) and b = 2;
 id	estRows	task	access object	operator info
-IndexLookUp	0.03	root		
-├─Selection(Build)	0.03	cop[tikv]		eq(planner__core__integration.t4.b, 2)
+IndexLookUp	1.00	root		
+├─Selection(Build)	1.00	cop[tikv]		eq(planner__core__integration.t4.b, 2)
 │ └─IndexRangeScan	30.00	cop[tikv]	table:t4, index:idx_a_b(a, b)	range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	0.03	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1105	Memory capacity of 1000 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen
 set @@tidb_opt_range_max_size=DEFAULT;
@@ -4254,8 +4254,8 @@ create table t (id int, c int) partition by range (id) (partition p0 values less
 insert into t values(3, 3), (5, 5);
 explain format = 'brief' select * from t where c = 1 and id = c;
 id	estRows	task	access object	operator info
-TableReader	0.01	root	partition:p0	data:Selection
-└─Selection	0.01	cop[tikv]		eq(planner__core__integration.t.c, 1), eq(planner__core__integration.t.id, 1)
+TableReader	1.00	root	partition:p0	data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__integration.t.c, 1), eq(planner__core__integration.t.id, 1)
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists sbtest;
 CREATE TABLE sbtest (

@@ -163,7 +163,7 @@ func (p *PhysicalApply) Attach2Task(tasks ...base.Task) base.Task {
 	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	t := &RootTask{}
 	t.SetPlan(p)
-	t.CopyFrom(&lTask.(*RootTask).simpleWarnings, &lTask.(*RootTask).simpleWarnings)
+	t.warnings.CopyFrom(&lTask.(*RootTask).warnings, &rTask.(*RootTask).warnings)
 	return t
 }
 
@@ -204,7 +204,7 @@ func indexHashJoinAttach2TaskV2(p *PhysicalIndexHashJoin, tasks ...base.Task) ba
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
-	t.CopyFrom(&outerTask.(*RootTask).simpleWarnings, &innerTask.(*RootTask).simpleWarnings)
+	t.warnings.CopyFrom(&outerTask.(*RootTask).warnings, &innerTask.(*RootTask).warnings)
 	return t
 }
 
@@ -239,7 +239,7 @@ func indexJoinAttach2TaskV2(p *PhysicalIndexJoin, tasks ...base.Task) base.Task 
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
-	t.CopyFrom(&outerTask.(*RootTask).simpleWarnings, &innerTask.(*RootTask).simpleWarnings)
+	t.warnings.CopyFrom(&outerTask.(*RootTask).warnings, &innerTask.(*RootTask).warnings)
 	return t
 }
 
@@ -274,7 +274,7 @@ func (p *PhysicalHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 	p.SetChildren(lTask.Plan(), rTask.Plan())
 	task := &RootTask{}
 	task.SetPlan(p)
-	task.CopyFrom(&rTask.(*RootTask).simpleWarnings, &lTask.(*RootTask).simpleWarnings)
+	task.warnings.CopyFrom(&rTask.(*RootTask).warnings, &lTask.(*RootTask).warnings)
 	return task
 }
 
@@ -515,7 +515,7 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		partTp:   outerTask.partTp,
 		hashCols: outerTask.hashCols,
 	}
-	task.CopyFrom(&rTask.simpleWarnings, &lTask.simpleWarnings)
+	task.warnings.CopyFrom(&rTask.warnings, &lTask.warnings)
 	// Current TiFlash doesn't support receive Join executors' schema info directly from TiDB.
 	// Instead, it calculates Join executors' output schema using algorithm like BuildPhysicalJoinSchema which
 	// produces full semantic schema.
@@ -606,7 +606,7 @@ func (p *PhysicalHashJoin) attach2TaskForTiFlash(tasks ...base.Task) base.Task {
 		indexPlanFinished: true,
 		tablePlan:         p,
 	}
-	task.CopyFrom(&rTask.simpleWarnings, &lTask.simpleWarnings)
+	task.warnings.CopyFrom(&rTask.warnings, &lTask.warnings)
 	return task
 }
 
@@ -617,7 +617,7 @@ func (p *PhysicalMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 	p.SetChildren(lTask.Plan(), rTask.Plan())
 	t := &RootTask{}
 	t.SetPlan(p)
-	t.CopyFrom(&rTask.(*RootTask).simpleWarnings, &lTask.(*RootTask).simpleWarnings)
+	t.warnings.CopyFrom(&rTask.(*RootTask).warnings, &lTask.(*RootTask).warnings)
 	return t
 }
 
@@ -2819,14 +2819,14 @@ func (p *PhysicalCTEStorage) Attach2Task(tasks ...base.Task) base.Task {
 			hashCols:    mpp.hashCols,
 			tblColHists: mpp.tblColHists,
 		}
-		nt.CopyFrom(&mpp.simpleWarnings)
+		nt.warnings.CopyFrom(&mpp.warnings)
 		return nt
 	}
 	t.ConvertToRootTask(p.SCtx())
 	p.SetChildren(t.Plan())
 	ta := &RootTask{}
 	ta.SetPlan(p)
-	ta.CopyFrom(&t.(*RootTask).simpleWarnings)
+	ta.warnings.CopyFrom(&t.(*RootTask).warnings)
 	return ta
 }
 
@@ -2856,16 +2856,15 @@ func (p *PhysicalSequence) Attach2Task(tasks ...base.Task) base.Task {
 	}
 	for _, t := range tasks {
 		if mpp, ok := t.(*MppTask); ok {
-			mppTask.CopyFrom(&mpp.simpleWarnings)
+			mppTask.warnings.CopyFrom(&mpp.warnings)
 			continue
 		}
 		if root, ok := t.(*RootTask); ok {
-			mppTask.CopyFrom(&root.simpleWarnings)
+			mppTask.warnings.CopyFrom(&root.warnings)
 			continue
 		}
 		if cop, ok := t.(*CopTask); ok {
-			mppTask.CopyFrom(&cop.simpleWarnings)
-			continue
+			mppTask.warnings.CopyFrom(&cop.warnings)
 		}
 	}
 	return mppTask
@@ -2971,7 +2970,7 @@ func (t *MppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *MppTask
 		partTp:   prop.MPPPartitionTp,
 		hashCols: prop.MPPPartitionCols,
 	}
-	nt.CopyFrom(&t.simpleWarnings)
+	nt.warnings.CopyFrom(&t.warnings)
 	return nt
 }
 

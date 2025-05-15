@@ -1637,7 +1637,7 @@ func runReorgJobAndHandleErr(
 			return false, ver, nil
 		}
 		// TODO(tangenta): get duplicate column and match index.
-		err = ingest.TryConvertToKeyExistsErr(err, allIndexInfos[0], tbl.Meta())
+		err = local.ConvertToErrFoundConflictRecords(err, tbl)
 		if !isRetryableJobError(err, job.ErrorCount) {
 			logutil.DDLLogger().Warn("run add index job failed, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), allIndexInfos, err)
@@ -2268,7 +2268,7 @@ func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 	return writerCfg
 }
 
-func writeChunkToLocal(
+func writeChunk(
 	ctx context.Context,
 	writers []ingest.Writer,
 	indexes []table.Index,
@@ -2333,7 +2333,7 @@ func writeChunkToLocal(
 			if needRestoreForIndexes[i] {
 				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
 			}
-			err = writeOneKVToLocal(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
+			err = writeOneKV(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -2355,7 +2355,7 @@ func maxIndexColumnCount(indexes []table.Index) int {
 	return maxCnt
 }
 
-func writeOneKVToLocal(
+func writeOneKV(
 	ctx context.Context,
 	writer ingest.Writer,
 	index table.Index,
@@ -2516,6 +2516,11 @@ func (w *worker) addTableIndex(
 			err := w.executeDistTask(jobCtx, t, reorgInfo)
 			if err != nil {
 				return err
+			}
+			if reorgInfo.ReorgMeta.UseCloudStorage {
+				// When adding unique index by global sort, it detects duplicate keys in each step.
+				// A duplicate key must be detected before, so we can skip the check bellow.
+				return nil
 			}
 			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, w.store)
 		}
