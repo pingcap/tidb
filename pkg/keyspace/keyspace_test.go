@@ -39,19 +39,6 @@ func TestSetKeyspaceNameAndIDInConf(t *testing.T) {
 	// The cfg.keyspaceName get higher weights than KEYSPACE_NAME in system env.
 	require.Equal(t, keyspaceNameInCfg, getKeyspaceName)
 	require.Equal(t, false, IsKeyspaceNameEmpty(getKeyspaceName))
-
-	// convert KeyspaceName to uint32 failed
-	getKeyspaceID := GetKeyspaceIDBySettings()
-	require.Equal(t, uint32(0), getKeyspaceID)
-	// get keyspaceID normally
-	keyspaceNameInCfg = "123"
-	c1.KeyspaceName = keyspaceNameInCfg
-	getKeyspaceID = GetKeyspaceIDBySettings()
-	if kerneltype.IsNextGen() {
-		require.Equal(t, uint32(123), getKeyspaceID)
-	} else {
-		require.Equal(t, uint32(0), getKeyspaceID)
-	}
 }
 
 func TestNoKeyspaceNameAndIDSet(t *testing.T) {
@@ -66,4 +53,24 @@ func TestNoKeyspaceNameAndIDSet(t *testing.T) {
 
 	getKeyspaceID := GetKeyspaceIDBySettings()
 	require.Equal(t, uint32(0), getKeyspaceID)
+}
+
+func TestKeyspaceIDBySettings(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = ""
+	})
+	// convert KeyspaceName to uint32 failed
+	getKeyspaceID := GetKeyspaceIDBySettings()
+	require.Nil(t, getKeyspaceID)
+
+	// get keyspaceID normally
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "123"
+	})
+	getKeyspaceID = GetKeyspaceIDBySettings()
+	if kerneltype.IsNextGen() {
+		require.Equal(t, uint32(123), *getKeyspaceID)
+	} else {
+		require.Nil(t, getKeyspaceID)
+	}
 }

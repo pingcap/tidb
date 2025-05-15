@@ -379,13 +379,20 @@ func (r *record) rebuildTsIndex() {
 	}
 }
 
+func keyspaceIDToScope(keyspaceID *uint32) *tipb.KeyspaceScope {
+	if keyspaceID == nil {
+		return nil
+	}
+	return &tipb.KeyspaceScope{KeyspaceId: *keyspaceID}
+}
+
 // toProto converts the record to the corresponding protobuf representation.
-func (r *record) toProto(keyspaceID uint32) tipb.TopSQLRecord {
+func (r *record) toProto(keyspaceID *uint32) tipb.TopSQLRecord {
 	return tipb.TopSQLRecord{
-		KeyspaceId: keyspaceID,
-		SqlDigest:  r.sqlDigest,
-		PlanDigest: r.planDigest,
-		Items:      r.tsItems.toProto(),
+		KeyspaceScope: keyspaceIDToScope(keyspaceID),
+		SqlDigest:     r.sqlDigest,
+		PlanDigest:    r.planDigest,
+		Items:         r.tsItems.toProto(),
 	}
 }
 
@@ -420,7 +427,7 @@ func (rs records) topN(n int) (top, evicted records) {
 }
 
 // toProto converts the records to the corresponding protobuf representation.
-func (rs records) toProto(keyspaceID uint32) []tipb.TopSQLRecord {
+func (rs records) toProto(keyspaceID *uint32) []tipb.TopSQLRecord {
 	pb := make([]tipb.TopSQLRecord, 0, len(rs))
 	for _, r := range rs {
 		pb = append(pb, r.toProto(keyspaceID))
@@ -645,12 +652,12 @@ func (m *normalizedSQLMap) take() *normalizedSQLMap {
 }
 
 // toProto converts the normalizedSQLMap to the corresponding protobuf representation.
-func (m *normalizedSQLMap) toProto(keyspaceID uint32) []tipb.SQLMeta {
+func (m *normalizedSQLMap) toProto(keyspaceID *uint32) []tipb.SQLMeta {
 	metas := make([]tipb.SQLMeta, 0, m.length.Load())
 	m.data.Load().Range(func(k, v any) bool {
 		meta := v.(sqlMeta)
 		metas = append(metas, tipb.SQLMeta{
-			KeyspaceId:    keyspaceID,
+			KeyspaceScope: keyspaceIDToScope(keyspaceID),
 			SqlDigest:     []byte(k.(string)),
 			NormalizedSql: meta.normalizedSQL,
 			IsInternalSql: meta.isInternal,
@@ -710,13 +717,13 @@ func (m *normalizedPlanMap) take() *normalizedPlanMap {
 }
 
 // toProto converts the normalizedPlanMap to the corresponding protobuf representation.
-func (m *normalizedPlanMap) toProto(keyspaceID uint32, decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) []tipb.PlanMeta {
+func (m *normalizedPlanMap) toProto(keyspaceID *uint32, decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) []tipb.PlanMeta {
 	metas := make([]tipb.PlanMeta, 0, m.length.Load())
 	m.data.Load().Range(func(k, v any) bool {
 		originalMeta := v.(planMeta)
 		protoMeta := tipb.PlanMeta{
-			KeyspaceId: keyspaceID,
-			PlanDigest: hack.Slice(k.(string)),
+			KeyspaceScope: keyspaceIDToScope(keyspaceID),
+			PlanDigest:    hack.Slice(k.(string)),
 		}
 
 		var err error

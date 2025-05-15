@@ -59,7 +59,7 @@ type TopSQLReporter interface {
 	BindProcessCPUTimeUpdater(updater collector.ProcessCPUTimeUpdater)
 
 	// BindKeyspaceID binds the keyspace ID to the reporter.
-	BindKeyspaceID(keyspaceID uint32)
+	BindKeyspaceID(keyspaceID *uint32)
 
 	// Close uses to close and release the reporter resource.
 	Close()
@@ -71,7 +71,7 @@ var _ DataSinkRegisterer = &RemoteTopSQLReporter{}
 // RemoteTopSQLReporter implements TopSQLReporter that sends data to a remote agent.
 // This should be called periodically to collect TopSQL resource usage metrics.
 type RemoteTopSQLReporter struct {
-	keyspaceID              uint32
+	keyspaceID              *uint32
 	ctx                     context.Context
 	reportCollectedDataChan chan collectedData
 	cancel                  context.CancelFunc
@@ -141,7 +141,7 @@ func (tsr *RemoteTopSQLReporter) BindProcessCPUTimeUpdater(updater collector.Pro
 }
 
 // BindKeyspaceID implements TopSQLReporter.
-func (tsr *RemoteTopSQLReporter) BindKeyspaceID(keyspaceID uint32) {
+func (tsr *RemoteTopSQLReporter) BindKeyspaceID(keyspaceID *uint32) {
 	tsr.keyspaceID = keyspaceID
 }
 
