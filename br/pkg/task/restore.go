@@ -983,9 +983,11 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		cfg.UseCheckpoint = false
 	}
 
-	var checkpointFirstRun = true
-	var reusePreallocID *checkpoint.PreallocIDs
-	reusePreallocID, checkpointFirstRun, err = checkRestorefirstRun(ctx, mgr, g, cfg, cmdName)
+	hash, err := Hash(cmdName, cfg.RestoreConfig)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	reusePreallocID, checkpointFirstRun, err := checkRestorefirstRun(ctx, mgr, g, cfg, cmdName, hash)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1120,7 +1122,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 		//TODO: (ris)add prealloc info into checkpoint
 		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(
-			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, checkpointFirstRun)
+			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, hash, checkpointFirstRun)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1384,7 +1386,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	return nil
 }
 
-func checkRestorefirstRun(ctx context.Context, mgr *conn.Mgr, g glue.Glue, cfg *SnapshotRestoreConfig, cmdName string) (prealloc *checkpoint.PreallocIDs, checkpointFirstRun bool, err error) {
+func checkRestorefirstRun(ctx context.Context, mgr *conn.Mgr, g glue.Glue, cfg *SnapshotRestoreConfig, cmdName string, hash []byte) (prealloc *checkpoint.PreallocIDs, checkpointFirstRun bool, err error) {
 	if !cfg.UseCheckpoint {
 		return nil, true, nil
 	}
@@ -1411,10 +1413,6 @@ func checkRestorefirstRun(ctx context.Context, mgr *conn.Mgr, g glue.Glue, cfg *
 	}
 
 	checkpointMeta, err := cfg.snapshotCheckpointMetaManager.LoadCheckpointMetadata(ctx)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-	hash, err := Hash(cmdName, cfg.RestoreConfig)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}

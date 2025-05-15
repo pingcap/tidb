@@ -354,6 +354,7 @@ func (rc *SnapClient) InitCheckpoint(
 	snapshotCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
 	config *pdutil.ClusterConfig,
 	logRestoredTS uint64,
+	hash []byte,
 	checkpointFirstRun bool,
 ) (checkpointSetWithTableID map[int64]map[string]struct{}, checkpointClusterConfig *pdutil.ClusterConfig, err error) {
 	// checkpoint sets distinguished by range key
@@ -373,6 +374,14 @@ func (rc *SnapClient) InitCheckpoint(
 					"Perhaps you should specify the last full backup storage instead, "+
 					"or just clean the checkpoint %s if the cluster has been cleaned up.",
 				rc.backupMeta.ClusterId, meta.UpstreamClusterID, snapshotCheckpointMetaManager)
+		}
+
+		if !bytes.Equal(meta.Hash, hash) {
+			return checkpointSetWithTableID, nil, errors.Errorf(
+				"The hash of the current snapshot restore does not match that recorded in checkpoint. "+
+					"Perhaps you should specify the last full backup storage instead, "+
+					"or just clean the checkpoint %s if the cluster has been cleaned up.",
+				snapshotCheckpointMetaManager)
 		}
 
 		if meta.RestoredTS != rc.backupMeta.EndVersion {
