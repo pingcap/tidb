@@ -133,11 +133,11 @@ func unquoteJSONString(s string) (string, error) {
 				if i+4 > len(s) {
 					return "", errors.Errorf("Invalid unicode: %s", s[i+1:])
 				}
-				char, size, err := decodeEscapedUnicode(hack.Slice(s[i+1 : i+5]))
+				char, size, inSurrogateRange, err := decodeOneEscapedUnicode(hack.Slice(s[i+1 : i+5]))
 				if err != nil {
 					// For `surrogate pair`, it uses two `\\uxxx` to encode a character.
-					if size < 0 && len(s) >= i+10 && s[i+5] == '\\' && s[i+6] == 'u' {
-						char, size, err = decodeEscapedUnicode(append(hack.Slice(s[i+1:i+5]), hack.Slice(s[i+7:i+11])...))
+					if inSurrogateRange && len(s) >= i+10 && s[i+5] == '\\' && s[i+6] == 'u' {
+						char, size, _, err = decodeOneEscapedUnicode(append([]byte(s[i+1:i+5]), []byte(s[i+7:i+11])...))
 						if err != nil {
 							return "", errors.Trace(err)
 						}
@@ -160,14 +160,20 @@ func unquoteJSONString(s string) (string, error) {
 	return ret.String(), nil
 }
 
-// decodeEscapedUnicode decodes unicode into utf8 bytes specified in RFC 3629.
+// decodeOneEscapedUnicode decodes one unicode into utf8 bytes specified in RFC 3629.
 // According RFC 3629, the max length of utf8 characters is 4 bytes.
 // And MySQL use 4 bytes to represent the unicode which must be in [0, 65536).
-func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
+func decodeOneEscapedUnicode(s []byte) (char [4]byte, size int, inSurrogateRange bool, err error) {
+	if len(s) > 8 {
+		return char, 0, false, errors.Errorf("Invalid `s` for decodeEscapedUnicode: %s", s)
+	}
 	size, err = hex.Decode(char[0:4], s)
-	if err != nil || (size != 2 && size != 4) {
+	if err != nil {
+		return char, 0, false, errors.Trace(err)
+	}
+	if size != 2 && size != 4 {
 		// The unicode must can be represented in 2 bytes or 4 bytes.
-		return char, 0, errors.Trace(err)
+		return char, size, false, errors.Errorf("Invalid unicode length: %d", size)
 	}
 
 	r1 := rune(binary.BigEndian.Uint16(char[0:2]))
@@ -176,7 +182,10 @@ func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
 	}
 	size = utf8.RuneLen(r1)
 	if size < 0 {
-		return char, size, errors.Errorf("Invalid unicode: %s", s)
+		if r1 >= 0xD800 && r1 <= 0xDFFF {
+			inSurrogateRange = true
+		}
+		return char, size, inSurrogateRange, errors.Errorf("Invalid unicode: %s", s)
 	}
 	utf8.EncodeRune(char[0:size], r1)
 	return
