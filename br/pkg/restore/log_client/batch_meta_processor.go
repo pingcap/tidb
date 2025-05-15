@@ -82,7 +82,6 @@ func (rp *RestoreMetaKVProcessor) RestoreAndRewriteMetaKVFiles(
 	}
 
 	if !hasExplicitFilter {
-		// TODO, use same technique to update schema as online
 		// global schema version to trigger a full reload so every TiDB node in the cluster will get synced with
 		// the latest schema update.
 		log.Info("updating schema version to do full reload")

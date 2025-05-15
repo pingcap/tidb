@@ -328,12 +328,20 @@ test_table_rename() {
     run_sql "create schema ${DB}_2;"
     run_sql "create schema ${DB}_3;"
 
+    run_sql "create schema ${DB}_drop_and_rename;"
+
     create_tables_with_values "${DB}_1" "initial_tables_to_rename_in_same_db" 1
     create_tables_with_values "${DB}_1" "initial_tables_to_rename_in_diff_db" 1
     create_tables_with_values "${DB}_2" "prefix_initial_tables_to_rename_out_same_db" 1
     create_tables_with_values "${DB}_2" "prefix_initial_tables_to_rename_out_diff_db" 1
     create_tables_with_values "${DB}_3" "initial_tables_many_rename_in_same_db" 1
     create_tables_with_values "${DB}_3" "initial_tables_many_rename_in_diff_db" 1
+
+    # Create the tables but don't populate them with the standard values
+    run_sql "create table ${DB}_drop_and_rename.table_to_drop(c int);"
+    run_sql "create table ${DB}_drop_and_rename.table_to_rename(c int);"
+    run_sql "insert into ${DB}_drop_and_rename.table_to_drop values (100);"
+    run_sql "insert into ${DB}_drop_and_rename.table_to_rename values (200);"
 
     run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$TASK_NAME/log"
 
@@ -406,6 +414,13 @@ test_table_rename() {
     rename_tables "${DB}_9" "${DB}_3" "log_tables_many_rename_in_diff_db" "log_tables_many_rename_in_diff_db" 1
     rename_tables "${DB}_3" "${DB}_6" "log_tables_many_rename_in_diff_db" "prefix_log_tables_many_rename_in_diff_db" 1
 
+    # drop and rename scenario - drop table_to_drop and rename table_to_rename to table_to_drop
+    run_sql "DROP TABLE ${DB}_drop_and_rename.table_to_drop;"
+    run_sql "RENAME TABLE ${DB}_drop_and_rename.table_to_rename TO ${DB}_drop_and_rename.table_to_drop;"
+    
+    # add some data to the renamed table
+    run_sql "INSERT INTO ${DB}_drop_and_rename.table_to_drop (c) VALUES (300);"
+
     . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
 
     # restart services to clean up the cluster
@@ -439,6 +454,43 @@ test_table_rename() {
         exit 1
     }
 
+    # Drop schemas from the previous test but leave drop_and_rename for our next test
+    for i in $(seq 1 9); do
+        run_sql "drop schema if exists ${DB}_${i};"
+    done
+
+    # Test drop and rename scenario
+    echo "case 21: drop and rename test"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "${DB}_drop_and_rename.table_to_drop"
+
+    # Verify the restored table contains data from the original table_to_rename plus the new data
+    run_sql "SELECT COUNT(*) = 2 FROM ${DB}_drop_and_rename.table_to_drop" || {
+        echo "table_to_drop doesn't have expected data after restore"
+        exit 1
+    }
+
+    # Verify the data contains both old data from table_to_rename and the data added after rename
+    run_sql "SELECT COUNT(*) = 1 FROM ${DB}_drop_and_rename.table_to_drop WHERE c = 200" || {
+        echo "table_to_drop missing expected data from table_to_rename"
+        exit 1
+    }
+    run_sql "SELECT COUNT(*) = 1 FROM ${DB}_drop_and_rename.table_to_drop WHERE c = 300" || {
+        echo "table_to_drop missing expected data added after rename"
+        exit 1
+    }
+
+    # Verify table_to_rename doesn't exist
+    if run_sql "SELECT * FROM ${DB}_drop_and_rename.table_to_rename" 2>/dev/null; then
+        echo "table_to_rename exists but should have been renamed"
+        exit 1
+    fi
+
+    # Verify the original data from the dropped table is gone by checking that no row
+    # with value 100 (from original table_to_drop) exists
+    run_sql "SELECT COUNT(*) = 0 FROM ${DB}_drop_and_rename.table_to_drop WHERE c = 100" || {
+        echo "Found data from the original dropped table which should be gone"
+        exit 1
+    }
     # cleanup
     rm -rf "$TEST_DIR/$TASK_NAME"
 

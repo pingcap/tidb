@@ -1678,8 +1678,7 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 
-		err = client.SetTableModeToNormal(ctx, schemasReplace)
-		if err != nil {
+		if err = client.SetTableModeToNormal(ctx, schemasReplace); err != nil {
 			return errors.Trace(err)
 		}
 	}

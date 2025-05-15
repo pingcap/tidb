@@ -66,6 +66,9 @@ type SchemasReplace struct {
 
 	AfterTableRewrittenFn func(deleted bool, tableInfo *model.TableInfo)
 	setRestoreTableMode   bool
+
+	// track deleted tables, maps dbID -> tableIDs
+	deletedTables map[int64]map[int64]struct{}
 }
 
 // NewTableReplace creates a TableReplace struct.
@@ -118,6 +121,7 @@ func NewSchemasReplace(
 		TiflashRecorder:     tiflashRecorder,
 		RewriteTS:           restoreTS,
 		setRestoreTableMode: setRestoreTableMode,
+		deletedTables:       make(map[int64]map[int64]struct{}),
 	}
 }
 
@@ -345,8 +349,19 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 	//       for now, we rewrite key and value separately hence we cannot
 	//       get a view of (is_delete, table_id, table_info) at the same time :(.
 	//       Maybe we can extract the rewrite part from rewriteTableInfo.
-	if result.Deleted && sr.AfterTableRewrittenFn != nil {
-		sr.AfterTableRewrittenFn(true, &model.TableInfo{ID: newTableID})
+	if result.Deleted {
+		dbReplace, exist := sr.DbReplaceMap[dbID]
+		if !exist {
+			log.Error("not able to find new db id", zap.Int64("oldDBID", dbID))
+		} else {
+			if _, ok := sr.deletedTables[dbReplace.DbID]; !ok {
+				sr.deletedTables[dbReplace.DbID] = make(map[int64]struct{})
+			}
+			sr.deletedTables[dbReplace.DbID][newTableID] = struct{}{}
+		}
+		if sr.AfterTableRewrittenFn != nil {
+			sr.AfterTableRewrittenFn(true, &model.TableInfo{ID: newTableID})
+		}
 	}
 
 	return &kv.Entry{Key: newKey, Value: result.NewValue}, nil
@@ -478,6 +493,11 @@ func (sr *SchemasReplace) rewriteValue(value []byte, cf string, rewriteFunc func
 
 func (sr *SchemasReplace) GetIngestRecorder() *ingestrec.IngestRecorder {
 	return sr.ingestRecorder
+}
+
+// GetDeletedTables returns a map of dbID to a set of tableIDs that were marked as deleted
+func (sr *SchemasReplace) GetDeletedTables() map[int64]map[int64]struct{} {
+	return sr.deletedTables
 }
 
 // RewriteMetaKvEntry uses to rewrite tableID/dbID in entry.key and entry.value

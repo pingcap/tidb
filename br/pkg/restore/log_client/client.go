@@ -1357,13 +1357,6 @@ func (rc *LogClient) UpdateSchemaVersionFullReload(ctx context.Context) error {
 
 // SetTableModeToNormal sets the table mode back to normal from restore mode if needed.
 func (rc *LogClient) SetTableModeToNormal(ctx context.Context, schemaReplace *stream.SchemasReplace) error {
-	const batchSize = 8
-
-	var tables []struct {
-		schemaID int64
-		tableID  int64
-	}
-
 	infoSchema := rc.dom.InfoSchema()
 
 	// collect all tables that need to be set to normal mode
@@ -1375,7 +1368,8 @@ func (rc *LogClient) SetTableModeToNormal(ctx context.Context, schemaReplace *st
 		// verify schema exists in info schema
 		_, exists := infoSchema.SchemaByID(dbReplace.DbID)
 		if !exists {
-			log.Info("schema doesn't exist in info schema, skipping", zap.Int64("schemaID", dbReplace.DbID), zap.String("schemaName", dbReplace.Name))
+			log.Info("schema doesn't exist in info schema, skipping",
+				zap.Int64("schemaID", dbReplace.DbID), zap.String("schemaName", dbReplace.Name))
 			continue
 		}
 
@@ -1386,7 +1380,7 @@ func (rc *LogClient) SetTableModeToNormal(ctx context.Context, schemaReplace *st
 
 			// verify table exists in info schema and is in restore mode
 			tbl, exist := infoSchema.TableByID(ctx, tableReplace.TableID)
-			if !exist {
+			if !exist || tbl.Meta().DBID != dbReplace.DbID {
 				log.Info("table doesn't exist in info schema, skipping",
 					zap.Int64("schemaID", dbReplace.DbID),
 					zap.Int64("tableID", tableReplace.TableID),
@@ -1404,30 +1398,13 @@ func (rc *LogClient) SetTableModeToNormal(ctx context.Context, schemaReplace *st
 				continue
 			}
 
-			tables = append(tables, struct {
-				schemaID int64
-				tableID  int64
-			}{
-				schemaID: dbReplace.DbID,
-				tableID:  tableReplace.TableID,
-			})
-		}
-	}
-
-	log.Info("going to alter table mode", zap.Int("num", len(tables)))
-
-	// TODO: Need batch support from DDL
-	for i := 0; i < len(tables); i += batchSize {
-		end := i + batchSize
-		if end > len(tables) {
-			end = len(tables)
-		}
-
-		for _, table := range tables[i:end] {
-			log.Info("altering table mode", zap.Int64("schemaID", table.schemaID), zap.Any("table id", table.tableID))
-			if err := rc.unsafeSession.AlterTableMode(ctx, table.schemaID, table.tableID, model.TableModeNormal); err != nil {
+			dbID := dbReplace.DbID
+			tableID := tableReplace.TableID
+			// TODO, use batch when available in DDL
+			log.Info("altering table mode", zap.Int64("schemaID", dbID), zap.Any("table id", tableID))
+			if err := rc.unsafeSession.AlterTableMode(ctx, dbID, tableID, model.TableModeNormal); err != nil {
 				return errors.Annotatef(err, "failed to alter table mode for table with schemaID=%d, tableID=%d",
-					table.schemaID, table.tableID)
+					dbID, tableID)
 			}
 		}
 	}
@@ -1909,43 +1886,59 @@ func PutRawKvWithRetry(ctx context.Context, client *rawkv.RawKVBatchClient, key,
 }
 
 // RefreshMetaForTables refreshes metadata for all tables in the schemasReplace map.
-// This is particularly important for tables that may have been deleted in the meta storage.
 func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *stream.SchemasReplace) error {
-	var tables []struct {
-		schemaID int64
-		tableID  int64
-	}
+	deletedTablesMap := schemasReplace.GetDeletedTables()
 
-	// collect all tables that need to be refreshed
+	deletedCount := 0
+	for dbID, tableIDsSet := range deletedTablesMap {
+		for tableID := range tableIDsSet {
+			args := &model.RefreshMetaArgs{
+				SchemaID: dbID,
+				TableID:  tableID,
+			}
+			log.Info("refreshing deleted table meta", zap.Int64("schemaID", dbID),
+				zap.Any("tableID", tableID))
+			if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
+				return errors.Annotatef(err,
+					"failed to refresh meta for deleted table with schemaID=%d, tableID=%d", dbID, tableID)
+			}
+			deletedCount++
+		}
+	}
+	log.Info("refreshed metadata for deleted tables", zap.Int("deletedTableCount", deletedCount))
+
+	regularCount := 0
 	for _, dbReplace := range schemasReplace.DbReplaceMap {
 		if dbReplace.FilteredOut {
 			continue
 		}
+
 		for _, tableReplace := range dbReplace.TableMap {
 			if tableReplace.FilteredOut {
 				continue
 			}
-			tables = append(tables, struct {
-				schemaID int64
-				tableID  int64
-			}{
-				schemaID: dbReplace.DbID,
-				tableID:  tableReplace.TableID,
-			})
+
+			// skip if this table is in the deleted list
+			if tableIDsSet, dbExists := deletedTablesMap[dbReplace.DbID]; dbExists {
+				if _, isDeleted := tableIDsSet[tableReplace.TableID]; isDeleted {
+					continue
+				}
+			}
+
+			args := &model.RefreshMetaArgs{
+				SchemaID: dbReplace.DbID,
+				TableID:  tableReplace.TableID,
+			}
+			log.Info("refreshing regular table meta", zap.Int64("schemaID", dbReplace.DbID),
+				zap.Any("tableID", tableReplace.TableID))
+			if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
+				return errors.Annotatef(err, "failed to refresh meta for table with schemaID=%d, tableID=%d",
+					dbReplace.DbID, tableReplace.TableID)
+			}
+			regularCount++
 		}
 	}
 
-	log.Info("refreshing metadata for tables", zap.Int("table_count", len(tables)))
-	for _, table := range tables {
-		args := &model.RefreshMetaArgs{
-			SchemaID: table.schemaID,
-			TableID:  table.tableID,
-		}
-		if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
-			return errors.Annotatef(err, "failed to refresh meta for table with schemaID=%d, tableID=%d",
-				table.schemaID, table.tableID)
-		}
-	}
-
+	log.Info("refreshed metadata for regular tables", zap.Int("regularTableCount", regularCount))
 	return nil
 }

@@ -1006,7 +1006,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			client.GetTableMap(),
 			client.GetPartitionMap(),
 			tableMap,
-			dbMap,
 		)
 		if err != nil {
 			return errors.Trace(err)
@@ -1573,7 +1572,6 @@ func processLogBackupTableHistory(
 	partitionMap map[int64]*stream.TableLocationInfo,
 	cfg *RestoreConfig,
 	existingTableMap map[int64]*metautil.Table,
-	existingDBMap map[int64]*metautil.Database,
 	pitrIdTracker *utils.PiTRIdTracker,
 ) {
 	for tableId, dbIDAndTableName := range history.GetTableHistory() {
@@ -1616,9 +1614,10 @@ func processLogBackupTableHistory(
 			continue
 		}
 
+		// skip if both match and nothing changes
 		if startMatches && endMatches {
-			// skip if both match and nothing changes
-			if start.DbID == end.DbID && start.TableName == end.TableName {
+			// skip if both match and in same db
+			if start.DbID == end.DbID {
 				continue
 			}
 		}
@@ -1629,62 +1628,21 @@ func processLogBackupTableHistory(
 		}
 
 		// at here only three cases left
-		// 1. both match but start and end are not identical
+		// 1. both match but start and end are not in same DB due to rename
 		// 2. end matches but start doesn't -> need to restore (add)
 		// 3. start matches but end doesn't -> need to remove
-		log.Info("handling rename",
-			zap.Int64("original_db_id", start.DbID),
-			zap.String("original_db_name", startDBName),
-			zap.Int64("end_db_id", end.DbID),
-			zap.String("end_db_name", endDBName),
-			zap.Int64("table_id", tableId),
-			zap.String("original_table_name", start.TableName),
-			zap.String("end_table_name", end.TableName),
-			zap.Bool("start_match_filter", startMatches),
-			zap.Bool("end_matches_filter", endMatches))
 		if startDB, exists := snapshotDBMap[start.DbID]; exists {
 			for _, table := range startDB.Tables {
 				if table.Info != nil && table.Info.ID == tableId {
 					if endMatches {
-						// for renames, directly point to the end database
-						var endDB *metautil.Database
-						if db, exists := existingDBMap[end.DbID]; exists {
-							endDB = db
-						} else if endDB, exists = snapshotDBMap[end.DbID]; exists {
-							existingDBMap[end.DbID] = endDB
-						} else {
-							// create the end database if it doesn't exist
-							endDB = &metautil.Database{
-								Info: &model.DBInfo{
-									ID:   end.DbID,
-									Name: ast.NewCIStr(endDBName),
-								},
-							}
-							existingDBMap[end.DbID] = endDB
-						}
-
-						// create a deep copy of the table and update its metadata to point to the end DB
-						tableCopy := *table
-						tableCopy.DB = endDB.Info
-						tableCopy.Info = table.Info.Clone()
-						tableCopy.Info.Name = ast.NewCIStr(end.TableName)
-						tableCopy.Info.DBID = end.DbID
-
-						existingTableMap[tableId] = &tableCopy
-
-						log.Info("handled rename by pointing table to end database",
-							zap.Int64("original_db_id", start.DbID),
-							zap.String("original_db_name", startDBName),
-							zap.Int64("end_db_id", end.DbID),
-							zap.String("end_db_name", endDBName),
+						log.Info("adding extra table to restore due to rename",
 							zap.Int64("table_id", tableId),
-							zap.String("original_table_name", start.TableName),
-							zap.String("end_table_name", end.TableName))
+							zap.String("table_name", table.Info.Name.O))
+						existingTableMap[tableId] = table
 					} else if startMatches {
 						log.Info("table renamed out of filter, removing this table",
 							zap.Int64("table_id", tableId),
 							zap.String("table_name", table.Info.Name.O))
-						// need to remove this table
 						delete(existingTableMap, table.Info.ID)
 					}
 					break
@@ -1786,7 +1744,6 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	snapshotTableMap map[int64]*metautil.Table,
 	partitionMap map[int64]*stream.TableLocationInfo,
 	tableMap map[int64]*metautil.Table,
-	dbMap map[int64]*metautil.Database,
 ) (err error) {
 	// build tracker for pitr restore to use later
 	piTRIdTracker := utils.NewPiTRIdTracker()
@@ -1801,7 +1758,8 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	}
 
 	// first handle table renames to determine which tables we need
-	processLogBackupTableHistory(logBackupTableHistory, snapshotDBMap, snapshotTableMap, partitionMap, cfg, tableMap, dbMap, piTRIdTracker)
+	processLogBackupTableHistory(logBackupTableHistory, snapshotDBMap, snapshotTableMap,
+		partitionMap, cfg, tableMap, piTRIdTracker)
 
 	// track all snapshot tables that's going to restore in PiTR tracker
 	for tableID, table := range tableMap {
@@ -1809,7 +1767,8 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	}
 
 	// handle partition exchange after all tables are tracked
-	if err := checkPartitionExchangesViolations(logBackupTableHistory, snapshotDBMap, snapshotTableMap, partitionMap, cfg); err != nil {
+	if err := checkPartitionExchangesViolations(logBackupTableHistory, snapshotDBMap,
+		snapshotTableMap, partitionMap, cfg); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
