@@ -24,38 +24,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestShowPlanForSQLBasic(t *testing.T) {
+func TestExplainExploreBasic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec(`create table t (a int, b int, c varchar(10), key(a))`)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where b=1"`).Rows()) == 0)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where b=1`).Rows()) == 0)
 	tk.MustExec(`create global binding using select a from t where b=1`)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where b=1"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "SELECT a FROM t WHERE b=1"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "SELECT a FROM t WHERE b= 1"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "     SELECT  a FROM test.t WHERE b= 1"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "23109784b802bcef5398dd81d3b1c5b79200c257c101a5b9f90758206f3d09ed"`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where b=1`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore SELECT a FROM t WHERE b=1`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore SELECT a FROM t WHERE b= 1`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore      SELECT  a FROM test.t WHERE b= 1`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore "23109784b802bcef5398dd81d3b1c5b79200c257c101a5b9f90758206f3d09ed"`).Rows()) == 1)
 
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where b in (1, 2, 3)"`).Rows()) == 0)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where b in (1, 2, 3)`).Rows()) == 0)
 	tk.MustExec(`create global binding using select a from t where b in (1, 2, 3)`)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where b in (1, 2, 3)"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where b in (1, 2)"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where b in (1)"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "SELECT a from t WHere b in (1)"`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where b in (1, 2, 3)`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where b in (1, 2)`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where b in (1)`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore SELECT a from t WHere b in (1)`).Rows()) == 1)
 
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where c = ''"`).Rows()) == 0)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where c = ''`).Rows()) == 0)
 	tk.MustExec(`create global binding using select a from t where c = ''`)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where c = ''"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where c = '123'"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where c = '\"'"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where c = '              '"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for 'select a from t where c = ""'`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for 'select a from t where c = "\'"'`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where c = ''`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where c = '123'`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where c = '\"'`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where c = '              '`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where c = ""`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where c = "\'"`).Rows()) == 1)
 
-	tk.MustExecToErr("show plan for 'xxx'", "")
-	tk.MustExecToErr("show plan for 'SELECT A FROM'", "")
+	tk.MustExecToErr("explain explore 'xxx'", "")
+	tk.MustExecToErr("explain explore SELECT A FROM", "")
 }
 
 func TestIsSimplePointPlan(t *testing.T) {

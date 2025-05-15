@@ -7866,6 +7866,16 @@ func TestVector(t *testing.T) {
 	RunTest(t, table, false)
 }
 
+func TestExplainExplore(t *testing.T) {
+	cases := []testCase{
+		{`explain explore 'digestxxx'`, true, `EXPLAIN EXPLORE 'digestxxx'`},
+		{`explain explore select 1 from t`, true, "EXPLAIN EXPLORE SELECT 1 FROM `t`"},
+		{`explain explore select 1 from t1, t2`, true, "EXPLAIN EXPLORE SELECT 1 FROM (`t1`) JOIN `t2`"},
+		{`explain explore select 1 from t where t1.a > (select max(a) from t2)`, true, "EXPLAIN EXPLORE SELECT 1 FROM `t` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`)"},
+	}
+	RunTest(t, cases, false)
+}
+
 func TestSecondaryEngineAttribute(t *testing.T) {
 	table := []testCase{
 		// Valid Partition-level SECONDARY_ENGINE_ATTRIBUTE
