@@ -486,6 +486,8 @@ func (isd *Data) gcOldFKVersion(schemaVersion int64) int {
 	return len(rfDels)
 }
 
+// GCOldVersion compacts btree nodes by removing items older than schema version.
+// exported for testing
 func (isd *Data) GCOldVersion(schemaVersion int64) (int, int64) {
 	if isd.byName.Load().Len() == 0 {
 		return 0, 0
