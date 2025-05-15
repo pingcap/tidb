@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -379,10 +378,11 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 			continue
 		}
 		dataFiles := kvMeta.GetDataFiles()
-		minFilesPerBatch := len(dataFiles) / external.MergeSortMergeFactor
-		maxFilesPerBatch := external.MergeSortFileCountStep
 		nodeCnt := max(1, planCtx.ExecuteNodesCnt)
-		dataFilesGroup := mathutil.Divide2Batches(dataFiles, nodeCnt, minFilesPerBatch, maxFilesPerBatch)
+		dataFilesGroup, err := external.DivideMergeSortDataFiles(dataFiles, nodeCnt, planCtx.ThreadCnt)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		for _, files := range dataFilesGroup {
 			result = append(result, &MergeSortSpec{
 				MergeSortStepMeta: &MergeSortStepMeta{

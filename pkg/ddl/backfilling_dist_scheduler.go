@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/backoff"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -617,9 +616,10 @@ func generateMergePlan(
 		if i < len(eleIDs) {
 			eleID = []int64{eleIDs[i]}
 		}
-		minFilesPerBatch := len(dataFiles) / external.MergeSortMergeFactor
-		maxFilesPerBatch := external.MergeSortFileCountStep
-		dataFilesGroup := mathutil.Divide2Batches(dataFiles, nodeCnt, minFilesPerBatch, maxFilesPerBatch)
+		dataFilesGroup, err := external.DivideMergeSortDataFiles(dataFiles, nodeCnt, task.Concurrency)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		for _, files := range dataFilesGroup {
 			m := &BackfillSubTaskMeta{
 				DataFiles: files,

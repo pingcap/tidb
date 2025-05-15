@@ -642,3 +642,43 @@ func TestRemoveDuplicatesMoreThan2(t *testing.T) {
 		})
 	}
 }
+
+func TestDivideMergeSortDataFilesBasic(t *testing.T) {
+	items := []string{}
+	result, err := DivideMergeSortDataFiles(items, 0, 0)
+	require.Error(t, err)
+
+	items = []string{"1", "2", "3"}
+	result, err = DivideMergeSortDataFiles(items, 3, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, [][]string{{"1"}, {"2"}, {"3"}}, result)
+	result, err = DivideMergeSortDataFiles(items, 2, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, [][]string{{"1", "2"}, {"3"}}, result)
+	result, err = DivideMergeSortDataFiles(items, 1, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, [][]string{{"1", "2", "3"}}, result)
+
+	items = []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"}
+	result, err = DivideMergeSortDataFiles(items, 5, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, [][]string{{"1", "2", "3"}, {"4", "5"}, {"6", "7"}, {"8", "9"}, {"10", "11"}}, result)
+}
+
+func TestDivideMergeSortDataFilesSubtaskCount(t *testing.T) {
+	const Concurrency = 16
+	for _, nodeCount := range []int{1, 3, 7, 16, 30, 60, 97} {
+		for _, fileCount := range []int{3000, 4000, 40000, 400000, 712345, 1000000} {
+			dataFiles := make([]string, fileCount)
+			dataFilesGroup, err := DivideMergeSortDataFiles(dataFiles, nodeCount, Concurrency)
+			require.NoError(t, err)
+			var totalTargetFileCount int
+			for _, dataFiles := range dataFilesGroup {
+				totalTargetFileCount += len(splitDataFiles(dataFiles, Concurrency))
+			}
+			// fmt.Println("nodeCount:", nodeCount, "fileCount:", fileCount, "subtaskCount:", len(dataFilesGroup), "totalTargetFileCount:", totalTargetFileCount)
+			require.LessOrEqual(t, len(dataFilesGroup), 250)
+			require.LessOrEqual(t, totalTargetFileCount, 4000)
+		}
+	}
+}
