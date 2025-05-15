@@ -635,7 +635,6 @@ func (e *memtableRetriever) setDataFromOneTable(
 			createOptions += "cached=on"
 		}
 
-		// 添加 ENCRYPTION 选项
 		if createOptions != "" {
 			createOptions += " "
 		}

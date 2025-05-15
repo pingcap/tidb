@@ -910,16 +910,11 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			ttlOptionsHandled = true
 
 		case ast.TableOptionEncryption:
-			// lower to upper
 			encryptionValue := strings.ToUpper(op.StrValue)
-
-			// Y to bool
 			encryptionEnabled := false
 			if encryptionValue == "Y" {
 				encryptionEnabled = true
 			}
-
-			// 将布尔值赋给相关字段
 			tbInfo.Encryption = encryptionEnabled
 
 		}
