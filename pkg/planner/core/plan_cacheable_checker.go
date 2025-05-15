@@ -362,8 +362,8 @@ func extractTableNames(node ast.ResultSetNode, names []*ast.TableName) ([]*ast.T
 	default:
 		return names, false, "queries that have sub-queries are not supported"
 	}
-	if len(names) > 2 {
-		return names, false, "queries that have more than 2 tables are not supported"
+	if len(names) > 5 {
+		return names, false, "queries that have more than 5 tables are not supported"
 	}
 	return names, true, ""
 }
