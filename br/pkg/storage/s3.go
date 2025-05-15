@@ -947,7 +947,7 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 
 		newReader, _, err1 := r.storage.open(r.ctx, r.name, r.pos, end)
 		if err1 != nil {
-			log.Warn("open new s3 reader failed", zap.String("file", r.name), zap.Error(err1))
+			log.Warn("open new s3 reader failed", zap.String("file", r.name), zap.Error(err1)) // may encounter `RequestCanceled: request context canceled\ncaused by: context canceled`
 			return
 		}
 		r.reader = newReader

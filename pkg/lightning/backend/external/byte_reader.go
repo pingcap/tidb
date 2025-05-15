@@ -234,6 +234,9 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 	}
 	hasRead := readLen > 0
 	for n > 0 {
+		if loopCnt >= uint64(n) {
+			return nil, errors.New("readNBytes reaches max loopCnt")
+		}
 		err := r.reload()
 		if err != nil {
 			r.logger.Error("readNBytes reload error", zap.Uint64("loopCnt", loopCnt), zap.Error(err))
@@ -251,7 +254,9 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 		}
 		readLen, bs = r.next(n)
 		if rand.Intn(10) == 0 {
-			r.logger.Info("readNBytes", zap.Uint64("loopCnt", loopCnt), zap.Int("readLen", readLen), zap.Bool("hasRead", hasRead))
+			r.logger.Info("readNBytes", zap.Uint64("loopCnt", loopCnt), zap.Int("readLen", readLen),
+				zap.Int("len(bs[0])", len(bs[0])),
+				zap.Bool("hasRead", hasRead))
 		}
 		hasRead = hasRead || readLen > 0
 		for _, b := range bs {
@@ -268,16 +273,17 @@ func (r *byteReader) next(n int) (int, [][]byte) {
 	retCnt := 0
 	// TODO(lance6716): heap escape performance?
 	ret := make([][]byte, 0, len(r.curBuf)-r.curBufIdx+1)
-	defer func() {
-		r.logger.Info("end next()", zap.Int("n", n), zap.Int("retCnt", retCnt), zap.Int("len(ret)", len(ret)), zap.Int("cap(ret)", cap(ret)))
-	}()
 	var loopCnt uint64
+	defer func() {
+		r.logger.Info("end next()", zap.Int("n", n), zap.Int("retCnt", retCnt), zap.Int("len(ret)", len(ret)), zap.Int("cap(ret)", cap(ret)), zap.Uint64("loopCnt", loopCnt))
+	}()
 	for r.curBufIdx < len(r.curBuf) && n > 0 {
+		cur := r.curBuf[r.curBufIdx]
 		if rand.Intn(10) == 0 {
-			r.logger.Info("next loop", zap.Uint64("loopCnt", loopCnt),
+			r.logger.Info("next loop", zap.Uint64("loopCnt", loopCnt), zap.Int("curBufIdx", r.curBufIdx),
+				zap.Int("curBufOffset", r.curBufOffset), zap.Int("len(cur)", len(cur)),
 				zap.Int("n", n), zap.Int("retCnt", retCnt), zap.Int("len(ret)", len(ret)), zap.Int("cap(ret)", cap(ret)))
 		}
-		cur := r.curBuf[r.curBufIdx]
 		if r.curBufOffset+n <= len(cur) {
 			ret = append(ret, cur[r.curBufOffset:r.curBufOffset+n])
 			retCnt += n
@@ -332,6 +338,9 @@ func (r *byteReader) reload() error {
 	//	prefetch.PrintLog = false
 	//	r.logger.Info("read data from external storage", zap.Int("n", n), zap.Error(err), zap.Int("bufSize", len(r.curBuf[0][0:])))
 	//}
+	if rand.Intn(10) == 0 {
+		r.logger.Info("reload()", zap.Int("n", n), zap.Error(err))
+	}
 	if err != nil {
 		switch err {
 		case io.EOF:
