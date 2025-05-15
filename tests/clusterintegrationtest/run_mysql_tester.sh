@@ -27,4 +27,4 @@ wait_for_tidb
 wait_for_tiflash
 
 echo "+ Running mysql-tester"
-~/go/bin/src -all
+./mysql-tester -all

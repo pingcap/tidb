@@ -885,7 +885,7 @@ set @@tidb_isolation_read_engines="tidb,tikv,tiflash";
 drop table t;
 // Test cases from expression/integration_test
 use test;
-drop table t;
+DROP TABLE IF EXISTS t;
 create table t(embedding VECTOR);
 insert into t values ('[1,2,3]');
 insert into t values ('[1,2,3,4]');

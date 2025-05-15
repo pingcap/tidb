@@ -39,7 +39,8 @@ function start_tidb_latest() {
 
 function build_mysql_tester() {
   echo "+ Installing mysql-tester"
-  go install github.com/pingcap/mysql-tester/src@314107b26aa8fce86beb0dd48e75827fb269b365
+  GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@314107b26aa8fce86beb0dd48e75827fb269b365
+  mv src mysql-tester
 }
 
 function wait_for_tidb() {

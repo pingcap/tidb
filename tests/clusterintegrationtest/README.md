@@ -56,8 +56,8 @@ After changing `t` or changing optimizer plans, `r` need to be updated.
    ```shell
    # cd clusterintegrationtest
    python3 -m pip install uv
-   uv venv --python python3.9
-   source .venv/bin/activate
+   uv init --python python3.9
+   uv venv
    uv pip install -r requirements.txt
    ```
 
@@ -84,6 +84,5 @@ After changing `t` or changing optimizer plans, `r` need to be updated.
 
    ```shell
    # cd clusterintegrationtest
-   source .venv/bin/activate
-   python3 python_testers/vector_recall.py
+   uv run python3 python_testers/vector_recall.py
    ```
