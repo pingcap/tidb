@@ -38,11 +38,11 @@ const (
 
 // statsLockImpl implements the util.StatsLock interface.
 type statsLockImpl struct {
-	pool util.SessionPool
+	pool util.DestroyableSessionPool
 }
 
 // NewStatsLock creates a new StatsLock.
-func NewStatsLock(pool util.SessionPool) types.StatsLock {
+func NewStatsLock(pool util.DestroyableSessionPool) types.StatsLock {
 	return &statsLockImpl{pool: pool}
 }
 
