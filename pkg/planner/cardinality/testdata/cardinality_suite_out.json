@@ -921,17 +921,17 @@
       {
         "SQL": "explain format = 'brief' select * from t where a > 800 and a < 1000",
         "Result": [
-          "TableReader 793.20 root partition:p3 data:Selection",
-          "└─Selection 793.20 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t, partition:p3 keep order:false"
+          "TableReader 495.00 root partition:p3 data:Selection",
+          "└─Selection 495.00 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
+          "  └─TableFullScan 500.00 cop[tikv] table:t, partition:p3 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1000",
         "Result": [
-          "TableReader 458.19 root partition:p3 data:Selection",
-          "└─Selection 458.19 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t, partition:p3 keep order:false"
+          "TableReader 1.00 root partition:p3 data:Selection",
+          "└─Selection 1.00 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
+          "  └─TableFullScan 500.00 cop[tikv] table:t, partition:p3 keep order:false"
         ]
       },
       {

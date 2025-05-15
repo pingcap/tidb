@@ -4121,11 +4121,15 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 		return statistics.PseudoTable(tblInfo, false, true)
 	}
 
-	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if pid == tblInfo.ID {
 		statsTbl = statsHandle.GetTableStats(tblInfo)
 	} else {
 		usePartitionStats = true
 		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
+		if statsTbl.RealtimeCount == 0 {
+			usePartitionStats = false
+			statsTbl = statsHandle.GetTableStats(tblInfo)
+		}
 	}
 	intest.Assert(statsTbl.ColAndIdxExistenceMap != nil, "The existence checking map must not be nil.")
 
