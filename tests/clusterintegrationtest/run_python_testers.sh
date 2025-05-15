@@ -21,6 +21,7 @@ source $CURRENT_DIR/_include.sh
 
 echo "+ Starting run python testers"
 
+install_tiup_if_needed
 start_tidb
 wait_for_tidb
 wait_for_tiflash
