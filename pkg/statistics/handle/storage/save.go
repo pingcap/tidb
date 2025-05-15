@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -126,9 +125,9 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	if err != nil {
 		return 0, err
 	}
-	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "save analyze"))
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "save analyze"))
 	defer func() {
-		logutil.BgLogger().Info("[stats_meta] end")
+		statslogutil.StatsLogger().Info("[stats_meta] end")
 	}()
 	version := txn.StartTS()
 	// 1. Save mysql.stats_meta.
@@ -327,9 +326,9 @@ func SaveColOrIdxStatsToStorage(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "savecoloridxstats"))
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "savecoloridxstats"))
 	defer func() {
-		logutil.BgLogger().Info("[stats_meta] end")
+		statslogutil.StatsLogger().Info("[stats_meta] end")
 	}()
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
@@ -384,9 +383,9 @@ func SaveMetaToStorage(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "save stats meta"))
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "save stats meta"))
 	defer func() {
-		logutil.BgLogger().Info("[stats_meta] end")
+		statslogutil.StatsLogger().Info("[stats_meta] end")
 	}()
 	var sql string
 	values := make([]string, 0, len(metaUpdates))
@@ -420,9 +419,9 @@ func InsertColStats2KV(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "insert col stats 2 kv"))
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "insert col stats 2 kv"))
 	defer func() {
-		logutil.BgLogger().Info("[stats_meta] end")
+		statslogutil.StatsLogger().Info("[stats_meta] end")
 	}()
 	// First of all, we update the version.
 	_, err = util.ExecWithCtx(

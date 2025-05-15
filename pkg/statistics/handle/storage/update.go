@@ -26,18 +26,18 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 // UpdateStatsVersion will set statistics version to the newest TS, then
 // tidb-server will reload automatic.
 func UpdateStatsVersion(ctx context.Context, sctx sessionctx.Context) error {
-	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "update stats version"))
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "update stats version"))
 	defer func() {
-		logutil.BgLogger().Info("[stats_meta] end")
+		statslogutil.StatsLogger().Info("[stats_meta] end")
 	}()
 	startTS, err := statsutil.GetStartTS(sctx)
 	if err != nil {
@@ -87,9 +87,9 @@ func UpdateStatsMeta(
 	updates ...*DeltaUpdate,
 ) (err error) {
 
-	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "update stats meta"))
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "update stats meta"))
 	defer func() {
-		logutil.BgLogger().Info("[stats_meta] end")
+		statslogutil.StatsLogger().Info("[stats_meta] end")
 	}()
 	if len(updates) == 0 {
 		return nil
@@ -176,9 +176,9 @@ func UpdateStatsMeta(
 func InsertExtendedStats(sctx sessionctx.Context,
 	statsCache types.StatsCache,
 	statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (statsVer uint64, err error) {
-	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "insert extended stats"))
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "insert extended stats"))
 	defer func() {
-		logutil.BgLogger().Info("[stats_meta] end")
+		statslogutil.StatsLogger().Info("[stats_meta] end")
 	}()
 	slices.Sort(colIDs)
 	bytes, err := json.Marshal(colIDs)
@@ -243,9 +243,9 @@ func SaveExtendedStatsToStorage(sctx sessionctx.Context,
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "save extended stats"))
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "save extended stats"))
 	defer func() {
-		logutil.BgLogger().Info("[stats_meta] end")
+		statslogutil.StatsLogger().Info("[stats_meta] end")
 	}()
 	for name, item := range extStats.Stats {
 		bytes, err := json.Marshal(item.ColIDs)
@@ -298,9 +298,9 @@ func ChangeGlobalStatsID(
 	sctx sessionctx.Context,
 	from, to int64,
 ) error {
-	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "change global stats"))
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "change global stats"))
 	defer func() {
-		logutil.BgLogger().Info("[stats_meta] end")
+		statslogutil.StatsLogger().Info("[stats_meta] end")
 	}()
 	for _, table := range changeGlobalStatsTables {
 		_, err := statsutil.ExecWithCtx(
@@ -325,9 +325,9 @@ func UpdateStatsMetaVerAndLastHistUpdateVer(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "update stats metaver"))
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "update stats metaver"))
 	defer func() {
-		logutil.BgLogger().Info("[stats_meta] end")
+		statslogutil.StatsLogger().Info("[stats_meta] end")
 	}()
 	if _, err = statsutil.ExecWithCtx(
 		ctx,
