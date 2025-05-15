@@ -285,6 +285,12 @@ func (index *IndexInfo) IsColumnarIndex() bool {
 	return index.VectorInfo != nil || index.InvertedInfo != nil || index.FullTextInfo != nil
 }
 
+// IsFulltextIndex checks whether the index is a fulltext index.
+// Fulltext index only exists in TiCI, no actual index data need to be written to KV layer.
+func (*IndexInfo) IsFulltextIndex() bool {
+	return false
+}
+
 // GetColumnarIndexType returns the type of columnar index.
 func (index *IndexInfo) GetColumnarIndexType() ColumnarIndexType {
 	if index.VectorInfo != nil {

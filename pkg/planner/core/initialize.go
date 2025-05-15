@@ -249,12 +249,27 @@ func (p PhysicalUnionScan) Init(ctx base.PlanContext, stats *property.StatsInfo,
 	return &p
 }
 
+func (p *PhysicalIndexLookUpReader) adjustReadReqType(ctx base.PlanContext) {
+	if p.StoreType == kv.TiFlash {
+		_, ok := p.tablePlan.(*PhysicalExchangeSender)
+		if ok {
+			p.ReadReqType = MPP
+			return
+		}
+		// When allow batch cop is 2, every query uses batch cop.
+		if ctx.GetSessionVars().AllowBatchCop == 2 {
+			p.ReadReqType = BatchCop
+		}
+	}
+}
+
 // Init initializes PhysicalIndexLookUpReader.
 func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexLookUpReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 	p.schema = p.tablePlan.Schema()
+	p.adjustReadReqType(ctx)
 	return &p
 }
 
