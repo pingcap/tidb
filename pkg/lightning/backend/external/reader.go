@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/hex"
 	"io"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -81,7 +80,6 @@ func readAllData(
 	readConn = min(readConn, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
-	var blocksSizesOfConcurrentReader atomic.Int64
 	for readIdx := 0; readIdx < readConn; readIdx++ {
 		eg.Go(func() error {
 			output.memKVBuffers[readIdx] = smallBlockBufPool.NewBuffer()
@@ -97,11 +95,6 @@ func readAllData(
 					if !ok {
 						return nil
 					}
-					var c int64
-					if concurrences[fileIdx] > 1 {
-						c = int64(int(concurrences[fileIdx]) * ConcurrentReaderBufferSizePerConc)
-						blocksSizesOfConcurrentReader.Add(c)
-					}
 					err2 := readOneFile(
 						egCtx,
 						store,
@@ -114,9 +107,6 @@ func readAllData(
 						largeBlockBuf,
 						output,
 					)
-					if concurrences[fileIdx] > 1 {
-						blocksSizesOfConcurrentReader.Add(-c)
-					}
 					if err2 != nil {
 						return errors.Annotatef(err2, "failed to read file %s", dataFiles[fileIdx])
 					}
@@ -130,8 +120,6 @@ func readAllData(
 		case <-egCtx.Done():
 			return eg.Wait()
 		case taskCh <- fileIdx:
-			logutil.Logger(ctx).Info("read all data concurrent reader max memory",
-				zap.Int64("current size", blocksSizesOfConcurrentReader.Load()))
 		}
 	}
 	close(taskCh)
