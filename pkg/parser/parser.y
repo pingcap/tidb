@@ -8039,9 +8039,9 @@ SimpleExpr:
 			ExplicitCharSet: explicitCharset,
 		}
 	}
-|	jsonSumCrc32 '(' Expression "AS" CastType ArrayKwdOpt ')'
+|	jsonSumCrc32 '(' Expression "AS" CastType "ARRAY" ')'
 	{
-		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
+		/* Copied from CAST function, except that ARRAY is enforced to be true */
 		tp := $5.(*types.FieldType)
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.GetType())
 		if tp.GetFlen() == types.UnspecifiedLength {
@@ -8050,10 +8050,9 @@ SimpleExpr:
 		if tp.GetDecimal() == types.UnspecifiedLength {
 			tp.SetDecimal(defaultDecimal)
 		}
-		isArray := $6.(bool)
-		tp.SetArray(isArray)
+		tp.SetArray(true)
 		explicitCharset := parser.explicitCharset
-		if isArray && !explicitCharset && tp.GetCharset() != charset.CharsetBin {
+		if !explicitCharset && tp.GetCharset() != charset.CharsetBin {
 			tp.SetCharset(charset.CharsetUTF8MB4)
 			tp.SetCollate(charset.CollationUTF8MB4)
 		}

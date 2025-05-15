@@ -602,7 +602,7 @@ const (
 )
 
 // JSONSumCrc32Expr is the function to calculate sum of crc32 values for array in json
-// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html
+// It's modified from CastFunction to sup00port processing JSON Array.
 type JSONSumCrc32Expr struct {
 	funcNode
 	// Expr is the expression to be converted.

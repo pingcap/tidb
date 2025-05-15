@@ -1739,6 +1739,12 @@ func TestBuiltin(t *testing.T) {
 		// for cast as JSON
 		{"SELECT *, CAST(data AS JSON) FROM t;", true, "SELECT *,CAST(`data` AS JSON) FROM `t`"},
 
+		// for JSON_SUM_CRC32
+		{"SELECT *, JSON_SUM_CRC32(data AS UNSIGNED ARRAY) FROM t;", true, "SELECT *,JSON_SUM_CRC32(`data` AS UNSIGNED ARRAY) FROM `t`"},
+		{"SELECT *, JSON_SUM_CRC32(data AS DOUBLE ARRAY) FROM t;", true, "SELECT *,JSON_SUM_CRC32(`data` AS DOUBLE ARRAY) FROM `t`"},
+		{"SELECT *, JSON_SUM_CRC32(data AS DOUBLE) FROM t;", false, ""},
+		{"SELECT *, JSON_SUM_CRC32(data) FROM t;", false, ""},
+
 		// for cast as signed int, fix issue #3691.
 		{"select cast(1 as signed int);", true, "SELECT CAST(1 AS SIGNED)"},
 
