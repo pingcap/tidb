@@ -425,7 +425,7 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 		})
 		prev = cur
 	}
-	lastKey := jobKeys[len(jobKeys)-1]
+	lastKey := slices.Clone(jobKeys[len(jobKeys)-1])
 	ranges = append(ranges, engineapi.Range{
 		Start: prev,
 		End:   lastKey,
