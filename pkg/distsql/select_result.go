@@ -580,7 +580,7 @@ func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
 	decoder := codec.NewDecoder(chk, r.ctx.Location)
 	for !chk.IsFull() && len(rowsData) > 0 {
-		for i := 0; i < r.rowLen; i++ {
+		for i := range r.rowLen {
 			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
 			if err != nil {
 				return err

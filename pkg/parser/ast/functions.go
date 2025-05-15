@@ -518,16 +518,19 @@ func (n *FuncCallExpr) customRestore(ctx *format.RestoreCtx) (bool, error) {
 		return true, nil
 	}
 	if n.FnName.L == JSONMemberOf {
-		if err := n.Args[0].Restore(ctx); err != nil {
-			return true, errors.Annotatef(err, "An error occurred while restore FuncCallExpr.(MEMBER OF).Args[0]")
+		if len(n.Args) == 2 {
+			if err := n.Args[0].Restore(ctx); err != nil {
+				return true, errors.Annotatef(err, "An error occurred while restore FuncCallExpr.(MEMBER OF).Args[0]")
+			}
+			ctx.WriteKeyWord(" MEMBER OF ")
+			ctx.WritePlain("(")
+			if err := n.Args[1].Restore(ctx); err != nil {
+				return true, errors.Annotatef(err, "An error occurred while restore FuncCallExpr.(MEMBER OF).Args[1]")
+			}
+			ctx.WritePlain(")")
+			return true, nil
 		}
-		ctx.WriteKeyWord(" MEMBER OF ")
-		ctx.WritePlain("(")
-		if err := n.Args[1].Restore(ctx); err != nil {
-			return true, errors.Annotatef(err, "An error occurred while restore FuncCallExpr.(MEMBER OF).Args[1]")
-		}
-		ctx.WritePlain(")")
-		return true, nil
+		return true, errors.WithStack(errors.Errorf("Incorrect parameter count in the call to native function 'json_memberof'"))
 	}
 	return false, nil
 }

@@ -100,7 +100,7 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 	chk := testutil.GenRandomChunks(buildTypes, 2049)
 	if withSelCol {
 		sel := make([]int, 0, 2049)
-		for i := 0; i < chk.NumRows(); i++ {
+		for i := range chk.NumRows() {
 			if i%3 == 0 {
 				continue
 			}
@@ -179,7 +179,7 @@ func TestLargeColumn(t *testing.T) {
 	chk := chunk.NewEmptyChunk(buildTypes)
 	// each string value is 256k
 	stringValue := make([]byte, 1024*256)
-	for i := 0; i < rows; i++ {
+	for i := range rows {
 		// first column is int
 		chk.AppendInt64(0, int64(i))
 		chk.AppendBytes(1, stringValue)
@@ -285,7 +285,7 @@ func checkColumnResult(t *testing.T, builder *rowTableBuilder, keepFilteredRows 
 	}
 	meta := ctx.hashTableMeta
 	if forOtherCondition {
-		for i := 0; i < meta.columnCountNeededForOtherCondition; i++ {
+		for i := range meta.columnCountNeededForOtherCondition {
 			colIndex := meta.rowColumnsOrder[i]
 			resultCol := result.Column(colIndex)
 			require.Equal(t, result.NumRows(), resultCol.Rows())
@@ -355,7 +355,7 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 	chk := testutil.GenRandomChunks(buildTypes, 2049)
 	if withSelCol {
 		sel := make([]int, 0, 2049)
-		for i := 0; i < chk.NumRows(); i++ {
+		for i := range chk.NumRows() {
 			if i%3 == 0 {
 				continue
 			}
@@ -408,7 +408,7 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 			checkColumnResult(t, builder, keepFilteredRows, tmpChunk, chk, hashJoinCtx, hasOtherConditionColumns)
 			// assume all the column is selected
 			mockJoinProber.selected = make([]bool, 0, tmpChunk.NumRows())
-			for i := 0; i < tmpChunk.NumRows(); i++ {
+			for range tmpChunk.NumRows() {
 				mockJoinProber.selected = append(mockJoinProber.selected, true)
 			}
 			// need to append the rest columns
@@ -448,7 +448,7 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 		if hasOtherConditionColumns {
 			checkColumnResult(t, builder, keepFilteredRows, tmpChunk, chk, hashJoinCtx, hasOtherConditionColumns)
 			mockJoinProber.selected = make([]bool, 0, tmpChunk.NumRows())
-			for i := 0; i < tmpChunk.NumRows(); i++ {
+			for range tmpChunk.NumRows() {
 				mockJoinProber.selected = append(mockJoinProber.selected, true)
 			}
 			err1 := mockJoinProber.buildResultAfterOtherCondition(resultChunk, tmpChunk)
@@ -603,7 +603,7 @@ func TestBalanceOfFilteredRows(t *testing.T) {
 	require.NoError(t, err)
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	rowTables := hashJoinCtx.hashTableContext.rowTables[0]
-	for i := 0; i < int(hashJoinCtx.partitionNumber); i++ {
+	for i := range int(hashJoinCtx.partitionNumber) {
 		require.Equal(t, int(3000/hashJoinCtx.partitionNumber), int(rowTables[i].rowCount()))
 	}
 }

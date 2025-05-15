@@ -561,12 +561,9 @@ func (job *Job) decodeArgs(args ...any) error {
 		return errors.Trace(err)
 	}
 
-	sz := len(rawArgs)
-	if sz > len(args) {
-		sz = len(args)
-	}
+	sz := min(len(rawArgs), len(args))
 
-	for i := 0; i < sz; i++ {
+	for i := range sz {
 		if err := json.Unmarshal(rawArgs[i], args[i]); err != nil {
 			return errors.Trace(err)
 		}
@@ -646,7 +643,7 @@ func (job *Job) IsPausable() bool {
 // IsAlterable checks whether the job type can be altered.
 func (job *Job) IsAlterable() bool {
 	// Currently, only non-distributed add index reorg task can be altered
-	return job.Type == ActionAddIndex && !job.ReorgMeta.UseCloudStorage ||
+	return job.Type == ActionAddIndex ||
 		job.Type == ActionModifyColumn ||
 		job.Type == ActionReorganizePartition
 }

@@ -1104,7 +1104,7 @@ func TestStmtSummaryEvictedPointGet(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval=%v;", interval))
 	tk.MustExec("create database point_get;")
 	tk.MustExec("use point_get;")
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		tk.MustExec(fmt.Sprintf("create table if not exists th%v ("+
 			"p bigint key,"+
 			"q int);", i))
@@ -1321,7 +1321,7 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1)")
-	for i := 0; i < 9; i++ {
+	for range 9 {
 		tk.MustExec("insert into t select * from t;")
 	}
 

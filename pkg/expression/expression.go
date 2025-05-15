@@ -399,7 +399,7 @@ func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chu
 	n := input.NumRows()
 	selected = selected[:0]
 	nulls = nulls[:0]
-	for i := 0; i < n; i++ {
+	for range n {
 		selected = append(selected, false)
 		nulls = append(nulls, false)
 	}
@@ -407,7 +407,7 @@ func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chu
 	sel := allocSelSlice(n)
 	defer deallocateSelSlice(sel)
 	sel = sel[:0]
-	for i := 0; i < n; i++ {
+	for i := range n {
 		sel = append(sel, i)
 	}
 	input.SetSel(sel)

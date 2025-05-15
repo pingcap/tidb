@@ -1399,6 +1399,7 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		ShouldCheckTiKV:             true,
 		DupeDetectEnabled:           false,
 		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: false},
+		TiKVWorkerURL:               tidb.GetGlobalConfig().TiKVWorkerURL,
 		StoreWriteBWLimit:           int(e.MaxWriteSpeed),
 		MaxOpenFiles:                int(tidbutil.GenRLimit("table_import")),
 		KeyspaceName:                tidb.GetGlobalKeyspaceName(),

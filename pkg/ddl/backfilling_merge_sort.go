@@ -25,7 +25,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
@@ -99,11 +102,15 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		onClose,
 		int(res.CPU.Capacity()),
 		true,
+		engineapi.OnDuplicateKeyError,
 	)
 	failpoint.Inject("mockMergeSortRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded
 	})
 	if err != nil {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			return local.ConvertToErrFoundConflictRecords(err, m.ptbl)
+		}
 		return errors.Trace(err)
 	}
 	return m.onFinished(ctx, subtask)
@@ -132,5 +139,10 @@ func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subta
 		return errors.Trace(err)
 	}
 	subtask.Meta = newMeta
+	return nil
+}
+
+func (*mergeSortExecutor) ResourceModified(_ context.Context, _ *proto.StepResource) error {
+	// Will be added in the future PR
 	return nil
 }

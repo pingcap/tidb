@@ -165,7 +165,8 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 					op.sharedVars.mergeIndexSummary(indexID, summary)
 				}).
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
-				SetBlockSize(indexBlockSize)
+				SetBlockSize(indexBlockSize).
+				SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
 			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
@@ -177,7 +178,8 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(op.sharedVars.mergeDataSummary).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
-			SetBlockSize(getKVGroupBlockSize(dataKVGroup))
+			SetBlockSize(getKVGroupBlockSize(dataKVGroup)).
+			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
 		writerID := path.Join("data", workerUUID)

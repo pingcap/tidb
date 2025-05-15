@@ -867,7 +867,7 @@ func TestReplaceTemporaryIDs(t *testing.T) {
 			tempCounter: -8,
 			genGlobalIDs: func(ctx context.Context, n int) ([]int64, error) {
 				ids := make([]int64, n)
-				for i := 0; i < n; i++ {
+				for i := range n {
 					ids[i] = int64(1000 + i*10)
 				}
 				return ids, nil
@@ -935,7 +935,7 @@ func TestReplaceTemporaryIDs(t *testing.T) {
 			tempCounter: -15,
 			genGlobalIDs: func(ctx context.Context, n int) ([]int64, error) {
 				ids := make([]int64, n)
-				for i := 0; i < n; i++ {
+				for i := range n {
 					ids[i] = int64(2000 + i*10)
 				}
 				return ids, nil
