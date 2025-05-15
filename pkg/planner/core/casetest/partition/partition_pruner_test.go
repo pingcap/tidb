@@ -647,5 +647,5 @@ func TestIssue61134(t *testing.T) {
 
 	tk.MustExec("insert into t values ('', 1)")
 	tk.MustQuery("explain select * from t where a in ('')").CheckContain("Point_Get")
-	tk.MustQuery("select * from t where a in ('')").Check(testkit.Rows("  1"))
+	tk.MustQuery("select * from t where a in ('')").Check(testkit.Rows(" 1"))
 }
