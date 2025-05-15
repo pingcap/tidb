@@ -129,7 +129,7 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 		}
 		return applyDropSchema(b, schemaDiff), nil
 	}
-	// Schema exists in kv but not in infoschema, drop it from infoschema.
+	// Schema exists in kv but not in infoschema, create it to infoschema.
 	if _, ok := b.SchemaByID(schemaID); !ok {
 		schemaDiff := &model.SchemaDiff{
 			Version:  diff.Version,
