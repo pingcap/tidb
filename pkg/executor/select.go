@@ -955,8 +955,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DiskTracker.Killer = &vars.SQLKiller
 	vars.SQLKiller.Reset()
 	vars.SQLKiller.ConnID.Store(vars.ConnectionID)
-	vars.RecordRelevantOptVarsAndFixes = false
-	vars.RelevantOptVars = nil
+	vars.ResetRelevantOptVarsAndFixes(false)
 
 	isAnalyze := false
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
