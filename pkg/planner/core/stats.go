@@ -123,6 +123,7 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 		ds.SetStats(ds.TableStats.Scale(selectivity))
 		return ds.StatsInfo(), nil
 	}
+
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(ds.SCtx())
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
@@ -156,6 +157,8 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 		return nil, err
 	}
 
+	removeInvalidPathsForDataSource(ds)
+
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugTraceAccessPaths(ds.SCtx(), ds.PossibleAccessPaths)
 	}
@@ -166,6 +169,109 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 	}
 
 	return ds.StatsInfo(), nil
+}
+
+// checkNoNullIndexForPath checks whether a path is valid considering `NO_NULL_INDEX`
+func checkNoNullIndexForPath(ds *logicalop.DataSource, path *util.AccessPath, conditions []expression.Expression) (valid bool) {
+	includeNullRange := false
+
+	for _, col := range path.Index.NoNullIdxColOffsets {
+		for _, ran := range path.Ranges {
+			if len(ran.LowVal) <= col || len(ran.HighVal) <= col ||
+				ran.LowVal[col].IsNull() || ran.HighVal[col].IsNull() {
+				includeNullRange = true
+				break
+			}
+		}
+
+		if includeNullRange {
+			// If the condition can make sure the column is not null, we can also use this index.
+			// TODO: maybe only considering the conditions except accessConds is enough, because the ranges
+			// do contain NULL.
+			if ranger.CheckColumnIsNotNullWithCNFConditions(ds.SCtx(), path.FullIdxCols[col], conditions) {
+				includeNullRange = false
+				continue
+			}
+
+			break
+		}
+	}
+
+	return !includeNullRange
+}
+
+// removeInvalidPathsForDataSource will remove invalid paths from PossibleAccessPaths.
+// Some paths are not available because they may use index which contains NO_NULL_INDEX column,
+// but cannot make sure the column is not null.
+func removeInvalidPathsForDataSource(ds *logicalop.DataSource) {
+	for i := len(ds.PossibleAccessPaths) - 1; i >= 0; i-- {
+		path := ds.PossibleAccessPaths[i]
+
+		if path.IsTablePath() {
+			continue
+		}
+
+		// If the index contains NO_NULL_INDEX column, it may not contain all rows
+		if path.Index != nil && len(path.Index.NoNullIdxColOffsets) > 0 {
+			if !checkNoNullIndexForPath(ds, path, ds.AllConds) {
+				ds.PossibleAccessPaths = slices.Delete(ds.PossibleAccessPaths, i, i+1)
+				continue
+			}
+		}
+
+		if path.PartialIndexPaths != nil {
+			// consider whether this path is valid for the `NO_NULL_INDEX` column.
+			isValid := true
+			for _, partialPath := range path.PartialIndexPaths {
+				if !checkPartialPathValid(ds, partialPath, path.TableFilters) {
+					isValid = false
+					break
+				}
+			}
+			if !isValid {
+				ds.PossibleAccessPaths = slices.Delete(ds.PossibleAccessPaths, i, i+1)
+				continue
+			}
+		}
+
+		if len(path.PartialAlternativeIndexPaths) > 0 {
+			isValid := true
+			// For each branch, remove the invalid path.
+			for i := 0; i < len(path.PartialAlternativeIndexPaths); i++ {
+				partialPaths := path.PartialAlternativeIndexPaths[i]
+				for j := len(partialPaths) - 1; j >= 0; j-- {
+					partialPath := partialPaths[j]
+					if !checkPartialPathValid(ds, partialPath, path.TableFilters) {
+						partialPaths = slices.Delete(partialPaths, j, j+1)
+					}
+				}
+
+				// If all paths are invalid, remove the whole possibleAccessPath.
+				if len(partialPaths) == 0 {
+					isValid = false
+					break
+				}
+
+				// If there are still valid paths, we need to update the PartialAlternativeIndexPaths.
+				path.PartialAlternativeIndexPaths[i] = partialPaths
+			}
+			if !isValid {
+				ds.PossibleAccessPaths = slices.Delete(ds.PossibleAccessPaths, i, i+1)
+				continue
+			}
+		}
+	}
+}
+
+// checkPartialPathValid checks whether a partial path of index merge is valid
+func checkPartialPathValid(ds *logicalop.DataSource, partialPath *util.AccessPath, tableFilters []expression.Expression) bool {
+	if partialPath.Index != nil && len(partialPath.Index.NoNullIdxColOffsets) > 0 {
+		if !checkNoNullIndexForPath(ds, partialPath, append(partialPath.IndexFilters, tableFilters...)) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression) error {
