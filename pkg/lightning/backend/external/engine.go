@@ -233,8 +233,10 @@ func getFilesReadConcurrency(
 		return nil, nil, err
 	}
 	startOffs, endOffs := offsets[0], offsets[1]
+	totalFileSize := 0
 	for i := range statsFiles {
 		expectedConc := (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
+		totalFileSize += int(endOffs[i] - startOffs[i])
 		// let the stat internals cover the [startKey, endKey) since seekPropsOffsets
 		// always return an offset that is less than or equal to the key.
 		expectedConc += 1
@@ -257,6 +259,8 @@ func getFilesReadConcurrency(
 			)
 		}
 	}
+	logutil.Logger(ctx).Info("estimated file size of this range group",
+		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 	return result, startOffs, nil
 }
 
