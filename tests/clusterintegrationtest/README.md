@@ -84,5 +84,5 @@ After changing `t` or changing optimizer plans, `r` need to be updated.
 
    ```shell
    # cd clusterintegrationtest
-   uv run python3 python_testers/vector_recall.py
+   uv run python_testers/vector_recall.py
    ```

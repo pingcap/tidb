@@ -19,25 +19,25 @@ set -euo pipefail
 CURRENT_DIR="$(dirname "$0")"
 source $CURRENT_DIR/_include.sh
 
-print_versions
-
-start_tidb
+start_tidb_fixed_version
 wait_for_tidb
 wait_for_tiflash
 
+print_versions
+
 echo "+ Starting run vector recall test"
 echo "+ Running ./python_testers/vector_recall.py"
-python3 ./python_testers/vector_recall.py
+uv run ./python_testers/vector_recall.py
 
 stop_tiup
 
 # use latest release tidb
-print_versions
-
-start_tidb_latest
+start_tidb
 wait_for_tidb
 wait_for_tiflash
 
+print_versions
+
 echo "+ Starting run vector recall test"
 echo "+ Testing vector recall and index using latest version"
-python3 ./python_testers/vector_recall.py --check-only
+uv run ./python_testers/vector_recall.py --check-only

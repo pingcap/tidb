@@ -20,11 +20,12 @@ CURRENT_DIR="$(dirname "$0")"
 source $CURRENT_DIR/_include.sh
 
 echo "+ Starting run python testers"
-print_versions
 
 start_tidb
 wait_for_tidb
 wait_for_tiflash
+
+print_versions
 
 echo "+ Running /root/python_testers/vector_recall.py"
 uv run ./python_testers/vector_recall.py

@@ -17,6 +17,8 @@
 set -euo pipefail
 
 function start_tidb() {
+  export VERSION_SOURCE="nightly"
+
   cd ../../ || exit 1
   echo "building tidb-server..."
   make
@@ -30,9 +32,9 @@ function start_tidb() {
   sleep 20
 }
 
-function start_tidb_latest() {
+function start_tidb_fixed_version() {
   echo "Starting TiUP Playground in the background..."
-  tiup playground nightly --db=1 --kv=1 --tiflash=1 &
+  tiup playground v8.5.1 --db=1 --kv=1 --tiflash=1 &
 
   sleep 20
 }
@@ -86,15 +88,30 @@ function stop_tiup() {
 
 function print_versions() {
   # Print versions
-  echo "+ TiDB Version"
-  ../../bin/tidb-server -V
-  echo
-  echo "+ TiKV Version"
-  ~/.tiup/components/tikv/v9.0.0-beta.1.pre-nightly/tikv-server --version
-  echo
-  echo "+ TiFlash Version"
-  ~/.tiup/components/tiflash/v9.0.0-beta.1.pre-nightly/tiflash/tiflash version
-  echo
-  echo "+ TiUP Version"
-  ~/.tiup/bin/tiup playground -v
+  if [ "$VERSION_SOURCE" = "nightly" ]; then
+    echo "+ TiDB Version"
+    ../../bin/tidb-server -V
+    echo
+    echo "+ TiKV Version"
+    ~/.tiup/components/tikv/*-nightly/tikv-server --version
+    echo
+    echo "+ TiFlash Version"
+    ~/.tiup/components/tiflash/*-nightly/tiflash/tiflash version
+    echo
+    echo "+ TiUP Version"
+    ~/.tiup/bin/tiup playground -v
+  else
+    echo "+ TiDB Version"
+    ~/.tiup/components/tikv/v8.5.1/tidb-server -V
+    echo
+    echo "+ TiKV Version"
+    ~/.tiup/components/tikv/v8.5.1/tikv-server --version
+    echo
+    echo "+ TiFlash Version"
+    ~/.tiup/components/tiflash/v8.5.1/tiflash/tiflash version
+    echo
+    echo "+ TiUP Version"
+    ~/.tiup/bin/tiup playground -v
+  fi
+  
 }

@@ -19,12 +19,12 @@ set -euo pipefail
 CURRENT_DIR="$(dirname "$0")"
 source $CURRENT_DIR/_include.sh
 
-print_versions
-
 build_mysql_tester
 start_tidb
 wait_for_tidb
 wait_for_tiflash
+
+print_versions
 
 echo "+ Running mysql-tester"
 ./mysql-tester -all
