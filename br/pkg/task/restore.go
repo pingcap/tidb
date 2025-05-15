@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -273,7 +274,7 @@ type RestoreConfig struct {
 
 	UseCheckpoint                 bool                            `json:"use-checkpoint" toml:"use-checkpoint"`
 	CheckpointStorage             string                          `json:"checkpoint-storage" toml:"checkpoint-storage"`
-	upstreamClusterID             uint64                          `json:"-" toml:"-"`
+	UpstreamClusterID             uint64                          `json:"-" toml:"-"`
 	snapshotCheckpointMetaManager checkpoint.SnapshotMetaManagerT `json:"-" toml:"-"`
 	logCheckpointMetaManager      checkpoint.LogMetaManagerT      `json:"-" toml:"-"`
 	sstCheckpointMetaManager      checkpoint.SnapshotMetaManagerT `json:"-" toml:"-"`
@@ -300,28 +301,33 @@ func (cfg *RestoreConfig) LocalEncryptionEnabled() bool {
 }
 
 type immutableRestoreConfig struct {
-	cmdName           string
-	upstreamClusterID uint64
-	storage           string
-	explictFlter      bool
-	filterStr         []string
-	withSysTable      bool
+	CmdName           string
+	UpstreamClusterID uint64
+	Storage           string
+	ExplictFilter      bool
+	FilterStr         []string
+	WithSysTable      bool
 }
 
 func Hash(cmdName string, cfg *RestoreConfig) ([]byte, error) {
-	config := &immutableRestoreConfig{
-		cmdName:           cmdName,
-		upstreamClusterID: cfg.upstreamClusterID,
-		storage:           cfg.Storage,
-		explictFlter:      cfg.ExplicitFilter,
-		filterStr:         cfg.FilterStr,
-		withSysTable:      cfg.WithSysTable,
+	if cfg == nil {
+		return nil, errors.New("nil config")
+	}
+	
+	config := immutableRestoreConfig{
+		CmdName:           cmdName,
+		UpstreamClusterID: cfg.UpstreamClusterID,
+		Storage:           cfg.Storage,
+		ExplictFilter:      cfg.ExplicitFilter,
+		FilterStr:         cfg.FilterStr,
+		WithSysTable:      cfg.WithSysTable,
 	}
 	data, err := json.Marshal(config)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	hash := sha256.Sum256(data)
+	log.Info("hash of restore config", zap.String("hash", hex.EncodeToString(hash[:])))
 	return hash[:], nil
 }
 
@@ -987,7 +993,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
-	reusePreallocID, checkpointFirstRun, err := checkRestorefirstRun(ctx, mgr, g, cfg, cmdName, hash)
+	reusePreallocID, checkpointFirstRun, err := checkRestorefirstRun(ctx, mgr, g, cfg, hash)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1139,30 +1145,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}()
 	}
 
-	failpoint.Inject("sleep_for_check_scheduler_status", func(val failpoint.Value) {
-		fileName, ok := val.(string)
-		func() {
-			if !ok {
-				return
-			}
-			_, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
-			if osErr != nil {
-				log.Warn("failed to create file", zap.Error(osErr))
-				return
-			}
-		}()
-		for {
-			_, statErr := os.Stat(fileName)
-			if os.IsNotExist(statErr) {
-				break
-			} else if statErr != nil {
-				log.Warn("error checking file", zap.Error(statErr))
-				break
-			}
-			time.Sleep(300 * time.Millisecond)
-		}
-	})
-
 	err = client.InstallPiTRSupport(ctx, snapclient.PiTRCollDep{
 		PDCli:   mgr.GetPDClient(),
 		EtcdCli: mgr.GetDomain().GetEtcdClient(),
@@ -1284,6 +1266,32 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
+	/* failpoint */
+	failpoint.Inject("sleep_for_check_scheduler_status", func(val failpoint.Value) {
+		fileName, ok := val.(string)
+		func() {
+			if !ok {
+				return
+			}
+			_, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+			if osErr != nil {
+				log.Warn("failed to create file", zap.Error(osErr))
+				return
+			}
+		}()
+		for {
+			_, statErr := os.Stat(fileName)
+			if os.IsNotExist(statErr) {
+				break
+			} else if statErr != nil {
+				log.Warn("error checking file", zap.Error(statErr))
+				break
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+	})
+	/* failpoint */
+
 
 	anyFileKey := getAnyFileKeyFromTables(tables)
 	if len(anyFileKey) == 0 {
@@ -1394,7 +1402,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	return nil
 }
 
-func checkRestorefirstRun(ctx context.Context, mgr *conn.Mgr, g glue.Glue, cfg *SnapshotRestoreConfig, cmdName string, hash []byte) (prealloc *checkpoint.PreallocIDs, checkpointFirstRun bool, err error) {
+func checkRestorefirstRun(ctx context.Context, mgr *conn.Mgr, g glue.Glue, cfg *SnapshotRestoreConfig, hash []byte) (prealloc *checkpoint.PreallocIDs, checkpointFirstRun bool, err error) {
 	if !cfg.UseCheckpoint {
 		return nil, true, nil
 	}
@@ -1420,8 +1428,8 @@ func checkRestorefirstRun(ctx context.Context, mgr *conn.Mgr, g glue.Glue, cfg *
 		return nil, true, nil
 	}
 
-	log.Info("checkpoint metadata exists, restore is not the first time")
 	checkpointMeta, err := cfg.snapshotCheckpointMetaManager.LoadCheckpointMetadata(ctx)
+	log.Info("checkpoint metadata exists", zap.String("hash", hex.EncodeToString(hash)), zap.String("checkpoint hash", hex.EncodeToString(checkpointMeta.Hash)))
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
