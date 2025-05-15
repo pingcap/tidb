@@ -144,7 +144,9 @@ func SumCostVer2(costs ...CostVer2) (ret CostVer2) {
 			if ret.trace.formula != "" {
 				ret.trace.formula += " + "
 			}
-			ret.trace.formula += "(" + c.trace.formula + ")"
+			if c.trace.formula != "" {
+				ret.trace.formula += "(" + c.trace.formula + ")"
+			}
 		}
 	}
 	return ret
