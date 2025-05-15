@@ -655,14 +655,9 @@ func calculatePlanDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDi
 	return digest.String(), nil
 }
 
-func recordRelevantOptVars(sctx sessionctx.Context, stmt ast.StmtNode) (varNames []string, err error) {
-	sctx.GetSessionVars().RecordRelevantOptVars = true
-	sctx.GetSessionVars().RelevantOptVars = nil
-	defer func() {
-		sctx.GetSessionVars().RecordRelevantOptVars = false
-		sctx.GetSessionVars().RelevantOptVars = nil
-	}()
-
+func recordRelevantOptVarsAndFixes(sctx sessionctx.Context, stmt ast.StmtNode) (varNames []string, fixIDs []uint64, err error) {
+	sctx.GetSessionVars().ResetRelevantOptVarsAndFixes(true)
+	defer sctx.GetSessionVars().ResetRelevantOptVarsAndFixes(false)
 	ret := &core.PreprocessorReturn{}
 	nodeW := resolve.NewNodeW(stmt)
 	err = core.Preprocess(
@@ -673,18 +668,25 @@ func recordRelevantOptVars(sctx sessionctx.Context, stmt ast.StmtNode) (varNames
 		core.InitTxnContextProvider,
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	_, _, err = Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	for varName := range sctx.GetSessionVars().RelevantOptVars {
 		varNames = append(varNames, varName)
 	}
 	sort.Strings(varNames)
+
+	for fixID := range sctx.GetSessionVars().RelevantOptFixes {
+		fixIDs = append(fixIDs, fixID)
+	}
+	sort.Slice(fixIDs, func(i, j int) bool {
+		return fixIDs[i] < fixIDs[j]
+	})
 	return
 }
 
@@ -696,5 +698,5 @@ func init() {
 		return domain.GetDomain(sctx).BindingHandle()
 	}
 	bindinfo.CalculatePlanDigest = calculatePlanDigestFunc
-	bindinfo.RecordRelevantOptVars = recordRelevantOptVars
+	bindinfo.RecordRelevantOptVarsAndFixes = recordRelevantOptVarsAndFixes
 }

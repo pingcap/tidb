@@ -533,7 +533,7 @@ func generateOtherIndexMerge(ds *logicalop.DataSource, regularPathCount int, ind
 			fixcontrol.Fix52869,
 			false,
 		)
-		ds.SCtx().GetSessionVars().RecordRelevantOptVar("Fix52869")
+		ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix52869)
 		if !skipRangeScanCheck {
 			for i := 1; i < len(ds.PossibleAccessPaths); i++ {
 				if len(ds.PossibleAccessPaths[i].AccessConds) != 0 {

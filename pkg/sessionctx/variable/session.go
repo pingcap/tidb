@@ -21,6 +21,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
+	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"maps"
 	"math"
 	"math/rand"
@@ -63,10 +65,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
-	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -1640,11 +1640,14 @@ type SessionVars struct {
 	// 0 > value <= 1 applies that percentage as the estimate when rows are found. For example 0.1 = 10%.
 	OptOrderingIdxSelRatio float64
 
-	// RecordRelevantOptVars indicates whether to record optimizer variables relevant to this query.
-	RecordRelevantOptVars bool
+	// RecordRelevantOptVarsAndFixes indicates whether to record optimizer variables/fixes relevant to this query.
+	RecordRelevantOptVarsAndFixes bool
 
 	// RelevantOptVars is a map of relevant optimizer variables to be recorded.
 	RelevantOptVars map[string]struct{}
+
+	// RelevantOptFixes is a map of relevant optimizer fixes to be recorded.
+	RelevantOptFixes map[uint64]struct{}
 
 	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
 	EnableMPPSharedCTEExecution bool
@@ -1729,15 +1732,33 @@ type SessionVars struct {
 	BulkDMLEnabled bool
 }
 
+// ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
+func (s *SessionVars) ResetRelevantOptVarsAndFixes(record bool) {
+	s.RecordRelevantOptVarsAndFixes = record
+	s.RelevantOptVars = nil
+	s.RelevantOptFixes = nil
+}
+
 // RecordRelevantOptVar records the optimizer variable that is relevant to the current query.
 func (s *SessionVars) RecordRelevantOptVar(varName string) {
-	if !s.RecordRelevantOptVars {
+	if !s.RecordRelevantOptVarsAndFixes {
 		return
 	}
 	if s.RelevantOptVars == nil {
 		s.RelevantOptVars = make(map[string]struct{})
 	}
 	s.RelevantOptVars[varName] = struct{}{}
+}
+
+// RecordRelevantOptFix records the optimizer fix that is relevant to the current query.
+func (s *SessionVars) RecordRelevantOptFix(fixID uint64) {
+	if !s.RecordRelevantOptVarsAndFixes {
+		return
+	}
+	if s.RelevantOptFixes == nil {
+		s.RelevantOptFixes = make(map[uint64]struct{})
+	}
+	s.RelevantOptFixes[fixID] = struct{}{}
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
