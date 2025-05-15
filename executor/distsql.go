@@ -785,7 +785,9 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, task.handles, true)
 	if err != nil {
-		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
+		if ctx.Err() != context.Canceled {
+			logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
+		}
 		return nil, err
 	}
 	return tableReader, nil
@@ -1419,7 +1421,9 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	tableReader, err := w.idxLookup.buildTableReader(ctx, task)
 	task.buildDoneTime = time.Now()
 	if err != nil {
-		logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
+		if ctx.Err() != context.Canceled {
+			logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
+		}
 		return err
 	}
 	defer terror.Call(tableReader.Close)
@@ -1438,7 +1442,9 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		chk := tryNewCacheChunk(tableReader)
 		err = Next(ctx, tableReader, chk)
 		if err != nil {
-			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
+			if ctx.Err() != context.Canceled {
+				logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
+			}
 			return err
 		}
 		if chk.NumRows() == 0 {
