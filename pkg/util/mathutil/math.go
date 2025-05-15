@@ -15,9 +15,9 @@
 package mathutil
 
 import (
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"math"
 
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"golang.org/x/exp/constraints"
 )
 

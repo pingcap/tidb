@@ -73,6 +73,7 @@ type baseConflictKVHandler struct {
 	kvGroup       string
 
 	collector       *conflictRowCollector
+	deleter         *conflictKVDeleter
 	encoder         *importer.TableKVEncoder
 	lastRefreshTime time.Time
 	snapshot        tidbkv.Snapshot
@@ -118,7 +119,7 @@ func (h *baseConflictKVHandler) close(ctx context.Context) error {
 		firstErr.Set(h.collector.close(ctx))
 	}
 	firstErr.Set(h.encoder.Close())
-	firstErr.Set(h.deleteKeysWithRetry(ctx))
+	firstErr.Set(h.sendKeysToDelete(ctx))
 
 	return firstErr.Get()
 }
@@ -189,29 +190,23 @@ func (h *baseConflictKVHandler) gatherAndDeleteKeysWithRetry(ctx context.Context
 	}
 
 	if h.bufSize >= bufferedKeySizeLimit || len(h.bufferedKeys) >= bufferedKeyCountLimit {
-		return h.deleteKeysWithRetry(ctx)
+		return h.sendKeysToDelete(ctx)
 	}
 	return nil
 }
 
-func (h *baseConflictKVHandler) deleteKeysWithRetry(ctx context.Context) error {
+func (h *baseConflictKVHandler) sendKeysToDelete(ctx context.Context) error {
 	if len(h.bufferedKeys) == 0 {
 		return nil
 	}
-	backoffer := backoff.NewExponential(storeOpMinBackoff, 2, storeOpMaxBackoff)
-	if err := dxfhandle.RunWithRetry(ctx, storeOpMaxRetryCnt, backoffer, h.logger, func(ctx context.Context) (bool, error) {
-		err := h.deleteBufferedKeys(ctx)
-		if err != nil {
-			return common.IsRetryableError(err), err
-		}
-		return true, nil
-	}); err != nil {
-		return err
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case h.deleter.getCh() <- h.bufferedKeys:
+		h.bufferedKeys = make([]tidbkv.Key, 0, len(h.bufferedKeys))
+		h.bufSize = 0
+		return nil
 	}
-
-	h.bufferedKeys = h.bufferedKeys[:0]
-	h.bufSize = 0
-	return nil
 }
 
 // we are deleting keys related to a single row in one transaction, and a normal
@@ -243,29 +238,6 @@ func (h *baseConflictKVHandler) gatherKeysToDelete(ctx context.Context, pairs []
 		h.bufSize += len(k)
 	}
 
-	return nil
-}
-
-func (h *baseConflictKVHandler) deleteBufferedKeys(ctx context.Context) error {
-	txn, err := h.store.Begin()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		if err == nil {
-			err = txn.Commit(ctx)
-		} else {
-			if rollbackErr := txn.Rollback(); rollbackErr != nil {
-				h.logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))
-			}
-		}
-	}()
-
-	for _, k := range h.bufferedKeys {
-		if err = txn.Delete(k); err != nil {
-			return errors.Trace(err)
-		}
-	}
 	return nil
 }
 
@@ -387,10 +359,8 @@ func handleKVGroupConflicts(
 	})
 	batches := mathutil.Divide2Batches(len(ci.Files), 2)
 	task := log.BeginTask(logger.With(
-		zap.String("kvGroup", kvGroup),
-		zap.Uint64("duplicates", ci.Count),
-		zap.Int("file-count", len(ci.Files)),
-		zap.Int("concurrency", concurrency),
+		zap.String("kvGroup", kvGroup), zap.Uint64("duplicates", ci.Count),
+		zap.Int("file-count", len(ci.Files)), zap.Int("concurrency", concurrency),
 		zap.Int("batch-count", len(batches)),
 	), "handle kv group conflicts")
 
@@ -453,6 +423,88 @@ func handleKVGroupConflicts(
 		})
 	}
 	return result, eg.Wait()
+}
+
+func resolveConflicts(
+	ctx context.Context,
+	logger *zap.Logger,
+	concurrency int,
+	newHandlerFn func(string, chan []tidbkv.Key) (conflictKVHandler, *conflictKVDeleter),
+	store storage.ExternalStorage,
+	kvGroup string,
+	ci *common.ConflictInfo,
+) (err error) {
+	failpoint.Inject("forceHandleConflictsBySingleThread", func() {
+		concurrency = 1
+	})
+	batches := mathutil.Divide2Batches(len(ci.Files), 2)
+	task := log.BeginTask(logger.With(
+		zap.String("kvGroup", kvGroup), zap.Uint64("duplicates", ci.Count),
+		zap.Int("file-count", len(ci.Files)), zap.Int("concurrency", concurrency),
+		zap.Int("batch-count", len(batches)),
+	), "handle kv group conflicts")
+
+	defer func() {
+		task.End(zapcore.ErrorLevel, err)
+	}()
+
+	pairCh := make(chan *external.KVPair)
+	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
+
+	var finishedSender atomic.Int32
+	var start int
+	for _, size := range batches {
+		files := ci.Files[start : start+size]
+		start += size
+		eg.Go(func() error {
+			defer func() {
+				count := finishedSender.Add(1)
+				if len(batches) == int(count) {
+					close(pairCh)
+				}
+			}()
+			for _, file := range files {
+				if err := readOneFile(egCtx, store, file, pairCh); err != nil {
+					return errors.Trace(err)
+				}
+			}
+			return nil
+		})
+	}
+	var initMu sync.Mutex
+	initHandlerWithLockFn := func(handler conflictKVHandler) error {
+		initMu.Lock()
+		defer initMu.Unlock()
+		// when create encoder, if the table have generated column, when calling
+		// backend/kv.CollectGeneratedColumns(), buildSimpleExpr will rewrite the
+		// AST node, and data race.
+		return handler.init()
+	}
+	var finishedHandlers atomic.Int32
+	keysToDeleteCh := make(chan []tidbkv.Key)
+	for i := 0; i < concurrency; i++ {
+		handler, deleter := newHandlerFn(kvGroup, keysToDeleteCh)
+		eg.Go(func() error {
+			defer func() {
+				count := finishedHandlers.Add(1)
+				if int(count) == concurrency {
+					close(keysToDeleteCh)
+				}
+			}()
+			if err := initHandlerWithLockFn(handler); err != nil {
+				return errors.Trace(err)
+			}
+			if err := handler.run(egCtx, pairCh); err != nil {
+				_ = handler.close(egCtx)
+				return err
+			}
+			return handler.close(egCtx)
+		})
+		eg.Go(func() error {
+			return deleter.run(egCtx)
+		})
+	}
+	return eg.Wait()
 }
 
 func readOneFile(ctx context.Context, store storage.ExternalStorage, file string, outCh chan *external.KVPair) error {

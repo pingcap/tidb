@@ -17,6 +17,9 @@ package importinto
 import (
 	"context"
 	"encoding/json"
+	dxfhandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/util/backoff"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -67,7 +70,7 @@ func (e *conflictResolutionStepExecutor) RunSubtask(ctx context.Context, subtask
 		}
 	}
 	for kvGroup, ci := range stepMeta.Infos.ConflictInfos {
-		_, err = handleKVGroupConflicts(ctx, e.logger, subtask.Concurrency, e.getHandler,
+		err = resolveConflicts(ctx, e.logger, subtask.Concurrency, e.getHandlerAndDeleter,
 			e.tableImporter.GlobalSortStore, kvGroup, ci)
 		failpoint.InjectCall("afterResolveOneKVGroup", &err)
 		if err != nil {
@@ -77,12 +80,19 @@ func (e *conflictResolutionStepExecutor) RunSubtask(ctx context.Context, subtask
 	return nil
 }
 
-func (e *conflictResolutionStepExecutor) getHandler(kvGroup string) conflictKVHandler {
+func (e *conflictResolutionStepExecutor) getHandlerAndDeleter(kvGroup string, keysToDelCh chan []tidbkv.Key) (
+	conflictKVHandler, *conflictKVDeleter) {
+	deleter := &conflictKVDeleter{
+		keysCh: keysToDelCh,
+		store:  e.store,
+		logger: e.logger,
+	}
 	baseHandler := &baseConflictKVHandler{
 		tableImporter: e.tableImporter,
 		store:         e.store,
 		logger:        e.logger,
 		kvGroup:       kvGroup,
+		deleter:       deleter,
 	}
 	dataKVHandler := &conflictDataKVHandler{baseConflictKVHandler: baseHandler}
 	baseHandler.handleFn = dataKVHandler.handle
@@ -92,10 +102,66 @@ func (e *conflictResolutionStepExecutor) getHandler(kvGroup string) conflictKVHa
 		baseHandler.handleFn = indexKVHandler.handle
 		handler = indexKVHandler
 	}
-	return handler
+	return handler, deleter
 }
 
 func (e *conflictResolutionStepExecutor) Cleanup(_ context.Context) (err error) {
 	e.logger.Info("cleanup subtask env")
 	return e.tableImporter.Close()
+}
+
+type conflictKVDeleter struct {
+	keysCh chan []tidbkv.Key
+	store  tidbkv.Storage
+	logger *zap.Logger
+}
+
+func (d *conflictKVDeleter) getCh() chan []tidbkv.Key {
+	return d.keysCh
+}
+
+func (d *conflictKVDeleter) run(ctx context.Context) error {
+	for keys := range d.keysCh {
+		if err := d.deleteKeysWithRetry(ctx, keys); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *conflictKVDeleter) deleteKeysWithRetry(ctx context.Context, keys []tidbkv.Key) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	backoffer := backoff.NewExponential(storeOpMinBackoff, 2, storeOpMaxBackoff)
+	return dxfhandle.RunWithRetry(ctx, storeOpMaxRetryCnt, backoffer, d.logger, func(ctx context.Context) (bool, error) {
+		err := d.deleteBufferedKeys(ctx, keys)
+		if err != nil {
+			return common.IsRetryableError(err), err
+		}
+		return true, nil
+	})
+}
+
+func (d *conflictKVDeleter) deleteBufferedKeys(ctx context.Context, keys []tidbkv.Key) error {
+	txn, err := d.store.Begin()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if err == nil {
+			err = txn.Commit(ctx)
+		} else {
+			if rollbackErr := txn.Rollback(); rollbackErr != nil {
+				d.logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))
+			}
+		}
+	}()
+
+	for _, k := range keys {
+		if err = txn.Delete(k); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
