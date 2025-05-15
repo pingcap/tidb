@@ -37,6 +37,7 @@ go_library(
         "//pkg/util/hack",
         "//pkg/util/intest",
         "//pkg/util/logutil",
+        "//pkg/util/mathutil",
         "//pkg/util/size",
         "@com_github_aws_aws_sdk_go//aws",
         "@com_github_cockroachdb_pebble//:pebble",
