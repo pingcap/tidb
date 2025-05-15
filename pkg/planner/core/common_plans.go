@@ -889,6 +889,8 @@ func (e *Explain) prepareSchema() error {
 		e.Format = types.ExplainFormatROW
 	}
 	switch {
+	case format == types.ExplainFormatRelevantKnobs:
+		fieldNames = []string{"knobs"}
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
 	case format == types.ExplainFormatVerbose:
@@ -1294,6 +1296,11 @@ func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, cos
 		}
 		operatorInfo = p.ExplainInfo()
 	}
+
+	flat := FlattenPhysicalPlan(p, false)
+	_, planDigest := NormalizeFlatPlan(flat)
+	operatorInfo += ", " + planDigest.String()
+
 	return estRows, estCost, costFormula, accessObject, operatorInfo
 }
 

@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -133,6 +134,7 @@ func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType, option *
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexScanCostFactor)
+	recordCostFactor(p.SCtx(), vardef.TiDBOptIndexScanCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -202,15 +204,19 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	if p.isChildOfIndexLookUp {
 		// This is a RowID table scan (child of IndexLookUp)
 		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableRowIDScanCostFactor)
+		recordCostFactor(p.SCtx(), vardef.TiDBOptTableRowIDScanCostFactor)
 	} else if !hasFullRangeScan {
 		// This is a table range scan (predicate exists on the PK)
 		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableRangeScanCostFactor)
+		recordCostFactor(p.SCtx(), vardef.TiDBOptTableRangeScanCostFactor)
 	} else {
 		// This is a table full scan
 		if p.StoreType == kv.TiFlash {
 			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableTiFlashScanCostFactor)
+			recordCostFactor(p.SCtx(), vardef.TiDBOptTableTiFlashScanCostFactor)
 		} else {
 			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableFullScanCostFactor)
+			recordCostFactor(p.SCtx(), vardef.TiDBOptTableFullScanCostFactor)
 		}
 	}
 	return p.PlanCostVer2, nil
@@ -240,6 +246,7 @@ func (p *PhysicalIndexReader) GetPlanCostVer2(taskType property.TaskType, option
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexReaderCostFactor)
+	recordCostFactor(p.SCtx(), vardef.TiDBOptIndexReaderCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -277,6 +284,7 @@ func (p *PhysicalTableReader) GetPlanCostVer2(taskType property.TaskType, option
 	}
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableReaderCostFactor)
+	recordCostFactor(p.SCtx(), vardef.TiDBOptTableReaderCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -341,9 +349,11 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer2(taskType property.TaskType, 
 	if p.PushedLimit != nil && tableRows <= float64(p.PushedLimit.Count) {
 		// Multiply by limit cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().LimitCostFactor)
+		recordCostFactor(p.SCtx(), vardef.TiDBOptLimitCostFactor)
 	}
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexLookupCostFactor)
+	recordCostFactor(p.SCtx(), vardef.TiDBOptIndexLookupCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -403,10 +413,12 @@ func (p *PhysicalIndexMergeReader) GetPlanCostVer2(taskType property.TaskType, o
 		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, 0.99)
 		// Multiply by limit cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().LimitCostFactor)
+		recordCostFactor(p.SCtx(), vardef.TiDBOptLimitCostFactor)
 	}
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexMergeCostFactor)
+	recordCostFactor(p.SCtx(), vardef.TiDBOptIndexMergeCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -462,6 +474,7 @@ func (p *PhysicalSort) GetPlanCostVer2(taskType property.TaskType, option *optim
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().SortCostFactor)
+	recordCostFactor(p.SCtx(), vardef.TiDBOptSortCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -499,6 +512,7 @@ func (p *PhysicalTopN) GetPlanCostVer2(taskType property.TaskType, option *optim
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TopNCostFactor)
+	recordCostFactor(p.SCtx(), vardef.TiDBOptTopNCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -524,6 +538,7 @@ func (p *PhysicalStreamAgg) GetPlanCostVer2(taskType property.TaskType, option *
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().StreamAggCostFactor)
+	recordCostFactor(p.SCtx(), vardef.TiDBOptStreamAggCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -558,6 +573,7 @@ func (p *PhysicalHashAgg) GetPlanCostVer2(taskType property.TaskType, option *op
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().HashAggCostFactor)
+	recordCostFactor(p.SCtx(), vardef.TiDBOptHashAggCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -590,6 +606,7 @@ func (p *PhysicalMergeJoin) GetPlanCostVer2(taskType property.TaskType, option *
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().MergeJoinCostFactor)
+	recordCostFactor(p.SCtx(), vardef.TiDBOptMergeJoinCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -645,6 +662,7 @@ func (p *PhysicalHashJoin) GetPlanCostVer2(taskType property.TaskType, option *o
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().HashJoinCostFactor)
+	recordCostFactor(p.SCtx(), vardef.TiDBOptHashJoinCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -714,6 +732,7 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexJoinCostFactor)
+	recordCostFactor(p.SCtx(), vardef.TiDBOptIndexJoinCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -1169,4 +1188,35 @@ func cols2Exprs(cols []*expression.Column) []expression.Expression {
 		exprs = append(exprs, c)
 	}
 	return exprs
+}
+
+func recordCostFactor(sctx planctx.PlanContext, factor string) {
+	sctx.GetSessionVars().StmtCtx.RelevantCostFactors[factor] = true
+	for _, group := range factorGroups {
+		hitGroup := false
+		for _, f := range group {
+			if f == factor {
+				hitGroup = true
+				break
+			}
+		}
+		if hitGroup {
+			for _, f := range group {
+				sctx.GetSessionVars().StmtCtx.RelevantCostFactors[f] = true
+			}
+		}
+	}
+}
+
+var factorGroups = [][]string{
+	{vardef.TiDBOptIndexScanCostFactor, vardef.TiDBOptIndexReaderCostFactor,
+		vardef.TiDBOptTableReaderCostFactor, vardef.TiDBOptTableRangeScanCostFactor,
+		vardef.TiDBOptTableRowIDScanCostFactor, vardef.TiDBOptTableTiFlashScanCostFactor,
+		vardef.TiDBOptIndexLookupCostFactor, vardef.TiDBOptTableFullScanCostFactor},
+	{vardef.TiDBOptIndexMergeCostFactor},
+	{vardef.TiDBOptSortCostFactor, vardef.TiDBOptTopNCostFactor,
+		vardef.TiDBOptLimitCostFactor},
+	{vardef.TiDBOptStreamAggCostFactor, vardef.TiDBOptHashAggCostFactor},
+	{vardef.TiDBOptMergeJoinCostFactor, vardef.TiDBOptHashJoinCostFactor,
+		vardef.TiDBOptIndexJoinCostFactor},
 }

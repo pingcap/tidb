@@ -1056,6 +1056,8 @@ type SessionVars struct {
 	HashJoinCostFactor         float64
 	IndexJoinCostFactor        float64
 
+	JoinOrderCostFactors map[string]float64
+
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
 	enableForceInlineCTE bool
 
