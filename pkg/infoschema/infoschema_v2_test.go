@@ -738,107 +738,6 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	require.True(t, dbItem.tomb)
 }
 
-func TestCompareReferredForeignKeyItem(t *testing.T) {
-	newItem := func(db, tbl, cs, ct, cf string, ver int64, tomb bool) *referredForeignKeyItem {
-		return &referredForeignKeyItem{
-			dbName:        db,
-			tableName:     tbl,
-			schemaVersion: ver,
-			tomb:          tomb,
-			referredFKInfo: &model.ReferredFKInfo{
-				ChildSchema: ast.NewCIStr(cs),
-				ChildTable:  ast.NewCIStr(ct),
-				ChildFKName: ast.NewCIStr(cf),
-			},
-		}
-	}
-
-	// differ by dbName
-	a := newItem("a", "t", "s", "u", "fk", 1, false)
-	b := newItem("b", "t", "s", "u", "fk", 1, false)
-	require.True(t, compareReferredForeignKeyItem(a, b))
-	require.False(t, compareReferredForeignKeyItem(b, a))
-
-	// differ by tableName
-	a = newItem("db", "a", "s", "u", "fk", 1, false)
-	b = newItem("db", "b", "s", "u", "fk", 1, false)
-	require.True(t, compareReferredForeignKeyItem(a, b))
-
-	// nil referredFKInfo
-	a = &referredForeignKeyItem{dbName: "db", tableName: "tb"}
-	b = newItem("db", "tb", "s", "u", "fk", 1, false)
-	require.False(t, compareReferredForeignKeyItem(a, b))
-	require.True(t, compareReferredForeignKeyItem(b, a))
-
-	// differ by ChildSchema
-	a = newItem("db", "tb", "a", "x", "fk", 1, false)
-	b = newItem("db", "tb", "b", "x", "fk", 1, false)
-	require.True(t, compareReferredForeignKeyItem(a, b))
-
-	// differ by ChildTable
-	a = newItem("db", "tb", "s", "a", "fk", 1, false)
-	b = newItem("db", "tb", "s", "b", "fk", 1, false)
-	require.True(t, compareReferredForeignKeyItem(a, b))
-
-	// differ by ChildFKName
-	a = newItem("db", "tb", "s", "u", "a", 1, false)
-	b = newItem("db", "tb", "s", "u", "b", 1, false)
-	require.True(t, compareReferredForeignKeyItem(a, b))
-
-	// differ by schemaVersion
-	a = newItem("db", "tb", "s", "u", "fk", 1, false)
-	b = newItem("db", "tb", "s", "u", "fk", 2, false)
-	require.True(t, compareReferredForeignKeyItem(a, b))
-
-	// differ by tomb flag (tomb=true sorts before tomb=false)
-	a = newItem("db", "tb", "s", "u", "fk", 1, true)
-	b = newItem("db", "tb", "s", "u", "fk", 1, false)
-	require.True(t, compareReferredForeignKeyItem(a, b))
-	require.False(t, compareReferredForeignKeyItem(b, a))
-}
-
-func TestReferredForeignKeysHelper(t *testing.T) {
-	start := referredForeignKeyItem{dbName: "db", tableName: "tbl", schemaVersion: math.MaxInt64}
-	helper := &referredForeignKeysHelper{start: start, schemaVersion: 10}
-
-	// 1) mismatched db/table -> reject
-	item1 := &referredForeignKeyItem{dbName: "x", tableName: "tbl", schemaVersion: 10}
-	require.False(t, helper.onItem(item1))
-
-	// 2) version > helper.schemaVersion -> skip
-	item2 := &referredForeignKeyItem{dbName: "db", tableName: "tbl", schemaVersion: 15}
-	require.True(t, helper.onItem(item2))
-
-	// 3) first valid entry at version 10 -> append
-	fkA := &model.ReferredFKInfo{ChildSchema: ast.NewCIStr("sA"), ChildTable: ast.NewCIStr("tA"), ChildFKName: ast.NewCIStr("fkA")}
-	itemA := &referredForeignKeyItem{dbName: "db", tableName: "tbl", schemaVersion: 10, referredFKInfo: fkA, tomb: false}
-	require.True(t, helper.onItem(itemA))
-	require.Equal(t, []*model.ReferredFKInfo{fkA}, helper.referredFKInfos)
-
-	// 4) duplicate fields at version 9 -> skip
-	dup := &referredForeignKeyItem{dbName: "db", tableName: "tbl", schemaVersion: 9, referredFKInfo: fkA, tomb: false}
-	require.True(t, helper.onItem(dup))
-	require.Len(t, helper.referredFKInfos, 1)
-
-	// 5) tomb entry at version 8 -> update prev but no append
-	fkB := &model.ReferredFKInfo{ChildSchema: ast.NewCIStr("sB"), ChildTable: ast.NewCIStr("tB"), ChildFKName: ast.NewCIStr("fkB")}
-	tomb := &referredForeignKeyItem{dbName: "db", tableName: "tbl", schemaVersion: 8, referredFKInfo: fkB, tomb: true}
-	require.True(t, helper.onItem(tomb))
-	require.Len(t, helper.referredFKInfos, 1)
-
-	// 6) old fields at version 7 -> skip
-	itemB := &referredForeignKeyItem{dbName: "db", tableName: "tbl", schemaVersion: 7, referredFKInfo: fkB, tomb: false}
-	require.True(t, helper.onItem(itemB))
-	require.Len(t, helper.referredFKInfos, 1)
-
-	// 7) new fields at version 6 -> append
-	fkC := &model.ReferredFKInfo{ChildSchema: ast.NewCIStr("sC"), ChildTable: ast.NewCIStr("tC"), ChildFKName: ast.NewCIStr("fkC")}
-	itemC := &referredForeignKeyItem{dbName: "db", tableName: "tbl", schemaVersion: 10, referredFKInfo: fkC, tomb: false}
-	require.True(t, helper.onItem(itemC))
-	require.Len(t, helper.referredFKInfos, 2)
-	require.Equal(t, []*model.ReferredFKInfo{fkA, fkC}, helper.referredFKInfos)
-}
-
 func TestReferredForeignKeys(t *testing.T) {
 	data := NewData()
 
@@ -902,11 +801,11 @@ func TestGCOldFKVersion(t *testing.T) {
 			tableName:     tbl,
 			schemaVersion: ver,
 			tomb:          tomb,
-			referredFKInfo: &model.ReferredFKInfo{
+			referredFKInfo: []*model.ReferredFKInfo{{
 				ChildSchema: ast.NewCIStr(cs),
 				ChildTable:  ast.NewCIStr(ct),
 				ChildFKName: ast.NewCIStr(cf),
-			},
+			}},
 		}
 	}
 	// prepare two groups: db1.table1.fkX and db2.table2.fkY
@@ -925,9 +824,8 @@ func TestGCOldFKVersion(t *testing.T) {
 	require.Equal(t, 6, before)
 
 	// GC entries older than version 4
-	deleted, total := data.gcOldFKVersion(4)
+	deleted := data.gcOldFKVersion(4)
 	require.Equal(t, 3, deleted) // versions 3,2,1 for group1
-	require.Equal(t, int64(6), total)
 	after := data.referredForeignKeys.Load().Len()
 	require.Equal(t, 3, after) // kept version 5 & 4 for group1, and the single group2
 
