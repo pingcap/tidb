@@ -300,7 +300,7 @@ func (rc *SnapClient) SetPlacementPolicyMode(withPlacementPolicy string) {
 func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table, reusePreallocID *checkpoint.PreallocIDs) error {
 	var preallocedTableIDs *tidalloc.PreallocIDs
 	var err error
-	if reusePreallocID != nil {
+	if reusePreallocID == nil {
 		preallocedTableIDs, err = tidalloc.New(tables)
 		if err != nil {
 			return errors.Trace(err)
