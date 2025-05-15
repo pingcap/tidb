@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"sync"
 	"sync/atomic"
 	"unsafe"
 
@@ -34,9 +35,11 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/types"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/maps"
@@ -102,8 +105,7 @@ func (e *collectConflictsStepExecutor) RunSubtask(ctx context.Context, subtask *
 	e.resetForNewSubtask(subtask.ID)
 
 	for kvGroup, ci := range stepMeta.Infos.ConflictInfos {
-		result, err := handleKVGroupConflicts(ctx, e.logger, subtask.Concurrency, e.getHandler,
-			e.tableImporter.GlobalSortStore, kvGroup, ci)
+		result, err := e.collectConflictsOfKVGroup(ctx, subtask.Concurrency, kvGroup, ci)
 		failpoint.InjectCall("afterCollectOneKVGroup", &err)
 		if err != nil {
 			return err
@@ -134,6 +136,62 @@ func (e *collectConflictsStepExecutor) OnFinished(_ context.Context, subtask *pr
 	}
 	subtask.Meta = newMeta
 	return nil
+}
+
+func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
+	ctx context.Context,
+	concurrency int,
+	kvGroup string,
+	ci *common.ConflictInfo,
+) (result *collectConflictResult, err error) {
+	failpoint.Inject("forceHandleConflictsBySingleThread", func() {
+		concurrency = 1
+	})
+	task := log.BeginTask(e.logger.With(
+		zap.String("kvGroup", kvGroup), zap.Uint64("duplicates", ci.Count),
+		zap.Int("file-count", len(ci.Files)), zap.Int("concurrency", concurrency),
+	), "collect conflicts of kv group")
+
+	defer func() {
+		task.End(zapcore.ErrorLevel, err)
+	}()
+
+	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
+
+	pairCh := startReadFiles(egCtx, eg, e.tableImporter.GlobalSortStore, ci.Files)
+
+	var initMu sync.Mutex
+	initHandlerWithLockFn := func(handler conflictKVHandler) error {
+		initMu.Lock()
+		defer initMu.Unlock()
+		// when create encoder, if the table have generated column, when calling
+		// backend/kv.CollectGeneratedColumns(), buildSimpleExpr will rewrite the
+		// AST node, and data race.
+		return handler.init()
+	}
+	result = newCollectConflictResultForMerge()
+	var mu sync.Mutex
+	for i := 0; i < concurrency; i++ {
+		handler := e.getHandler(kvGroup)
+		eg.Go(func() error {
+			if err := initHandlerWithLockFn(handler); err != nil {
+				return errors.Trace(err)
+			}
+			if err := handler.run(egCtx, pairCh); err != nil {
+				_ = handler.close(egCtx)
+				return err
+			}
+			if err := handler.close(egCtx); err != nil {
+				return err
+			}
+			res := handler.getCollectResult()
+			mu.Lock()
+			result.merge(res)
+			mu.Unlock()
+			return nil
+		})
+	}
+	return result, eg.Wait()
 }
 
 func (e *collectConflictsStepExecutor) getHandler(kvGroup string) conflictKVHandler {

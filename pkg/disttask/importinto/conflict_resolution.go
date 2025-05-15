@@ -17,6 +17,8 @@ package importinto
 import (
 	"context"
 	"encoding/json"
+	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -28,6 +30,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -70,14 +73,71 @@ func (e *conflictResolutionStepExecutor) RunSubtask(ctx context.Context, subtask
 		}
 	}
 	for kvGroup, ci := range stepMeta.Infos.ConflictInfos {
-		err = resolveConflicts(ctx, e.logger, subtask.Concurrency, e.getHandlerAndDeleter,
-			e.tableImporter.GlobalSortStore, kvGroup, ci)
+		err = e.resolveConflictsOfKVGroup(ctx, subtask.Concurrency, kvGroup, ci)
 		failpoint.InjectCall("afterResolveOneKVGroup", &err)
 		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
+	ctx context.Context,
+	concurrency int,
+	kvGroup string,
+	ci *common.ConflictInfo,
+) (err error) {
+	failpoint.Inject("forceHandleConflictsBySingleThread", func() {
+		concurrency = 1
+	})
+	task := log.BeginTask(e.logger.With(
+		zap.String("kvGroup", kvGroup), zap.Uint64("duplicates", ci.Count),
+		zap.Int("file-count", len(ci.Files)), zap.Int("concurrency", concurrency),
+	), "resolve conflicts of kv group")
+
+	defer func() {
+		task.End(zapcore.ErrorLevel, err)
+	}()
+
+	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
+
+	pairCh := startReadFiles(egCtx, eg, e.tableImporter.GlobalSortStore, ci.Files)
+
+	var initMu sync.Mutex
+	initHandlerWithLockFn := func(handler conflictKVHandler) error {
+		initMu.Lock()
+		defer initMu.Unlock()
+		// when create encoder, if the table have generated column, when calling
+		// backend/kv.CollectGeneratedColumns(), buildSimpleExpr will rewrite the
+		// AST node, and data race.
+		return handler.init()
+	}
+	var finishedHandlers atomic.Int32
+	keysToDeleteCh := make(chan []tidbkv.Key)
+	for i := 0; i < concurrency; i++ {
+		handler, deleter := e.getHandlerAndDeleter(kvGroup, keysToDeleteCh)
+		eg.Go(func() error {
+			defer func() {
+				count := finishedHandlers.Add(1)
+				if int(count) == concurrency {
+					close(keysToDeleteCh)
+				}
+			}()
+			if err := initHandlerWithLockFn(handler); err != nil {
+				return errors.Trace(err)
+			}
+			if err := handler.run(egCtx, pairCh); err != nil {
+				_ = handler.close(egCtx)
+				return err
+			}
+			return handler.close(egCtx)
+		})
+		eg.Go(func() error {
+			return deleter.run(egCtx)
+		})
+	}
+	return eg.Wait()
 }
 
 func (e *conflictResolutionStepExecutor) getHandlerAndDeleter(kvGroup string, keysToDelCh chan []tidbkv.Key) (

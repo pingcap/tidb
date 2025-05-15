@@ -18,30 +18,23 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dxfhandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/redact"
-	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -345,166 +338,19 @@ func (h *conflictIndexKVHandler) close(ctx context.Context) error {
 	return firstErr.Get()
 }
 
-func handleKVGroupConflicts(
-	ctx context.Context,
-	logger *zap.Logger,
-	concurrency int,
-	newHandlerFn func(string) conflictKVHandler,
-	store storage.ExternalStorage,
-	kvGroup string,
-	ci *common.ConflictInfo,
-) (result *collectConflictResult, err error) {
-	failpoint.Inject("forceHandleConflictsBySingleThread", func() {
-		concurrency = 1
-	})
-	batches := mathutil.Divide2Batches(len(ci.Files), 2)
-	task := log.BeginTask(logger.With(
-		zap.String("kvGroup", kvGroup), zap.Uint64("duplicates", ci.Count),
-		zap.Int("file-count", len(ci.Files)), zap.Int("concurrency", concurrency),
-		zap.Int("batch-count", len(batches)),
-	), "handle kv group conflicts")
-
-	defer func() {
-		task.End(zapcore.ErrorLevel, err)
-	}()
-
+func startReadFiles(ctx context.Context, eg *tidbutil.ErrorGroupWithRecover,
+	store storage.ExternalStorage, files []string) chan *external.KVPair {
 	pairCh := make(chan *external.KVPair)
-	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
-
-	var finishedSender atomic.Int32
-	var start int
-	for _, size := range batches {
-		files := ci.Files[start : start+size]
-		start += size
-		eg.Go(func() error {
-			defer func() {
-				count := finishedSender.Add(1)
-				if len(batches) == int(count) {
-					close(pairCh)
-				}
-			}()
-			for _, file := range files {
-				if err := readOneFile(egCtx, store, file, pairCh); err != nil {
-					return errors.Trace(err)
-				}
-			}
-			return nil
-		})
-	}
-	var initMu sync.Mutex
-	initHandlerWithLockFn := func(handler conflictKVHandler) error {
-		initMu.Lock()
-		defer initMu.Unlock()
-		// when create encoder, if the table have generated column, when calling
-		// backend/kv.CollectGeneratedColumns(), buildSimpleExpr will rewrite the
-		// AST node, and data race.
-		return handler.init()
-	}
-	result = newCollectConflictResultForMerge()
-	var mu sync.Mutex
-	for i := 0; i < concurrency; i++ {
-		handler := newHandlerFn(kvGroup)
-		eg.Go(func() error {
-			if err := initHandlerWithLockFn(handler); err != nil {
+	eg.Go(func() error {
+		defer close(pairCh)
+		for _, file := range files {
+			if err := readOneFile(ctx, store, file, pairCh); err != nil {
 				return errors.Trace(err)
 			}
-			if err := handler.run(egCtx, pairCh); err != nil {
-				_ = handler.close(egCtx)
-				return err
-			}
-			if err := handler.close(egCtx); err != nil {
-				return err
-			}
-			res := handler.getCollectResult()
-			mu.Lock()
-			result.merge(res)
-			mu.Unlock()
-			return nil
-		})
-	}
-	return result, eg.Wait()
-}
-
-func resolveConflicts(
-	ctx context.Context,
-	logger *zap.Logger,
-	concurrency int,
-	newHandlerFn func(string, chan []tidbkv.Key) (conflictKVHandler, *conflictKVDeleter),
-	store storage.ExternalStorage,
-	kvGroup string,
-	ci *common.ConflictInfo,
-) (err error) {
-	failpoint.Inject("forceHandleConflictsBySingleThread", func() {
-		concurrency = 1
+		}
+		return nil
 	})
-	batches := mathutil.Divide2Batches(len(ci.Files), 2)
-	task := log.BeginTask(logger.With(
-		zap.String("kvGroup", kvGroup), zap.Uint64("duplicates", ci.Count),
-		zap.Int("file-count", len(ci.Files)), zap.Int("concurrency", concurrency),
-		zap.Int("batch-count", len(batches)),
-	), "handle kv group conflicts")
-
-	defer func() {
-		task.End(zapcore.ErrorLevel, err)
-	}()
-
-	pairCh := make(chan *external.KVPair)
-	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
-
-	var finishedSender atomic.Int32
-	var start int
-	for _, size := range batches {
-		files := ci.Files[start : start+size]
-		start += size
-		eg.Go(func() error {
-			defer func() {
-				count := finishedSender.Add(1)
-				if len(batches) == int(count) {
-					close(pairCh)
-				}
-			}()
-			for _, file := range files {
-				if err := readOneFile(egCtx, store, file, pairCh); err != nil {
-					return errors.Trace(err)
-				}
-			}
-			return nil
-		})
-	}
-	var initMu sync.Mutex
-	initHandlerWithLockFn := func(handler conflictKVHandler) error {
-		initMu.Lock()
-		defer initMu.Unlock()
-		// when create encoder, if the table have generated column, when calling
-		// backend/kv.CollectGeneratedColumns(), buildSimpleExpr will rewrite the
-		// AST node, and data race.
-		return handler.init()
-	}
-	var finishedHandlers atomic.Int32
-	keysToDeleteCh := make(chan []tidbkv.Key)
-	for i := 0; i < concurrency; i++ {
-		handler, deleter := newHandlerFn(kvGroup, keysToDeleteCh)
-		eg.Go(func() error {
-			defer func() {
-				count := finishedHandlers.Add(1)
-				if int(count) == concurrency {
-					close(keysToDeleteCh)
-				}
-			}()
-			if err := initHandlerWithLockFn(handler); err != nil {
-				return errors.Trace(err)
-			}
-			if err := handler.run(egCtx, pairCh); err != nil {
-				_ = handler.close(egCtx)
-				return err
-			}
-			return handler.close(egCtx)
-		})
-		eg.Go(func() error {
-			return deleter.run(egCtx)
-		})
-	}
-	return eg.Wait()
+	return pairCh
 }
 
 func readOneFile(ctx context.Context, store storage.ExternalStorage, file string, outCh chan *external.KVPair) error {
@@ -532,8 +378,4 @@ func readOneFile(ctx context.Context, store storage.ExternalStorage, file string
 		}
 	}
 	return nil
-}
-
-func isKeyNotFoundErr(err error) bool {
-	return tidbkv.IsErrNotFound(err) || tikverr.IsErrNotFound(err)
 }
