@@ -176,7 +176,7 @@ func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
 	}
 	size = utf8.RuneLen(r1)
 	if size < 0 {
-		return char, size, errors.Errorf("not a valid Unicode character")
+		return char, size, errors.Errorf("Invalid unicode: %s", s)
 	}
 	utf8.EncodeRune(char[0:size], r1)
 	return
