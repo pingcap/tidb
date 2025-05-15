@@ -82,6 +82,10 @@ func GCStats(
 	is infoschema.InfoSchema,
 	ddlLease time.Duration,
 ) (err error) {
+	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "gc stats"))
+	defer func() {
+		logutil.BgLogger().Info("[stats_meta] end")
+	}()
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
 	lease := max(statsHandle.Lease(), ddlLease)
@@ -140,6 +144,10 @@ func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64, soft bool
 	if err != nil {
 		return errors.Trace(err)
 	}
+	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "delete table stats from kv"))
+	defer func() {
+		logutil.BgLogger().Info("[stats_meta] end")
+	}()
 	for _, statsID := range statsIDs {
 		// We update the version so that other tidb will know that this table is deleted.
 		// And we also update the last_stats_histograms_version to tell other tidb that the stats histogram is deleted
@@ -196,6 +204,10 @@ func forCount(total int64, batch int64) int64 {
 
 // ClearOutdatedHistoryStats clear outdated historical stats
 func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
+	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "clear out dated"))
+	defer func() {
+		logutil.BgLogger().Info("[stats_meta] end")
+	}()
 	sql := "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
 	rs, err := util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
 	if err != nil {
@@ -230,6 +242,10 @@ func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
 
 // gcHistoryStatsFromKV delete history stats from kv.
 func gcHistoryStatsFromKV(sctx sessionctx.Context, physicalID int64) (err error) {
+	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "gcHistory"))
+	defer func() {
+		logutil.BgLogger().Info("[stats_meta] end")
+	}()
 	sql := "delete from mysql.stats_history where table_id = %?"
 	_, err = util.Exec(sctx, sql, physicalID)
 	if err != nil {
@@ -242,6 +258,10 @@ func gcHistoryStatsFromKV(sctx sessionctx.Context, physicalID int64) (err error)
 
 // deleteHistStatsFromKV deletes all records about a column or an index and updates version.
 func deleteHistStatsFromKV(sctx sessionctx.Context, physicalID int64, histID int64, isIndex int) (err error) {
+	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "deletehist"))
+	defer func() {
+		logutil.BgLogger().Info("[stats_meta] end")
+	}()
 	startTS, err := util.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -302,6 +322,10 @@ func gcTableStats(sctx sessionctx.Context,
 				return errors.Trace(DeleteTableStatsFromKV(sctx, []int64{physicalID}, false))
 			})
 		}
+		logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "gctablestats"))
+		defer func() {
+			logutil.BgLogger().Info("[stats_meta] end")
+		}()
 		// len(rows) == 0 => The table's stats is empty.
 		// The table has already been deleted in stats and acknowledged to all tidb,
 		// We can safely remove the meta info now.
@@ -436,6 +460,10 @@ func MarkExtendedStatsDeleted(sctx sessionctx.Context,
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "mark extended"))
+	defer func() {
+		logutil.BgLogger().Info("[stats_meta] end")
+	}()
 	if _, err = util.Exec(sctx, "UPDATE mysql.stats_meta SET version = %?, last_stats_histograms_version = %? WHERE table_id = %?", version, version, tableID); err != nil {
 		return 0, err
 	}
