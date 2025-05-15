@@ -783,8 +783,8 @@ func TestGlobalStats(t *testing.T) {
 	// On the table with global-stats, we use explain to query a single-partition query.
 	// And we should get the result that global-stats is used instead of pseudo-stats.
 	tk.MustQuery("explain format = 'brief' select * from t partition(p1) where a > 15;").Check(testkit.Rows(
-		"IndexReader 2.00 root partition:p1 index:IndexRangeScan",
-		"└─IndexRangeScan 2.00 cop[tikv] table:t, partition:p1, index:a(a) range:(15,+inf], keep order:false"))
+		"IndexReader 1.00 root partition:p1 index:IndexRangeScan",
+		"└─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:a(a) range:(15,+inf], keep order:false"))
 
 	// Even if we have global-stats, we will not use it when the switch is set to `static`.
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")

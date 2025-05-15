@@ -259,3 +259,24 @@ func TestIssue59902(t *testing.T) {
 			"        └─Selection 1.00 cop[tikv]  not(isnull(test.t2.a))",
 			"          └─IndexRangeScan 1.00 cop[tikv] table:t2, index:idx(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"))
 }
+
+func TestABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`   CREATE TABLE t (                                          
+   a int DEFAULT NULL,                                     
+   b int DEFAULT NULL,                                     
+   UNIQUE KEY idx (a)                                    
+ ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin 
+ PARTITION BY RANGE (a) (
+ 		PARTITION p0 VALUES LESS THAN (4),
+ 		PARTITION p1 VALUES LESS THAN (10))`)
+	tk.MustExec(`insert into t values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9) ;`)
+	tk.MustExec(`analyze table t;`)
+	tk.MustQuery(`explain format = 'cost_trace' select * from t where t.a <4 ;`).Check(testkit.Rows(
+		"TableReader_9 3.00 80.79 ((((cpu(3*filters(1)*tikv_cpu_factor(49.9))) + ((scan(3*logrowsize(48)*tikv_scan_factor(40.7)))*1.00)) + (net(3*rowsize(32)*tidb_kv_net_factor(3.96))))/15.00)*1.00 root partition:p0 data:Selection_8",
+		"└─Selection_8 3.00 831.62 (cpu(3*filters(1)*tikv_cpu_factor(49.9))) + ((scan(3*logrowsize(48)*tikv_scan_factor(40.7)))*1.00) cop[tikv]  lt(test.t.a, 4)",
+		"  └─TableFullScan_7 3.00 681.92 (scan(3*logrowsize(48)*tikv_scan_factor(40.7)))*1.00 cop[tikv] table:t, partition:p0 keep order:false",
+	))
+}
