@@ -24231,7 +24231,7 @@
             },
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_import_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", state=\"written\"}[1m])) by(task_id)",
+              "expr": "sum(rate(tidb_import_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", state=\"merged\"}[1m])) by(task_id)",
               "hide": false,
               "interval": "",
               "legendFormat": "merge kv - {{task_id}}",
@@ -24242,7 +24242,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Total Encode/Deliver/Import-kv Speed",
+          "title": "Total Encode/Deliver/Merge/Import-kv Speed",
           "tooltip": {
             "shared": true,
             "sort": 0,
