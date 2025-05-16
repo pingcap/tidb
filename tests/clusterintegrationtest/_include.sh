@@ -63,7 +63,7 @@ function wait_for_tidb() {
 function wait_for_tiflash() {
   echo
   echo "+ Waiting TiFlash start up (30s)"
-  sleep 30
+  sleep 60
 }
 
 function stop_tiup() {
