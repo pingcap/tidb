@@ -124,23 +124,23 @@ func TestNeedCheckTargetClusterFresh(t *testing.T) {
 	require.NoError(t, err)
 
 	// not set filter and first run with checkpoint
-	require.True(t, client.NeedCheckFreshCluster(false, true))
+	require.True(t, client.NeedCheckFreshCluster(false, false))
 
 	// skip check when has checkpoint
-	require.False(t, client.NeedCheckFreshCluster(false, false))
+	require.False(t, client.NeedCheckFreshCluster(false, true))
 
 	// skip check when set --filter
-	require.False(t, client.NeedCheckFreshCluster(true, false))
+	require.False(t, client.NeedCheckFreshCluster(true, true))
 
 	// skip check when has set --filter and has checkpoint
-	require.False(t, client.NeedCheckFreshCluster(true, true))
+	require.False(t, client.NeedCheckFreshCluster(true, false))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/snap_client/mock-incr-backup-data", "return(false)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/snap_client/mock-incr-backup-data"))
 	}()
 	// skip check when increment backup
-	require.False(t, client.NeedCheckFreshCluster(false, true))
+	require.False(t, client.NeedCheckFreshCluster(false, false))
 }
 
 func TestCheckTargetClusterFresh(t *testing.T) {
