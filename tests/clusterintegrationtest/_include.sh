@@ -22,6 +22,7 @@ function install_tiup_if_needed() {
     return 0
   fi
   curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh
+  source /home/jenkins/.bash_profile
 }
 
 function start_tidb() {
