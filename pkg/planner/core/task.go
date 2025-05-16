@@ -1527,18 +1527,18 @@ func inheritStatsFromBottomElemForIndexJoinInner(p base.PhysicalPlan, indexJoinI
 		switch p.(type) {
 		case *PhysicalSelection:
 			// todo: for simplicity, we can just inherit it from child.
-			p.SetStats(stats)
+			p.StatsInfo().ScaleByExpectCnt(stats.RowCount)
 		case *PhysicalProjection:
 			// mainly about the rowEst, proj doesn't change that.
-			p.SetStats(stats)
+			p.StatsInfo().ScaleByExpectCnt(stats.RowCount)
 		case *PhysicalHashAgg, *PhysicalStreamAgg:
 			// todo: for simplicity, we can just inherit it from child.
-			p.SetStats(stats)
+			p.StatsInfo().ScaleByExpectCnt(stats.RowCount)
 		case *PhysicalUnionScan:
 			// todo: for simplicity, we can just inherit it from child.
-			p.SetStats(stats)
+			p.StatsInfo().ScaleByExpectCnt(stats.RowCount)
 		default:
-			p.SetStats(stats)
+			p.StatsInfo().ScaleByExpectCnt(stats.RowCount)
 		}
 	}
 }
