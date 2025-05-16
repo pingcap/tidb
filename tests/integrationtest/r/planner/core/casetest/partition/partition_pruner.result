@@ -898,15 +898,15 @@ Ab	1
 abc	2
 explain select * from t where b in (1,2);
 id	estRows	task	access object	operator info
-IndexLookUp_7	2.00	root	partition:p1,p2	
-├─IndexRangeScan_5(Build)	2.00	cop[tikv]	table:t, index:PRIMARY(b)	range:[1,1], [2,2], keep order:false, stats:pseudo
-└─TableRowIDScan_6(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp_9	2.00	root	partition:p1,p2	
+├─IndexRangeScan_7(Build)	2.00	cop[tikv]	table:t, index:PRIMARY(b)	range:[1,1], [2,2], keep order:false, stats:pseudo
+└─TableRowIDScan_8(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where b in (1,2) and a like '%a%';
 a	b
 abc	2
 explain select * from t where b in (1,2) and a like '%a%';
 id	estRows	task	access object	operator info
-IndexLookUp_8	1.60	root	partition:p1,p2	
-├─IndexRangeScan_5(Build)	2.00	cop[tikv]	table:t, index:PRIMARY(b)	range:[1,1], [2,2], keep order:false, stats:pseudo
-└─Selection_7(Probe)	1.60	cop[tikv]		like(issue42135.t.a, "%a%", 92)
-  └─TableRowIDScan_6	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp_10	1.60	root	partition:p1,p2	
+├─IndexRangeScan_7(Build)	2.00	cop[tikv]	table:t, index:PRIMARY(b)	range:[1,1], [2,2], keep order:false, stats:pseudo
+└─Selection_9(Probe)	1.60	cop[tikv]		like(issue42135.t.a, "%a%", 92)
+  └─TableRowIDScan_8	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo

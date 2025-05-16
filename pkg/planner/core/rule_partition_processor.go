@@ -874,6 +874,11 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 	if pi == nil {
 		return ds, nil
 	}
+	// pruning the partition will impact the plan cache. so we need to return the original plan
+	if ds.SCtx().GetSessionVars().StmtCtx.InPreparedPlanBuilding &&
+		ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		return ds, nil
+	}
 	// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from ds.AllConds, the condition
 	// like 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
 	// TODO: there may be a better way to push down Not once for all.
@@ -893,7 +898,6 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 	case ast.PartitionTypeList:
 		return s.processListPartition(ds, pi, opt)
 	}
-
 	return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)), opt)
 }
 
@@ -1953,7 +1957,6 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 		}
 	}
 	s.checkHintsApplicable(ds, partitionNameSet)
-
 	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("Static partition pruning mode")
 	if len(children) == 0 {
 		// No result after table pruning.
@@ -1962,10 +1965,14 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, tableDual, children, opt)
 		return tableDual, nil
 	}
+
 	if len(children) == 1 {
 		// No need for the union all.
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, children[0], children, opt)
 		return children[0], nil
+	}
+	if ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		return ds, nil
 	}
 	unionAll := logicalop.LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	unionAll.SetChildren(children...)
