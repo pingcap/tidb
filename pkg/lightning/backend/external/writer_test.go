@@ -253,7 +253,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	kvs := make([]kvPair, 0, kvCount)
+	kvs := make([]KVPair, 0, kvCount)
 
 	kvAndStat = summary.MultipleFilesStats[0].Filenames[0]
 	kvReader, err := NewKVReader(ctx, kvAndStat[0], memStore, 0, 100)
@@ -265,7 +265,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		copy(clonedKey, key)
 		clonedVal := make([]byte, len(value))
 		copy(clonedVal, value)
-		kvs = append(kvs, kvPair{key: clonedKey, value: clonedVal})
+		kvs = append(kvs, KVPair{Key: clonedKey, Value: clonedVal})
 	}
 	_, _, err = kvReader.NextKV()
 	require.Equal(t, io.EOF, err)

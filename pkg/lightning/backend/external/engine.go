@@ -86,7 +86,7 @@ const maxCloudStorageConnections = 1000
 
 type memKVsAndBuffers struct {
 	mu  sync.Mutex
-	kvs []kvPair
+	kvs []KVPair
 	// memKVBuffers contains two types of buffer, first half are used for small block
 	// buffer, second half are used for large one.
 	memKVBuffers []*membuf.Buffer
@@ -94,7 +94,7 @@ type memKVsAndBuffers struct {
 	droppedSize  int
 
 	// temporary fields to store KVs to reduce slice allocations.
-	kvsPerFile         [][]kvPair
+	kvsPerFile         [][]KVPair
 	droppedSizePerFile []int
 }
 
@@ -113,7 +113,7 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 		zap.Int("sumKVCnt", sumKVCnt),
 		zap.Int("droppedSize", b.droppedSize))
 
-	b.kvs = make([]kvPair, 0, sumKVCnt)
+	b.kvs = make([]KVPair, 0, sumKVCnt)
 	for i := range b.kvsPerFile {
 		b.kvs = append(b.kvs, b.kvsPerFile[i]...)
 		b.kvsPerFile[i] = nil
@@ -350,7 +350,7 @@ func (e *Engine) loadRangeBatch(ctx context.Context, jobKeys [][]byte, outCh cha
 	sorty.MaxGor = uint64(e.workerConcurrency * 2)
 	var dupFound atomic.Bool
 	sorty.Sort(len(e.memKVsAndBuffers.kvs), func(i, k, r, s int) bool {
-		res := bytes.Compare(e.memKVsAndBuffers.kvs[i].key, e.memKVsAndBuffers.kvs[k].key)
+		res := bytes.Compare(e.memKVsAndBuffers.kvs[i].Key, e.memKVsAndBuffers.kvs[k].Key)
 		if res < 0 { // strict comparator like < or >
 			if r != s {
 				e.memKVsAndBuffers.kvs[r], e.memKVsAndBuffers.kvs[s] = e.memKVsAndBuffers.kvs[s], e.memKVsAndBuffers.kvs[r]
@@ -375,7 +375,7 @@ func (e *Engine) loadRangeBatch(ctx context.Context, jobKeys [][]byte, outCh cha
 	sortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / sortSecond)
 
 	var (
-		deduplicatedKVs, dups []kvPair
+		deduplicatedKVs, dups []KVPair
 		dupCount              int
 		deduplicateDur        time.Duration
 	)
@@ -389,8 +389,8 @@ func (e *Engine) loadRangeBatch(ctx context.Context, jobKeys [][]byte, outCh cha
 			deduplicatedKVs, dups, dupCount = removeDuplicates(deduplicatedKVs, getPairKey, true)
 			e.recordedDupCnt += len(dups)
 			for _, p := range dups {
-				e.recordedDupSize += int64(len(p.key) + len(p.value))
-				if err = e.dupKVStore.addRawKV(p.key, p.value); err != nil {
+				e.recordedDupSize += int64(len(p.Key) + len(p.Value))
+				if err = e.dupKVStore.addRawKV(p.Key, p.Value); err != nil {
 					return err
 				}
 			}
@@ -534,7 +534,7 @@ func (e *Engine) closeDupWriterAsNeeded(ctx context.Context) error {
 	return nil
 }
 
-func (e *Engine) buildIngestData(kvs []kvPair, buf []*membuf.Buffer) *MemoryIngestData {
+func (e *Engine) buildIngestData(kvs []KVPair, buf []*membuf.Buffer) *MemoryIngestData {
 	return &MemoryIngestData{
 		keyAdapter:         e.keyAdapter,
 		duplicateDetection: e.duplicateDetection,
@@ -682,7 +682,7 @@ type MemoryIngestData struct {
 	duplicateDB        *pebble.DB
 	dupDetectOpt       common.DupDetectOpt
 
-	kvs []kvPair
+	kvs []KVPair
 	ts  uint64
 
 	memBuf          []*membuf.Buffer
@@ -698,7 +698,7 @@ func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (
 	if len(lowerBound) > 0 {
 		lowerBound = m.keyAdapter.Encode(nil, lowerBound, common.MinRowID)
 		firstKeyIdx = sort.Search(len(m.kvs), func(i int) bool {
-			return bytes.Compare(lowerBound, m.kvs[i].key) <= 0
+			return bytes.Compare(lowerBound, m.kvs[i].Key) <= 0
 		})
 		if firstKeyIdx == len(m.kvs) {
 			return -1, -1
@@ -710,7 +710,7 @@ func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (
 		upperBound = m.keyAdapter.Encode(nil, upperBound, common.MinRowID)
 		i := sort.Search(len(m.kvs), func(i int) bool {
 			reverseIdx := len(m.kvs) - 1 - i
-			return bytes.Compare(upperBound, m.kvs[reverseIdx].key) > 0
+			return bytes.Compare(upperBound, m.kvs[reverseIdx].Key) > 0
 		})
 		if i == len(m.kvs) {
 			// should not happen
@@ -727,11 +727,11 @@ func (m *MemoryIngestData) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]
 	if firstKeyIdx < 0 || firstKeyIdx > lastKeyIdx {
 		return nil, nil, nil
 	}
-	firstKey, err := m.keyAdapter.Decode(nil, m.kvs[firstKeyIdx].key)
+	firstKey, err := m.keyAdapter.Decode(nil, m.kvs[firstKeyIdx].Key)
 	if err != nil {
 		return nil, nil, err
 	}
-	lastKey, err := m.keyAdapter.Decode(nil, m.kvs[lastKeyIdx].key)
+	lastKey, err := m.keyAdapter.Decode(nil, m.kvs[lastKeyIdx].Key)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -739,7 +739,7 @@ func (m *MemoryIngestData) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]
 }
 
 type memoryDataIter struct {
-	kvs []kvPair
+	kvs []KVPair
 
 	firstKeyIdx int
 	lastKeyIdx  int
@@ -768,12 +768,12 @@ func (m *memoryDataIter) Next() bool {
 
 // Key implements ForwardIter.
 func (m *memoryDataIter) Key() []byte {
-	return m.kvs[m.curIdx].key
+	return m.kvs[m.curIdx].Key
 }
 
 // Value implements ForwardIter.
 func (m *memoryDataIter) Value() []byte {
-	return m.kvs[m.curIdx].value
+	return m.kvs[m.curIdx].Value
 }
 
 // Close implements ForwardIter.

@@ -228,7 +228,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		common.OnDuplicateKeyIgnore,
 	))
 
-	kvs := make([]kvPair, 0, kvCount)
+	kvs := make([]KVPair, 0, kvCount)
 
 	kvReader, err := NewKVReader(ctx, onefile[0], memStore, 0, 100)
 	require.NoError(t, err)
@@ -239,7 +239,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		copy(clonedKey, key)
 		clonedVal := make([]byte, len(value))
 		copy(clonedVal, value)
-		kvs = append(kvs, kvPair{key: clonedKey, value: clonedVal})
+		kvs = append(kvs, KVPair{Key: clonedKey, Value: clonedVal})
 	}
 	_, _, err = kvReader.NextKV()
 	require.Equal(t, io.EOF, err)
@@ -450,17 +450,17 @@ func TestOneFileWriterOnDupRemove(t *testing.T) {
 		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
 		writer := doGetWriter(store, builder)
 		input := []struct {
-			pair *kvPair
+			pair *KVPair
 			cnt  int
 		}{
-			{pair: &kvPair{key: []byte("1111"), value: []byte("vvvv")}, cnt: 1},
-			{pair: &kvPair{key: []byte("2222"), value: []byte("vvvv")}, cnt: 1},
-			{pair: &kvPair{key: []byte("6666"), value: []byte("vvvv")}, cnt: 3},
-			{pair: &kvPair{key: []byte("7777"), value: []byte("vvvv")}, cnt: 5},
+			{pair: &KVPair{Key: []byte("1111"), Value: []byte("vvvv")}, cnt: 1},
+			{pair: &KVPair{Key: []byte("2222"), Value: []byte("vvvv")}, cnt: 1},
+			{pair: &KVPair{Key: []byte("6666"), Value: []byte("vvvv")}, cnt: 3},
+			{pair: &KVPair{Key: []byte("7777"), Value: []byte("vvvv")}, cnt: 5},
 		}
 		for _, p := range input {
 			for i := 0; i < p.cnt; i++ {
-				require.NoError(t, writer.WriteRow(ctx, p.pair.key, p.pair.value))
+				require.NoError(t, writer.WriteRow(ctx, p.pair.Key, p.pair.Value))
 			}
 		}
 		require.NoError(t, writer.Close(ctx))
@@ -477,20 +477,20 @@ func TestOneFileWriterOnDupRemove(t *testing.T) {
 		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
 		writer := doGetWriter(store, builder)
 		input := []struct {
-			pair *kvPair
+			pair *KVPair
 			cnt  int
 		}{
-			{pair: &kvPair{key: []byte("1111"), value: []byte("vvvv")}, cnt: 5},
-			{pair: &kvPair{key: []byte("2222"), value: []byte("vvvv")}, cnt: 3},
-			{pair: &kvPair{key: []byte("3333"), value: []byte("vvvv")}, cnt: 4},
-			{pair: &kvPair{key: []byte("4444"), value: []byte("vvvv")}, cnt: 4},
-			{pair: &kvPair{key: []byte("5555"), value: []byte("vvvv")}, cnt: 2},
-			{pair: &kvPair{key: []byte("6666"), value: []byte("vvvv")}, cnt: 1},
-			{pair: &kvPair{key: []byte("7777"), value: []byte("vvvv")}, cnt: 1},
+			{pair: &KVPair{Key: []byte("1111"), Value: []byte("vvvv")}, cnt: 5},
+			{pair: &KVPair{Key: []byte("2222"), Value: []byte("vvvv")}, cnt: 3},
+			{pair: &KVPair{Key: []byte("3333"), Value: []byte("vvvv")}, cnt: 4},
+			{pair: &KVPair{Key: []byte("4444"), Value: []byte("vvvv")}, cnt: 4},
+			{pair: &KVPair{Key: []byte("5555"), Value: []byte("vvvv")}, cnt: 2},
+			{pair: &KVPair{Key: []byte("6666"), Value: []byte("vvvv")}, cnt: 1},
+			{pair: &KVPair{Key: []byte("7777"), Value: []byte("vvvv")}, cnt: 1},
 		}
 		for _, p := range input {
 			for i := 0; i < p.cnt; i++ {
-				require.NoError(t, writer.WriteRow(ctx, p.pair.key, p.pair.value))
+				require.NoError(t, writer.WriteRow(ctx, p.pair.Key, p.pair.Value))
 			}
 		}
 		require.NoError(t, writer.Close(ctx))
