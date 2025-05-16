@@ -1587,8 +1587,11 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
 
 	var userPriv, dbPriv, tablePriv, columnPriv mysql.PrivilegeType
+	var userRecord *UserRecord
+	var dbRecord *dbRecord
+	var tableRecord *tablesPrivRecord
 	for _, r := range roleList {
-		userRecord := p.matchUser(r.Username, r.Hostname)
+		userRecord = p.matchUser(r.Username, r.Hostname)
 		if userRecord != nil {
 			userPriv |= userRecord.Privileges
 		}
@@ -1598,7 +1601,7 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 	}
 
 	for _, r := range roleList {
-		dbRecord := p.matchDB(r.Username, r.Hostname, db)
+		dbRecord = p.matchDB(r.Username, r.Hostname, db)
 		if dbRecord != nil {
 			dbPriv |= dbRecord.Privileges
 		}
@@ -1608,7 +1611,7 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 	}
 
 	for _, r := range roleList {
-		tableRecord := p.matchTables(r.Username, r.Hostname, db, table)
+		tableRecord = p.matchTables(r.Username, r.Hostname, db, table)
 		if tableRecord != nil {
 			tablePriv |= tableRecord.TablePriv
 			if column != "" {
@@ -1641,11 +1644,32 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 			zap.String("table", table),
 			zap.String("column", column),
 			zap.Uint64("priv", uint64(priv)),
+			zap.Bool("userRecordExits", userRecord != nil),
 			zap.Uint64("userPriv", uint64(userPriv)),
+			zap.Bool("dbRecordExits", dbRecord != nil),
 			zap.Uint64("dbPriv", uint64(dbPriv)),
+			zap.Bool("tableRecordExits", tableRecord != nil),
 			zap.Uint64("tablePriv", uint64(tablePriv)),
 			zap.Uint64("columnPriv", uint64(columnPriv)),
 			zap.Stack("stack"))
+		if userRecord != nil {
+			logutil.BgLogger().Info("userRecord",
+				zap.String("host", userRecord.Host),
+				zap.String("user", userRecord.User),
+				zap.String("mask", userRecord.hostIPNet.String()))
+		}
+		if tableRecord != nil {
+			logutil.BgLogger().Info("tableRecord",
+				zap.String("host", tableRecord.Host),
+				zap.String("user", tableRecord.User),
+				zap.String("mask", tableRecord.hostIPNet.String()))
+		}
+		if dbRecord != nil {
+			logutil.BgLogger().Info("dbRecord",
+				zap.String("host", dbRecord.Host),
+				zap.String("user", dbRecord.User),
+				zap.String("mask", dbRecord.hostIPNet.String()))
+		}
 	}
 
 	return priv == 0
