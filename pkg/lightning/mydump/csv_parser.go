@@ -44,6 +44,35 @@ func init() {
 	LargestEntryLimit = tidbconfig.MaxTxnEntrySizeLimit
 }
 
+// CSVHeaderOption is the option to control how to process the CSV header.
+type CSVHeaderOption string
+
+var (
+	// CSVHeaderTrue means the first line of the CSV file is a header.
+	CSVHeaderTrue CSVHeaderOption = "true"
+
+	// CSVHeaderFalse means the first line of the CSV file is not a header.
+	CSVHeaderFalse CSVHeaderOption = "false"
+
+	// CSVHeaderAuto means parser will try to detect the header.
+	// It's only used for IMPORT INTO.
+	CSVHeaderAuto CSVHeaderOption = "auto"
+)
+
+// GetCSVHeaderOption returns the CSVHeaderOption according to the given string.
+func GetCSVHeaderOption(header string) CSVHeaderOption {
+	switch strings.ToLower(header) {
+	case "true":
+		return CSVHeaderTrue
+	case "false":
+		return CSVHeaderFalse
+	case "auto":
+		return CSVHeaderAuto
+	default:
+		return CSVHeaderFalse
+	}
+}
+
 // CSVParser is basically a copy of encoding/csv, but special-cased for MySQL-like input.
 type CSVParser struct {
 	blockParser
@@ -70,6 +99,8 @@ type CSVParser struct {
 	unquoteByteSet byteSet
 	newLineByteSet byteSet
 
+	csvHeaderOption CSVHeaderOption
+
 	// recordBuffer holds the unescaped fields, one after another.
 	// The fields can be accessed by using the indexes in fieldIndexes.
 	// E.g., For the row `a,"b","c""d",e`, recordBuffer will contain `abc"de`
@@ -84,8 +115,6 @@ type CSVParser struct {
 	lastRecord []field
 
 	escFlavor escapeFlavor
-	// if set to true, csv parser will treat the first non-empty line as header line
-	shouldParseHeader bool
 	// in LOAD DATA, empty line should be treated as a valid record
 	allowEmptyLine   bool
 	quotedNullIsText bool
@@ -105,7 +134,7 @@ func NewCSVParser(
 	reader ReadSeekCloser,
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
-	shouldParseHeader bool,
+	csvHeaderOption CSVHeaderOption,
 	charsetConvertor *CharsetConvertor,
 ) (*CSVParser, error) {
 	var err error
@@ -159,23 +188,23 @@ func NewCSVParser(
 	}
 	metrics, _ := metric.FromContext(ctx)
 	return &CSVParser{
-		blockParser:       makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.FromContext(ctx)),
-		cfg:               cfg,
-		charsetConvertor:  charsetConvertor,
-		comma:             []byte(fieldTerminator),
-		quote:             []byte(delimiter),
-		newLine:           []byte(lineTerminator),
-		startingBy:        []byte(cfg.LinesStartingBy),
-		escapedBy:         cfg.FieldsEscapedBy,
-		unescapeRegexp:    r,
-		escFlavor:         escFlavor,
-		quoteByteSet:      makeByteSet(quoteStopSet),
-		unquoteByteSet:    makeByteSet(unquoteStopSet),
-		newLineByteSet:    makeByteSet(newLineStopSet),
-		shouldParseHeader: shouldParseHeader,
-		allowEmptyLine:    cfg.AllowEmptyLine,
-		quotedNullIsText:  cfg.QuotedNullIsText,
-		unescapedQuote:    cfg.UnescapedQuote,
+		blockParser:      makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.FromContext(ctx)),
+		cfg:              cfg,
+		charsetConvertor: charsetConvertor,
+		comma:            []byte(fieldTerminator),
+		quote:            []byte(delimiter),
+		newLine:          []byte(lineTerminator),
+		startingBy:       []byte(cfg.LinesStartingBy),
+		escapedBy:        cfg.FieldsEscapedBy,
+		unescapeRegexp:   r,
+		escFlavor:        escFlavor,
+		quoteByteSet:     makeByteSet(quoteStopSet),
+		unquoteByteSet:   makeByteSet(unquoteStopSet),
+		newLineByteSet:   makeByteSet(newLineStopSet),
+		csvHeaderOption:  csvHeaderOption,
+		allowEmptyLine:   cfg.AllowEmptyLine,
+		quotedNullIsText: cfg.QuotedNullIsText,
+		unescapedQuote:   cfg.UnescapedQuote,
 	}, nil
 }
 
@@ -420,6 +449,9 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 }
 
 func (parser *CSVParser) readRecord(dst []field) ([]field, error) {
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
+
 	parser.recordBuffer = parser.recordBuffer[:0]
 	parser.fieldIndexes = parser.fieldIndexes[:0]
 	parser.fieldIsQuoted = parser.fieldIsQuoted[:0]
@@ -629,25 +661,27 @@ func (parser *CSVParser) replaceEOF(err error, replaced error) error {
 
 // ReadRow reads a row from the datafile.
 func (parser *CSVParser) ReadRow() error {
-	parser.beginRowLenCheck()
-	defer parser.endRowLenCheck()
 	row := &parser.lastRow
 	row.Length = 0
 	row.RowID++
 
-	// skip the header first
-	if parser.shouldParseHeader {
-		err := parser.ReadColumns()
-		if err != nil {
+	var (
+		fields   []field
+		needRead = true
+		err      error
+	)
+
+	if parser.csvHeaderOption != CSVHeaderFalse {
+		if fields, needRead, err = parser.trySkipHeader(); err != nil {
 			return errors.Trace(err)
 		}
-		parser.shouldParseHeader = false
+		parser.csvHeaderOption = CSVHeaderFalse
 	}
 
-	fields, err := parser.readRecord(parser.lastRecord)
-	if err != nil {
-		return errors.Trace(err)
+	if needRead {
+		fields, err = parser.readRecord(parser.lastRecord)
 	}
+
 	parser.lastRecord = fields
 	// remove the last empty value
 	if parser.cfg.TrimLastEmptyField {
@@ -680,25 +714,50 @@ func (parser *CSVParser) ReadRow() error {
 }
 
 // ReadColumns reads the columns of this CSV file.
-func (parser *CSVParser) ReadColumns() error {
+func (parser *CSVParser) ReadColumns() ([]string, error) {
 	parser.beginRowLenCheck()
 	defer parser.endRowLenCheck()
-	columns, err := parser.readRecord(nil)
+	fields, err := parser.readRecord(nil)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	if !parser.cfg.HeaderSchemaMatch {
-		return nil
-	}
-	parser.columns = make([]string, 0, len(columns))
-	for _, colName := range columns {
+
+	columns := make([]string, 0, len(fields))
+	for _, colName := range fields {
 		colNameStr, _, err := parser.unescapeString(colName)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
-		parser.columns = append(parser.columns, strings.ToLower(colNameStr))
+		columns = append(columns, strings.ToLower(colNameStr))
 	}
-	return nil
+
+	return columns, nil
+}
+
+// trySkipHeader read one row, and return the fields and whether the header matches
+func (parser *CSVParser) trySkipHeader() ([]field, bool, error) {
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
+	fields, err := parser.readRecord(nil)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+
+	match := true
+	if parser.csvHeaderOption == CSVHeaderAuto {
+		for i, colName := range fields {
+			colNameStr, _, err := parser.unescapeString(colName)
+			if err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			if parser.columns[i] != strings.ToLower(colNameStr) {
+				match = false
+				break
+			}
+		}
+	}
+
+	return fields, match, nil
 }
 
 // ReadUntilTerminator seeks the file until the terminator token is found, and
