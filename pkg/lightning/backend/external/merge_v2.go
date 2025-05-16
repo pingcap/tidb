@@ -146,7 +146,7 @@ func MergeOverlappingFilesV2(
 		now = time.Now()
 		sorty.MaxGor = uint64(concurrency)
 		sorty.Sort(len(loaded.kvs), func(i, k, r, s int) bool {
-			if bytes.Compare(loaded.kvs[i].key, loaded.kvs[k].key) < 0 { // strict comparator like < or >
+			if bytes.Compare(loaded.kvs[i].Key, loaded.kvs[k].Key) < 0 { // strict comparator like < or >
 				if r != s {
 					loaded.kvs[r], loaded.kvs[s] = loaded.kvs[s], loaded.kvs[r]
 				}
@@ -157,7 +157,7 @@ func MergeOverlappingFilesV2(
 		sortTime := time.Since(now)
 		now = time.Now()
 		for _, kv := range loaded.kvs {
-			err1 = writer.WriteRow(ctx, kv.key, kv.value)
+			err1 = writer.WriteRow(ctx, kv.Key, kv.Value)
 			if err1 != nil {
 				logutil.Logger(ctx).Warn("write one row to writer failed", zap.Error(err1))
 				return
