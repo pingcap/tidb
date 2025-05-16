@@ -16,7 +16,6 @@ package planner
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"math/rand"
 	"sort"
@@ -694,18 +693,11 @@ func recordRelevantOptVarsAndFixes(sctx sessionctx.Context, stmt ast.StmtNode) (
 func genPlanWithSCtx(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest, planHintStr string, planText [][]string, err error) {
 	ret := &core.PreprocessorReturn{}
 	nodeW := resolve.NewNodeW(stmt)
-	err = core.Preprocess(
-		context.Background(),
-		sctx,
-		nodeW,
-		core.WithPreprocessorReturn(ret),
-		core.InitTxnContextProvider,
-	)
-	if err != nil {
+	if err = core.Preprocess(context.Background(), sctx, nodeW,
+		core.WithPreprocessorReturn(ret), core.InitTxnContextProvider,
+	); err != nil {
 		return "", "", nil, err
 	}
-
-	fmt.Println(">>>>>>>>> ", sctx.GetSessionVars().CostModelVersion, sctx.GetSessionVars().TableFullScanCostFactor)
 
 	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
