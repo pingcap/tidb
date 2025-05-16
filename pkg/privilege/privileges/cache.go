@@ -1631,6 +1631,22 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 		return true
 	}
 
+	if priv != 0 {
+		logutil.BgLogger().Info("Request verification failed",
+			zap.Stringers("activeRoles", activeRoles),
+			zap.String("user", user),
+			zap.String("host", host),
+			zap.String("db", db),
+			zap.String("table", table),
+			zap.String("column", column),
+			zap.Uint64("priv", uint64(priv)),
+			zap.Uint64("userPriv", uint64(userPriv)),
+			zap.Uint64("dbPriv", uint64(dbPriv)),
+			zap.Uint64("tablePriv", uint64(tablePriv)),
+			zap.Uint64("columnPriv", uint64(columnPriv)),
+			zap.Stack("stack"))
+	}
+
 	return priv == 0
 }
 
