@@ -625,21 +625,20 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 		// it means hintCanWork and hintWorksWithProp is not determined here.
 		// so we need to check the plansFitsProp or plansNeedEnforce both to find the low-cost and
 		// hint applicable plan.
-		if !enumerationContainIndexJoin(plansFitsProp) && !enumerationContainIndexJoin(plansNeedEnforce) {
-			if hintCanWork && !hintWorksWithProp {
-				// If the hint can work with the empty property, but cannot work with
-				// the required property, we give up `plansFitProp` to make sure the hint
-				// can work.
-				plansFitsProp = nil
-			}
-			if !hintCanWork && !hintWorksWithProp && !prop.CanAddEnforcer {
-				// If the original property is not enforced and hint cannot
-				// work anyway, we give up `plansNeedEnforce` for efficiency.
-				//
-				// for special case, once we empty the sort item here, the more possible index join can be enumerated, which
-				// may lead the hint work only after child is built up under index join build mode v2. so here we tried
-				plansNeedEnforce = nil
-			}
+		// if !enumerationContainIndexJoin(plansFitsProp) && !enumerationContainIndexJoin(plansNeedEnforce) {
+		if hintCanWork && !hintWorksWithProp {
+			// If the hint can work with the empty property, but cannot work with
+			// the required property, we give up `plansFitProp` to make sure the hint
+			// can work.
+			plansFitsProp = nil
+		}
+		if !hintCanWork && !hintWorksWithProp && !prop.CanAddEnforcer {
+			// If the original property is not enforced and hint cannot
+			// work anyway, we give up `plansNeedEnforce` for efficiency.
+			//
+			// for special case, once we empty the sort item here, the more possible index join can be enumerated, which
+			// may lead the hint work only after child is built up under index join build mode v2. so here we tried
+			plansNeedEnforce = nil
 		}
 		newProp = prop
 	}
