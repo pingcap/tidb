@@ -355,7 +355,7 @@ func (r *byteReader) reload() (err error) {
 			return err
 		case io.ErrUnexpectedEOF:
 			// The last batch.
-			r.curBuf[0] = r.curBuf[0][:n]
+			r.curBuf[0] = r.curBuf[0][:n] // TODO: if n == 0 here, r.curBuf[0] would be [], causing deap loop
 		case context.Canceled:
 			return err
 		default:

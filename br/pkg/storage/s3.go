@@ -773,7 +773,7 @@ func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 	if prefetchSize > 0 {
 		reader = prefetch.NewReader(reader, o.PrefetchSize)
 	}
-	return &s3ObjectReader{
+	ret := &s3ObjectReader{
 		storage:      rs,
 		name:         path,
 		reader:       reader,
@@ -781,7 +781,10 @@ func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 		ctx:          ctx,
 		rangeInfo:    r,
 		prefetchSize: prefetchSize,
-	}, nil
+	}
+	ret.logger = log.L().With(zap.String("s3 reader id", fmt.Sprintf("%p", ret)))
+
+	return ret, nil
 }
 
 // RangeInfo represents the an HTTP Content-Range header value
@@ -906,6 +909,8 @@ type s3ObjectReader struct {
 	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
 	ctx          context.Context
 	prefetchSize int
+
+	logger *zap.Logger
 }
 
 // Read implement the io.Reader interface.
@@ -913,18 +918,25 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	retryCnt := 0
 	maxCnt := r.rangeInfo.End + 1 - r.pos
 	if maxCnt == 0 {
+		r.logger.Error("Read return 0, EOF")
 		return 0, io.EOF
 	}
+	defer func() {
+		r.logger.Info("Read return", zap.Int("n", n), zap.Error(err), zap.Int("len(p)", len(p)), zap.Int("retryCnt", retryCnt), zap.Int64("maxCnt", maxCnt))
+	}()
 	if maxCnt > int64(len(p)) {
 		maxCnt = int64(len(p))
 	}
 	ingestErr := func() {
+		if n == 0 || err != nil {
+			r.logger.Warn("Read encounter error", zap.Int("n", n), zap.Error(err))
+		}
 		if r.prefetchSize > 0 && rand.Intn(5) == 0 && n > 0 && err == nil {
 			n, err = rand.Intn(n), io.ErrUnexpectedEOF
 			if rand.Intn(2) == 0 {
 				n = 0
 			}
-			log.L().Warn("ingest error for s3ObjectReader.Read", zap.Int("n", n), zap.Error(err))
+			r.logger.Warn("ingest error", zap.Int("n", n), zap.Error(err))
 		}
 	}
 	n, err = r.reader.Read(p[:maxCnt])

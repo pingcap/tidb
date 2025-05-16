@@ -68,7 +68,7 @@ func (r *Reader) run() {
 		r.logger.Info("end run()")
 	}()
 	for {
-		if rand.Intn(10) == 0 {
+		if rand.Intn(5) == 0 {
 			r.logger.Info("run loop", zap.Int("loopCnt", int(loopCnt)))
 		}
 		r.bufIdx = (r.bufIdx + 1) % 2
@@ -79,7 +79,7 @@ func (r *Reader) run() {
 		} else if rand.Intn(10) == 0 {
 			r.logger.Info("After normal read in run()", zap.Int("n", n))
 		}
-		buf = buf[:n] // TODO: skip this if n == 0
+		buf = buf[:n]
 		select {
 		case <-r.closedCh:
 			return
@@ -102,15 +102,15 @@ func (r *Reader) Read(data []byte) (int, error) {
 	var loopCnt uint64
 	r.logger.Info("start Read()", zap.Int("len(data)", len(data)))
 	defer func() {
-		r.logger.Info("end Read()")
+		r.logger.Info("end Read()", zap.Int("len(data)", len(data)), zap.Error(r.err))
 	}()
 	for {
-		if rand.Intn(10) == 0 {
+		if rand.Intn(5) == 0 {
 			r.logger.Info("Read loop", zap.Int("loopCnt", int(loopCnt)))
 		}
 		if r.curBufReader == nil {
 			b, ok := <-r.bufCh
-			if !ok || len(b) == 0 {
+			if !ok {
 				if total > 0 {
 					//PrintLog = true
 					//logutil.BgLogger().Error("set printlog = true", zap.Error(r.err), zap.Int("total", total), zap.Any("data-buf-len", len(data)))
@@ -128,7 +128,7 @@ func (r *Reader) Read(data []byte) (int, error) {
 		expected := len(data)
 		n, err := r.curBufReader.Read(data)
 		if n == 0 || err != nil {
-			r.logger.Error("After abnormal read in Read()", zap.Int("n", n), zap.Error(err)) // (0, io.EOF)
+			r.logger.Error("After abnormal read in Read()", zap.Int("n", n), zap.Error(err)) // (0, io.EOF) if len(b) == 0
 		}
 		total += n
 		if n == expected {
