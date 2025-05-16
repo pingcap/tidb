@@ -16,6 +16,7 @@ package bindinfo_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -23,6 +24,47 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGenPlanWithSCtx(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (a int, b int, c int, key(a), key(b))`)
+	tk.MustExec(`create table t2 (a int, b int, c int, key(a), key(b))`)
+
+	p := parser.New()
+	sctx := tk.Session()
+	sctx.GetSessionVars().CostModelVersion = 2
+	check := func(sql, expectedHint, expectedPlan string) {
+		p.Reset()
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		planDigest, planHint, planText, err := bindinfo.GenPlanWithSCtx(sctx, stmt)
+		require.NoError(t, err)
+		require.True(t, len(planDigest) > 0)
+		require.True(t, strings.Contains(planHint, expectedHint))
+		planOperators := make([]string, 0, len(planText))
+		for _, row := range planText {
+			planOperators = append(planOperators, row[0])
+		}
+		require.True(t, strings.Contains(strings.Join(planOperators, ","), expectedPlan))
+	}
+	check("select count(1) from t1 where a=1",
+		"stream_agg", "StreamAgg")
+
+	sctx.GetSessionVars().StreamAggCostFactor = 10000
+	check("select count(1) from t1 where a=1",
+		"hash_agg", "HashAgg")
+	sctx.GetSessionVars().StreamAggCostFactor = 1
+
+	check("select * from t1, t2 where t1.a=t2.a and t2.b=1",
+		"inl_hash_join", "IndexHashJoin")
+
+	sctx.GetSessionVars().IndexJoinCostFactor = 100000
+	sctx.GetSessionVars().HashJoinCostFactor = 100000
+	check("select * from t1, t2 where t1.a=t2.a and t2.b=1",
+		"merge_join", `MergeJoin`)
+}
 
 func TestExplainExploreBasic(t *testing.T) {
 	store := testkit.CreateMockStore(t)

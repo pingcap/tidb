@@ -385,7 +385,7 @@ func (e *ShowExec) fetchPlanForSQL() error {
 	bindingHandle := domain.GetDomain(e.Ctx()).BindingHandle()
 	charset, collation := e.Ctx().GetSessionVars().GetCharsetInfo()
 	currentDB := e.Ctx().GetSessionVars().CurrentDB
-	plans, err := bindingHandle.ShowPlansForSQL(currentDB, e.SQLOrDigest, charset, collation)
+	plans, err := bindingHandle.ExplorePlansForSQL(currentDB, e.SQLOrDigest, charset, collation)
 	if err != nil {
 		return err
 	}
