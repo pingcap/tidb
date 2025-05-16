@@ -37,8 +37,6 @@ var (
 	_ base.Task = &CopTask{}
 )
 
-var _ context.WarnGetterAppender = &simpleWarnings{}
-
 type simpleWarnings struct {
 	warnings []*context.SQLWarn
 }
@@ -189,6 +187,11 @@ func (t *RootTask) MemoryUsage() (sum int64) {
 	return sum
 }
 
+// AppendWarning appends a warning
+func (t *RootTask) AppendWarning(err error) {
+	t.warnings.AppendWarning(err)
+}
+
 // ************************************* RootTask End ******************************************
 
 // ************************************* MPPTask Start ******************************************
@@ -261,6 +264,11 @@ func (t *MppTask) MemoryUsage() (sum int64) {
 		sum += t.p.MemoryUsage()
 	}
 	return
+}
+
+// AppendWarning appends a warning
+func (t *MppTask) AppendWarning(err error) {
+	t.warnings.AppendWarning(err)
 }
 
 // ConvertToRootTaskImpl implements Task interface.
@@ -365,6 +373,11 @@ type CopTask struct {
 
 	// warnings passed through different task copy attached with more upper operator specific warnings. (not concurrent safe)
 	warnings simpleWarnings
+}
+
+// AppendWarning appends a warning
+func (t *CopTask) AppendWarning(err error) {
+	t.warnings.AppendWarning(err)
 }
 
 // Invalid implements Task interface.
