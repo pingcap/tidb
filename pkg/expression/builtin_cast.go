@@ -23,6 +23,8 @@
 package expression
 
 import (
+	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -1113,6 +1115,7 @@ func (b *builtinCastStringAsJSONSig) Clone() builtinFunc {
 }
 
 func (b *builtinCastStringAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+	var serr *json.SyntaxError
 	val, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -1135,6 +1138,13 @@ func (b *builtinCastStringAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (r
 		return res, false, err
 	} else if mysql.HasParseToJSONFlag(b.tp.GetFlag()) {
 		res, err = types.ParseBinaryJSONFromString(val)
+		if err != nil {
+			if goerrors.As(err, &serr) {
+				err = types.ErrInvalidJSONTextInParam.GenWithStackByArgs(1, "cast_as_json", err, serr.Offset)
+			} else {
+				err = types.ErrInvalidJSONTextInParam.GenWithStackByArgs(1, "cast_as_json", err, 0)
+			}
+		}
 	} else {
 		res = types.CreateBinaryJSON(val)
 	}
