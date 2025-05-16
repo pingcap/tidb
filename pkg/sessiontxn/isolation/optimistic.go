@@ -33,7 +33,8 @@ var emptyOptimisticTxnContextProvider = OptimisticTxnContextProvider{}
 // OptimisticTxnContextProvider provides txn context for optimistic transaction
 type OptimisticTxnContextProvider struct {
 	baseTxnContextProvider
-	optimizeWithMaxTS bool
+	optimizeWithMaxTS    bool
+	TryOptimizeWithMaxTS bool
 }
 
 // ResetForNewTxn resets OptimisticTxnContextProvider to an initial state for a new txn
@@ -119,6 +120,14 @@ func (p *OptimisticTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 	return p.baseTxnContextProvider.GetStmtForUpdateTS()
 }
 
+// AdviseWarmup implements TxnAdvisable interface.
+func (p *OptimisticTxnContextProvider) AdviseWarmup() error {
+	if p.TryOptimizeWithMaxTS || p.optimizeWithMaxTS {
+		return nil
+	}
+	return p.baseTxnContextProvider.AdviseWarmup()
+}
+
 // AdviseOptimizeWithPlan providers optimization according to the plan
 // It will use MaxTS as the startTS in autocommit txn for some plans.
 func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan any) (err error) {
@@ -143,8 +152,8 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan any) (err err
 
 	ok = plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(p.sctx.GetSessionVars(), realPlan)
 
+	sessVars := p.sctx.GetSessionVars()
 	if ok {
-		sessVars := p.sctx.GetSessionVars()
 		logutil.BgLogger().Debug("init txnStartTS with MaxUint64",
 			zap.Uint64("conn", sessVars.ConnectionID),
 			zap.String("text", sessVars.StmtCtx.OriginalSQL),
@@ -162,6 +171,11 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan any) (err err
 		p.optimizeWithMaxTS = true
 		if sessVars.StmtCtx.Priority == mysql.NoPriority {
 			sessVars.StmtCtx.Priority = kv.PriorityHigh
+		}
+	} else if !sessVars.GuaranteeLinearizability {
+		ok = plannercore.IsTableOrIndexReaderByAutoCommit(p.sctx.GetSessionVars(), realPlan)
+		if ok {
+			p.TryOptimizeWithMaxTS = true
 		}
 	}
 	return nil
