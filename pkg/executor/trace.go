@@ -44,10 +44,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"sourcegraph.com/sourcegraph/appdash"
-	traceImpl "sourcegraph.com/sourcegraph/appdash/opentracing"
+	// traceImpl "sourcegraph.com/sourcegraph/appdash/opentracing"
 )
 
 // TraceExec represents a root executor of trace query.
@@ -227,44 +228,47 @@ func (e *TraceExec) nextTraceLog(ctx context.Context, se sqlexec.SQLExecutor, re
 }
 
 func (e *TraceExec) nextRowJSON(ctx context.Context, se sqlexec.SQLExecutor, req *chunk.Chunk) error {
-	store := appdash.NewMemoryStore()
-	tracer := traceImpl.NewTracer(store)
-	span := tracer.StartSpan("trace")
-	ctx = opentracing.ContextWithSpan(ctx, span)
+	// store := appdash.NewMemoryStore()
+	// tracer := traceImpl.NewTracer(store)
+	// span := tracer.StartSpan("trace")
+	// ctx = opentracing.ContextWithSpan(ctx, span)
 
 	e.executeChild(ctx, se)
-	span.Finish()
+	tracing.MarkDump(ctx)
 
-	traces, err := store.Traces(appdash.TracesOpts{})
-	if err != nil {
-		return errors.Trace(err)
-	}
+	// span.Finish()
+
+	// traces, err := store.Traces(appdash.TracesOpts{})
+	// if err != nil {
+	// 	return errors.Trace(err)
+	// }
 
 	// Row format.
-	if e.format != core.TraceFormatJSON {
-		if len(traces) < 1 {
-			e.exhausted = true
-			return nil
-		}
-		trace := traces[0]
-		dfsTree(trace, "", false, req)
-		e.exhausted = true
-		return nil
-	}
+	// if e.format != core.TraceFormatJSON {
+	// 	if len(traces) < 1 {
+	// 		e.exhausted = true
+	// 		return nil
+	// 	}
+	// 	trace := traces[0]
+	// 	dfsTree(trace, "", false, req)
+	// 	e.exhausted = true
+	// 	return nil
+	// }
 
-	// Json format.
-	data, err := json.Marshal(traces)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	// // Json format.
+	// data, err := json.Marshal(traces)
+	// if err != nil {
+	// 	return errors.Trace(err)
+	// }
 
-	// Split json data into rows to avoid the max packet size limitation.
-	const maxRowLen = 4096
-	for len(data) > maxRowLen {
-		req.AppendString(0, string(data[:maxRowLen]))
-		data = data[maxRowLen:]
-	}
-	req.AppendString(0, string(data))
+	// // Split json data into rows to avoid the max packet size limitation.
+	// const maxRowLen = 4096
+	// for len(data) > maxRowLen {
+	// 	req.AppendString(0, string(data[:maxRowLen]))
+	// 	data = data[maxRowLen:]
+	// }
+	// req.AppendString(0, string(data))
+	// req.AppendString(0, "")
 	e.exhausted = true
 	return nil
 }
