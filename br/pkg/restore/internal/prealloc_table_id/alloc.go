@@ -5,8 +5,8 @@ package prealloctableid
 import (
 	"fmt"
 	"math"
-	"sync/atomic"
 
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pkg/errors"
@@ -35,21 +35,21 @@ type PreallocIDs struct {
 	reusableBorder int64
 	end            int64
 	count          int64
-	next           atomic.Int64
 }
 
 // New collects the requirement of prealloc IDs and return a
 // not-yet-allocated PreallocIDs.
-func New(tables []*metautil.Table) *PreallocIDs {
+func New(tables []*metautil.Table) (*PreallocIDs, error) {
 	if len(tables) == 0 {
 		return &PreallocIDs{
 			start: math.MaxInt64,
-		}
+		}, nil
 	}
 
 	maxID := int64(0)
 	count := int64(len(tables))
 
+	//TODO: (ris) sort all tables by ID, also in createTables
 	for _, t := range tables {
 		if t.Info.ID > maxID && t.Info.ID < InsaneTableIDThreshold {
 			maxID = t.Info.ID
@@ -65,14 +65,54 @@ func New(tables []*metautil.Table) *PreallocIDs {
 		}
 	}
 	if maxID+count+1 > InsaneTableIDThreshold {
-		return nil
+		return nil, errors.Errorf("table ID %d is too large", maxID)
 	}
 	return &PreallocIDs{
 		start:          math.MaxInt64,
 		reusableBorder: maxID + 1,
 		count:          count,
-		next:           atomic.Int64{},
+	}, nil
+}
+
+func Reuse(lagacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocIDs, error) {
+	if lagacy == nil {
+		return nil, errors.Errorf("no prealloc IDs to be reused")
 	}
+
+	//TODO: (ris) sort all tables by ID, also in createTables
+	count := int64(len(tables))
+	maxID := int64(0)
+	for _, t := range tables {
+		if t.Info.ID > maxID && t.Info.ID < InsaneTableIDThreshold {
+			maxID = t.Info.ID
+		}
+
+		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
+			count += int64(len(t.Info.Partition.Definitions))
+			for _, part := range t.Info.Partition.Definitions {
+				if part.ID > maxID && part.ID < InsaneTableIDThreshold {
+					maxID = part.ID
+				}
+			}
+		}
+	}
+	if maxID+count+1 > InsaneTableIDThreshold {
+		return nil, errors.Errorf("table ID %d is too large", maxID)
+	}
+
+	if count != lagacy.Count {
+		return nil, errors.Errorf("prealloc IDs count %d are not match with the tables count %d", lagacy.Count, count)
+	}
+	if lagacy.ReusableBorder != maxID+1 {
+		return nil, errors.Errorf("prealloc IDs reusable border %d are not match with the tables max ID %d", lagacy.ReusableBorder, maxID+1)
+	}
+	ret := PreallocIDs{
+		start:          lagacy.Start,
+		reusableBorder: lagacy.ReusableBorder,
+		end:            lagacy.End,
+		count:          lagacy.Count,
+	}
+	return &ret, nil
 }
 
 // String implements fmt.Stringer.
@@ -111,7 +151,6 @@ func (p *PreallocIDs) Alloc(m Allocator) error {
 	}
 
 	p.end = p.start + idRange
-	p.next.Store(p.reusableBorder)
 	return nil
 }
 
@@ -120,9 +159,9 @@ func (p *PreallocIDs) allocID(originalID int64) (int64, error) {
 		return originalID, nil
 	}
 
-	rewriteID := p.next.Add(1) - 1
+	rewriteID := originalID - p.start + p.reusableBorder
 	if rewriteID >= p.end {
-		return 0, errors.Errorf("no available IDs")
+		return 0, errors.Errorf("table ID can't rewrite (%d -> %d), out of range [%d, %d)", originalID, rewriteID, p.start, p.end)
 	}
 	return rewriteID, nil
 }
@@ -151,4 +190,17 @@ func (p *PreallocIDs) RewriteTableInfo(info *model.TableInfo) (*model.TableInfo,
 	}
 
 	return infoCopy, nil
+}
+
+func (p *PreallocIDs) CreateCheckpoint() *checkpoint.PreallocIDs {
+	if p == nil || p.start >= p.end {
+		return nil
+	}
+
+	return &checkpoint.PreallocIDs{
+		Start:          p.start,
+		ReusableBorder: p.reusableBorder,
+		End:            p.end,
+		Count:          p.count,
+	}
 }
