@@ -142,6 +142,11 @@ func RecordHistoricalStatsMeta(
 		return errors.Errorf("tableID %d, version %d are invalid", tableID, version)
 	}
 
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "recordHistoricalStatsMeta"))
+	defer func() {
+		statslogutil.StatsLogger().Info("[stats_meta] end")
+	}()
+
 	rows, _, err := handleutil.ExecRowsWithCtx(
 		ctx,
 		sctx,
