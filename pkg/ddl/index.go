@@ -1637,7 +1637,7 @@ func runReorgJobAndHandleErr(
 			return false, ver, nil
 		}
 		// TODO(tangenta): get duplicate column and match index.
-		err = local.ConvertToErrFoundConflictRecords(err, tbl)
+		err = ingest.TryConvertToKeyExistsErr(err, allIndexInfos[0], tbl.Meta())
 		if !isRetryableJobError(err, job.ErrorCount) {
 			logutil.DDLLogger().Warn("run add index job failed, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), allIndexInfos, err)
@@ -2277,6 +2277,7 @@ func writeChunk(
 	errCtx errctx.Context,
 	writeStmtBufs *variable.WriteStmtBufs,
 	copChunk *chunk.Chunk,
+	tblInfo *model.TableInfo,
 ) (int, kv.Handle, error) {
 	iter := chunk.NewIterator4Chunk(copChunk)
 	c := copCtx.GetBase()
@@ -2335,6 +2336,7 @@ func writeChunk(
 			}
 			err = writeOneKV(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {
+				err = ingest.TryConvertToKeyExistsErr(err, index.Meta(), tblInfo)
 				return 0, nil, errors.Trace(err)
 			}
 		}
