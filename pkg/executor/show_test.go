@@ -59,7 +59,7 @@ func Test_fillOneImportJobInfo(t *testing.T) {
 	require.True(t, c.GetRow(1).IsNull(10))
 	require.True(t, c.GetRow(1).IsNull(11))
 
-	jobInfo.Summary = &importer.JobSummary{ImportedRows: 123}
+	jobInfo.Summary = importer.MockSummary(123)
 	jobInfo.StartTime = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	jobInfo.EndTime = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	executor.FillOneImportJobInfo(c, jobInfo, 0)

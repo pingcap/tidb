@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
@@ -90,6 +91,9 @@ type TaskManager interface {
 
 	// GetAllSubtasksByStepAndState gets all subtasks by given states for one step.
 	GetAllSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error)
+
+	// GetAllSubtasksByStepAndState gets all subtasks by given states for one step.
+	GetAllSubtaskSummaryByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState) ([]*execute.SubtaskSummary, error)
 
 	WithNewSession(fn func(se sessionctx.Context) error) error
 	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error

@@ -476,6 +476,13 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 				return annotateErr(err, allPeers[i], "when send data")
 			}
 		}
+
+		// TODO(joechenrh): consider duplication for OnRead
+		if local.collector != nil {
+			local.collector.OnRead(size, int64(count))
+			local.collector.OnWrite(size, int64(count))
+		}
+
 		failpoint.Inject("afterFlushKVs", func() {
 			log.FromContext(ctx).Info(fmt.Sprintf("afterFlushKVs count=%d,size=%d", count, size))
 		})

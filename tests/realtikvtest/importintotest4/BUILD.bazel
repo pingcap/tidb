@@ -5,6 +5,7 @@ go_test(
     timeout = "moderate",
     srcs = [
         "global_sort_test.go",
+        "import_summary_test.go",
         "main_test.go",
         "manual_recovery_test.go",
         "split_file_test.go",
@@ -15,6 +16,7 @@ go_test(
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
+        "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/disttask/framework/testutil",
         "//pkg/disttask/importinto",
         "//pkg/executor/importer",

@@ -32,6 +32,7 @@ go_library(
         "//br/pkg/version",
         "//pkg/config/kerneltype",
         "//pkg/distsql",
+        "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/infoschema",
         "//pkg/ingestor/engineapi",
         "//pkg/ingestor/ingestcli",

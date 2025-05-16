@@ -285,6 +285,38 @@ type ASTArgs struct {
 	LinesInfo          *ast.LinesClause
 }
 
+// StepSummary records the output data size and row count of each step.
+type StepSummary struct {
+	Bytes  uint64 `json:"input-bytes,omitempty"`
+	RowCnt uint64 `json:"input-rows,omitempty"`
+}
+
+// Summary records the metrics information, which is stored in the TaskMeta.
+// And this information will be stored into tidb_import_jobs table after the job is done.
+// Because data may have duplicates, rows and size of each step may be different.
+type Summary struct {
+	// bytes and rows after encoding
+	EncodeSummary StepSummary `json:"encode-summary,omitempty"`
+
+	// bytes and rows during merging
+	MergeSummary StepSummary `json:"merge-summary,omitempty"`
+
+	// bytes and rows to ingest
+	IngestSummary StepSummary `json:"ingest-summary,omitempty"`
+
+	// bytes and rows after ingesting
+	PostProcessSummary StepSummary `json:"post-process-summary,omitempty"`
+}
+
+// MockSummary creates a mock summary for testing.
+func MockSummary(rowCnt int64) *Summary {
+	return &Summary{
+		PostProcessSummary: StepSummary{
+			RowCnt: uint64(rowCnt),
+		},
+	}
+}
+
 // LoadDataController load data controller.
 // todo: need a better name
 type LoadDataController struct {

@@ -15,6 +15,7 @@ import (
 
 	proto "github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	storage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	execute "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	sessionctx "github.com/pingcap/tidb/pkg/sessionctx"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -366,6 +367,21 @@ func (m *MockTaskManager) GetAllNodes(arg0 context.Context) ([]proto.ManagedNode
 func (mr *MockTaskManagerMockRecorder) GetAllNodes(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllNodes", reflect.TypeOf((*MockTaskManager)(nil).GetAllNodes), arg0)
+}
+
+// GetAllSubtaskSummaryByStepAndState mocks base method.
+func (m *MockTaskManager) GetAllSubtaskSummaryByStepAndState(arg0 context.Context, arg1 int64, arg2 proto.Step, arg3 proto.SubtaskState) ([]*execute.SubtaskSummary, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAllSubtaskSummaryByStepAndState", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].([]*execute.SubtaskSummary)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAllSubtaskSummaryByStepAndState indicates an expected call of GetAllSubtaskSummaryByStepAndState.
+func (mr *MockTaskManagerMockRecorder) GetAllSubtaskSummaryByStepAndState(arg0, arg1, arg2, arg3 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllSubtaskSummaryByStepAndState", reflect.TypeOf((*MockTaskManager)(nil).GetAllSubtaskSummaryByStepAndState), arg0, arg1, arg2, arg3)
 }
 
 // GetAllSubtasks mocks base method.
