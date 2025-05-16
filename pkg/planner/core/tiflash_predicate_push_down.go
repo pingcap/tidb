@@ -255,6 +255,18 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 		return
 	}
 
+	// Currently, TiFlash does not support vector index with predicates.
+	// So for now, one DataSource only contains one TiFlash !keepOrder path,
+	// which means that the following code will only be executed once.
+	// TODO: If there are multiple TiFlash !keepOrder paths in one DataSource in the future,
+	// we need to move the following code to another place.
+	// Since caculating selectivity is expensive, we need to avoid duplicate execution.
+	for _, index := range ts.UsedColumnarIndexes {
+		if index.IndexInfo.VectorInfo != nil {
+			panic("TiFlash does not support vector index with pedicates")
+		}
+	}
+
 	// Consider use index hints
 	indexMap := make(map[string]int, len(ts.Table.Indices))
 	for _, hint := range indexHints {
