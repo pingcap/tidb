@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -227,6 +229,16 @@ func NewMgr(
 		if err != nil {
 			return nil, errors.Annotate(err, "unable to check cluster version for ddl")
 		}
+	}
+
+	if err = g.UseOneShotSession(storage, !needDomain, func(se glue.Session) error {
+		enableFollowerHandleRegion, err := se.GetGlobalSysVar(vardef.PDEnableFollowerHandleRegion)
+		if err != nil {
+			return err
+		}
+		return controller.SetFollowerHandle(variable.TiDBOptOn(enableFollowerHandleRegion))
+	}); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	mgr := &Mgr{
