@@ -294,6 +294,7 @@ func TestRewriteTableInfoForPartitionTable(t *testing.T) {
 		nil,
 		0,
 		nil,
+		false,
 	)
 
 	// set restoreKV status, and rewrite it.
@@ -420,7 +421,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 		Key:   txnKey,
 		Value: value,
 	}
-	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF)
+	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF, NewMockMetaInfoCollector())
 	require.Nil(t, err)
 
 	sr := NewSchemasReplace(
@@ -428,6 +429,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 		nil,
 		0,
 		nil,
+		false,
 	)
 
 	// rewrite partition table
@@ -449,7 +451,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 		Key:   txnKey,
 		Value: value,
 	}
-	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF)
+	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF, NewMockMetaInfoCollector())
 	require.Nil(t, err)
 
 	value, err = sr.rewriteTableInfo(value, dbID2)

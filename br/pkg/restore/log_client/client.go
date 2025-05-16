@@ -1005,14 +1005,16 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 		}
 	}
 
-	if len(dbMaps) <= 0 {
+	if len(dbMaps) <= 0 && tableMappingManger.IsEmpty() {
 		log.Error("no id maps found")
 		return errors.New("no base id map found from saved id or last restored PiTR")
 	}
 	dbReplaces = stream.FromDBMapProto(dbMaps)
 
 	stream.LogDBReplaceMap("base db replace info", dbReplaces)
-	tableMappingManger.MergeBaseDBReplace(dbReplaces)
+	if len(dbReplaces) != 0 {
+		tableMappingManger.MergeBaseDBReplace(dbReplaces)
+	}
 	return nil
 }
 

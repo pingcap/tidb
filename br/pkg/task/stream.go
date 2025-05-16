@@ -1668,15 +1668,15 @@ func restoreStream(
 	}
 
 	if cfg.ExplicitFilter {
-		failpoint.Inject("before-set-table-mode-to-normal", func(_ failpoint.Value) {
-			failpoint.Return(errors.New("fail before setting table mode to normal"))
-		})
-
 		// refresh metadata will sync data from TiKV to info schema one table at a time.
 		// this must succeed to ensure schema consistency
 		if err = client.RefreshMetaForTables(ctx, schemasReplace); err != nil {
 			return errors.Trace(err)
 		}
+
+		failpoint.Inject("before-set-table-mode-to-normal", func(_ failpoint.Value) {
+			failpoint.Return(errors.New("fail before setting table mode to normal"))
+		})
 
 		if err = client.SetTableModeToNormal(ctx, schemasReplace); err != nil {
 			return errors.Trace(err)
@@ -2127,11 +2127,9 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	tableMappingManager *stream.TableMappingManager) error {
 	// get the schemas ID replace information.
 	saved := isCurrentIdMapSaved(cfg.checkpointTaskInfo)
-	if tableMappingManager.IsEmpty() {
-		err := client.GetBaseIDMapAndMerge(ctx, saved, cfg.logCheckpointMetaManager, tableMappingManager)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	err := client.GetBaseIDMapAndMerge(ctx, saved, cfg.logCheckpointMetaManager, tableMappingManager)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	if saved {
@@ -2142,7 +2140,7 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	// do filter
 	cfg.tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
 	// replace temp id with read global id
-	err := tableMappingManager.ReplaceTemporaryIDs(ctx, client.GenGlobalIDs)
+	err = tableMappingManager.ReplaceTemporaryIDs(ctx, client.GenGlobalIDs)
 	if err != nil {
 		return errors.Trace(err)
 	}
