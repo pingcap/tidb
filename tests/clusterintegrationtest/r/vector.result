@@ -25,8 +25,8 @@ TopN_7	2.00	root		Column#3, offset:0, count:2
   └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
     └─Projection_12	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
       └─TableFullScan_11	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tiflash";
 select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
@@ -78,8 +78,8 @@ TopN_10	2.00	root		Column#3, offset:0, count:2
     └─TopN_18	2.00	mpp[tiflash]		Column#3, offset:0, count:2
       └─Projection_17	2.00	mpp[tiflash]		vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
         └─TableFullScan_16	3.00	mpp[tiflash]	table:t	keep order:false, stats:pseudo
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tikv,tiflash";
 drop table t;
@@ -109,8 +109,8 @@ TopN_7	2.00	root		Column#3, offset:0, count:2
   └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
     └─Projection_12	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
       └─TableFullScan_11	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tiflash";
 select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
@@ -162,8 +162,8 @@ TopN_11	2.00	root		Column#4, offset:0, count:2
     └─TopN_27	2.00	mpp[tiflash]		Column#4, offset:0, count:2
       └─Projection_26	2.00	mpp[tiflash]		vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#4
         └─TableFullScan_25	2.00	mpp[tiflash]	table:t, index:vector_index(vec)	keep order:false, stats:pseudo, annIndex:L2(vec..[0,0,0], limit:2)
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tikv,tiflash";
 drop table t;
@@ -194,8 +194,8 @@ TopN_7	2.00	root		Column#3, offset:0, count:2
   └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
     └─Projection_12	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
       └─TableFullScan_11	3.00	cop[tikv]	table:t	keep order:false
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tiflash";
 select id from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
@@ -247,8 +247,8 @@ TopN_10	2.00	root		Column#3, offset:0, count:2
     └─TopN_18	2.00	mpp[tiflash]		Column#3, offset:0, count:2
       └─Projection_17	2.00	mpp[tiflash]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
         └─TableFullScan_16	3.00	mpp[tiflash]	table:t	keep order:false
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tikv,tiflash";
 drop table t;
@@ -278,8 +278,8 @@ TopN_7	2.00	root		Column#3, offset:0, count:2
   └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
     └─Projection_12	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
       └─TableFullScan_11	3.00	cop[tikv]	table:t	keep order:false
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tiflash";
 select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
@@ -294,8 +294,8 @@ TopN_11	2.00	root		Column#4, offset:0, count:2
     └─TopN_27	2.00	mpp[tiflash]		Column#4, offset:0, count:2
       └─Projection_26	2.00	mpp[tiflash]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#4
         └─TableFullScan_25	2.00	mpp[tiflash]	table:t, index:vector_index(vec)	keep order:false, annIndex:L2(vec..[0,0,0], limit:2)
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tikv,tiflash";
 alter table t compact;
@@ -348,8 +348,8 @@ TopN_7	2.00	root		Column#3, offset:0, count:2
   └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
     └─Projection_12	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
       └─TableFullScan_11	3.00	cop[tikv]	table:t	keep order:false
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tiflash";
 select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
@@ -389,8 +389,8 @@ TopN_10	2.00	root		Column#3, offset:0, count:2
     └─TopN_21	2.00	mpp[tiflash]		Column#3, offset:0, count:2
       └─Projection_20	2.00	mpp[tiflash]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
         └─TableFullScan_18	3.00	mpp[tiflash]	table:t	keep order:false
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tikv,tiflash";
 drop table t;
@@ -420,8 +420,8 @@ TopN_7	2.00	root		Column#4, offset:0, count:2
   └─TopN_13	2.00	cop[tikv]		Column#4, offset:0, count:2
     └─Projection_12	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#4
       └─TableFullScan_11	3.00	cop[tikv]	table:t	keep order:false
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tiflash";
 select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
@@ -461,8 +461,8 @@ TopN_10	2.00	root		Column#4, offset:0, count:2
     └─TopN_21	2.00	mpp[tiflash]		Column#4, offset:0, count:2
       └─Projection_20	2.00	mpp[tiflash]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#4
         └─TableFullScan_18	3.00	mpp[tiflash]	table:t	keep order:false
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tikv,tiflash";
 drop table t;
@@ -492,8 +492,8 @@ TopN_7	2.00	root		Column#3, offset:0, count:2
   └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
     └─Projection_12	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#3
       └─TableFullScan_11	500.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tiflash";
 select * from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
@@ -545,8 +545,8 @@ TopN_11	2.00	root		Column#4, offset:0, count:2
     └─TopN_27	2.00	mpp[tiflash]		Column#4, offset:0, count:2
       └─Projection_26	2.00	mpp[tiflash]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#4
         └─TableFullScan_25	2.00	mpp[tiflash]	table:t, index:vector_index(vec)	keep order:false, stats:pseudo, annIndex:L2(vec..[2e+02,2e+02,2e+02], limit:2)
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tikv,tiflash";
 drop table t;
@@ -587,8 +587,8 @@ TopN_7	2.00	root		Column#3, offset:0, count:2
   └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
     └─Projection_12	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#3
       └─TableFullScan_11	500.00	cop[tikv]	table:t	keep order:false
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tiflash";
 select * from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
@@ -640,8 +640,8 @@ TopN_11	2.00	root		Column#4, offset:0, count:2
     └─TopN_27	2.00	mpp[tiflash]		Column#4, offset:0, count:2
       └─Projection_26	2.00	mpp[tiflash]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#4
         └─TableFullScan_25	2.00	mpp[tiflash]	table:t, index:vector_index(vec)	keep order:false, annIndex:L2(vec..[2e+02,2e+02,2e+02], limit:2)
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tikv,tiflash";
 drop table t;
@@ -682,8 +682,8 @@ TopN_7	2.00	root		Column#3, offset:0, count:2
   └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
     └─Projection_12	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#3
       └─TableFullScan_11	500.00	cop[tikv]	table:t	keep order:false
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tiflash";
 select * from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
@@ -759,8 +759,8 @@ TopN_11	2.00	root		Column#4, offset:0, count:2
     └─TopN_27	2.00	mpp[tiflash]		Column#4, offset:0, count:2
       └─Projection_26	2.00	mpp[tiflash]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#4
         └─TableFullScan_25	2.00	mpp[tiflash]	table:t, index:vector_index(vec)	keep order:false, annIndex:L2(vec..[2e+02,2e+02,2e+02], limit:2)
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tikv,tiflash";
 drop table t;
@@ -801,8 +801,8 @@ TopN_7	2.00	root		Column#4, offset:0, count:2
   └─TopN_13	2.00	cop[tikv]		Column#4, offset:0, count:2
     └─Projection_12	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#4
       └─TableFullScan_11	500.00	cop[tikv]	table:t	keep order:false
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tiflash";
 select * from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
@@ -878,8 +878,8 @@ TopN_11	2.00	root		Column#5, offset:0, count:2
     └─TopN_27	2.00	mpp[tiflash]		Column#5, offset:0, count:2
       └─Projection_26	2.00	mpp[tiflash]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#5
         └─TableFullScan_25	2.00	mpp[tiflash]	table:t, index:vector_index(vec)	keep order:false, annIndex:L2(vec..[2e+02,2e+02,2e+02], limit:2)
-select sleep(5);
-sleep(5)
+select sleep(20);
+sleep(20)
 0
 set @@tidb_isolation_read_engines="tidb,tikv,tiflash";
 drop table t;
