@@ -19,7 +19,6 @@ set -euo pipefail
 CURRENT_DIR="$(dirname "$0")"
 source $CURRENT_DIR/_include.sh
 
-install_tiup_if_needed
 build_mysql_tester
 start_tidb
 wait_for_tidb

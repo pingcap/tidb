@@ -16,15 +16,6 @@
 
 set -euo pipefail
 
-function install_tiup_if_needed() {
-  if command -v tiup &>/dev/null && tiup --version &>/dev/null; then
-    echo "TiUP is already installed, skipping installation."
-    return 0
-  fi
-  curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh
-  source /home/jenkins/.bash_profile
-}
-
 function start_tidb() {
   export VERSION_SOURCE="nightly"
 
