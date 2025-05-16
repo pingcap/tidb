@@ -1634,8 +1634,8 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 		return true
 	}
 
+	// For debug on ci, will delete it before 2025/06/01.
 	if priv != 0 {
-		// For debug on ci, will delete it later.
 		logutil.BgLogger().Info("Request verification failed",
 			zap.Stringers("activeRoles", activeRoles),
 			zap.String("user", user),
@@ -1653,22 +1653,40 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 			zap.Uint64("columnPriv", uint64(columnPriv)),
 			zap.Stack("stack"))
 		if userRecord != nil {
-			logutil.BgLogger().Info("userRecord",
-				zap.String("host", userRecord.Host),
-				zap.String("user", userRecord.User),
-				zap.String("mask", userRecord.hostIPNet.String()))
+			for _, r := range roleList {
+				item, _ := p.user.Get(itemUser{username: r.Username})
+				var p []mysql.PrivilegeType
+				var host []string
+				for _, d := range item.data {
+					p = append(p, d.Privileges)
+					host = append(host, d.Host)
+				}
+				logutil.BgLogger().Info("userRecord", zap.String("user", item.username), zap.Int("itemLen", len(item.data)), zap.Any("hosts", host), zap.Any("privileges", p))
+			}
 		}
 		if tableRecord != nil {
-			logutil.BgLogger().Info("tableRecord",
-				zap.String("host", tableRecord.Host),
-				zap.String("user", tableRecord.User),
-				zap.String("mask", tableRecord.hostIPNet.String()))
+			for _, r := range roleList {
+				item, _ := p.tablesPriv.Get(itemTablesPriv{username: r.Username})
+				var p []mysql.PrivilegeType
+				var host []string
+				for _, d := range item.data {
+					p = append(p, d.TablePriv)
+					host = append(host, d.Host)
+				}
+				logutil.BgLogger().Info("tableRecord", zap.String("user", item.username), zap.Int("itemLen", len(item.data)), zap.Any("hosts", host), zap.Any("privileges", p))
+			}
 		}
 		if dbRecord != nil {
-			logutil.BgLogger().Info("dbRecord",
-				zap.String("host", dbRecord.Host),
-				zap.String("user", dbRecord.User),
-				zap.String("mask", dbRecord.hostIPNet.String()))
+			for _, r := range roleList {
+				item, _ := p.db.Get(itemDB{username: r.Username})
+				var p []mysql.PrivilegeType
+				var host []string
+				for _, d := range item.data {
+					p = append(p, d.Privileges)
+					host = append(host, d.Host)
+				}
+				logutil.BgLogger().Info("dbRecord", zap.String("user", item.username), zap.Int("itemLen", len(item.data)), zap.Any("hosts", host), zap.Any("privileges", p))
+			}
 		}
 	}
 
