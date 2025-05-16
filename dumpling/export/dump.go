@@ -1427,7 +1427,7 @@ func resolveAutoConsistency(d *Dumper) error {
 		err = FlushTableWithReadLock(d.tctx, conn)
 		//nolint: errcheck
 		defer UnlockTables(d.tctx, conn)
-		if err != nil {
+		if err != nil || ctx.Err() == context.DeadlineExceeded {
 			// fallback to ConsistencyTypeLock
 			d.tctx.L().Warn("error when use FLUSH TABLE WITH READ LOCK, fallback to LOCK TABLES",
 				zap.Error(err))
