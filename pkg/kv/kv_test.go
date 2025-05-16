@@ -18,8 +18,10 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,15 +36,19 @@ func genRandHex(length int) []byte {
 
 func TestResourceGroupTagEncoding(t *testing.T) {
 	sqlDigest := parser.NewDigest(nil)
-	tag := NewResourceGroupTagBuilder().SetSQLDigest(sqlDigest).EncodeTagWithKey([]byte(""))
+	tag := NewResourceGroupTagBuilder(nil).SetSQLDigest(sqlDigest).EncodeTagWithKey([]byte(""))
 	require.Len(t, tag, 2)
 
 	decodedSQLDigest, err := resourcegrouptag.DecodeResourceGroupTag(tag)
 	require.NoError(t, err)
 	require.Len(t, decodedSQLDigest, 0)
+	resTag := &tipb.ResourceGroupTag{}
+	err = resTag.Unmarshal(tag)
+	require.NoError(t, err)
+	require.Nil(t, resTag.KeyspaceId)
 
 	sqlDigest = parser.NewDigest([]byte{'a', 'a'})
-	tag = NewResourceGroupTagBuilder().SetSQLDigest(sqlDigest).EncodeTagWithKey([]byte(""))
+	tag = NewResourceGroupTagBuilder(keyspace.GetKeyspaceIDBySettings()).SetSQLDigest(sqlDigest).EncodeTagWithKey([]byte(""))
 	// version(1) + prefix(1) + length(1) + content(2hex -> 1byte)
 	require.Len(t, tag, 6)
 
@@ -50,15 +56,25 @@ func TestResourceGroupTagEncoding(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, sqlDigest.Bytes(), decodedSQLDigest)
 
+	keyspaceID := uint32(123)
 	sqlDigest = parser.NewDigest(genRandHex(64))
-	tag = NewResourceGroupTagBuilder().SetSQLDigest(sqlDigest).EncodeTagWithKey([]byte(""))
+	tag = NewResourceGroupTagBuilder(&keyspaceID).SetSQLDigest(sqlDigest).EncodeTagWithKey([]byte(""))
 	decodedSQLDigest, err = resourcegrouptag.DecodeResourceGroupTag(tag)
 	require.NoError(t, err)
 	require.Equal(t, sqlDigest.Bytes(), decodedSQLDigest)
+	resTag = &tipb.ResourceGroupTag{}
+	err = resTag.Unmarshal(tag)
+	require.NoError(t, err)
+	require.NotNil(t, resTag.KeyspaceId)
+	require.Equal(t, resTag.KeyspaceId, &keyspaceID)
 
 	sqlDigest = parser.NewDigest(genRandHex(510))
-	tag = NewResourceGroupTagBuilder().SetSQLDigest(sqlDigest).EncodeTagWithKey([]byte(""))
+	tag = NewResourceGroupTagBuilder(keyspace.GetKeyspaceIDBySettings()).SetSQLDigest(sqlDigest).EncodeTagWithKey([]byte(""))
 	decodedSQLDigest, err = resourcegrouptag.DecodeResourceGroupTag(tag)
 	require.NoError(t, err)
 	require.Equal(t, sqlDigest.Bytes(), decodedSQLDigest)
+	resTag = &tipb.ResourceGroupTag{}
+	err = resTag.Unmarshal(tag)
+	require.NoError(t, err)
+	require.Nil(t, resTag.KeyspaceId)
 }

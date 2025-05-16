@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,4 +50,22 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 
 	require.Equal(t, "", getKeyspaceName)
 	require.Equal(t, true, IsKeyspaceNameEmpty(getKeyspaceName))
+}
+
+func TestNoKeyspaceIDBySettings(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = ""
+	})
+	getKeyspaceID := GetKeyspaceIDBySettings()
+	require.Nil(t, getKeyspaceID)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "123"
+	})
+	getKeyspaceID = GetKeyspaceIDBySettings()
+	if kerneltype.IsNextGen() {
+		require.Equal(t, uint32(123), *getKeyspaceID)
+	} else {
+		require.Nil(t, getKeyspaceID)
+	}
 }
