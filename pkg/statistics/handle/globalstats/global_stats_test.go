@@ -996,7 +996,7 @@ func TestMergeGlobalStatsForCMSketch(t *testing.T) {
 	tk.MustQuery("explain format='brief' select * from t where a = 1").Check(
 		testkit.Rows("TableReader 1.00 root partition:p0 data:Selection",
 			"└─Selection 1.00 cop[tikv]  eq(test.t.a, 1)",
-			"  └─TableFullScan 18.00 cop[tikv] table:t, partition:p0 keep order:false"))
+			"  └─TableFullScan 8.00 cop[tikv] table:t, partition:p0 keep order:false"))
 }
 
 func TestEmptyHists(t *testing.T) {
