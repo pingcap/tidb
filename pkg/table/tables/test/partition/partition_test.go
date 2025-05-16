@@ -299,7 +299,7 @@ func TestLocatePartition(t *testing.T) {
 		tk0.MustQuery("explain format = 'brief' select id, type from t where  type = 'WatchEvent';").Check(testkit.Rows(""+
 			`TableReader 2.00 root partition:watch_event data:Selection`,
 			`└─Selection 2.00 cop[tikv]  eq(test.t.type, "WatchEvent")`,
-			`  └─TableFullScan 3.00 cop[tikv] table:t, partition:watch_event keep order:false`))
+			`  └─TableFullScan 2.00 cop[tikv] table:t, partition:watch_event keep order:false`))
 	}
 
 	run := func(num int) {
