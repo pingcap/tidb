@@ -308,7 +308,7 @@ func (s *Server) startHTTPServer() {
 	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
 	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
 
-	router.HandleFunc("/covdata", func(writer http.ResponseWriter, request *http.Request) {
+	router.HandleFunc("/covdata", func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/zip")
 		writer.Header().Set("Content-Disposition", "attachment; filename=files.zip")
 
@@ -327,7 +327,6 @@ func (s *Server) startHTTPServer() {
 		}
 
 		zipWriter := zip.NewWriter(writer)
-		defer zipWriter.Close()
 
 		err = filepath.Walk(dir, func(file string, fi os.FileInfo, err error) error {
 			if err != nil {
@@ -344,11 +343,13 @@ func (s *Server) startHTTPServer() {
 			if err != nil {
 				return err
 			}
-			srcFile, err := os.Open(file)
+			srcFile, err := os.Open(filepath.Clean(file))
 			if err != nil {
 				return err
 			}
-			defer srcFile.Close()
+			defer func() {
+				_ = srcFile.Close()
+			}()
 			_, err = io.Copy(writer, srcFile)
 			return err
 		})
@@ -357,6 +358,8 @@ func (s *Server) startHTTPServer() {
 			serveError(writer, http.StatusInternalServerError, "zip coverage files failed")
 			return
 		}
+		err = zipWriter.Close()
+		terror.Log(err)
 	})
 
 	ballast := newBallast(s.cfg.MaxBallastObjectSize)
