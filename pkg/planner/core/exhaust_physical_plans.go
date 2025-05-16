@@ -2201,14 +2201,6 @@ func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalPro
 	// Print warning message if any hints cannot work.
 	// If the required property is not empty, we will enforce it and try the hint again.
 	// So we only need to generate warning message when the property is empty.
-	//
-	// but for warnings handle inside findBestTask here:
-	// Say prop1(sortItem=[a]), when we do the enforcement enumeration, we will reset prop1
-	// to be prop2(sortItem=nil) to get the planNeedEnforce plans, then pass the prop1 and
-	// enforce=true to signal optimizer to add the enforcer at this level, while those childProp
-	// is derived from planNeedEnforce plans from prop2.
-	//
-	// so here we change the admission to both: 1. if it's the original empty and
 	if prop.IsSortItemEmpty() {
 		var indexJoinTables, indexHashJoinTables, indexMergeJoinTables []h.HintedTable
 		if p.HintInfo != nil {
