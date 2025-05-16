@@ -133,7 +133,7 @@ func (p *PhysicalUnionScan) Attach2Task(tasks ...base.Task) base.Task {
 			sel.SetChildren(pj.Children()...)
 			p.SetChildren(sel)
 			p.SetStats(task.Plan().StatsInfo())
-			rt, _ := task.(*RootTask)
+			rt := task.(*RootTask)
 			rt.SetPlan(p) // root task plan current is p headed.
 			pj.SetChildren(p)
 			return pj.Attach2Task(task)
