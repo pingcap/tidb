@@ -1901,7 +1901,7 @@ explain format = 'brief' select /*+ hash_join_build(t1) */ sum(t1.a not in (sele
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:sum(Column#9)->Column#8
 └─Projection	10000.00	root		cast(Column#7, decimal(3,0) BINARY)->Column#9
-  └─HashJoin	10000.00	root		anti left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
+  └─MergeJoin	10000.00	root		anti left outer semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
