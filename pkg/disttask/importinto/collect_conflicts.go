@@ -384,9 +384,12 @@ func (c *conflictRowCollector) trySaveHandledRowFromIndex(handle tidbkv.Handle) 
 	failpoint.InjectCall("trySaveHandledRowFromIndex", &limit)
 	if c.savedHandleSize.Load() >= limit {
 		c.logger.Info("too many conflict rows from index, skip checking",
-			zap.String("handleSize", units.BytesSize(float64(c.savedHandleSize.Load()))))
+			zap.String("handleSize", units.BytesSize(float64(c.savedHandleSize.Load()))),
+			zap.Int("handleCount", len(c.savedHandles)))
 		c.skipSaveHandle = true
-		c.savedHandles = make(map[string]bool)
+		// Note: we still keep the savedHandles, to make it merged into the same
+		// field in collectConflictsStepExecutor, so we can avoid handling other
+		// KV groups of same handle as much as possible.
 		return
 	}
 
