@@ -794,16 +794,6 @@ func (rc *SnapClient) GetTableMap() map[int64]*metautil.Table {
 	return tableMap
 }
 
-// PartitionInfo contains information about a partition including its parent table and database
-type PartitionInfo struct {
-	Partition       *metautil.Table
-	PartitionID     int64
-	ParentTableID   int64
-	ParentTableName string
-	DBID            int64
-	DBName          string
-}
-
 // GetPartitionMap returns all partitions with their related information indexed by partition ID
 func (rc *SnapClient) GetPartitionMap() map[int64]*stream.TableLocationInfo {
 	partitionMap := make(map[int64]*stream.TableLocationInfo)

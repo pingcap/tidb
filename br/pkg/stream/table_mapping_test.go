@@ -670,7 +670,7 @@ func TestFilterDBReplaceMap(t *testing.T) {
 					DbID: 2000,
 					TableMap: map[UpstreamID]*TableReplace{
 						20: {TableID: 2020, Name: "table3"},
-						21: {TableID: 2021, Name: "table4"},
+						21: {TableID: 2021, Name: "table4", FilteredOut: true},
 					},
 				},
 				3: {

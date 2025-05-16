@@ -1603,6 +1603,11 @@ func processLogBackupTableHistory(
 		}
 
 		_, isStartInSnap := snapshotTableMap[tableId]
+		// no need to adjust tables if start is not in snapshot
+		if !isStartInSnap {
+			continue
+		}
+
 		startDBName, exists := getDBNameFromBackup(start.DbID, snapshotDBMap, history)
 		if !exists {
 			continue
@@ -1620,11 +1625,6 @@ func processLogBackupTableHistory(
 			if start.DbID == end.DbID {
 				continue
 			}
-		}
-
-		// no need to adjust tables if start is not in snapshot
-		if !isStartInSnap {
-			continue
 		}
 
 		// at here only three cases left
@@ -2166,10 +2166,10 @@ func checkOptionalClusterRequirements(
 			if err := checkTableExistence(ctx, mgr, tables); err != nil {
 				return errors.Trace(err)
 			}
-		}
-		if isPitr {
-			if err := checkTableExistence(ctx, mgr, buildLogBackupMetaTables(cfg.PiTRTableTracker.DBNameToTableNames)); err != nil {
-				return errors.Trace(err)
+			if isPitr {
+				if err := checkTableExistence(ctx, mgr, buildLogBackupMetaTables(cfg.PiTRTableTracker.DBNameToTableNames)); err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 	}

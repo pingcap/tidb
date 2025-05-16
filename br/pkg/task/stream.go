@@ -1502,7 +1502,6 @@ func restoreStream(
 	defer client.RestoreSSTStatisticFields(&extraFields)
 
 	ddlFiles := cfg.ddlFiles
-	tableMappingManager := cfg.tableMappingManager
 
 	currentTS, err = getCurrentTSFromCheckpointOrPD(ctx, mgr, cfg)
 	if err != nil {
@@ -1564,12 +1563,12 @@ func restoreStream(
 	}
 
 	// build and save id map
-	if err := buildAndSaveIDMapIfNeeded(ctx, client, cfg, tableMappingManager); err != nil {
+	if err := buildAndSaveIDMapIfNeeded(ctx, client, cfg); err != nil {
 		return errors.Trace(err)
 	}
 
 	// build schema replace
-	schemasReplace, err := buildSchemaReplace(client, cfg, tableMappingManager)
+	schemasReplace, err := buildSchemaReplace(client, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2103,11 +2102,8 @@ func isCurrentIdMapSaved(checkpointTaskInfo *checkpoint.TaskInfoForLogRestore) b
 	return checkpointTaskInfo != nil && checkpointTaskInfo.Progress == checkpoint.InLogRestoreAndIdMapPersisted
 }
 
-func buildSchemaReplace(
-	client *logclient.LogClient,
-	cfg *LogRestoreConfig,
-	tableMappingManager *stream.TableMappingManager) (*stream.SchemasReplace, error) {
-	schemasReplace := stream.NewSchemasReplace(tableMappingManager.DBReplaceMap, cfg.tiflashRecorder,
+func buildSchemaReplace(client *logclient.LogClient, cfg *LogRestoreConfig) (*stream.SchemasReplace, error) {
+	schemasReplace := stream.NewSchemasReplace(cfg.tableMappingManager.DBReplaceMap, cfg.tiflashRecorder,
 		client.CurrentTS(), client.RecordDeleteRange, cfg.ExplicitFilter)
 	schemasReplace.AfterTableRewrittenFn = func(deleted bool, tableInfo *model.TableInfo) {
 		// When the table replica changed to 0, the tiflash replica might be set to `nil`.
@@ -2123,11 +2119,10 @@ func buildSchemaReplace(
 	return schemasReplace, nil
 }
 
-func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient, cfg *LogRestoreConfig,
-	tableMappingManager *stream.TableMappingManager) error {
+func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient, cfg *LogRestoreConfig) error {
 	// get the schemas ID replace information.
 	saved := isCurrentIdMapSaved(cfg.checkpointTaskInfo)
-	err := client.GetBaseIDMapAndMerge(ctx, saved, cfg.logCheckpointMetaManager, tableMappingManager)
+	err := client.GetBaseIDMapAndMerge(ctx, saved, cfg.logCheckpointMetaManager, cfg.tableMappingManager)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2140,11 +2135,11 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	// do filter
 	cfg.tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
 	// replace temp id with read global id
-	err = tableMappingManager.ReplaceTemporaryIDs(ctx, client.GenGlobalIDs)
+	err = cfg.tableMappingManager.ReplaceTemporaryIDs(ctx, client.GenGlobalIDs)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = client.SaveIdMapWithFailPoints(ctx, tableMappingManager, cfg.logCheckpointMetaManager); err != nil {
+	if err = client.SaveIdMapWithFailPoints(ctx, cfg.tableMappingManager, cfg.logCheckpointMetaManager); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
