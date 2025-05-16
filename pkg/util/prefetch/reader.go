@@ -73,13 +73,13 @@ func (r *Reader) run() {
 		}
 		r.bufIdx = (r.bufIdx + 1) % 2
 		buf := r.buf[r.bufIdx]
-		n, err := r.r.Read(buf) // Clue1: may return (0, EOF) ?
+		n, err := r.r.Read(buf) // No EOF
 		if n == 0 || err != nil {
-			r.logger.Error("After abnormal read in run()", zap.Int("n", n), zap.Error(err))
+			r.logger.Error("After abnormal read in run()", zap.Int("n", n), zap.Error(err)) // n=0, failed to read file xxx: illegal n when reading from external storage / http: read on closed response body / read tcp 10.200.12.194:37046->198.18.96.40:80: use of closed network connection / read N bytes from external storage, exceed max limit
 		} else if rand.Intn(10) == 0 {
 			r.logger.Info("After normal read in run()", zap.Int("n", n))
 		}
-		buf = buf[:n]
+		buf = buf[:n] // TODO: skip this if n == 0
 		select {
 		case <-r.closedCh:
 			return
@@ -87,7 +87,7 @@ func (r *Reader) run() {
 		}
 		if err != nil { // why handle the error after select clause?
 			//logutil.BgLogger().Error("read error", zap.Error(err))
-			r.logger.Error("run encounter error", zap.Int("n", n), zap.Error(err))
+			r.logger.Error("run encounter error", zap.Int("n", n), zap.Error(err)) // n=0, failed to read file xxx: illegal n when reading from external storage
 			r.err = err
 			close(r.bufCh)
 			return
@@ -110,14 +110,14 @@ func (r *Reader) Read(data []byte) (int, error) {
 		}
 		if r.curBufReader == nil {
 			b, ok := <-r.bufCh
-			if !ok {
+			if !ok || len(b) == 0 {
 				if total > 0 {
 					//PrintLog = true
 					//logutil.BgLogger().Error("set printlog = true", zap.Error(r.err), zap.Int("total", total), zap.Any("data-buf-len", len(data)))
-					r.logger.Info("Read() return", zap.Int("total", total))
+					r.logger.Info("Read() return", zap.Int("total", total)) // total > 0
 					return total, nil
 				}
-				r.logger.Info("Read() return", zap.Error(r.err))
+				r.logger.Info("Read() return", zap.Error(r.err)) // failed to read file 1/1/data/923c8a66-5667-477a-b735-d44b2e4f9d91/19: illegal n when reading from external storage
 				return 0, r.err
 			}
 
@@ -126,13 +126,13 @@ func (r *Reader) Read(data []byte) (int, error) {
 		}
 
 		expected := len(data)
-		n, err := r.curBufReader.Read(data) // Clue1: return 0, io.EOF ?
+		n, err := r.curBufReader.Read(data)
 		if n == 0 || err != nil {
-			r.logger.Error("After abnormal read in Read()", zap.Int("n", n), zap.Error(err))
+			r.logger.Error("After abnormal read in Read()", zap.Int("n", n), zap.Error(err)) // (0, io.EOF)
 		}
 		total += n
 		if n == expected {
-			r.logger.Info("Read() return", zap.Int("total", total), zap.Int("n", n))
+			r.logger.Info("Read() return", zap.Int("total", total), zap.Int("n", n)) // total > 0, n > 0
 			return total, nil
 		}
 

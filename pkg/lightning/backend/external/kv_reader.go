@@ -71,9 +71,9 @@ func (r *kvReader) nextKV() (key, val []byte, err error) {
 	valLen := int(binary.BigEndian.Uint64(lenBytes))
 	keyAndValue, err := r.byteReader.readNBytes(keyLen + valLen)
 	if err != nil {
-		r.byteReader.logger.Error("nextKV encounter error", zap.Error(err))
+		r.byteReader.logger.Error("nextKV encounter error", zap.Error(err)) // read N bytes from external storage, exceed max limit / illegal n (xxx) when reading from external storage
 		if keyLen+valLen <= 0 || keyLen+valLen > int(size.GB) {
-			r.byteReader.logger.Error("invalid length", zap.Int("keyLen", keyLen), zap.Int("valLen", valLen))
+			r.byteReader.logger.Error("invalid length", zap.Int("keyLen", keyLen), zap.Int("valLen", valLen)) // [keyLen=8099820035866059111] [valLen=5563993253346493017]
 		}
 		return nil, nil, noEOF(err)
 	}
