@@ -1632,6 +1632,7 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 	}
 
 	if priv != 0 {
+		// For debug on ci, will delete it later.
 		logutil.BgLogger().Info("Request verification failed",
 			zap.Stringers("activeRoles", activeRoles),
 			zap.String("user", user),
