@@ -477,13 +477,16 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, 
 	blockBufSize := int64(p.cfg.Mydumper.ReadBlockSize)
 	switch dataFileMeta.Type {
 	case mydump.SourceTypeCSV:
-		hasHeader := p.cfg.Mydumper.CSV.Header
+		csvHeaderOption := mydump.CSVHeaderFalse
+		if p.cfg.Mydumper.CSV.Header {
+			csvHeaderOption = mydump.CSVHeaderTrue
+		}
 		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
 		charsetConvertor, err := mydump.NewCharsetConvertor(p.cfg.Mydumper.DataCharacterSet, p.cfg.Mydumper.DataInvalidCharReplace)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		parser, err = mydump.NewCSVParser(ctx, &p.cfg.Mydumper.CSV, reader, blockBufSize, p.ioWorkers, hasHeader, charsetConvertor)
+		parser, err = mydump.NewCSVParser(ctx, &p.cfg.Mydumper.CSV, reader, blockBufSize, p.ioWorkers, csvHeaderOption, charsetConvertor)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -647,13 +650,16 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	var parser mydump.Parser
 	switch tableMeta.DataFiles[0].FileMeta.Type {
 	case mydump.SourceTypeCSV:
-		hasHeader := p.cfg.Mydumper.CSV.Header
+		csvHeaderOption := mydump.CSVHeaderFalse
+		if p.cfg.Mydumper.CSV.Header {
+			csvHeaderOption = mydump.CSVHeaderTrue
+		}
 		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
 		charsetConvertor, err := mydump.NewCharsetConvertor(p.cfg.Mydumper.DataCharacterSet, p.cfg.Mydumper.DataInvalidCharReplace)
 		if err != nil {
 			return 0.0, false, errors.Trace(err)
 		}
-		parser, err = mydump.NewCSVParser(ctx, &p.cfg.Mydumper.CSV, reader, blockBufSize, p.ioWorkers, hasHeader, charsetConvertor)
+		parser, err = mydump.NewCSVParser(ctx, &p.cfg.Mydumper.CSV, reader, blockBufSize, p.ioWorkers, csvHeaderOption, charsetConvertor)
 		if err != nil {
 			return 0.0, false, errors.Trace(err)
 		}

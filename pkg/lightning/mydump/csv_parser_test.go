@@ -1388,7 +1388,7 @@ yyy",5,xx"xxxx,8
 			LinesStartingBy:    "x\nxx",
 		},
 	}
-	_, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, nil, 1, ioWorkersForCSV, false, nil)
+	_, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, nil, 1, ioWorkersForCSV, mydump.CSVHeaderFalse, nil)
 	require.ErrorContains(t, err, "STARTING BY 'x\nxx' cannot contain LINES TERMINATED BY '\n'")
 }
 
