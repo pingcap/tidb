@@ -1139,7 +1139,6 @@ func (e *Explain) explainFlatOpInRowFormat(flatOp *FlatOperator) {
 }
 
 func getExplainIDAndTaskTp(flatOp *FlatOperator) (taskTp, textTreeExplainID string) {
-	taskTp = ""
 	if flatOp.IsRoot {
 		taskTp = "root"
 	} else {
