@@ -1374,7 +1374,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
 		err = client.GetBaseIDMapAndMerge(ctx, true, nil, stream.NewTableMappingManager())
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "miss upstream table information at `start-ts`(1) but the full backup path is not specified")
+		require.Contains(t, err.Error(), "no base id map found from saved id or last restored PiTR")
 	}
 }
 
