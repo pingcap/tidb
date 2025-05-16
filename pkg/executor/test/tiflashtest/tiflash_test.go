@@ -463,6 +463,23 @@ func TestTiFlashPartitionTableReader(t *testing.T) {
 	}
 }
 
+func TestUseIndexTiFlash(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (id int primary key, a int, b int, c int, key(a), key(b), key(c))`)
+	tk.MustExec(`alter table t set tiflash replica 1`)
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	tk.MustUseIndex(`select /*+ use_index(t, a, b, c, tiflash) */ 1 from t where a=1`, "a")
+	tk.MustUseIndex(`select /*+ use_index(t, a, b, c, tiflash) */ 1 from t where b=1`, "b")
+	tk.MustUseIndex(`select /*+ use_index(t, a, b, c, tiflash) */ 1 from t where b=1`, "b")
+	plan := tk.MustQuery(`explain select /*+ use_index(t, a, b, c, tiflash) */ 1 from t`).Rows()
+	require.Equal(t, plan[len(plan)-1][2], "mpp[tiflash]")
+}
+
 func TestPartitionTable(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
