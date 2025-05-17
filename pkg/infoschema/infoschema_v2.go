@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -316,16 +317,6 @@ func (isd *Data) getTableReferredForeignKeys(schema, table string, schemaMetaVer
 		referredFKInfos: make([]*model.ReferredFKInfo, 0),
 	}
 	isd.referredForeignKeys.Load().DescendLessOrEqual(&helper.start, helper.onItem)
-
-	sort.Slice(helper.referredFKInfos, func(i, j int) bool {
-		if helper.referredFKInfos[i].ChildSchema.L != helper.referredFKInfos[j].ChildSchema.L {
-			return helper.referredFKInfos[i].ChildSchema.L < helper.referredFKInfos[j].ChildSchema.L
-		}
-		if helper.referredFKInfos[i].ChildTable.L != helper.referredFKInfos[j].ChildTable.L {
-			return helper.referredFKInfos[i].ChildTable.L < helper.referredFKInfos[j].ChildTable.L
-		}
-		return helper.referredFKInfos[i].ChildFKName.L < helper.referredFKInfos[j].ChildFKName.L
-	})
 	return helper.referredFKInfos
 }
 
@@ -365,6 +356,15 @@ func (isd *Data) addReferredForeignKeys(schema ast.CIStr, tbInfo *model.TableInf
 			ChildTable:  tbInfo.Name,
 			ChildFKName: fk.Name,
 		})
+		sort.Slice(newRefs, func(i, j int) bool {
+			if newRefs[i].ChildSchema.L != newRefs[j].ChildSchema.L {
+				return newRefs[i].ChildSchema.L < newRefs[j].ChildSchema.L
+			}
+			if newRefs[i].ChildTable.L != newRefs[j].ChildTable.L {
+				return newRefs[i].ChildTable.L < newRefs[j].ChildTable.L
+			}
+			return newRefs[i].ChildFKName.L < newRefs[j].ChildFKName.L
+		})
 		btreeSet(&isd.referredForeignKeys, &referredForeignKeyItem{
 			dbName:         refSchema,
 			tableName:      refTable,
@@ -401,15 +401,11 @@ func (isd *Data) deleteReferredForeignKeys(schema ast.CIStr, tbInfo *model.Table
 			})
 		} else {
 			// If there are multiple references, create new array excluding this one
-			newRefs := make([]*model.ReferredFKInfo, 0, len(existingRefs)-1)
-			for _, ref := range existingRefs {
-				if ref.ChildSchema.L == schema.L &&
+			newRefs := slices.DeleteFunc(existingRefs, func(ref *model.ReferredFKInfo) bool {
+				return ref.ChildSchema.L == schema.L &&
 					ref.ChildTable.L == tbInfo.Name.L &&
-					ref.ChildFKName.L == fk.Name.L {
-					continue
-				}
-				newRefs = append(newRefs, ref)
-			}
+					ref.ChildFKName.L == fk.Name.L
+			})
 
 			btreeSet(&isd.referredForeignKeys, &referredForeignKeyItem{
 				dbName:         refSchema,
