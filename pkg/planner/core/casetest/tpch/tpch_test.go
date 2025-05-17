@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/stretchr/testify/require"
 )
 
 func TestQ1(t *testing.T) {
@@ -186,7 +187,8 @@ CREATE TABLE lineitem (
 	testkit.LoadTableStats("orders_stats.json", dom)
 	testkit.SetTiFlashReplica(t, dom, "olap", "orders")
 	testkit.SetTiFlashReplica(t, dom, "olap", "lineitem")
-	q4 := `explain format='brief' select
+	briefFormat := `explain format='brief' `
+	q4 := `select
         o_orderpriority,
         count(*) as order_count
 from
@@ -203,7 +205,7 @@ where
                         and l_commitdate < l_receiptdate  )
 group by  o_orderpriority
 order by       o_orderpriority`
-	tk.MustQuery(q4).Check(testkit.Rows(
+	tk.MustQuery(briefFormat + q4).Check(testkit.Rows(
 		"Sort 1.00 root  olap.orders.o_orderpriority",
 		"└─Projection 1.00 root  olap.orders.o_orderpriority, Column#26",
 		"  └─HashAgg 1.00 root  group by:olap.orders.o_orderpriority, funcs:count(1)->Column#26, funcs:firstrow(olap.orders.o_orderpriority)->olap.orders.o_orderpriority",
@@ -215,9 +217,10 @@ order by       o_orderpriority`
 		"        └─Selection 45161741.07 cop[tikv]  lt(olap.lineitem.l_commitdate, olap.lineitem.l_receiptdate)",
 		"          └─TableRangeScan 56452176.33 cop[tikv] table:lineitem range: decided by [eq(olap.lineitem.l_orderkey, olap.orders.o_orderkey)], keep order:false",
 	))
+	checkCost(t, tk, q4)
 	// https://github.com/pingcap/tidb/issues/60991
 	tk.MustExec(`set @@session.tidb_enforce_mpp=1;`)
-	tk.MustQuery(q4).Check(testkit.Rows("Sort 1.00 root  olap.orders.o_orderpriority",
+	tk.MustQuery(briefFormat + q4).Check(testkit.Rows("Sort 1.00 root  olap.orders.o_orderpriority",
 		"└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
 		"  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"    └─Projection 1.00 mpp[tiflash]  olap.orders.o_orderpriority, Column#26",
@@ -236,6 +239,21 @@ order by       o_orderpriority`
 		"                        └─Projection 4799991767.20 mpp[tiflash]  olap.lineitem.l_orderkey",
 		"                          └─Selection 4799991767.20 mpp[tiflash]  lt(olap.lineitem.l_commitdate, olap.lineitem.l_receiptdate)",
 		"                            └─TableFullScan 5999989709.00 mpp[tiflash] table:lineitem pushed down filter:empty, keep order:false"))
+	checkCost(t, tk, q4)
+}
+
+// check the cost trace's cost and verbose's cost. they should be the same.
+// it is from https://github.com/pingcap/tidb/issues/61155
+func checkCost(t *testing.T, tk *testkit.TestKit, q4 string) {
+	costTraceFormat := `explain format='cost_trace' `
+	verboseFormat := `explain format='verbose' `
+	costTraceRows := tk.MustQuery(costTraceFormat + q4)
+	verboseRows := tk.MustQuery(verboseFormat + q4)
+	require.Equal(t, len(costTraceRows.Rows()), len(verboseRows.Rows()))
+	for i := 0; i < len(costTraceRows.Rows()); i++ {
+		// check id / estRows / estCost. they should be the same one
+		require.Equal(t, costTraceRows.Rows()[i][:2], verboseRows.Rows()[i][:2])
+	}
 }
 
 func TestQ9(t *testing.T) {
