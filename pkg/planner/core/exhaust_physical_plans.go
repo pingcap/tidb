@@ -784,6 +784,9 @@ func constructIndexJoin(
 	if hasNullEQ {
 		return nil
 	}
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
 	if prop.ExpectedCnt < p.StatsInfo().RowCount {
@@ -1389,11 +1392,6 @@ func buildIndexJoinInner2TableScan(
 		lastColMng = indexJoinResult.lastColManager
 	}
 	joins = make([]base.PhysicalPlan, 0, 3)
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
-		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
-			failpoint.Return(constructIndexHashJoin(p, prop, outerIdx, innerTask, nil, keyOff2IdxOff, path, lastColMng))
-		}
-	})
 	joins = append(joins, constructIndexJoin(p, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, lastColMng, true)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
@@ -2569,6 +2567,9 @@ func tryToGetMppHashJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProper
 		forceLeftToBuild = false
 		forceRightToBuild = false
 	}
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	preferredBuildIndex := 0
 	fixedBuildSide := false // Used to indicate whether the build side for the MPP join is fixed or not.
 	if p.JoinType == logicalop.InnerJoin {
@@ -2715,6 +2716,9 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 			failpoint.Return(indexJoins, true, nil)
 		}
 	})
+	if !lp.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 
 	if !isJoinHintSupportedInMPPMode(p.PreferJoinType) {
 		if hasMPPJoinHints(p.PreferJoinType) {
@@ -2773,26 +2777,29 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 
 	if !p.IsNAAJ() {
 		// naaj refuse merge join and index join.
-		mergeJoins := GetMergeJoin(p, prop, p.Schema(), p.StatsInfo(), p.Children()[0].StatsInfo(), p.Children()[1].StatsInfo())
-		if (p.PreferJoinType&h.PreferMergeJoin) > 0 && len(mergeJoins) > 0 {
-			return mergeJoins, true, nil
-		}
-		joins = append(joins, mergeJoins...)
-
+		/*
+			mergeJoins := GetMergeJoin(p, prop, p.Schema(), p.StatsInfo(), p.Children()[0].StatsInfo(), p.Children()[1].StatsInfo())
+			if (p.PreferJoinType&h.PreferMergeJoin) > 0 && len(mergeJoins) > 0 {
+				return mergeJoins, true, nil
+			}
+			joins = append(joins, mergeJoins...)
+		*/
 		// todo: feel vars.EnhanceIndexJoinBuildV2 and tryToEnumerateIndexJoin(p, prop)
+		//if lp.SCtx().GetSessionVars().InRestrictedSQL {
 		indexJoins, forced := tryToGetIndexJoin(p, prop)
 		if forced {
 			return indexJoins, true, nil
 		}
 		joins = append(joins, indexJoins...)
+		//}
 	}
-
-	hashJoins, forced := getHashJoins(p, prop)
-	if forced && len(hashJoins) > 0 {
-		return hashJoins, true, nil
-	}
-	joins = append(joins, hashJoins...)
-
+	/*
+		hashJoins, forced := getHashJoins(p, prop)
+		if forced && len(hashJoins) > 0 {
+			return hashJoins, true, nil
+		}
+		joins = append(joins, hashJoins...)
+	*/
 	if p.PreferJoinType > 0 {
 		// If we reach here, it means we have a hint that doesn't work.
 		// It might be affected by the required property, so we enforce

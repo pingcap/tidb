@@ -43,6 +43,18 @@ func GetPlanCost(p base.PhysicalPlan, taskType property.TaskType, option *optimi
 // GenPlanCostTrace define a hook function to customize the cost calculation.
 var GenPlanCostTrace func(p base.PhysicalPlan, costV *costusage.CostVer2, taskType property.TaskType, option *optimizetrace.PlanCostOption)
 
+func genPlanCostTracePrinter(p base.PhysicalPlan, costV *costusage.CostVer2, taskType property.TaskType, option *optimizetrace.PlanCostOption) {
+	trace := costV.GetTrace()
+	if trace != nil {
+		fmt.Println("=========================")
+		fmt.Println(p.OutputNames())
+		fmt.Println(p.TP())
+		fmt.Println(costV.GetCost())
+		fmt.Println(trace.GetFormula())
+		fmt.Println("=========================")
+	}
+}
+
 func getPlanCost(p base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
 	if p.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
 		planCost, err := p.GetPlanCostVer2(taskType, option)
@@ -141,6 +153,9 @@ func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType, option *
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experiments.
 func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
@@ -152,6 +167,10 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		columns = p.schema.Columns
 	}
 	rows := getCardinality(p, option.CostFlag)
+	if rows == 1 || rows == 10000 {
+		fmt.Println("wwz")
+		rows = getCardinality(p, option.CostFlag)
+	}
 	rowSize := getAvgRowSize(p.StatsInfo(), columns)
 	// Ensure rows and rowSize have a reasonable minimum value to avoid underestimation
 	if !p.isChildOfIndexLookUp {
@@ -893,6 +912,9 @@ func (p *PhysicalCTE) GetPlanCostVer2(taskType property.TaskType, option *optimi
 func scanCostVer2(option *optimizetrace.PlanCostOption, rows, rowSize float64, scanFactor costusage.CostVer2Factor) costusage.CostVer2 {
 	if rowSize < 1 {
 		rowSize = 1
+	}
+	if rows == 1 {
+		fmt.Println("wwz")
 	}
 	return costusage.NewCostVer2(option, scanFactor,
 		// rows * log(row-size) * scanFactor, log2 from experiments
