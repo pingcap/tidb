@@ -81,16 +81,93 @@ func ExhaustErrors(ec <-chan error) []error {
 	}
 }
 
+func (rc *SnapClient) filterAndValidateTemporaryTables(
+	ctx context.Context,
+	createdTables []*CreatedTable,
+	temporaryTablesCheckFn func(string, string) (string, bool),
+	kvClient kv.Client,
+	checksum bool,
+	checksumConcurrency uint,
+) (map[string]map[string]struct{}, int, error) {
+	renamedTables := make(map[string]map[string]struct{})
+	renamedTableCount := 0
+	workerpool := tidbutil.NewWorkerPool(defaultChecksumConcurrency, "Restore Statistic Checksum")
+	eg, ectx := errgroup.WithContext(ctx)
+	for _, createdTable := range createdTables {
+		tempSchemaName := createdTable.OldTable.DB.Name.O
+		tableName := createdTable.OldTable.Info.Name.O
+		if dbName, ok := temporaryTablesCheckFn(tempSchemaName, tableName); ok {
+			renamedTableMap, ok := renamedTables[dbName]
+			if !ok {
+				renamedTableMap = make(map[string]struct{})
+				renamedTables[dbName] = renamedTableMap
+			}
+			renamedTableMap[tableName] = struct{}{}
+			if checksum {
+				workerpool.ApplyOnErrorGroup(eg, func() error {
+					return rc.execAndValidateChecksum(ectx, createdTable, kvClient, checksumConcurrency)
+				})
+			}
+			renamedTableCount += 1
+		}
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	return renamedTables, renamedTableCount, nil
+}
+
+func (rc *SnapClient) moveStatsTable(ctx context.Context, restoreTS uint64, statisticTables map[string]map[string]struct{}) error {
+	// the renamed tables will be deleted by DROP DATABASE in the function cleanTemporaryDatabase later
+	renameSQL := GenerateMoveStatsTableSQLPair(restoreTS, statisticTables)
+	err := rc.db.Session().Execute(ctx, renameSQL)
+	return errors.Trace(err)
+}
+
+func (rc *SnapClient) replaceTables(
+	ctx context.Context,
+	createdTables []*CreatedTable,
+	schemaVersionPair SchemaVersionPairT,
+	restoreTS uint64,
+	loadStatsPhysical, loadSysTablePhysical bool,
+	kvClient kv.Client,
+	checksum bool,
+	checksumConcurrency uint,
+) (int, error) {
+	temporaryTableChecker := &TemporaryTableChecker{
+		loadStatsPhysical:    loadStatsPhysical,
+		loadSysTablePhysical: loadSysTablePhysical,
+	}
+	renamedTables, renamedTableCount, err := rc.filterAndValidateTemporaryTables(ctx, createdTables, temporaryTableChecker.CheckTemporaryTables, kvClient, checksum, checksumConcurrency)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	if err := rc.moveStatsTable(ctx, restoreTS, renamedTables); err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	if err := updateStatsTableSchema(ctx, renamedTables, schemaVersionPair, rc.db.Session().Execute); err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	return renamedTableCount, nil
+}
+
 type PipelineContext struct {
 	// pipeline item switch
-	Checksum         bool
-	LoadStats        bool
-	WaitTiflashReady bool
+	Checksum             bool
+	LoadStats            bool
+	LoadStatsPhysical    bool
+	LoadSysTablePhysical bool
+	WaitTiflashReady     bool
 
 	// pipeline item configuration
 	LogProgress         bool
 	ChecksumConcurrency uint
 	StatsConcurrency    uint
+	SchemaVersionPair   SchemaVersionPairT
+	RestoreTS           uint64
 
 	// pipeline item tool client
 	KvClient   kv.Client
@@ -104,29 +181,37 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 	defer func() {
 		summary.CollectDuration("restore pipeline", time.Since(start))
 	}()
-	progressLen := int64(0)
+	pipelineNum := 0
 	if plCtx.Checksum {
-		progressLen += int64(len(createdTables))
+		pipelineNum += 1
 	}
-	if plCtx.LoadStats {
-		progressLen += int64(len(createdTables))
+	if plCtx.LoadStats && !plCtx.LoadStatsPhysical {
+		pipelineNum += 1
 	}
 	if plCtx.WaitTiflashReady {
-		progressLen += int64(len(createdTables))
+		pipelineNum += 1
+	}
+	progressLen := int64(pipelineNum * len(createdTables))
+	if plCtx.LoadStatsPhysical || plCtx.LoadSysTablePhysical {
+		renamedTableCount, err := rc.replaceTables(ctx, createdTables, plCtx.SchemaVersionPair, plCtx.RestoreTS, plCtx.LoadStatsPhysical, plCtx.LoadSysTablePhysical, plCtx.KvClient, plCtx.Checksum, plCtx.ChecksumConcurrency)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		progressLen -= int64(pipelineNum * renamedTableCount)
 	}
 
 	// Redirect to log if there is no log file to avoid unreadable output.
 	updateCh := plCtx.Glue.StartProgress(ctx, "Restore Pipeline", progressLen, !plCtx.LogProgress)
 	defer updateCh.Close()
 
-	handlerBuilder := &PipelineConcurrentBuilder{}
+	handlerBuilder := &PipelineConcurrentBuilder{loadStatsPhysical: plCtx.LoadStatsPhysical, loadSysTablePhysical: plCtx.LoadSysTablePhysical}
 	// pipeline checksum
 	if plCtx.Checksum {
 		rc.registerValidateChecksum(handlerBuilder, plCtx.KvClient, updateCh, plCtx.ChecksumConcurrency)
 	}
 
 	// pipeline update meta and load stats
-	if plCtx.LoadStats {
+	if plCtx.LoadStats && !plCtx.LoadStatsPhysical {
 		rc.registerUpdateMetaAndLoadStats(handlerBuilder, plCtx.ExtStorage, updateCh, plCtx.StatsConcurrency)
 	}
 
@@ -150,6 +235,9 @@ type pipelineFunction struct {
 
 type PipelineConcurrentBuilder struct {
 	pipelineFunctions []pipelineFunction
+
+	loadStatsPhysical    bool
+	loadSysTablePhysical bool
 }
 
 func (builder *PipelineConcurrentBuilder) RegisterPipelineTask(
@@ -174,7 +262,7 @@ func (builder *PipelineConcurrentBuilder) StartPipelineTask(ctx context.Context,
 	}
 
 	// the first pipeline task
-	postHandleCh := handler.afterTableRestoredCh(createdTables)
+	postHandleCh := handler.afterTableRestoredCh(createdTables, builder.loadStatsPhysical, builder.loadSysTablePhysical)
 
 	// the middle pipeline tasks
 	for _, f := range builder.pipelineFunctions {
@@ -192,13 +280,19 @@ type PipelineConcurrentHandler struct {
 	eg              *errgroup.Group
 }
 
-func (handler *PipelineConcurrentHandler) afterTableRestoredCh(createdTables []*CreatedTable) <-chan *CreatedTable {
+func (handler *PipelineConcurrentHandler) afterTableRestoredCh(createdTables []*CreatedTable, loadStatsPhysical, loadSysTablePhysical bool) <-chan *CreatedTable {
 	outCh := make(chan *CreatedTable)
 
 	handler.eg.Go(func() error {
 		defer close(outCh)
 
 		for _, createdTable := range createdTables {
+			if loadStatsPhysical && IsStatsTemporaryTable(createdTable.OldTable.DB.Name.O, createdTable.OldTable.Info.Name.O) {
+				continue
+			}
+			if loadSysTablePhysical && IsRenameableSysTemporaryTable(createdTable.OldTable.DB.Name.O, createdTable.OldTable.Info.Name.O) {
+				continue
+			}
 			select {
 			case <-handler.pipelineTaskCtx.Done():
 				return handler.pipelineTaskCtx.Err()
