@@ -15,6 +15,7 @@
 package old
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -881,6 +882,9 @@ func (*pushDownJoin) predicatePushDown(
 		dual := logicalop.Conds2TableDual(join, tempCond)
 		if dual != nil {
 			return leftCond, rightCond, remainCond, dual
+		}
+		if !sctx.GetSessionVars().InRestrictedSQL {
+			fmt.Println("wwz")
 		}
 		equalCond, leftPushCond, rightPushCond, otherCond = join.ExtractOnCondition(tempCond, leftSchema, rightSchema, true, true)
 		join.LeftConditions = nil
