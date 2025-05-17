@@ -47,12 +47,14 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 //go:generate go run ./generator/plan_cache/plan_clone_generator.go -- plan_clone_generated.go
@@ -1023,6 +1025,33 @@ func (ts *PhysicalTableScan) ExtractCorrelatedCols() []*expression.CorrelatedCol
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
 	return corCols
+}
+
+func (ts *PhysicalTableScan) selectivity() float64 {
+	selectivity := 1.0
+	if ts.StoreType == kv.TiFlash && len(ts.filterCondition) > 0 {
+		var err error
+		selectivity, _, err = cardinality.Selectivity(ts.SCtx(), ts.BasePhysicalPlan.StatsInfo().HistColl, ts.filterCondition, nil)
+		if err != nil {
+			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+			selectivity = cost.SelectionFactor
+		}
+	}
+	return selectivity
+}
+
+// StatsInfo returns the stats info of the table scan.
+func (ts *PhysicalTableScan) StatsInfo() *property.StatsInfo {
+	selectivity := ts.selectivity()
+	if selectivity == 1 {
+		return ts.BasePhysicalPlan.StatsInfo()
+	}
+	return ts.BasePhysicalPlan.StatsInfo().Scale(selectivity)
+}
+
+// StatsCount returns the count of the table scan.
+func (ts *PhysicalTableScan) StatsCount() float64 {
+	return ts.BasePhysicalPlan.StatsCount() * ts.selectivity()
 }
 
 // IsPartition returns true and partition ID if it's actually a partition.

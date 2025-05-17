@@ -1258,6 +1258,22 @@ func getCardinality(operator base.PhysicalPlan, costFlag uint64) float64 {
 	return rows
 }
 
+func (p *PhysicalTableScan) getCardinality(costFlag uint64) float64 {
+	if hasCostFlag(costFlag, costusage.CostFlagUseTrueCardinality) {
+		actualProbeCnt := p.GetActualProbeCnt(p.SCtx().GetSessionVars().StmtCtx.RuntimeStatsColl)
+		if actualProbeCnt == 0 {
+			return 0
+		}
+		return max(0, getOperatorActRows(p)/float64(actualProbeCnt))
+	}
+	rows := p.BasePhysicalPlan.StatsCount()
+	if rows <= 0 && p.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
+		// 0 est-row can lead to 0 operator cost which makes plan choice unstable.
+		rows = 1
+	}
+	return rows
+}
+
 // estimateNetSeekCost calculates the net seek cost for the plan.
 // for TiKV, it's len(access-range) * seek-factor,
 // and for TiFlash, it's len(access-range) * len(access-column) * seek-factor.

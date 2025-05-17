@@ -151,7 +151,7 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	} else { // TiFlash
 		columns = p.schema.Columns
 	}
-	rows := getCardinality(p, option.CostFlag)
+	rows := p.getCardinality(option.CostFlag)
 	rowSize := getAvgRowSize(p.StatsInfo(), columns)
 	// Ensure rows and rowSize have a reasonable minimum value to avoid underestimation
 	if !p.isChildOfIndexLookUp {
@@ -267,7 +267,6 @@ func (p *PhysicalTableReader) GetPlanCostVer2(taskType property.TaskType, option
 	}
 
 	netCost := netCostVer2(option, rows, rowSize, netFactor)
-
 	childCost, err := p.tablePlan.GetPlanCostVer2(childType, option)
 	if err != nil {
 		return costusage.ZeroCostVer2, err
