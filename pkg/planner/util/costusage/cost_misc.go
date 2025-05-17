@@ -98,10 +98,7 @@ func HasCostFlag(costFlag, flag uint64) bool {
 
 // TraceCost indicates whether to trace cost.
 func TraceCost(option *optimizetrace.PlanCostOption) bool {
-	if option != nil && HasCostFlag(option.CostFlag, CostFlagTrace) {
-		return true
-	}
-	return false
+	return true
 }
 
 // NewCostVer2 is the constructor of CostVer2.

@@ -43,6 +43,18 @@ func GetPlanCost(p base.PhysicalPlan, taskType property.TaskType, option *optimi
 // GenPlanCostTrace define a hook function to customize the cost calculation.
 var GenPlanCostTrace func(p base.PhysicalPlan, costV *costusage.CostVer2, taskType property.TaskType, option *optimizetrace.PlanCostOption)
 
+func genPlanCostTracePrinter(p base.PhysicalPlan, costV *costusage.CostVer2, taskType property.TaskType, option *optimizetrace.PlanCostOption) {
+	trace := costV.GetTrace()
+	if trace != nil {
+		fmt.Println("=========================")
+		fmt.Println(p.OutputNames())
+		fmt.Println(p.TP())
+		fmt.Println(costV.GetCost())
+		fmt.Println(trace.GetFormula())
+		fmt.Println("=========================")
+	}
+}
+
 func getPlanCost(p base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
 	if p.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
 		planCost, err := p.GetPlanCostVer2(taskType, option)

@@ -403,8 +403,8 @@ func iterateChildPlan4LogicalSequence(
 func compareTaskCost(curTask, bestTask base.Task, op *optimizetrace.PhysicalOptimizeOp) (curIsBetter bool, err error) {
 	_, ok1 := curTask.Plan().(*PhysicalIndexJoin)
 	_, ok2 := bestTask.Plan().(*PhysicalTableReader)
-	if ok1 && ok2 {
-		fmt.Println("wwz")
+	if ok1 || ok2 {
+		GenPlanCostTrace = genPlanCostTracePrinter
 	}
 	curCost, curInvalid, err := getTaskPlanCost(curTask, op)
 	if err != nil {
@@ -420,6 +420,7 @@ func compareTaskCost(curTask, bestTask base.Task, op *optimizetrace.PhysicalOpti
 	if bestInvalid {
 		return true, nil
 	}
+	GenPlanCostTrace = nil
 	return curCost < bestCost, nil
 }
 

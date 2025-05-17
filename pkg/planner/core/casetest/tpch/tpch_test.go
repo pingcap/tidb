@@ -186,8 +186,8 @@ CREATE TABLE lineitem (
 	testkit.LoadTableStats("orders_stats.json", dom)
 	testkit.SetTiFlashReplica(t, dom, "olap", "orders")
 	testkit.SetTiFlashReplica(t, dom, "olap", "lineitem")
-	q4 := `explain format='brief' select
-        o_orderpriority,
+	tk.MustExec("set @@session.tidb_enforce_mpp = 1")
+	q4 := `explain format='cost_trace' select
         count(*) as order_count
 from
         orders
@@ -200,9 +200,7 @@ where
                         lineitem
                 where
                         l_orderkey = o_orderkey
-                        and l_commitdate < l_receiptdate  )
-group by  o_orderpriority
-order by       o_orderpriority`
+                        and l_commitdate < l_receiptdate  )`
 	tk.MustQuery(q4).Check(testkit.Rows(
 		"Sort 1.00 root  olap.orders.o_orderpriority",
 		"└─Projection 1.00 root  olap.orders.o_orderpriority, Column#26",

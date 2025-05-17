@@ -1392,11 +1392,6 @@ func buildIndexJoinInner2TableScan(
 		lastColMng = indexJoinResult.lastColManager
 	}
 	joins = make([]base.PhysicalPlan, 0, 3)
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
-		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
-			failpoint.Return(constructIndexHashJoin(p, prop, outerIdx, innerTask, nil, keyOff2IdxOff, path, lastColMng))
-		}
-	})
 	joins = append(joins, constructIndexJoin(p, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, lastColMng, true)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
@@ -2779,11 +2774,13 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 			joins = append(joins, mergeJoins...)
 		*/
 		// todo: feel vars.EnhanceIndexJoinBuildV2 and tryToEnumerateIndexJoin(p, prop)
+		//if lp.SCtx().GetSessionVars().InRestrictedSQL {
 		indexJoins, forced := tryToGetIndexJoin(p, prop)
 		if forced {
 			return indexJoins, true, nil
 		}
 		joins = append(joins, indexJoins...)
+		//}
 	}
 	/*
 		hashJoins, forced := getHashJoins(p, prop)
