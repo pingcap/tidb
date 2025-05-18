@@ -311,6 +311,7 @@ import (
 	/* The following tokens belong to UnReservedKeyword. Notice: make sure these tokens are contained in UnReservedKeyword. */
 	account                  "ACCOUNT"
 	action                   "ACTION"
+	addColumnarReplicaOnDemand "ADD_COLUMNAR_REPLICA_ON_DEMAND"
 	advise                   "ADVISE"
 	after                    "AFTER"
 	against                  "AGAINST"
@@ -6673,6 +6674,8 @@ IndexOptionList:
 				opt1.Visibility = opt2.Visibility
 			} else if opt2.PrimaryKeyTp != ast.PrimaryKeyTypeDefault {
 				opt1.PrimaryKeyTp = opt2.PrimaryKeyTp
+			} else if opt2.AddColumnarReplicaOnDemand > 0 {
+				opt1.AddColumnarReplicaOnDemand = opt2.AddColumnarReplicaOnDemand
 			} else if opt2.Global {
 				opt1.Global = true
 			} else if opt2.SplitOpt != nil {
@@ -6689,6 +6692,12 @@ IndexOption:
 	{
 		$$ = &ast.IndexOption{
 			KeyBlockSize: $3.(uint64),
+		}
+	}
+|	"ADD_COLUMNAR_REPLICA_ON_DEMAND"
+	{
+		$$ = &ast.IndexOption{
+			AddColumnarReplicaOnDemand: 1,
 		}
 	}
 |	IndexType
@@ -6846,6 +6855,7 @@ Identifier:
 
 UnReservedKeyword:
 	"ACTION"
+|	"ADD_COLUMNAR_REPLICA_ON_DEMAND"
 |	"ADVISE"
 |	"ASCII"
 |	"APPLY"
