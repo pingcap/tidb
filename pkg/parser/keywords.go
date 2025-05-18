@@ -259,6 +259,7 @@ var Keywords = []KeywordsType{
 	{"ZEROFILL", true, "reserved"},
 	{"ACCOUNT", false, "unreserved"},
 	{"ACTION", false, "unreserved"},
+	{"ADD_COLUMNAR_REPLICA_ON_DEMAND", false, "unreserved"},
 	{"ADVISE", false, "unreserved"},
 	{"AFTER", false, "unreserved"},
 	{"AGAINST", false, "unreserved"},
