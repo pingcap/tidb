@@ -25,7 +25,7 @@ type unicode0900AICICollator struct {
 
 // Clone implements Collator interface.
 func (uc *unicode0900AICICollator) Clone() Collator {
-    return &unicode0900AICICollator{impl: uc.impl.Clone()}
+	return &unicode0900AICICollator{impl: uc.impl.Clone()}
 }
 
 // Compare implements Collator interface.
