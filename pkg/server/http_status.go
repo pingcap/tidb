@@ -320,10 +320,14 @@ func (s *Server) startHTTPServer() {
 		err := coverage.WriteMetaDir(dir)
 		if err != nil {
 			logutil.BgLogger().Warn("write coverage meta failed", zap.Error(err))
+			serveError(writer, http.StatusInternalServerError, "write coverage meta failed")
+			return
 		}
 		err = coverage.WriteCountersDir(dir)
 		if err != nil {
 			logutil.BgLogger().Warn("write coverage counters failed", zap.Error(err))
+			serveError(writer, http.StatusInternalServerError, "write coverage counters failed")
+			return
 		}
 
 		zipWriter := zip.NewWriter(writer)
