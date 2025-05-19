@@ -558,9 +558,11 @@ func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([
 	for (rounds*nodeCnt*maxTargetFilesPerSubtask)+(adjustNodeCnt*maxTargetFilesPerSubtask) > int(MergeSortOverlapThreshold) {
 		adjustNodeCnt--
 		if adjustNodeCnt == 0 {
-			return nil, errors.Errorf("too many files to sort, dataFiles=%d, nodeCnt=%d", dataFilesCnt, nodeCnt)
+			return nil, errors.Errorf("unexpected zero node count, dataFiles=%d, nodeCnt=%d", dataFilesCnt, nodeCnt)
 		}
 	}
+	minimalFileCount := 32 // Each subtask should merge at least 32 files.
+	adjustNodeCnt = max(min(remainder/minimalFileCount, adjustNodeCnt), 1)
 	sizes := mathutil.Divide2Batches(remainder, adjustNodeCnt)
 	for _, s := range sizes {
 		result = append(result, dataFiles[:s])
