@@ -393,6 +393,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 		NullValueOptEnclosed: nullValueOptEnclosed,
 		LineFieldsInfo:       lineFieldsInfo,
 		IgnoreLines:          ignoreLines,
+		CSVHeaderOption:      mydump.CSVHeaderFalse,
 
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		Charset:          charset,

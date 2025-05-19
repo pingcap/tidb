@@ -746,6 +746,7 @@ func (parser *CSVParser) TrySkipHeader() ([]field, bool, error) {
 				continue
 			}
 			colNameCSV, _, err := parser.unescapeString(fields[i])
+			colNameCSV = strings.TrimSpace(colNameCSV)
 			if err != nil {
 				return nil, false, errors.Trace(err)
 			}
