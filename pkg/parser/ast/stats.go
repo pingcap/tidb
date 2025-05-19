@@ -273,6 +273,43 @@ func (n *LoadStatsStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+type InitStatsStmt struct {
+	stmtNode
+
+	Tables []*TableName
+}
+
+// Restore implements Node interface.
+func (n *InitStatsStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("INIT STATS ")
+	for index, table := range n.Tables {
+		if index != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := table.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore InitStatsStmt.Tables[%d]", index)
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *InitStatsStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*InitStatsStmt)
+	for i, val := range n.Tables {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Tables[i] = node.(*TableName)
+	}
+	return v.Leave(n)
+}
+
 // LockStatsStmt is the statement node for lock table statistic
 type LockStatsStmt struct {
 	stmtNode

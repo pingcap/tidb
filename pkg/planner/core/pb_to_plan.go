@@ -76,6 +76,8 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 		p, err = b.pbToAgg(e, true)
 	case tipb.ExecType_TypeKill:
 		p, err = b.pbToKill(e)
+	case tipb.ExecType_TypeInitStats:
+		p, err = b.pbToInitStats(e)
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet", e.GetTp())
@@ -267,6 +269,20 @@ func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (base.PhysicalPlan, error) {
 	node := &ast.KillStmt{
 		ConnectionID: e.Kill.ConnID,
 		Query:        e.Kill.Query,
+	}
+	simple := Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
+	return &PhysicalSimpleWrapper{Inner: simple}, nil
+}
+
+func (*PBPlanBuilder) pbToInitStats(e *tipb.Executor) (base.PhysicalPlan, error) {
+	tables := make([]*ast.TableName, 0, len(e.InitStats.TableNames))
+	for _, table := range e.InitStats.TableNames {
+		tables = append(tables, &ast.TableName{
+			Name: ast.NewCIStr(table),
+		})
+	}
+	node := &ast.InitStatsStmt{
+		Tables: tables,
 	}
 	simple := Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
 	return &PhysicalSimpleWrapper{Inner: simple}, nil

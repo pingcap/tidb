@@ -2775,6 +2775,69 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 	return err
 }
 
+func (e *SimpleExec) executeInitStats(ctx context.Context, s *ast.InitStatsStmt) error {
+	tableNames := make([]string, 0, len(s.Tables))
+	for _, table := range s.Tables {
+		tableNames = append(tableNames, table.Name.O)
+	}
+	sm := e.Ctx().GetSessionManager()
+	if sm == nil {
+		return nil
+	}
+	if e.IsFromRemote {
+		// TODO: init stats
+		return nil
+	}
+	return initStats(ctx, e.Ctx(), tableNames)
+}
+
+func initStats(ctx context.Context, sctx sessionctx.Context, tableNames []string) error {
+	initStatsExec := &tipb.Executor{
+		Tp: tipb.ExecType_TypeInitStats,
+		InitStats: &tipb.InitStats{
+			TableNames: tableNames,
+		},
+	}
+	dagReq := &tipb.DAGRequest{}
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sctx.GetSessionVars().Location())
+	sc := sctx.GetSessionVars().StmtCtx
+	if sc.RuntimeStatsColl != nil {
+		collExec := true
+		dagReq.CollectExecutionSummaries = &collExec
+	}
+	dagReq.Flags = sc.PushDownFlags()
+	dagReq.Executors = []*tipb.Executor{initStatsExec}
+
+	var builder distsql.RequestBuilder
+	kvReq, err := builder.
+		SetDAGRequest(dagReq).
+		SetFromSessionVars(sctx.GetDistSQLCtx()).
+		SetFromInfoSchema(sctx.GetInfoSchema()).
+		SetStoreType(kv.TiDB).
+		SetTiDBServerID(0).
+		SetStartTS(math.MaxUint64). // To make check visibility success.
+		Build()
+	if err != nil {
+		return err
+	}
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, &kv.ClientSendOption{})
+	if resp == nil {
+		err := errors.New("client returns nil response")
+		return err
+	}
+
+	// Must consume & close the response, otherwise coprocessor task will leak.
+	defer func() {
+		_ = resp.Close()
+	}()
+	if _, err := resp.Next(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
+	logutil.BgLogger().Info("Init stats", zap.Strings("tableNames", tableNames))
+	return err
+}
+
 func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 	switch s.Tp {
 	case ast.FlushTables:

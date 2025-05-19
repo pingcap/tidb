@@ -163,6 +163,7 @@ import (
 	in                "IN"
 	index             "INDEX"
 	infile            "INFILE"
+	init1             "INIT"
 	inner             "INNER"
 	inout             "INOUT"
 	insert            "INSERT"
@@ -633,6 +634,7 @@ import (
 	sqlTsiWeek                 "SQL_TSI_WEEK"
 	sqlTsiYear                 "SQL_TSI_YEAR"
 	start                      "START"
+	stats                      "STATS"
 	statsAutoRecalc            "STATS_AUTO_RECALC"
 	statsColChoice             "STATS_COL_CHOICE"
 	statsColList               "STATS_COL_LIST"
@@ -889,7 +891,6 @@ import (
 	sessionStates              "SESSION_STATES"
 	split                      "SPLIT"
 	statistics                 "STATISTICS"
-	stats                      "STATS"
 	statsBuckets               "STATS_BUCKETS"
 	statsExtended              "STATS_EXTENDED"
 	statsHealthy               "STATS_HEALTHY"
@@ -1033,6 +1034,7 @@ import (
 	ImportIntoStmt             "IMPORT INTO statement"
 	ImportFromSelectStmt       "SELECT statement of IMPORT INTO"
 	KillStmt                   "Kill statement"
+	InitStatsStmt              "INIT STATS statement"
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockStatsStmt              "Lock statistic statement"
@@ -12421,6 +12423,7 @@ Statement:
 |	ImportIntoStmt
 |	InsertIntoStmt
 |	KillStmt
+|	InitStatsStmt
 |	LoadDataStmt
 |	LoadStatsStmt
 |	LockStatsStmt
@@ -15426,6 +15429,14 @@ KillOrKillTiDB:
 |	"KILL" "TIDB"
 	{
 		$$ = true
+	}
+
+InitStatsStmt:
+	"INIT" "STATS" TableNameList
+	{
+		$$ = &ast.InitStatsStmt{
+			Tables: $3.([]*ast.TableName),
+		}
 	}
 
 LoadStatsStmt:
