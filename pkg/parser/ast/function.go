@@ -25,7 +25,7 @@ type CreateLoadableFunctionStmt struct {
 
 	Aggregate   bool
 	IfNotExists bool
-	Name        *TableName
+	Name        CIStr
 	ReturnType  types.EvalType
 	SoName      string
 }
@@ -40,9 +40,7 @@ func (n *CreateLoadableFunctionStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfNotExists {
 		ctx.WriteKeyWord("IF NOT EXISTS ")
 	}
-	if err := n.Name.Restore(ctx); err != nil {
-		return err
-	}
+	ctx.WriteName(n.Name.String())
 	ctx.WriteKeyWord(" RETURNS ")
 	if n.ReturnType == types.ETInt {
 		ctx.WriteKeyWord("INTEGER")
@@ -56,19 +54,9 @@ func (n *CreateLoadableFunctionStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node interface.
 func (n *CreateLoadableFunctionStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
+	// this stmt has no children node
+	newNode, _ := v.Enter(n)
 	n = newNode.(*CreateLoadableFunctionStmt)
-	if skipChildren {
-		return v.Leave(n)
-	}
-
-	if n.Name != nil {
-		newName, ok := n.Name.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Name = newName.(*TableName)
-	}
 	return v.Leave(n)
 }
 

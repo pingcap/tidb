@@ -16648,12 +16648,12 @@ DropProcedureStmt:
 *     SONAME shared_library_name
 ********************************************************************************************/
 CreateLoadableFunctionStmt:
-	"CREATE" AggregateOpt "FUNCTION" IfNotExists TableName "RETURNS" LoadableFunctionReturnType "SONAME" stringLit
+	"CREATE" AggregateOpt "FUNCTION" IfNotExists Identifier "RETURNS" LoadableFunctionReturnType "SONAME" stringLit
 	{
 		$$ = &ast.CreateLoadableFunctionStmt{
 			Aggregate:   $2.(bool),
 			IfNotExists: $4.(bool),
-			Name:        $5.(*ast.TableName),
+			Name:        ast.NewCIStr($5),
 			ReturnType:  $7.(types.EvalType),
 			SoName:      $9,
 		}
@@ -16673,7 +16673,7 @@ LoadableFunctionReturnType:
 	{
 		$$ = types.ETString
 	}
-|	"INTEGER"
+|	OptInteger
 	{
 		$$ = types.ETInt
 	}
