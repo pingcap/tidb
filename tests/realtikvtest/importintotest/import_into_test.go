@@ -345,8 +345,10 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 }
 
 func (s *mockGCSSuite) TestCSVHeaderOption() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "csv-option"})
+
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-multi-load", Name: "csv_with_header.csv"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "csv-option", Name: "csv_with_header.csv"},
 		Content: []byte(`a,b,c
 1,test1,11
 2,test2,22
@@ -354,7 +356,7 @@ func (s *mockGCSSuite) TestCSVHeaderOption() {
 4,test4,44`),
 	})
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-multi-load", Name: "csv_without_header.csv"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "csv-option", Name: "csv_without_header.csv"},
 		Content: []byte(`5,test5,55
 6,test6,66
 7,test7,77
@@ -383,7 +385,7 @@ func (s *mockGCSSuite) TestCSVHeaderOption() {
 
 	for _, tc := range testCases {
 		s.tk.MustExec("truncate table t")
-		loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/%s?endpoint=%s'
+		loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://csv-option/%s?endpoint=%s'
 		with remove_csv_header="%s", thread=1`, tc.file, gcsEndpoint, tc.csvOption)
 		if tc.result {
 			s.tk.MustQuery(loadDataSQL)
