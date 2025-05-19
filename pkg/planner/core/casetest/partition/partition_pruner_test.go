@@ -649,3 +649,27 @@ func TestIssue61134(t *testing.T) {
 	tk.MustQuery("explain select * from t where a in ('')").CheckContain("Point_Get")
 	tk.MustQuery("select * from t where a in ('')").Check(testkit.Rows(" 1"))
 }
+
+func TestIssue61176(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (a varchar(9), unique index (a)) PARTITION BY RANGE COLUMNS (a) (PARTITION p0 VALUES LESS THAN ('M'), PARTITION p1 VALUES LESS THAN (MAXVALUE))`)
+	tk.MustExec(`insert into t values ('Y'),('A'),(NULL)`)
+	tk.MustQuery(`select a from t where a <=> 'Y'`).Check(testkit.Rows("Y"))
+	tk.MustQuery(`select a from t where a <=> 'A'`).Check(testkit.Rows("A"))
+	tk.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`explain format=brief select a from t where a <=> 'Y'`).MultiCheckContain([]string{"Point_Get", "partition:p1"})
+	tk.MustQuery(`explain format=brief select a from t where a <=> 'A'`).MultiCheckContain([]string{"Point_Get", "partition:p0"})
+	tk.MustQuery(`explain format=brief select a from t where a <=> NULL`).MultiCheckContain([]string{"IndexRangeScan", "partition:p0"})
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`CREATE TABLE t (a varchar(9) PRIMARY KEY) PARTITION BY RANGE COLUMNS (a) (PARTITION p0 VALUES LESS THAN ('M'), PARTITION p1 VALUES LESS THAN (MAXVALUE))`)
+	tk.MustExec(`insert into t values ('Y'),('A')`)
+	tk.MustContainErrMsg(`insert into t values (NULL)`, "[table:1048]Column 'a' cannot be null")
+	tk.MustQuery(`select a from t where a <=> 'Y'`).Check(testkit.Rows("Y"))
+	tk.MustQuery(`select a from t where a <=> 'A'`).Check(testkit.Rows("A"))
+	tk.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows())
+	tk.MustQuery(`explain format=brief select a from t where a <=> 'Y'`).MultiCheckContain([]string{"Point_Get", "partition:p1"})
+	tk.MustQuery(`explain format=brief select a from t where a <=> 'A'`).MultiCheckContain([]string{"Point_Get", "partition:p0"})
+	tk.MustQuery(`explain format=brief select a from t where a <=> NULL`).MultiCheckContain([]string{"TableRangeScan", "partition:p0"})
+}
