@@ -143,6 +143,101 @@ CREATE TABLE lineitem (
 	}
 }
 
+func TestQ4(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database olap")
+	tk.MustExec("use olap")
+	tk.MustExec(`
+CREATE TABLE orders (
+    O_ORDERKEY bigint NOT NULL,
+    O_CUSTKEY bigint NOT NULL,
+    O_ORDERSTATUS char(1) NOT NULL,
+    O_TOTALPRICE decimal(15,2) NOT NULL,
+    O_ORDERDATE date NOT NULL,
+    O_ORDERPRIORITY char(15) NOT NULL,
+    O_CLERK char(15) NOT NULL,
+    O_SHIPPRIORITY bigint NOT NULL,
+    O_COMMENT varchar(79) NOT NULL,
+    PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`
+CREATE TABLE lineitem (
+    L_ORDERKEY bigint NOT NULL,
+    L_PARTKEY bigint NOT NULL,
+    L_SUPPKEY bigint NOT NULL,
+    L_LINENUMBER bigint NOT NULL,
+    L_QUANTITY decimal(15,2) NOT NULL,
+    L_EXTENDEDPRICE decimal(15,2) NOT NULL,
+    L_DISCOUNT decimal(15,2) NOT NULL,
+    L_TAX decimal(15,2) NOT NULL,
+    L_RETURNFLAG char(1) NOT NULL,
+    L_LINESTATUS char(1) NOT NULL,
+    L_SHIPDATE date NOT NULL,
+    L_COMMITDATE date NOT NULL,
+    L_RECEIPTDATE date NOT NULL,
+    L_SHIPINSTRUCT char(25) NOT NULL,
+    L_SHIPMODE char(10) NOT NULL,
+    L_COMMENT varchar(44) NOT NULL,
+    PRIMARY KEY (L_ORDERKEY, L_LINENUMBER) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+`)
+	testkit.LoadTableStats("lineitem_stats.json", dom)
+	testkit.LoadTableStats("orders_stats.json", dom)
+	testkit.SetTiFlashReplica(t, dom, "olap", "orders")
+	testkit.SetTiFlashReplica(t, dom, "olap", "lineitem")
+	q4 := `explain format='brief' select
+        o_orderpriority,
+        count(*) as order_count
+from
+        orders
+where
+        o_orderdate >= '1995-01-01'
+        and o_orderdate < date_add('1995-01-01', interval '3' month)
+        and exists (
+                select    *
+                from
+                        lineitem
+                where
+                        l_orderkey = o_orderkey
+                        and l_commitdate < l_receiptdate  )
+group by  o_orderpriority
+order by       o_orderpriority`
+	tk.MustQuery(q4).Check(testkit.Rows(
+		"Sort 1.00 root  olap.orders.o_orderpriority",
+		"└─Projection 1.00 root  olap.orders.o_orderpriority, Column#26",
+		"  └─HashAgg 1.00 root  group by:olap.orders.o_orderpriority, funcs:count(1)->Column#26, funcs:firstrow(olap.orders.o_orderpriority)->olap.orders.o_orderpriority",
+		"    └─IndexJoin 45161741.07 root  semi join, inner:TableReader, left side:TableReader, outer key:olap.orders.o_orderkey, inner key:olap.lineitem.l_orderkey, equal cond:eq(olap.orders.o_orderkey, olap.lineitem.l_orderkey)",
+		"      ├─TableReader(Build) 56452176.33 root  MppVersion: 3, data:ExchangeSender",
+		"      │ └─ExchangeSender 56452176.33 mpp[tiflash]  ExchangeType: PassThrough",
+		"      │   └─TableFullScan 56452176.33 mpp[tiflash] table:orders pushed down filter:ge(olap.orders.o_orderdate, 1995-01-01 00:00:00.000000), lt(olap.orders.o_orderdate, 1995-04-01 00:00:00.000000), keep order:false",
+		"      └─TableReader(Probe) 45161741.07 root  data:Selection",
+		"        └─Selection 45161741.07 cop[tikv]  lt(olap.lineitem.l_commitdate, olap.lineitem.l_receiptdate)",
+		"          └─TableRangeScan 56452176.33 cop[tikv] table:lineitem range: decided by [eq(olap.lineitem.l_orderkey, olap.orders.o_orderkey)], keep order:false",
+	))
+	// https://github.com/pingcap/tidb/issues/60991
+	tk.MustExec(`set @@session.tidb_enforce_mpp=1;`)
+	tk.MustQuery(q4).Check(testkit.Rows("Sort 1.00 root  olap.orders.o_orderpriority",
+		"└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+		"  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"    └─Projection 1.00 mpp[tiflash]  olap.orders.o_orderpriority, Column#26",
+		"      └─Projection 1.00 mpp[tiflash]  Column#26, olap.orders.o_orderpriority",
+		"        └─HashAgg 1.00 mpp[tiflash]  group by:olap.orders.o_orderpriority, funcs:sum(Column#31)->Column#26, funcs:firstrow(olap.orders.o_orderpriority)->olap.orders.o_orderpriority",
+		"          └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+		"            └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: olap.orders.o_orderpriority, collate: utf8mb4_bin]",
+		"              └─HashAgg 1.00 mpp[tiflash]  group by:olap.orders.o_orderpriority, funcs:count(1)->Column#31",
+		"                └─Projection 45161741.07 mpp[tiflash]  olap.orders.o_orderpriority, olap.orders.o_orderkey",
+		"                  └─HashJoin 45161741.07 mpp[tiflash]  semi join, left side:ExchangeReceiver, equal:[eq(olap.orders.o_orderkey, olap.lineitem.l_orderkey)]",
+		"                    ├─ExchangeReceiver(Build) 56452176.33 mpp[tiflash]  ",
+		"                    │ └─ExchangeSender 56452176.33 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: olap.orders.o_orderkey, collate: binary]",
+		"                    │   └─TableFullScan 56452176.33 mpp[tiflash] table:orders pushed down filter:ge(olap.orders.o_orderdate, 1995-01-01 00:00:00.000000), lt(olap.orders.o_orderdate, 1995-04-01 00:00:00.000000), keep order:false",
+		"                    └─ExchangeReceiver(Probe) 4799991767.20 mpp[tiflash]  ",
+		"                      └─ExchangeSender 4799991767.20 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: olap.lineitem.l_orderkey, collate: binary]",
+		"                        └─Projection 4799991767.20 mpp[tiflash]  olap.lineitem.l_orderkey",
+		"                          └─Selection 4799991767.20 mpp[tiflash]  lt(olap.lineitem.l_commitdate, olap.lineitem.l_receiptdate)",
+		"                            └─TableFullScan 5999989709.00 mpp[tiflash] table:lineitem pushed down filter:empty, keep order:false"))
+}
+
 func TestQ9(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

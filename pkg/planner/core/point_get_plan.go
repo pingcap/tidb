@@ -388,8 +388,15 @@ func needsPartitionPruning(sctx sessionctx.Context, tblInfo *model.TableInfo, pt
 	}
 
 	partIdx, err := PartitionPruning(sctx.GetPlanCtx(), pt, conds, partitionNames, tblCols, partNameSlice)
-	if err != nil || len(partIdx) != 1 {
+	if err != nil {
 		return nil, true, err
+	}
+	if len(partIdx) == 1 && partIdx[0] == FullRange {
+		ret := make([]int, len(tblInfo.Partition.Definitions))
+		for i := range len(tblInfo.Partition.Definitions) {
+			ret[i] = i
+		}
+		return ret, true, nil
 	}
 	return partIdx, true, nil
 }

@@ -12,7 +12,6 @@ go_test(
     race = "on",
     shard_count = 18,
     deps = [
-        "//pkg/domain",
         "//pkg/executor",
         "//pkg/meta/model",
         "//pkg/parser/ast",
@@ -23,7 +22,6 @@ go_test(
         "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/statistics/handle/ddl/testutil",
-        "//pkg/statistics/util",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
         "//pkg/testkit/testmain",

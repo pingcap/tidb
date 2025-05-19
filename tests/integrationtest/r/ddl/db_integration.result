@@ -1239,6 +1239,8 @@ Error 3800 (HY000): Expression of expression index 'k' cannot refer to a row val
 create table t (j json, key k ((j+1),(j+1)));
 create table t1 (col1 int, index ((concat(''))));
 Error 3761 (HY000): The used storage engine cannot index the expression 'concat(_utf8mb4'')'
+create table t1 (col1 int, index ((null)));
+Error 3761 (HY000): The used storage engine cannot index the expression 'null'
 CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))) NONCLUSTERED);
 Error 3756 (HY000): The primary key cannot be an expression index
 drop table if exists t;

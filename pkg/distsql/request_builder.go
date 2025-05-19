@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -81,14 +82,17 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 
 	if dag := builder.dag; dag != nil {
 		if execCnt := len(dag.Executors); execCnt == 1 {
-			oldConcurrency := builder.Request.Concurrency
 			// select * from t order by id
-			if builder.Request.KeepOrder {
+			if builder.Request.KeepOrder && builder.Request.Concurrency == vardef.DefDistSQLScanConcurrency {
 				// When the DAG is just simple scan and keep order, set concurrency to 2.
 				// If a lot data are returned to client, mysql protocol is the bottleneck so concurrency 2 is enough.
 				// If very few data are returned to client, the speed is not optimal but good enough.
+				//
+				// If a user set @@tidb_distsql_scan_concurrency, he must be doing it by intention.
+				// so only rewrite concurrency when @@tidb_distsql_scan_concurrency is default value.
 				switch dag.Executors[0].Tp {
 				case tipb.ExecType_TypeTableScan, tipb.ExecType_TypeIndexScan, tipb.ExecType_TypePartitionTableScan:
+					oldConcurrency := builder.Request.Concurrency
 					builder.Request.Concurrency = 2
 					failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 						if val.(bool) {

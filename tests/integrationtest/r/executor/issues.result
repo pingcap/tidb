@@ -1000,6 +1000,14 @@ Limit_11	1.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
   └─Limit_19	1.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
     └─Selection_18	1.00	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.pt.val, 126)	<memory>	<disk>
       └─TableFullScan_17	256.00	<actRows>	cop[tikv]	table:pt	NULL	keep order:true	<memory>	<disk>
+explain analyze select /*+ set_var(tidb_distsql_scan_concurrency=5)*/ * from t order by id;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+TableReader_11	256.00	<actRows>	root	NULL	max_distsql_concurrency: 5	NULL	<memory>	<disk>
+└─TableFullScan_10	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
+explain analyze select /*+ set_var(tidb_distsql_scan_concurrency=15)*/ * from t order by id;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+TableReader_11	256.00	<actRows>	root	NULL	max_distsql_concurrency: 2	NULL	<memory>	<disk>
+└─TableFullScan_10	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
 CREATE TABLE test_55837 (col1 int(4) NOT NULL, col2 bigint(4) NOT NULL, KEY col2_index (col2));
 insert into test_55837 values(0,1725292800),(0,1725292800);
 select from_unixtime( if(col2 >9999999999, col2/1000, col2), '%Y-%m-%d %H:%i:%s') as result from test_55837;

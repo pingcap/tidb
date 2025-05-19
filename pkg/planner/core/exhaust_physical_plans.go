@@ -1215,7 +1215,7 @@ func buildDataSource2IndexScanByIndexJoinProp(
 	// here we don't need to construct physical index join here anymore, because we will encapsulate it bottom-up.
 	// chosenPath and lastColManager of indexJoinResult should be returned to the caller (seen by index join to keep
 	// index join aware of indexColLens and compareFilters).
-	completeIndexJoinFeedBackInfo(innerTask.(*CopTask), indexJoinResult, indexJoinResult.chosenRanges.Range(), keyOff2IdxOff)
+	completeIndexJoinFeedBackInfo(innerTask.(*CopTask), indexJoinResult, indexJoinResult.chosenRanges, keyOff2IdxOff)
 	return innerTask
 }
 
@@ -1798,6 +1798,7 @@ func constructDS2IndexScanTask(
 	// We can calculate the lower bound of the NDV therefore we can get an upper bound of the row count here.
 	rowCountUpperBound := -1.0
 	fixControlOK := fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44855, false)
+	ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix44855)
 	if fixControlOK && ds.TableStats != nil {
 		usedColIDs := make([]int64, 0)
 		// We only consider columns in this index that (1) are used to probe as join key,
@@ -2156,6 +2157,13 @@ func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty
 	return filterIndexJoinBySessionVars(p.SCtx(), candidates), false
 }
 
+func enumerationContainIndexJoin(candidates []base.PhysicalPlan) bool {
+	return slices.ContainsFunc(candidates, func(candidate base.PhysicalPlan) bool {
+		_, _, ok := getIndexJoinSideAndMethod(candidate)
+		return ok
+	})
+}
+
 // handleFilterIndexJoinHints is trying to avoid generating index join or index hash join when no-index-join related
 // hint is specified in the query. So we can do it in physic enumeration phase.
 func handleFilterIndexJoinHints(p *logicalop.LogicalJoin, candidates []base.PhysicalPlan) []base.PhysicalPlan {
@@ -2184,6 +2192,10 @@ func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalPro
 	p, ok := lp.(*logicalop.LogicalJoin)
 	if !ok {
 		return nil
+	}
+	if !p.PreferAny(h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
+		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner) {
+		return nil // no force index join hints
 	}
 	// Cannot find any valid index join plan with these force hints.
 	// Print warning message if any hints cannot work.
