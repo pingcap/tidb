@@ -242,6 +242,16 @@ func enumeratePhysicalPlans4Task(
 			curTask = curTask.ConvertToRootTask(p.SCtx())
 		}
 
+		// Get the most preferred and efficient one by hint and low-cost priority.
+		// since hint applicable plan may greater than 1, like inl_join can suit for:
+		// index_join, index_hash_join, index_merge_join, we should chase the most efficient
+		// one among them.
+		//
+		// we need to check the hint is applicable before enforcing the property. otherwise
+		// what we get is Sort ot Exchanger kind of operators.
+		// todo: extend applyLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
+		hintApplicable := applyLogicalJoinHint(p.Self(), curTask.Plan())
+
 		// Enforce curTask property
 		if addEnforcer {
 			curTask = enforceProperty(prop, curTask, p.Plan.SCtx(), fd)
@@ -269,12 +279,7 @@ func enumeratePhysicalPlans4Task(
 			bestTask = curTask
 		}
 
-		// Get the most preferred and efficient one by hint and low-cost priority.
-		// since hint applicable plan may greater than 1, like inl_join can suit for:
-		// index_join, index_hash_join, index_merge_join, we should chase the most efficient
-		// one among them.
-		// todo: extend suitLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
-		if suitLogicalJoinHint(p.Self(), curTask.Plan()) {
+		if hintApplicable {
 			// curTask is a preferred physic plan, compare cost with previous preferred one and cache the low-cost one.
 			if curIsBetter, err := compareTaskCost(curTask, preferTask, opt); err != nil {
 				return nil, 0, err
@@ -866,6 +871,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 && // not IndexMerge since its row count estimation is not accurate enough
 		prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
 		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
+		sctx.GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix45132)
 		if threshold > 0 { // set it to 0 to disable this rule
 			// corrResult is included to ensure we don't preference to a higher risk plan given that
 			// this rule does not check the other criteria included below.
@@ -1316,6 +1322,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		fixcontrol.Fix52869,
 		false,
 	)
+	ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix52869)
 	if preferRange {
 		// Override preferRange with the following limitations to scope
 		preferRange = preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
@@ -1456,11 +1463,15 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 			// even enforce hint can not work with this.
 			return base.InvalidTask, 0, nil
 		}
+		// cache the physical for indexJoinProp
+		defer func() {
+			ds.StoreTask(prop, t)
+		}()
 		// when datasource leaf is in index join's inner side, build the task out with old
 		// index join build logic, we can't merge this with normal datasource's index range
 		// because normal index range is built on expression EQ/IN. while index join's inner
 		// has its special runtime constants detecting and filling logic.
-		return getBestIndexJoinInnerTaskByProp(ds, prop, opt, planCounter)
+		return getBestIndexJoinInnerTaskByProp(ds, prop, planCounter)
 	}
 	var cnt int64
 	var unenforcedTask base.Task

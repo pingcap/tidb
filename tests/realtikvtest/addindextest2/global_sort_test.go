@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -316,16 +318,126 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
-	defer func() {
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
+	t.Cleanup(func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		vardef.CloudStorageURI.Store("")
-	}()
+		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+		tk.MustExec("set @@session.tidb_scatter_region = ''")
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRegionBatch", `return(1)`)
+	testErrStep := proto.StepInit
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterRunSubtask",
+		func(e taskexecutor.TaskExecutor, errP *error, _ context.Context) {
+			if errP != nil {
+				testErrStep = e.GetTaskBase().Step
+			}
+		},
+	)
 
-	tk.MustExec("create table t (a int, b int, c int);")
-	tk.MustExec("insert into t values (1, 1, 1);")
-	tk.MustExec("insert into t values (2, 1, 2);")
+	testcases := []struct {
+		caseName        string
+		createTableSQL  string
+		splitTableSQL   string
+		initDataSQL     string
+		addUniqueKeySQL string
+		errMsg          string
+	}{
+		{
+			"varchar index",
+			"create table t (id int, data varchar(255));",
+			"",
+			"insert into t values (1, '1'), (2, '1');",
+			"alter table t add unique index idx(data);",
+			"[kv:1062]Duplicate entry '1' for key 't.idx'",
+		},
+		{
+			"int index on multi regions",
+			"create table t (a int primary key, b int);",
+			"split table t between (0) and (4000) regions 4;",
+			"insert into t values (1, 1), (1001, 1), (2001, 2001), (4001, 1);",
+			"alter table t add unique index idx(b);",
+			"[kv:1062]Duplicate entry '1' for key 't.idx'",
+		},
+		{
+			"combined index",
+			"create table t (id int, data varchar(255));",
+			"",
+			"insert into t values (1, '1'), (1, '1');",
+			"alter table t add unique index idx(id, data);",
+			"[kv:1062]Duplicate entry '1-1' for key 't.idx'",
+		},
+		{
+			"multi value index",
+			"create table t (id int, data json);",
+			"",
+			`insert into t values (1, '{"code":[1,1]}'), (2, '{"code":[1,1]}');`,
+			"alter table t add unique index idx( (CAST(data->'$.code' AS UNSIGNED ARRAY)));",
+			"[kv:1062]Duplicate entry '1' for key 't.idx'",
+		},
+		{
+			"global index",
+			"create table t (k int, c int) partition by list (k) (partition odd values in (1,3,5,7,9), partition even values in (2,4,6,8,10));",
+			"",
+			"insert into t values (1, 1), (2, 1)",
+			"alter table t add unique index idx(c) global",
+			"[kv:1062]Duplicate entry '1' for key 't.idx'",
+		},
+	}
 
-	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
+	checkSubtaskStepAndReset := func(t *testing.T, expectedStep proto.Step) {
+		require.Equal(t, expectedStep, testErrStep)
+		testErrStep = proto.StepInit
+	}
+
+	checkRedactMsgAndReset := func(addUniqueKeySQL string) {
+		tk.MustExec("set session tidb_redact_log = on;")
+		tk.MustContainErrMsg(addUniqueKeySQL, "[kv:1062]Duplicate entry '?' for key 't.idx'")
+		tk.MustExec("set session tidb_redact_log = off;")
+		testErrStep = proto.StepInit
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.caseName, func(tt *testing.T) {
+			// init
+			tk.MustExec(tc.createTableSQL)
+			tk.MustExec(tc.initDataSQL)
+			tt.Cleanup(func() {
+				tk.MustExec("drop table if exists t")
+			})
+
+			// pre-check
+			multipleRegions := len(tc.splitTableSQL) > 0 || strings.Contains(tc.createTableSQL, "partition")
+			if len(tc.splitTableSQL) > 0 {
+				tk.MustQuery(tc.splitTableSQL).Check(testkit.Rows("3 1"))
+			}
+			if strings.Contains(tc.createTableSQL, "partition") {
+				rs := tk.MustQuery("show table t regions")
+				require.Len(tt, rs.Rows(), 2)
+			}
+
+			// 1. read index
+			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
+			if multipleRegions {
+				checkSubtaskStepAndReset(tt, proto.BackfillStepWriteAndIngest)
+			} else {
+				checkSubtaskStepAndReset(tt, proto.BackfillStepReadIndex)
+			}
+			checkRedactMsgAndReset(tc.addUniqueKeySQL)
+
+			// 2. merge sort
+			testfailpoint.Enable(tt, "github.com/pingcap/tidb/pkg/ddl/ignoreReadIndexDupKey", `return(true)`)
+			require.NoError(tt, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()"))
+			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
+			checkSubtaskStepAndReset(tt, proto.BackfillStepMergeSort)
+
+			// 3. cloud import
+			require.NoError(tt, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
+			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
+			checkSubtaskStepAndReset(tt, proto.BackfillStepWriteAndIngest)
+		})
+	}
 }
 
 // When meeting a retryable error, the subtask/job should be idempotent.

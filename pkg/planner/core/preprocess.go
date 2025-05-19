@@ -638,7 +638,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 				break
 			}
 		}
-		if !valid {
+		if x.Format != "" && !valid {
 			p.err = plannererrors.ErrUnknownExplainFormat.GenWithStackByArgs(x.Format)
 		}
 	case *ast.TableName:
