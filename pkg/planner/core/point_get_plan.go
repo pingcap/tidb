@@ -389,8 +389,15 @@ func needsPartitionPruning(sctx sessionctx.Context, tblInfo *model.TableInfo, pt
 	}
 
 	partIdx, err := PartitionPruning(sctx.GetPlanCtx(), pt, conds, partitionNames, tblCols, partNameSlice)
-	if err != nil || len(partIdx) != 1 {
+	if err != nil {
 		return nil, true, err
+	}
+	if len(partIdx) == 1 && partIdx[0] == FullRange {
+		ret := make([]int, len(tblInfo.Partition.Definitions))
+		for i := range len(tblInfo.Partition.Definitions) {
+			ret[i] = i
+		}
+		return ret, true, nil
 	}
 	return partIdx, true, nil
 }
@@ -606,12 +613,18 @@ func (p *BatchPointGetPlan) OperatorInfo(normalized bool) string {
 		if normalized {
 			buffer.WriteString("handle:?, ")
 		} else {
+			redactMode := p.SCtx().GetSessionVars().EnableRedactLog
+			redactOn := redactMode == errors.RedactLogEnable
 			buffer.WriteString("handle:[")
 			for i, handle := range p.Handles {
 				if i != 0 {
 					buffer.WriteString(" ")
 				}
-				buffer.WriteString(handle.String())
+				if redactOn {
+					buffer.WriteString("?")
+				} else {
+					redact.WriteRedact(&buffer, handle.String(), redactMode)
+				}
 			}
 			buffer.WriteString("], ")
 		}

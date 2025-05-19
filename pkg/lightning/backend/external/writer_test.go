@@ -20,7 +20,6 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
-	"path"
 	"slices"
 	"sort"
 	"strconv"
@@ -28,7 +27,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -37,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
@@ -224,7 +221,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(1000).
-		SetKeyDuplicationEncoding(true).
+		SetOnDup(engineapi.OnDuplicateKeyError).
 		Build(memStore, "/test", "0")
 	kvCount := 20
 	for i := range kvCount {
@@ -237,64 +234,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		require.NoError(t, err)
 	}
 	err := writer.Close(ctx)
-	require.NoError(t, err)
-
-	// test MergeOverlappingFiles will not change duplicate detection functionality.
-	err = mergeOverlappingFilesImpl(
-		ctx,
-		[]string{"/test/0/0"},
-		memStore,
-		100,
-		"/test2",
-		"mergeID",
-		1000,
-		1000,
-		8*1024,
-		1*size.MB,
-		2,
-		nil,
-		false,
-	)
-	require.NoError(t, err)
-
-	kvs := make([]kvPair, 0, kvCount)
-
-	kvReader, err := newKVReader(ctx, "/test2/mergeID/0", memStore, 0, 100)
-	require.NoError(t, err)
-	for range kvCount {
-		key, value, err := kvReader.nextKV()
-		require.NoError(t, err)
-		clonedKey := make([]byte, len(key))
-		copy(clonedKey, key)
-		clonedVal := make([]byte, len(value))
-		copy(clonedVal, value)
-		kvs = append(kvs, kvPair{key: clonedKey, value: clonedVal})
-	}
-	_, _, err = kvReader.nextKV()
-	require.ErrorIs(t, err, io.EOF)
-	require.NoError(t, kvReader.Close())
-
-	dir := t.TempDir()
-	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
-	require.NoError(t, err)
-	keyAdapter := common.DupDetectKeyAdapter{}
-	data := &MemoryIngestData{
-		keyAdapter:         keyAdapter,
-		duplicateDetection: true,
-		duplicateDB:        db,
-		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
-		kvs:                kvs,
-		ts:                 123,
-	}
-	pool := membuf.NewPool()
-	defer pool.Destroy()
-	iter := data.NewIter(ctx, nil, nil, pool)
-
-	for iter.First(); iter.Valid(); iter.Next() {
-	}
-	err = iter.Error()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "found duplicate key")
+	require.ErrorContains(t, err, "found duplicate key")
 }
 
 func TestMultiFileStat(t *testing.T) {

@@ -25,6 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -180,6 +181,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			closeFn,
 			1,
 			true,
+			engineapi.OnDuplicateKeyIgnore,
 		))
 	}
 

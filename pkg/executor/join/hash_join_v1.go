@@ -884,8 +884,7 @@ func (w *ProbeWorkerV1) join2Chunk(probeSideChk *chunk.Chunk, hCtx *HashContext,
 			if !selected[i] {
 				// since this is the case of using inner to build, so for an outer row unselected, we should fill the result when it's outer join.
 				w.Joiner.OnMissMatch(false, probeSideChk.GetRow(i), joinResult.chk)
-			}
-			if hCtx.naHasNull[i] {
+			} else if hCtx.naHasNull[i] {
 				// here means the probe join connecting column has null value in it and this is special for matching all the hash buckets
 				// for it. (probeKey is not necessary here)
 				probeRow := probeSideChk.GetRow(i)
