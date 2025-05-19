@@ -435,7 +435,7 @@ TopN_10	2.00	root		Column#4, offset:0, count:2
   └─ExchangeSender_22	2.00	mpp[tiflash]		ExchangeType: PassThrough
     └─TopN_21	2.00	mpp[tiflash]		Column#4, offset:0, count:2
       └─Projection_20	2.00	mpp[tiflash]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#4
-        └─TableFullScan_18	6.00	mpp[tiflash]	table:t	keep order:false
+        └─TableFullScan_18	3.00	mpp[tiflash]	table:t	keep order:false
 alter table t compact;
 select id from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id
@@ -448,7 +448,7 @@ TopN_11	2.00	root		Column#5, offset:0, count:2
   └─ExchangeSender_23	2.00	mpp[tiflash]		ExchangeType: PassThrough
     └─TopN_22	2.00	mpp[tiflash]		Column#5, offset:0, count:2
       └─Projection_21	2.00	mpp[tiflash]		vector.t.id, vec_l2_distance(vector.t.vec, [0,0,0])->Column#5
-        └─TableFullScan_19	6.00	mpp[tiflash]	table:t	keep order:false
+        └─TableFullScan_19	3.00	mpp[tiflash]	table:t	keep order:false
 select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	vec
 id3	[1,2,1]
@@ -460,7 +460,7 @@ TopN_10	2.00	root		Column#4, offset:0, count:2
   └─ExchangeSender_22	2.00	mpp[tiflash]		ExchangeType: PassThrough
     └─TopN_21	2.00	mpp[tiflash]		Column#4, offset:0, count:2
       └─Projection_20	2.00	mpp[tiflash]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#4
-        └─TableFullScan_18	6.00	mpp[tiflash]	table:t	keep order:false
+        └─TableFullScan_18	3.00	mpp[tiflash]	table:t	keep order:false
 select sleep(20);
 sleep(20)
 0
@@ -816,7 +816,7 @@ TopN_10	2.00	root		Column#4, offset:0, count:2
   └─ExchangeSender_22	2.00	mpp[tiflash]		ExchangeType: PassThrough
     └─TopN_21	2.00	mpp[tiflash]		Column#4, offset:0, count:2
       └─Projection_20	2.00	mpp[tiflash]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#4
-        └─TableFullScan_18	500.00	mpp[tiflash]	table:t	keep order:false
+        └─TableFullScan_18	1000.00	mpp[tiflash]	table:t	keep order:false
 select id from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 id
 id201
@@ -828,7 +828,7 @@ TopN_11	2.00	root		Column#5, offset:0, count:2
   └─ExchangeSender_23	2.00	mpp[tiflash]		ExchangeType: PassThrough
     └─TopN_22	2.00	mpp[tiflash]		Column#5, offset:0, count:2
       └─Projection_21	2.00	mpp[tiflash]		vector.t.id, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#5
-        └─TableFullScan_19	500.00	mpp[tiflash]	table:t	keep order:false
+        └─TableFullScan_19	1000.00	mpp[tiflash]	table:t	keep order:false
 select vec from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 vec
 [201,201,201]
@@ -853,7 +853,7 @@ TopN_10	2.00	root		Column#4, offset:0, count:2
   └─ExchangeSender_22	2.00	mpp[tiflash]		ExchangeType: PassThrough
     └─TopN_21	2.00	mpp[tiflash]		Column#4, offset:0, count:2
       └─Projection_20	2.00	mpp[tiflash]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#4
-        └─TableFullScan_18	500.00	mpp[tiflash]	table:t	keep order:false
+        └─TableFullScan_18	1000.00	mpp[tiflash]	table:t	keep order:false
 select id from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 id
 id201
@@ -865,7 +865,7 @@ TopN_11	2.00	root		Column#5, offset:0, count:2
   └─ExchangeSender_23	2.00	mpp[tiflash]		ExchangeType: PassThrough
     └─TopN_22	2.00	mpp[tiflash]		Column#5, offset:0, count:2
       └─Projection_21	2.00	mpp[tiflash]		vector.t.id, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#5
-        └─TableFullScan_19	500.00	mpp[tiflash]	table:t	keep order:false
+        └─TableFullScan_19	1000.00	mpp[tiflash]	table:t	keep order:false
 select vec from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 vec
 [201,201,201]
