@@ -347,7 +347,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 func (s *mockGCSSuite) TestCSVHeaderOption() {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-multi-load", Name: "csv_with_header.csv"},
-		Content: []byte(`a, b, c
+		Content: []byte(`a,b,c
 1,test1,11
 2,test2,22
 3,test3,33
@@ -376,6 +376,9 @@ func (s *mockGCSSuite) TestCSVHeaderOption() {
 		{mydump.CSVHeaderTrue, "csv_without_header.csv", true, 3}, // the first row is skipped
 		{mydump.CSVHeaderFalse, "csv_with_header.csv", false, -1},
 		{mydump.CSVHeaderFalse, "csv_without_header.csv", true, 4},
+		{mydump.CSVHeaderAuto, "*.csv", true, 8},
+		{mydump.CSVHeaderFalse, "*.csv", false, -1},
+		{mydump.CSVHeaderTrue, "*.csv", true, 7},
 	}
 
 	for _, tc := range testCases {

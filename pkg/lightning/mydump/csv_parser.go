@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/types"
+	"go.uber.org/zap"
 )
 
 var (
@@ -740,13 +741,16 @@ func (parser *CSVParser) TrySkipHeader() ([]field, bool, error) {
 
 	match := true
 	if parser.csvHeaderOption == CSVHeaderAuto {
+		if len(parser.columns) == 0 {
+			parser.Logger.Error("CSV header auto detect failed")
+			return nil, false, errors.New("no columns specified for CSV header auto detect")
+		}
 		for i, colName := range parser.columns {
 			// skipped column
 			if colName == "" {
 				continue
 			}
 			colNameCSV, _, err := parser.unescapeString(fields[i])
-			colNameCSV = strings.TrimSpace(colNameCSV)
 			if err != nil {
 				return nil, false, errors.Trace(err)
 			}
@@ -755,10 +759,16 @@ func (parser *CSVParser) TrySkipHeader() ([]field, bool, error) {
 				break
 			}
 		}
+		parser.Logger.Info("CSV header auto detect",
+			zap.Any("table columns", parser.columns),
+			zap.Any("first row", fields),
+			zap.Bool("match", match),
+		)
 	} else if parser.csvHeaderOption == CSVHeaderTrue && parser.cfg.HeaderSchemaMatch {
 		parser.columns = make([]string, 0, len(fields))
 		for _, colName := range fields {
 			colNameStr, _, err := parser.unescapeString(colName)
+			colNameStr = strings.TrimSpace(colNameStr)
 			if err != nil {
 				return nil, false, errors.Trace(err)
 			}
