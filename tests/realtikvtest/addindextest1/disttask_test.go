@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -494,4 +495,46 @@ func TestAddIndexDistCleanUpBlock(t *testing.T) {
 	}
 	wg.Wait()
 	close(ch)
+}
+
+func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (id int, b int, c int, primary key(id) clustered);")
+	tk.MustExec("insert into t values (1,1,1)")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test;")
+
+	var hexKey string
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionBeforeScanV2", func(idxInfo []*model.IndexInfo) {
+		if idxInfo[0].Name.L == "b" {
+			rows := tk1.MustQuery("select tidb_encode_index_key('test', 't', 'b', 1, null);").Rows()
+			hexKey = rows[0][0].(string)
+			_, err := tk1.Exec("delete from t where id = 1;")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("insert into t values (2,1,1);")
+			assert.NoError(t, err)
+			rs := tk.MustQuery(fmt.Sprintf("select tidb_mvcc_info('%s')", hexKey)).Rows()
+			t.Log("after first insertion", rs[0][0].(string))
+			_, err = tk1.Exec("delete from t where id = 2;")
+			assert.NoError(t, err)
+			rs = tk.MustQuery(fmt.Sprintf("select tidb_mvcc_info('%s')", hexKey)).Rows()
+			t.Log("after second insertion", rs[0][0].(string))
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge", func(info *model.IndexInfo) {
+		if info.Name.L == "b" {
+			_, err := tk1.Exec("insert into t values (3, 1, 1);")
+			assert.NoError(t, err)
+			rs := tk.MustQuery(fmt.Sprintf("select tidb_mvcc_info('%s')", hexKey)).Rows()
+			t.Log("after third insertion", rs[0][0].(string))
+		}
+	})
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipReorgWorkForTempIndex", "return(false)")
+
+	tk.MustExec("alter table t add unique index b(b), add index c(c);")
+	tk.MustExec("admin check table t;")
 }

@@ -606,6 +606,7 @@ type reorgInfo struct {
 	jobCtx        *jobContext
 	first         bool
 	mergingTmpIdx bool
+	splitKeys     []kv.Key
 	// PhysicalTableID is used for partitioned table.
 	// DDL reorganize for a partitioned table will handle partitions one by one,
 	// PhysicalTableID is used to trace the current partition we are handling.
@@ -871,6 +872,8 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 		end     kv.Key
 		pid     int64
 		info    reorgInfo
+
+		splitKeys []kv.Key
 	)
 
 	if job.SnapshotVer == 0 {
@@ -913,7 +916,9 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 					pid = tblInfo.ID
 				}
 			}
-			start, end = encodeTempIndexRange(pid, elements[0].ID, elements[len(elements)-1].ID)
+			splitKeys = getSplitKeysForTempIndexRanges(pid, elements)
+			start = splitKeys[0].Clone()
+			end = splitKeys[len(splitKeys)-1].PrefixNext()
 		} else {
 			start, end, err = getTableRange(ctx, jobCtx.store, tb, ver.Ver, job.Priority)
 			if err != nil {
@@ -974,6 +979,19 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 	info.dbInfo = dbInfo
 
 	return &info, nil
+}
+
+func getSplitKeysForTempIndexRanges(pid int64, elements []*meta.Element) []kv.Key {
+	splitKeys := make([]kv.Key, 0, len(elements))
+	for _, e := range elements {
+		if !bytes.Equal(e.TypeKey, meta.IndexElementKey) {
+			continue
+		}
+		tempIdxID := tablecodec.TempIndexPrefix | e.ID
+		splitKey := tablecodec.EncodeIndexSeekKey(pid, tempIdxID, nil)
+		splitKeys = append(splitKeys, splitKey)
+	}
+	return splitKeys
 }
 
 func encodeTempIndexRange(physicalID, firstIdxID, lastIdxID int64) (start kv.Key, end kv.Key) {
