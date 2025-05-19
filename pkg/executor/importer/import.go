@@ -354,7 +354,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
 
 	csvHeaderOption := mydump.CSVHeaderFalse
-	if plan.IgnoreLines != nil {
+	if plan.IgnoreLines != nil && *plan.IgnoreLines == 1 {
 		csvHeaderOption = mydump.CSVHeaderTrue
 	}
 
@@ -410,9 +410,9 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	// those are the default values for lightning CSV format too
 	lineFieldsInfo := plannercore.LineFieldsInfo{
 		FieldsTerminatedBy: `,`,
-		// FieldsEnclosedBy:   `"`,
-		// FieldsEscapedBy:    `\`,
-		// LinesStartingBy:    ``,
+		FieldsEnclosedBy:   `"`,
+		FieldsEscapedBy:    `\`,
+		LinesStartingBy:    ``,
 		// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
 		// But user cannot set this to empty explicitly.
 		LinesTerminatedBy: ``,
