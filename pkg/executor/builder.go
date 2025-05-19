@@ -628,13 +628,11 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) exec.Ex
 		table:            t,
 		physicalID:       t.Meta().ID,
 	}
-	sessCtx := e.Ctx().GetSessionVars().StmtCtx
-	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, e.columns)
+	e.handleCols = buildHandleColsForExec(tblInfo, e.columns)
 	return e
 }
 
-func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.TableInfo,
-	allColInfo []*model.ColumnInfo) plannerutil.HandleCols {
+func buildHandleColsForExec(tblInfo *model.TableInfo, allColInfo []*model.ColumnInfo) plannerutil.HandleCols {
 	if !tblInfo.IsCommonHandle {
 		extraColPos := len(allColInfo) - 1
 		intCol := &expression.Column{
@@ -697,8 +695,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 		physicalID:   t.Meta().ID,
 		batchSize:    20000,
 	}
-	sessCtx := e.Ctx().GetSessionVars().StmtCtx
-	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, e.columns)
+	e.handleCols = buildHandleColsForExec(tblInfo, e.columns)
 	if e.index.Meta().Global {
 		e.columns = append(e.columns, model.NewExtraPhysTblIDColInfo())
 	}
@@ -2662,7 +2659,7 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) exec.Ex
 	return e
 }
 
-func buildHandleColsForSplit(sc *stmtctx.StatementContext, tbInfo *model.TableInfo) plannerutil.HandleCols {
+func buildHandleColsForSplit(tbInfo *model.TableInfo) plannerutil.HandleCols {
 	if tbInfo.IsCommonHandle {
 		primaryIdx := tables.FindPrimaryIndex(tbInfo)
 		tableCols := make([]*expression.Column, len(tbInfo.Columns))
@@ -2713,7 +2710,7 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) exec.Exec
 			valueLists:     v.ValueLists,
 		}
 	}
-	handleCols := buildHandleColsForSplit(b.ctx.GetSessionVars().StmtCtx, v.TableInfo)
+	handleCols := buildHandleColsForSplit(v.TableInfo)
 	if len(v.ValueLists) > 0 {
 		return &SplitTableRegionExec{
 			BaseExecutor:   base,
