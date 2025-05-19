@@ -418,17 +418,16 @@ func SplitLargeCSV(
 			_ = r.Close()
 			return nil, nil, err
 		}
-		parser, err := NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, CSVHeaderFalse, charsetConvertor)
+		parser, err := NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, CSVHeaderTrue, charsetConvertor)
 		if err != nil {
 			return nil, nil, err
 		}
-		readColumns, err := parser.ReadColumns()
-		if err != nil {
+		if _, _, err = parser.TrySkipHeader(); err != nil {
 			_ = parser.Close()
 			return nil, nil, err
 		}
 		if cfg.CSV.HeaderSchemaMatch {
-			columns = readColumns
+			columns = parser.Columns()
 		}
 		startOffset, _ = parser.Pos()
 		endOffset = min(startOffset+maxRegionSize, dataFile.FileMeta.FileSize)

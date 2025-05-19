@@ -1281,7 +1281,7 @@ func (e *LoadDataController) GetParser(
 			nil,
 			csvHeaderOption,
 			charsetConvertor)
-		if err == nil {
+		if err == nil && csvHeaderOption == mydump.CSVHeaderAuto {
 			columnNames := make([]string, 0, len(e.FieldMappings))
 			for _, fieldMapping := range e.FieldMappings {
 				if fieldMapping.Column != nil {

@@ -676,7 +676,7 @@ func (parser *CSVParser) ReadRow() error {
 
 	if parser.csvHeaderOption != CSVHeaderFalse {
 		var needRead bool
-		if fields, needRead, err = parser.trySkipHeader(); err != nil {
+		if fields, needRead, err = parser.TrySkipHeader(); err != nil {
 			return errors.Trace(err)
 		}
 		parser.csvHeaderOption = CSVHeaderFalse
@@ -728,29 +728,9 @@ func (parser *CSVParser) setRow(fields []field) error {
 	return nil
 }
 
-// ReadColumns reads the columns of this CSV file.
-func (parser *CSVParser) ReadColumns() ([]string, error) {
-	parser.beginRowLenCheck()
-	defer parser.endRowLenCheck()
-	fields, err := parser.readRecord(nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	columns := make([]string, 0, len(fields))
-	for _, colName := range fields {
-		colNameStr, _, err := parser.unescapeString(colName)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		columns = append(columns, strings.ToLower(colNameStr))
-	}
-
-	return columns, nil
-}
-
-// trySkipHeader read one row, and return the fields and whether the header matches
-func (parser *CSVParser) trySkipHeader() ([]field, bool, error) {
+// TrySkipHeader try to skip the header of the CSV file.
+// It returns the first row, and whether the header matches this row.
+func (parser *CSVParser) TrySkipHeader() ([]field, bool, error) {
 	parser.beginRowLenCheck()
 	defer parser.endRowLenCheck()
 	fields, err := parser.readRecord(nil)
@@ -773,6 +753,15 @@ func (parser *CSVParser) trySkipHeader() ([]field, bool, error) {
 				match = false
 				break
 			}
+		}
+	} else if parser.csvHeaderOption == CSVHeaderTrue && parser.cfg.HeaderSchemaMatch {
+		parser.columns = make([]string, 0, len(fields))
+		for _, colName := range fields {
+			colNameStr, _, err := parser.unescapeString(colName)
+			if err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			parser.columns = append(parser.columns, strings.ToLower(colNameStr))
 		}
 	}
 
