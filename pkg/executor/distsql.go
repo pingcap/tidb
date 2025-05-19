@@ -631,11 +631,7 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 
 	var err error
 	if e.corColInIdxSide {
-		storeType := kv.TiKV
-		if e.index.IsFulltextIndex() {
-			storeType = kv.TiFlash
-		}
-		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.idxPlans, storeType)
+		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.idxPlans, e.storeType)
 		if err != nil {
 			return err
 		}
