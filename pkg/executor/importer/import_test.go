@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -38,6 +37,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -203,11 +203,7 @@ func TestAdjustOptions(t *testing.T) {
 }
 
 func TestAdjustDiskQuota(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/common/GetStorageSize", "return(2048)")
-	require.NoError(t, err)
-	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/common/GetStorageSize")
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/common/GetStorageSize", "return(2048)")
 	d := t.TempDir()
 	require.Equal(t, int64(1638), adjustDiskQuota(0, d, logutil.BgLogger()))
 	require.Equal(t, int64(1), adjustDiskQuota(1, d, logutil.BgLogger()))

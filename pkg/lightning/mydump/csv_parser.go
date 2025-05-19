@@ -765,7 +765,7 @@ func (parser *CSVParser) trySkipHeader() ([]field, bool, error) {
 			if err != nil {
 				return nil, false, errors.Trace(err)
 			}
-			if strings.ToLower(colName) != strings.ToLower(colNameCSV) {
+			if !strings.EqualFold(colName, colNameCSV) {
 				match = false
 				break
 			}
