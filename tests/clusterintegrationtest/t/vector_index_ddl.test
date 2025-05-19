@@ -46,7 +46,7 @@ select id from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 explain select id from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 select vec from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 explain select vec from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
-select sleep(5);
+select sleep(20);
 set @@tidb_isolation_read_engines="tidb,tiflash";
 select * from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 explain select * from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
@@ -63,6 +63,6 @@ explain select * from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') lim
 # explain select id from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 select vec from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 explain select vec from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
-select sleep(5);
+select sleep(20);
 set @@tidb_isolation_read_engines="tidb,tikv,tiflash";
 drop table t;

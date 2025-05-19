@@ -309,7 +309,7 @@ TopN_8	2.00	root		Column#4, offset:0, count:2
 └─TableReader_17	2.00	root		data:TopN_16
   └─TopN_16	2.00	cop[tikv]		Column#4, offset:0, count:2
     └─Projection_15	2.00	cop[tikv]		vector.t.id, vec_l2_distance(vector.t.vec, [0,0,0])->Column#4
-      └─TableFullScan_12	6.00	cop[tikv]	table:t	keep order:false
+      └─TableFullScan_12	3.00	cop[tikv]	table:t	keep order:false
 select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	vec
 3	[1,2,1]
@@ -885,6 +885,7 @@ set @@tidb_isolation_read_engines="tidb,tikv,tiflash";
 drop table t;
 // Test cases from expression/integration_test
 use test;
+drop table if exists t;
 create table t(embedding VECTOR);
 insert into t values ('[1,2,3]');
 insert into t values ('[1,2,3,4]');
