@@ -610,11 +610,10 @@ func (p *PhysicalMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 	tp := t.indexPlan
 	for len(tp.Children()) > 0 {
-		if len(tp.Children()) == 1 {
-			tp = tp.Children()[0]
-		} else {
+		if len(tp.Children()) != 1 {
 			break
 		}
+		tp = tp.Children()[0]
 	}
 	newTask := &RootTask{}
 	p := PhysicalIndexLookUpReader{

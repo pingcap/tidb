@@ -502,9 +502,9 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, store kv.StoreType) (*t
 	}
 	if store == kv.TiFlash {
 		executorID := p.ExplainID().String()
-		query_columns := make([]*model.ColumnInfo, 0, len(p.prop.FullTextProp.QueryColumns))
+		queryColumns := make([]*model.ColumnInfo, 0, len(p.prop.FullTextProp.QueryColumns))
 		for _, col := range p.prop.FullTextProp.QueryColumns {
-			query_columns = append(query_columns, FindColumnInfoByID(tableColumns, col.ID))
+			queryColumns = append(queryColumns, FindColumnInfoByID(tableColumns, col.ID))
 		}
 		unique := false
 		idxExec := &tipb.IndexScan{
@@ -517,7 +517,7 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, store kv.StoreType) (*t
 			FtsQueryInfo: &tipb.FTSQueryInfo{
 				QueryType:   tipb.FTSQueryType_FTSQueryTypeFilter,
 				IndexId:     p.Index.ID,
-				Columns:     util.ColumnsToProto(query_columns, p.Table.PKIsHandle, true, false),
+				Columns:     util.ColumnsToProto(queryColumns, p.Table.PKIsHandle, true, false),
 				ColumnNames: nil,
 				QueryText:   p.prop.FullTextProp.QueryJSONStr,
 				QueryFunc:   tipb.ScalarFuncSig_FTSMatchWord,
