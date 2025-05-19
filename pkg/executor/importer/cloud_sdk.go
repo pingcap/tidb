@@ -384,17 +384,16 @@ func (sdk *ImportSDK) generateWildcard(
 		paths = append(paths, file.FileMeta.Path)
 	}
 
-	// Try different pattern generation strategies in order of specificity
-	patterns := []string{
-		generateMydumperPattern(paths),     // Specific to Mydumper format
-		generatePrefixSuffixPattern(paths), // Generic prefix/suffix pattern
+	// Try Mydumper-specific pattern first
+	p := generateMydumperPattern(paths)
+	if p != "" && validatePattern(p, tableFiles, allFiles) {
+		return p, nil
 	}
 
-	// Use the first valid pattern
-	for _, pattern := range patterns {
-		if pattern != "" && validatePattern(pattern, tableFiles, allFiles) {
-			return pattern, nil
-		}
+	// Fallback to generic prefix/suffix pattern
+	p = generatePrefixSuffixPattern(paths)
+	if p != "" && validatePattern(p, tableFiles, allFiles) {
+		return p, nil
 	}
 
 	return "", errors.New("unable to generate a specific wildcard pattern for this table's data files")
