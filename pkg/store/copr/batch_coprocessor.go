@@ -1622,5 +1622,8 @@ func buildBatchCopTasksForFullText(store *kvStore) ([]*batchCopTask, error) {
 		})
 		break // now only one tiflash store
 	}
+	if len(tasks) == 0 {
+		return nil, errors.New("tiflash_fts node is unavailable")
+	}
 	return tasks, nil
 }
