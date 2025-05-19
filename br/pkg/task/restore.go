@@ -865,12 +865,7 @@ type SnapshotRestoreConfig struct {
 	piTRTaskInfo           *PiTRTaskInfo
 	logTableHistoryManager *stream.LogBackupTableHistoryManager
 	tableMappingManager    *stream.TableMappingManager
-	SaveIdMap              saveIdMapFunc
 }
-
-// saveIdMapFunc is a function type for saving ID mapping to avoid cyclic dependencies
-type saveIdMapFunc func(ctx context.Context, tableMappingManager *stream.TableMappingManager,
-	logCheckpointMetaManager checkpoint.LogMetaManagerT) error
 
 func (s *SnapshotRestoreConfig) isPiTR() (bool, error) {
 	if s.piTRTaskInfo != nil && s.logTableHistoryManager != nil && s.tableMappingManager != nil {

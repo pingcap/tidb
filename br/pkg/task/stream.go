@@ -1397,10 +1397,6 @@ func RunStreamRestore(
 			piTRTaskInfo:           taskInfo,
 			logTableHistoryManager: metaInfoProcessor.GetTableHistoryManager(),
 			tableMappingManager:    metaInfoProcessor.GetTableMappingManager(),
-			SaveIdMap: func(ctx context.Context, tableMappingManager *stream.TableMappingManager,
-				logCheckpointMetaManager checkpoint.LogMetaManagerT) error {
-				return logClient.SaveIdMapWithFailPoints(ctx, tableMappingManager, logCheckpointMetaManager)
-			},
 		}
 		// TiFlash replica is restored to down-stream on 'pitr' currently.
 		if err = runSnapshotRestore(ctx, mgr, g, FullRestoreCmd, &snapshotRestoreConfig); err != nil {
