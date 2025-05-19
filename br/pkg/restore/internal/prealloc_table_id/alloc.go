@@ -3,8 +3,11 @@
 package prealloctableid
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"math"
+	"sort"
 
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -35,6 +38,8 @@ type PreallocIDs struct {
 	reusableBorder int64
 	end            int64
 	count          int64
+	hash           [32]byte
+	reallocRule    map[int64]int64
 }
 
 // New collects the requirement of prealloc IDs and return a
@@ -48,12 +53,14 @@ func New(tables []*metautil.Table) (*PreallocIDs, error) {
 
 	maxID := int64(0)
 	count := int64(len(tables))
+	ids := make([]int64, 0, len(tables))
 
 	//TODO: (ris) sort all tables by ID, also in createTables
 	for _, t := range tables {
 		if t.Info.ID > maxID && t.Info.ID < InsaneTableIDThreshold {
 			maxID = t.Info.ID
 		}
+		ids = append(ids, t.Info.ID)
 
 		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
 			count += int64(len(t.Info.Partition.Definitions))
@@ -61,16 +68,27 @@ func New(tables []*metautil.Table) (*PreallocIDs, error) {
 				if part.ID > maxID && part.ID < InsaneTableIDThreshold {
 					maxID = part.ID
 				}
+				ids = append(ids, part.ID)
 			}
 		}
 	}
 	if maxID+count+1 > InsaneTableIDThreshold {
 		return nil, errors.Errorf("table ID %d is too large", maxID)
 	}
+
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	reallocRule := make(map[int64]int64, len(ids))
+	for idx, id := range ids {
+		reallocRule[id] = int64(idx) + maxID + 1
+	}
+
 	return &PreallocIDs{
 		start:          math.MaxInt64,
 		reusableBorder: maxID + 1,
 		count:          count,
+		hash:           hashSortedIds(ids),
+		reallocRule:    reallocRule,
 	}, nil
 }
 
@@ -79,13 +97,18 @@ func Reuse(lagacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocI
 		return nil, errors.Errorf("no prealloc IDs to be reused")
 	}
 
-	//TODO: (ris) sort all tables by ID, also in createTables
 	count := int64(len(tables))
+	if count != lagacy.Count {
+		return nil, errors.Errorf("prealloc IDs count %d are not match with the tables count %d", lagacy.Count, count)
+	}
+
 	maxID := int64(0)
+	ids := make([]int64, 0, len(tables))
 	for _, t := range tables {
 		if t.Info.ID > maxID && t.Info.ID < InsaneTableIDThreshold {
 			maxID = t.Info.ID
 		}
+		ids = append(ids, t.Info.ID)
 
 		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
 			count += int64(len(t.Info.Partition.Definitions))
@@ -93,24 +116,36 @@ func Reuse(lagacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocI
 				if part.ID > maxID && part.ID < InsaneTableIDThreshold {
 					maxID = part.ID
 				}
+				ids = append(ids, part.ID)
 			}
 		}
+	}
+
+	if lagacy.ReusableBorder != maxID+1 {
+		return nil, errors.Errorf("prealloc IDs reusable border %d are not match with the tables max ID %d", lagacy.ReusableBorder, maxID+1)
 	}
 	if maxID+count+1 > InsaneTableIDThreshold {
 		return nil, errors.Errorf("table ID %d is too large", maxID)
 	}
 
-	if count != lagacy.Count {
-		return nil, errors.Errorf("prealloc IDs count %d are not match with the tables count %d", lagacy.Count, count)
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	hash := hashSortedIds(ids)
+	if lagacy.Hash != hash {
+		return nil, errors.Errorf("prealloc IDs hash %x are not match with the tables hash %x", lagacy.Hash, hash)
 	}
-	if lagacy.ReusableBorder != maxID+1 {
-		return nil, errors.Errorf("prealloc IDs reusable border %d are not match with the tables max ID %d", lagacy.ReusableBorder, maxID+1)
+
+	reallocRule := make(map[int64]int64, len(ids))
+	for idx, id := range ids {
+		reallocRule[id] = int64(idx) + lagacy.ReusableBorder
 	}
+
 	ret := PreallocIDs{
 		start:          lagacy.Start,
 		reusableBorder: lagacy.ReusableBorder,
 		end:            lagacy.End,
 		count:          lagacy.Count,
+		hash:           lagacy.Hash,
+		reallocRule:    reallocRule,
 	}
 	return &ret, nil
 }
@@ -159,7 +194,10 @@ func (p *PreallocIDs) allocID(originalID int64) (int64, error) {
 		return originalID, nil
 	}
 
-	rewriteID := originalID - p.start + p.reusableBorder
+	rewriteID := p.reallocRule[originalID]
+	if rewriteID == 0 {
+		return 0, errors.Errorf("table ID %d is not in the range [%d, %d)", originalID, p.start, p.end)
+	}
 	if rewriteID >= p.end {
 		return 0, errors.Errorf("table ID can't rewrite (%d -> %d), out of range [%d, %d)", originalID, rewriteID, p.start, p.end)
 	}
@@ -202,5 +240,20 @@ func (p *PreallocIDs) CreateCheckpoint() *checkpoint.PreallocIDs {
 		ReusableBorder: p.reusableBorder,
 		End:            p.end,
 		Count:          p.count,
+		Hash:           p.hash,
 	}
+}
+
+func hashSortedIds(ids []int64) [32]byte {
+	h := sha256.New()
+	buffer := make([]byte, 8)
+
+	for _, id := range ids {
+		binary.BigEndian.PutUint64(buffer, uint64(id))
+		h.Write(buffer)
+	}
+
+	var digest [32]byte
+	copy(digest[:], h.Sum(nil))
+	return digest
 }
