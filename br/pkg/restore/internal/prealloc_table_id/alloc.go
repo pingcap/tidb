@@ -107,8 +107,8 @@ func Reuse(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocI
 		}
 	}
 
-	if legacy.ReusableBorder != maxID+1 {
-		return nil, errors.Errorf("prealloc IDs reusable border %d are not match with the tables max ID %d", legacy.ReusableBorder, maxID+1)
+	if legacy.ReusableBorder < maxID+1 {
+		return nil, errors.Errorf("prealloc IDs reusable border %d does not match with the tables max ID %d", legacy.ReusableBorder, maxID+1)
 	}
 	if maxID+int64(len(ids))+1 > InsaneTableIDThreshold {
 		return nil, errors.Errorf("table ID %d is too large", maxID)
@@ -120,9 +120,17 @@ func Reuse(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocI
 		return nil, errors.Errorf("prealloc IDs hash %x are not match with the tables hash %x", legacy.Hash, hash)
 	}
 
-	reallocRule := make(map[int64]int64, len(ids))
-	for idx, id := range ids {
-		reallocRule[id] = int64(idx) + legacy.ReusableBorder
+	allocRule := make(map[int64]int64, len(ids))
+	rewriteCnt := int64(0)
+	for _, id := range ids {
+		if id < legacy.Start {
+			allocRule[id] = legacy.ReusableBorder + rewriteCnt
+			rewriteCnt++
+		} else if  id < legacy.ReusableBorder {
+			allocRule[id] = id
+		} else if id >= legacy.ReusableBorder {
+			return nil, errors.Errorf("table ID %d is out of range [%d, %d)", id, legacy.Start, legacy.ReusableBorder)
+		}
 	}
 
 	ret := PreallocIDs{
@@ -130,7 +138,7 @@ func Reuse(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocI
 		reusableBorder: legacy.ReusableBorder,
 		end:            legacy.End,
 		hash:           legacy.Hash,
-		allocRule:      reallocRule,
+		allocRule:      allocRule,
 	}
 	return &ret, nil
 }
