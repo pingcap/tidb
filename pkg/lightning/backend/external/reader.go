@@ -75,6 +75,12 @@ func readAllData(
 		return err
 	}
 
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	readConn := 1000
+	readConn = min(readConn, len(dataFiles))
+	taskCh := make(chan int)
+	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
+
 	beforeLimit, _ := smallBlockBufPool.LogLimierLimit(true)
 	defer func() {
 		afterLimit, maxDiff := smallBlockBufPool.LogLimierLimit(false)
@@ -84,13 +90,9 @@ func readAllData(
 			zap.Int("estimate total size(MiB)", estimateTotalSize/1024/1024),
 			zap.Int("max diff(MiB)", maxDiff/1024/1024),
 			zap.Int("before/after limiter allocate(MiB)", (beforeLimit-afterLimit)/1024/1024),
+			zap.Int("read conn", readConn),
 		)
 	}()
-	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	readConn := 1000
-	readConn = min(readConn, len(dataFiles))
-	taskCh := make(chan int)
-	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
 	for readIdx := 0; readIdx < readConn; readIdx++ {
 		eg.Go(func() error {
 			output.memKVBuffers[readIdx] = smallBlockBufPool.NewBuffer()
