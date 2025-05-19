@@ -180,7 +180,7 @@ func (res *Result) String() string {
 func (res *Result) MultiCheckContain(expecteds []string) {
 	result := res.String()
 	for _, expected := range expecteds {
-		res.require.True(strings.Contains(result, expected), "the result doesn't contain the expected %s\n%s", expected, result)
+		res.require.True(strings.Contains(result, expected), "the result doesn't contain the exepected %s\n%s", expected, result)
 	}
 }
 
