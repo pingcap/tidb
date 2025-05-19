@@ -89,7 +89,7 @@ const (
 	fieldsEscapedByOption     = "fields_escaped_by"
 	fieldsDefinedNullByOption = "fields_defined_null_by"
 	linesTerminatedByOption   = "lines_terminated_by"
-	csvHeaderOption           = "csv_header"
+	csvHeaderOption           = "remove_csv_header"
 	splitFileOption           = "split_file"
 	diskQuotaOption           = "disk_quota"
 	threadOption              = "thread"
@@ -564,6 +564,7 @@ func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 	p.MaxRecordedErrors = 100
 	p.Detached = false
 	p.DisableTiKVImportMode = false
+	p.CSVHeaderOption = mydump.CSVHeaderFalse
 	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
 	p.CloudStorageURI = vardef.CloudStorageURI.Load()
 
@@ -676,13 +677,15 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 		p.LinesTerminatedBy = v
 	}
+	p.CSVHeaderOption = mydump.CSVHeaderFalse
 	if opt, ok := specifiedOptions[csvHeaderOption]; ok {
 		v, err := optAsString(opt)
 		if err != nil || v == "" {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		v = strings.ToLower(v)
-		p.CSVHeaderOption = mydump.GetCSVHeaderOption(v)
+		if p.CSVHeaderOption, err = mydump.GetCSVHeaderOption(v); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	if _, ok := specifiedOptions[splitFileOption]; ok {
 		p.SplitFile = true
@@ -1253,6 +1256,17 @@ func (e *LoadDataController) GetParser(
 			nil,
 			csvHeaderOption,
 			charsetConvertor)
+		if err == nil {
+			columnNames := make([]string, 0, len(e.FieldMappings))
+			for _, fieldMapping := range e.FieldMappings {
+				if fieldMapping.Column != nil {
+					columnNames = append(columnNames, fieldMapping.Column.Name.O)
+				} else {
+					columnNames = append(columnNames, "")
+				}
+			}
+			parser.SetColumns(columnNames)
+		}
 	case DataFormatSQL:
 		parser = mydump.NewChunkParser(
 			ctx,

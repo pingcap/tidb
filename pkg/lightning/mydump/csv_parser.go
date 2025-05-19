@@ -59,17 +59,25 @@ var (
 	CSVHeaderAuto CSVHeaderOption = "auto"
 )
 
+// GetCSVHeaderOptionFromCfg returns the CSVHeaderOption according to the config, used for lightning and test.
+func GetCSVHeaderOptionFromCfg(cfg *config.Config) CSVHeaderOption {
+	if cfg.Mydumper.CSV.Header {
+		return CSVHeaderTrue
+	}
+	return CSVHeaderFalse
+}
+
 // GetCSVHeaderOption returns the CSVHeaderOption according to the given string.
-func GetCSVHeaderOption(header string) CSVHeaderOption {
+func GetCSVHeaderOption(header string) (CSVHeaderOption, error) {
 	switch strings.ToLower(header) {
 	case "true":
-		return CSVHeaderTrue
+		return CSVHeaderTrue, nil
 	case "false":
-		return CSVHeaderFalse
+		return CSVHeaderFalse, nil
 	case "auto":
-		return CSVHeaderAuto
+		return CSVHeaderAuto, nil
 	default:
-		return CSVHeaderFalse
+		return CSVHeaderFalse, errors.Errorf("invalid CSV header option: %s", header)
 	}
 }
 
@@ -681,6 +689,9 @@ func (parser *CSVParser) ReadRow() error {
 	if needRead {
 		fields, err = parser.readRecord(parser.lastRecord)
 	}
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	parser.lastRecord = fields
 	// remove the last empty value
@@ -745,12 +756,16 @@ func (parser *CSVParser) trySkipHeader() ([]field, bool, error) {
 
 	match := true
 	if parser.csvHeaderOption == CSVHeaderAuto {
-		for i, colName := range fields {
-			colNameStr, _, err := parser.unescapeString(colName)
+		for i, colName := range parser.columns {
+			// skipped column
+			if colName == "" {
+				continue
+			}
+			colNameCSV, _, err := parser.unescapeString(fields[i])
 			if err != nil {
 				return nil, false, errors.Trace(err)
 			}
-			if parser.columns[i] != strings.ToLower(colNameStr) {
+			if strings.ToLower(colName) != strings.ToLower(colNameCSV) {
 				match = false
 				break
 			}

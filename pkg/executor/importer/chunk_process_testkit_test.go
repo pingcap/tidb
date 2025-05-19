@@ -50,7 +50,7 @@ func getCSVParser(ctx context.Context, t *testing.T, fileName string) mydump.Par
 	file, err := os.Open(fileName)
 	require.NoError(t, err)
 	csvParser, err := mydump.NewCSVParser(ctx, &config.CSVConfig{FieldsTerminatedBy: `,`, FieldsEnclosedBy: `"`},
-		file, importer.LoadDataReadBlockSize, nil, false, nil)
+		file, importer.LoadDataReadBlockSize, nil, mydump.CSVHeaderFalse, nil)
 	require.NoError(t, err)
 	return csvParser
 }
