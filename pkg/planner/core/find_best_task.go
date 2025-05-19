@@ -17,6 +17,7 @@ package core
 import (
 	"cmp"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"math"
 	"slices"
 	"strings"
@@ -249,6 +250,101 @@ func enumeratePhysicalPlans4Task(
 		}
 	}
 	return bestTask, cntPlan, nil
+}
+
+func enumeratePhysicalPlans4Task(
+	ge *memo.GroupExpression,
+	physicalPlans []base.PhysicalPlan,
+	prop *property.PhysicalProperty,
+	addEnforcer bool,
+	opt *optimizetrace.PhysicalOptimizeOp,
+) (base.Task, int64, error) {
+	var bestTask base.Task = base.InvalidTask
+	var err error
+	childTasks := make([]base.Task, 0, len(ge.Inputs))
+	childCnts := make([]int64, len(ge.Inputs))
+	iteration := iteratePhysicalPlan4GroupExpression
+	if _, ok := ge.LogicalPlan.(*logicalop.LogicalSequence); ok {
+		iteration = iterateChildPlan4LogicalSequence
+	}
+
+	ctx := ge.LogicalPlan.SCtx()
+	for _, pp := range physicalPlans {
+		childTasks, _, childCnts, err = iteration(ge, pp, childTasks, childCnts, prop, opt)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		// This check makes sure that there is no invalid child task.
+		if len(childTasks) != len(ge.Inputs) {
+			continue
+		}
+
+		// Combine the best child tasks with parent physical plan.
+		curTask := pp.Attach2Task(childTasks...)
+		if curTask.Invalid() {
+			continue
+		}
+
+		// An optimal task could not satisfy the property, so it should be converted here.
+		if _, ok := curTask.(*RootTask); !ok && prop.TaskTp == property.RootTaskType {
+			curTask = curTask.ConvertToRootTask(ctx)
+		}
+
+		// Enforce curTask property
+		if addEnforcer {
+			curTask = enforceProperty(prop, curTask, ctx)
+		}
+
+		// Optimize by shuffle executor to running in parallel manner.
+		if _, isMpp := curTask.(*MppTask); !isMpp && prop.IsSortItemEmpty() {
+			// Currently, we do not regard shuffled plan as a new plan.
+			curTask = optimizeByShuffle(curTask, ctx)
+		}
+
+		appendCandidate4PhysicalOptimizeOp(opt, ge.LogicalPlan, curTask.Plan(), prop)
+		// Get the most efficient one.
+		if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
+			return nil, 0, err
+		} else if curIsBetter {
+			bestTask = curTask
+		}
+	}
+	return bestTask, 0, nil
+}
+
+// iteratePhysicalPlan4GroupExpression is used to iterate the physical plan and get all child tasks.
+func iteratePhysicalPlan4GroupExpression(
+	ge *memo.GroupExpression,
+	selfPhysicalPlan base.PhysicalPlan,
+	childTasks []base.Task,
+	childCnts []int64,
+	_ *property.PhysicalProperty,
+	opt *optimizetrace.PhysicalOptimizeOp,
+) ([]base.Task, int64, []int64, error) {
+	// Find the best child tasks firstly.
+	childTasks = childTasks[:0]
+	// The curCntPlan records the number of possible plans for selfPhysicalPlan
+	curCntPlan := int64(1)
+	for j, childG := range ge.Inputs {
+		childProp := selfPhysicalPlan.GetChildReqProps(j)
+		childTask, cnt, err := implementGroupAndCost(childG, childProp, math.MaxFloat64, &PlanCounterDisabled)
+		childCnts[j] = cnt
+		if err != nil {
+			return nil, 0, childCnts, err
+		}
+		curCntPlan = curCntPlan * cnt
+		if childTask != nil && childTask.Invalid() {
+			return nil, 0, childCnts, nil
+		}
+		childTasks = append(childTasks, childTask)
+	}
+
+	// This check makes sure that there is no invalid child task.
+	if len(childTasks) != len(ge.Inputs) {
+		return nil, 0, childCnts, nil
+	}
+	return childTasks, curCntPlan, childCnts, nil
 }
 
 // iteratePhysicalPlan4BaseLogical is used to iterate the physical plan and get all child tasks.
@@ -492,6 +588,90 @@ func appendPlanCostDetail4PhysicalOptimizeOp(pop *optimizetrace.PhysicalOptimize
 		return
 	}
 	pop.GetTracer().PhysicalPlanCostDetails[fmt.Sprintf("%v_%v", detail.GetPlanType(), detail.GetPlanID())] = detail
+}
+
+// findBestTask is key workflow that drive logic plan tree to generate optimal physical ones.
+// The logic inside it is mainly about physical plan numeration and task encapsulation, it should
+// be defined in core pkg, and be called by logic plan in their logic interface implementation.
+func findBestTask4GroupExpression(ge *memo.GroupExpression, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
+	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error) {
+
+	canAddEnforcer := prop.CanAddEnforcer
+	cntPlan = 0
+	// prop should be read only because its cached hashcode might be not consistent
+	// when it is changed. So we clone a new one for the temporary changes.
+	newProp := prop.CloneEssentialFields()
+	var plansFitsProp, plansNeedEnforce []base.PhysicalPlan
+	var hintWorksWithProp bool
+	// Maybe the plan can satisfy the required property,
+	// so we try to get the task without the enforced sort first.
+	plansFitsProp, hintWorksWithProp, err = p.Self().ExhaustPhysicalPlans(newProp)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !hintWorksWithProp && !newProp.IsSortItemEmpty() {
+		// If there is a hint in the plan and the hint cannot satisfy the property,
+		// we enforce this property and try to generate the PhysicalPlan again to
+		// make sure the hint can work.
+		canAddEnforcer = true
+	}
+
+	if canAddEnforcer {
+		// Then, we use the empty property to get physicalPlans and
+		// try to get the task with an enforced sort.
+		newProp.SortItems = []property.SortItem{}
+		newProp.SortItemsForPartition = []property.SortItem{}
+		newProp.ExpectedCnt = math.MaxFloat64
+		newProp.MPPPartitionCols = nil
+		newProp.MPPPartitionTp = property.AnyType
+		var hintCanWork bool
+		plansNeedEnforce, hintCanWork, err = p.Self().ExhaustPhysicalPlans(newProp)
+		if err != nil {
+			return nil, 0, err
+		}
+		if hintCanWork && !hintWorksWithProp {
+			// If the hint can work with the empty property, but cannot work with
+			// the required property, we give up `plansFitProp` to make sure the hint
+			// can work.
+			plansFitsProp = nil
+		}
+		if !hintCanWork && !hintWorksWithProp && !prop.CanAddEnforcer {
+			// If the original property is not enforced and hint cannot
+			// work anyway, we give up `plansNeedEnforce` for efficiency,
+			plansNeedEnforce = nil
+		}
+		newProp = prop
+	}
+
+	var cnt int64
+	var curTask base.Task
+	if bestTask, cnt, err = enumeratePhysicalPlans4Task(p, plansFitsProp, newProp, false, planCounter, opt); err != nil {
+		return nil, 0, err
+	}
+	cntPlan += cnt
+	if planCounter.Empty() {
+		goto END
+	}
+
+	curTask, cnt, err = enumeratePhysicalPlans4Task(p, plansNeedEnforce, newProp, true, planCounter, opt)
+	if err != nil {
+		return nil, 0, err
+	}
+	cntPlan += cnt
+	if planCounter.Empty() {
+		bestTask = curTask
+		goto END
+	}
+	appendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
+	if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
+		return nil, 0, err
+	} else if curIsBetter {
+		bestTask = curTask
+	}
+
+END:
+	p.StoreTask(prop, bestTask)
+	return bestTask, cntPlan, nil
 }
 
 // findBestTask is key workflow that drive logic plan tree to generate optimal physical ones.

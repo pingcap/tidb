@@ -69,12 +69,7 @@ type Group struct {
 	explored bool
 
 	// bestPhysicalMap is used to store the best physical plan for each required physical property.
-	bestPhysicalMap map[string]*CostPair
-}
-
-type CostPair struct {
-	Cost     float64
-	Physical corebase.PhysicalPlan
+	bestPhysicalMap map[string]corebase.Task
 }
 
 // GroupPair is a pair of *Group
@@ -346,27 +341,20 @@ func NewGroup(prop *property.LogicalProperty) *Group {
 	return g
 }
 
-// SetBestExpression sets the best expression for the given physical property.
-func (g *Group) SetBestExpression(cost float64, physical corebase.PhysicalPlan, prop *property.PhysicalProperty) {
+// SetBestTask sets the best expression for the given physical property.
+func (g *Group) SetBestTask(prop *property.PhysicalProperty, task corebase.Task) {
 	key := string(prop.HashCode())
-	costPair, ok := g.bestPhysicalMap[key]
-	if !ok {
-		costPair = &CostPair{Cost: cost, Physical: physical}
-	} else if costPair.Cost > cost {
-		costPair.Cost = cost
-		costPair.Physical = physical
-	}
-	g.bestPhysicalMap[key] = costPair
+	g.bestPhysicalMap[key] = task
 }
 
-// GetBestExpression gets the best expression for the given physical property.
-func (g *Group) GetBestExpression(prop *property.PhysicalProperty) *CostPair {
+// GetBestTask gets the best expression for the given physical property.
+func (g *Group) GetBestTask(prop *property.PhysicalProperty) corebase.Task {
 	key := string(prop.HashCode())
-	costPair, ok := g.bestPhysicalMap[key]
+	task, ok := g.bestPhysicalMap[key]
 	if !ok {
 		return nil
 	}
-	return costPair
+	return task
 }
 
 // ReplaceBestExpression replaces the best expression for the given physical property.

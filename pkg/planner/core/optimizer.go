@@ -1124,19 +1124,26 @@ func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
 }
 
 func implementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, costLimit float64,
-	planCounter *base.PlanCounterTp) (base.PhysicalPlan, float64, error) {
+	planCounter *base.PlanCounterTp) (base.Task, int64, error) {
+	// cache the invalid task for the group.
+	if prop.TaskTp != property.RootTaskType && !prop.IsFlashProp() {
+		// Currently all plan cannot totally push down to TiKV.
+		group.SetBestTask(prop, base.InvalidTask)
+		return base.InvalidTask, 0, nil
+	}
 	// Check whether the child group is already optimized for the physical property.
-	pair := group.GetBestExpression(prop)
-	if pair != nil {
+	task := group.GetBestTask(prop)
+	if task != nil {
 		if pair.Cost <= costLimit {
 			// the optimized group has a valid cost plan according to this physical prop.
-			return pair.Physical, pair.Cost, nil
+			return pair.Task, pair.Cost, nil
 		} else {
-			// the optimized group has no options.
+			// the optimized group has no optimal one, quite fall over.
 			return nil, 0, nil
 		}
 	}
-	// the group hasn't been optimized, physical it.
+
+	// the group hasn't been optimized, physic it.
 	var implErr error
 	group.ForEachGE(func(ge *memo.GroupExpression) bool {
 		// for each group expression inside group, we will try to find the best physical plan.
