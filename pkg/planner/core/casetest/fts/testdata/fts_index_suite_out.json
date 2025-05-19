@@ -1,0 +1,108 @@
+[
+  {
+    "Name": "TestTiFlashFTSIndexWhere",
+    "Cases": [
+      {
+        "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title)",
+        "Plan": [
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan 10000.00 mpp[tiflash] table:t1, index:title(title) , textSearch:(hello IN test.t1.title) keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', body)",
+        "Plan": [
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan 10000.00 mpp[tiflash] table:t1, index:body(body) , textSearch:(hello IN test.t1.body) keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) AND id > 10",
+        "Plan": [
+          "TableReader 3333.33 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableRangeScan 3333.33 mpp[tiflash] table:t1, index:title(title) range:(10,+inf], , textSearch:(hello IN test.t1.title) keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 1",
+        "Plan": [
+          "TableReader 2666.67 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 2666.67 mpp[tiflash]  gt(length(test.t1.title), 1)",
+          "    └─TableRangeScan 3333.33 mpp[tiflash] table:t1, index:title(title) range:(10,+inf], pushed down filter:empty, , textSearch:(hello IN test.t1.title) keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select title from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 1",
+        "Plan": [
+          "TableReader 2666.67 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 2666.67 mpp[tiflash]  test.t1.title",
+          "    └─Selection 2666.67 mpp[tiflash]  gt(length(test.t1.title), 1)",
+          "      └─TableRangeScan 3333.33 mpp[tiflash] table:t1, index:title(title) range:(10,+inf], pushed down filter:empty, , textSearch:(hello IN test.t1.title) keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select count(id) from t1 where fts_match_word('hello', title)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t1.id)->Column#5",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1, index:title(title) , textSearch:(hello IN test.t1.title) keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select count(*) from t1 where fts_match_word('hello', title)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t1.id)->Column#5",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1, index:title(title) , textSearch:(hello IN test.t1.title) keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title)",
+        "Plan": [
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 mpp[tiflash]  test.t1.id",
+          "    └─TableFullScan 10000.00 mpp[tiflash] table:t1, index:title(title) , textSearch:(hello IN test.t1.title) keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title) AND id > 10",
+        "Plan": [
+          "TableReader 3333.33 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 3333.33 mpp[tiflash]  test.t1.id",
+          "    └─TableRangeScan 3333.33 mpp[tiflash] table:t1, index:title(title) range:(10,+inf], , textSearch:(hello IN test.t1.title) keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title) AND LENGTH(body) > 10",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  test.t1.id",
+          "    └─Selection 8000.00 mpp[tiflash]  gt(length(test.t1.body), 10)",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1, index:title(title) pushed down filter:empty, , textSearch:(hello IN test.t1.title) keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
+  }
+]

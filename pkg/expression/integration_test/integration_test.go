@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
@@ -101,30 +102,30 @@ func TestFTSUnsupportedCases(t *testing.T) {
 
 	tk.MustQuery("explain select * from t where fts_match_word('hello', title)")
 	tk.MustQuery("explain select * from t where fts_match_word('hello', title) AND id > 10")
-	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', body)", "Full text search can only be used with a matching fulltext index")
-	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', body) OR id > 10", "Currently 'FTS_MATCH_WORD()' must be used alone")
-	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) OR id > 10", "Currently 'FTS_MATCH_WORD()' must be used alone")
-	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) > 0", "Currently 'FTS_MATCH_WORD()' must be used alone")
-	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) AND fts_match_word('hello body', title)", "Currently 'FTS_MATCH_WORD()' must be used alone")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', body)", "Full text search can only be used with a matching fulltext index and a columnar storage")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', body) OR id > 10", plannererrors.FTSWrongPlace)
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) OR id > 10", plannererrors.FTSWrongPlace)
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) > 0", plannererrors.FTSWrongPlace)
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) AND fts_match_word('hello body', title)", "Current TiDB doesn't support multiple fulltext search functions used with multiple index calls")
 
-	tk.MustContainErrMsg("explain select * from t order by fts_match_word('hello', title) limit 10", "It must be used with a WHERE clause and must be used alone")
-	tk.MustContainErrMsg("explain select * from t order by fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' in ORDER BY without a LIMIT clause is not supported")
-	tk.MustContainErrMsg("explain select * from t order by 1, fts_match_word('hello', title) limit 5", "FTS_MATCH_WORD() must be used as the first item in ORDER BY")
-	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) order by fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' in ORDER BY without a LIMIT clause is not supported")
-	tk.MustQuery("explain select * from t where fts_match_word('hello', title) order by fts_match_word('hello', title) limit 10")
-	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) order by fts_match_word('hello world', title) limit 10", "'FTS_MATCH_WORD()' in ORDER BY must match the one in WHERE")
+	tk.MustContainErrMsg("explain select * from t order by fts_match_word('hello', title) limit 10", "Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
+	tk.MustContainErrMsg("explain select * from t order by fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
+	tk.MustContainErrMsg("explain select * from t order by 1, fts_match_word('hello', title) limit 5", "Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) order by fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) order by fts_match_word('hello', title) limit 10", "Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) order by fts_match_word('hello world', title) limit 10", "Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
 
 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tiflash'")
 	tk.MustQuery("explain select * from t where fts_match_word('hello', title)")
 
 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tikv'")
-	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can be only executed in a columnar storage")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can be only executed in a columnar storag")
 
 	tk.MustExec("alter table t set tiflash replica 0")
 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tikv'")
-	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can be only executed in a columnar storage")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can only be used with a matching fulltext index and a columnar storage")
 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tikv,tiflash'")
-	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can be only executed in a columnar storage")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can only be used with a matching fulltext index and a columnar storage")
 }
 
 func TestFTSParser(t *testing.T) {

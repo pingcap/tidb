@@ -1222,7 +1222,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			if index.IsColumnarIndex() {
 				// Because the value of `TiFlashReplica.Available` changes as the user modify replica, it is not ideal if the state of index changes accordingly.
 				// So the current way to use the columnar indexes is to require the TiFlash Replica to be available.
-				if !tblInfo.TiFlashReplica.Available {
+				if tblInfo.TiFlashReplica == nil || !tblInfo.TiFlashReplica.Available {
 					continue
 				}
 				if index.FullTextInfo != nil {

@@ -70,7 +70,7 @@ func (p LogicalMemTable) Init(ctx base.PlanContext, offset int) *LogicalMemTable
 func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	if p.Extractor != nil {
 		failpoint.Inject("skipExtractor", func(_ failpoint.Value) {
-			failpoint.Return(predicates, p.Self())
+			failpoint.Return(predicates, p.Self(), nil)
 		})
 		predicates = p.Extractor.Extract(p.SCtx(), p.Schema(), p.OutputNames(), predicates)
 	}

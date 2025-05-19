@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -656,7 +657,7 @@ func (ds *DataSource) analyzeFTSFunc() error {
 		sf, ok := cond.(*expression.ScalarFunction)
 		if !ok || sf.FuncName.L != ast.FTSMatchWord {
 			if expression.ContainsFullTextSearchFn(cond) {
-				return errors.New("FTS function is not supported in this context")
+				return plannererrors.ErrWrongUsage.FastGen(plannererrors.FTSWrongPlace)
 			}
 			continue
 		}
@@ -675,7 +676,7 @@ func (ds *DataSource) analyzeFTSFunc() error {
 		}
 		// If the index is not found, it means that the FTS function is not valid.
 		if currentIndex == nil {
-			return errors.New("Full text search can only be used with a matching fulltext index")
+			return errors.New("Full text search can only be used with a matching fulltext index and a columnar storage")
 		}
 		// Currently TiDB doesn't support multiple fulltext search functions used with multiple index calls.
 		if matchedIdx != nil {
@@ -694,10 +695,17 @@ func (ds *DataSource) analyzeFTSFunc() error {
 	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
 		return path.StoreType == kv.TiKV
 	})
+	if len(ds.PossibleAccessPaths) == 0 {
+		return plannererrors.ErrWrongUsage.FastGen("Full text search can be only executed in a columnar storage")
+	}
 	// Build protobuf info for the matched index.
 	pbColumns := make([]*tipb.ColumnInfo, 0, len(matchedColumns))
 	for _, col := range matchedColumns {
 		pbColumns = append(pbColumns, tidbutil.ColumnToProto(col.ToInfo(), false, false))
+	}
+	colNames := make([]string, 0, len(matchedColumns))
+	for _, col := range matchedColumns {
+		colNames = append(colNames, col.OrigName)
 	}
 	ds.FtsIndexes[0] = matchedIdx
 	ds.FtsIndexes = ds.FtsIndexes[:1]
@@ -706,6 +714,7 @@ func (ds *DataSource) analyzeFTSFunc() error {
 		QueryType:      tipb.FTSQueryType_FTSQueryTypeFilter,
 		IndexId:        matchedIdx.ID,
 		Columns:        pbColumns,
+		ColumnNames:    colNames,
 		QueryText:      matchedFunc.GetArgs()[0].(*expression.Constant).Value.GetString(),
 		QueryTokenizer: string(matchedIdx.FullTextInfo.ParserType),
 	}

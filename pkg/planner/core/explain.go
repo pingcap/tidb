@@ -242,6 +242,17 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		}
 		buffer.WriteString(", ")
 	}
+	if p.MatchedFTS != nil {
+		buffer.WriteString(", textSearch:(")
+		if normalized {
+			buffer.WriteString("?")
+		} else {
+			buffer.WriteString(p.MatchedFTS.QueryText)
+		}
+		buffer.WriteString(" IN ")
+		buffer.WriteString(p.MatchedFTS.ColumnNames[0])
+		buffer.WriteString(") ")
+	}
 	buffer.WriteString("keep order:")
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
 	if p.Desc {
@@ -302,26 +313,6 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 				buffer.WriteString(cols[len(cols)-1].String())
 			}
 		}
-	}
-	if p.FTSInfo != nil {
-		buffer.WriteString(", textSearch:")
-		if normalized {
-			buffer.WriteString("?")
-		} else {
-			buffer.WriteString(p.FTSInfo.QueryText)
-		}
-		buffer.WriteString(" IN ")
-		buffer.WriteString(p.FTSInfo.ColumnNames[0])
-		buffer.WriteString(")")
-		buffer.WriteString(", ")
-		buffer.WriteString("indexed columns: [")
-		for i, col := range p.FTSInfo.ColumnNames {
-			if i != 0 {
-				buffer.WriteString(", ")
-			}
-			buffer.WriteString(col)
-		}
-		buffer.WriteString("], ")
 	}
 
 	return buffer.String()

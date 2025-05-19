@@ -122,3 +122,5 @@ var (
 	ErrNoReferencedRow2 = dbterror.ClassOptimizer.NewStd(mysql.ErrNoReferencedRow2)
 	ErrSpDoesNotExist   = dbterror.ClassOptimizer.NewStd(mysql.ErrSpDoesNotExist)
 )
+
+const FTSWrongPlace = "Currently 'FTS_MATCH_WORD()' must be used alone. It cannot be placed inside any other function or expression as a parameter, or used multiple times. A valid example: SELECT * FROM <TABLE> WHERE FTS_MATCH_WORD(...)"

@@ -2679,6 +2679,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			}
 		}
 		if ds.MatchedFTS != nil {
+			ts.MatchedFTS = ds.MatchedFTS
 			ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildTextInvertedIndexExtra(ds.FtsIndexes[0], ds.MatchedFTS))
 		}
 	}
