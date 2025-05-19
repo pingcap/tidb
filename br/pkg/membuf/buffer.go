@@ -14,7 +14,12 @@
 
 package membuf
 
-import "unsafe"
+import (
+	"unsafe"
+
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
+)
 
 const (
 	defaultPoolSize  = 1024
@@ -93,6 +98,17 @@ func NewPool(opts ...Option) *Pool {
 		opt(p)
 	}
 	return p
+}
+
+func (p *Pool) LogLimierLimit() int {
+	if p.limiter != nil {
+		logutil.BgLogger().Info("limiter limit",
+			zap.Int("init limit", p.limiter.initLimit),
+			zap.Int("current limit", p.limiter.limit),
+			zap.Ints("wait nums", p.limiter.waitNums))
+		return p.limiter.limit
+	}
+	return 0
 }
 
 func (p *Pool) acquire() []byte {

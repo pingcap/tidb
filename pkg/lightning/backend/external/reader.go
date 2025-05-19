@@ -75,6 +75,14 @@ func readAllData(
 		return err
 	}
 
+	beforeLimit := smallBlockBufPool.LogLimierLimit()
+	defer func() {
+		afterLimit := smallBlockBufPool.LogLimierLimit()
+		logutil.BgLogger().Info("readAllData limiter",
+			zap.Int("before limit", beforeLimit),
+			zap.Int("after limit", afterLimit),
+			zap.Int("limiter allocate(MiB)", (beforeLimit-afterLimit)/1024/1024))
+	}()
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	readConn := 1000
 	readConn = min(readConn, len(dataFiles))
