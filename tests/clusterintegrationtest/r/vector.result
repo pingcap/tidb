@@ -320,7 +320,7 @@ TopN_7	2.00	root		Column#3, offset:0, count:2
 └─TableReader_16	2.00	root		data:TopN_15
   └─TopN_15	2.00	cop[tikv]		Column#3, offset:0, count:2
     └─Projection_14	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
-      └─TableFullScan_11	6.00	cop[tikv]	table:t	keep order:false
+      └─TableFullScan_11	3.00	cop[tikv]	table:t	keep order:false
 drop table t;
 // small dataset, fixed vector, clustered char PK, indexed
 create table t(id varchar(40) primary key CLUSTERED, vec vector(3), vector index ((vec_l2_distance(vec))));
