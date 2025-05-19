@@ -1258,6 +1258,7 @@ func (rc *SnapClient) execAndValidateChecksum(
 		checksumMatch = false
 	})
 	if !checksumMatch {
+		// Enhanced logging with more detailed information
 		logger.Error("failed in validate checksum",
 			zap.Uint64("expected tidb crc64", expectedChecksumStats.Crc64Xor),
 			zap.Uint64("calculated crc64", item.Crc64xor),
@@ -1265,8 +1266,20 @@ func (rc *SnapClient) execAndValidateChecksum(
 			zap.Uint64("calculated total kvs", item.TotalKvs),
 			zap.Uint64("expected tidb total bytes", expectedChecksumStats.TotalBytes),
 			zap.Uint64("calculated total bytes", item.TotalBytes),
+			zap.Int64("table_id", tbl.Table.ID),
+			zap.String("table_info", tbl.Table.Name.String()),
 		)
-		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
+
+		// Create an error with more diagnostic details
+		return errors.Annotatef(berrors.ErrRestoreChecksumMismatch,
+			"checksum mismatch for table '%s.%s' (ID: %d): "+
+				"crc64xor (expected: %d, actual: %d), "+
+				"totalKvs (expected: %d, actual: %d), "+
+				"totalBytes (expected: %d, actual: %d)",
+			tbl.OldTable.DB.Name.O, tbl.OldTable.Info.Name.O, tbl.Table.ID,
+			expectedChecksumStats.Crc64Xor, item.Crc64xor,
+			expectedChecksumStats.TotalKvs, item.TotalKvs,
+			expectedChecksumStats.TotalBytes, item.TotalBytes)
 	}
 	logger.Info("success in validating checksum")
 	return nil

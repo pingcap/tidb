@@ -105,7 +105,6 @@ type PreallocIDs struct {
 	Start          int64
 	ReusableBorder int64
 	End            int64
-	Count          int64
 	Hash           [32]byte
 }
 

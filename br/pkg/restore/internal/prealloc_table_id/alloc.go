@@ -37,9 +37,9 @@ type PreallocIDs struct {
 	start          int64
 	reusableBorder int64
 	end            int64
-	count          int64
 	hash           [32]byte
-	reallocRule    map[int64]int64
+	unallocedIDs   []int64
+	allocRule      map[int64]int64
 }
 
 // New collects the requirement of prealloc IDs and return a
@@ -52,54 +52,41 @@ func New(tables []*metautil.Table) (*PreallocIDs, error) {
 	}
 
 	maxID := int64(0)
-	count := int64(len(tables))
-	ids := make([]int64, 0, len(tables))
+	unallocedIDs := make([]int64, 0, len(tables))
 
-	//TODO: (ris) sort all tables by ID, also in createTables
 	for _, t := range tables {
 		if t.Info.ID > maxID && t.Info.ID < InsaneTableIDThreshold {
 			maxID = t.Info.ID
 		}
-		ids = append(ids, t.Info.ID)
+		unallocedIDs = append(unallocedIDs, t.Info.ID)
 
 		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
-			count += int64(len(t.Info.Partition.Definitions))
 			for _, part := range t.Info.Partition.Definitions {
 				if part.ID > maxID && part.ID < InsaneTableIDThreshold {
 					maxID = part.ID
 				}
-				ids = append(ids, part.ID)
+				unallocedIDs = append(unallocedIDs, part.ID)
 			}
 		}
 	}
-	if maxID+count+1 > InsaneTableIDThreshold {
+	if maxID+int64(len(unallocedIDs))+1 > InsaneTableIDThreshold {
 		return nil, errors.Errorf("table ID %d is too large", maxID)
 	}
 
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-
-	reallocRule := make(map[int64]int64, len(ids))
-	for idx, id := range ids {
-		reallocRule[id] = int64(idx) + maxID + 1
-	}
+	sort.Slice(unallocedIDs, func(i, j int) bool { return unallocedIDs[i] < unallocedIDs[j] })
 
 	return &PreallocIDs{
 		start:          math.MaxInt64,
 		reusableBorder: maxID + 1,
-		count:          count,
-		hash:           hashSortedIds(ids),
-		reallocRule:    reallocRule,
+		hash:           hashSortedIds(unallocedIDs),
+		unallocedIDs:   unallocedIDs,
+		allocRule:      make(map[int64]int64, len(unallocedIDs)),
 	}, nil
 }
 
-func Reuse(lagacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocIDs, error) {
-	if lagacy == nil {
+func Reuse(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocIDs, error) {
+	if legacy == nil {
 		return nil, errors.Errorf("no prealloc IDs to be reused")
-	}
-
-	count := int64(len(tables))
-	if count != lagacy.Count {
-		return nil, errors.Errorf("prealloc IDs count %d are not match with the tables count %d", lagacy.Count, count)
 	}
 
 	maxID := int64(0)
@@ -111,7 +98,6 @@ func Reuse(lagacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocI
 		ids = append(ids, t.Info.ID)
 
 		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
-			count += int64(len(t.Info.Partition.Definitions))
 			for _, part := range t.Info.Partition.Definitions {
 				if part.ID > maxID && part.ID < InsaneTableIDThreshold {
 					maxID = part.ID
@@ -121,31 +107,30 @@ func Reuse(lagacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocI
 		}
 	}
 
-	if lagacy.ReusableBorder != maxID+1 {
-		return nil, errors.Errorf("prealloc IDs reusable border %d are not match with the tables max ID %d", lagacy.ReusableBorder, maxID+1)
+	if legacy.ReusableBorder != maxID+1 {
+		return nil, errors.Errorf("prealloc IDs reusable border %d are not match with the tables max ID %d", legacy.ReusableBorder, maxID+1)
 	}
-	if maxID+count+1 > InsaneTableIDThreshold {
+	if maxID+int64(len(ids))+1 > InsaneTableIDThreshold {
 		return nil, errors.Errorf("table ID %d is too large", maxID)
 	}
 
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	hash := hashSortedIds(ids)
-	if lagacy.Hash != hash {
-		return nil, errors.Errorf("prealloc IDs hash %x are not match with the tables hash %x", lagacy.Hash, hash)
+	if legacy.Hash != hash {
+		return nil, errors.Errorf("prealloc IDs hash %x are not match with the tables hash %x", legacy.Hash, hash)
 	}
 
 	reallocRule := make(map[int64]int64, len(ids))
 	for idx, id := range ids {
-		reallocRule[id] = int64(idx) + lagacy.ReusableBorder
+		reallocRule[id] = int64(idx) + legacy.ReusableBorder
 	}
 
 	ret := PreallocIDs{
-		start:          lagacy.Start,
-		reusableBorder: lagacy.ReusableBorder,
-		end:            lagacy.End,
-		count:          lagacy.Count,
-		hash:           lagacy.Hash,
-		reallocRule:    reallocRule,
+		start:          legacy.Start,
+		reusableBorder: legacy.ReusableBorder,
+		end:            legacy.End,
+		hash:           legacy.Hash,
+		allocRule:      reallocRule,
 	}
 	return &ret, nil
 }
@@ -164,7 +149,7 @@ func (p *PreallocIDs) GetIDRange() (int64, int64) {
 
 // preallocTableIDs peralloc the id for [start, end)
 func (p *PreallocIDs) Alloc(m Allocator) error {
-	if p.count == 0 {
+	if len(p.unallocedIDs) == 0 {
 		return nil
 	}
 	if p.start < p.end {
@@ -180,26 +165,35 @@ func (p *PreallocIDs) Alloc(m Allocator) error {
 	if p.reusableBorder <= p.start {
 		p.reusableBorder = p.start
 	}
-	idRange := p.reusableBorder - p.start + p.count
+
+	for i := p.start; i < p.reusableBorder; i++ {
+		p.allocRule[i] = i
+	}
+	rewriteCnt := int64(0)
+	for _, id := range p.unallocedIDs {
+		if _, ok := p.allocRule[id]; ok {
+			continue
+		}
+		p.allocRule[id] = p.reusableBorder + rewriteCnt
+		rewriteCnt++
+	}
+	idRange := p.reusableBorder - p.start + rewriteCnt
 	if _, err := m.AdvanceGlobalIDs(int(idRange)); err != nil {
 		return err
 	}
-
 	p.end = p.start + idRange
+	p.unallocedIDs = nil
+
 	return nil
 }
 
 func (p *PreallocIDs) allocID(originalID int64) (int64, error) {
-	if originalID >= p.start && originalID < p.reusableBorder {
-		return originalID, nil
+	if p.unallocedIDs != nil {
+		return 0, errors.Errorf("table ID %d is not allocated yet", originalID)
 	}
-
-	rewriteID := p.reallocRule[originalID]
-	if rewriteID == 0 {
-		return 0, errors.Errorf("table ID %d is not in the range [%d, %d)", originalID, p.start, p.end)
-	}
-	if rewriteID >= p.end {
-		return 0, errors.Errorf("table ID can't rewrite (%d -> %d), out of range [%d, %d)", originalID, rewriteID, p.start, p.end)
+	rewriteID := p.allocRule[originalID]
+	if rewriteID < p.start || rewriteID >= p.end {
+		return 0, errors.Errorf("table ID %d is not in range [%d, %d)", rewriteID, p.start, p.end)
 	}
 	return rewriteID, nil
 }
@@ -239,7 +233,6 @@ func (p *PreallocIDs) CreateCheckpoint() *checkpoint.PreallocIDs {
 		Start:          p.start,
 		ReusableBorder: p.reusableBorder,
 		End:            p.end,
-		Count:          p.count,
 		Hash:           p.hash,
 	}
 }

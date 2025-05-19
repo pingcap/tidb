@@ -253,7 +253,7 @@ func cloneTableInfos(
 			})
 		}
 		var err error
-		ids,err = prealloctableid.New(tableInfos)
+		ids, err = prealloctableid.New(tableInfos)
 		if err != nil {
 			return err
 		}
