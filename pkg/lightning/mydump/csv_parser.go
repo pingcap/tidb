@@ -768,7 +768,6 @@ func (parser *CSVParser) TrySkipHeader() ([]field, bool, error) {
 		parser.columns = make([]string, 0, len(fields))
 		for _, colName := range fields {
 			colNameStr, _, err := parser.unescapeString(colName)
-			colNameStr = strings.TrimSpace(colNameStr)
 			if err != nil {
 				return nil, false, errors.Trace(err)
 			}
