@@ -30,6 +30,8 @@ type Limiter struct {
 	mu        sync.Mutex
 	waitNums  []int
 	waitChs   []chan struct{}
+	maxLimit  int
+	minLimit  int
 }
 
 // NewLimiter creates a new Limiter with the given limit.
@@ -50,6 +52,8 @@ func (l *Limiter) Acquire(n int) {
 			zap.Int("current allocate size", n),
 			zap.Int("total allocate size", l.initLimit-l.limit))
 		l.limit -= n
+		l.maxLimit = max(l.maxLimit, l.limit)
+		l.minLimit = min(l.minLimit, l.limit)
 		l.mu.Unlock()
 		return
 	}

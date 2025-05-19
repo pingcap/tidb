@@ -15,10 +15,8 @@
 package membuf
 
 import (
+	"math"
 	"unsafe"
-
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 )
 
 const (
@@ -100,15 +98,16 @@ func NewPool(opts ...Option) *Pool {
 	return p
 }
 
-func (p *Pool) LogLimierLimit() int {
+func (p *Pool) LogLimierLimit(before bool) (int, int) {
 	if p.limiter != nil {
-		logutil.BgLogger().Info("limiter limit",
-			zap.Int("init limit", p.limiter.initLimit),
-			zap.Int("current limit", p.limiter.limit),
-			zap.Ints("wait nums", p.limiter.waitNums))
-		return p.limiter.limit
+		if before {
+			p.limiter.maxLimit = math.MinInt
+			p.limiter.minLimit = math.MaxInt
+			return p.limiter.limit, 0
+		}
+		return p.limiter.limit, p.limiter.maxLimit - p.limiter.minLimit
 	}
-	return 0
+	return -1, -1
 }
 
 func (p *Pool) acquire() []byte {
