@@ -2122,11 +2122,6 @@ func checkpointEnabledAndExists(
 // it's mandatory since it cannot be turned off
 func checkMandatoryClusterRequirements(client *snapclient.SnapClient, cfg *SnapshotRestoreConfig,
 	checkpointEnabledAndExists bool, cmdName string) error {
-	// verify not raw kv mode
-	if client.IsRawKvMode() {
-		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw kv data")
-	}
-
 	// verify dbs and tables are in backup
 	if err := VerifyDBAndTableInBackup(client.GetDatabases(), cfg.RestoreConfig); err != nil {
 		return errors.Trace(err)
