@@ -18,6 +18,7 @@ import (
 	"context"
 	"math"
 	"math/rand"
+	"sort"
 	"sync"
 	"time"
 
@@ -631,7 +632,7 @@ func queryPlanCost(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error) 
 	return core.GetPlanCost(pp, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 }
 
-func planDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error) {
+func calculatePlanDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error) {
 	ret := &core.PreprocessorReturn{}
 	nodeW := resolve.NewNodeW(stmt)
 	err = core.Preprocess(
@@ -654,6 +655,41 @@ func planDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest stri
 	return digest.String(), nil
 }
 
+func recordRelevantOptVarsAndFixes(sctx sessionctx.Context, stmt ast.StmtNode) (varNames []string, fixIDs []uint64, err error) {
+	sctx.GetSessionVars().ResetRelevantOptVarsAndFixes(true)
+	defer sctx.GetSessionVars().ResetRelevantOptVarsAndFixes(false)
+	ret := &core.PreprocessorReturn{}
+	nodeW := resolve.NewNodeW(stmt)
+	err = core.Preprocess(
+		context.Background(),
+		sctx,
+		nodeW,
+		core.WithPreprocessorReturn(ret),
+		core.InitTxnContextProvider,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	_, _, err = Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for varName := range sctx.GetSessionVars().RelevantOptVars {
+		varNames = append(varNames, varName)
+	}
+	sort.Strings(varNames)
+
+	for fixID := range sctx.GetSessionVars().RelevantOptFixes {
+		fixIDs = append(fixIDs, fixID)
+	}
+	sort.Slice(fixIDs, func(i, j int) bool {
+		return fixIDs[i] < fixIDs[j]
+	})
+	return
+}
+
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
@@ -661,5 +697,6 @@ func init() {
 	bindinfo.GetBindingHandle = func(sctx sessionctx.Context) bindinfo.BindingHandle {
 		return domain.GetDomain(sctx).BindingHandle()
 	}
-	bindinfo.PlanDigestFunc = planDigestFunc
+	bindinfo.CalculatePlanDigest = calculatePlanDigestFunc
+	bindinfo.RecordRelevantOptVarsAndFixes = recordRelevantOptVarsAndFixes
 }

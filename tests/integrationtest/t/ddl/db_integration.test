@@ -1052,6 +1052,8 @@ create table t (j json, key k (((j,j))));
 create table t (j json, key k ((j+1),(j+1)));
 -- error 3761
 create table t1 (col1 int, index ((concat(''))));
+-- error 3761
+create table t1 (col1 int, index ((null)));
 -- error 3756
 CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))) NONCLUSTERED);
 

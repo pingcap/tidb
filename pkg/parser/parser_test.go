@@ -81,7 +81,7 @@ func TestSimple(t *testing.T) {
 
 	// Testcase for unreserved keywords
 	unreservedKws := []string{
-		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
+		"add_columnar_replica_on_demand", "auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "extended", "first", "file", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "savepoint", "session", "signed",
 		"start", "global", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
@@ -3245,6 +3245,7 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX IF NOT EXISTS ((VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX IF NOT EXISTS((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
+		{"ALTER TABLE t ADD VECTOR INDEX IF NOT EXISTS ((VEC_COSINE_DISTANCE(a))) ADD_COLUMNAR_REPLICA_ON_DEMAND USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX IF NOT EXISTS((VEC_COSINE_DISTANCE(`a`))) ADD_COLUMNAR_REPLICA_ON_DEMAND USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD COLUMNAR (a) USING INVERTED COMMENT 'a'", false, ""},
 		{"ALTER TABLE t ADD COLUMNAR ((a - 1)) USING INVERTED COMMENT 'a'", false, ""},
 		{"ALTER TABLE t ADD COLUMNAR (a) USING HASH COMMENT 'a'", false, ""},
