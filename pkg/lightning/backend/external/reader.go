@@ -64,7 +64,7 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	concurrences, startOffsets, err := getFilesReadConcurrency(
+	concurrences, startOffsets, err, estimateTotalSize := getFilesReadConcurrency(
 		ctx,
 		store,
 		statsFiles,
@@ -81,7 +81,8 @@ func readAllData(
 		logutil.BgLogger().Info("readAllData limiter",
 			zap.Int("before limit", beforeLimit),
 			zap.Int("after limit", afterLimit),
-			zap.Int("limiter allocate(MiB)", (beforeLimit-afterLimit)/1024/1024))
+			zap.Int("limiter allocate(MiB)", (beforeLimit-afterLimit)/1024/1024),
+			zap.Int("estimate total size(MiB)", estimateTotalSize/1024/1024))
 	}()
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	readConn := 1000
