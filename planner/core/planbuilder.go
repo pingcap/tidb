@@ -2912,6 +2912,10 @@ var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptSampleRate:    math.Float64bits(1),
 }
 
+<<<<<<< HEAD:planner/core/planbuilder.go
+=======
+// TODO(0xPoe): give some explanation about the default value.
+>>>>>>> 2dce92429d7 (*: update owners aliases (#61164)):pkg/planner/core/planbuilder.go
 var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumBuckets:    256,
 	ast.AnalyzeOptNumTopN:       20,
