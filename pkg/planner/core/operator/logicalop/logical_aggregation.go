@@ -105,10 +105,13 @@ func (la *LogicalAggregation) ReplaceExprColumns(replace map[string]*expression.
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	condsToPush, ret := la.splitCondForAggregation(predicates)
-	la.BaseLogicalPlan.PredicatePushDown(condsToPush, opt)
-	return ret, la
+	condsToPush, newChild, err := la.BaseLogicalPlan.PredicatePushDown(condsToPush, opt)
+	if err != nil {
+		return nil, la, err
+	}
+	return ret, newChild, nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.

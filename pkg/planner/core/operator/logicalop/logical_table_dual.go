@@ -71,8 +71,8 @@ func (p *LogicalTableDual) HashCode() []byte {
 }
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	return predicates, p
+func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
+	return predicates, p, nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.

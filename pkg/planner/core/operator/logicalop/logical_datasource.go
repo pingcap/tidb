@@ -160,7 +160,7 @@ func (ds *DataSource) ExplainInfo() string {
 // HashCode inherits BaseLogicalPlan.<0th> interface.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	predicates = expression.PropagateConstant(ds.SCtx().GetExprCtx(), predicates)
 	predicates = constraint.DeleteTrueExprs(ds, predicates)
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
@@ -170,17 +170,17 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 	dual := Conds2TableDual(ds, ds.AllConds)
 	if dual != nil {
 		AppendTableDualTraceStep(ds, dual, predicates, opt)
-		return nil, dual
+		return nil, dual, nil
 	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
 	if ds.SCtx().HasFTSFunc() {
 		err := ds.analyzeFTSFunc()
 		if err != nil {
-			panic(err)
+			return nil, nil, err
 		}
 	}
-	return predicates, ds
+	return predicates, ds, nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
