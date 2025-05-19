@@ -669,29 +669,33 @@ func (parser *CSVParser) replaceEOF(err error, replaced error) error {
 
 // ReadRow reads a row from the datafile.
 func (parser *CSVParser) ReadRow() error {
-	row := &parser.lastRow
-	row.Length = 0
-	row.RowID++
-
 	var (
-		fields   []field
-		needRead = true
-		err      error
+		fields []field
+		err    error
 	)
 
 	if parser.csvHeaderOption != CSVHeaderFalse {
+		var needRead bool
 		if fields, needRead, err = parser.trySkipHeader(); err != nil {
 			return errors.Trace(err)
 		}
 		parser.csvHeaderOption = CSVHeaderFalse
+		if !needRead {
+			return parser.setRow(fields)
+		}
 	}
 
-	if needRead {
-		fields, err = parser.readRecord(parser.lastRecord)
-	}
+	fields, err = parser.readRecord(parser.lastRecord)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	return parser.setRow(fields)
+}
+
+func (parser *CSVParser) setRow(fields []field) error {
+	row := &parser.lastRow
+	row.Length = 0
+	row.RowID++
 
 	parser.lastRecord = fields
 	// remove the last empty value
