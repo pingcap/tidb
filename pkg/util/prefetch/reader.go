@@ -79,6 +79,13 @@ func (r *Reader) run() {
 		} else if rand.Intn(10) == 0 {
 			r.logger.Info("After normal read in run()", zap.Int("n", n))
 		}
+		if rand.Intn(10) == 0 && n > 0 && err == nil {
+			n, err = rand.Intn(n), io.ErrUnexpectedEOF
+			if rand.Intn(2) == 0 {
+				n = 0
+			}
+			r.logger.Warn("ingest error", zap.Int("n", n), zap.Error(err))
+		}
 		buf = buf[:n]
 		select {
 		case <-r.closedCh:
@@ -102,7 +109,7 @@ func (r *Reader) Read(data []byte) (int, error) {
 	var loopCnt uint64
 	r.logger.Info("start Read()", zap.Int("len(data)", len(data)))
 	defer func() {
-		r.logger.Info("end Read()", zap.Int("len(data)", len(data)), zap.Error(r.err))
+		r.logger.Info("end Read()", zap.Int("len(data)", len(data)), zap.Error(r.err)) // 14532, illegal N when reading from external storage
 	}()
 	for {
 		if rand.Intn(5) == 0 {

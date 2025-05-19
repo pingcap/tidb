@@ -206,6 +206,8 @@ func (r *byteReader) switchToConcurrentReader() error {
 	return nil
 }
 
+const deadLoopDetectThreshold = 100
+
 // readNBytes reads the next n bytes from the reader and returns a buffer slice
 // containing those bytes. The content of returned slice may be changed after
 // next call.
@@ -236,14 +238,15 @@ func (r *byteReader) readNBytes(n int) (auxBuf []byte, err error) {
 		n -= len(b)
 	}
 	hasRead := readLen > 0
+	readNoByteCnt := 0
 	for n > 0 {
-		if loopCnt >= uint64(rawN*5) {
-			return nil, errors.New(fmt.Sprintf("readNBytes reaches max loopCnt %d", rawN*5))
-		}
+		// if loopCnt >= uint64(rawN*5) {
+		// 	return nil, errors.New(fmt.Sprintf("readNBytes reaches max loopCnt %d", rawN*5))
+		// }
 		err = r.reload()
 		if err != nil {
 			r.logger.Error("readNBytes reload error", zap.Uint64("loopCnt", loopCnt), zap.Int("n", n),
-				zap.Error(err), zap.Bool("hasRead", hasRead)) // 0, EOF / read N bytes from external storage, exceed max limit
+				zap.Error(err), zap.Bool("hasRead", hasRead)) // EOF / read N bytes from external storage, exceed max limit
 		}
 		switch err {
 		case nil:
@@ -262,6 +265,14 @@ func (r *byteReader) readNBytes(n int) (auxBuf []byte, err error) {
 			r.logger.Info("readNBytes", zap.Uint64("loopCnt", loopCnt), zap.Int("readLen", readLen),
 				zap.Int("len(bs[0])", len(bs[0])),
 				zap.Bool("hasRead", hasRead))
+		}
+		if readLen == 0 {
+			readNoByteCnt += 1
+			if readNoByteCnt >= deadLoopDetectThreshold {
+				return nil, errors.Errorf("read no bytes, remaining %d byte(s)", n)
+			}
+		} else {
+			readNoByteCnt = 0
 		}
 		hasRead = hasRead || readLen > 0
 		for _, b := range bs {
