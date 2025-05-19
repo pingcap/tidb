@@ -27,7 +27,4 @@ wait_for_tiflash
 print_versions
 
 echo "+ Running mysql-tester"
-./mysql-tester -all
-
-# stop the tidb cluster in backen.
-stop_tiup
+./mysql-tester -all || { stop_tiup; exit 1; }

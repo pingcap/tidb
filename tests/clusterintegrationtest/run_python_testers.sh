@@ -28,7 +28,4 @@ wait_for_tiflash
 print_versions
 
 echo "+ Running /root/python_testers/vector_recall.py"
-uv run ./python_testers/vector_recall.py
-
-# stop the tidb cluster in backen.
-stop_tiup
+uv run ./python_testers/vector_recall.py || { stop_tiup; exit 1; }

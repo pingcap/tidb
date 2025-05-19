@@ -255,7 +255,6 @@ drop table t;
 
 --echo // Test cases from expression/integration_test
 use test;
-DROP TABLE IF EXISTS t;
 create table t(embedding VECTOR);
 insert into t values ('[1,2,3]');
 insert into t values ('[1,2,3,4]');
