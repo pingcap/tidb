@@ -126,7 +126,7 @@ func Reuse(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocI
 		if id < legacy.Start {
 			allocRule[id] = legacy.ReusableBorder + rewriteCnt
 			rewriteCnt++
-		} else if  id < legacy.ReusableBorder {
+		} else if id < legacy.ReusableBorder {
 			allocRule[id] = id
 		} else if id >= legacy.ReusableBorder {
 			return nil, errors.Errorf("table ID %d is out of range [%d, %d)", id, legacy.Start, legacy.ReusableBorder)
