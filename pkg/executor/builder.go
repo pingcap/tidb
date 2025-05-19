@@ -659,7 +659,7 @@ func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.Table
 			}
 		}
 	}
-	return plannerutil.NewCommonHandleCols(sctx, tblInfo, pkIdx, tblCols)
+	return plannerutil.NewCommonHandleCols(tblInfo, pkIdx, tblCols)
 }
 
 func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Executor {
@@ -2675,7 +2675,7 @@ func buildHandleColsForSplit(sc *stmtctx.StatementContext, tbInfo *model.TableIn
 		for i, pkCol := range primaryIdx.Columns {
 			tableCols[pkCol.Offset].Index = i
 		}
-		return plannerutil.NewCommonHandleCols(sc, tbInfo, primaryIdx, tableCols)
+		return plannerutil.NewCommonHandleCols(tbInfo, primaryIdx, tableCols)
 	}
 	intCol := &expression.Column{
 		RetType: types.NewFieldType(mysql.TypeLonglong),

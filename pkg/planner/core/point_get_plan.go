@@ -2303,7 +2303,7 @@ func buildHandleCols(ctx base.PlanContext, dbName string, tbl *model.TableInfo, 
 
 	if tbl.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(tbl)
-		return util.NewCommonHandleCols(ctx.GetSessionVars().StmtCtx, tbl, pkIdx, schema.Columns)
+		return util.NewCommonHandleCols(tbl, pkIdx, schema.Columns)
 	}
 
 	handleCol := colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())
