@@ -28,3 +28,6 @@ print_versions
 
 echo "+ Running mysql-tester"
 ./mysql-tester -all
+
+# stop the tidb cluster in backen.
+stop_tiup

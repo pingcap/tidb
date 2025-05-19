@@ -29,3 +29,6 @@ print_versions
 
 echo "+ Running /root/python_testers/vector_recall.py"
 uv run ./python_testers/vector_recall.py
+
+# stop the tidb cluster in backen.
+stop_tiup
