@@ -123,7 +123,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = newCtx", f.Name)
 		case "util.HandleCols":
 			c.write("if op.%v != nil {", f.Name)
-			c.write("cloned.%v = op.%v.Clone(newCtx.GetSessionVars().StmtCtx)", f.Name, f.Name)
+			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
 			c.write("}")
 		case "*core.PushedDownLimit":
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)

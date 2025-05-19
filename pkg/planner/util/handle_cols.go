@@ -65,7 +65,7 @@ type HandleCols interface {
 	// MemoryUsage return the memory usage
 	MemoryUsage() int64
 	// Clone clones the HandleCols.
-	Clone(newCtx *stmtctx.StatementContext) HandleCols
+	Clone() HandleCols
 	// IterColumns iterates the columns.
 	IterColumns() iter.Seq[*expression.Column]
 	// IterColumns2 iterates the columns.
@@ -80,7 +80,7 @@ type CommonHandleCols struct {
 }
 
 // Clone implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) Clone(newCtx *stmtctx.StatementContext) HandleCols {
+func (cb *CommonHandleCols) Clone() HandleCols {
 	newCols := make([]*expression.Column, len(cb.columns))
 	for i, col := range cb.columns {
 		newCols[i] = col.Clone().(*expression.Column)
@@ -160,7 +160,8 @@ func (cb *CommonHandleCols) IterColumns2() iter.Seq2[int, *expression.Column] {
 	return slices.All(cb.columns)
 }
 
-func (cb *CommonHandleCols) buildHandleByDatumsBuffer(sc *stmtctx.StatementContext, datumBuf []types.Datum) (kv.Handle, error) {
+func (cb *CommonHandleCols) buildHandleByDatumsBuffer(sc *stmtctx.StatementContext, datumBuf []types.Datum,
+) (kv.Handle, error) {
 	tablecodec.TruncateIndexValues(cb.tblInfo, cb.idxInfo, datumBuf)
 	handleBytes, err := codec.EncodeKey(sc.TimeZone(), nil, datumBuf...)
 	err = sc.HandleError(err)
@@ -189,7 +190,8 @@ func (cb *CommonHandleCols) BuildHandleFromIndexRow(sc *stmtctx.StatementContext
 }
 
 // BuildPartitionHandleFromIndexRow implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) BuildPartitionHandleFromIndexRow(sc *stmtctx.StatementContext, row chunk.Row) (kv.PartitionHandle, error) {
+func (cb *CommonHandleCols) BuildPartitionHandleFromIndexRow(sc *stmtctx.StatementContext, row chunk.Row,
+) (kv.PartitionHandle, error) {
 	datumBuf := make([]types.Datum, 0, 4)
 	for i := 0; i < cb.NumCols(); i++ {
 		datumBuf = append(datumBuf, row.GetDatum(row.Len()-1-cb.NumCols()+i, cb.columns[i].RetType))
@@ -354,7 +356,7 @@ func (ib *IntHandleCols) Equals(other any) bool {
 }
 
 // Clone implements the kv.HandleCols interface.
-func (ib *IntHandleCols) Clone(*stmtctx.StatementContext) HandleCols {
+func (ib *IntHandleCols) Clone() HandleCols {
 	return &IntHandleCols{col: ib.col.Clone().(*expression.Column)}
 }
 
