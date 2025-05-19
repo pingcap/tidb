@@ -502,19 +502,28 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, store kv.StoreType) (*t
 	}
 	if store == kv.TiFlash {
 		executorID := p.ExplainID().String()
-		queryColumns := make([]*model.ColumnInfo, 0, len(p.prop.FullTextProp.QueryColumns))
+		query_columns := make([]*model.ColumnInfo, 0, len(p.prop.FullTextProp.QueryColumns))
 		for _, col := range p.prop.FullTextProp.QueryColumns {
-			queryColumns = append(queryColumns, FindColumnInfoByID(tableColumns, col.ID))
+			query_columns = append(query_columns, FindColumnInfoByID(tableColumns, col.ID))
 		}
-		idxExec := &tipb.TiCIScan{
-			TableId:       p.Table.ID,
-			IndexId:       p.Index.ID,
-			ReturnColumns: util.ColumnsToProto(columns, p.Table.PKIsHandle, true, false),
-			QueryColumns:  util.ColumnsToProto(queryColumns, p.Table.PKIsHandle, true, false),
-			QueryJsonStr:  &p.prop.FullTextProp.QueryJSONStr,
-			Limit:         0,
+		unique := false
+		idxExec := &tipb.IndexScan{
+			TableId:          p.Table.ID,
+			IndexId:          p.Index.ID,
+			Columns:          util.ColumnsToProto(columns, p.Table.PKIsHandle, true, false),
+			Desc:             false,
+			Unique:           &unique,
+			PrimaryColumnIds: pkColIDs,
+			FtsQueryInfo: &tipb.FTSQueryInfo{
+				QueryType:   tipb.FTSQueryType_FTSQueryTypeFilter,
+				IndexId:     p.Index.ID,
+				Columns:     util.ColumnsToProto(query_columns, p.Table.PKIsHandle, true, false),
+				ColumnNames: nil,
+				QueryText:   p.prop.FullTextProp.QueryJSONStr,
+				QueryFunc:   tipb.ScalarFuncSig_FTSMatchWord,
+			},
 		}
-		return &tipb.Executor{Tp: tipb.ExecType_TypeTiCIScan, TiciScan: idxExec, ExecutorId: &executorID}, nil
+		return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec, ExecutorId: &executorID}, nil
 	}
 	idxExec := &tipb.IndexScan{
 		TableId:          p.Table.ID,
