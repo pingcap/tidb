@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,14 @@ func TestSetVarTimestampHintsWorks(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
+
+	// test that the timestamp continues to update (default behavior)
+	tk.MustExec(`set timestamp=default;`)
+	require.Equal(t, "42", tk.MustQuery(`select /*+ set_var(timestamp=1) */ @@timestamp + 41;`).Rows()[0][0].(string))
+	firstts := tk.MustQuery(`select @@timestamp;`).Rows()[0][0].(string)
+	require.Eventually(t, func() bool {
+		return firstts < tk.MustQuery(`select @@timestamp;`).Rows()[0][0].(string)
+	}, time.Second, time.Microsecond*10)
 
 	// test that the set value is preserved
 	tk.MustExec(`set timestamp=1745862208.446495;`)
@@ -38,6 +47,15 @@ func TestSetVarTimestampHintsWorksWithBindings(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create session binding for select @@timestamp + 41 using select /*+ set_var(timestamp=1) */ @@timestamp + 41;`)
+
+	// test that bindings with hints correctly restore the default timestamp
+	tk.MustExec(`set timestamp=default;`)
+	require.Equal(t, "42", tk.MustQuery(`select @@timestamp + 41;`).Rows()[0][0].(string))
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+	firstts := tk.MustQuery(`select @@timestamp;`).Rows()[0][0].(string)
+	require.Eventually(t, func() bool {
+		return firstts < tk.MustQuery(`select @@timestamp;`).Rows()[0][0].(string)
+	}, time.Second, time.Microsecond*10)
 
 	// test that bindings with hints correctly restore the previous non-default timestamp value
 	tk.MustExec(`set timestamp=1745862208.446495;`)
