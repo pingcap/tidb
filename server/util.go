@@ -385,7 +385,7 @@ func (d *resultEncoder) encodeData(src []byte) []byte {
 }
 
 func (d *resultEncoder) encodeWith(src []byte, enc charset.Encoding) []byte {
-	data, err := enc.Transform(d.buffer, src, charset.OpEncode)
+	data, err := enc.Transform(d.buffer, src, charset.OpEncodeReplace)
 	if err != nil {
 		logutil.BgLogger().Debug("encode error", zap.Error(err))
 	}
