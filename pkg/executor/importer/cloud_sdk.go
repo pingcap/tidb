@@ -17,6 +17,7 @@ package importer
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -38,6 +39,9 @@ type CloudImportSDK interface {
 
 	// GetTableMetaByName returns metadata for a specific table
 	GetTableMetaByName(ctx context.Context, schema, table string) (*TableMeta, error)
+
+	// GetTotalSize returns the cumulative size (in bytes) of all data files under the source path
+	GetTotalSize(ctx context.Context) (int64, error)
 
 	// Close releases resources used by the SDK
 	Close() error
@@ -89,10 +93,11 @@ func NewImportSDK(ctx context.Context, sourcePath string, db *sql.DB, options ..
 	}
 
 	ldrCfg := mydump.LoaderConfig{
-		SourceURL:   sourcePath,
-		FileRouters: cfg.fileRouteRules,
-		// Use default rules only if no custom rules are provided
+		SourceURL:        sourcePath,
+		Filter:           cfg.filter,
+		FileRouters:      cfg.fileRouteRules,
 		DefaultFileRules: len(cfg.fileRouteRules) == 0,
+		CharacterSet:     cfg.charset,
 	}
 
 	loader, err := mydump.NewLoaderWithStore(ctx, ldrCfg, store)
@@ -115,9 +120,11 @@ type SDKOption func(*sdkConfig)
 
 type sdkConfig struct {
 	// Loader options
-	concurrency     int
-	sqlMode         mysql.SQLMode
-	fileRouteRules  []*config.FileRouteRule
+	concurrency    int
+	sqlMode        mysql.SQLMode
+	fileRouteRules []*config.FileRouteRule
+	filter         []string
+	charset        string
 
 	// General options
 	logger log.Logger
@@ -125,8 +132,10 @@ type sdkConfig struct {
 
 func defaultSDKConfig() *sdkConfig {
 	return &sdkConfig{
-		concurrency:     4,
-		logger:          log.L(),
+		concurrency: 4,
+		filter:      config.GetDefaultFilter(),
+		logger:      log.L(),
+		charset:     "auto",
 	}
 }
 
@@ -153,6 +162,13 @@ func WithSQLMode(mode mysql.SQLMode) SDKOption {
 	}
 }
 
+// WithFilter specifies a filter for the loader
+func WithFilter(filter []string) SDKOption {
+	return func(cfg *sdkConfig) {
+		cfg.filter = filter
+	}
+}
+
 // WithFileRouters specifies custom file routing rules
 func WithFileRouters(routers []*config.FileRouteRule) SDKOption {
 	return func(cfg *sdkConfig) {
@@ -160,11 +176,20 @@ func WithFileRouters(routers []*config.FileRouteRule) SDKOption {
 	}
 }
 
+// WithCharset specifies the character set for import (default "auto").
+func WithCharset(cs string) SDKOption {
+	return func(cfg *sdkConfig) {
+		if cs != "" {
+			cfg.charset = cs
+		}
+	}
+}
+
 // CreateSchemasAndTables implements the CloudImportSDK interface
 func (sdk *ImportSDK) CreateSchemasAndTables(ctx context.Context) error {
 	dbMetas := sdk.loader.GetDatabases()
 	if len(dbMetas) == 0 {
-		return errors.New("no database schemas found in source path")
+		return errors.New("no databases found in the source path")
 	}
 
 	// Create all schemas and tables
@@ -196,12 +221,15 @@ func (sdk *ImportSDK) GetTablesMeta(ctx context.Context) ([]*TableMeta, error) {
 			for _, file := range tblMeta.DataFiles {
 				allDataFiles[file.FileMeta.Path] = file
 			}
+			if tblMeta.SchemaFile.FileMeta.Path != "" {
+				allDataFiles[tblMeta.SchemaFile.FileMeta.Path] = tblMeta.SchemaFile
+			}
 		}
 	}
 
 	for _, dbMeta := range dbMetas {
 		for _, tblMeta := range dbMeta.Tables {
-			tableMeta, err := sdk.buildTableMeta(ctx, dbMeta, tblMeta, allDataFiles)
+			tableMeta, err := sdk.buildTableMeta(dbMeta, tblMeta, allDataFiles)
 			if err != nil {
 				return nil, errors.Wrapf(err, "failed to build metadata for table %s.%s",
 					dbMeta.Name, tblMeta.Name)
@@ -217,12 +245,15 @@ func (sdk *ImportSDK) GetTablesMeta(ctx context.Context) ([]*TableMeta, error) {
 func (sdk *ImportSDK) GetTableMetaByName(ctx context.Context, schema, table string) (*TableMeta, error) {
 	dbMetas := sdk.loader.GetDatabases()
 
-	// Collect all data files for pattern matching
+	// Collect all data files (and schema files) for pattern matching
 	allDataFiles := make(map[string]mydump.FileInfo)
 	for _, dbMeta := range dbMetas {
 		for _, tblMeta := range dbMeta.Tables {
 			for _, file := range tblMeta.DataFiles {
 				allDataFiles[file.FileMeta.Path] = file
+			}
+			if tblMeta.SchemaFile.FileMeta.Path != "" {
+				allDataFiles[tblMeta.SchemaFile.FileMeta.Path] = tblMeta.SchemaFile
 			}
 		}
 	}
@@ -238,7 +269,7 @@ func (sdk *ImportSDK) GetTableMetaByName(ctx context.Context, schema, table stri
 				continue
 			}
 
-			return sdk.buildTableMeta(ctx, dbMeta, tblMeta, allDataFiles)
+			return sdk.buildTableMeta(dbMeta, tblMeta, allDataFiles)
 		}
 
 		return nil, errors.Errorf("table '%s' not found in schema '%s'", table, schema)
@@ -247,9 +278,21 @@ func (sdk *ImportSDK) GetTableMetaByName(ctx context.Context, schema, table stri
 	return nil, errors.Errorf("schema '%s' not found", schema)
 }
 
+// GetTotalSize implements CloudImportSDK interface
+func (sdk *ImportSDK) GetTotalSize(ctx context.Context) (int64, error) {
+	tables, err := sdk.GetTablesMeta(ctx)
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, tbl := range tables {
+		total += tbl.TotalSize
+	}
+	return total, nil
+}
+
 // buildTableMeta creates a TableMeta from database and table metadata
 func (sdk *ImportSDK) buildTableMeta(
-	ctx context.Context,
 	dbMeta *mydump.MDDatabaseMeta,
 	tblMeta *mydump.MDTableMeta,
 	allDataFiles map[string]mydump.FileInfo,
@@ -279,7 +322,7 @@ func (sdk *ImportSDK) buildTableMeta(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tableMeta.WildcardPath = wildcard
+	tableMeta.WildcardPath = strings.TrimSuffix(sdk.store.URI(), "/") + "/" + wildcard
 
 	return tableMeta, nil
 }
@@ -289,8 +332,10 @@ func (sdk *ImportSDK) Close() error {
 	sdk.mu.Lock()
 	defer sdk.mu.Unlock()
 
-	// Nothing to close at the moment, but this could be used
-	// to clean up resources in the future
+	// close external storage
+	if sdk.store != nil {
+		sdk.store.Close()
+	}
 	return nil
 }
 
@@ -342,7 +387,6 @@ func (sdk *ImportSDK) generateWildcard(
 	// Try different pattern generation strategies in order of specificity
 	patterns := []string{
 		generateMydumperPattern(paths),     // Specific to Mydumper format
-		generateDirectoryPattern(paths),    // Try directory-based pattern
 		generatePrefixSuffixPattern(paths), // Generic prefix/suffix pattern
 	}
 
@@ -356,43 +400,6 @@ func (sdk *ImportSDK) generateWildcard(
 	return "", errors.New("unable to generate a specific wildcard pattern for this table's data files")
 }
 
-// generateDirectoryPattern attempts to create a pattern based on directory structure
-func generateDirectoryPattern(paths []string) string {
-	// Get common directory prefix
-	dirPrefix := extractCommonDirectory(paths)
-	if dirPrefix == "" {
-		return ""
-	}
-
-	// See if all files are in the same directory
-	allSameDir := true
-	for _, path := range paths {
-		lastSlash := strings.LastIndex(path, "/")
-		if lastSlash < 0 || path[:lastSlash+1] != dirPrefix {
-			allSameDir = false
-			break
-		}
-	}
-
-	if allSameDir {
-		// Try to find common filename patterns within the directory
-		fileNames := make([]string, len(paths))
-		for i, path := range paths {
-			fileNames[i] = path[len(dirPrefix):]
-		}
-
-		filePrefix := longestCommonPrefix(fileNames)
-		if filePrefix != "" {
-			return dirPrefix + filePrefix + "*"
-		}
-
-		// If no common filename prefix, just use the directory
-		return dirPrefix + "*"
-	}
-
-	return ""
-}
-
 // validatePattern checks if a wildcard pattern matches only the table's files
 func validatePattern(pattern string, tableFiles map[string]struct{}, allFiles map[string]mydump.FileInfo) bool {
 	if pattern == "" {
@@ -400,7 +407,10 @@ func validatePattern(pattern string, tableFiles map[string]struct{}, allFiles ma
 	}
 
 	for path := range allFiles {
-		isMatch := wildcardMatches(pattern, path)
+		isMatch, err := filepath.Match(pattern, path)
+		if err != nil {
+			return false // Invalid pattern
+		}
 		_, isTableFile := tableFiles[path]
 
 		// If pattern matches a file that's not from our table, it's invalid
@@ -415,23 +425,6 @@ func validatePattern(pattern string, tableFiles map[string]struct{}, allFiles ma
 	}
 
 	return true
-}
-
-// wildcardMatches checks if a path matches a wildcard pattern
-// This implementation handles patterns with a single * wildcard
-func wildcardMatches(pattern, path string) bool {
-	if !strings.Contains(pattern, "*") {
-		return pattern == path
-	}
-
-	parts := strings.Split(pattern, "*")
-	if len(parts) != 2 {
-		// This implementation only handles a single wildcard
-		return false
-	}
-
-	prefix, suffix := parts[0], parts[1]
-	return strings.HasPrefix(path, prefix) && strings.HasSuffix(path, suffix) && len(path) >= len(prefix)+len(suffix)
 }
 
 // generateMydumperPattern creates a pattern optimized for Mydumper naming conventions
@@ -580,20 +573,19 @@ func generatePrefixSuffixPattern(paths []string) string {
 		return paths[0]
 	}
 
-	// Find common prefix and suffix
 	prefix := longestCommonPrefix(paths)
 	suffix := longestCommonSuffix(paths)
 
-	// If prefix and suffix would overlap, adjust them
-	if len(prefix)+len(suffix) > len(paths[0]) {
-		overlap := len(prefix) + len(suffix) - len(paths[0])
-		suffix = suffix[overlap:]
+	minLen := len(paths[0])
+	for _, p := range paths[1:] {
+		if len(p) < minLen {
+			minLen = len(p)
+		}
+	}
+	maxSuffixLen := minLen - len(prefix)
+	if len(suffix) > maxSuffixLen {
+		suffix = suffix[len(suffix)-maxSuffixLen:]
 	}
 
-	// Construct pattern with appropriate wildcards
-	if prefix != "" || suffix != "" {
-		return prefix + "*" + suffix
-	}
-
-	return ""
+	return prefix + "*" + suffix
 }
