@@ -401,7 +401,9 @@ func (isd *Data) deleteReferredForeignKeys(schema ast.CIStr, tbInfo *model.Table
 			})
 		} else {
 			// If there are multiple references, create new array excluding this one
-			newRefs := slices.DeleteFunc(existingRefs, func(ref *model.ReferredFKInfo) bool {
+			// clone existingRefs to avoid modifying the original slice
+			tmpRefs := append([]*model.ReferredFKInfo(nil), existingRefs...)
+			newRefs := slices.DeleteFunc(tmpRefs, func(ref *model.ReferredFKInfo) bool {
 				return ref.ChildSchema.L == schema.L &&
 					ref.ChildTable.L == tbInfo.Name.L &&
 					ref.ChildFKName.L == fk.Name.L
@@ -1568,16 +1570,10 @@ func (b *Builder) applyRecoverSchemaV2(m meta.Reader, diff *model.SchemaDiff) ([
 }
 
 func applyModifySchemaCharsetAndCollate(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
-	if b.enableV2 {
-		return b.applyModifySchemaCharsetAndCollateV2(m, diff)
-	}
 	return b.applyModifySchemaCharsetAndCollate(m, diff)
 }
 
 func applyModifySchemaDefaultPlacement(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
-	if b.enableV2 {
-		return b.applyModifySchemaDefaultPlacementV2(m, diff)
-	}
 	return b.applyModifySchemaDefaultPlacement(m, diff)
 }
 
