@@ -167,7 +167,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("if op.%v != nil {", f.Name)
 			c.write("cloned.%v = make(map[int64][]util.HandleCols, len(op.%v))", f.Name, f.Name)
 			c.write("for k, v := range op.%v {", f.Name)
-			c.write("cloned.%v[k] = util.CloneHandleCols(newCtx.GetSessionVars().StmtCtx, v)", f.Name)
+			c.write("cloned.%v[k] = util.CloneHandleCols(v)", f.Name)
 			c.write("}}")
 		case "map[int64]*expression.Column":
 			c.write("if op.%v != nil {", f.Name)
