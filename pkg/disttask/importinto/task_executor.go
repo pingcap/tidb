@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -371,7 +372,8 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		getKVGroupBlockSize(sm.KVGroup),
 		onClose,
 		int(m.GetResource().CPU.Capacity()),
-		false)
+		false,
+		engineapi.OnDuplicateKeyIgnore)
 	logger.Info(
 		"merge sort finished",
 		zap.Uint64("total-kv-size", m.subtaskSortedKVMeta.TotalKVSize),

@@ -51,6 +51,7 @@ const (
 	flagCompressionType  = "compression"
 	flagCompressionLevel = "compression-level"
 	flagRemoveSchedulers = "remove-schedulers"
+	flagRangeLimit       = "range-limit"
 	flagIgnoreStats      = "ignore-stats"
 	flagUseBackupMetaV2  = "use-backupmeta-v2"
 	flagUseCheckpoint    = "use-checkpoint"
@@ -87,6 +88,7 @@ type BackupConfig struct {
 	LastBackupTS     uint64            `json:"last-backup-ts" toml:"last-backup-ts"`
 	GCTTL            int64             `json:"gc-ttl" toml:"gc-ttl"`
 	RemoveSchedulers bool              `json:"remove-schedulers" toml:"remove-schedulers"`
+	RangeLimit       int               `json:"range-limit" toml:"range-limit"`
 	IgnoreStats      bool              `json:"ignore-stats" toml:"ignore-stats"`
 	UseBackupMetaV2  bool              `json:"use-backupmeta-v2"`
 	UseCheckpoint    bool              `json:"use-checkpoint" toml:"use-checkpoint"`
@@ -131,6 +133,8 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 		"disable the balance, shuffle and region-merge schedulers in PD to speed up backup")
 	// This flag can impact the online cluster, so hide it in case of abuse.
 	_ = flags.MarkHidden(flagRemoveSchedulers)
+
+	flags.Int(flagRangeLimit, backup.RangesSentThreshold, "limits the number of ranges marshaled at the same time when sent to many TiKVs.")
 
 	// Disable stats by default.
 	// TODO: we need a better way to backup/restore stats.
@@ -221,6 +225,13 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig b
 	cfg.RemoveSchedulers, err = flags.GetBool(flagRemoveSchedulers)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	cfg.RangeLimit, err = flags.GetInt(flagRangeLimit)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.RangeLimit <= 0 {
+		return errors.Errorf("the parameter `--range-limit` should be larger than 0")
 	}
 	cfg.IgnoreStats, err = flags.GetBool(flagIgnoreStats)
 	if err != nil {
@@ -689,7 +700,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	})
 
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	checksumMap, err := client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.ReplicaReadLabel, metawriter, progressCallBack)
+	checksumMap, err := client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.RangeLimit, cfg.ReplicaReadLabel, metawriter, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
