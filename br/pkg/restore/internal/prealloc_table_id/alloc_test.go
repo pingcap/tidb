@@ -168,7 +168,8 @@ func TestAllocator(t *testing.T) {
 			tables = append(tables, &table)
 		}
 
-		ids := prealloctableid.New(tables)
+		ids, err := prealloctableid.New(tables)
+		require.NoError(t, err)
 		allocator := testAllocator(c.hasAllocatedTo)
 		ids.Alloc(&allocator)
 		alloc, err := BatchAlloc(tables, ids)
@@ -204,7 +205,8 @@ func TestAllocatorBound(t *testing.T) {
 		{Info: &model.TableInfo{ID: currentGlobalID + 2}},
 		{Info: &model.TableInfo{ID: currentGlobalID + 4}},
 	}
-	ids := prealloctableid.New(tableInfos)
+	ids, err := prealloctableid.New(tableInfos)
+	require.NoError(t, err)
 	lastGlobalID := currentGlobalID
 	err = kv.RunInNewTxn(ctx, s.Mock.Store(), true, func(_ context.Context, txn kv.Transaction) error {
 		allocator := meta.NewMutator(txn)
