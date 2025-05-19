@@ -5549,7 +5549,7 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 
 	var targetPlan base.Plan
 	if explain.Stmt != nil && !explain.Explore {
-		if strings.ToLower(explain.Format) == types.ExplainFormatCostTrace {
+		if strings.EqualFold(explain.Format, types.ExplainFormatCostTrace) {
 			origin := sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace
 			sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
 			defer func() {
