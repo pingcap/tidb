@@ -1161,7 +1161,9 @@ func isTiKVIndexByName(idxName string, tblInfo *model.TableInfo) bool {
 	return false
 }
 
-func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
+// getPossibleAccessPaths returns all possible access paths for the table.
+// Fulltext index is handled separately because it will be the only choice if it's needed for the query.
+func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) (available []*util.AccessPath, ftsIndexes []*model.IndexInfo, err error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1196,7 +1198,6 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	check = check || ctx.GetSessionVars().IsIsolation(ast.ReadCommitted)
 	check = check && ctx.GetSessionVars().ConnectionID > 0
 	var latestIndexes map[int64]*model.IndexInfo
-	var err error
 
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
@@ -1210,7 +1211,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			if check && latestIndexes == nil {
 				latestIndexes, check, err = domainmisc.GetLatestIndexInfo(ctx, tblInfo.ID, 0)
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 			}
 			if check {
@@ -1222,6 +1223,13 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				// Because the value of `TiFlashReplica.Available` changes as the user modify replica, it is not ideal if the state of index changes accordingly.
 				// So the current way to use the columnar indexes is to require the TiFlash Replica to be available.
 				if !tblInfo.TiFlashReplica.Available {
+					continue
+				}
+				if index.FullTextInfo != nil {
+					if len(ftsIndexes) == 0 {
+						ftsIndexes = make([]*model.IndexInfo, 0, 4)
+					}
+					ftsIndexes = append(ftsIndexes, index)
 					continue
 				}
 				path := genTiFlashPath(tblInfo)
@@ -1260,7 +1268,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	}
 
 	hasScanHint, hasUseOrForce := false, false
-	available := make([]*util.AccessPath, 0, len(publicPaths))
+	available = make([]*util.AccessPath, 0, len(publicPaths))
 	ignored := make([]*util.AccessPath, 0, len(publicPaths))
 
 	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
@@ -1301,7 +1309,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				err := plannererrors.ErrKeyDoesNotExist.FastGenByArgs(idxName, tblInfo.Name)
 				// if hint is from comment-style sql hints, we should throw a warning instead of error.
 				if i < indexHintsLen {
-					return nil, err
+					return nil, nil, err
 				}
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
@@ -1316,7 +1324,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				engineVals, _ := ctx.GetSessionVars().GetSystemVar(vardef.TiDBIsolationReadEngines)
 				err := fmt.Errorf("TiDB doesn't support index '%v' in the isolation read engines(value: '%v')", idxName, engineVals)
 				if i < indexHintsLen {
-					return nil, err
+					return nil, nil, err
 				}
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
@@ -1365,7 +1373,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = append(available, tablePath)
 	}
 
-	return available, nil
+	return available, ftsIndexes, nil
 }
 
 func filterPathByIsolationRead(ctx base.PlanContext, paths []*util.AccessPath, tblName ast.CIStr, dbName ast.CIStr) ([]*util.AccessPath, error) {

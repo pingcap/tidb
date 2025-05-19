@@ -303,6 +303,26 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			}
 		}
 	}
+	if p.FTSInfo != nil {
+		buffer.WriteString(", textSearch:")
+		if normalized {
+			buffer.WriteString("?")
+		} else {
+			buffer.WriteString(p.FTSInfo.QueryText)
+		}
+		buffer.WriteString(" IN ")
+		buffer.WriteString(p.FTSInfo.ColumnNames[0])
+		buffer.WriteString(")")
+		buffer.WriteString(", ")
+		buffer.WriteString("indexed columns: [")
+		for i, col := range p.FTSInfo.ColumnNames {
+			if i != 0 {
+				buffer.WriteString(", ")
+			}
+			buffer.WriteString(col)
+		}
+		buffer.WriteString("], ")
+	}
 
 	return buffer.String()
 }

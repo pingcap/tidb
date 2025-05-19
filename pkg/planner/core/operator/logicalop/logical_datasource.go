@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -39,9 +40,11 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // DataSource represents a tableScan without condition push down.
@@ -76,6 +79,8 @@ type DataSource struct {
 	// * correlate rule XForm will gen additional correlated condition which will be push down to a ds alternative.
 	// No matter whether the newly generated ds is always good or not, we should both derive the stats from the conditions we so far.
 	PossibleAccessPaths []*util.AccessPath
+	FtsIndexes          []*model.IndexInfo
+	MatchedFTS          *tipb.FTSQueryInfo
 
 	// The data source may be a partition, rather than a real table.
 	PartitionDefIdx *int
@@ -169,6 +174,12 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
+	if ds.SCtx().HasFTSFunc() {
+		err := ds.analyzeFTSFunc()
+		if err != nil {
+			panic(err)
+		}
+	}
 	return predicates, ds
 }
 
@@ -620,4 +631,83 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 		}
 	}
 	return resultColumn, resultColumnInfo
+}
+
+// analyzeFTSFunc checks whether FTS function is used and is a valid one.
+// Then convert the function to index call because it can not be executed without the index.
+func (ds *DataSource) analyzeFTSFunc() error {
+	if !ds.SCtx().HasFTSFunc() {
+		return nil
+	}
+	idx2FastCheck := make(map[*model.IndexInfo]intset.FastIntSet)
+	idSetForCheck := intset.NewFastIntSet()
+	for _, index := range ds.FtsIndexes {
+		s := intset.NewFastIntSet()
+		for _, col := range index.Columns {
+			s.Insert(int(ds.TableInfo.Columns[col.Offset].ID))
+		}
+		idx2FastCheck[index] = s
+	}
+	var matchedIdx *model.IndexInfo
+	var matchedFunc *expression.ScalarFunction
+	var matchedCondPos int
+	matchedColumns := make([]*expression.Column, 0, 2)
+	for i, cond := range ds.PushedDownConds {
+		sf, ok := cond.(*expression.ScalarFunction)
+		if !ok || sf.FuncName.L != ast.FTSMatchWord {
+			if expression.ContainsFullTextSearchFn(cond) {
+				return errors.New("FTS function is not supported in this context")
+			}
+			continue
+		}
+		idSetForCheck.Clear()
+		for i := 1; i < len(sf.GetArgs()); i++ {
+			col := sf.GetArgs()[i].(*expression.Column)
+			idSetForCheck.Insert(int(col.ID))
+		}
+		var currentIndex *model.IndexInfo
+		for idx, set := range idx2FastCheck {
+			// The used columns in the FTS function should be a subset of the index columns.
+			if idSetForCheck.SubsetOf(set) {
+				currentIndex = idx
+				break
+			}
+		}
+		// If the index is not found, it means that the FTS function is not valid.
+		if currentIndex == nil {
+			return errors.New("Full text search can only be used with a matching fulltext index")
+		}
+		// Currently TiDB doesn't support multiple fulltext search functions used with multiple index calls.
+		if matchedIdx != nil {
+			return errors.New("Current TiDB doesn't support multiple fulltext search functions used with multiple index calls")
+		}
+		matchedIdx = currentIndex
+		matchedFunc = sf
+		matchedCondPos = i
+		matchedColumns = matchedColumns[:0]
+		for i := 1; i < len(sf.GetArgs()); i++ {
+			col := sf.GetArgs()[i].(*expression.Column)
+			matchedColumns = append(matchedColumns, col)
+		}
+	}
+	// Fulltext index must be used. So we prune all other possible access paths.
+	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+		return path.StoreType == kv.TiKV
+	})
+	// Build protobuf info for the matched index.
+	pbColumns := make([]*tipb.ColumnInfo, 0, len(matchedColumns))
+	for _, col := range matchedColumns {
+		pbColumns = append(pbColumns, tidbutil.ColumnToProto(col.ToInfo(), false, false))
+	}
+	ds.FtsIndexes[0] = matchedIdx
+	ds.FtsIndexes = ds.FtsIndexes[:1]
+	ds.PushedDownConds = append(ds.PushedDownConds[:matchedCondPos], ds.PushedDownConds[matchedCondPos+1:]...)
+	ds.MatchedFTS = &tipb.FTSQueryInfo{
+		QueryType:      tipb.FTSQueryType_FTSQueryTypeFilter,
+		IndexId:        matchedIdx.ID,
+		Columns:        pbColumns,
+		QueryText:      matchedFunc.GetArgs()[0].(*expression.Constant).Value.GetString(),
+		QueryTokenizer: string(matchedIdx.FullTextInfo.ParserType),
+	}
+	return nil
 }
