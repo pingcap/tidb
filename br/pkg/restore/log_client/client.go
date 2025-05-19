@@ -972,6 +972,7 @@ type GetIDMapConfig struct {
 // a subset of the entire job.
 func (rc *LogClient) GetBaseIDMapAndMerge(
 	ctx context.Context,
+	hasFullBackupStorageConfig,
 	loadSavedIDMap bool,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 	tableMappingManger *stream.TableMappingManager,
@@ -993,7 +994,7 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 
 	// a new task, but without full snapshot restore, tries to load
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
-	if len(dbMaps) <= 0 {
+	if len(dbMaps) <= 0 && !hasFullBackupStorageConfig {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
 		dbMaps, err = rc.loadSchemasMap(ctx, rc.startTS, logCheckpointMetaManager)
 		if err != nil {
@@ -1005,7 +1006,7 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 		}
 	}
 
-	if len(dbMaps) <= 0 && tableMappingManger.IsEmpty() {
+	if len(dbMaps) <= 0 && !hasFullBackupStorageConfig {
 		log.Error("no id maps found")
 		return errors.New("no base id map found from saved id or last restored PiTR")
 	}

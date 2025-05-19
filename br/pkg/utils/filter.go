@@ -125,23 +125,19 @@ func (t *PiTRIdTracker) ContainsDB(dbID int64) bool {
 }
 
 func MatchSchema(filter filter.Filter, schema string, withSys bool) bool {
-	if name, ok := StripTempDBPrefixIfNeeded(schema); IsSysDB(name) && ok {
+	schema = StripTempDBPrefixIfNeeded(schema)
+	if IsSysDB(schema) && !withSys {
 		// early return if system tables are disabled
-		if !withSys {
-			return false
-		}
-		schema = name
+		return false
 	}
 	return filter.MatchSchema(schema)
 }
 
 func MatchTable(filter filter.Filter, schema, table string, withSys bool) bool {
-	if name, ok := StripTempDBPrefixIfNeeded(schema); IsSysDB(name) && ok {
+	schema = StripTempDBPrefixIfNeeded(schema)
+	if IsSysDB(schema) && !withSys {
 		// early return if system tables are disabled
-		if !withSys {
-			return false
-		}
-		schema = name
+		return false
 	}
 	return filter.MatchTable(schema, table)
 }

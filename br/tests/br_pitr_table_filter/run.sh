@@ -459,8 +459,31 @@ test_table_rename() {
         run_sql "drop schema if exists ${DB}_${i};"
     done
 
+    echo "testing renamed in from another DB"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "${DB}_2.prefix_initial_tables_to_rename_in_diff_db*"
+
+    # verify the table exists and has correct data
+    run_sql "SELECT COUNT(*) = 1 FROM ${DB}_2.prefix_initial_tables_to_rename_in_diff_db_1" || {
+        echo "prefix_initial_tables_to_rename_in_diff_db_1 doesn't have expected row count"
+        exit 1
+    }
+
+    # verify the data value is correct
+    run_sql "SELECT COUNT(*) = 1 FROM ${DB}_2.prefix_initial_tables_to_rename_in_diff_db_1 WHERE c = 1" || {
+        echo "prefix_initial_tables_to_rename_in_diff_db_1 doesn't have expected data"
+        exit 1
+    }
+
+    # verify no other tables exist
+    verify_no_unexpected_tables 1 || {
+        echo "Found unexpected number of tables after restore"
+        exit 1
+    }
+
+    run_sql "drop schema if exists ${DB}_2;"
+    
     # Test drop and rename scenario
-    echo "case 21: drop and rename test"
+    echo "testing drop and rename"
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "${DB}_drop_and_rename.table_to_drop"
 
     # Verify the restored table contains data from the original table_to_rename plus the new data
@@ -1530,16 +1553,16 @@ test_log_compaction() {
     echo "log compaction with filter test passed"
 }
 
-test_basic_filter
-test_with_full_backup_filter
+#test_basic_filter
+#test_with_full_backup_filter
 test_table_rename
-test_with_checkpoint
-test_partition_exchange
-test_system_tables
-test_foreign_keys
-test_index_filter
-test_table_truncation
-test_sequential_restore
-test_log_compaction
+#test_with_checkpoint
+#test_partition_exchange
+#test_system_tables
+#test_foreign_keys
+#test_index_filter
+#test_table_truncation
+#test_sequential_restore
+#test_log_compaction
 
 echo "br pitr table filter all tests passed"

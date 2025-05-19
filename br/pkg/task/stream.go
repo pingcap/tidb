@@ -2118,7 +2118,9 @@ func buildSchemaReplace(client *logclient.LogClient, cfg *LogRestoreConfig) (*st
 func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient, cfg *LogRestoreConfig) error {
 	// get the schemas ID replace information.
 	saved := isCurrentIdMapSaved(cfg.checkpointTaskInfo)
-	err := client.GetBaseIDMapAndMerge(ctx, saved, cfg.logCheckpointMetaManager, cfg.tableMappingManager)
+	hasFullBackupStorage := len(cfg.FullBackupStorage) != 0
+	err := client.GetBaseIDMapAndMerge(ctx, hasFullBackupStorage, saved,
+		cfg.logCheckpointMetaManager, cfg.tableMappingManager)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -1001,6 +1001,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			client.GetTableMap(),
 			client.GetPartitionMap(),
 			tableMap,
+			dbMap,
 		)
 		if err != nil {
 			return errors.Trace(err)
@@ -1567,6 +1568,7 @@ func processLogBackupTableHistory(
 	partitionMap map[int64]*stream.TableLocationInfo,
 	cfg *RestoreConfig,
 	existingTableMap map[int64]*metautil.Table,
+	existingDBMap map[int64]*metautil.Database,
 	pitrIdTracker *utils.PiTRIdTracker,
 ) {
 	for tableId, dbIDAndTableName := range history.GetTableHistory() {
@@ -1586,6 +1588,8 @@ func processLogBackupTableHistory(
 				pitrIdTracker.TrackTableId(end.DbID, tableId)
 				// used to check if existing cluster has same table already so can error out
 				pitrIdTracker.TrackTableName(endDBName, end.TableName)
+				log.Info("tracking table", zap.Int64("schemaID", end.DbID),
+					zap.Int64("tableID", tableId), zap.String("tableName", end.TableName))
 			} else {
 				// only used for partition violation checking later
 				pitrIdTracker.TrackPartitionId(tableId)
@@ -1630,10 +1634,11 @@ func processLogBackupTableHistory(
 			for _, table := range startDB.Tables {
 				if table.Info != nil && table.Info.ID == tableId {
 					if endMatches {
-						log.Info("adding extra table to restore due to rename",
+						log.Info("table renamed into the filter, adding this table",
 							zap.Int64("table_id", tableId),
 							zap.String("table_name", table.Info.Name.O))
 						existingTableMap[tableId] = table
+						existingDBMap[start.DbID] = startDB
 					} else if startMatches {
 						log.Info("table renamed out of filter, removing this table",
 							zap.Int64("table_id", tableId),
@@ -1739,6 +1744,7 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	snapshotTableMap map[int64]*metautil.Table,
 	partitionMap map[int64]*stream.TableLocationInfo,
 	tableMap map[int64]*metautil.Table,
+	DBMap map[int64]*metautil.Database,
 ) (err error) {
 	// build tracker for pitr restore to use later
 	piTRIdTracker := utils.NewPiTRIdTracker()
@@ -1754,7 +1760,7 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 
 	// first handle table renames to determine which tables we need
 	processLogBackupTableHistory(logBackupTableHistory, snapshotDBMap, snapshotTableMap,
-		partitionMap, cfg, tableMap, piTRIdTracker)
+		partitionMap, cfg, tableMap, DBMap, piTRIdTracker)
 
 	// track all snapshot tables that's going to restore in PiTR tracker
 	for tableID, table := range tableMap {

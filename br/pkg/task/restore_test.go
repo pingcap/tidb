@@ -637,6 +637,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 		snapshotTableMap map[int64]*metautil.Table
 		snapshotFileMap  map[int64][]*backuppb.File
 		expectedTableIDs map[int64][]int64
+		expectedDBs      []int64
 		expectedTables   []int64
 		expectedFileMap  map[int64][]*backuppb.File
 	}{
@@ -658,6 +659,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				1: {11, 12},
 				2: {21},
 			},
+			expectedDBs:    []int64{1, 2},
 			expectedTables: []int64{11, 12, 21},
 		},
 		{
@@ -675,6 +677,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			expectedTableIDs: map[int64][]int64{
 				1: {11, 12},
 			},
+			expectedDBs:    []int64{1},
 			expectedTables: []int64{11, 12},
 		},
 		{
@@ -692,6 +695,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			expectedTableIDs: map[int64][]int64{
 				1: {11},
 			},
+			expectedDBs:    []int64{1, 2},
 			expectedTables: []int64{11},
 		},
 		{
@@ -713,6 +717,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				1: {11, 12},
 				2: {21},
 			},
+			expectedDBs:    []int64{1, 2},
 			expectedTables: []int64{11, 12, 21}, // 13 not in full backup
 		},
 		{
@@ -733,6 +738,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			expectedTableIDs: map[int64][]int64{
 				2: {11, 21},
 			},
+			expectedDBs:    []int64{1, 2},
 			expectedTables: []int64{11, 21},
 		},
 		{
@@ -753,6 +759,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			expectedTableIDs: map[int64][]int64{
 				1: {12},
 			},
+			expectedDBs:    []int64{1},
 			expectedTables: []int64{12},
 		},
 		{
@@ -767,6 +774,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			},
 			// using empty snapshotDBMap for this test
 			expectedTableIDs: map[int64][]int64{},
+			expectedDBs:      []int64{},
 			expectedTables:   []int64{},
 		},
 		{
@@ -786,6 +794,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			expectedTableIDs: map[int64][]int64{
 				1: {11},
 			},
+			expectedDBs:    []int64{}, // not in full backup
 			expectedTables: []int64{}, // not in full backup
 		},
 	}
@@ -825,8 +834,9 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			partitionMap := make(map[int64]*stream.TableLocationInfo)
 
 			currentTableMap := make(map[int64]*metautil.Table)
+			currentDBMap := make(map[int64]*metautil.Database)
 
-			filterSnapshotMaps(testFilter, localSnapshotDBMap, currentTableMap)
+			filterSnapshotMaps(testFilter, localSnapshotDBMap, currentDBMap, currentTableMap)
 
 			// Run the function
 			err = task.AdjustTablesToRestoreAndCreateTableTracker(
@@ -836,6 +846,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				snapTableMap,
 				partitionMap,
 				currentTableMap,
+				currentDBMap,
 			)
 			require.NoError(t, err)
 
@@ -843,6 +854,11 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				for _, tableID := range tableIDs {
 					require.True(t, cfg.PiTRTableTracker.ContainsDBAndTableId(dbID, tableID))
 				}
+			}
+
+			require.Len(t, currentDBMap, len(tc.expectedDBs))
+			for _, dbID := range tc.expectedDBs {
+				require.NotNil(t, currentDBMap[dbID])
 			}
 
 			require.Len(t, currentTableMap, len(tc.expectedTables))
@@ -959,10 +975,15 @@ func TestSortKeyRanges(t *testing.T) {
 func filterSnapshotMaps(
 	tableFilter filter.Filter,
 	snapDBMap map[int64]*metautil.Database,
+	currentDBMap map[int64]*metautil.Database,
 	currentTableMap map[int64]*metautil.Table,
 ) {
-	for _, db := range snapDBMap {
+	for dbID, db := range snapDBMap {
 		dbName := db.Info.Name.O
+
+		if tableFilter.MatchSchema(dbName) {
+			currentDBMap[dbID] = db
+		}
 
 		for _, table := range db.Tables {
 			tableID := table.Info.ID
