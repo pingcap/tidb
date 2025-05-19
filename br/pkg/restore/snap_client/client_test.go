@@ -400,7 +400,7 @@ func createTestTable(schemaID, tableID int64) *metautil.Table {
 func generateMetautilTable(dbName string, tableID int64, partitionIDs ...int64) *metautil.Table {
 	var partition *model.PartitionInfo
 	if len(partitionIDs) > 0 {
-		partition := &model.PartitionInfo{
+		partition = &model.PartitionInfo{
 			Definitions: make([]model.PartitionDefinition, 0, len(partitionIDs)),
 		}
 		for _, partitionID := range partitionIDs {
