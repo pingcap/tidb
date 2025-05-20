@@ -40,7 +40,7 @@ func TestGenPlanWithSCtx(t *testing.T) {
 		p.Reset()
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
-		planDigest, planHint, planText, err := bindinfo.GenPlanWithSCtx(sctx, stmt)
+		planDigest, planHint, planText, err := bindinfo.GenBriefPlanWithSCtx(sctx, stmt)
 		require.NoError(t, err)
 		require.True(t, len(planDigest) > 0)
 		require.True(t, strings.Contains(planHint, expectedHint))

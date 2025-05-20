@@ -38,11 +38,11 @@ var CalculatePlanDigest func(sctx sessionctx.Context, stmt ast.StmtNode) (planDi
 // This function will call the optimizer.
 var RecordRelevantOptVarsAndFixes func(sctx sessionctx.Context, stmt ast.StmtNode) (varNames []string, fixIDs []uint64, err error)
 
-// GenPlanWithSCtx generates the plan for the given SQL statement under the given session context.
-// This function will call the optimizer.
+// GenBriefPlanWithSCtx generates the plan for the given SQL statement under the given session context.
+// This function will call the optimizer, the output is same as "EXPLAIN FORMAT='brief' {SQL}".
 // PlanHintStr is a set of hints to reproduce this plan, which is used to create binding.
 // PlanText is the results of EXPLAIN of the current plan.
-var GenPlanWithSCtx func(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest, planHintStr string, planText [][]string, err error)
+var GenBriefPlanWithSCtx func(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest, planHintStr string, planText [][]string, err error)
 
 // BindingPlanInfo contains the binding info and its corresponding plan execution info, which is used by
 // "SHOW PLAN FOR <SQL>" to help users understand the historical plans for a specific SQL.
