@@ -10,14 +10,14 @@ KEY a9af33a4 (57fd8d09,b80b3746,43b06e99),
 KEY 464b386e (b80b3746),
 KEY 19dc3c2d (57fd8d09)
 ) ENGINE=InnoDB DEFAULT CHARSET=ascii COLLATE=ascii_bin COMMENT='320f8401';
-explain select  /*+ use_index_merge( `aa311c3c` ) */   `aa311c3c`.`43b06e99` as r0 , `aa311c3c`.`6302d8ac` as r1 from `aa311c3c` where `aa311c3c`.`b80b3746` = 3 or not( `aa311c3c`.`57fd8d09` >= '2008' )   order by r0,r1 limit 95;
+explain format='brief' select  /*+ use_index_merge( `aa311c3c` ) */   `aa311c3c`.`43b06e99` as r0 , `aa311c3c`.`6302d8ac` as r1 from `aa311c3c` where `aa311c3c`.`b80b3746` = 3 or not( `aa311c3c`.`57fd8d09` >= '2008' )   order by r0,r1 limit 95;
 id	estRows	task	access object	operator info
-TopN_9	95.00	root		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac, offset:0, count:95
-└─IndexMerge_17	95.00	root		type: union
-  ├─IndexRangeScan_13(Build)	10.00	cop[tikv]	table:aa311c3c, index:464b386e(b80b3746)	range:[3,3], keep order:false, stats:pseudo
-  ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:aa311c3c, index:3080c821(57fd8d09, 43b06e99, b80b3746)	range:[-inf,2008), keep order:false, stats:pseudo
-  └─TopN_16(Probe)	95.00	cop[tikv]		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac, offset:0, count:95
-    └─TableRowIDScan_15	3330.01	cop[tikv]	table:aa311c3c	keep order:false, stats:pseudo
+TopN	95.00	root		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac, offset:0, count:95
+└─IndexMerge	95.00	root		type: union
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:aa311c3c, index:464b386e(b80b3746)	range:[3,3], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:aa311c3c, index:3080c821(57fd8d09, 43b06e99, b80b3746)	range:[-inf,2008), keep order:false, stats:pseudo
+  └─TopN(Probe)	95.00	cop[tikv]		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac, offset:0, count:95
+    └─TableRowIDScan	3330.01	cop[tikv]	table:aa311c3c	keep order:false, stats:pseudo
 CREATE TABLE t1(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));
 CREATE TABLE t2(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));
 INSERT INTO t1 values(1,NULL,NULL,null),(2,NULL,NULL,null),(3,NULL,NULL,null);
@@ -94,13 +94,13 @@ PARTITION `p20220101` VALUES IN ('20220101'),
 PARTITION `p20230516` VALUES IN ('20230516'));
 analyze table ads_txn;
 set autocommit=OFF;
-explain update ads_txn s set aml_cntpr_accno = trim(acpayr_accno) where s._tidb_rowid between 1 and 100000;
+explain format='brief' update ads_txn s set aml_cntpr_accno = trim(acpayr_accno) where s._tidb_rowid between 1 and 100000;
 id	estRows	task	access object	operator info
-Update_5	N/A	root		N/A
-└─Projection_6	8000.00	root		planner__core__issuetest__planner_issue.ads_txn.cusno, planner__core__issuetest__planner_issue.ads_txn.txn_dt, planner__core__issuetest__planner_issue.ads_txn.unn_trno, planner__core__issuetest__planner_issue.ads_txn.aml_cntpr_accno, planner__core__issuetest__planner_issue.ads_txn.acpayr_accno, planner__core__issuetest__planner_issue.ads_txn._tidb_rowid
-  └─SelectLock_7	8000.00	root		for update 0
-    └─TableReader_9	10000.00	root	partition:all	data:TableRangeScan_8
-      └─TableRangeScan_8	10000.00	cop[tikv]	table:s	range:[1,100000], keep order:false, stats:pseudo
+Update	N/A	root		N/A
+└─Projection	8000.00	root		planner__core__issuetest__planner_issue.ads_txn.cusno, planner__core__issuetest__planner_issue.ads_txn.txn_dt, planner__core__issuetest__planner_issue.ads_txn.unn_trno, planner__core__issuetest__planner_issue.ads_txn.aml_cntpr_accno, planner__core__issuetest__planner_issue.ads_txn.acpayr_accno, planner__core__issuetest__planner_issue.ads_txn._tidb_rowid
+  └─SelectLock	8000.00	root		for update 0
+    └─TableReader	10000.00	root	partition:all	data:TableRangeScan
+      └─TableRangeScan	10000.00	cop[tikv]	table:s	range:[1,100000], keep order:false, stats:pseudo
 CREATE TABLE tb1 (cid INT, code INT, class VARCHAR(10));
 CREATE TABLE tb2 (cid INT, code INT, class VARCHAR(10));
 UPDATE tb1, (SELECT code AS cid, code, MAX(class) AS class FROM tb2 GROUP BY code) tb3 SET tb1.cid = tb3.cid, tb1.code = tb3.code, tb1.class = tb3.class;
@@ -108,16 +108,16 @@ CREATE TEMPORARY TABLE v0(v1 int);
 INSERT INTO v0 WITH ta2 AS (TABLE v0) TABLE ta2 FOR UPDATE OF ta2;
 create table tbl_39(col_239 year(4) not null default '2009', primary key(col_239), unique key idx_223(col_239), key idx_224(col_239));
 insert into tbl_39 values (1994),(1995),(1996),(1997);
-explain select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
+explain format='brief' select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
 id	estRows	task	access object	operator info
-Limit_15	382.00	root		offset:0, count:382
-└─UnionScan_23	382.00	root		or(and(not(not(eq(planner__core__issuetest__planner_issue.tbl_39.col_239, 1994))), not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010, 2010))), and(not(le(planner__core__issuetest__planner_issue.tbl_39.col_239, 1996)), not(and(ge(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), le(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011)))))
-  └─IndexMerge_29	382.00	root		type: union
-    ├─Selection_25(Build)	0.05	cop[tikv]		not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010, 2010))
-    │ └─IndexRangeScan_24	0.14	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:[1994,1994], keep order:true, stats:pseudo
-    ├─Selection_27(Build)	458.26	cop[tikv]		or(lt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), gt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011))
-    │ └─IndexRangeScan_26	477.36	cop[tikv]	table:tbl_39, index:idx_223(col_239)	range:(1996,+inf], keep order:true, stats:pseudo
-    └─TableRowIDScan_28(Probe)	382.00	cop[tikv]	table:tbl_39	keep order:false, stats:pseudo
+Limit	382.00	root		offset:0, count:382
+└─UnionScan	382.00	root		or(and(not(not(eq(planner__core__issuetest__planner_issue.tbl_39.col_239, 1994))), not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010, 2010))), and(not(le(planner__core__issuetest__planner_issue.tbl_39.col_239, 1996)), not(and(ge(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), le(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011)))))
+  └─IndexMerge	382.00	root		type: union
+    ├─Selection(Build)	0.05	cop[tikv]		not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010, 2010))
+    │ └─IndexRangeScan	0.14	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:[1994,1994], keep order:true, stats:pseudo
+    ├─Selection(Build)	458.26	cop[tikv]		or(lt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), gt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011))
+    │ └─IndexRangeScan	477.36	cop[tikv]	table:tbl_39, index:idx_223(col_239)	range:(1996,+inf], keep order:true, stats:pseudo
+    └─TableRowIDScan(Probe)	382.00	cop[tikv]	table:tbl_39	keep order:false, stats:pseudo
 select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
 col_239
 1994
@@ -650,20 +650,20 @@ create table t2 (cc1 int,cc2 text,primary key(cc1));
 insert into t2 values (2, '2');
 set tidb_executor_concurrency = 1;
 set tidb_window_concurrency = 100;
-explain select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a,b,c;
+explain format='brief' select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a,b,c;
 id	estRows	task	access object	operator info
-Sort_15	20000.00	root		Column#8, Column#9, Column#10
-└─Union_18	20000.00	root		
-  ├─Projection_20	10000.00	root		test.t2.cc2->Column#8, test.t2.cc2->Column#9, test.t2.cc1->Column#10
-  │ └─TableReader_22	10000.00	root		data:TableFullScan_21
-  │   └─TableFullScan_21	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─Projection_23	10000.00	root		cast(Column#7, text BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#8, test.t1.cc2->Column#9, test.t1.cc1->Column#10
-    └─Shuffle_28	10000.00	root		execution info: concurrency:100, data sources:[TableReader_26]
-      └─Window_24	10000.00	root		count(1)->Column#7 over(partition by test.t1.cc1)
-        └─Sort_27	10000.00	root		test.t1.cc1
-          └─ShuffleReceiver_30	10000.00	root		
-            └─TableReader_26	10000.00	root		data:TableFullScan_25
-              └─TableFullScan_25	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Sort	20000.00	root		Column#8, Column#9, Column#10
+└─Union	20000.00	root		
+  ├─Projection	10000.00	root		test.t2.cc2->Column#8, test.t2.cc2->Column#9, test.t2.cc1->Column#10
+  │ └─TableReader	10000.00	root		data:TableFullScan
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─Projection	10000.00	root		cast(Column#7, text BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#8, test.t1.cc2->Column#9, test.t1.cc1->Column#10
+    └─Shuffle	10000.00	root		execution info: concurrency:100, data sources:[TableReader]
+      └─Window	10000.00	root		count(1)->Column#7 over(partition by test.t1.cc1)
+        └─Sort	10000.00	root		test.t1.cc1
+          └─ShuffleReceiver	10000.00	root		
+            └─TableReader	10000.00	root		data:TableFullScan
+              └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a,b,c;
 a	b	c
 1	aaaa	1
@@ -699,7 +699,7 @@ PARTITION `p1` VALUES LESS THAN (14104),
 PARTITION `p2` VALUES LESS THAN (56927));
 INSERT INTO `tceb7972c` VALUES(NULL,32768,3820.5208),('[2978991857918245466, 2358633058135455779]',14958,9050.871),('[3209216649516490663, 8796285761077563704, 8679842102776923655, 7938639730493564777]',50028,5950.6714),('[1835017567976206479, 2]',25510,6779.271),('[7771897049175925887, 1, 5907722896328501457, 2218303279528464844, 4106409123325473016]',56899,9767.853),('[7839602274985524695, 4773627824242235154, 5873227109465605544, 4833046260666832936]',33174,3820.5208);
 analyze table tceb7972c;
-explain SELECT 1
+explain format='brief' SELECT 1
 FROM (
 SELECT /*+ USE_INDEX_MERGE(tceb7972c t61a85298)*/ tceb7972c.col_17 AS col_60767
 FROM t61a85298
@@ -708,14 +708,14 @@ JOIN tceb7972c ON tceb7972c.col_19 = t61a85298.col_71
 WHERE 16739493649928310215 MEMBER OF (derived_table.col_60767)
 OR NOT (JSON_CONTAINS(derived_table.col_60767, '6019730272580550835'));
 id	estRows	task	access object	operator info
-Projection_11	6.00	root		1->Column#18
-└─HashJoin_13	6.00	root		inner join, equal:[eq(test.tceb7972c.col_19, Column#19)]
-  ├─TableReader_16(Build)	4.80	root	partition:all	data:Selection_15
-  │ └─Selection_15	4.80	cop[tikv]		or(json_memberof(cast(16739493649928310215, json BINARY), test.tceb7972c.col_17), not(istrue_with_null(json_contains(test.tceb7972c.col_17, cast("6019730272580550835", json BINARY)))))
-  │   └─TableFullScan_14	6.00	cop[tikv]	table:tceb7972c	keep order:false, stats:partial[col_17:missing]
-  └─Projection_17(Probe)	10000.00	root		cast(test.t61a85298.col_71, double BINARY)->Column#19
-    └─TableReader_19	10000.00	root		data:TableFullScan_18
-      └─TableFullScan_18	10000.00	cop[tikv]	table:t61a85298	keep order:false, stats:pseudo
+Projection	6.00	root		1->Column#18
+└─HashJoin	6.00	root		inner join, equal:[eq(test.tceb7972c.col_19, Column#19)]
+  ├─TableReader(Build)	4.80	root	partition:all	data:Selection
+  │ └─Selection	4.80	cop[tikv]		or(json_memberof(cast(16739493649928310215, json BINARY), test.tceb7972c.col_17), not(istrue_with_null(json_contains(test.tceb7972c.col_17, cast("6019730272580550835", json BINARY)))))
+  │   └─TableFullScan	6.00	cop[tikv]	table:tceb7972c	keep order:false, stats:partial[col_17:missing]
+  └─Projection(Probe)	10000.00	root		cast(test.t61a85298.col_71, double BINARY)->Column#19
+    └─TableReader	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t61a85298	keep order:false, stats:pseudo
 drop table if exists t0, t1;
 CREATE TABLE t0(c0 int);
 CREATE TABLE t1(c0 int);
@@ -779,15 +779,15 @@ create table t1(a int primary key, b int, index idx(b));
 insert into t values(1), (2), (123);
 insert into t1 values(2, 123), (123, 2);
 set tidb_opt_fix_control='44855:on';
-explain select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
+explain format='brief' select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
 id	estRows	task	access object	operator info
-Projection_9	12.50	root		test.t.a, test.t1.a, test.t1.b
-└─IndexJoin_12	12.50	root		inner join, inner:IndexReader_11, outer key:test.t.a, inner key:test.t1.a, equal cond:eq(test.t.a, test.t1.a)
-  ├─TableReader_20(Build)	9990.00	root		data:Selection_19
-  │ └─Selection_19	9990.00	cop[tikv]		not(isnull(test.t.a))
-  │   └─TableFullScan_18	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─IndexReader_11(Probe)	12.50	root		index:IndexRangeScan_10
-    └─IndexRangeScan_10	12.50	cop[tikv]	table:t1, index:idx(b)	range: decided by [eq(test.t1.a, test.t.a) eq(test.t1.b, 123)], keep order:false, stats:pseudo
+Projection	12.50	root		test.t.a, test.t1.a, test.t1.b
+└─IndexJoin	12.50	root		inner join, inner:IndexReader, outer key:test.t.a, inner key:test.t1.a, equal cond:eq(test.t.a, test.t1.a)
+  ├─TableReader(Build)	9990.00	root		data:Selection
+  │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.a))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexReader(Probe)	12.50	root		index:IndexRangeScan
+    └─IndexRangeScan	12.50	cop[tikv]	table:t1, index:idx(b)	range: decided by [eq(test.t1.a, test.t.a) eq(test.t1.b, 123)], keep order:false, stats:pseudo
 select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
 a	a	b
 2	2	123
@@ -797,38 +797,38 @@ insert into t values(1), (2);
 select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
 a	a
 2	2
-explain select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
+explain format='brief' select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
 id	estRows	task	access object	operator info
-IndexJoin_15	1.25	root		left outer join, inner:TableReader_12, left side:Limit_22, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
-├─Limit_22(Build)	1.00	root		offset:1, count:1
-│ └─TableReader_26	2.00	root		data:Limit_25
-│   └─Limit_25	2.00	cop[tikv]		offset:0, count:2
-│     └─TableFullScan_24	2.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─TableReader_12(Probe)	1.00	root		data:TableRangeScan_11
-  └─TableRangeScan_11	1.00	cop[tikv]	table:t2	range: decided by [test.t.a], keep order:false, stats:pseudo
+IndexJoin	1.25	root		left outer join, inner:TableReader, left side:Limit, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
+├─Limit(Build)	1.00	root		offset:1, count:1
+│ └─TableReader	2.00	root		data:Limit
+│   └─Limit	2.00	cop[tikv]		offset:0, count:2
+│     └─TableFullScan	2.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableReader(Probe)	1.00	root		data:TableRangeScan
+  └─TableRangeScan	1.00	cop[tikv]	table:t2	range: decided by [test.t.a], keep order:false, stats:pseudo
 drop table if exists t1, t2;
 create table t1(a int, b int, index idx(a, b));
 create table t2(a int, b int, index idx(a));
-explain select /*+ merge_join(t1) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
+explain format='brief' select /*+ merge_join(t1) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
 id	estRows	task	access object	operator info
-MergeJoin_8	12475.01	root		inner join, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b
-├─Sort_23(Build)	9980.01	root		test.t2.a, test.t2.b
-│ └─TableReader_18	9980.01	root		data:Selection_17
-│   └─Selection_17	9980.01	cop[tikv]		not(isnull(test.t2.a)), not(isnull(test.t2.b))
-│     └─TableFullScan_16	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─IndexReader_11(Probe)	9980.01	root		index:Selection_10
-  └─Selection_10	9980.01	cop[tikv]		not(isnull(test.t1.b))
-    └─IndexFullScan_9	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:true, stats:pseudo
-explain select /*+ no_hash_join(t1), no_index_join(t1,t2), no_index_hash_join(t1,t2) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
+MergeJoin	12475.01	root		inner join, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b
+├─Sort(Build)	9980.01	root		test.t2.a, test.t2.b
+│ └─TableReader	9980.01	root		data:Selection
+│   └─Selection	9980.01	cop[tikv]		not(isnull(test.t2.a)), not(isnull(test.t2.b))
+│     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─IndexReader(Probe)	9980.01	root		index:Selection
+  └─Selection	9980.01	cop[tikv]		not(isnull(test.t1.b))
+    └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:true, stats:pseudo
+explain format='brief' select /*+ no_hash_join(t1), no_index_join(t1,t2), no_index_hash_join(t1,t2) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
 id	estRows	task	access object	operator info
-MergeJoin_8	12475.01	root		inner join, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b
-├─Sort_51(Build)	9980.01	root		test.t2.a, test.t2.b
-│ └─TableReader_46	9980.01	root		data:Selection_45
-│   └─Selection_45	9980.01	cop[tikv]		not(isnull(test.t2.a)), not(isnull(test.t2.b))
-│     └─TableFullScan_44	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─IndexReader_39(Probe)	9980.01	root		index:Selection_38
-  └─Selection_38	9980.01	cop[tikv]		not(isnull(test.t1.b))
-    └─IndexFullScan_37	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:true, stats:pseudo
+MergeJoin	12475.01	root		inner join, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b
+├─Sort(Build)	9980.01	root		test.t2.a, test.t2.b
+│ └─TableReader	9980.01	root		data:Selection
+│   └─Selection	9980.01	cop[tikv]		not(isnull(test.t2.a)), not(isnull(test.t2.b))
+│     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─IndexReader(Probe)	9980.01	root		index:Selection
+  └─Selection	9980.01	cop[tikv]		not(isnull(test.t1.b))
+    └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:true, stats:pseudo
 drop table if exists t;
 create table t(a int, b int, c int, primary key(a,b), key ib(b));
 explain format = brief select * from t use index (ib) where a = 1 and b = 1;

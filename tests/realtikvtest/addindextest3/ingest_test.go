@@ -59,7 +59,7 @@ func TestAddIndexIngestMemoryUsage(t *testing.T) {
 	var sb strings.Builder
 	sb.WriteString("insert into t values ")
 	size := 100
-	for i := 0; i < size; i++ {
+	for i := range size {
 		sb.WriteString(fmt.Sprintf("(%d, %d, %d)", i, i, i))
 		if i != size-1 {
 			sb.WriteString(",")
@@ -150,7 +150,7 @@ func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
 	tk.MustExec("create table t (a int primary key) partition by hash(a) partitions 32;")
 	var sb strings.Builder
 	sb.WriteString("insert into t values ")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		sb.WriteString(fmt.Sprintf("(%d)", i))
 		if i != 99 {
 			sb.WriteString(",")
@@ -190,7 +190,7 @@ func TestIngestMVIndexOnPartitionTable(t *testing.T) {
 			internalTK := testkit.NewTestKit(t, store)
 			internalTK.MustExec("use addindexlit;")
 
-			for i := 0; i < 1024; i++ {
+			for i := range 1024 {
 				internalTK.MustExec(fmt.Sprintf("insert into t values (%d, '[%d, %d, %d]')", n, n, n+1, n+2))
 				internalTK.MustExec(fmt.Sprintf("delete from t where pk = %d", n-10))
 				internalTK.MustExec(fmt.Sprintf("update t set a = '[%d, %d, %d]' where pk = %d", n-3, n-2, n+1000, n-5))
@@ -226,7 +226,7 @@ func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
 	tk.MustExec("create table t (a int primary key);")
 	var sb strings.Builder
 	sb.WriteString("insert into t values ")
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		sb.WriteString(fmt.Sprintf("(%d000)", i))
 		if i != 19 {
 			sb.WriteString(",")
@@ -279,7 +279,7 @@ func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
 	tk.MustExec("create table t (a int primary key);")
 	var sb strings.Builder
 	sb.WriteString("insert into t values ")
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		sb.WriteString(fmt.Sprintf("(%d000)", i))
 		if i != 19 {
 			sb.WriteString(",")
@@ -374,7 +374,7 @@ func TestAddIndexSplitTableRanges(t *testing.T) {
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 
 	tk.MustExec("create table t (a int primary key, b int);")
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
 	}
 	tk.MustQuery("split table t between (0) and (80000) regions 7;").Check(testkit.Rows("6 1"))
@@ -388,7 +388,7 @@ func TestAddIndexSplitTableRanges(t *testing.T) {
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int primary key, b int);")
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
 	}
 	tk.MustQuery("split table t by (10000),(20000),(30000),(40000),(50000),(60000);").Check(testkit.Rows("6 1"))
@@ -407,7 +407,7 @@ func TestAddIndexLoadTableRangeError(t *testing.T) {
 	tk.MustExec(`set global tidb_enable_dist_task=off;`) // Use checkpoint manager.
 
 	tk.MustExec("create table t (a int primary key, b int);")
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
 	}
 	tk.MustQuery("split table t by (10000),(20000),(30000),(40000),(50000),(60000);").Check(testkit.Rows("6 1"))
@@ -435,7 +435,7 @@ func TestAddIndexMockFlushError(t *testing.T) {
 	tk.MustExec("set global tidb_enable_dist_task = off;")
 
 	tk.MustExec("create table t (a int primary key, b int);")
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockFlushError", "1*return"))
@@ -634,7 +634,7 @@ func TestAddIndexImportFailed(t *testing.T) {
 	tk.MustExec(`set global tidb_enable_dist_task=off;`)
 
 	tk.MustExec("create table t (a int, b int);")
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		insertSQL := fmt.Sprintf("insert into t values (%d, %d)", i, i)
 		tk.MustExec(insertSQL)
 	}
@@ -725,13 +725,13 @@ func TestConcFastReorg(t *testing.T) {
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 
 	tblNum := 10
-	for i := 0; i < tblNum; i++ {
+	for i := range tblNum {
 		tk.MustExec(fmt.Sprintf("create table t%d(a int);", i))
 	}
 
 	var wg sync.WaitGroup
 	wg.Add(tblNum)
-	for i := 0; i < tblNum; i++ {
+	for i := range tblNum {
 		go func() {
 			defer wg.Done()
 			tk2 := testkit.NewTestKit(t, store)
@@ -769,7 +769,7 @@ func TestIssue55808(t *testing.T) {
 	})
 
 	tk.MustExec("create table t (a int primary key, b int);")
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
 	}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/doIngestFailed", "return()")
@@ -832,4 +832,34 @@ func TestAddIndexBackfillLostTempIndexValues(t *testing.T) {
 	require.Equal(t, rows[0][0].(string), "4")
 
 	tk.MustExec("admin check table t;")
+}
+
+func TestAddIndexInsertSameOriginIndexValue(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
+
+	tk.MustExec("create table t(id int primary key, b int not null default 0);")
+	tk.MustExec("insert into t values (1, 0);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use addindexlit;")
+
+	ingest.MockDMLExecutionStateBeforeImport = func() {
+		_, err := tk1.Exec("delete from t where id = 1;")
+		assert.NoError(t, err)
+		_, err = tk1.Exec("insert into t values (1, 0);")
+		assert.NoError(t, err)
+	}
+	ddl.MockDMLExecutionStateBeforeMerge = func() {
+		_, err := tk1.Exec("insert into t (id) values (1);")
+		assert.ErrorContains(t, err, "Duplicate entry")
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport", "1*return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge", "1*return")
+	tk.MustExec("alter table t add unique index idx(b);")
 }

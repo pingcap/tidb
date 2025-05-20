@@ -40,11 +40,11 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
 	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t(pk int primary key, a int)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))
 	}
 	tk.MustExec("create table s(a int primary key)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if rand.Float32() < 0.3 {
 			tk.MustExec(fmt.Sprintf("insert into s values(%d)", i))
 		} else {
@@ -434,11 +434,11 @@ func TestIssue31129(t *testing.T) {
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
 	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t(pk int primary key, a int)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))
 	}
 	tk.MustExec("create table s(a int primary key)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into s values(%d)", i))
 	}
 	tk.MustExec("analyze table t")

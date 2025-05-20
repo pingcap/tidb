@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 const (
@@ -158,7 +157,7 @@ func (g *TTLTimersSyncer) Reset() {
 	g.lastSyncTime = zeroTime
 	g.lastSyncVer = 0
 	if len(g.key2Timers) > 0 {
-		maps.Clear(g.key2Timers)
+		clear(g.key2Timers)
 	}
 }
 

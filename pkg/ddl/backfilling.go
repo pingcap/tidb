@@ -395,6 +395,8 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			break
 		}
 	}
+	failpoint.InjectCall("afterHandleBackfillTask", task.jobID)
+
 	logutil.DDLLogger().Info("backfill worker finish task",
 		zap.Stringer("worker", w), zap.Stringer("task", task),
 		zap.Int("added count", result.addedCount),
@@ -828,20 +830,9 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 }
 
 func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) {
-	opR, opW := pipe.GetLocalIngestModeReaderAndWriter()
-	if opR == nil || opW == nil {
+	reader, writer := pipe.GetReaderAndWriter()
+	if reader == nil || writer == nil {
 		logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", job.ID))
-		return
-	}
-	reader, readerOk := opR.(*TableScanOperator)
-	writer, writerOk := opW.(*IndexIngestOperator)
-	if !readerOk || !writerOk {
-		logutil.DDLIngestLogger().Error(
-			"unexpected operator types, config can't be adjusted",
-			zap.Int64("jobID", job.ID),
-			zap.Bool("isReaderValid", readerOk),
-			zap.Bool("isWriterValid", writerOk),
-		)
 		return
 	}
 	ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
@@ -1022,7 +1013,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				} else {
 					totalAddedCount += int64(result.addedCount)
 				}
-				dc.getReorgCtx(reorgInfo.Job.ID).setRowCount(totalAddedCount)
 
 				keeper.updateNextKey(result.taskID, result.nextKey)
 

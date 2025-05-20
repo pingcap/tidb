@@ -221,7 +221,7 @@ func RunWithRetry(
 	f func(context.Context) (bool, error),
 ) error {
 	var lastErr error
-	for i := 0; i < maxRetry; i++ {
+	for i := range maxRetry {
 		retryable, err := f(ctx)
 		if err == nil || !retryable {
 			return err

@@ -381,10 +381,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 		dataFiles := kvMeta.GetDataFiles()
 		length := len(dataFiles)
 		for start := 0; start < length; start += step {
-			end := start + step
-			if end > length {
-				end = length
-			}
+			end := min(start+step, length)
 			result = append(result, &MergeSortSpec{
 				MergeSortStepMeta: &MergeSortStepMeta{
 					KVGroup:   kvGroup,

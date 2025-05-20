@@ -4,6 +4,7 @@ package stream_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -62,7 +63,7 @@ func TestMetadataHelperReadFile(t *testing.T) {
 	// write data at first
 	err = s.WriteFile(ctx, filename1, data1)
 	require.NoError(t, err)
-	err = s.WriteFile(ctx, filename2, append(append([]byte{}, data1...), data2...))
+	err = s.WriteFile(ctx, filename2, slices.Concat(data1, data2))
 	require.NoError(t, err)
 
 	helper.InitCacheEntry(filename2, 2)

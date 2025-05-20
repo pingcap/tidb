@@ -167,10 +167,8 @@ func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalSto
 
 func (ms *StreamMetadataSet) iterateDataFiles(f func(d *FileGroupInfo) (shouldBreak bool)) {
 	for _, m := range ms.metadataInfos {
-		for _, d := range m.FileGroupInfos {
-			if f(d) {
-				return
-			}
+		if slices.ContainsFunc(m.FileGroupInfos, f) {
+			return
 		}
 	}
 }

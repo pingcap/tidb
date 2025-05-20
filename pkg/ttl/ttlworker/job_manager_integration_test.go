@@ -108,7 +108,11 @@ func TestWithSession(t *testing.T) {
 		ttlworker.DetachStatsCollector = origDetachStats
 	}()
 
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	// stop TTLJobManager to avoid unnecessary job schedule and make test stable
+	dom.TTLJobManager().Stop()
+	require.NoError(t, dom.TTLJobManager().WaitStopped(context.Background(), time.Minute))
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@time_zone = 'Asia/Shanghai'")
 	tk.MustExec("set @@global.time_zone= 'Europe/Berlin'")
@@ -212,7 +216,7 @@ func TestParallelLockNewJob(t *testing.T) {
 
 		wg := sync.WaitGroup{}
 		stopErr := atomic.NewError(nil)
-		for j := 0; j < concurrency; j++ {
+		for j := range concurrency {
 			jobManagerID := fmt.Sprintf("test-ttl-manager-%d", j)
 			wg.Add(1)
 			go func() {
@@ -1556,7 +1560,7 @@ func TestFinishError(t *testing.T) {
 
 	// Test the `CheckFinishedJob` can tolerate the `job.finish` error
 	initializeTest()
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		m.CheckFinishedJob(se)
 		tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("1"))
 	}
@@ -1570,7 +1574,7 @@ func TestFinishError(t *testing.T) {
 	t.Cleanup(func() {
 		vardef.EnableTTLJob.Store(true)
 	})
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		m.RescheduleJobs(se, now)
 		tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("1"))
 	}
@@ -1581,7 +1585,7 @@ func TestFinishError(t *testing.T) {
 	initializeTest()
 	tk.MustExec("drop table t")
 	require.NoError(t, m.InfoSchemaCache().Update(se))
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		m.RescheduleJobs(se, now)
 		tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("1"))
 	}
@@ -1594,7 +1598,7 @@ func TestFinishError(t *testing.T) {
 
 	// Teset the `updateHeartBeat` can tolerate the `job.finish` error
 	initializeTest()
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		// timeout is 6h
 		now = now.Add(time.Hour * 8)
 		m.UpdateHeartBeat(context.Background(), se, now)
@@ -1856,7 +1860,7 @@ func TestJobManagerWithFault(t *testing.T) {
 		pool syssession.Pool
 	}
 	managers := make([]managerWithPool, 0, managerCount)
-	for i := 0; i < managerCount; i++ {
+	for i := range managerCount {
 		pool := wrapPoolForTest(dom.AdvancedSysSessionPool())
 		faultPool := newFaultSessionPool(t, pool)
 
@@ -1912,7 +1916,7 @@ func TestJobManagerWithFault(t *testing.T) {
 				// the first non-faultt manager is the leader
 				leader.Store(managers[faultCount].m.ID())
 				logutil.BgLogger().Info("set leader", zap.String("leader", leader.Load()))
-				for i := 0; i < faultCount; i++ {
+				for i := range faultCount {
 					m := managers[i]
 					logutil.BgLogger().Info("inject fault", zap.String("id", m.m.ID()))
 					m.pool.(*faultSessionPool).setFault(fault)
@@ -1965,10 +1969,10 @@ func TestJobManagerWithFault(t *testing.T) {
 		logutil.BgLogger().Info("create table", zap.Int64("table_id", tbl.Meta().ID))
 
 		// insert some data
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			tk.MustExec(fmt.Sprintf("INSERT INTO t VALUES (%d, '%s')", i, time.Now().Add(-time.Hour*2).Format(time.DateTime)))
 		}
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			tk.MustExec(fmt.Sprintf("INSERT INTO t VALUES (%d, '%s')", i+5, time.Now().Format(time.DateTime)))
 		}
 

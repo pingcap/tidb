@@ -482,7 +482,7 @@ func TestAddIndexDistCleanUpBlock(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec(`set global tidb_enable_dist_task=1;`)
 	var wg sync.WaitGroup
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

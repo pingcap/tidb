@@ -70,7 +70,7 @@ func (sm *Manager) delScheduler(taskID int64) {
 	delete(sm.mu.schedulerMap, taskID)
 	for i, scheduler := range sm.mu.schedulers {
 		if scheduler.GetTask().ID == taskID {
-			sm.mu.schedulers = append(sm.mu.schedulers[:i], sm.mu.schedulers[i+1:]...)
+			sm.mu.schedulers = slices.Delete(sm.mu.schedulers, i, i+1)
 			break
 		}
 	}
