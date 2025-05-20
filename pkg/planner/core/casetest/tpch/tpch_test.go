@@ -198,7 +198,6 @@ CREATE TABLE lineitem (
 	integrationSuiteData.LoadTestCases(t, &input, &output)
 	costTraceFormat := `explain format='cost_trace' `
 	for i := range input {
-
 		testdata.OnRecord(func() {
 			output[i].SQL = input[i]
 		})
