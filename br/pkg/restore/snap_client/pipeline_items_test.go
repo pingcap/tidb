@@ -25,20 +25,21 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
-func generateMockCreatedTables(tableCount int) []*snapclient.CreatedTable {
-	createdTables := make([]*snapclient.CreatedTable, 0, tableCount)
+func generateMockCreatedTables(tableCount int) []*restoreutils.CreatedTable {
+	createdTables := make([]*restoreutils.CreatedTable, 0, tableCount)
 	for i := 1; i <= 100; i += 1 {
-		createdTables = append(createdTables, &snapclient.CreatedTable{
+		createdTables = append(createdTables, &restoreutils.CreatedTable{
 			Table: &model.TableInfo{ID: int64(i)},
 		})
 	}
@@ -48,14 +49,14 @@ func generateMockCreatedTables(tableCount int) []*snapclient.CreatedTable {
 func TestPipelineConcurrentHandler1(t *testing.T) {
 	handlerBuilder := &snapclient.PipelineConcurrentBuilder{}
 
-	handlerBuilder.RegisterPipelineTask("task1", 4, func(ctx context.Context, ct *snapclient.CreatedTable) error {
+	handlerBuilder.RegisterPipelineTask("task1", 4, func(ctx context.Context, ct *restoreutils.CreatedTable) error {
 		ct.Table.ID += 10000
 		return nil
 	}, func(ctx context.Context) error {
 		return nil
 	})
 	totalID := int64(0)
-	handlerBuilder.RegisterPipelineTask("task2", 4, func(ctx context.Context, ct *snapclient.CreatedTable) error {
+	handlerBuilder.RegisterPipelineTask("task2", 4, func(ctx context.Context, ct *restoreutils.CreatedTable) error {
 		atomic.AddInt64(&totalID, ct.Table.ID)
 		return nil
 	}, func(ctx context.Context) error {
@@ -72,7 +73,7 @@ func TestPipelineConcurrentHandler2(t *testing.T) {
 	handlerBuilder := &snapclient.PipelineConcurrentBuilder{}
 
 	count1, count2, count3 := int64(0), int64(0), int64(0)
-	handlerBuilder.RegisterPipelineTask("task1", 4, func(ctx context.Context, ct *snapclient.CreatedTable) error {
+	handlerBuilder.RegisterPipelineTask("task1", 4, func(ctx context.Context, ct *restoreutils.CreatedTable) error {
 		atomic.AddInt64(&count1, 1)
 		time.Sleep(time.Millisecond * 10)
 		return nil
@@ -80,7 +81,7 @@ func TestPipelineConcurrentHandler2(t *testing.T) {
 		return nil
 	})
 	concurrency := uint(4)
-	handlerBuilder.RegisterPipelineTask("task2", concurrency, func(ctx context.Context, ct *snapclient.CreatedTable) error {
+	handlerBuilder.RegisterPipelineTask("task2", concurrency, func(ctx context.Context, ct *restoreutils.CreatedTable) error {
 		atomic.AddInt64(&count2, 1)
 		if ct.Table.ID > int64(concurrency) {
 			return errors.Errorf("failed in task2")
@@ -89,7 +90,7 @@ func TestPipelineConcurrentHandler2(t *testing.T) {
 	}, func(ctx context.Context) error {
 		return nil
 	})
-	handlerBuilder.RegisterPipelineTask("task3", concurrency, func(ctx context.Context, ct *snapclient.CreatedTable) error {
+	handlerBuilder.RegisterPipelineTask("task3", concurrency, func(ctx context.Context, ct *restoreutils.CreatedTable) error {
 		atomic.AddInt64(&count3, 1)
 		<-ctx.Done()
 		return errors.Annotate(ctx.Err(), "failed in task3")
@@ -132,11 +133,11 @@ func generateStatsPartition(partitionIDs []int64) (*model.PartitionInfo, *model.
 	for _, partitionID := range partitionIDs {
 		downDefs = append(downDefs, model.PartitionDefinition{
 			ID:   partitionID,
-			Name: ast.NewCIStr(fmt.Sprintf("p%d", partitionID)),
+			Name: pmodel.NewCIStr(fmt.Sprintf("p%d", partitionID)),
 		})
 		upDefs = append(upDefs, model.PartitionDefinition{
 			ID:   partitionID + 1000,
-			Name: ast.NewCIStr(fmt.Sprintf("p%d", partitionID)),
+			Name: pmodel.NewCIStr(fmt.Sprintf("p%d", partitionID)),
 		})
 	}
 	return &model.PartitionInfo{Definitions: downDefs}, &model.PartitionInfo{Definitions: upDefs}
@@ -190,18 +191,18 @@ func generateStatsIndices(hasGlobalIndex bool) []*model.IndexInfo {
 	}
 }
 
-func generateStatsCreatedTables(hasGlobalIndex bool, tableID int64, partitionIDs ...int64) *snapclient.CreatedTable {
+func generateStatsCreatedTables(hasGlobalIndex bool, tableID int64, partitionIDs ...int64) *restoreutils.CreatedTable {
 	downPart, upPart := generateStatsPartition(partitionIDs)
 	indices := generateStatsIndices(hasGlobalIndex)
 	files := generateStatsFiles(tableID, partitionIDs, hasGlobalIndex)
-	return &snapclient.CreatedTable{
+	return &restoreutils.CreatedTable{
 		Table: &model.TableInfo{
 			ID:        tableID,
 			Partition: downPart,
 			Indices:   indices,
 		},
 		OldTable: &metautil.Table{
-			DB: &model.DBInfo{Name: ast.NewCIStr("test")},
+			DB: &model.DBInfo{Name: pmodel.NewCIStr("test")},
 			Info: &model.TableInfo{
 				ID:        tableID + 1000,
 				Partition: upPart,
@@ -231,7 +232,7 @@ func TestUpdateStatsMeta(t *testing.T) {
 	client.SetDomain(dom)
 	builder := &snapclient.PipelineConcurrentBuilder{}
 	client.RegisterUpdateMetaAndLoadStats(builder, nil, MockUpdateCh{}, 1)
-	err = builder.StartPipelineTask(ctx, []*snapclient.CreatedTable{
+	err = builder.StartPipelineTask(ctx, []*restoreutils.CreatedTable{
 		generateStatsCreatedTables(false, 100, 101, 102, 103),
 		generateStatsCreatedTables(true, 104, 105, 106, 107),
 		generateStatsCreatedTables(false, 116),

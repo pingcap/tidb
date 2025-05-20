@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -47,14 +46,6 @@ const defaultChannelSize = 1024
 // checksum tasks.
 const defaultChecksumConcurrency = 64
 
-// CreatedTable is a table created on restore process,
-// but not yet filled with data.
-type CreatedTable struct {
-	RewriteRule *restoreutils.RewriteRules
-	Table       *model.TableInfo
-	OldTable    *metautil.Table
-}
-
 type PhysicalTable struct {
 	NewPhysicalID int64
 	OldPhysicalID int64
@@ -62,8 +53,8 @@ type PhysicalTable struct {
 	Files         []*backuppb.File
 }
 
-func defaultOutputTableChan() chan *CreatedTable {
-	return make(chan *CreatedTable, defaultChannelSize)
+func defaultOutputTableChan() chan *restoreutils.CreatedTable {
+	return make(chan *restoreutils.CreatedTable, defaultChannelSize)
 }
 
 // ExhaustErrors drains all remaining errors in the channel, into a slice of errors.
@@ -99,7 +90,7 @@ type PipelineContext struct {
 }
 
 // RestorePipeline does checksum, load stats and wait for tiflash to be ready.
-func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext, createdTables []*CreatedTable) error {
+func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext, createdTables []*restoreutils.CreatedTable) (err error) {
 	start := time.Now()
 	defer func() {
 		summary.CollectDuration("restore pipeline", time.Since(start))
@@ -144,7 +135,7 @@ type pipelineFunction struct {
 	taskLabel   string
 	concurrency uint
 
-	processFn func(context.Context, *CreatedTable) error
+	processFn func(context.Context, *restoreutils.CreatedTable) error
 	endFn     func(context.Context) error
 }
 
@@ -155,7 +146,7 @@ type PipelineConcurrentBuilder struct {
 func (builder *PipelineConcurrentBuilder) RegisterPipelineTask(
 	taskLabel string,
 	concurrency uint,
-	processFn func(context.Context, *CreatedTable) error,
+	processFn func(context.Context, *restoreutils.CreatedTable) error,
 	endFn func(context.Context) error,
 ) {
 	builder.pipelineFunctions = append(builder.pipelineFunctions, pipelineFunction{
@@ -166,7 +157,7 @@ func (builder *PipelineConcurrentBuilder) RegisterPipelineTask(
 	})
 }
 
-func (builder *PipelineConcurrentBuilder) StartPipelineTask(ctx context.Context, createdTables []*CreatedTable) error {
+func (builder *PipelineConcurrentBuilder) StartPipelineTask(ctx context.Context, createdTables []*restoreutils.CreatedTable) error {
 	eg, pipelineTaskCtx := errgroup.WithContext(ctx)
 	handler := &PipelineConcurrentHandler{
 		pipelineTaskCtx: pipelineTaskCtx,
@@ -192,8 +183,8 @@ type PipelineConcurrentHandler struct {
 	eg              *errgroup.Group
 }
 
-func (handler *PipelineConcurrentHandler) afterTableRestoredCh(createdTables []*CreatedTable) <-chan *CreatedTable {
-	outCh := make(chan *CreatedTable)
+func (handler *PipelineConcurrentHandler) afterTableRestoredCh(createdTables []*restoreutils.CreatedTable) <-chan *restoreutils.CreatedTable {
+	outCh := make(chan *restoreutils.CreatedTable)
 
 	handler.eg.Go(func() error {
 		defer close(outCh)
@@ -213,7 +204,7 @@ func (handler *PipelineConcurrentHandler) afterTableRestoredCh(createdTables []*
 
 // dropToBlackhole drop all incoming tables into black hole,
 // i.e. don't execute checksum, just increase the process anyhow.
-func (handler *PipelineConcurrentHandler) dropToBlackhole(inCh <-chan *CreatedTable) {
+func (handler *PipelineConcurrentHandler) dropToBlackhole(inCh <-chan *restoreutils.CreatedTable) {
 	handler.eg.Go(func() error {
 		for {
 			select {
@@ -229,12 +220,12 @@ func (handler *PipelineConcurrentHandler) dropToBlackhole(inCh <-chan *CreatedTa
 }
 
 func (handler *PipelineConcurrentHandler) concurrentHandleTablesCh(
-	inCh <-chan *CreatedTable,
+	inCh <-chan *restoreutils.CreatedTable,
 	concurrency uint,
 	taskLabel string,
-	processFun func(context.Context, *CreatedTable) error,
+	processFun func(context.Context, *restoreutils.CreatedTable) error,
 	endFun func(context.Context) error,
-) (outCh chan *CreatedTable) {
+) (outCh chan *restoreutils.CreatedTable) {
 	outCh = defaultOutputTableChan()
 	handler.eg.Go(func() (pipelineErr error) {
 		workers := tidbutil.NewWorkerPool(concurrency, taskLabel)
@@ -299,7 +290,7 @@ func (rc *SnapClient) registerValidateChecksum(
 	updateCh glue.Progress,
 	concurrency uint,
 ) {
-	builder.RegisterPipelineTask("Restore Checksum", defaultChecksumConcurrency, func(c context.Context, tbl *CreatedTable) error {
+	builder.RegisterPipelineTask("Restore Checksum", defaultChecksumConcurrency, func(c context.Context, tbl *restoreutils.CreatedTable) error {
 		err := rc.execAndValidateChecksum(c, tbl, kvClient, concurrency)
 		if err != nil {
 			return errors.Trace(err)
@@ -376,7 +367,8 @@ func calculateRowCountForPhysicalTable(files []*backuppb.File) int64 {
 	return int64(totalKvs)
 }
 
-func updateStatsMetaForNonPartitionTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle, tbl *CreatedTable) error {
+func updateStatsMetaForNonPartitionTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle,
+	tbl *restoreutils.CreatedTable) error {
 	count := calculateRowCountForPhysicalTable(tbl.OldTable.FilesOfPhysicals[tbl.OldTable.Info.ID])
 	if statsErr := buffer.TryUpdateMetas(ctx, statsHandler, tbl.Table.ID, count); statsErr != nil {
 		log.Error("update stats meta failed", zap.Error(statsErr))
@@ -385,7 +377,8 @@ func updateStatsMetaForNonPartitionTable(ctx context.Context, buffer *statsMetaI
 	return nil
 }
 
-func updateStatsMetaForPartitionTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle, tbl *CreatedTable) error {
+func updateStatsMetaForPartitionTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle,
+	tbl *restoreutils.CreatedTable) error {
 	totalCount := int64(0)
 	physicalRowCountMap := make(map[int64]int64)
 	for physicalID, files := range tbl.OldTable.FilesOfPhysicals {
@@ -423,7 +416,8 @@ func updateStatsMetaForPartitionTable(ctx context.Context, buffer *statsMetaItem
 	return nil
 }
 
-func updateStatsMetaForTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle, tbl *CreatedTable) error {
+func updateStatsMetaForTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle,
+	tbl *restoreutils.CreatedTable) error {
 	if tbl.OldTable.Info.Partition == nil {
 		return updateStatsMetaForNonPartitionTable(ctx, buffer, statsHandler, tbl)
 	}
@@ -439,7 +433,7 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 	statsHandler := rc.dom.StatsHandle()
 	buffer := NewStatsMetaItemBuffer()
 
-	builder.RegisterPipelineTask("Update Stats", statsConcurrency, func(c context.Context, tbl *CreatedTable) error {
+	builder.RegisterPipelineTask("Update Stats", statsConcurrency, func(c context.Context, tbl *restoreutils.CreatedTable) error {
 		oldTable := tbl.OldTable
 		var statsErr error = nil
 		if oldTable.Stats != nil {
@@ -507,7 +501,7 @@ func (rc *SnapClient) registerWaitTiFlashReady(
 		}
 	}
 
-	builder.RegisterPipelineTask("Wait For Tiflash Ready", 4, func(c context.Context, tbl *CreatedTable) error {
+	builder.RegisterPipelineTask("Wait For Tiflash Ready", 4, func(c context.Context, tbl *restoreutils.CreatedTable) error {
 		if tbl.Table != nil && tbl.Table.TiFlashReplica == nil {
 			log.Info("table has no tiflash replica",
 				zap.Stringer("table", tbl.OldTable.Info.Name),

@@ -4,6 +4,7 @@ go_library(
     name = "utils",
     srcs = [
         "backoff.go",
+        "common.go",
         "db.go",
         "dyn_pprof_other.go",
         "dyn_pprof_unix.go",
@@ -33,6 +34,7 @@ go_library(
         "//br/pkg/summary",
         "//pkg/errno",
         "//pkg/kv",
+        "//pkg/meta",
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
@@ -93,10 +95,11 @@ go_test(
         "register_test.go",
         "retry_test.go",
         "safe_point_test.go",
+        "schema_test.go",
     ],
     embed = [":utils"],
     flaky = True,
-    shard_count = 37,
+    shard_count = 40,
     deps = [
         "//br/pkg/errors",
         "//pkg/kv",
