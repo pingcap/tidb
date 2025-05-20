@@ -55,6 +55,10 @@ func (s *syncer) getWatchRecordByID(id int64) ([]*QuarantineRecord, error) {
 	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectByIDStmt(id), false)
 }
 
+func (s *syncer) getWatchRecordByGroup(groupName string) ([]*QuarantineRecord, error) {
+	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectByGroupStmt(groupName), false)
+}
+
 func (s *syncer) getNewWatchRecords() ([]*QuarantineRecord, error) {
 	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectStmt, true)
 }
@@ -170,6 +174,18 @@ func (r *systemTableReader) genSelectByIDStmt(id int64) func() (string, []any) {
 		builder.WriteString(r.TableName)
 		builder.WriteString(" where id = %?")
 		params = append(params, id)
+		return builder.String(), params
+	}
+}
+
+func (r *systemTableReader) genSelectByGroupStmt(groupName string) func() (string, []any) {
+	return func() (string, []any) {
+		var builder strings.Builder
+		params := make([]any, 0, 1)
+		builder.WriteString("select * from ")
+		builder.WriteString(r.TableName)
+		builder.WriteString(" where resource_group_name = %?")
+		params = append(params, groupName)
 		return builder.String(), params
 	}
 }

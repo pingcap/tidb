@@ -155,10 +155,7 @@ func buildHist(
 	sampleFactor := float64(count) / float64(sampleNum)
 	// ndvFactor is a ratio that represents the average number of times each distinct value (NDV) should appear in the dataset.
 	// It is calculated as the total number of rows divided by the number of distinct values.
-	ndvFactor := float64(count) / float64(ndv)
-	if ndvFactor > sampleFactor {
-		ndvFactor = sampleFactor
-	}
+	ndvFactor := min(float64(count)/float64(ndv), sampleFactor)
 	// Since bucket count is increased by sampleFactor, so the actual max values per bucket are
 	// floor(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
 	// thus we need to add a sampleFactor to avoid building too many buckets.
@@ -338,7 +335,7 @@ func BuildHistAndTopN(
 	var corrXYSum float64
 
 	// Iterate through the samples
-	for i := int64(0); i < sampleNum; i++ {
+	for i := range sampleNum {
 		if isColumn {
 			corrXYSum += float64(i) * float64(samples[i].Ordinal)
 		}
@@ -355,8 +352,8 @@ func BuildHistAndTopN(
 			continue
 		}
 		// case 2, meet a different value: counting for the "current" is complete
-		// case 2-1, do not add a count of 1 if we're sampling
-		if curCnt == 1 && sampleFactor > 1 && allowPruning {
+		// case 2-1, do not add a count of 1 if we're sampling or if we've already collected 10% of the topN
+		if curCnt == 1 && allowPruning && (len(topNList) >= (numTopN/10) || sampleFactor > 1) {
 			cur, curCnt = sampleBytes, 1
 			continue
 		}
@@ -367,7 +364,7 @@ func BuildHistAndTopN(
 			continue
 		}
 		// case 2-3, now topn is full, and the "current" count is less than the least count in the topn: no need to insert the "current"
-		if len(topNList) >= numTopN && uint64(curCnt) <= topNList[len(topNList)-1].Count {
+		if len(topNList) >= numTopN && (curCnt == 1 || uint64(curCnt) <= topNList[len(topNList)-1].Count) {
 			cur, curCnt = sampleBytes, 1
 			continue
 		}
@@ -431,7 +428,7 @@ func BuildHistAndTopN(
 				foundTwice      bool
 				firstTimeSample types.Datum
 			)
-			for j := 0; j < len(topNList); j++ {
+			for j := range topNList {
 				if bytes.Equal(sampleBytes, topNList[j].Encoded) {
 					// This should never happen, but we met this panic before, so we add this check here.
 					// See: https://github.com/pingcap/tidb/issues/35948
@@ -478,6 +475,13 @@ func BuildHistAndTopN(
 
 	// Step3: build histogram with the rest samples
 	if len(samples) > 0 {
+		// if we pruned the topN, it means that there are no remaining skewed values in the samples
+		if len(topn.TopN) < numTopN && numBuckets == 256 {
+			remainingNDV := ndv - int64(len(topn.TopN))
+			// set the number of buckets to be the number of remaining distinct values divided by 2
+			// but no less than 1 and no more than the original number of buckets
+			numBuckets = int(min(max(1, remainingNDV/2), int64(numBuckets)))
+		}
 		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
 		if err != nil {
 			return nil, nil, err
@@ -497,7 +501,7 @@ func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64
 	// Sum the occurrence except the least common one from the top-n list. To check whether the lest common one is worth
 	// storing later.
 	sumCount := uint64(0)
-	for i := 0; i < len(topns)-1; i++ {
+	for i := range len(topns) - 1 {
 		sumCount += topns[i].Count
 	}
 	topNNum := len(topns)

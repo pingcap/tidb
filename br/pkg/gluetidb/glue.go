@@ -4,6 +4,7 @@ package gluetidb
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -70,10 +71,6 @@ func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	se, err := g.createTypesSession(store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	dom, err := session.GetDomain(store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -84,7 +81,7 @@ func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 			return nil, err
 		}
 		// create stats handler for backup and restore.
-		err = dom.UpdateTableStatsLoop(se, initStatsSe)
+		err = dom.UpdateTableStatsLoop(initStatsSe)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -264,11 +261,46 @@ func (gs *tidbSession) Close() {
 	gs.se.Close()
 }
 
-// GetGlobalVariables implements glue.Session.
+// GetGlobalVariable implements glue.Session.
 func (gs *tidbSession) GetGlobalVariable(name string) (string, error) {
 	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
 }
 
+// GetGlobalSysVar gets the global system variable value for name.
+func (gs *tidbSession) GetGlobalSysVar(name string) (string, error) {
+	return gs.se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(name)
+}
+
 func (gs *tidbSession) showCreatePlacementPolicy(policy *model.PolicyInfo) string {
 	return executor.ConstructResultOfShowCreatePlacementPolicy(policy)
+}
+
+func (gs *tidbSession) AlterTableMode(
+	_ context.Context,
+	schemaID int64,
+	tableID int64,
+	tableMode model.TableMode) error {
+	originQueryString := gs.se.Value(sessionctx.QueryString)
+	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
+	d := domain.GetDomain(gs.se).DDLExecutor()
+	gs.se.SetValue(sessionctx.QueryString,
+		fmt.Sprintf("ALTER TABLE MODE SCHEMA_ID=%d TABLE_ID=%d TO %s", schemaID, tableID, tableMode.String()))
+	args := &model.AlterTableModeArgs{
+		SchemaID:  schemaID,
+		TableID:   tableID,
+		TableMode: tableMode,
+	}
+	return d.AlterTableMode(gs.se, args)
+}
+
+// RefreshMeta submits a refresh meta job to update the info schema with the latest metadata.
+func (gs *tidbSession) RefreshMeta(
+	_ context.Context,
+	args *model.RefreshMetaArgs) error {
+	originQueryString := gs.se.Value(sessionctx.QueryString)
+	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
+	d := domain.GetDomain(gs.se).DDLExecutor()
+	gs.se.SetValue(sessionctx.QueryString,
+		fmt.Sprintf("REFRESH META SCHEMA_ID=%d TABLE_ID=%d", args.SchemaID, args.TableID))
+	return d.RefreshMeta(gs.se, args)
 }

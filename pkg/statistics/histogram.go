@@ -428,7 +428,7 @@ func (hg *Histogram) ToString(idxCols int) string {
 	} else {
 		strs = append(strs, fmt.Sprintf("column:%d ndv:%d totColSize:%d", hg.ID, hg.NDV, hg.TotColSize))
 	}
-	for i := 0; i < hg.Len(); i++ {
+	for i := range hg.Len() {
 		strs = append(strs, hg.BucketToString(i, idxCols))
 	}
 	return strings.Join(strs, "\n")
@@ -767,7 +767,7 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 	protoHg := &tipb.Histogram{
 		Ndv: hg.NDV,
 	}
-	for i := 0; i < hg.Len(); i++ {
+	for i := range hg.Len() {
 		bkt := &tipb.Bucket{
 			Count:      hg.Buckets[i].Count,
 			LowerBound: DeepSlice(hg.GetLower(i).GetBytes()),
@@ -863,7 +863,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 		rh.mergeBuckets(rh.Len() - 1)
 		rAvg *= 2
 	}
-	for i := 0; i < rh.Len(); i++ {
+	for i := range rh.Len() {
 		if statsVer >= Version2 {
 			lh.AppendBucketWithNDV(rh.GetLower(i), rh.GetUpper(i), rh.Buckets[i].Count+lCount-offset, rh.Buckets[i].Repeat, rh.Buckets[i].NDV)
 			continue
@@ -1065,32 +1065,32 @@ func (hg *Histogram) OutOfRangeRowCount(
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	rowCount = totalPercent * hg.NotNullCount()
 
-	// Upper & lower bound logic.
-	upperBound := rowCount
+	// oneValue assumes "one value qualies", and is used as either an Upper & lower bound.
+	oneValue := rowCount
 	if histNDV > 0 {
-		upperBound = hg.NotNullCount() / float64(histNDV)
+		oneValue = hg.NotNullCount() / float64(histNDV)
 	}
 
 	if !allowUseModifyCount {
 		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
 		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
-		// We use 1/NDV here (only the Histogram part is considered) and it seems reasonable and good enough for now.
-		return min(rowCount, upperBound)
+		// We use 1/NDV here to assume that at most 1 value qualifies.
+		return min(rowCount, oneValue)
 	}
 
-	// If the realtimeRowCount is larger than the original table rows, then any out of range estimate is unreliable.
-	// Assume at least 1/NDV is returned
 	addedRows := float64(realtimeRowCount) - hg.TotalRowCount()
-	if addedRows > 1 {
-		// Conservatively - use the larger of the left or right percent - since we are working with
-		// changes to the table since last Analyze - any out of range estimate is unreliable.
+	addedPct := addedRows / float64(realtimeRowCount)
+	// If the newly added rows is larger than the percentage that we've estimated that we're
+	// searching for out of the range, rowCount may need to be adjusted.
+	if addedPct > totalPercent {
 		// if the histogram range is invalid (too small/large - histInvalid) - totalPercent is zero
-		// and we will set rowCount to min of upperbound and added rows
-		totalPercent = min(0.5, max(leftPercent, rightPercent))
-		rowCount += totalPercent * addedRows
-		if rowCount < upperBound {
-			rowCount = min(upperBound, addedRows)
+		if histInvalid {
+			totalPercent = min(addedPct, 0.5)
 		}
+		// Attempt to account for the added rows - but not more than the totalPercent
+		outOfRangeAdded := addedRows * totalPercent
+		// Return the max of each estimate - with a minimum of one value.
+		rowCount = max(rowCount, outOfRangeAdded, oneValue)
 	}
 
 	// Use modifyCount as a final bound
@@ -1151,7 +1151,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 	// Set a limit on the frequency of boundary values to avoid extract values with low frequency.
 	limit := hg.NotNullCount() / float64(hg.Len())
 	// Since our histogram are equal depth, they must occurs on the boundaries of buckets.
-	for i := 0; i < hg.Bounds.NumRows(); i++ {
+	for i := range hg.Bounds.NumRows() {
 		data := hg.Bounds.GetRow(i).GetBytes(0)
 		prefixLens, err := GetIndexPrefixLens(data, numCols)
 		if err != nil {
@@ -1231,7 +1231,7 @@ func newBucket4Meging() *bucket4Merging {
 // Notice: Count in Histogram.Buckets is prefix sum but in bucket4Merging is not.
 func (hg *Histogram) buildBucket4Merging() []*bucket4Merging {
 	buckets := make([]*bucket4Merging, 0, hg.Len())
-	for i := 0; i < hg.Len(); i++ {
+	for i := range hg.Len() {
 		b := newbucket4MergingForRecycle()
 		hg.LowerToDatum(i, b.lower)
 		hg.UpperToDatum(i, b.upper)
@@ -1413,10 +1413,7 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	// since `mergeBucketNDV` is based on uniform and inclusion assumptions, it has the trend to under-estimate,
 	// and as the number of buckets increases, these assumptions become weak,
 	// so to mitigate this problem, a damping factor based on the number of buckets is introduced.
-	res.NDV = int64(float64(res.NDV) * math.Pow(1.15, float64(len(buckets)-1)))
-	if res.NDV > totNDV {
-		res.NDV = totNDV
-	}
+	res.NDV = min(int64(float64(res.NDV)*math.Pow(1.15, float64(len(buckets)-1))), totNDV)
 	return res, nil
 }
 
@@ -1443,6 +1440,12 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	if expBucketNumber == 0 {
 		return nil, errors.Errorf("expBucketNumber can not be zero")
 	}
+	// This only occurs when there are no histogram records in the histogram system table.
+	// It happens only to tables whose DDL events haven’t been processed yet and that have no indexes or keys,
+	// with the predicate column feature enabled.
+	if len(hists) == 0 {
+		return nil, nil
+	}
 	for _, hist := range hists {
 		totColSize += hist.TotColSize
 		totNull += hist.NullCount
@@ -1452,7 +1455,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			totCount += hist.Buckets[hist.Len()-1].Count
 		}
 	}
-
 	// If all the hist and the topn is empty, return a empty hist.
 	if bucketNumber+len(popedTopN) == 0 {
 		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, 0, totColSize), nil
@@ -1666,7 +1668,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		leftMost.Copy(merged.lower)
 		globalBuckets = append(globalBuckets, merged)
 	}
-	for i := 0; i < len(buckets); i++ {
+	for i := range buckets {
 		releasebucket4MergingForRecycle(buckets[i])
 	}
 	// Because we merge backwards, we need to flip the slices.

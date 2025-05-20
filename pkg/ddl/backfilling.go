@@ -395,6 +395,8 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			break
 		}
 	}
+	failpoint.InjectCall("afterHandleBackfillTask", task.jobID)
+
 	logutil.DDLLogger().Info("backfill worker finish task",
 		zap.Stringer("worker", w), zap.Stringer("task", task),
 		zap.Int("added count", result.addedCount),
@@ -511,7 +513,11 @@ func loadTableRanges(
 	maxSleep := 10000 // ms
 	bo := tikv.NewBackofferWithVars(ctx, maxSleep, nil)
 	var ranges []kv.KeyRange
-	err := util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (bool, error) {
+	maxRetryTimes := util.DefaultMaxRetries
+	failpoint.Inject("loadTableRangesNoRetry", func() {
+		maxRetryTimes = 1
+	})
+	err := util.RunWithRetry(maxRetryTimes, util.RetryInterval, func() (bool, error) {
 		logutil.DDLLogger().Info("load table ranges from PD",
 			zap.Int64("physicalTableID", t.GetPhysicalID()),
 			zap.String("start key", hex.EncodeToString(startKey)),
@@ -549,6 +555,9 @@ func loadTableRanges(
 }
 
 func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error {
+	failpoint.Inject("validateAndFillRangesErr", func() {
+		failpoint.Return(dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("mock"))
+	})
 	if len(ranges) == 0 {
 		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]",
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
@@ -559,6 +568,10 @@ func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error 
 			s := r.StartKey
 			if len(s) == 0 || bytes.Compare(s, startKey) < 0 {
 				ranges[i].StartKey = startKey
+			} else if bytes.Compare(s, startKey) > 0 {
+				errMsg := fmt.Sprintf("get empty range at the beginning of ranges, expected %s, but got %s",
+					hex.EncodeToString(startKey), hex.EncodeToString(s))
+				return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 			}
 		}
 		if i == len(ranges)-1 {
@@ -566,12 +579,15 @@ func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error 
 			if len(e) == 0 || bytes.Compare(e, endKey) > 0 {
 				ranges[i].EndKey = endKey
 			}
+			// We don't need to check the end key because a limit may set before scanning regions.
 		}
 		if len(ranges[i].StartKey) == 0 || len(ranges[i].EndKey) == 0 {
-			return errors.Errorf("get empty start/end key in the middle of ranges")
+			return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("get empty start/end key in the middle of ranges")
 		}
 		if i > 0 && !bytes.Equal(ranges[i-1].EndKey, ranges[i].StartKey) {
-			return errors.Errorf("ranges are not continuous")
+			errMsg := fmt.Sprintf("ranges are not continuous, last end key %s, next start key %s",
+				hex.EncodeToString(ranges[i-1].EndKey), hex.EncodeToString(ranges[i].StartKey))
+			return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 		}
 	}
 	return nil
@@ -743,7 +759,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 		err error
 	)
 	if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
-		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, false)
+		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, false, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -814,20 +830,9 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 }
 
 func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) {
-	opR, opW := pipe.GetLocalIngestModeReaderAndWriter()
-	if opR == nil || opW == nil {
+	reader, writer := pipe.GetReaderAndWriter()
+	if reader == nil || writer == nil {
 		logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", job.ID))
-		return
-	}
-	reader, readerOk := opR.(*TableScanOperator)
-	writer, writerOk := opW.(*IndexIngestOperator)
-	if !readerOk || !writerOk {
-		logutil.DDLIngestLogger().Error(
-			"unexpected operator types, config can't be adjusted",
-			zap.Int64("jobID", job.ID),
-			zap.Bool("isReaderValid", readerOk),
-			zap.Bool("isWriterValid", writerOk),
-		)
 		return
 	}
 	ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
@@ -1008,7 +1013,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				} else {
 					totalAddedCount += int64(result.addedCount)
 				}
-				dc.getReorgCtx(reorgInfo.Job.ID).setRowCount(totalAddedCount)
 
 				keeper.updateNextKey(result.taskID, result.nextKey)
 

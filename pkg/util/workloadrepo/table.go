@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/slice"
@@ -40,7 +41,7 @@ func buildCreateQuery(ctx context.Context, sess sessionctx.Context, rt *reposito
 	}
 
 	sb := &strings.Builder{}
-	sqlescape.MustFormatSQL(sb, "CREATE TABLE IF NOT EXISTS %n.%n (", WorkloadSchema, rt.destTable)
+	sqlescape.MustFormatSQL(sb, "CREATE TABLE IF NOT EXISTS %n.%n (", mysql.WorkloadSchema, rt.destTable)
 	if rt.tableType == snapshotTable {
 		fmt.Fprintf(sb, "`SNAP_ID` INT UNSIGNED NOT NULL, ")
 	}
@@ -68,7 +69,7 @@ func buildInsertQuery(ctx context.Context, sess sessionctx.Context, rt *reposito
 	}
 
 	sb := &strings.Builder{}
-	sqlescape.MustFormatSQL(sb, "INSERT %n.%n (", WorkloadSchema, rt.destTable)
+	sqlescape.MustFormatSQL(sb, "INSERT %n.%n (", mysql.WorkloadSchema, rt.destTable)
 
 	if rt.tableType == snapshotTable {
 		fmt.Fprint(sb, "`SNAP_ID`, ")
@@ -105,7 +106,7 @@ func (w *worker) createAllTables(ctx context.Context, now time.Time) error {
 	defer w.sesspool.Put(_sessctx)
 	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
 	if !is.SchemaExists(workloadSchemaCIStr) {
-		_, err := execRetry(ctx, sess, "create database if not exists "+WorkloadSchema)
+		_, err := execRetry(ctx, sess, "create database if not exists "+mysql.WorkloadSchema)
 		if err != nil {
 			return err
 		}

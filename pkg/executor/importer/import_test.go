@@ -28,12 +28,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -189,11 +187,17 @@ func TestAdjustOptions(t *testing.T) {
 	plan.adjustOptions(16)
 	require.Equal(t, 16, plan.ThreadCnt)
 	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
+	require.False(t, plan.DisableTiKVImportMode)
 
 	plan.ThreadCnt = 100000000
 	plan.DataSourceType = DataSourceTypeQuery
 	plan.adjustOptions(16)
 	require.Equal(t, 32, plan.ThreadCnt)
+	require.False(t, plan.DisableTiKVImportMode)
+
+	plan.CloudStorageURI = "s3://bucket/path"
+	plan.adjustOptions(16)
+	require.True(t, plan.DisableTiKVImportMode)
 }
 
 func TestAdjustDiskQuota(t *testing.T) {
@@ -228,22 +232,6 @@ func TestASTArgsFromStmt(t *testing.T) {
 	importIntoStmt := stmtNode.(*ast.ImportIntoStmt)
 	require.Equal(t, astArgs.ColumnAssignments, importIntoStmt.ColumnAssignments)
 	require.Equal(t, astArgs.ColumnsAndUserVars, importIntoStmt.ColumnsAndUserVars)
-}
-
-func TestGetFileRealSize(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", "return(250)")
-	require.NoError(t, err)
-	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage")
-	}()
-	fileMeta := mydump.SourceFileMeta{Compression: mydump.CompressionNone, FileSize: 100}
-	c := &LoadDataController{logger: log.L()}
-	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
-	fileMeta.Compression = mydump.CompressionGZ
-	require.Equal(t, int64(250), c.getFileRealSize(context.Background(), fileMeta, nil))
-	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
-	require.NoError(t, err)
-	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
 }
 
 func urlEqual(t *testing.T, expected, actual string) {
@@ -313,19 +301,6 @@ func TestGetLocalBackendCfg(t *testing.T) {
 	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
 }
 
-func TestGetBackendWorkerConcurrency(t *testing.T) {
-	c := &LoadDataController{
-		Plan: &Plan{
-			ThreadCnt: 3,
-		},
-	}
-	require.Equal(t, 6, c.getBackendWorkerConcurrency())
-	c.Plan.CloudStorageURI = "xxx"
-	require.Equal(t, 6, c.getBackendWorkerConcurrency())
-	c.Plan.ThreadCnt = 123
-	require.Equal(t, 246, c.getBackendWorkerConcurrency())
-}
-
 func TestSupportedSuffixForServerDisk(t *testing.T) {
 	username, err := user.Current()
 	require.NoError(t, err)
@@ -361,12 +336,12 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.NoError(t, c.InitDataFiles(ctx))
 
 	var allData []string
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		fileName := fmt.Sprintf("server-%d.csv", i)
 		var content []byte
 		rowCnt := 2
-		for j := 0; j < rowCnt; j++ {
-			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", i*rowCnt+j, i*rowCnt+j))...)
+		for j := range rowCnt {
+			content = append(content, fmt.Appendf(nil, "%d,test-%d\n", i*rowCnt+j, i*rowCnt+j)...)
 			allData = append(allData, fmt.Sprintf("%d test-%d", i*rowCnt+j, i*rowCnt+j))
 		}
 		require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), content, 0o644))

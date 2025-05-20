@@ -265,7 +265,7 @@ func (m *mockStores) AssertIsNormalMode(t *testing.T) {
 
 func fakeCluster(t *testing.T, nodes int, keys ...[]byte) pd.Client {
 	tmp := t.TempDir()
-	_, pdc, cluster, err := unistore.New(tmp, nil)
+	_, pdc, cluster, err := unistore.New(tmp, nil, nil)
 	unistore.BootstrapWithMultiStores(cluster, nodes)
 	require.NoError(t, err)
 	cluster.SplitArbitrary(keys...)
@@ -275,7 +275,7 @@ func fakeCluster(t *testing.T, nodes int, keys ...[]byte) pd.Client {
 func dummyRegions(size int) [][]byte {
 	// Generate regions like "a", "b", ..., "z", "aa", "ba", ..., "zz", "aaa"
 	res := [][]byte{}
-	for i := 0; i < size; i++ {
+	for i := range size {
 		s := make([]byte, 0, i/26)
 		for j := i; j > 0; j /= 26 {
 			s = append(s, byte('a')+byte(j%26))
@@ -461,7 +461,7 @@ func TestSplitEnv(t *testing.T) {
 	}
 	makeHugeRequestRegions := func(n int, eachSize int) []*metapb.Region {
 		regions := []*metapb.Region{}
-		for i := 0; i < n; i++ {
+		for i := range n {
 			regions = append(regions, &metapb.Region{
 				StartKey: append(make([]byte, eachSize-1), byte(i)),
 				EndKey:   append(make([]byte, eachSize-1), byte(i+1)),

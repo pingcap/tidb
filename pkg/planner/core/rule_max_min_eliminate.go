@@ -72,7 +72,7 @@ func (a *MaxMinEliminator) checkColCanUseIndex(plan base.LogicalPlan, col *expre
 		return a.checkColCanUseIndex(p.Children()[0], col, conditions)
 	case *logicalop.DataSource:
 		// Check whether there is an AccessPath can use index for col.
-		for _, path := range p.PossibleAccessPaths {
+		for _, path := range p.AllPossibleAccessPaths {
 			if path.IsIntHandlePath {
 				// Since table path can contain accessConds of at most one column,
 				// we only need to check if all of the conditions can be pushed down as accessConds
@@ -125,12 +125,15 @@ func (a *MaxMinEliminator) cloneSubPlans(plan base.LogicalPlan) base.LogicalPlan
 		newDs.SetSchema(p.Schema().Clone())
 		newDs.Columns = make([]*model.ColumnInfo, len(p.Columns))
 		copy(newDs.Columns, p.Columns)
-		newAccessPaths := make([]*util.AccessPath, 0, len(p.PossibleAccessPaths))
-		for _, path := range p.PossibleAccessPaths {
+		allAccessPaths := make([]*util.AccessPath, 0, len(p.AllPossibleAccessPaths))
+		// alloc len for copy func.
+		newDs.PossibleAccessPaths = make([]*util.AccessPath, len(p.AllPossibleAccessPaths))
+		for _, path := range p.AllPossibleAccessPaths {
 			newPath := *path
-			newAccessPaths = append(newAccessPaths, &newPath)
+			allAccessPaths = append(allAccessPaths, &newPath)
 		}
-		newDs.PossibleAccessPaths = newAccessPaths
+		newDs.AllPossibleAccessPaths = allAccessPaths
+		copy(newDs.PossibleAccessPaths, allAccessPaths)
 		return &newDs
 	}
 	// This won't happen, because we have checked the subtree.

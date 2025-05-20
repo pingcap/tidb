@@ -49,7 +49,7 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	if op.runtimeFilterList != nil {
 		return nil, false
 	}
-	if op.AnnIndexExtra != nil {
+	if op.UsedColumnarIndexes != nil {
 		return nil, false
 	}
 	return cloned, true

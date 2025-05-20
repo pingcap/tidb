@@ -273,15 +273,15 @@ func TestAllocateContinuousRowID(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a int,b int, key I_a(a));`)
 	var wg util.WaitGroupWrapper
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		idx := i
 		wg.Run(func() {
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
-			for j := 0; j < 10; j++ {
+			for j := range 10 {
 				k := strconv.Itoa(idx*100 + j)
 				sql := "insert into t1(a,b) values (" + k + ", 2)"
-				for t := 0; t < 20; t++ {
+				for range 20 {
 					sql += ",(" + k + ",2)"
 				}
 				tk.MustExec(sql)
@@ -426,7 +426,9 @@ func TestInsertRuntimeStat(t *testing.T) {
 	stats.BasicRuntimeStats.Record(5*time.Second, 1)
 	require.Equal(t, "prepare: 3s, check_insert: {total_time: 2s, mem_insert_time: 1s, prefetch: 1s}", stats.String())
 	require.Equal(t, stats.Clone().String(), stats.String())
-	stats.Merge(stats.Clone())
+	newStats := stats.Clone()
+	newStats.(*executor.InsertRuntimeStat).BasicRuntimeStats.Record(5*time.Second, 1)
+	stats.Merge(newStats)
 	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}", stats.String())
 	stats.FKCheckTime = time.Second
 	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s, fk_check: 1s}", stats.String())
@@ -514,7 +516,7 @@ func TestGlobalTempTableParallel(t *testing.T) {
 		newTk := testkit.NewTestKit(t, store)
 		newTk.MustExec("use test")
 		newTk.MustExec("begin")
-		for i := 0; i < loops; i++ {
+		for range loops {
 			newTk.MustExec("insert temp_test value(0)")
 			newTk.MustExec("insert temp_test value(0), (0)")
 		}
@@ -523,7 +525,7 @@ func TestGlobalTempTableParallel(t *testing.T) {
 		newTk.MustExec("commit")
 	}
 
-	for i := 0; i < threads; i++ {
+	for range threads {
 		wg.Run(insertFunc)
 	}
 	wg.Wait()

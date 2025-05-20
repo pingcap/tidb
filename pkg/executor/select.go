@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -135,7 +136,7 @@ func init() {
 	action := &globalPanicOnExceed{}
 	GlobalMemoryUsageTracker = memory.NewGlobalTracker(memory.LabelForGlobalMemory, -1)
 	GlobalMemoryUsageTracker.SetActionOnExceed(action)
-	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(memory.LabelForGlobalStorage, -1)
+	GlobalDiskUsageTracker = disk.NewGlobalTracker(memory.LabelForGlobalStorage, -1)
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
 	GlobalAnalyzeMemoryTracker = memory.NewTracker(memory.LabelForGlobalAnalyzeMemory, -1)
 	GlobalAnalyzeMemoryTracker.SetActionOnExceed(action)
@@ -307,9 +308,6 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 	}
 	lockCtx := tikvstore.NewLockCtx(forUpdateTS, lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
 	lockCtx.Killed = &seVars.SQLKiller.Signal
-	lockCtx.PessimisticLockWaited = &seVars.StmtCtx.PessimisticLockWaited
-	lockCtx.LockKeysDuration = &seVars.StmtCtx.LockKeysDuration
-	lockCtx.LockKeysCount = &seVars.StmtCtx.LockKeysCount
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
 	lockCtx.ResourceGroupTagger = func(req *kvrpcpb.PessimisticLockRequest) []byte {
 		if req == nil {
@@ -325,7 +323,7 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 			}
 			_, planDigest := seVars.StmtCtx.GetPlanDigest()
 
-			return kv.NewResourceGroupTagBuilder().
+			return kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceIDBySettings()).
 				SetPlanDigest(planDigest).
 				SetSQLDigest(digest).
 				EncodeTagWithKey(mutation.Key)
@@ -958,6 +956,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DiskTracker.Killer = &vars.SQLKiller
 	vars.SQLKiller.Reset()
 	vars.SQLKiller.ConnID.Store(vars.ConnectionID)
+	vars.ResetRelevantOptVarsAndFixes(false)
 
 	isAnalyze := false
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {

@@ -74,3 +74,68 @@ func TestBaseFunc_InferAggRetType(t *testing.T) {
 		}
 	}
 }
+
+func TestTypeInfer4AvgSum(t *testing.T) {
+	ctx := mock.NewContext()
+
+	// sum(col)
+	{
+		argCol := &expression.Column{
+			UniqueID: 0,
+			RetType:  types.NewFieldType(mysql.TypeNewDecimal),
+		}
+		argColFlen := 15
+		argCol.RetType.SetFlen(argColFlen)
+		argCol.RetType.SetDecimal(2)
+
+		avgFunc, err := newBaseFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{argCol})
+		require.NoError(t, err)
+		err = avgFunc.TypeInfer(ctx)
+		require.NoError(t, err)
+
+		partialSumFunc := avgFunc
+		partialSumFunc.Name = ast.AggFuncSum
+		err = partialSumFunc.TypeInfer4AvgSum(ctx.GetEvalCtx(), avgFunc.RetTp)
+		require.NoError(t, err)
+
+		require.Equal(t, partialSumFunc.RetTp.GetFlen(), argColFlen+22)
+		require.Equal(t, partialSumFunc.RetTp.GetDecimal(), 2)
+	}
+
+	// sum(div(col/col))
+	{
+		divArgCol1 := &expression.Column{
+			UniqueID: 0,
+			RetType:  types.NewFieldType(mysql.TypeNewDecimal),
+		}
+		divArgCol1.RetType.SetFlen(20)
+		divArgCol1.RetType.SetDecimal(0)
+
+		divArgCol2 := &expression.Column{
+			UniqueID: 0,
+			RetType:  types.NewFieldType(mysql.TypeNewDecimal),
+		}
+		divArgCol2.RetType.SetFlen(5)
+		divArgCol2.RetType.SetDecimal(0)
+
+		mockDivRetType := types.NewFieldType(mysql.TypeUnspecified)
+		divExpr, err := expression.NewFunction(ctx, ast.Div, mockDivRetType, divArgCol1, divArgCol2)
+		require.NoError(t, err)
+		require.Equal(t, divExpr.GetType(ctx.GetEvalCtx()).GetFlen(), 25)
+		require.Equal(t, divExpr.GetType(ctx.GetEvalCtx()).GetDecimal(), 4)
+
+		avgFunc, err := newBaseFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{divExpr})
+		require.NoError(t, err)
+		err = avgFunc.TypeInfer(ctx)
+		require.NoError(t, err)
+		require.Equal(t, avgFunc.RetTp.GetFlen(), 29)
+		require.Equal(t, avgFunc.RetTp.GetDecimal(), 8)
+
+		partialSumFunc := avgFunc
+		partialSumFunc.Name = ast.AggFuncSum
+		err = partialSumFunc.TypeInfer4AvgSum(ctx.GetEvalCtx(), avgFunc.RetTp)
+		require.NoError(t, err)
+		require.Equal(t, partialSumFunc.RetTp.GetFlen(), 51)
+		require.Equal(t, partialSumFunc.RetTp.GetDecimal(), 8)
+	}
+}

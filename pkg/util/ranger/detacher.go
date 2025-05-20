@@ -31,8 +31,7 @@ import (
 
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
 // Please make sure that the top level is CNF form.
-func detachColumnCNFConditions(sctx expression.BuildContext, conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, []expression.Expression) {
-	var accessConditions, filterConditions []expression.Expression //nolint: prealloc
+func detachColumnCNFConditions(sctx expression.BuildContext, conditions []expression.Expression, checker *conditionChecker) (accessConditions, filterConditions []expression.Expression) {
 	for _, cond := range conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 			dnfItems := expression.FlattenDNFConditions(sf)
@@ -722,14 +721,13 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 // columnValues: the constant column values for all index columns. columnValues[i] is nil if cols[i] is not constant.
 // bool: indicate whether there's nil range when merging eq and in conditions.
 func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []expression.Expression, cols []*expression.Column,
-	lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression, []*valueInfo, bool) {
-	var filters []expression.Expression
+	lengths []int) (accesses, filters, newConditions []expression.Expression, columnValues []*valueInfo, _ bool) {
 	rb := builder{sctx: sctx}
-	accesses := make([]expression.Expression, len(cols))
+	accesses = make([]expression.Expression, len(cols))
 	points := make([][]*point, len(cols))
 	mergedAccesses := make([]expression.Expression, len(cols))
-	newConditions := make([]expression.Expression, 0, len(conditions))
-	columnValues := make([]*valueInfo, len(cols))
+	newConditions = make([]expression.Expression, 0, len(conditions))
+	columnValues = make([]*valueInfo, len(cols))
 	offsets := make([]int, len(conditions))
 	for i, cond := range conditions {
 		offset := getPotentialEqOrInColOffset(sctx, cond, cols)

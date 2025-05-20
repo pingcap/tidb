@@ -15,110 +15,144 @@
 package utils
 
 import (
-	"fmt"
-	"sort"
-	"strings"
-
+	"github.com/pingcap/log"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
+	"go.uber.org/zap"
 )
 
 // PiTRIdTracker tracks all the DB and tables ids that need to restore in a PiTR
 type PiTRIdTracker struct {
-	DBIdToTableId map[int64]map[int64]struct{}
+	DBIds map[int64]struct{}
+	// TableIdToDBIds maps a table ID to a set of database IDs it belongs to
+	// This handles the case where a table can be renamed across databases
+	TableIdToDBIds map[int64]map[int64]struct{}
+	PartitionIds   map[int64]struct{}
+	// DBNameToTableNames maps a database name to a set of table names it contains
+	DBNameToTableNames map[string]map[string]struct{}
 }
 
 func NewPiTRIdTracker() *PiTRIdTracker {
 	return &PiTRIdTracker{
-		DBIdToTableId: make(map[int64]map[int64]struct{}),
+		DBIds:              make(map[int64]struct{}),
+		TableIdToDBIds:     make(map[int64]map[int64]struct{}),
+		PartitionIds:       make(map[int64]struct{}),
+		DBNameToTableNames: make(map[string]map[string]struct{}),
 	}
 }
 
 // TrackTableId adds a physical ID to the filter for the given database ID
-func (t *PiTRIdTracker) TrackTableId(dbID, physicalId int64) {
-	if t.DBIdToTableId == nil {
-		t.DBIdToTableId = make(map[int64]map[int64]struct{})
+func (t *PiTRIdTracker) TrackTableId(dbID, tableId int64) {
+	log.Info("tracking table id", zap.Int64("dbID", dbID), zap.Int64("tableID", tableId))
+
+	if t.DBIds == nil {
+		t.DBIds = make(map[int64]struct{})
+	}
+	if t.TableIdToDBIds == nil {
+		t.TableIdToDBIds = make(map[int64]map[int64]struct{})
 	}
 
-	if _, ok := t.DBIdToTableId[dbID]; !ok {
-		t.DBIdToTableId[dbID] = make(map[int64]struct{})
+	t.DBIds[dbID] = struct{}{}
+
+	// Initialize the map for this table ID if it doesn't exist
+	if _, exists := t.TableIdToDBIds[tableId]; !exists {
+		t.TableIdToDBIds[tableId] = make(map[int64]struct{})
 	}
 
-	t.DBIdToTableId[dbID][physicalId] = struct{}{}
+	// Add this database ID to the set of databases for this table
+	t.TableIdToDBIds[tableId][dbID] = struct{}{}
+}
+
+func (t *PiTRIdTracker) TrackPartitionId(partitionID int64) {
+	if t.PartitionIds == nil {
+		t.PartitionIds = make(map[int64]struct{})
+	}
+	t.PartitionIds[partitionID] = struct{}{}
 }
 
 // AddDB adds the database id
 func (t *PiTRIdTracker) AddDB(dbID int64) {
-	if t.DBIdToTableId == nil {
-		t.DBIdToTableId = make(map[int64]map[int64]struct{})
+	log.Info("tracking db id", zap.Int64("dbID", dbID))
+	if t.DBIds == nil {
+		t.DBIds = make(map[int64]struct{})
 	}
 
-	if _, ok := t.DBIdToTableId[dbID]; !ok {
-		t.DBIdToTableId[dbID] = make(map[int64]struct{})
-	}
+	t.DBIds[dbID] = struct{}{}
 }
 
-// ContainsTableId checks if the given database ID and table ID combination exists in the filter
-func (t *PiTRIdTracker) ContainsTableId(dbID, tableID int64) bool {
-	if tables, ok := t.DBIdToTableId[dbID]; ok {
-		_, exists := tables[tableID]
-		return exists
+// ContainsDBAndTableId checks if the given database ID and table ID combination is tracked
+func (t *PiTRIdTracker) ContainsDBAndTableId(dbID, tableID int64) bool {
+	if t.TableIdToDBIds == nil {
+		return false
 	}
-	return false
+
+	dbIDs, exists := t.TableIdToDBIds[tableID]
+	if !exists {
+		return false
+	}
+
+	// Check if this specific database ID is in the set of databases for this table
+	_, hasDB := dbIDs[dbID]
+	return hasDB
+}
+
+// ContainsTableId checks if the given table ID is tracked
+func (t *PiTRIdTracker) ContainsTableId(tableID int64) bool {
+	if t.TableIdToDBIds == nil {
+		return false
+	}
+
+	_, exists := t.TableIdToDBIds[tableID]
+	return exists
+}
+
+// ContainsPartitionId checks if the given partition ID is tracked
+func (t *PiTRIdTracker) ContainsPartitionId(partitionID int64) bool {
+	if t.PartitionIds == nil {
+		return false
+	}
+
+	_, exists := t.PartitionIds[partitionID]
+	return exists
 }
 
 // ContainsDB checks if the given database ID exists in the filter
 func (t *PiTRIdTracker) ContainsDB(dbID int64) bool {
-	_, ok := t.DBIdToTableId[dbID]
+	if t.DBIds == nil {
+		return false
+	}
+	_, ok := t.DBIds[dbID]
 	return ok
 }
 
-// String returns a string representation of the PiTRIdTracker for debugging
-func (t *PiTRIdTracker) String() string {
-	if t == nil || t.DBIdToTableId == nil {
-		return "PiTRIdTracker{nil}"
-	}
-
-	var result strings.Builder
-	result.WriteString("PiTRIdTracker{\n")
-	result.WriteString("  DBToTables: {\n")
-	for dbID, tables := range t.DBIdToTableId {
-		result.WriteString(fmt.Sprintf("  DB[%d]: {", dbID))
-		tableIDs := make([]int64, 0, len(tables))
-		for tableID := range tables {
-			tableIDs = append(tableIDs, tableID)
-		}
-		// Sort for consistent output
-		sort.Slice(tableIDs, func(i, j int) bool { return tableIDs[i] < tableIDs[j] })
-		for i, tableID := range tableIDs {
-			if i > 0 {
-				result.WriteString(", ")
-			}
-			result.WriteString(fmt.Sprintf("%d", tableID))
-		}
-		result.WriteString("}\n")
-	}
-	result.WriteString("}")
-	return result.String()
-}
-
 func MatchSchema(filter filter.Filter, schema string, withSys bool) bool {
-	if name, ok := StripTempDBPrefixIfNeeded(schema); IsSysDB(name) && ok {
+	schema = StripTempDBPrefixIfNeeded(schema)
+	if IsSysDB(schema) && !withSys {
 		// early return if system tables are disabled
-		if !withSys {
-			return false
-		}
-		schema = name
+		return false
 	}
 	return filter.MatchSchema(schema)
 }
 
 func MatchTable(filter filter.Filter, schema, table string, withSys bool) bool {
-	if name, ok := StripTempDBPrefixIfNeeded(schema); IsSysDB(name) && ok {
+	schema = StripTempDBPrefixIfNeeded(schema)
+	if IsSysDB(schema) && !withSys {
 		// early return if system tables are disabled
-		if !withSys {
-			return false
-		}
-		schema = name
+		return false
 	}
 	return filter.MatchTable(schema, table)
+}
+
+// TrackTableName adds a table name for the given database name
+func (t *PiTRIdTracker) TrackTableName(dbName, tableName string) {
+	log.Info("tracking table name", zap.String("dbName", dbName), zap.String("tableName", tableName))
+
+	if t.DBNameToTableNames == nil {
+		t.DBNameToTableNames = make(map[string]map[string]struct{})
+	}
+
+	if _, ok := t.DBNameToTableNames[dbName]; !ok {
+		t.DBNameToTableNames[dbName] = make(map[string]struct{})
+	}
+
+	t.DBNameToTableNames[dbName][tableName] = struct{}{}
 }

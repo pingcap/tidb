@@ -278,10 +278,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 	}
 	for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
 		start := i
-		end := start + analyzePartitionBatchSize
-		if end >= len(needAnalyzePartitionNames) {
-			end = len(needAnalyzePartitionNames)
-		}
+		end := min(start+analyzePartitionBatchSize, len(needAnalyzePartitionNames))
 
 		sql := getPartitionSQL("analyze table %n.%n partition", "", end-start)
 		params := append([]any{j.SchemaName, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
@@ -311,10 +308,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 		}
 		for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
 			start := i
-			end := start + analyzePartitionBatchSize
-			if end >= len(needAnalyzePartitionNames) {
-				end = len(needAnalyzePartitionNames)
-			}
+			end := min(start+analyzePartitionBatchSize, len(needAnalyzePartitionNames))
 
 			sql := getPartitionSQL("analyze table %n.%n partition", " index %n", end-start)
 			params := append([]any{j.SchemaName, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
@@ -347,7 +341,7 @@ func (j *DynamicPartitionedTableAnalysisJob) getAnalyzeType() analyzeType {
 func getPartitionSQL(prefix, suffix string, numPartitions int) string {
 	var sqlBuilder strings.Builder
 	sqlBuilder.WriteString(prefix)
-	for i := 0; i < numPartitions; i++ {
+	for i := range numPartitions {
 		if i != 0 {
 			sqlBuilder.WriteString(",")
 		}
