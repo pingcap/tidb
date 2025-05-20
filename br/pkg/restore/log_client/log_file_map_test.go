@@ -36,7 +36,7 @@ func TestLogFilesSkipMap(t *testing.T) {
 		skipmap := logclient.NewLogFilesSkipMap()
 		nativemap := make(map[string]map[int]map[int]struct{})
 		count := 0
-		for i := 0; i < int(ratio*float64(metaNum*groupNum*fileNum)); i++ {
+		for range int(ratio * float64(metaNum*groupNum*fileNum)) {
 			metaKey := fmt.Sprint(rand.Intn(metaNum))
 			groupOff := rand.Intn(groupNum)
 			fileOff := rand.Intn(fileNum)
@@ -83,10 +83,10 @@ func TestLogFilesSkipMap(t *testing.T) {
 			return exists
 		}
 
-		for metai := 0; metai < metaNum; metai++ {
+		for metai := range metaNum {
 			metaKey := fmt.Sprint(metai)
-			for groupi := 0; groupi < groupNum; groupi++ {
-				for filei := 0; filei < fileNum; filei++ {
+			for groupi := range groupNum {
+				for filei := range fileNum {
 					if continueFunc(metaKey, groupi, filei) {
 						continue
 					}

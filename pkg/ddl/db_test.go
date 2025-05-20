@@ -319,7 +319,7 @@ func TestForbidCacheTableForSystemTable(t *testing.T) {
 		tk.MustExec("use " + db)
 		tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil)
 		rows := tk.MustQuery("show tables").Rows()
-		for i := 0; i < len(rows); i++ {
+		for i := range rows {
 			sysTables = append(sysTables, rows[i][0].(string))
 		}
 		for _, one := range sysTables {
@@ -521,7 +521,7 @@ func TestIssue60047(t *testing.T) {
 	partition p2 values less than ('90'));`)
 
 	// initialize the data.
-	for i := 0; i < 90; i++ {
+	for i := range 90 {
 		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
 	}
 
@@ -1204,27 +1204,31 @@ func TestAdminAlterDDLJobUpdateSysTable(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int);")
 
-	job := model.Job{
-		ID:        1,
-		Type:      model.ActionAddIndex,
-		ReorgMeta: &model.DDLReorgMeta{},
+	for _, useCloudStorage := range []bool{true, false} {
+		job := model.Job{
+			ID:   1,
+			Type: model.ActionAddIndex,
+			ReorgMeta: &model.DDLReorgMeta{
+				UseCloudStorage: useCloudStorage,
+			},
+		}
+		job.ReorgMeta.Concurrency.Store(4)
+		job.ReorgMeta.BatchSize.Store(128)
+		insertMockJob2Table(tk, &job)
+		tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID))
+		j := getJobMetaByID(t, tk, job.ID)
+		require.Equal(t, 8, j.ReorgMeta.GetConcurrency())
+
+		tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d batch_size = 256;", job.ID))
+		j = getJobMetaByID(t, tk, job.ID)
+		require.Equal(t, 256, j.ReorgMeta.GetBatchSize())
+
+		tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 16, batch_size = 512;", job.ID))
+		j = getJobMetaByID(t, tk, job.ID)
+		require.Equal(t, 16, j.ReorgMeta.GetConcurrency())
+		require.Equal(t, 512, j.ReorgMeta.GetBatchSize())
+		deleteJobMetaByID(tk, job.ID)
 	}
-	job.ReorgMeta.Concurrency.Store(4)
-	job.ReorgMeta.BatchSize.Store(128)
-	insertMockJob2Table(tk, &job)
-	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID))
-	j := getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, 8, j.ReorgMeta.GetConcurrency())
-
-	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d batch_size = 256;", job.ID))
-	j = getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, 256, j.ReorgMeta.GetBatchSize())
-
-	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 16, batch_size = 512;", job.ID))
-	j = getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, 16, j.ReorgMeta.GetConcurrency())
-	require.Equal(t, 512, j.ReorgMeta.GetBatchSize())
-	deleteJobMetaByID(tk, job.ID)
 }
 
 func TestAdminAlterDDLJobUnsupportedCases(t *testing.T) {
@@ -1275,21 +1279,7 @@ func TestAdminAlterDDLJobUnsupportedCases(t *testing.T) {
 	insertMockJob2Table(tk, &job)
 	// unsupported job type
 	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
-		"unsupported DDL operation: add column. Supported DDL operations are: ADD INDEX (without global sort), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
-	deleteJobMetaByID(tk, 1)
-
-	job = model.Job{
-		ID:   1,
-		Type: model.ActionAddIndex,
-		ReorgMeta: &model.DDLReorgMeta{
-			IsDistReorg:     true,
-			UseCloudStorage: true,
-		},
-	}
-	insertMockJob2Table(tk, &job)
-	// unsupported job type
-	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
-		"unsupported DDL operation: add index. Supported DDL operations are: ADD INDEX (without global sort), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
+		"unsupported DDL operation: add column. Supported DDL operations are: ADD INDEX, MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
 	deleteJobMetaByID(tk, 1)
 }
 
@@ -1320,7 +1310,7 @@ func TestGetAllTableInfos(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
-	for i := 0; i < 113; i++ {
+	for i := range 113 {
 		tk.MustExec(fmt.Sprintf("create database test%d", i))
 		tk.MustExec(fmt.Sprintf("use test%d", i))
 		tk.MustExec("create table t1 (a int)")

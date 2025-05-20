@@ -269,7 +269,7 @@ func expectedDefaultConfig() Config {
 		BackendOptions:            storage.BackendOptions{S3: storage.S3BackendOptions{ForcePathStyle: true}},
 		PD:                        []string{"127.0.0.1:2379"},
 		ChecksumConcurrency:       4,
-		Checksum:                  true,
+		Checksum:                  false,
 		SendCreds:                 true,
 		CheckRequirements:         true,
 		FilterStr:                 []string(nil),
@@ -287,13 +287,13 @@ func expectedDefaultConfig() Config {
 
 func expectedDefaultBackupConfig() BackupConfig {
 	defaultConfig := expectedDefaultConfig()
-	defaultConfig.Checksum = false
 	return BackupConfig{
 		Config: defaultConfig,
 		GCTTL:  utils.DefaultBRGCSafePointTTL,
 		CompressionConfig: CompressionConfig{
 			CompressionType: backup.CompressionType_ZSTD,
 		},
+		RangeLimit:       30000000,
 		IgnoreStats:      true,
 		UseBackupMetaV2:  true,
 		UseCheckpoint:    true,

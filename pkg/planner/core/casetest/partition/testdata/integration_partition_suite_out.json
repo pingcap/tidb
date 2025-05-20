@@ -1370,7 +1370,7 @@
       {
         "SQL": "select * from thash2 where a in (1,2) and b = 1 order by a desc",
         "DynamicPlan": [
-          "Sort 0.02 root  test.thash2.a:desc",
+          "Sort 1.00 root  test.thash2.a:desc",
           "└─TableReader 2.00 root partition:p1 data:TableRangeScan",
           "  └─TableRangeScan 2.00 cop[tikv] table:thash2 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
         ],
@@ -1389,7 +1389,7 @@
           "└─TableRangeScan 2.00 cop[tikv] table:thash2 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "PartitionUnion 0.04 root  ",
+          "PartitionUnion 2.00 root  ",
           "├─Batch_Point_Get 2.00 root table:thash2, partition:p0, clustered index:PRIMARY(a, b) keep order:false, desc:false",
           "└─Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:false, desc:false"
         ],
@@ -1405,8 +1405,8 @@
           "└─TableRangeScan 2.00 cop[tikv] table:thash2 range:[1 1,1 1], [1 2,1 2], keep order:true, stats:pseudo"
         ],
         "StaticPlan": [
-          "Sort 0.04 root  test.thash2.b",
-          "└─PartitionUnion 0.04 root  ",
+          "Sort 2.00 root  test.thash2.b",
+          "└─PartitionUnion 2.00 root  ",
           "  ├─Batch_Point_Get 2.00 root table:thash2, partition:p0, clustered index:PRIMARY(a, b) keep order:false, desc:false",
           "  └─Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:false, desc:false"
         ],
@@ -1418,13 +1418,13 @@
       {
         "SQL": "select * from thash2 where a = 1 and b in (1,2) order by b desc",
         "DynamicPlan": [
-          "Sort 0.02 root  test.thash2.b:desc",
+          "Sort 1.00 root  test.thash2.b:desc",
           "└─TableReader 2.00 root partition:p0,p1 data:TableRangeScan",
           "  └─TableRangeScan 2.00 cop[tikv] table:thash2 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "Sort 0.04 root  test.thash2.b:desc",
-          "└─PartitionUnion 0.04 root  ",
+          "Sort 2.00 root  test.thash2.b:desc",
+          "└─PartitionUnion 2.00 root  ",
           "  ├─Batch_Point_Get 2.00 root table:thash2, partition:p0, clustered index:PRIMARY(a, b) keep order:false, desc:false",
           "  └─Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:false, desc:false"
         ],
@@ -1466,12 +1466,12 @@
       {
         "SQL": "select * from trange2 where a in (1,2) and b = 1 order by a desc",
         "DynamicPlan": [
-          "Sort 0.02 root  test.trange2.a:desc",
+          "Sort 1.00 root  test.trange2.a:desc",
           "└─TableReader 2.00 root partition:p0 data:TableRangeScan",
           "  └─TableRangeScan 2.00 cop[tikv] table:trange2 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "Sort 0.02 root  test.trange2.a:desc",
+          "Sort 1.00 root  test.trange2.a:desc",
           "└─TableReader 2.00 root  data:TableRangeScan",
           "  └─TableRangeScan 2.00 cop[tikv] table:trange2, partition:p0 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
         ],
@@ -1487,7 +1487,7 @@
           "└─TableRangeScan 2.00 cop[tikv] table:trange2 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "PartitionUnion 0.04 root  ",
+          "PartitionUnion 2.00 root  ",
           "├─TableReader 2.00 root  data:TableRangeScan",
           "│ └─TableRangeScan 2.00 cop[tikv] table:trange2, partition:p0 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
           "└─TableReader 2.00 root  data:TableRangeScan",
@@ -1505,8 +1505,8 @@
           "└─TableRangeScan 2.00 cop[tikv] table:trange2 range:[1 1,1 1], [1 2,1 2], keep order:true, stats:pseudo"
         ],
         "StaticPlan": [
-          "Sort 0.04 root  test.trange2.b",
-          "└─PartitionUnion 0.04 root  ",
+          "Sort 2.00 root  test.trange2.b",
+          "└─PartitionUnion 2.00 root  ",
           "  ├─TableReader 2.00 root  data:TableRangeScan",
           "  │ └─TableRangeScan 2.00 cop[tikv] table:trange2, partition:p0 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
           "  └─TableReader 2.00 root  data:TableRangeScan",
@@ -1520,13 +1520,13 @@
       {
         "SQL": "select * from trange2 where a = 1 and b in (1,2) order by b desc",
         "DynamicPlan": [
-          "Sort 0.02 root  test.trange2.b:desc",
+          "Sort 1.00 root  test.trange2.b:desc",
           "└─TableReader 2.00 root partition:all data:TableRangeScan",
           "  └─TableRangeScan 2.00 cop[tikv] table:trange2 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "Sort 0.04 root  test.trange2.b:desc",
-          "└─PartitionUnion 0.04 root  ",
+          "Sort 2.00 root  test.trange2.b:desc",
+          "└─PartitionUnion 2.00 root  ",
           "  ├─TableReader 2.00 root  data:TableRangeScan",
           "  │ └─TableRangeScan 2.00 cop[tikv] table:trange2, partition:p0 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
           "  └─TableReader 2.00 root  data:TableRangeScan",
@@ -1570,12 +1570,12 @@
       {
         "SQL": "select * from tlist2 where a in (1,2) and b = 1 order by a desc",
         "DynamicPlan": [
-          "Sort 0.02 root  test.tlist2.a:desc",
+          "Sort 1.00 root  test.tlist2.a:desc",
           "└─TableReader 2.00 root partition:p0 data:TableRangeScan",
           "  └─TableRangeScan 2.00 cop[tikv] table:tlist2 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "Sort 0.02 root  test.tlist2.a:desc",
+          "Sort 1.00 root  test.tlist2.a:desc",
           "└─TableReader 2.00 root  data:TableRangeScan",
           "  └─TableRangeScan 2.00 cop[tikv] table:tlist2, partition:p0 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
         ],
@@ -1591,7 +1591,7 @@
           "└─TableRangeScan 2.00 cop[tikv] table:tlist2 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "PartitionUnion 0.04 root  ",
+          "PartitionUnion 2.00 root  ",
           "├─TableReader 2.00 root  data:TableRangeScan",
           "│ └─TableRangeScan 2.00 cop[tikv] table:tlist2, partition:p0 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
           "└─TableReader 2.00 root  data:TableRangeScan",
@@ -1609,8 +1609,8 @@
           "└─TableRangeScan 2.00 cop[tikv] table:tlist2 range:[1 1,1 1], [1 2,1 2], keep order:true, stats:pseudo"
         ],
         "StaticPlan": [
-          "Sort 0.04 root  test.tlist2.b",
-          "└─PartitionUnion 0.04 root  ",
+          "Sort 2.00 root  test.tlist2.b",
+          "└─PartitionUnion 2.00 root  ",
           "  ├─TableReader 2.00 root  data:TableRangeScan",
           "  │ └─TableRangeScan 2.00 cop[tikv] table:tlist2, partition:p0 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
           "  └─TableReader 2.00 root  data:TableRangeScan",
@@ -1624,13 +1624,13 @@
       {
         "SQL": "select * from tlist2 where a = 1 and b in (1,2) order by b desc",
         "DynamicPlan": [
-          "Sort 0.02 root  test.tlist2.b:desc",
+          "Sort 1.00 root  test.tlist2.b:desc",
           "└─TableReader 2.00 root partition:all data:TableRangeScan",
           "  └─TableRangeScan 2.00 cop[tikv] table:tlist2 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "Sort 0.04 root  test.tlist2.b:desc",
-          "└─PartitionUnion 0.04 root  ",
+          "Sort 2.00 root  test.tlist2.b:desc",
+          "└─PartitionUnion 2.00 root  ",
           "  ├─TableReader 2.00 root  data:TableRangeScan",
           "  │ └─TableRangeScan 2.00 cop[tikv] table:tlist2, partition:p0 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
           "  └─TableReader 2.00 root  data:TableRangeScan",

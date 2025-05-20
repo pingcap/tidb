@@ -132,7 +132,7 @@ func TestNonPreparedPlanTypeRandomly(t *testing.T) {
 	tk.MustExec(`create table t7 (a datetime, b datetime, key(a))`)
 
 	n := 30
-	for i := 0; i < n; i++ {
+	for range n {
 		tk.MustExec(fmt.Sprintf(`insert into t1 values (%v, %v)`, randNonPrepTypeVal(t, n, "int"), randNonPrepTypeVal(t, n, "int")))
 		tk.MustExec(fmt.Sprintf(`insert into t2 values (%v, %v)`, randNonPrepTypeVal(t, n, "varchar"), randNonPrepTypeVal(t, n, "varchar")))
 		tk.MustExec(fmt.Sprintf(`insert into t3 values (%v, %v)`, randNonPrepTypeVal(t, n, "double"), randNonPrepTypeVal(t, n, "double")))
@@ -143,7 +143,7 @@ func TestNonPreparedPlanTypeRandomly(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`insert into t7 values (%v, %v)`, randNonPrepTypeVal(t, n, "datetime"), randNonPrepTypeVal(t, n, "datetime")))
 	}
 
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		q := fmt.Sprintf(`select * from t%v where %v`, rand.Intn(7)+1, randNonPrepFilter(t, n))
 		tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
 		r0 := tk.MustQuery(q).Sort()            // the first execution
@@ -198,7 +198,7 @@ func TestNonPreparedPlanCacheBasically(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, c int, d int, key(b), key(c, d))`)
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v, %v, %v)", i, rand.Intn(20), rand.Intn(20), rand.Intn(20)))
 	}
 
@@ -591,7 +591,7 @@ func convertQueryToPrepExecStmt(q string) (normalQuery, prepStmt string, paramet
 	normalQuery = strings.ReplaceAll(q, "#", "")
 	normalQuery = strings.ReplaceAll(normalQuery, "?", "")
 	vs := strings.Split(q, "#")
-	for i := 0; i < len(vs); i++ {
+	for i := range vs {
 		if len(vs[i]) == 0 {
 			continue
 		}
@@ -614,8 +614,8 @@ func planCachePointGetPrepareData(tk *testkit.TestKit) {
 	tk.MustExec(fmt.Sprintf(`create table t1 (a %v, b %v, c %v, d %v, primary key(a), unique key(b), unique key(c), unique key(c))`, t(), t(), t(), t()))
 	tk.MustExec(fmt.Sprintf(`create table t2 (a %v, b %v, c %v, d %v, primary key(a, b), unique key(c, d))`, t(), t(), t(), t()))
 
-	var vals []string
-	for i := 0; i < 50; i++ {
+	vals := make([]string, 0, 50)
+	for i := range 50 {
 		vals = append(vals, fmt.Sprintf("('%v.%v', '%v.%v', '%v.%v', '%v.%v')",
 			i-20, rand.Intn(5),
 			i-20, rand.Intn(5),
@@ -655,8 +655,8 @@ func planCachePointGetQueries(isNonPrep bool) []string {
 		}
 		return fmt.Sprintf("%v %v %v", col, op, v())
 	}
-	var queries []string
-	for i := 0; i < 50; i++ {
+	queries := make([]string, 0, 50*12)
+	for range 50 {
 		queries = append(queries, fmt.Sprintf("select * from t1 where %v", f()))
 		queries = append(queries, fmt.Sprintf("select * from t1 where %v and %v", f(), f()))
 		queries = append(queries, fmt.Sprintf("select * from t1 where %v and %v and %v", f(), f(), f()))
@@ -717,8 +717,8 @@ func planCacheIntConvertQueries(isNonPrep bool) []string {
 		}
 		return strings.Join(fs, ", ")
 	}
-	var queries []string
-	for i := 0; i < 50; i++ {
+	queries := make([]string, 0, 50*6)
+	for range 50 {
 		queries = append(queries, fmt.Sprintf("select %v from t where %v", fields(), f()))
 		queries = append(queries, fmt.Sprintf("select %v from t where %v and %v", fields(), f(), f()))
 		queries = append(queries, fmt.Sprintf("select %v from t where %v and %v and %v", fields(), f(), f(), f()))
@@ -734,7 +734,7 @@ func planCacheIntConvertPrepareData(tk *testkit.TestKit) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(a int, b year, c double, d varchar(16), key(a), key(b), key(c))`)
 	vals := make([]string, 0, 50)
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		a := fmt.Sprintf("%v", 2000+rand.Intn(20)-10)
 		if rand.Intn(10) == 0 {
 			a = "null"
@@ -800,8 +800,8 @@ func planCacheIndexMergeQueries(isNonPrep bool) []string {
 			return "*"
 		}
 	}
-	var queries []string
-	for i := 0; i < 50; i++ {
+	queries := make([]string, 0, 50*12)
+	for range 50 {
 		queries = append(queries, fmt.Sprintf("select /*+ use_index_merge(t, a, b) */ %s from t where %s and %s", fields(), f("a"), f("b")))
 		queries = append(queries, fmt.Sprintf("select /*+ use_index_merge(t, a, c) */ %s from t where %s and %s", fields(), f("a"), f("c")))
 		queries = append(queries, fmt.Sprintf("select /*+ use_index_merge(t, a, b, c) */ %s from t where %s and %s and %s", fields(), f("a"), f("b"), f("c")))
@@ -829,7 +829,7 @@ func planCacheIndexMergePrepareData(tk *testkit.TestKit) {
 		}
 		return fmt.Sprintf("%d", rand.Intn(20)-10)
 	}
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		vals = append(vals, fmt.Sprintf("(%s, %s, %s, %s)", v(), v(), v(), v()))
 	}
 	tk.MustExec("insert into t values " + strings.Join(vals, ","))
@@ -852,16 +852,20 @@ func testRandomPlanCacheCases(t *testing.T,
 	tk := testkit.NewTestKit(t, store)
 	prepFunc(tk)
 
-	// prepared plan cache
+	// nonprepared plan cache
 	for _, q := range queryFunc(true) {
 		tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
 		result1 := tk.MustQuery(q).Sort()
 		tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
 		result2 := tk.MustQuery(q).Sort()
+		require.True(t, result1.Equal(result2.Rows()))
+
+		result2 = tk.MustQuery(q).Sort()
 		require.True(t, result1.Equal(result2.Rows()))
 	}
 
-	// non prepared plan cache
+	// prepared plan cache
 	for _, q := range queryFunc(false) {
 		q, prepStmt, parameters := convertQueryToPrepExecStmt(q)
 		result1 := tk.MustQuery(q).Sort()
@@ -877,7 +881,13 @@ func testRandomPlanCacheCases(t *testing.T,
 		} else {
 			execStmt = fmt.Sprintf("execute st using %s", strings.Join(xs, ", "))
 		}
+
+		// first execution caches plan
 		result2 := tk.MustQuery(execStmt).Sort()
+		require.True(t, result1.Equal(result2.Rows()))
+
+		// second execution uses cache
+		result2 = tk.MustQuery(execStmt).Sort()
 		require.True(t, result1.Equal(result2.Rows()))
 	}
 }
@@ -1029,13 +1039,13 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t1 order by a",                              // order by
 		"select * from t3 where full_name = 'a b'",                 // generated column
 		"select * from t3 where a > 1 and full_name = 'a b'",
-		"select * from t1 where a in (1, 2)",                    // Partitioned
-		"select * from t2 where a in (1, 2) and b in (1, 2, 3)", // Partitioned
-		"select * from t1 where a in (1, 2) and b < 15",         // Partitioned
+		"select * from t1 where a in (1, 2)",                                 // Partitioned
+		"select * from t2 where a in (1, 2) and b in (1, 2, 3)",              // Partitioned
+		"select * from t1 where a in (1, 2) and b < 15",                      // Partitioned
+		"select /*+ use_index(t1, idx_b) */ * from t1 where a > 1 and b < 2", // hint
 	}
 
 	unsupported := []string{
-		"select /*+ use_index(t1, idx_b) */ * from t1 where a > 1 and b < 2",               // hint
 		"select a, sum(b) as c from t1 where a > 1 and b < 2 group by a having sum(b) > 1", // having
 		"select * from (select * from t1) t",                                               // sub-query
 		"select * from t1 where a in (select a from t)",                                    // uncorrelated sub-query
@@ -1049,14 +1059,13 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t where bt > 0", // bit
 		"select * from t where a > 1 and bt > 0",
 		"select data_type from INFORMATION_SCHEMA.columns where table_name = 'v'", // memTable
-		"select * from v",                // view
-		"select * from t where a = null", // null
-		"select * from t where false",    // table dual
+		"select * from v",                                                         // view
+		"select * from t where a = null",                                          // null
+		"select * from t where false",                                             // table dual
 	}
 
 	reasons := []string{
-		"skip non-prepared plan-cache: queries that have hints, having-clause, window-function are not supported",
-		"skip non-prepared plan-cache: queries that have hints, having-clause, window-function are not supported",
+		"skip non-prepared plan-cache: queries with HAVING clauses are not supported",
 		"skip non-prepared plan-cache: queries that have sub-queries are not supported",
 		"skip non-prepared plan-cache: query has some unsupported Node",
 		"skip non-prepared plan-cache: query has some unsupported Node",
@@ -1175,7 +1184,7 @@ func TestIssue43667Concurrency(t *testing.T) {
 	tk.MustExec("create table cycle (pk int key, val int)")
 	var wg sync.WaitGroup
 	concurrency := 30
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		tk.MustExec(fmt.Sprintf("insert into cycle values (%v,%v)", i, i))
 		wg.Add(1)
 		go func(id int) {
@@ -1184,7 +1193,7 @@ func TestIssue43667Concurrency(t *testing.T) {
 			tk.MustExec("use test")
 			tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=1")
 			query := fmt.Sprintf("select (val) from cycle where pk = %v", id)
-			for j := 0; j < 5000; j++ {
+			for range 5000 {
 				tk.MustQuery(query).Check(testkit.Rows(fmt.Sprintf("%v", id)))
 			}
 		}(i)
@@ -1338,14 +1347,14 @@ func randValueForMVIndex(colType string) string {
 	case "json-string":
 		var array []string
 		arraySize := 1 + rand.Intn(5)
-		for i := 0; i < arraySize; i++ {
+		for range arraySize {
 			array = append(array, randValueForMVIndex("string"))
 		}
 		return "'[" + strings.Join(array, ", ") + "]'"
 	case "json-signed":
 		var array []string
 		arraySize := 1 + rand.Intn(5)
-		for i := 0; i < arraySize; i++ {
+		for range arraySize {
 			array = append(array, randValueForMVIndex("int"))
 		}
 		return "'[" + strings.Join(array, ", ") + "]'"
@@ -1355,8 +1364,8 @@ func randValueForMVIndex(colType string) string {
 }
 
 func insertValuesForMVIndex(nRows int, colTypes ...string) string {
-	var stmtVals []string
-	for i := 0; i < nRows; i++ {
+	stmtVals := make([]string, 0, nRows)
+	for range nRows {
 		var vals []string
 		for _, colType := range colTypes {
 			vals = append(vals, randValueForMVIndex(colType))
@@ -1367,7 +1376,7 @@ func insertValuesForMVIndex(nRows int, colTypes ...string) string {
 }
 
 func verifyPlanCacheForMVIndex(t *testing.T, tk *testkit.TestKit, isIndexMerge, hitCache bool, queryTemplate string, colTypes ...string) {
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		var vals []string
 		for _, colType := range colTypes {
 			vals = append(vals, randValueForMVIndex(colType))
@@ -1694,4 +1703,44 @@ func TestIssue54652(t *testing.T) {
 	tk.MustExec(`execute st using @pk`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // can't reuse since it's in txn now.
 	tk.MustExec(`commit`)
+}
+
+func TestNonPreparedPlanSupportsHints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
+
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`select  /*+ max_execution_time(2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`select  /*+ max_execution_time(2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanSupportsBindings(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
+
+	tk.MustExec(`CREATE BINDING FOR select * from t where pk >= ? USING select * from t where pk >= ?`)
+
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`select  /*+ max_execution_time(2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select  /*+ max_execution_time(2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
 }

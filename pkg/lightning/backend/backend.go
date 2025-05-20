@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -134,6 +135,8 @@ type ExternalEngineConfig struct {
 	CheckHotspot bool
 	// MemCapacity is the memory capacity for the whole subtask.
 	MemCapacity int64
+	// OnDup is the action when a duplicate key is found during global sort.
+	OnDup engineapi.OnDuplicateKey
 }
 
 // CheckCtx contains all parameters used in CheckRequirements
@@ -389,7 +392,7 @@ func NewClosedEngine(backend Backend, logger log.Logger, uuid uuid.UUID, id int3
 func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize, regionSplitKeys int64) error {
 	var err error
 
-	for i := 0; i < importMaxRetryTimes; i++ {
+	for i := range importMaxRetryTimes {
 		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
 		err = engine.backend.ImportEngine(ctx, engine.uuid, regionSplitSize, regionSplitKeys)
 		if !common.IsRetryableError(err) {

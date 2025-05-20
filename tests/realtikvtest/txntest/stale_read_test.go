@@ -18,24 +18,24 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/docker/go-units"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/placement"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/tikv/client-go/v2/oracle"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 )
@@ -1360,7 +1360,7 @@ func TestPlanCacheWithStaleReadByBinaryProto(t *testing.T) {
 	// issue #31550
 	stmtID1, _, _, err := se.PrepareStmt("select * from t1 as of timestamp @a where id=1")
 	require.NoError(t, err)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
@@ -1369,7 +1369,7 @@ func TestPlanCacheWithStaleReadByBinaryProto(t *testing.T) {
 	// issue #33814
 	stmtID2, _, _, err := se.PrepareStmt("select * from t1 where id=1")
 	require.NoError(t, err)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID2, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 100"))
@@ -1393,8 +1393,8 @@ func TestStalePrepare(t *testing.T) {
 	require.Nil(t, err)
 	tk.MustExec("prepare stmt from \"select * from t as of timestamp now(3) - interval 100000 microsecond order by id asc\"")
 
-	var expected [][]any
-	for i := 0; i < 20; i++ {
+	expected := make([][]any, 0, 20)
+	for i := range 20 {
 		tk.MustExec("insert into t values(?)", i)
 		time.Sleep(200 * time.Millisecond) // sleep 200ms to ensure staleread_ts > commit_ts.
 

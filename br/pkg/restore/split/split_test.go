@@ -869,20 +869,28 @@ func initKeys() [][]byte {
 func initRanges() []rtree.Range {
 	var ranges [4]rtree.Range
 	ranges[0] = rtree.Range{
-		StartKey: []byte("aaa"),
-		EndKey:   []byte("aae"),
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("aaa"),
+			EndKey:   []byte("aae"),
+		},
 	}
 	ranges[1] = rtree.Range{
-		StartKey: []byte("aae"),
-		EndKey:   []byte("aaz"),
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("aae"),
+			EndKey:   []byte("aaz"),
+		},
 	}
 	ranges[2] = rtree.Range{
-		StartKey: []byte("ccd"),
-		EndKey:   []byte("ccf"),
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("ccd"),
+			EndKey:   []byte("ccf"),
+		},
 	}
 	ranges[3] = rtree.Range{
-		StartKey: []byte("ccf"),
-		EndKey:   []byte("ccj"),
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("ccf"),
+			EndKey:   []byte("ccj"),
+		},
 	}
 	return ranges[:]
 }
@@ -983,7 +991,7 @@ func TestSplitPoint2(t *testing.T) {
 	client := NewFakeSplitClient()
 	client.AppendRegion(keyWithTablePrefix(tableID, "a"), keyWithTablePrefix(tableID, "g"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "g"), keyWithTablePrefix(tableID, getCharFromNumber("g", 0)))
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		client.AppendRegion(keyWithTablePrefix(tableID, getCharFromNumber("g", i)), keyWithTablePrefix(tableID, getCharFromNumber("g", i+1)))
 	}
 	client.AppendRegion(keyWithTablePrefix(tableID, getCharFromNumber("g", 256)), keyWithTablePrefix(tableID, "h"))

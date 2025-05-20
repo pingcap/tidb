@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -81,14 +82,17 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 
 	if dag := builder.dag; dag != nil {
 		if execCnt := len(dag.Executors); execCnt == 1 {
-			oldConcurrency := builder.Request.Concurrency
 			// select * from t order by id
-			if builder.Request.KeepOrder {
+			if builder.Request.KeepOrder && builder.Request.Concurrency == vardef.DefDistSQLScanConcurrency {
 				// When the DAG is just simple scan and keep order, set concurrency to 2.
 				// If a lot data are returned to client, mysql protocol is the bottleneck so concurrency 2 is enough.
 				// If very few data are returned to client, the speed is not optimal but good enough.
+				//
+				// If a user set @@tidb_distsql_scan_concurrency, he must be doing it by intention.
+				// so only rewrite concurrency when @@tidb_distsql_scan_concurrency is default value.
 				switch dag.Executors[0].Tp {
 				case tipb.ExecType_TypeTableScan, tipb.ExecType_TypeIndexScan, tipb.ExecType_TypePartitionTableScan:
+					oldConcurrency := builder.Request.Concurrency
 					builder.Request.Concurrency = 2
 					failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 						if val.(bool) {
@@ -500,9 +504,9 @@ func tableRangesToKVRangesWithoutSplit(tids []int64, ranges []*ranger.Range) *kv
 	return kv.NewPartitionedKeyRanges(krs)
 }
 
-func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
-	low := codec.EncodeInt(nil, ran.LowVal[0].GetInt64())
-	high := codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
+func encodeHandleKey(ran *ranger.Range) (low, high []byte) {
+	low = codec.EncodeInt(nil, ran.LowVal[0].GetInt64())
+	high = codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
 	if ran.LowExclude {
 		low = kv.Key(low).PrefixNext()
 	}
@@ -526,7 +530,7 @@ func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
 //
 // if `KeepOrder` is false, we merge the two groups of ranges into one group, to save a rpc call later
 // if `desc` is false, return signed ranges first, vice versa.
-func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) ([]*ranger.Range, []*ranger.Range) {
+func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) (signedRanges, unsignedRanges []*ranger.Range) {
 	if isCommonHandle || len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
 		return ranges, nil
 	}
@@ -546,8 +550,8 @@ func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc
 		return signedRanges, unsignedRanges
 	}
 	// need to split the range that straddles the int64 boundary
-	signedRanges := make([]*ranger.Range, 0, idx+1)
-	unsignedRanges := make([]*ranger.Range, 0, len(ranges)-idx)
+	signedRanges = make([]*ranger.Range, 0, idx+1)
+	unsignedRanges = make([]*ranger.Range, 0, len(ranges)-idx)
 	signedRanges = append(signedRanges, ranges[0:idx]...)
 	if !(ranges[idx].LowVal[0].GetUint64() == math.MaxInt64 && ranges[idx].LowExclude) {
 		signedRanges = append(signedRanges, &ranger.Range{
@@ -791,7 +795,7 @@ func indexRangesToKVWithoutSplit(dctx *distsqlctx.DistSQLContext, tids []int64, 
 }
 
 // EncodeIndexKey gets encoded keys containing low and high
-func EncodeIndexKey(dctx *distsqlctx.DistSQLContext, ran *ranger.Range) ([]byte, []byte, error) {
+func EncodeIndexKey(dctx *distsqlctx.DistSQLContext, ran *ranger.Range) (low, high []byte, err error) {
 	tz := time.UTC
 	errCtx := errctx.StrictNoWarningContext
 	if dctx != nil {
@@ -799,7 +803,7 @@ func EncodeIndexKey(dctx *distsqlctx.DistSQLContext, ran *ranger.Range) ([]byte,
 		errCtx = dctx.ErrCtx
 	}
 
-	low, err := codec.EncodeKey(tz, nil, ran.LowVal...)
+	low, err = codec.EncodeKey(tz, nil, ran.LowVal...)
 	err = errCtx.HandleError(err)
 	if err != nil {
 		return nil, nil, err
@@ -807,7 +811,7 @@ func EncodeIndexKey(dctx *distsqlctx.DistSQLContext, ran *ranger.Range) ([]byte,
 	if ran.LowExclude {
 		low = kv.Key(low).PrefixNext()
 	}
-	high, err := codec.EncodeKey(tz, nil, ran.HighVal...)
+	high, err = codec.EncodeKey(tz, nil, ran.HighVal...)
 	err = errCtx.HandleError(err)
 	if err != nil {
 		return nil, nil, err

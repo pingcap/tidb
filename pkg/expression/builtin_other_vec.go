@@ -99,7 +99,7 @@ func (b *builtinBitCountSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 		if types.ErrOverflow.Equal(err) {
 			result.ResizeInt64(n, false)
 			i64s := result.Int64s()
-			for i := 0; i < n; i++ {
+			for i := range n {
 				res, isNull, err := b.evalInt(ctx, input.GetRow(i))
 				if err != nil {
 					return err
@@ -112,7 +112,7 @@ func (b *builtinBitCountSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 		return err
 	}
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -137,7 +137,7 @@ func (b *builtinGetParamStringSig) vecEvalString(ctx EvalContext, input *chunk.C
 	}
 	idxIs := idx.Int64s()
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if idx.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -186,7 +186,7 @@ func (b *builtinSetStringVarSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 		return err
 	}
 	_, collation := sessionVars.GetCharsetInfo()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -227,7 +227,7 @@ func (b *builtinSetIntVarSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	if err != nil {
 		return err
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
 			continue
@@ -268,7 +268,7 @@ func (b *builtinSetRealVarSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, 
 	if err != nil {
 		return err
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
 			continue
@@ -309,7 +309,7 @@ func (b *builtinSetDecimalVarSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 	if err != nil {
 		return err
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
 			continue
@@ -346,7 +346,7 @@ func (b *builtinGetStringVarSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 	}
 	result.ReserveString(n)
 	userVars := ctx.GetUserVarsReader()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf0.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -383,7 +383,7 @@ func (b *builtinGetIntVarSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	result.MergeNulls(buf0)
 	i64s := result.Int64s()
 	userVars := ctx.GetUserVarsReader()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -417,7 +417,7 @@ func (b *builtinGetRealVarSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, 
 	result.MergeNulls(buf0)
 	f64s := result.Float64s()
 	userVars := ctx.GetUserVarsReader()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -455,7 +455,7 @@ func (b *builtinGetDecimalVarSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 	result.MergeNulls(buf0)
 	decs := result.Decimals()
 	userVars := ctx.GetUserVarsReader()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}

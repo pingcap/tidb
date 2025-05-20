@@ -45,8 +45,8 @@ var (
 	// dumpStatsMaxDuration is the max duration since last update.
 	dumpStatsMaxDuration = 5 * time.Minute
 
-	// batchInsertSize is the batch size used by internal SQL to insert values to some system table.
-	batchInsertSize = 10
+	// batchInsertSize is the batch size used by internal SQL to insert values to stats usage table.
+	batchInsertSize = 8192
 )
 
 // needDumpStatsDelta checks whether to dump stats delta.
@@ -115,10 +115,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 
 	// Dump stats delta in batches.
 	for i := 0; i < len(tableIDs); i += dumpDeltaBatchSize {
-		end := i + dumpDeltaBatchSize
-		if end > len(tableIDs) {
-			end = len(tableIDs)
-		}
+		end := min(i+dumpDeltaBatchSize, len(tableIDs))
 
 		batchTableIDs := tableIDs[i:end]
 		var (
@@ -314,6 +311,11 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 	defer util.Recover(metrics.LabelStats, "DumpColStatsUsageToKV", nil, false)
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		metrics.StatsUsageUpdateHistogram.Observe(dur.Seconds())
+	}()
 	s.SweepSessionStatsList()
 	colMap := s.SessionStatsUsage().GetUsageAndReset()
 	defer func() {
@@ -335,10 +337,7 @@ func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 	})
 	// Use batch insert to reduce cost.
 	for i := 0; i < len(pairs); i += batchInsertSize {
-		end := i + batchInsertSize
-		if end > len(pairs) {
-			end = len(pairs)
-		}
+		end := min(i+batchInsertSize, len(pairs))
 		sql := new(strings.Builder)
 		sqlescape.MustFormatSQL(sql, "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES ")
 		for j := i; j < end; j++ {
