@@ -22,10 +22,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -45,6 +47,10 @@ var (
 // MockClient create a fake Client used to test.
 func MockClient(dbs map[string]*metautil.Database) *SnapClient {
 	return &SnapClient{databases: dbs}
+}
+
+func (rc *SnapClient) SetDomain(dom *domain.Domain) {
+	rc.dom = dom
 }
 
 // Mock the call of setSpeedLimit function
@@ -101,4 +107,13 @@ func (rc *SnapClient) CreateTablesTest(
 		return cmp.Compare(tbMapping[i.Name.String()], tbMapping[j.Name.String()])
 	})
 	return rewriteRules, newTables, nil
+}
+
+func (rc *SnapClient) RegisterUpdateMetaAndLoadStats(
+	builder *PipelineConcurrentBuilder,
+	s storage.ExternalStorage,
+	updateCh glue.Progress,
+	statsConcurrency uint,
+) {
+	rc.registerUpdateMetaAndLoadStats(builder, s, updateCh, statsConcurrency)
 }

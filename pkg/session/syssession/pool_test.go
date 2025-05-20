@@ -269,7 +269,7 @@ func TestSessionPoolPut(t *testing.T) {
 		sessions[i] = se
 	}
 
-	for i := 0; i < poolCap; i++ {
+	for i := range poolCap {
 		require.Equal(t, i, len(p.pool))
 		sctx = sessions[i].internal.sctx.(*mockSessionContext)
 		sctx.MockNoPendingTxn()
@@ -292,14 +292,14 @@ func TestSessionPoolPut(t *testing.T) {
 	sctx.AssertExpectations(t)
 
 	// put a closed pool
-	for i := 0; i < poolCap; i++ {
+	for i := range poolCap {
 		sctx = sessions[i].internal.sctx.(*mockSessionContext)
 		sctx.On("Close").Once()
 	}
 	p.Close()
 	require.True(t, p.IsClosed())
 	require.Equal(t, 0, len(p.pool))
-	for i := 0; i < poolCap; i++ {
+	for i := range poolCap {
 		sctx = sessions[i].internal.sctx.(*mockSessionContext)
 		sctx.AssertExpectations(t)
 	}
@@ -388,7 +388,7 @@ func TestSessionPoolClose(t *testing.T) {
 	// make a pool with some sessions
 	sctxs := make([]*mockSessionContext, capacity)
 	ses := make([]*Session, capacity)
-	for i := 0; i < capacity; i++ {
+	for i := range capacity {
 		sctx := &mockSessionContext{}
 		sctxs[i] = sctx
 		factory.On("create").Return(sctx, nil).Once()
@@ -398,7 +398,7 @@ func TestSessionPoolClose(t *testing.T) {
 		factory.AssertExpectations(t)
 		sctx.AssertExpectations(t)
 	}
-	for i := 0; i < capacity; i++ {
+	for i := range capacity {
 		sctx := sctxs[i]
 		se := ses[i]
 		sctx.MockNoPendingTxn()
@@ -408,7 +408,7 @@ func TestSessionPoolClose(t *testing.T) {
 	}
 
 	// close pool should close all sessions in it
-	for i := 0; i < capacity; i++ {
+	for i := range capacity {
 		sctx := sctxs[i]
 		sctx.On("Close").Once()
 	}
@@ -422,7 +422,7 @@ func TestSessionPoolClose(t *testing.T) {
 	default:
 		require.FailNow(t, "pool is still active")
 	}
-	for i := 0; i < capacity; i++ {
+	for i := range capacity {
 		sctx := sctxs[i]
 		sctx.AssertExpectations(t)
 	}

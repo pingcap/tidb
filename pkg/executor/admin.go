@@ -665,7 +665,7 @@ func extractIdxVals(row chunk.Row, idxVals []types.Datum,
 		idxVals = idxVals[:idxValLen]
 	}
 
-	for i := 0; i < idxValLen; i++ {
+	for i := range idxValLen {
 		colVal := row.GetDatum(i, fieldTypes[i])
 		colVal.Copy(&idxVals[i])
 	}

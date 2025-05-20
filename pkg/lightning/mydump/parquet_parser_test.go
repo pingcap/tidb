@@ -46,7 +46,7 @@ func TestParquetParser(t *testing.T) {
 	writer, err := writer2.NewParquetWriter(pf, test, 2)
 	require.NoError(t, err)
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		test.A = int32(i)
 		test.S = strconv.Itoa(i)
 		require.NoError(t, writer.Write(test))
@@ -73,7 +73,7 @@ func TestParquetParser(t *testing.T) {
 	}
 
 	// test read some rows
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		require.NoError(t, reader.ReadRow())
 		verifyRow(i)
 	}
@@ -149,7 +149,7 @@ func TestParquetVariousTypes(t *testing.T) {
 	}
 	row := reader.lastRow.Row
 	require.Len(t, rowValue, len(row))
-	for i := 0; i < len(row); i++ {
+	for i := range row {
 		assert.Equal(t, types.KindString, row[i].Kind())
 		assert.Equal(t, row[i].GetString(), rowValue[i])
 	}
@@ -282,13 +282,13 @@ func TestParquetAurora(t *testing.T) {
 		},
 	}
 
-	for i := 0; i < len(expectedRes); i++ {
+	for i := range expectedRes {
 		err = parser.ReadRow()
 		assert.NoError(t, err)
 		expectedValues := expectedRes[i]
 		row := parser.LastRow().Row
 		assert.Len(t, expectedValues, len(row))
-		for j := 0; j < len(row); j++ {
+		for j := range row {
 			switch v := expectedValues[j].(type) {
 			case int64:
 				assert.Equal(t, row[j].GetInt64(), v)
@@ -322,7 +322,7 @@ func TestHiveParquetParser(t *testing.T) {
 		time.Date(2038, 1, 19, 0, 0, 0, 0, time.UTC),
 	}
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		err = reader.ReadRow()
 		require.NoError(t, err)
 		lastRow := reader.LastRow()

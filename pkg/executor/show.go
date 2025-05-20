@@ -139,7 +139,7 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return errors.Trace(err)
 		}
 		iter := chunk.NewIterator4Chunk(e.result)
-		for colIdx := 0; colIdx < e.Schema().Len(); colIdx++ {
+		for colIdx := range e.Schema().Len() {
 			retType := e.Schema().Columns[colIdx].RetType
 			if !types.IsTypeVarchar(retType.GetType()) {
 				continue
@@ -385,7 +385,7 @@ func (e *ShowExec) fetchPlanForSQL() error {
 	bindingHandle := domain.GetDomain(e.Ctx()).BindingHandle()
 	charset, collation := e.Ctx().GetSessionVars().GetCharsetInfo()
 	currentDB := e.Ctx().GetSessionVars().CurrentDB
-	plans, err := bindingHandle.ShowPlansForSQL(currentDB, e.SQLOrDigest, charset, collation)
+	plans, err := bindingHandle.ExplorePlansForSQL(currentDB, e.SQLOrDigest, charset, collation)
 	if err != nil {
 		return err
 	}

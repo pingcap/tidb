@@ -82,7 +82,7 @@ func flushStatsFile(
 		SizeEnc:    uint64(len(encryptedContent)),
 		SizeOri:    sizeOri,
 		CipherIv:   iv,
-		InlineData: []byte(fmt.Sprintf("%d", rand.Int())),
+		InlineData: fmt.Appendf(nil, "%d", rand.Int()),
 	}
 }
 
