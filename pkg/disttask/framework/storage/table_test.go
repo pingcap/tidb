@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -1204,11 +1203,11 @@ func TestTaskManagerEntrySize(t *testing.T) {
 			select {
 			case <-bgCtx.Done():
 				return
-			case <-time.After(15 * time.Second):
+			case <-time.After(10 * time.Second):
 			}
 			buf := make([]byte, 8<<20)
 			stackLen := runtime.Stack(buf, true)
-			logutil.BgLogger().Info(fmt.Sprintf("\n=== dump goroutine stack. ===\n%s\n", string(buf[:stackLen])))
+			t.Logf("\n\n\n\n=== dump goroutine stack. ===\n%s\n\n\n\n", string(buf[:stackLen]))
 		}
 	})
 	store, tm, ctx := testutil.InitTableTest(t)
