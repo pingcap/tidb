@@ -411,7 +411,8 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
 	} else {
-		// without FORMAT 'xxx' clause, default to none and will detect type in InitDataFiles
+		// without FORMAT 'xxx' clause, default to none and will detect file type
+		// when init data files
 		format = DataFormatNone
 	}
 	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode()
@@ -605,7 +606,8 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		specifiedOptions[opt.Name] = opt
 	}
 
-	// DataFormatNone means format is unspecified from stmt, will validate below CSV options in InitDataFiles.
+	// DataFormatNone means format is unspecified from stmt,
+	// will validate below CSV options when init data files.
 	if p.Format != DataFormatCSV && p.Format != DataFormatNone {
 		for k := range csvOnlyOptions {
 			if _, ok := specifiedOptions[k]; ok {
@@ -1121,7 +1123,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	}
 
 	s := e.dataStore
-	var totalSize int64
+	var (
+		totalSize  int64
+		sourceType mydump.SourceType
+	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	// check glob pattern is present in filename.
 	idx := strings.IndexAny(fileNameKey, "*[")
@@ -1139,7 +1144,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek")
 		}
 		e.updateFormat(fileNameKey)
-		sourceType := e.getSourceType()
+		sourceType = e.getSourceType()
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		fileMeta := mydump.SourceFileMeta{
 			Path:        fileNameKey,
@@ -1173,7 +1178,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				}
 				// pick arbitrary one file to detect the format.
 				e.updateFormat(remotePath)
-				sourceType := e.getSourceType()
+				sourceType = e.getSourceType()
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
 				totalSize += size
 				return nil
@@ -1391,7 +1396,8 @@ func (p *Plan) IsGlobalSort() bool {
 	return !p.IsLocalSort()
 }
 
-// checkCSVOnlyOptions check csvOnlyOptions is default or not in plan when format is not csv. Skip check for not ImportInto plan and csv format.
+// checkCSVOnlyOptions check all csc only options is default or not in plan when
+// format is not csv. Skip check for not ImportInto plan and csv format.
 func (p *Plan) checkCSVOnlyOptions() error {
 	if !p.InImportInto || p.Format == DataFormatCSV {
 		return nil
