@@ -1250,7 +1250,27 @@ func checkIfTableReorgWorkCanSkip(
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
 	ctx.setDDLLabelForTopSQL(job.Query)
-	return checkIfTableIsEmpty(ctx, store, tbl, startTS)
+	if isEmpty, err := checkIfTableIsEmpty(ctx, store, tbl, startTS); err != nil || !isEmpty {
+		return false
+	}
+	return true
+}
+
+func CheckImportIntoTableIsEmpty(
+	store kv.Storage,
+	sessCtx sessionctx.Context,
+	tbl table.Table,
+) (bool, error) {
+	txn, err := sessCtx.Txn(false)
+	if err != nil {
+		return false, err
+	}
+	validTxn := txn != nil && txn.Valid()
+	if !validTxn {
+		return false, errors.New("check if table is empty failed")
+	}
+	startTS := txn.StartTS()
+	return checkIfTableIsEmpty(NewReorgContext(), store, tbl, startTS)
 }
 
 func checkIfTableIsEmpty(
@@ -1258,19 +1278,22 @@ func checkIfTableIsEmpty(
 	store kv.Storage,
 	tbl table.Table,
 	startTS uint64,
-) bool {
+) (bool, error) {
 	if pTbl, ok := tbl.(table.PartitionedTable); ok {
 		for _, pid := range pTbl.GetAllPartitionIDs() {
 			pTbl := pTbl.GetPartition(pid)
-			if !checkIfPhysicalTableIsEmpty(ctx, store, pTbl, startTS) {
-				return false
+			if isEmpty, err := checkIfPhysicalTableIsEmpty(ctx, store, pTbl, startTS); err != nil || !isEmpty {
+				return false, err
 			}
 		}
-		return true
+		return true, nil
 	}
 	//nolint:forcetypeassert
 	plainTbl := tbl.(table.PhysicalTable)
-	return checkIfPhysicalTableIsEmpty(ctx, store, plainTbl, startTS)
+	if isEmpty, err := checkIfPhysicalTableIsEmpty(ctx, store, plainTbl, startTS); err != nil || !isEmpty {
+		return false, err
+	}
+	return true, nil
 }
 
 func checkIfPhysicalTableIsEmpty(
@@ -1278,14 +1301,14 @@ func checkIfPhysicalTableIsEmpty(
 	store kv.Storage,
 	tbl table.PhysicalTable,
 	startTS uint64,
-) bool {
+) (bool, error) {
 	hasRecord, err := existsTableRow(ctx, store, tbl, startTS)
 	intest.Assert(err == nil)
 	if err != nil {
-		logutil.DDLLogger().Info("check if table is empty failed", zap.Error(err))
-		return false
+		logutil.DDLLogger().Warn("check if table is empty failed", zap.Error(err))
+		return false, err
 	}
-	return !hasRecord
+	return !hasRecord, nil
 }
 
 func checkIfTempIndexReorgWorkCanSkip(
