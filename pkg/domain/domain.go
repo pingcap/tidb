@@ -1940,7 +1940,7 @@ func (do *Domain) GetPDHTTPClient() pdhttp.Client {
 
 func (do *Domain) decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
 	var msg PrivilegeEvent
-	isNewVersionTriggers := false
+	isNewVersionEvents := false
 	for _, event := range resp.Events {
 		if event.Kv != nil {
 			val := event.Kv.Value
@@ -1951,7 +1951,7 @@ func (do *Domain) decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEve
 					logutil.BgLogger().Warn("decodePrivilegeEvent unmarshal fail", zap.Error(err))
 					break
 				}
-				isNewVersionTriggers = true
+				isNewVersionEvents = true
 				if tmp.ServerID == do.ServerID() {
 					// Skip the events from this TiDB-Server
 					continue
@@ -1968,7 +1968,7 @@ func (do *Domain) decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEve
 
 	// In case old version triggers the event, the event value is empty,
 	// Then we fall back to the old way: reload all the users.
-	if len(msg.UserList) == 0 && !isNewVersionTriggers {
+	if len(msg.UserList) == 0 && !isNewVersionEvents {
 		msg.All = true
 	}
 	return msg
