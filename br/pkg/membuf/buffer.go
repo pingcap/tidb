@@ -190,6 +190,10 @@ func (p *Pool) NewBuffer(opts ...BufferOption) *Buffer {
 	return b
 }
 
+func (b *Buffer) GetSmallObjOverhead() int {
+	return b.smallObjOverhead
+}
+
 // smallObjOverheadBatch is the batch size to acquire memory from limiter. 256KB
 // can store 256KB/24B = 10922 []byte objects, or 256KB/12B = 21845 SliceLocation
 // objects.

@@ -83,7 +83,7 @@ func readAllData(
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
 
-	var allFileKeySize, allFileValSize, allFileKeySizeAdd, allFileValSizeAdd atomic.Int64
+	var allFileKeySize, allFileValSize, allFileKeySizeAdd, allFileValSizeAdd, smallObjMem atomic.Int64
 	beforeLimit, _ := smallBlockBufPool.LogLimierLimit(true)
 	defer func() {
 		afterLimit, maxDiff := smallBlockBufPool.LogLimierLimit(false)
@@ -100,6 +100,7 @@ func readAllData(
 			zap.String("read all k+v size added", units.BytesSize(float64(allFileKeySizeAdd.Load()+allFileValSizeAdd.Load()))),
 			zap.String("key size added", units.BytesSize(float64(allFileKeySizeAdd.Load()))),
 			zap.String("val size added", units.BytesSize(float64(allFileValSizeAdd.Load()))),
+			zap.String("small object memory", units.BytesSize(float64(smallObjMem.Load()))),
 		)
 	}()
 	for readIdx := 0; readIdx < readConn; readIdx++ {
@@ -144,6 +145,7 @@ func readAllData(
 					if valSizeAdd > 0 {
 						allFileValSizeAdd.Add(int64(valSizeAdd))
 					}
+					smallObjMem.Add(int64(smallBlockBuf.GetSmallObjOverhead()))
 				}
 			}
 		})
