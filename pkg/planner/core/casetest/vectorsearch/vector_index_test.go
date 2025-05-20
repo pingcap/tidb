@@ -84,7 +84,7 @@ func TestTiFlashANNIndex(t *testing.T) {
 			('[2,2,2]', 2, 2, '[2,2,2]', '[2,2,2]'),
 			('[3,3,3]', 3, 3, '[3,3,3]', '[3,3,3]')
 	`)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		tk.MustExec("insert into t1(vec, a, b, c, d) select vec, a, b, c, d from t1")
 	}
 	dom := domain.GetDomain(tk.Session())
@@ -335,7 +335,7 @@ func prepareVectorSearchWithPK(t *testing.T) *testkit.TestKit {
 			VECTOR INDEX idx_embedding ((VEC_COSINE_DISTANCE(vec)))
 		)
 	`)
-	for i := 0; i < 2000; i++ {
+	for i := range 2000 {
 		tk.MustExec(fmt.Sprintf(`
 		insert into t1 values
 			(%d, '[1,1,1]', 1, 1, '[1,1,1]', '[1,1,1]'),

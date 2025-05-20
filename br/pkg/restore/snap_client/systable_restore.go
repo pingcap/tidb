@@ -286,10 +286,8 @@ func IsStatsTemporaryTable(tempSchemaName, tableName string) bool {
 }
 
 func GetDBNameIfStatsTemporaryTable(tempSchemaName, tableName string) (string, bool) {
-	if name, ok := utils.StripTempDBPrefixIfNeeded(tempSchemaName); ok && isStatsTable(name, tableName) {
-		return name, true
-	}
-	return "", false
+	dbName := utils.StripTempDBPrefixIfNeeded(tempSchemaName)
+	return dbName, isStatsTable(dbName, tableName)
 }
 
 func IsRenameableSysTemporaryTable(tempSchemaName, tableName string) bool {
@@ -298,10 +296,8 @@ func IsRenameableSysTemporaryTable(tempSchemaName, tableName string) bool {
 }
 
 func GetDBNameIfRenameableSysTemporaryTable(tempSchemaName, tableName string) (string, bool) {
-	if name, ok := utils.StripTempDBPrefixIfNeeded(tempSchemaName); ok && isRenameableSysTable(name, tableName) {
-		return name, true
-	}
-	return "", false
+	dbName := utils.StripTempDBPrefixIfNeeded(tempSchemaName)
+	return dbName, isRenameableSysTable(dbName, tableName)
 }
 
 type TemporaryTableChecker struct {

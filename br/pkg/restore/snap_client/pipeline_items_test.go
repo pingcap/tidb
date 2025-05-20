@@ -28,6 +28,7 @@ import (
 	brmock "github.com/pingcap/tidb/br/pkg/mock"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -39,10 +40,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func generateMockCreatedTables(tableCount int) []*snapclient.CreatedTable {
-	createdTables := make([]*snapclient.CreatedTable, 0, tableCount)
+func generateMockCreatedTables(tableCount int) []*restoreutils.CreatedTable {
+	createdTables := make([]*restoreutils.CreatedTable, 0, tableCount)
 	for i := 1; i <= 100; i += 1 {
-		createdTables = append(createdTables, &snapclient.CreatedTable{
+		createdTables = append(createdTables, &restoreutils.CreatedTable{
 			Table: &model.TableInfo{ID: int64(i)},
 		})
 	}
@@ -52,14 +53,14 @@ func generateMockCreatedTables(tableCount int) []*snapclient.CreatedTable {
 func TestPipelineConcurrentHandler1(t *testing.T) {
 	handlerBuilder := &snapclient.PipelineConcurrentBuilder{}
 
-	handlerBuilder.RegisterPipelineTask("task1", 4, func(ctx context.Context, ct *snapclient.CreatedTable) error {
+	handlerBuilder.RegisterPipelineTask("task1", 4, func(ctx context.Context, ct *restoreutils.CreatedTable) error {
 		ct.Table.ID += 10000
 		return nil
 	}, func(ctx context.Context) error {
 		return nil
 	})
 	totalID := int64(0)
-	handlerBuilder.RegisterPipelineTask("task2", 4, func(ctx context.Context, ct *snapclient.CreatedTable) error {
+	handlerBuilder.RegisterPipelineTask("task2", 4, func(ctx context.Context, ct *restoreutils.CreatedTable) error {
 		atomic.AddInt64(&totalID, ct.Table.ID)
 		return nil
 	}, func(ctx context.Context) error {
@@ -76,7 +77,7 @@ func TestPipelineConcurrentHandler2(t *testing.T) {
 	handlerBuilder := &snapclient.PipelineConcurrentBuilder{}
 
 	count1, count2, count3 := int64(0), int64(0), int64(0)
-	handlerBuilder.RegisterPipelineTask("task1", 4, func(ctx context.Context, ct *snapclient.CreatedTable) error {
+	handlerBuilder.RegisterPipelineTask("task1", 4, func(ctx context.Context, ct *restoreutils.CreatedTable) error {
 		atomic.AddInt64(&count1, 1)
 		time.Sleep(time.Millisecond * 10)
 		return nil
@@ -84,7 +85,7 @@ func TestPipelineConcurrentHandler2(t *testing.T) {
 		return nil
 	})
 	concurrency := uint(4)
-	handlerBuilder.RegisterPipelineTask("task2", concurrency, func(ctx context.Context, ct *snapclient.CreatedTable) error {
+	handlerBuilder.RegisterPipelineTask("task2", concurrency, func(ctx context.Context, ct *restoreutils.CreatedTable) error {
 		atomic.AddInt64(&count2, 1)
 		if ct.Table.ID > int64(concurrency) {
 			return errors.Errorf("failed in task2")
@@ -93,7 +94,7 @@ func TestPipelineConcurrentHandler2(t *testing.T) {
 	}, func(ctx context.Context) error {
 		return nil
 	})
-	handlerBuilder.RegisterPipelineTask("task3", concurrency, func(ctx context.Context, ct *snapclient.CreatedTable) error {
+	handlerBuilder.RegisterPipelineTask("task3", concurrency, func(ctx context.Context, ct *restoreutils.CreatedTable) error {
 		atomic.AddInt64(&count3, 1)
 		<-ctx.Done()
 		return errors.Annotate(ctx.Err(), "failed in task3")
@@ -194,11 +195,11 @@ func generateStatsIndices(hasGlobalIndex bool) []*model.IndexInfo {
 	}
 }
 
-func generateStatsCreatedTables(hasGlobalIndex bool, tableID int64, partitionIDs ...int64) *snapclient.CreatedTable {
+func generateStatsCreatedTables(hasGlobalIndex bool, tableID int64, partitionIDs ...int64) *restoreutils.CreatedTable {
 	downPart, upPart := generateStatsPartition(partitionIDs)
 	indices := generateStatsIndices(hasGlobalIndex)
 	files := generateStatsFiles(tableID, partitionIDs, hasGlobalIndex)
-	return &snapclient.CreatedTable{
+	return &restoreutils.CreatedTable{
 		Table: &model.TableInfo{
 			ID:        tableID,
 			Partition: downPart,
@@ -235,7 +236,7 @@ func TestUpdateStatsMeta(t *testing.T) {
 	client.SetDomain(dom)
 	builder := &snapclient.PipelineConcurrentBuilder{}
 	client.RegisterUpdateMetaAndLoadStats(builder, nil, MockUpdateCh{}, 1)
-	err = builder.StartPipelineTask(ctx, []*snapclient.CreatedTable{
+	err = builder.StartPipelineTask(ctx, []*restoreutils.CreatedTable{
 		generateStatsCreatedTables(false, 100, 101, 102, 103),
 		generateStatsCreatedTables(true, 104, 105, 106, 107),
 		generateStatsCreatedTables(false, 116),
@@ -288,7 +289,7 @@ func TestReplaceTables(t *testing.T) {
 	tk.MustExec("insert into __TiDB_BR_Temporary_mysql.global_priv values ('%', 'test', '')")
 	tk.MustExec("insert into __TiDB_BR_Temporary_mysql.stats_meta values (4, 4, 4, 4, 4)")
 
-	count, err := client.ReplaceTables(ctx, []*snapclient.CreatedTable{
+	count, err := client.ReplaceTables(ctx, []*restoreutils.CreatedTable{
 		{
 			OldTable: &metautil.Table{
 				DB:   &model.DBInfo{Name: ast.NewCIStr("__TiDB_BR_Temporary_mysql")},

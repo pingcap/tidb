@@ -123,7 +123,7 @@ func (rc *SnapClient) RegisterUpdateMetaAndLoadStats(
 
 func (rc *SnapClient) ReplaceTables(
 	ctx context.Context,
-	createdTables []*CreatedTable,
+	createdTables []*restoreutils.CreatedTable,
 	schemaVersionPair SchemaVersionPairT,
 	restoreTS uint64,
 	loadStatsPhysical, loadSysTablePhysical bool,

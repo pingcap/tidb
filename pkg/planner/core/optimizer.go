@@ -1192,6 +1192,9 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 		return nil, 0, plannererrors.ErrInternal.GenWithStackByArgs(errMsg)
 	}
 
+	// collect the warnings from task.
+	logic.SCtx().GetSessionVars().StmtCtx.AppendWarnings(t.(*RootTask).warnings.GetWarnings())
+
 	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
@@ -1287,12 +1290,7 @@ func existsCartesianProduct(p base.LogicalPlan) bool {
 	if join, ok := p.(*logicalop.LogicalJoin); ok && len(join.EqualConditions) == 0 {
 		return join.JoinType == logicalop.InnerJoin || join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin
 	}
-	for _, child := range p.Children() {
-		if existsCartesianProduct(child) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(p.Children(), existsCartesianProduct)
 }
 
 // DefaultDisabledLogicalRulesList indicates the logical rules which should be banned.
