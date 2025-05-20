@@ -920,7 +920,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	if cfg.LoadSysTablePhysical && !cfg.WithSysTable {
-		return errors.Errorf("cannot set --load-stats-physical when --with-sys-table is unset. " +
+		return errors.Errorf("cannot set --load-sys-table-physical when --with-sys-table is unset. " +
 			"Please also set --with-sys-table.")
 	}
 
@@ -950,6 +950,14 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		schemaVersionPair.UpstreamVersionMinor = upstreamClusterVersion.Minor
 		schemaVersionPair.DownstreamVersionMajor = downstreamClusterVersion.Major
 		schemaVersionPair.DownstreamVersionMinor = downstreamClusterVersion.Minor
+		if cfg.LoadSysTablePhysical {
+			if schemaVersionPair.UpstreamVersionMajor != schemaVersionPair.DownstreamVersionMajor ||
+				schemaVersionPair.UpstreamVersionMinor != schemaVersionPair.DownstreamVersionMinor {
+				return errors.Annotatef(berrors.ErrVersionMismatch,
+					"cannot set --load-sys-table-physical when the cluster version of snapshot backup is different from that of the downstream cluster. "+
+						"Please unset --load-sys-table-physical.")
+			}
+		}
 	}
 	if cfg.CheckRequirements {
 		log.Info("Checking incompatible TiCDC changefeeds before restoring.",
@@ -1019,7 +1027,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err := checkMandatoryClusterRequirements(client, cfg, cpEnabledAndExists, cmdName); err != nil {
 		return errors.Trace(err)
 	}
-	if !cpEnabledAndExists && (client.IsIncremental() || cfg.ExplicitFilter) {
+	if client.IsIncremental() || cfg.ExplicitFilter || !isFullRestore(cmdName) {
 		if cfg.LoadStatsPhysical {
 			return errors.Errorf("cannot set --load-stats-physical when it is not full restore. " +
 				"Please unset --load-stats-physical or try to full restore.")
