@@ -120,7 +120,7 @@ func (s *state) Encode() string {
 		}
 		if _, isFloat := v.(float64); isFloat {
 			// only consider 4 decimal digits, which should be enough for optimizer tuning.
-			sb.WriteString(fmt.Sprintf("%.4f", v))
+			_, _ = fmt.Fprintf(sb, "%.4f", v)
 		} else {
 			sb.WriteString(fmt.Sprintf("%v", v))
 		}
