@@ -350,7 +350,7 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	var err error
 	if e.corColInFilter {
-		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.plans, kv.TiKV)
+		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.plans)
 		if err != nil {
 			return err
 		}
@@ -611,8 +611,8 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 }
 
 func (e *IndexLookUpExecutor) open(_ context.Context) error {
-	if e.storeType == kv.TiFlash && !e.batchCop {
-		return errors.New("tici only support batchcop")
+	if e.storeType == kv.TiFlash {
+		e.batchCop = true
 	}
 	// We have to initialize "memTracker" and other execution resources in here
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
@@ -631,14 +631,19 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 
 	var err error
 	if e.corColInIdxSide {
-		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.idxPlans, e.storeType)
+		if e.storeType == kv.TiKV {
+			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.idxPlans)
+		}
+		if e.storeType == kv.TiFlash {
+			e.dagPB.Executors, err = builder.ConstructTreeBasedDistExec(e.buildPBCtx, e.idxPlans[len(e.idxPlans)-1])
+		}
 		if err != nil {
 			return err
 		}
 	}
 
 	if e.corColInTblSide {
-		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.tblPlans, kv.TiKV)
+		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.tblPlans)
 		if err != nil {
 			return err
 		}
