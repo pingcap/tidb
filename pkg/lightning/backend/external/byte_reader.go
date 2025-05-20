@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -105,7 +106,8 @@ func newByteReader(
 		curBufOffset:  0,
 	}
 	r.curBuf = [][]byte{r.smallBuf}
-	r.logger = logutil.Logger(r.ctx)
+	r.logger = logutil.Logger(r.ctx).With(zap.String("byte reader id", fmt.Sprintf("%p", r)))
+	r.logger.Info("new byte reader")
 	return r, r.reload()
 }
 
@@ -204,10 +206,20 @@ func (r *byteReader) switchToConcurrentReader() error {
 	return nil
 }
 
+const deadLoopDetectThreshold = 100
+
 // readNBytes reads the next n bytes from the reader and returns a buffer slice
 // containing those bytes. The content of returned slice may be changed after
 // next call.
-func (r *byteReader) readNBytes(n int) ([]byte, error) {
+func (r *byteReader) readNBytes(n int) (auxBuf []byte, err error) {
+	rawN := n
+	var loopCnt uint64
+	r.logger.Info("start readNBytes()", zap.Int("n", rawN))
+	defer func() {
+		r.logger.Info("end readNBytes()", zap.Int("rawN", rawN), zap.Int("n", n), zap.Uint64("loopCnt", loopCnt),
+			zap.Int("len(auxBuf)", len(auxBuf)), zap.Error(err),
+		)
+	}()
 	if n <= 0 {
 		return nil, errors.Errorf("illegal n (%d) when reading from external storage", n)
 	}
@@ -220,41 +232,76 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 		return bs[0], nil
 	}
 	// need to flatten bs
-	auxBuf := make([]byte, n)
+	auxBuf = make([]byte, n)
 	for _, b := range bs {
 		copy(auxBuf[len(auxBuf)-n:], b)
 		n -= len(b)
 	}
 	hasRead := readLen > 0
+	readNoByteCnt := 0
 	for n > 0 {
-		err := r.reload()
+		// if loopCnt >= uint64(rawN*5) {
+		// 	return nil, errors.New(fmt.Sprintf("readNBytes reaches max loopCnt %d", rawN*5))
+		// }
+		err = r.reload()
+		if err != nil {
+			r.logger.Error("readNBytes reload error", zap.Uint64("loopCnt", loopCnt), zap.Int("n", n),
+				zap.Error(err), zap.Bool("hasRead", hasRead)) // EOF / read N bytes from external storage, exceed max limit
+		}
 		switch err {
 		case nil:
 		case io.EOF:
 			// EOF is only allowed when we have not read any data
 			if hasRead {
-				return nil, io.ErrUnexpectedEOF
+				err = io.ErrUnexpectedEOF
+				return nil, err
 			}
 			return nil, err
 		default:
 			return nil, err
 		}
 		readLen, bs = r.next(n)
+		if rand.Intn(5) == 0 {
+			r.logger.Info("readNBytes", zap.Uint64("loopCnt", loopCnt), zap.Int("readNoByteCnt", readNoByteCnt),
+				zap.Int("readLen", readLen), zap.Int("len(bs[0])", len(bs[0])),
+				zap.Bool("hasRead", hasRead))
+		}
+		if readLen == 0 {
+			readNoByteCnt += 1
+			if readNoByteCnt >= deadLoopDetectThreshold {
+				return nil, errors.Errorf("read no bytes, remaining %d byte(s)", n)
+			}
+		} else {
+			readNoByteCnt = 0
+		}
 		hasRead = hasRead || readLen > 0
 		for _, b := range bs {
 			copy(auxBuf[len(auxBuf)-n:], b)
 			n -= len(b)
 		}
+		loopCnt += 1
 	}
 	return auxBuf, nil
 }
 
-func (r *byteReader) next(n int) (int, [][]byte) {
-	retCnt := 0
+func (r *byteReader) next(n int) (retCnt int, ret [][]byte) {
+	r.logger.Info("start next()", zap.Int("n", n))
 	// TODO(lance6716): heap escape performance?
-	ret := make([][]byte, 0, len(r.curBuf)-r.curBufIdx+1)
+	ret = make([][]byte, 0, len(r.curBuf)-r.curBufIdx+1)
+	var loopCnt uint64
+	defer func() {
+		r.logger.Info("end next()", zap.Int("n", n), zap.Int("retCnt", retCnt),
+			zap.Int("len(ret)", len(ret)), zap.Int("cap(ret)", cap(ret)),
+			zap.Int("curBufIdx", r.curBufIdx), zap.Int("curBufOffset", r.curBufOffset),
+			zap.Uint64("loopCnt", loopCnt))
+	}()
 	for r.curBufIdx < len(r.curBuf) && n > 0 {
 		cur := r.curBuf[r.curBufIdx]
+		if rand.Intn(10) == 0 {
+			r.logger.Info("next loop", zap.Uint64("loopCnt", loopCnt), zap.Int("curBufIdx", r.curBufIdx),
+				zap.Int("curBufOffset", r.curBufOffset), zap.Int("len(cur)", len(cur)),
+				zap.Int("n", n), zap.Int("retCnt", retCnt), zap.Int("len(ret)", len(ret)), zap.Int("cap(ret)", cap(ret)))
+		}
 		if r.curBufOffset+n <= len(cur) {
 			ret = append(ret, cur[r.curBufOffset:r.curBufOffset+n])
 			retCnt += n
@@ -270,12 +317,18 @@ func (r *byteReader) next(n int) (int, [][]byte) {
 		n -= len(cur) - r.curBufOffset
 		r.curBufIdx++
 		r.curBufOffset = 0
+		loopCnt += 1
 	}
 
 	return retCnt, ret
 }
 
-func (r *byteReader) reload() error {
+func (r *byteReader) reload() (err error) {
+	r.logger.Info("start reload()")
+	var n int
+	defer func() {
+		r.logger.Info("end reload()", zap.Int("curBufIdx", r.curBufIdx), zap.Int("curBufOffset", r.curBufOffset), zap.Int("n", n), zap.Error(err))
+	}()
 	to := r.concurrentReader.expected
 	now := r.concurrentReader.now
 	// in read only false -> true is possible
@@ -299,7 +352,12 @@ func (r *byteReader) reload() error {
 		return nil
 	}
 	// when not using concurrentReader, len(curBuf) == 1
-	n, err := io.ReadFull(r.storageReader, r.curBuf[0][0:])
+	n, err = io.ReadFull(r.storageReader, r.curBuf[0])
+	if n == 0 || err != nil {
+		r.logger.Info("abnormal reload()", zap.Int("n", n), zap.Error(err)) // (220224, unexpected EOF) / (0, EOF) / (18594, read N bytes from external storage, exceed max limit) / (0, unexpected EOF)
+	} else if rand.Intn(10) == 0 {
+		r.logger.Info("normal reload()", zap.Int("n", n))
+	}
 	if err != nil {
 		switch err {
 		case io.EOF:
@@ -308,7 +366,7 @@ func (r *byteReader) reload() error {
 			return err
 		case io.ErrUnexpectedEOF:
 			// The last batch.
-			r.curBuf[0] = r.curBuf[0][:n]
+			r.curBuf[0] = r.curBuf[0][:n] // TODO: if n == 0 here, r.curBuf[0] would be [], causing deap loop
 		case context.Canceled:
 			return err
 		default:

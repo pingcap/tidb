@@ -253,9 +253,9 @@ endif
 .PHONY: linux
 linux:
 ifeq ($(TARGET), "")
-	GOOS=linux $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server-linux ./cmd/tidb-server
+	GOOS=linux GOARCH=amd64 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server-linux ./cmd/tidb-server
 else
-	GOOS=linux $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
+	GOOS=linux GOARCH=amd64 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
 
 .PHONY: server_coverage

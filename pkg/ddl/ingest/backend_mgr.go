@@ -53,6 +53,7 @@ type BackendCtxMgr interface {
 		importConc int,
 		maxWriteSpeed int,
 		initTS uint64,
+		adjustedWorkerConcurrency int,
 	) (BackendCtx, error)
 	Unregister(jobID int64)
 	// EncodeJobSortPath encodes the job ID to the local disk sort path.
@@ -121,6 +122,7 @@ func (m *litBackendCtxMgr) Register(
 	concurrency int,
 	maxWriteSpeed int,
 	initTS uint64,
+	adjustedWorkerConcurrency int,
 ) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
 	if exist {
@@ -150,7 +152,7 @@ func (m *litBackendCtxMgr) Register(
 	// folder, which may cause cleanupSortPath wrongly delete the sort folder if only
 	// checking the existence of the entry in backends.
 	m.backends.mu.Lock()
-	bd, err := createLocalBackend(ctx, cfg, pdSvcDiscovery)
+	bd, err := createLocalBackend(ctx, cfg, pdSvcDiscovery, adjustedWorkerConcurrency)
 	if err != nil {
 		m.backends.mu.Unlock()
 		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
@@ -178,7 +180,11 @@ func createLocalBackend(
 	ctx context.Context,
 	cfg *local.BackendConfig,
 	pdSvcDiscovery pd.ServiceDiscovery,
+	adjustedWorkerConcurrency int,
 ) (*local.Backend, error) {
+	if adjustedWorkerConcurrency > 0 {
+		cfg.WorkerConcurrency = adjustedWorkerConcurrency
+	}
 	tidbCfg := config.GetGlobalConfig()
 	tls, err := common.NewTLS(
 		tidbCfg.Security.ClusterSSLCA,
