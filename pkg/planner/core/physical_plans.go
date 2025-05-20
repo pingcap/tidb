@@ -504,8 +504,8 @@ type PhysicalIndexLookUpReader struct {
 	expectedCnt uint64
 	keepOrder   bool
 
-	// StoreType indicates table read from which type of store.
-	StoreType kv.StoreType
+	// IndexStoreType indicates table read from which type of store.
+	IndexStoreType kv.StoreType
 
 	// ReadReqType is the read request type for current physical table reader, there are 3 kinds of read request: Cop,
 	// BatchCop and MPP, currently, the latter two are only used in TiFlash

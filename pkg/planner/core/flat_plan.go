@@ -339,7 +339,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalIndexLookUpReader:
 		childCtx.isRoot = false
-		childCtx.storeType = plan.StoreType
+		childCtx.storeType = plan.IndexStoreType
 		childCtx.reqType = plan.ReadReqType
 		childCtx.label = BuildSide
 		childCtx.isLastChild = false

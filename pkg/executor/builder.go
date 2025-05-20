@@ -4193,7 +4193,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		PushedLimit:                v.PushedLimit,
 		idxNetDataSize:             v.GetAvgTableRowSize(),
 		avgRowSize:                 v.GetAvgTableRowSize(),
-		storeType:                  v.StoreType,
+		storeType:                  v.IndexStoreType,
 		batchCop:                   v.ReadReqType == plannercore.BatchCop,
 	}
 

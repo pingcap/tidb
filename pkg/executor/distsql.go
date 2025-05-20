@@ -633,9 +633,12 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 	if e.corColInIdxSide {
 		if e.storeType == kv.TiKV {
 			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.idxPlans)
-		}
-		if e.storeType == kv.TiFlash {
-			e.dagPB.Executors, err = builder.ConstructTreeBasedDistExec(e.buildPBCtx, e.idxPlans[len(e.idxPlans)-1])
+		} else if e.storeType == kv.TiFlash {
+			var executors []*tipb.Executor
+			executors, err = builder.ConstructTreeBasedDistExec(e.buildPBCtx, e.idxPlans[len(e.idxPlans)-1])
+			e.dagPB.RootExecutor = executors[0]
+		} else {
+			err = errors.Errorf("unsupported store type %s", e.storeType.Name())
 		}
 		if err != nil {
 			return err
