@@ -1423,10 +1423,6 @@ func (p *rangePruner) partitionRangeForExpr(sctx base.PlanContext, expr expressi
 	if !ok {
 		return 0, 0, false
 	}
-	if dataForPrune.op == ast.NullEQ {
-		// Only returned if NullEQ AND isNull!
-		return 0, 1, true
-	}
 
 	start, end = pruneUseBinarySearch(p.lessThan, dataForPrune)
 	return start, end, true
@@ -1664,15 +1660,19 @@ func (p *rangePruner) extractDataForPrune(sctx base.PlanContext, expr expression
 	default:
 		return ret, false
 	}
-	if err == nil && !isNull {
+	if err != nil {
+		return ret, false
+	}
+	if !isNull {
 		if ret.op == ast.NullEQ {
 			ret.op = ast.EQ
 		}
 		ret.c = c
 		ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).GetFlag())
 		return ret, true
-	}
-	if isNull && ret.op == ast.NullEQ {
+	} else if ret.op == ast.NullEQ {
+		// Mark it as IsNull, which is already handled in pruneUseBinarySearch.
+		ret.op = ast.IsNull
 		return ret, true
 	}
 	return ret, false
