@@ -37,6 +37,7 @@ func newOperatorCommand() *cobra.Command {
 	cmd.AddCommand(newMigrateToCommand())
 	cmd.AddCommand(newForceFlushCommand())
 	cmd.AddCommand(newChecksumCommand())
+	cmd.AddCommand(newCleanupRestoreModeCommand())
 	return cmd
 }
 
@@ -151,5 +152,22 @@ func newForceFlushCommand() *cobra.Command {
 		},
 	}
 	operator.DefineFlagsForForceFlushConfig(cmd.Flags())
+	return cmd
+}
+
+func newCleanupRestoreModeCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "cleanup-restore-mode",
+		Short: "cleanup tables in restore mode and set them back to normal mode",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := operator.CleanupRestoreModeConfig{}
+			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
+				return err
+			}
+			ctx := GetDefaultContext()
+			return operator.RunCleanupRestoreMode(ctx, &cfg)
+		},
+	}
 	return cmd
 }
