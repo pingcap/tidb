@@ -19,9 +19,9 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -38,7 +38,7 @@ func init() {
 }
 
 func TestCreateNonUniqueIndex(t *testing.T) {
-	t.Skip("too fucking slow")
+	testutil.ReduceCheckInterval(t)
 	var colIDs = [][]int{
 		{1, 4, 7, 10, 13, 16, 19, 22, 25},
 		{2, 5, 8, 11, 14, 17, 20, 23, 26},
@@ -49,9 +49,6 @@ func TestCreateNonUniqueIndex(t *testing.T) {
 }
 
 func TestCreateUniqueIndex(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("duplicate data, cause send empty request, then tikv worker panic")
-	}
 	var colIDs [][]int = [][]int{
 		{1, 6, 7, 8, 11, 13, 15, 16, 18, 19, 22, 26},
 		{2, 9, 11, 17},
@@ -72,7 +69,7 @@ func TestCreateGenColIndex(t *testing.T) {
 }
 
 func TestCreateMultiColsIndex(t *testing.T) {
-	t.Skip("too fucking slow")
+	testutil.ReduceCheckInterval(t)
 	var coliIDs = [][]int{
 		{1, 4, 7},
 		{2, 5},
@@ -101,7 +98,7 @@ func TestCreateMultiColsIndex(t *testing.T) {
 }
 
 func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
-	t.Skip("too fucking slow")
+	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists fk_index;")
@@ -163,9 +160,6 @@ func TestAddUKWithSmallIntHandles(t *testing.T) {
 }
 
 func TestAddUniqueDuplicateIndexes(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("duplicate data, cause send empty request, then tikv worker panic")
-	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
