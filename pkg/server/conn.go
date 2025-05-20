@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -2003,7 +2004,7 @@ func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls strin
 	normalized, digest := parser.NormalizeDigest(sqls)
 	topsql.AttachAndRegisterSQLInfo(context.Background(), normalized, digest, false)
 	if len(normalized) != 0 {
-		snapshot.SetOption(kv.ResourceGroupTagger, kv.NewResourceGroupTagBuilder().SetSQLDigest(digest))
+		snapshot.SetOption(kv.ResourceGroupTagger, kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceIDBySettings()).SetSQLDigest(digest))
 	}
 }
 

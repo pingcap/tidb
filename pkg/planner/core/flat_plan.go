@@ -162,6 +162,31 @@ func (d OperatorLabel) String() string {
 	return ""
 }
 
+// ExplainFlatPlan returns the explain result of the FlatPhysicalPlan in a slice of string slice.
+func ExplainFlatPlan(flatPlan *FlatPhysicalPlan) (plan [][]string) {
+	plan = make([][]string, 0, 4)
+	for _, flatOp := range flatPlan.Main {
+		plan = append(plan, explainFlatPlanOperator(flatOp))
+	}
+	for _, cte := range flatPlan.CTEs {
+		for _, flatOp := range cte {
+			plan = append(plan, explainFlatPlanOperator(flatOp))
+		}
+	}
+	for _, subQ := range flatPlan.ScalarSubQueries {
+		for _, flatOp := range subQ {
+			plan = append(plan, explainFlatPlanOperator(flatOp))
+		}
+	}
+	return
+}
+
+func explainFlatPlanOperator(flatOp *FlatOperator) []string {
+	taskTp, textTreeExplainID := getExplainIDAndTaskTp(flatOp)
+	estRows, _, _, accessObject, operatorInfo := getOperatorInfo(flatOp.Origin.SCtx(), flatOp.Origin)
+	return []string{textTreeExplainID, taskTp, estRows, accessObject, operatorInfo}
+}
+
 type operatorCtx struct {
 	depth       uint32
 	label       OperatorLabel
@@ -193,6 +218,7 @@ func FlattenPhysicalPlan(p base.Plan, buildSideFirst bool) *FlatPhysicalPlan {
 	flattenedCTEPlan := make(map[int]struct{}, len(res.ctesToFlatten))
 
 	// Note that ctesToFlatten may be modified during the loop, so we manually loop over it instead of using for...range.
+	// nolint:intrange
 	for i := 0; i < len(res.ctesToFlatten); i++ {
 		cte := res.ctesToFlatten[i]
 		cteDef := (*CTEDefinition)(cte)

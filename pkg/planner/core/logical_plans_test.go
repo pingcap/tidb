@@ -1600,7 +1600,7 @@ func checkVisitInfo(t *testing.T, v1, v2 []visitInfo, comment string) {
 	v2 = unique(v2)
 
 	require.Equal(t, len(v2), len(v1), comment)
-	for i := 0; i < len(v1); i++ {
+	for i := range v1 {
 		// loose compare errors for code match
 		require.True(t, terror.ErrorEqual(v1[i].err, v2[i].err), fmt.Sprintf("err1 %v, err2 %v for %s", v1[i].err, v2[i].err, comment))
 		// compare remainder
@@ -2356,7 +2356,7 @@ func TestWindowLogicalPlanAmbiguous(t *testing.T) {
 	iterations := 100
 	s := createPlannerSuite()
 	defer s.Close()
-	for i := 0; i < iterations; i++ {
+	for range iterations {
 		stmt, err := s.p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 		nodeW := resolve.NewNodeW(stmt)
@@ -2549,7 +2549,7 @@ func TestPruneColumnsForDelete(t *testing.T) {
 				innerRet = append(innerRet, sb.String())
 				sb.Reset()
 				fmt.Fprintf(&sb, "handle cols: %s:", colsLayout.HandleCols.StringWithCtx(s.sctx.GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
-				for i := 0; i < colsLayout.HandleCols.NumCols(); i++ {
+				for i := range colsLayout.HandleCols.NumCols() {
 					if i > 0 {
 						sb.WriteString(", ")
 					}

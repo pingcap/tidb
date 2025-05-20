@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -944,7 +945,7 @@ func (e *Explain) renderResultForExplore() error {
 	if sqlOrDigest == "" {
 		sqlOrDigest = e.ExecStmt.Text()
 	}
-	plans, err := bindingHandle.ShowPlansForSQL(currentDB, sqlOrDigest, charset, collation)
+	plans, err := bindingHandle.ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation)
 	if err != nil {
 		return err
 	}
@@ -1018,16 +1019,6 @@ func (e *Explain) RenderResult() error {
 			}
 		} else {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("'explain format=true_card_cost' cannot support this plan"))
-		}
-	}
-
-	if strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
-		if pp, ok := e.TargetPlan.(base.PhysicalPlan); ok {
-			// trigger getPlanCost again with CostFlagTrace to record all cost formulas
-			if _, err := getPlanCost(pp, property.RootTaskType,
-				optimizetrace.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate|costusage.CostFlagTrace)); err != nil {
-				return err
-			}
 		}
 	}
 
@@ -1133,16 +1124,20 @@ func (e *Explain) explainOpRecursivelyInJSONFormat(flatOp *FlatOperator, flats F
 }
 
 func (e *Explain) explainFlatOpInRowFormat(flatOp *FlatOperator) {
-	taskTp := ""
+	taskTp, textTreeExplainID := getExplainIDAndTaskTp(flatOp)
+	e.prepareOperatorInfo(flatOp.Origin, taskTp, textTreeExplainID)
+}
+
+func getExplainIDAndTaskTp(flatOp *FlatOperator) (taskTp, textTreeExplainID string) {
 	if flatOp.IsRoot {
 		taskTp = "root"
 	} else {
 		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
 	}
-	textTreeExplainID := texttree.PrettyIdentifier(flatOp.Origin.ExplainID().String()+flatOp.Label.String(),
+	textTreeExplainID = texttree.PrettyIdentifier(flatOp.Origin.ExplainID().String()+flatOp.Label.String(),
 		flatOp.TextTreeIndent,
 		flatOp.IsLastChild)
-	e.prepareOperatorInfo(flatOp.Origin, taskTp, textTreeExplainID)
+	return
 }
 
 func getRuntimeInfoStr(ctx base.PlanContext, p base.Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
@@ -1264,14 +1259,17 @@ func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, cos
 			return row[1], "N/A", "N/A", row[3], row[4]
 		}
 	}
+	return getOperatorInfo(e.SCtx(), p)
+}
 
+func getOperatorInfo(sctx planctx.PlanContext, p base.Plan) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
 	pp, isPhysicalPlan := p.(base.PhysicalPlan)
 	estRows = "N/A"
 	estCost = "N/A"
 	costFormula = "N/A"
 	if isPhysicalPlan {
 		estRows = strconv.FormatFloat(pp.GetEstRowCountForDisplay(), 'f', 2, 64)
-		if e.SCtx() != nil && e.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
+		if sctx != nil && sctx.GetSessionVars().CostModelVersion == modelVer2 {
 			costVer2, _ := pp.GetPlanCostVer2(property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(costVer2.GetCost(), 'f', 2, 64)
 			if costVer2.GetTrace() != nil {
@@ -1289,8 +1287,8 @@ func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, cos
 		accessObject = plan.AccessObject().String()
 		operatorInfo = plan.OperatorInfo(false)
 	} else {
-		if pa, ok := p.(partitionAccesser); ok && e.SCtx() != nil {
-			accessObject = pa.accessObject(e.SCtx()).String()
+		if pa, ok := p.(partitionAccesser); ok && sctx != nil {
+			accessObject = pa.accessObject(sctx).String()
 		}
 		operatorInfo = p.ExplainInfo()
 	}
@@ -1481,7 +1479,7 @@ func (e *Explain) prepareTaskDot(p base.PhysicalPlan, taskTp string, buffer *byt
 			copTasks = append(copTasks, copPlan.tablePlan)
 			copTasks = append(copTasks, copPlan.indexPlan)
 		case *PhysicalIndexMergeReader:
-			for i := 0; i < len(copPlan.partialPlans); i++ {
+			for i := range copPlan.partialPlans {
 				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.partialPlans[i].ExplainID()))
 				copTasks = append(copTasks, copPlan.partialPlans[i])
 			}

@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"maps"
 	"math"
 	"reflect"
 	"slices"
@@ -358,12 +359,7 @@ func (b *PlanBuilder) GetIsForUpdateRead() bool {
 func GetDBTableInfo(visitInfo []visitInfo) []stmtctx.TableEntry {
 	var tables []stmtctx.TableEntry
 	existsFunc := func(tbls []stmtctx.TableEntry, tbl *stmtctx.TableEntry) bool {
-		for _, t := range tbls {
-			if t == *tbl {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(tbls, *tbl)
 	}
 	for _, v := range visitInfo {
 		if v.db == "" && v.table == "" {
@@ -1038,12 +1034,7 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (base.Plan, 
 
 // detectAggInExprNode detects an aggregate function in its exprs.
 func (*PlanBuilder) detectAggInExprNode(exprs []ast.ExprNode) bool {
-	for _, expr := range exprs {
-		if ast.HasAggFlag(expr) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(exprs, ast.HasAggFlag)
 }
 
 // detectSelectAgg detects an aggregate function or GROUP BY clause.
@@ -1386,7 +1377,7 @@ func filterPathByIsolationRead(ctx base.PlanContext, paths []*util.AccessPath, t
 			availableEngineStr += paths[i].StoreType.Name()
 		}
 		if _, ok := isolationReadEngines[paths[i].StoreType]; !ok && paths[i].StoreType != kv.TiDB {
-			paths = append(paths[:i], paths[i+1:]...)
+			paths = slices.Delete(paths, i, i+1)
 		}
 	}
 	var err error
@@ -1985,7 +1976,7 @@ func BuildHandleColsForAnalyze(
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
 		pkColLen := len(pkIdx.Columns)
 		columns := make([]*expression.Column, pkColLen)
-		for i := 0; i < pkColLen; i++ {
+		for i := range pkColLen {
 			colInfo := tblInfo.Columns[pkIdx.Columns[i].Offset]
 			var index int
 			if allColumns {
@@ -2491,9 +2482,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	if err != nil {
 		return err
 	}
-	for physicalID, opts := range optionsMap {
-		analyzePlan.OptionsMap[physicalID] = opts
-	}
+	maps.Copy(analyzePlan.OptionsMap, optionsMap)
 
 	var indexes, independentIndexes, specialGlobalIndexes []*model.IndexInfo
 
@@ -3072,13 +3061,9 @@ func fillAnalyzeOptionsV2(optMap map[ast.AnalyzeOptionType]uint64) map[ast.Analy
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeOptionType]uint64, error) {
 	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
 	if statsVer == statistics.Version1 {
-		for key, val := range analyzeOptionDefault {
-			optMap[key] = val
-		}
+		maps.Copy(optMap, analyzeOptionDefault)
 	} else {
-		for key, val := range analyzeOptionDefaultV2 {
-			optMap[key] = val
-		}
+		maps.Copy(optMap, analyzeOptionDefaultV2)
 	}
 	sampleNum, sampleRate := uint64(0), 0.0
 	for _, opt := range opts {
@@ -4422,7 +4407,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	schema4NewRow := expression.NewSchema(make([]*expression.Column, len(insertPlan.Table.Cols()))...)
 	names4NewRow := make(types.NameSlice, len(insertPlan.Table.Cols()))
 	// TODO: don't clone it.
-	for i := 0; i < actualColLen; i++ {
+	for i := range actualColLen {
 		selCol := insertPlan.SelectPlan.Schema().Columns[i]
 		ordinal := affectedValuesCols[i].Offset
 		schema4NewRow.Columns[ordinal] = &expression.Column{}
@@ -5566,6 +5551,13 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 
 	var targetPlan base.Plan
 	if explain.Stmt != nil && !explain.Explore {
+		if strings.EqualFold(explain.Format, types.ExplainFormatCostTrace) {
+			origin := sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace
+			sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+			defer func() {
+				sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = origin
+			}()
+		}
 		nodeW := resolve.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
 		targetPlan, _, err = OptimizeAstNode(ctx, sctx, nodeW, b.is)
 		if err != nil {
