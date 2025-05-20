@@ -261,9 +261,9 @@ func (r *byteReader) readNBytes(n int) (auxBuf []byte, err error) {
 			return nil, err
 		}
 		readLen, bs = r.next(n)
-		if rand.Intn(10) == 0 {
-			r.logger.Info("readNBytes", zap.Uint64("loopCnt", loopCnt), zap.Int("readLen", readLen),
-				zap.Int("len(bs[0])", len(bs[0])),
+		if rand.Intn(5) == 0 {
+			r.logger.Info("readNBytes", zap.Uint64("loopCnt", loopCnt), zap.Int("readNoByteCnt", readNoByteCnt),
+				zap.Int("readLen", readLen), zap.Int("len(bs[0])", len(bs[0])),
 				zap.Bool("hasRead", hasRead))
 		}
 		if readLen == 0 {

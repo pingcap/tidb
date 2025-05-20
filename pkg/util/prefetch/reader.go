@@ -73,8 +73,8 @@ func (r *Reader) run() {
 		}
 		r.bufIdx = (r.bufIdx + 1) % 2
 		buf := r.buf[r.bufIdx]
-		n, err := r.r.Read(buf) // No EOF
-		if n == 0 || err != nil {
+		n, err := r.r.Read(buf)   // No EOF
+		if n == 0 || err != nil { // n=0, http: read on closed response body / cancel subtasks
 			r.logger.Error("After abnormal read in run()", zap.Int("n", n), zap.Error(err)) // n=0, failed to read file xxx: illegal n when reading from external storage / http: read on closed response body / read tcp 10.200.12.194:37046->198.18.96.40:80: use of closed network connection / read N bytes from external storage, exceed max limit
 		} else if rand.Intn(10) == 0 {
 			r.logger.Info("After normal read in run()", zap.Int("n", n))
@@ -93,7 +93,6 @@ func (r *Reader) run() {
 		case r.bufCh <- buf:
 		}
 		if err != nil { // why handle the error after select clause?
-			//logutil.BgLogger().Error("read error", zap.Error(err))
 			r.logger.Error("run encounter error", zap.Int("n", n), zap.Error(err)) // n=0, failed to read file xxx: illegal n when reading from external storage
 			r.err = err
 			close(r.bufCh)
@@ -118,14 +117,9 @@ func (r *Reader) Read(data []byte) (int, error) {
 		if r.curBufReader == nil {
 			b, ok := <-r.bufCh
 			if !ok {
-				if total > 0 {
-					//PrintLog = true
-					//logutil.BgLogger().Error("set printlog = true", zap.Error(r.err), zap.Int("total", total), zap.Any("data-buf-len", len(data)))
-					r.logger.Info("Read() return", zap.Int("total", total)) // total > 0
-					return total, nil
-				}
-				r.logger.Info("Read() return", zap.Error(r.err)) // failed to read file 1/1/data/923c8a66-5667-477a-b735-d44b2e4f9d91/19: illegal n when reading from external storage
-				return 0, r.err
+				// TODO: we should return r.err here?
+				r.logger.Info("Read() return", zap.Int("total", total), zap.Error(r.err)) // failed to read file 1/1/data/923c8a66-5667-477a-b735-d44b2e4f9d91/19: illegal n when reading from external storage
+				return total, r.err
 			}
 
 			r.curBufReader = bytes.NewReader(b) // Clue1: len(b) == 0 ?
