@@ -1228,8 +1228,7 @@ func prepareOperatorInfo(flatOp *FlatOperator, format string, analyze bool,
 		}
 		row = append(row, taskType, accessObject, operatorInfo)
 	}
-	rows = append(rows, row)
-	return rows
+	return append(rows, row)
 }
 
 func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id string, explainID string) *ExplainInfoForEncode {
