@@ -2054,6 +2054,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 				event = do.batchReadMoreData(watchCh, event)
 			}
 
+			// All events are from this TiDB-Server, skip them
 			if !event.All && len(event.UserList) == 0 {
 				continue
 			}
