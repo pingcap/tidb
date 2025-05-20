@@ -194,7 +194,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 			v-- // insert a duplicate key.
 		}
 		key, val := []byte{byte(v)}, []byte{byte(v)}
-		kvSize += len(key) + len(val) + 2*lengthBytes
+		kvSize += len(key) + len(val)
 		require.NoError(t, writer.WriteRow(ctx, key, val, dbkv.IntHandle(i)))
 	}
 	require.NoError(t, writer.Close(ctx))

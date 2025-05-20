@@ -177,10 +177,7 @@ func (j *JobInfo) CanCancel() bool {
 	return j.Status == jobStatusPending || j.Status == JobStatusRunning
 }
 
-// GetJob returns the job with the given id if the user has privilege.
-// hasSuperPriv: whether the user has super privilege.
-// If the user has super privilege, the user can show or operate all jobs,
-// else the user can only show or operate his own jobs.
+// GetJob returns the job with the given id if the user has privilege to show this job.
 func GetJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, user string, hasSuperPriv bool) (*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 
@@ -359,6 +356,8 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 	}
 
 	importedRows := int64(-1)
+	// Only finished/failed job has summary
+	// For running job, we have to get importedRows from GetRuntimeInfoForJob.
 	if !row.IsNull(12) {
 		summaryStr := row.GetString(12)
 		if len(summaryStr) > 0 {
@@ -366,7 +365,10 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 			if err := json.Unmarshal([]byte(summaryStr), summary); err != nil {
 				return nil, errors.Trace(err)
 			}
-			importedRows = summary.PostProcessSummary.RowCnt
+			// Only update importedRows if rowcnt > 0, which means ingest step is finished.
+			if summary.PostProcessSummary.RowCnt > 0 {
+				importedRows = summary.PostProcessSummary.RowCnt
+			}
 		}
 	}
 
@@ -393,6 +395,7 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 }
 
 // GetAllViewableJobs gets all viewable jobs.
+// If the user has super privilege, he can show all jobs, otherwise he can only show his jobs.
 func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user string, hasSuperPriv bool) ([]*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	sql := baseQuerySQL
