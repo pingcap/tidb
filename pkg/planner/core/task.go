@@ -1443,7 +1443,7 @@ func (p *PhysicalProjection) Attach2Task(tasks ...base.Task) base.Task {
 		}
 	} else if mpp, ok := t.(*MppTask); ok {
 		if expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Exprs, kv.TiFlash) {
-			if p.SameProjection(tasks...) {
+			if p.sameProjection(tasks...) {
 				return mpp
 			}
 			p.SetChildren(mpp.p)
@@ -1451,7 +1451,7 @@ func (p *PhysicalProjection) Attach2Task(tasks ...base.Task) base.Task {
 			return mpp
 		}
 	}
-	if p.SameProjection(tasks...) {
+	if p.sameProjection(tasks...) {
 		return tasks[0]
 	}
 	t = t.ConvertToRootTask(p.SCtx())
@@ -1462,11 +1462,11 @@ func (p *PhysicalProjection) Attach2Task(tasks ...base.Task) base.Task {
 	return t
 }
 
-func (p *PhysicalProjection) SameProjection(tasks ...base.Task) bool {
+func (p *PhysicalProjection) sameProjection(tasks ...base.Task) bool {
 	if len(tasks) == 1 {
 		if childProjection, ok := tasks[0].Plan().(*PhysicalProjection); ok {
 			evalExpr := p.SCtx().GetExprCtx().GetEvalCtx()
-			if EqualFold(evalExpr, p.Exprs, childProjection.Exprs) {
+			if equalFold(evalExpr, p.Exprs, childProjection.Exprs) {
 				return true
 			}
 		}
@@ -1474,7 +1474,7 @@ func (p *PhysicalProjection) SameProjection(tasks ...base.Task) bool {
 	return false
 }
 
-func EqualFold(ctx exprctx.EvalContext, parent, child []expression.Expression) bool {
+func equalFold(ctx exprctx.EvalContext, parent, child []expression.Expression) bool {
 	if len(parent) != len(child) {
 		return false
 	}
