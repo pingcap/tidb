@@ -83,7 +83,7 @@ func readAllData(
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
 
-	var allFileKeySize, allFileValSize atomic.Int64
+	var allFileKeySize, allFileValSize, allFileKeySizeAdd, allFileValSizeAdd atomic.Int64
 	beforeLimit, _ := smallBlockBufPool.LogLimierLimit(true)
 	defer func() {
 		afterLimit, maxDiff := smallBlockBufPool.LogLimierLimit(false)
@@ -97,6 +97,9 @@ func readAllData(
 			zap.String("read all k+v size", units.BytesSize(float64(allFileKeySize.Load()+allFileValSize.Load()))),
 			zap.String("key size", units.BytesSize(float64(allFileKeySize.Load()))),
 			zap.String("val size", units.BytesSize(float64(allFileValSize.Load()))),
+			zap.String("read all k+v size added", units.BytesSize(float64(allFileKeySizeAdd.Load()+allFileValSizeAdd.Load()))),
+			zap.String("key size added", units.BytesSize(float64(allFileKeySizeAdd.Load()))),
+			zap.String("val size added", units.BytesSize(float64(allFileValSizeAdd.Load()))),
 		)
 	}()
 	for readIdx := 0; readIdx < readConn; readIdx++ {
@@ -114,7 +117,7 @@ func readAllData(
 					if !ok {
 						return nil
 					}
-					err2, keySize, valSize := readOneFile(
+					err2, keySize, valSize, keySizeAdd, valSizeAdd := readOneFile(
 						egCtx,
 						store,
 						dataFiles[fileIdx],
@@ -134,6 +137,12 @@ func readAllData(
 					}
 					if valSize > 0 {
 						allFileValSize.Add(int64(valSize))
+					}
+					if keySizeAdd > 0 {
+						allFileKeySizeAdd.Add(int64(keySizeAdd))
+					}
+					if valSizeAdd > 0 {
+						allFileValSizeAdd.Add(int64(valSizeAdd))
 					}
 				}
 			}
@@ -161,14 +170,14 @@ func readOneFile(
 	smallBlockBuf *membuf.Buffer,
 	largeBlockBuf *membuf.Buffer,
 	output *memKVsAndBuffers,
-) (error, int, int) {
+) (error, int, int, int, int) {
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_one_file")
 
 	ts := time.Now()
 
 	rd, err := newKVReader(ctx, dataFile, storage, startOffset, 64*1024)
 	if err != nil {
-		return err, -1, -1
+		return err, -1, -1, -1, -1
 	}
 	defer rd.Close()
 	if concurrency > 1 {
@@ -181,7 +190,7 @@ func readOneFile(
 		)
 		err = rd.byteReader.switchConcurrentMode(true)
 		if err != nil {
-			return err, -1, -1
+			return err, -1, -1, -1, -1
 		}
 	}
 
@@ -192,13 +201,15 @@ func readOneFile(
 
 	totalKeySize := 0
 	totalValSize := 0
+	totalKeySizeAdd := 0
+	totalValSizeAdd := 0
 	for {
 		k, v, err := rd.nextKV()
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
-			return err, -1, -1
+			return err, -1, -1, -1, -1
 		}
 		totalKeySize += len(k)
 		totalValSize += len(v)
@@ -214,6 +225,8 @@ func readOneFile(
 		keys = append(keys, smallBlockBuf.AddBytes(k))
 		values = append(values, smallBlockBuf.AddBytes(v))
 		size += len(k) + len(v)
+		totalKeySizeAdd += len(k)
+		totalValSizeAdd += len(v)
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
 	output.mu.Lock()
@@ -222,5 +235,5 @@ func readOneFile(
 	output.size += size
 	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()
-	return nil, totalKeySize, totalValSize
+	return nil, totalKeySize, totalValSize, totalKeySizeAdd, totalValSizeAdd
 }
