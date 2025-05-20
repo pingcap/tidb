@@ -1,5 +1,3 @@
-#!/bin/bash
-#
 # Copyright 2025 PingCAP, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,12 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-cd ../../ || exit 1
-echo "building tidb-server..."
-make
-echo "build successfully"
+lease = "0"
+host = "127.0.0.1"
+new_collations_enabled_on_first_bootstrap = true
+enable-table-lock = true
 
-cd - || exit 1
+[status]
+status-host = "127.0.0.1"
 
-echo "Starting TiUP Playground in the background..."
-tiup playground nightly --db=1 --kv=1 --tiflash=1 --db.binpath=../../bin/tidb-server --db.config=./config.toml
+[performance]
+stats-lease = "0"
+
+[tikv-client.async-commit]
+safe-window = 0
+allowed-clock-drift = 0
+
+[experimental]
+enable-new-charset = true
+allow-expression-index = true
