@@ -555,6 +555,9 @@ func (e *HashAggExec) spill() {
 func (e *HashAggExec) waitPartialWorkerAndCloseOutputChs(waitGroup *sync.WaitGroup) {
 	waitGroup.Wait()
 	close(e.inputCh)
+	for input := range e.inputCh {
+		e.memTracker.Consume(-input.chk.MemoryUsage())
+	}
 	for _, ch := range e.partialOutputChs {
 		close(ch)
 	}
