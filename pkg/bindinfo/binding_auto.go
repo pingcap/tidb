@@ -81,7 +81,7 @@ type bindingAuto struct {
 func newBindingAuto(sPool util.DestroyableSessionPool) BindingPlanEvolution {
 	return &bindingAuto{
 		sPool:              sPool,
-		planGenerator:      new(knobBasedPlanGenerator),
+		planGenerator:      &planGenerator{sPool: sPool},
 		ruleBasedPredictor: new(ruleBasedPlanPerfPredictor),
 		llmPredictor:       new(llmBasedPlanPerfPredictor),
 	}
@@ -97,7 +97,7 @@ func (ba *bindingAuto) ExplorePlansForSQL(currentDB, sqlOrDigest, charset, colla
 		return nil, err
 	}
 
-	generatedPlans, err := ba.planGenerator.Generate(currentDB, sqlOrDigest)
+	generatedPlans, err := ba.planGenerator.Generate(currentDB, sqlOrDigest, charset, collation)
 	if err != nil {
 		return nil, err
 	}
