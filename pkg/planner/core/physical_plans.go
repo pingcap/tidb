@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -1213,14 +1214,9 @@ func (p *PhysicalProjection) MemoryUsage() (sum int64) {
 
 // SetChildren implements Plan interface.
 func (p *PhysicalProjection) SetChildren(children ...base.PhysicalPlan) {
-	intest.AssertFunc(func() bool {
-		for _, child := range children {
-			if _, ok := child.(*PhysicalProjection); ok {
-				return false
-			}
-		}
-		return true
-	}, "projection should not be a child of another projection")
+	if intest.InTest && !p.SCtx().GetSessionVars().InRestrictedSQL {
+		logutil.BgLogger().Warn("projection should not be a child of another projection")
+	}
 	p.BasePhysicalPlan.SetChildren(children...)
 }
 
