@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -1442,10 +1443,16 @@ func (p *PhysicalProjection) Attach2Task(tasks ...base.Task) base.Task {
 		}
 	} else if mpp, ok := t.(*MppTask); ok {
 		if expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Exprs, kv.TiFlash) {
+			if p.SameProjection(tasks...) {
+				return mpp
+			}
 			p.SetChildren(mpp.p)
 			mpp.p = p
 			return mpp
 		}
+	}
+	if p.SameProjection(tasks...) {
+		return tasks[0]
 	}
 	t = t.ConvertToRootTask(p.SCtx())
 	t = attachPlan2Task(p, t)
@@ -1453,6 +1460,37 @@ func (p *PhysicalProjection) Attach2Task(tasks ...base.Task) base.Task {
 		t.(*RootTask).SetEmpty(true)
 	}
 	return t
+}
+
+func (p *PhysicalProjection) SameProjection(tasks ...base.Task) bool {
+	if len(tasks) == 1 {
+		if childProjection, ok := tasks[0].Plan().(*PhysicalProjection); ok {
+			evalExpr := p.SCtx().GetExprCtx().GetEvalCtx()
+			if EqualFold(evalExpr, p.Exprs, childProjection.Exprs) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func EqualFold(ctx exprctx.EvalContext, parent, child []expression.Expression) bool {
+	if len(parent) != len(child) {
+		return false
+	}
+	for _, p := range parent {
+		find := false
+		for _, v := range child {
+			if p.Equal(ctx, v) {
+				find = true
+				break
+			}
+		}
+		if !find {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *PhysicalUnionAll) attach2MppTasks(tasks ...base.Task) base.Task {

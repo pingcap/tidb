@@ -1211,6 +1211,19 @@ func (p *PhysicalProjection) MemoryUsage() (sum int64) {
 	return
 }
 
+// SetChildren implements Plan interface.
+func (p *PhysicalProjection) SetChildren(children ...base.PhysicalPlan) {
+	intest.AssertFunc(func() bool {
+		for _, child := range children {
+			if _, ok := child.(*PhysicalProjection); ok {
+				return false
+			}
+		}
+		return true
+	}, "projection should not be a child of another projection")
+	p.BasePhysicalPlan.SetChildren(children...)
+}
+
 // PhysicalTopN is the physical operator of topN.
 type PhysicalTopN struct {
 	physicalSchemaProducer
