@@ -1470,6 +1470,9 @@ func (p *PhysicalProjection) sameProjection(tasks ...base.Task) bool {
 	if len(tasks) == 1 {
 		if childProjection, ok := tasks[0].Plan().(*PhysicalProjection); ok {
 			evalExpr := p.SCtx().GetExprCtx().GetEvalCtx()
+			if childProjection.BasePhysicalPlan.GetChildReqProps(0) == nil {
+				return false
+			}
 			if equalExpression(evalExpr, p.Exprs, childProjection.Exprs) {
 				return true
 			}
@@ -1485,15 +1488,20 @@ func equalColumns(ctx exprctx.EvalContext, parent []expression.Expression, child
 	if len(parent) != len(child) {
 		return false
 	}
+	finded := make(map[int]struct{}, len(child))
 	for _, p := range parent {
 		pc, ok := p.(*expression.Column)
 		if !ok {
 			return false
 		}
 		find := false
-		for _, v := range child {
+		for idx, v := range child {
+			if _, ok := finded[idx]; ok {
+				continue
+			}
 			if pc.Equal(ctx, v) {
 				find = true
+				finded[idx] = struct{}{}
 				break
 			}
 		}
@@ -1508,11 +1516,16 @@ func equalExpression(ctx exprctx.EvalContext, parent, child []expression.Express
 	if len(parent) != len(child) {
 		return false
 	}
+	finded := make(map[int]struct{}, len(child))
 	for _, p := range parent {
 		find := false
-		for _, v := range child {
+		for idx, v := range child {
+			if _, ok := finded[idx]; ok {
+				continue
+			}
 			if p.Equal(ctx, v) {
 				find = true
+				finded[idx] = struct{}{}
 				break
 			}
 		}
