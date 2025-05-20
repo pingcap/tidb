@@ -73,6 +73,8 @@ type HandleCols interface {
 }
 
 // CommonHandleCols implements the kv.HandleCols interface.
+// Currently, HandleCols are data fields in some operators and executors, and will be used during execution.
+// So please avoid adding fields like sctx and stmtctx to avoid potential bugs when it's reused/shared by plan cache.
 type CommonHandleCols struct {
 	tblInfo *model.TableInfo
 	idxInfo *model.IndexInfo
