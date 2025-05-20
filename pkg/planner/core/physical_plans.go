@@ -1214,7 +1214,7 @@ func (p *PhysicalProjection) MemoryUsage() (sum int64) {
 
 // SetChildren implements Plan interface.
 func (p *PhysicalProjection) SetChildren(children ...base.PhysicalPlan) {
-	if intest.InTest && !p.SCtx().GetSessionVars().InRestrictedSQL {
+	if intest.InTest {
 		logutil.BgLogger().Warn("projection should not be a child of another projection")
 	}
 	p.BasePhysicalPlan.SetChildren(children...)
