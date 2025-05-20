@@ -198,6 +198,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 
 		w.finalizeWorkerProcess(needShuffle, finalConcurrency, hasError)
 
+		w.memTracker.Consume(-w.chk.MemoryUsage())
 		updateWorkerTime(w.stats, start)
 
 		// We must ensure that there is no panic before `waitGroup.Done()` or there will be hang
