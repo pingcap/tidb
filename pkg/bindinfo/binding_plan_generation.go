@@ -121,9 +121,9 @@ func (s *state) Encode() string {
 		if _, isFloat := v.(float64); isFloat {
 			// only consider 4 decimal digits, which should be enough for optimizer tuning.
 			fmt.Fprintf(sb, "%.4f", v)
-		} else {
-			sb.WriteString(fmt.Sprintf("%v", v))
+			continue
 		}
+		fmt.Fprintf(sb, "%v", v)
 	}
 	for _, v := range s.fixValues {
 		if sb.Len() > 0 {
@@ -243,6 +243,7 @@ func breadthFirstPlanSearch(sctx sessionctx.Context, stmt ast.StmtNode, vars []s
 	return plans, nil
 }
 
+// genPlanUnderState returns a plan generated under the given state (vars and fix-controls).
 func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state) (plan *genedPlan, err error) {
 	for i, varName := range state.varNames {
 		switch varName {
@@ -313,6 +314,7 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 	}, nil
 }
 
+// adjustVar returns the new value of the variable for plan generation.
 func adjustVar(varName string, varVal any) (newVarVal any, err error) {
 	switch varName {
 	case vardef.TiDBOptIndexScanCostFactor, vardef.TiDBOptIndexReaderCostFactor, vardef.TiDBOptTableReaderCostFactor,
@@ -340,6 +342,7 @@ func adjustVar(varName string, varVal any) (newVarVal any, err error) {
 	return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
 }
 
+// adjustFix returns the new value of the fix-control for plan generation.
 func adjustFix(fixID uint64, fixVal string) (newFixVal string, err error) {
 	switch fixID {
 	case fixcontrol.Fix44855, fixcontrol.Fix52869: // flip the switch
@@ -357,6 +360,7 @@ func adjustFix(fixID uint64, fixVal string) (newFixVal string, err error) {
 		if num <= 10 {
 			return fixVal, nil
 		}
+		// each time become 50% more aggressive.
 		return fmt.Sprintf("%v", num/2), nil
 	default:
 		return "", fmt.Errorf("unsupported fix-control %d in plan generation", fixID)
@@ -364,6 +368,7 @@ func adjustFix(fixID uint64, fixVal string) (newFixVal string, err error) {
 }
 
 func getStartState(vars []string, fixes []uint64) (*state, error) {
+	// use the default values of these vars and fix-controls as the initial state.
 	s := &state{varNames: vars, fixIDs: fixes}
 	for _, varName := range vars {
 		switch varName {
