@@ -683,6 +683,11 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 
 func (sch *importScheduler) failJob(ctx context.Context, taskHandle storage.TaskHandle, task *proto.Task,
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
+	summary := &importer.Summary{}
+	if err := json.Unmarshal(taskMeta.TaskResult, summary); err != nil {
+		return errors.Trace(err)
+	}
+
 	sch.switchTiKV2NormalMode(ctx, task, logger)
 	sch.unregisterTask(ctx, task)
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
@@ -691,7 +696,7 @@ func (sch *importScheduler) failJob(ctx context.Context, taskHandle storage.Task
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.GetSQLExecutor()
-				return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg)
+				return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg, summary)
 			})
 		},
 	)

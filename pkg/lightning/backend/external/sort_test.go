@@ -124,7 +124,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	for i := range kvCnt {
 		key := []byte(uuid.New().String())
 		val := []byte("56789")
-		kvSize += len(key) + len(val) + 2*lengthBytes
+		kvSize += len(key) + len(val)
 		kvs[i] = common.KvPair{
 			Key: key,
 			Val: val,

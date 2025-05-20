@@ -301,26 +301,40 @@ func Job2Step(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, step s
 // FinishJob tries to finish a running job with jobID, change its status to finished, clear its step and update summary.
 // It will not return error when there's no matched job.
 func FinishJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, summary *Summary) error {
-	bytes, err := json.Marshal(summary)
-	if err != nil {
-		return err
+	summaryStr := "{}"
+	if summary != nil {
+		bytes, err := json.Marshal(summary)
+		if err != nil {
+			return err
+		}
+		summaryStr = string(bytes)
 	}
+
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	_, err = conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
+	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
 		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, step = %?, summary = %?
 		WHERE id = %? AND status = %?;`,
-		jobStatusFinished, jobStepNone, bytes, jobID, JobStatusRunning)
+		jobStatusFinished, jobStepNone, summaryStr, jobID, JobStatusRunning)
 	return err
 }
 
 // FailJob fails import into job. A job can only be failed once.
 // It will not return error when there's no matched job.
-func FailJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, errorMsg string) error {
+func FailJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, errorMsg string, summary *Summary) error {
+	summaryStr := "{}"
+	if summary != nil {
+		bytes, err := json.Marshal(summary)
+		if err != nil {
+			return err
+		}
+		summaryStr = string(bytes)
+	}
+
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
-		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, error_message = %?
+		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, error_message = %?, summary = %?
 		WHERE id = %? AND status = %?;`,
-		jobStatusFailed, errorMsg, jobID, JobStatusRunning)
+		jobStatusFailed, errorMsg, summaryStr, jobID, JobStatusRunning)
 	return err
 }
 

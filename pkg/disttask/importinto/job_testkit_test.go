@@ -175,6 +175,7 @@ func TestShowImportProgress(t *testing.T) {
 
 	// Encode step
 	task, err := manager.GetTaskByID(ctx, taskID)
+	require.NoError(t, err)
 	require.NoError(t, manager.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.ImportStepEncodeAndSort, nil))
 	for _, s := range subtasks {
 		testutil.CreateSubTaskWithSummary(t, manager, taskID, proto.ImportStepEncodeAndSort,
@@ -191,6 +192,7 @@ func TestShowImportProgress(t *testing.T) {
 
 	// Merge step
 	task, err = manager.GetTaskByID(ctx, taskID)
+	require.NoError(t, err)
 	require.NoError(t, manager.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.ImportStepMergeSort, nil))
 
 	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, jobID)
@@ -207,11 +209,13 @@ func TestShowImportProgress(t *testing.T) {
 	}
 
 	task, err = manager.GetTaskByID(ctx, taskID)
+	require.NoError(t, err)
 	require.NoError(t, manager.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.ImportStepWriteAndIngest, nil))
 	checkShowInfo("[ingest] subtasks: 1/3, progress: 50.00", 60)
 
 	// Post-process step
 	task, err = manager.GetTaskByID(ctx, taskID)
+	require.NoError(t, err)
 	require.NoError(t, manager.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.ImportStepPostProcess, nil))
 	checkShowInfo("[post-process] N/A", 100)
 
