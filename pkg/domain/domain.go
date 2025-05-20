@@ -1952,7 +1952,7 @@ func (do *Domain) decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEve
 					break
 				}
 				isNewVersionEvents = true
-				if tmp.ServerID == do.ServerID() {
+				if do.ServerID() != 0 && tmp.ServerID == do.ServerID() {
 					// Skip the events from this TiDB-Server
 					continue
 				}
