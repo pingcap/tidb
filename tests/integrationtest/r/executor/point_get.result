@@ -108,9 +108,7 @@ PARTITION P2 VALUES IN (75, 90)
 ) ;
 explain format='brief' select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);
 id	estRows	task	access object	operator info
-IndexLookUp	3.00	root	partition:dual	
-├─IndexRangeScan(Build)	3.00	cop[tikv]	table:UK_RP16939, index:UK_COL1(COL1)	range:[-30,-30], [48,48], [116,116], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	3.00	cop[tikv]	table:UK_RP16939	keep order:false, stats:pseudo
+TableDual	0.00	root		rows:0
 select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);
 col1	col2
 drop table if exists UK_RP16939;
