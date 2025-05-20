@@ -26,10 +26,8 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -44,14 +42,6 @@ const defaultChannelSize = 1024
 // checksum tasks.
 const defaultChecksumConcurrency = 64
 
-// CreatedTable is a table created on restore process,
-// but not yet filled with data.
-type CreatedTable struct {
-	RewriteRule *restoreutils.RewriteRules
-	Table       *model.TableInfo
-	OldTable    *metautil.Table
-}
-
 type PhysicalTable struct {
 	NewPhysicalID int64
 	OldPhysicalID int64
@@ -59,8 +49,8 @@ type PhysicalTable struct {
 	Files         []*backuppb.File
 }
 
-func defaultOutputTableChan() chan *CreatedTable {
-	return make(chan *CreatedTable, defaultChannelSize)
+func defaultOutputTableChan() chan *restoreutils.CreatedTable {
+	return make(chan *restoreutils.CreatedTable, defaultChannelSize)
 }
 
 // ExhaustErrors drains all remaining errors in the channel, into a slice of errors.
@@ -96,7 +86,7 @@ type PipelineContext struct {
 }
 
 // RestorePipeline does checksum, load stats and wait for tiflash to be ready.
-func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext, createdTables []*CreatedTable) (err error) {
+func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext, createdTables []*restoreutils.CreatedTable) (err error) {
 	start := time.Now()
 	defer func() {
 		summary.CollectDuration("restore pipeline", time.Since(start))
@@ -140,8 +130,8 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 	return errors.Trace(err)
 }
 
-func afterTableRestoredCh(ctx context.Context, createdTables []*CreatedTable) <-chan *CreatedTable {
-	outCh := make(chan *CreatedTable)
+func afterTableRestoredCh(ctx context.Context, createdTables []*restoreutils.CreatedTable) <-chan *restoreutils.CreatedTable {
+	outCh := make(chan *restoreutils.CreatedTable)
 
 	go func() {
 		defer close(outCh)
@@ -160,7 +150,7 @@ func afterTableRestoredCh(ctx context.Context, createdTables []*CreatedTable) <-
 
 // dropToBlackhole drop all incoming tables into black hole,
 // i.e. don't execute checksum, just increase the process anyhow.
-func dropToBlackhole(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<- error) <-chan struct{} {
+func dropToBlackhole(ctx context.Context, inCh <-chan *restoreutils.CreatedTable, errCh chan<- error) <-chan struct{} {
 	outCh := make(chan struct{}, 1)
 	go func() {
 		defer func() {
@@ -183,11 +173,11 @@ func dropToBlackhole(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<
 
 func concurrentHandleTablesCh(
 	ctx context.Context,
-	inCh <-chan *CreatedTable,
-	outCh chan<- *CreatedTable,
+	inCh <-chan *restoreutils.CreatedTable,
+	outCh chan<- *restoreutils.CreatedTable,
 	errCh chan<- error,
 	workers *tidbutil.WorkerPool,
-	processFun func(context.Context, *CreatedTable) error,
+	processFun func(context.Context, *restoreutils.CreatedTable) error,
 	deferFun func()) {
 	eg, ectx := errgroup.WithContext(ctx)
 	defer func() {
@@ -226,16 +216,16 @@ func concurrentHandleTablesCh(
 // it returns a channel fires a struct{} when all things get done.
 func (rc *SnapClient) GoValidateChecksum(
 	ctx context.Context,
-	inCh <-chan *CreatedTable,
+	inCh <-chan *restoreutils.CreatedTable,
 	kvClient kv.Client,
 	errCh chan<- error,
 	updateCh glue.Progress,
 	concurrency uint,
-) chan *CreatedTable {
+) chan *restoreutils.CreatedTable {
 	log.Info("Start to validate checksum")
 	outCh := defaultOutputTableChan()
 	workers := tidbutil.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
-	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *restoreutils.CreatedTable) error {
 		err := rc.execAndValidateChecksum(c, tbl, kvClient, concurrency)
 		if err != nil {
 			return errors.Trace(err)
@@ -251,18 +241,18 @@ func (rc *SnapClient) GoValidateChecksum(
 func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 	ctx context.Context,
 	s storage.ExternalStorage,
-	inCh <-chan *CreatedTable,
+	inCh <-chan *restoreutils.CreatedTable,
 	errCh chan<- error,
 	updateCh glue.Progress,
 	statsConcurrency uint,
 	loadStats bool,
-) chan *CreatedTable {
+) chan *restoreutils.CreatedTable {
 	log.Info("Start to update meta then load stats")
 	outCh := defaultOutputTableChan()
 	workers := tidbutil.NewWorkerPool(statsConcurrency, "UpdateStats")
 	statsHandler := rc.dom.StatsHandle()
 
-	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *restoreutils.CreatedTable) error {
 		oldTable := tbl.OldTable
 		var statsErr error = nil
 		if loadStats && oldTable.Stats != nil {
@@ -314,10 +304,10 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 
 func (rc *SnapClient) GoWaitTiFlashReady(
 	ctx context.Context,
-	inCh <-chan *CreatedTable,
+	inCh <-chan *restoreutils.CreatedTable,
 	updateCh glue.Progress,
 	errCh chan<- error,
-) chan *CreatedTable {
+) chan *restoreutils.CreatedTable {
 	log.Info("Start to wait tiflash replica sync")
 	outCh := defaultOutputTableChan()
 	workers := tidbutil.NewWorkerPool(4, "WaitForTiflashReady")
@@ -332,7 +322,7 @@ func (rc *SnapClient) GoWaitTiFlashReady(
 			tiFlashStores[store.Store.ID] = store
 		}
 	}
-	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *restoreutils.CreatedTable) error {
 		if tbl.Table != nil && tbl.Table.TiFlashReplica == nil {
 			log.Info("table has no tiflash replica",
 				zap.Stringer("table", tbl.OldTable.Info.Name),

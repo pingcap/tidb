@@ -60,6 +60,8 @@ type Session interface {
 	Close()
 	GetGlobalVariable(name string) (string, error)
 	GetSessionCtx() sessionctx.Context
+	AlterTableMode(ctx context.Context, schemaID int64, tableID int64, tableMode model.TableMode) error
+	RefreshMeta(ctx context.Context, args *model.RefreshMetaArgs) error
 }
 
 // BatchCreateTableSession is an interface to batch create table parallelly

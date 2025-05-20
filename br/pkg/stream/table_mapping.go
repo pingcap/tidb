@@ -23,8 +23,11 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/metautil"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -78,11 +81,20 @@ func (tm *TableMappingManager) FromDBReplaceMap(dbReplaceMap map[UpstreamID]*DBR
 	return nil
 }
 
+// MetaInfoCollector is an interface for collecting metadata information during parsing
+type MetaInfoCollector interface {
+	// OnDatabaseInfo is called when database information is found in a value
+	OnDatabaseInfo(dbInfo *model.DBInfo)
+	// OnTableInfo is called when table information is found in a value
+	OnTableInfo(dbID int64, tableInfo *model.TableInfo)
+}
+
 // ParseMetaKvAndUpdateIdMapping collect table information
 // the keys and values that are selected to parse here follows the implementation in rewrite_meta_rawkv. Maybe
 // parsing a subset of these keys/values would suffice, but to make it safe we decide to parse exactly same as
 // in rewrite_meta_rawkv.
-func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(e *kv.Entry, cf string) error {
+func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(
+	e *kv.Entry, cf string, collector MetaInfoCollector) error {
 	if !utils.IsMetaDBKey(e.Key) {
 		return nil
 	}
@@ -105,7 +117,7 @@ func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(e *kv.Entry, cf str
 			return errors.Trace(err)
 		}
 		if value != nil {
-			return tm.parseDBValueAndUpdateIdMapping(value)
+			return tm.parseDBValueAndUpdateIdMapping(value, collector)
 		}
 	} else if !meta.IsDBkey(rawKey.Key) {
 		return nil
@@ -129,7 +141,7 @@ func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(e *kv.Entry, cf str
 			return errors.Trace(err)
 		}
 		if value != nil {
-			return tm.parseTableValueAndUpdateIdMapping(dbID, value)
+			return tm.parseTableValueAndUpdateIdMapping(dbID, value, collector)
 		}
 	} else if meta.IsAutoIncrementIDKey(rawKey.Field) {
 		// parse auto increment key and update
@@ -170,7 +182,7 @@ func (tm *TableMappingManager) parseDBKeyAndUpdateIdMapping(field []byte) error 
 	return errors.Trace(err)
 }
 
-func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte) error {
+func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte, collector MetaInfoCollector) error {
 	dbInfo := new(model.DBInfo)
 	if err := json.Unmarshal(value, dbInfo); err != nil {
 		return errors.Trace(err)
@@ -180,7 +192,10 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte) erro
 	if err != nil {
 		return errors.Trace(err)
 	}
-	dbReplace.Name = dbInfo.Name.O
+	if dbInfo.Name.O != "" {
+		dbReplace.Name = dbInfo.Name.O
+	}
+	collector.OnDatabaseInfo(dbInfo)
 	return nil
 }
 
@@ -237,7 +252,8 @@ func (tm *TableMappingManager) parseTableIdAndUpdateIdMapping(
 	return nil
 }
 
-func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, value []byte) error {
+func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, value []byte,
+	collector MetaInfoCollector) error {
 	var tableInfo model.TableInfo
 	if err := json.Unmarshal(value, &tableInfo); err != nil {
 		return errors.Trace(err)
@@ -252,7 +268,9 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, val
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tableReplace.Name = tableInfo.Name.O
+	if tableInfo.Name.O != "" {
+		tableReplace.Name = tableInfo.Name.O
+	}
 
 	// update table ID and partition ID.
 	partitions := tableInfo.GetPartitionInfo()
@@ -269,6 +287,7 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, val
 			}
 		}
 	}
+	collector.OnTableInfo(dbID, &tableInfo)
 	return nil
 }
 
@@ -339,9 +358,7 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 					// merge partition mappings for existing tables
 					existingTableReplace := existingDBReplace.TableMap[tableUpID]
 					for partUpID, partDownID := range baseTableReplace.PartitionMap {
-						if _, exists := existingTableReplace.PartitionMap[partUpID]; !exists {
-							existingTableReplace.PartitionMap[partUpID] = partDownID
-						}
+						existingTableReplace.PartitionMap[partUpID] = partDownID
 					}
 				}
 			}
@@ -355,11 +372,6 @@ func (tm *TableMappingManager) IsEmpty() bool {
 
 func (tm *TableMappingManager) ReplaceTemporaryIDs(
 	ctx context.Context, genGenGlobalIDs func(ctx context.Context, n int) ([]int64, error)) error {
-	if tm.tempIDCounter == InitialTempId {
-		// no temporary IDs were allocated
-		return nil
-	}
-
 	// find actually used temporary IDs
 	usedTempIDs := make(map[DownstreamID]UpstreamID)
 
@@ -396,6 +408,11 @@ func (tm *TableMappingManager) ReplaceTemporaryIDs(
 				}
 			}
 		}
+	}
+
+	if len(usedTempIDs) == 0 {
+		// no temp id allocated
+		return nil
 	}
 
 	tempIDs := make([]DownstreamID, 0, len(usedTempIDs))
@@ -459,7 +476,7 @@ func (tm *TableMappingManager) ApplyFilterToDBReplaceMap(tracker *utils.PiTRIdTr
 
 		// filter tables in this database
 		for tableID, tableReplace := range dbReplace.TableMap {
-			if !tracker.ContainsTableId(dbID, tableID) {
+			if !tracker.ContainsDBAndTableId(dbID, tableID) {
 				tableReplace.FilteredOut = true
 			}
 		}
@@ -549,4 +566,41 @@ func ExtractValue(e *kv.Entry, cf string) ([]byte, error) {
 func (tm *TableMappingManager) generateTempID() DownstreamID {
 	tm.tempIDCounter--
 	return tm.tempIDCounter
+}
+
+// UpdateDownstreamIds updates the mapping from old table ID to new table ID.
+// this is necessary since we override the table name during full restore directly to its end name, so we need to
+// figure out the id mapping upfront.
+func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*metautil.Database, tables []*restoreutils.CreatedTable,
+	dom *domain.Domain) error {
+	dbReplaces := make(map[UpstreamID]*DBReplace)
+
+	for _, oldDB := range dbs {
+		newDBInfo, exists := dom.InfoSchema().SchemaByName(oldDB.Info.Name)
+		if !exists {
+			return errors.New("db not exist in snapshot stage UpdateDownstreamIds")
+		}
+		_, exist := dbReplaces[oldDB.Info.ID]
+		if !exist {
+			dbReplaces[oldDB.Info.ID] = NewDBReplace(newDBInfo.Name.O, newDBInfo.ID)
+		}
+	}
+
+	for _, t := range tables {
+		oldTable := t.OldTable
+		newTable := t.Table
+
+		dbReplace, exist := dbReplaces[oldTable.DB.ID]
+		if !exist {
+			return errors.New("table exists but db not exist in UpdateDownstreamIds")
+		}
+
+		dbReplace.TableMap[oldTable.Info.ID] = &TableReplace{
+			Name:         newTable.Name.O,
+			TableID:      newTable.ID,
+			PartitionMap: restoreutils.GetPartitionIDMap(newTable, oldTable.Info),
+		}
+	}
+	tm.MergeBaseDBReplace(dbReplaces)
+	return nil
 }
