@@ -1570,10 +1570,16 @@ func (b *Builder) applyRecoverSchemaV2(m meta.Reader, diff *model.SchemaDiff) ([
 }
 
 func applyModifySchemaCharsetAndCollate(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
+	if b.enableV2 {
+		return b.applyModifySchemaCharsetAndCollateV2(m, diff)
+	}
 	return b.applyModifySchemaCharsetAndCollate(m, diff)
 }
 
 func applyModifySchemaDefaultPlacement(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
+	if b.enableV2 {
+		return b.applyModifySchemaDefaultPlacementV2(m, diff)
+	}
 	return b.applyModifySchemaDefaultPlacement(m, diff)
 }
 
