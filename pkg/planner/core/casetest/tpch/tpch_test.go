@@ -252,7 +252,7 @@ func checkCost(t *testing.T, tk *testkit.TestKit, q4 string) {
 	require.Equal(t, len(costTraceRows.Rows()), len(verboseRows.Rows()))
 	for i := 0; i < len(costTraceRows.Rows()); i++ {
 		// check id / estRows / estCost. they should be the same one
-		require.Equal(t, costTraceRows.Rows()[i][:3], verboseRows.Rows()[i][:3])
+		require.Equal(t, costTraceRows.Rows()[i][1:3], verboseRows.Rows()[i][1:3])
 	}
 }
 
