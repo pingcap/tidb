@@ -2466,7 +2466,6 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo) {
 }
 
 func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *chunk.Chunk) error {
-	info.Progress = "[Not Running]"
 	if info.Status == importer.JobStatusRunning {
 		// for running jobs, we need more information from distributed framework.
 		runInfo, err := importinto.GetRuntimeInfoForJob(ctx, info.ID)
@@ -2474,11 +2473,12 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 			return err
 		}
 		if runInfo != nil {
-			info.Progress = runInfo.String()
 			info.ImportedRows = runInfo.ImportRows
 			if runInfo.Status == proto.TaskStateAwaitingResolution {
 				info.Status = string(runInfo.Status)
 				info.ErrorMessage = runInfo.ErrorMsg
+			} else {
+				info.Progress = runInfo.String()
 			}
 		}
 	}

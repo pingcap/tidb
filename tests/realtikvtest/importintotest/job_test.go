@@ -64,8 +64,8 @@ func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row 
 	} else {
 		s.Equal(strconv.Itoa(int(jobInfo.ImportedRows)), row[7])
 	}
-	s.Regexp(jobInfo.ErrorMessage, row[8])
-	s.Equal(jobInfo.CreatedBy, row[12])
+	s.Regexp(jobInfo.ErrorMessage, row[9])
+	s.Equal(jobInfo.CreatedBy, row[13])
 }
 
 func (s *mockGCSSuite) TestShowJob() {

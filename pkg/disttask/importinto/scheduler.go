@@ -587,16 +587,14 @@ func updateTaskSummary(
 		}
 	}
 
-	// Process output row count and data size
+	// Process row count and data size
 	switch nextStep {
-	case proto.ImportStepEncodeAndSort:
+	case proto.ImportStepEncodeAndSort, proto.ImportStepImport:
 		importSummary.EncodeSummary = p.summary.EncodeSummary
 	case proto.ImportStepMergeSort:
 		importSummary.MergeSummary = p.summary.MergeSummary
 	case proto.ImportStepWriteAndIngest:
 		importSummary.IngestSummary = p.summary.IngestSummary
-	case proto.ImportStepImport:
-		importSummary.IngestSummary = p.summary.EncodeSummary
 	case proto.ImportStepPostProcess:
 		// For ingest step, we need to sum up the output row count and data size from subtasks summary.
 		// Only data kv groups will record row count.

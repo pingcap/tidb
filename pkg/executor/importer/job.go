@@ -78,6 +78,8 @@ const (
 					table_schema, table_name, table_id, created_by, parameters, source_file_size,
 					status, step, summary, error_message
 				FROM mysql.tidb_import_jobs`
+
+	defaultProgressMessage = "[Not Running]"
 )
 
 // ImportParameters is the parameters for import into statement.
@@ -390,6 +392,7 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 		Status:         row.GetString(10),
 		Step:           row.GetString(11),
 		ImportedRows:   importedRows,
+		Progress:       defaultProgressMessage,
 		ErrorMessage:   errMsg,
 	}, nil
 }

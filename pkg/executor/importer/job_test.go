@@ -320,7 +320,7 @@ func TestGetJobInfoNullField(t *testing.T) {
 	jobInfo.ID = jobID1
 	jobInfo.Status = "failed"
 	jobInfo.Step = importer.JobStepImporting
-	jobInfo.ImportedRows = 0
+	jobInfo.ImportedRows = -1
 	jobInfo.ErrorMessage = "failed"
 	jobInfoEqual(t, jobInfo, gotJobInfos[0])
 	require.False(t, gotJobInfos[0].StartTime.IsZero())

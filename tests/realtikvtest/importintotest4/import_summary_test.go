@@ -67,8 +67,8 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 	var summaries importer.Summary
 	require.NoError(s.T(), json.Unmarshal([]byte(rs[0][0].(string)), &summaries))
 
-	// For global sort with force merge sort, rows of all steps should be 10000
-	require.EqualValues(s.T(), 10000, summaries.EncodeSummary.RowCnt)
+	// For global sort with force merge sort, rows of all steps should be 10000 except encode step,
+	// since we don't know the exact number of rows before encoding.
 	require.EqualValues(s.T(), 10000, summaries.MergeSummary.RowCnt)
 	require.EqualValues(s.T(), 10000, summaries.IngestSummary.RowCnt)
 	require.EqualValues(s.T(), 10000, summaries.PostProcessSummary.RowCnt)
@@ -115,8 +115,7 @@ func (s *mockGCSSuite) TestLocallSortSummary() {
 	slices.Sort(allData)
 	s.prepareAndUseDB("local_sort_summary")
 	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), key(b), key(a, b), key(b, a))")
-	importSQL := fmt.Sprintf(`import into t FROM 'gs://local-sort-file/t.csv?endpoint=%s'
-		with __force_merge_step`, gcsEndpoint)
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://local-sort-file/t.csv?endpoint=%s'`, gcsEndpoint)
 	rs := s.tk.MustQuery(importSQL).Rows()
 	jobID, err := strconv.Atoi(rs[0][0].(string))
 	require.NoError(s.T(), err)
@@ -130,7 +129,6 @@ func (s *mockGCSSuite) TestLocallSortSummary() {
 	require.NoError(s.T(), json.Unmarshal([]byte(rs[0][0].(string)), &summaries))
 
 	// For local sort, only PostProcessSummary stores row count
-	require.EqualValues(s.T(), 0, summaries.EncodeSummary.RowCnt)
 	require.EqualValues(s.T(), 0, summaries.MergeSummary.RowCnt)
 	require.EqualValues(s.T(), 0, summaries.IngestSummary.RowCnt)
 	require.EqualValues(s.T(), 10000, summaries.PostProcessSummary.RowCnt)

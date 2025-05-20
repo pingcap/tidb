@@ -36,7 +36,7 @@ import (
 )
 
 func switchTaskStep(
-	t *testing.T, ctx context.Context,
+	ctx context.Context, t *testing.T,
 	manager *storage.TaskManager, taskID int64, step proto.Step,
 ) {
 	task, err := manager.GetTaskByID(ctx, taskID)
@@ -80,7 +80,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 			"", nil, m, proto.SubtaskStatePending, proto.ImportInto, 11)
 	}
 
-	switchTaskStep(t, ctx, manager, taskID, proto.ImportStepImport)
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepImport)
 
 	runInfo, err := importinto.GetRuntimeInfoForJob(ctx, 111)
 	require.NoError(t, err)
@@ -109,7 +109,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 			"", bytes, m, proto.SubtaskStatePending, proto.ImportInto, 11)
 	}
 
-	switchTaskStep(t, ctx, manager, taskID, proto.ImportStepWriteAndIngest)
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
 
 	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, 222)
 	require.NoError(t, err)
@@ -189,7 +189,7 @@ func TestShowImportProgress(t *testing.T) {
 	checkShowInfo("[init] N/A", 0)
 
 	// Encode step
-	switchTaskStep(t, ctx, manager, taskID, proto.ImportStepEncodeAndSort)
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepEncodeAndSort)
 	for _, s := range subtasks {
 		testutil.CreateSubTaskWithSummary(t, manager, taskID, proto.ImportStepEncodeAndSort,
 			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
@@ -204,7 +204,7 @@ func TestShowImportProgress(t *testing.T) {
 	checkShowInfo("[encode] subtasks: 1/3, progress: 50.00", 0)
 
 	// Merge step
-	switchTaskStep(t, ctx, manager, taskID, proto.ImportStepMergeSort)
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepMergeSort)
 
 	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, jobID)
 	require.NoError(t, err)
@@ -219,11 +219,11 @@ func TestShowImportProgress(t *testing.T) {
 			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
 	}
 
-	switchTaskStep(t, ctx, manager, taskID, proto.ImportStepWriteAndIngest)
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
 	checkShowInfo("[ingest] subtasks: 1/3, progress: 50.00", 60)
 
 	// Post-process step
-	switchTaskStep(t, ctx, manager, taskID, proto.ImportStepPostProcess)
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepPostProcess)
 	checkShowInfo("[post-process] N/A", 100)
 
 	require.NoError(t, importer.FinishJob(ctx, conn, jobID, taskSummary))

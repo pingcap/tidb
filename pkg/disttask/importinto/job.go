@@ -183,10 +183,7 @@ func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*importer.RuntimeIn
 	}
 
 	switch task.Step {
-	case proto.ImportStepImport:
-		totalBytes = summary.IngestSummary.Bytes
-		totalRowCnt = summary.IngestSummary.RowCnt
-	case proto.ImportStepEncodeAndSort:
+	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
 		totalBytes = summary.EncodeSummary.Bytes
 		totalRowCnt = summary.EncodeSummary.RowCnt
 	case proto.ImportStepMergeSort:

@@ -201,6 +201,7 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	}); err != nil {
 		return err
 	}
+	info.Progress = "[Not Running]"
 	FillOneImportJobInfo(req, info)
 	return nil
 }
