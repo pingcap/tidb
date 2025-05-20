@@ -2782,12 +2782,8 @@ func (e *SimpleExec) executeInitStats(ctx context.Context, s *ast.InitStatsStmt)
 	for _, table := range s.Tables {
 		tableNames = append(tableNames, table.Name.O)
 	}
-	sm := e.Ctx().GetSessionManager()
-	if sm == nil {
-		return nil
-	}
 	if e.IsFromRemote {
-		// TODO: init stats
+		// TODO: do the real init stats
 		return nil
 	}
 	return initStats(ctx, e.Ctx(), tableNames)
