@@ -300,6 +300,7 @@ func TestGetJobInfoNullField(t *testing.T) {
 				"detached":  nil,
 			},
 		},
+		Progress:       importer.DefaultProgressMessage,
 		SourceFileSize: 123,
 		ImportedRows:   -1,
 		Status:         "pending",

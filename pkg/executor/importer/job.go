@@ -79,7 +79,9 @@ const (
 					status, step, summary, error_message
 				FROM mysql.tidb_import_jobs`
 
-	defaultProgressMessage = "[Not Running]"
+	// DefaultProgressMessage is the default message for import into progress.
+	// Exported for test.
+	DefaultProgressMessage = "[Not Running]"
 )
 
 // ImportParameters is the parameters for import into statement.
@@ -392,7 +394,7 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 		Status:         row.GetString(10),
 		Step:           row.GetString(11),
 		ImportedRows:   importedRows,
-		Progress:       defaultProgressMessage,
+		Progress:       DefaultProgressMessage,
 		ErrorMessage:   errMsg,
 	}, nil
 }

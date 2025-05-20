@@ -270,6 +270,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
+		ImportedRows:   -1,
 		Status:         "pending",
 		Step:           "",
 	}
@@ -310,6 +311,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
+		ImportedRows:   -1,
 		Status:         "pending",
 		Step:           "",
 	}
@@ -321,6 +323,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID2)).Rows()
 	s.Len(rows, 1)
 	jobInfo.Status = "failed"
+	jobInfo.ImportedRows = 2
 	jobInfo.Step = importer.JobStepValidating
 	jobInfo.ErrorMessage = `\[Lighting:Restore:ErrChecksumMismatch]checksum mismatched remote vs local.*`
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
@@ -343,6 +346,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
+		ImportedRows:   -1,
 		Status:         "pending",
 		Step:           "",
 	}
@@ -428,6 +432,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 		SourceFileSize: 3,
 		Status:         "cancelled",
 		Step:           importer.JobStepImporting,
+		ImportedRows:   -1,
 		ErrorMessage:   "cancelled by user",
 	}
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
@@ -488,6 +493,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
+		ImportedRows:   -1,
 		Status:         "cancelled",
 		Step:           importer.JobStepValidating,
 		ErrorMessage:   "cancelled by user",
@@ -556,6 +562,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
+		ImportedRows:   -1,
 		Status:         "cancelled",
 		Step:           "importing",
 		ErrorMessage:   "cancelled by user",
@@ -586,6 +593,7 @@ func (s *mockGCSSuite) TestJobFailWhenDispatchSubtask() {
 		SourceFileSize: 3,
 		Status:         "failed",
 		Step:           importer.JobStepValidating,
+		ImportedRows:   -1,
 		ErrorMessage:   "injected error after ImportStepImport",
 	}
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/failWhenDispatchPostProcessSubtask", "return(true)")
