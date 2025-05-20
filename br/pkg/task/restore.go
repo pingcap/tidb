@@ -2057,6 +2057,9 @@ func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (ds
 }
 
 func rewriteKeyRanges(preAlloced [2]int64) [][2]kv.Key {
+	if preAlloced == [2]int64{} {
+		return nil
+	}
 	startKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(preAlloced[0]))
 	endKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(preAlloced[1]))
 

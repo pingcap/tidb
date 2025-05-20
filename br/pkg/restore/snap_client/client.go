@@ -348,7 +348,7 @@ func (rc *SnapClient) GetPreAllocedTableIDRange() ([2]int64, error) {
 
 	if start >= end {
 		log.Warn("PreAlloced IDs range is empty, no table to restore")
-		return [2]int64{start, end}, nil
+		return [2]int64{}, nil
 	}
 
 	return [2]int64{start, end}, nil
