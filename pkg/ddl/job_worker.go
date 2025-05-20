@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -702,7 +703,7 @@ func (w *ReorgContext) getResourceGroupTaggerForTopSQL() *kv.ResourceGroupTagBui
 	}
 
 	digest := w.cacheDigest
-	return kv.NewResourceGroupTagBuilder().SetSQLDigest(digest)
+	return kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceIDBySettings()).SetSQLDigest(digest)
 }
 
 func (w *ReorgContext) ddlJobSourceType() string {
@@ -1046,6 +1047,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onDropCheckConstraint(jobCtx, job)
 	case model.ActionAlterCheckConstraint:
 		ver, err = w.onAlterCheckConstraint(jobCtx, job)
+	case model.ActionRefreshMeta:
+		ver, err = onRefreshMeta(jobCtx, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

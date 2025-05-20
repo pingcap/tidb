@@ -16,6 +16,7 @@ package core
 
 import (
 	"math/bits"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -100,9 +101,9 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinRe
 	}
 	visited := make([]bool, len(joinGroup))
 	nodeID2VisitID := make([]int, len(joinGroup))
-	var joins []base.LogicalPlan
+	joins := make([]base.LogicalPlan, 0, len(joinGroup))
 	// BFS the tree.
-	for i := 0; i < len(joinGroup); i++ {
+	for i := range joinGroup {
 		if visited[i] {
 			continue
 		}
@@ -123,7 +124,7 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinRe
 			}
 			totalNonEqEdges[i].nodeIDMask = newMask
 			subNonEqEdges = append(subNonEqEdges, totalNonEqEdges[i])
-			totalNonEqEdges = append(totalNonEqEdges[:i], totalNonEqEdges[i+1:]...)
+			totalNonEqEdges = slices.Delete(totalNonEqEdges, i, i+1)
 		}
 		// Do DP on each sub graph.
 		join, err := s.dpGraph(visitID2NodeID, nodeID2VisitID, joinGroup, totalEqEdges, subNonEqEdges, tracer)
@@ -170,7 +171,7 @@ func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, _ []
 	nodeCnt := uint(len(visitID2NodeID))
 	bestPlan := make([]*jrNode, 1<<nodeCnt)
 	// bestPlan[s] is nil can be treated as bestCost[s] = +inf.
-	for i := uint(0); i < nodeCnt; i++ {
+	for i := range nodeCnt {
 		bestPlan[1<<i] = s.curJoinGroup[visitID2NodeID[i]]
 	}
 	// Enumerate the nodeBitmap from small to big, make sure that S1 must be enumerated before S2 if S1 belongs to S2.
