@@ -1466,7 +1466,10 @@ func (p *PhysicalProjection) sameProjection(tasks ...base.Task) bool {
 	if len(tasks) == 1 {
 		if childProjection, ok := tasks[0].Plan().(*PhysicalProjection); ok {
 			evalExpr := p.SCtx().GetExprCtx().GetEvalCtx()
-			if equalFold(evalExpr, p.Exprs, childProjection.Exprs) {
+			if equalExpression(evalExpr, p.Exprs, childProjection.Exprs) {
+				return true
+			}
+			if equalColumns(evalExpr, p.Exprs, childProjection.Schema().Columns) {
 				return true
 			}
 		}
@@ -1474,7 +1477,30 @@ func (p *PhysicalProjection) sameProjection(tasks ...base.Task) bool {
 	return false
 }
 
-func equalFold(ctx exprctx.EvalContext, parent, child []expression.Expression) bool {
+func equalColumns(ctx exprctx.EvalContext, parent []expression.Expression, child []*expression.Column) bool {
+	if len(parent) != len(child) {
+		return false
+	}
+	for _, p := range parent {
+		pc, ok := p.(*expression.Column)
+		if !ok {
+			return false
+		}
+		find := false
+		for _, v := range child {
+			if pc.Equal(ctx, v) {
+				find = true
+				break
+			}
+		}
+		if !find {
+			return false
+		}
+	}
+	return true
+}
+
+func equalExpression(ctx exprctx.EvalContext, parent, child []expression.Expression) bool {
 	if len(parent) != len(child) {
 		return false
 	}
