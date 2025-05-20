@@ -1821,7 +1821,7 @@ func (e *BasicRuntimeStats) String() string {
 	closeTime := e.close.Load()
 	str.WriteString(timePrefix)
 	str.WriteString("time:")
-	str.WriteString(FormatDuration(time.Duration(totalTime)))
+	str.WriteString(fmt.Sprintf("%.4fms", float64(totalTime)/float64(time.Millisecond)))
 	str.WriteString(", ")
 	str.WriteString(timePrefix)
 	str.WriteString("open:")
