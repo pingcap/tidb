@@ -84,9 +84,9 @@ func readAllData(
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
 
 	var allFileKeySize, allFileValSize, allFileKeySizeAdd, allFileValSizeAdd, smallObjMem atomic.Int64
-	beforeLimit, _ := smallBlockBufPool.LogLimierLimit(true)
+	beforeLimit, _, _ := smallBlockBufPool.LogLimierLimit(true)
 	defer func() {
-		afterLimit, maxDiff := smallBlockBufPool.LogLimierLimit(false)
+		afterLimit, maxDiff, allocateLimit := smallBlockBufPool.LogLimierLimit(false)
 		logutil.BgLogger().Info("readAllData limiter",
 			zap.Int("before limit", beforeLimit),
 			zap.Int("after limit", afterLimit),
@@ -101,6 +101,7 @@ func readAllData(
 			zap.String("key size added", units.BytesSize(float64(allFileKeySizeAdd.Load()))),
 			zap.String("val size added", units.BytesSize(float64(allFileValSizeAdd.Load()))),
 			zap.String("small object memory", units.BytesSize(float64(smallObjMem.Load()))),
+			zap.Int("limiter allocate memory", allocateLimit),
 		)
 	}()
 	for readIdx := 0; readIdx < readConn; readIdx++ {

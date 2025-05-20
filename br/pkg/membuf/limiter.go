@@ -25,13 +25,14 @@ import (
 // Limiter will block on Acquire if the number it has acquired and not released
 // exceeds the limit.
 type Limiter struct {
-	initLimit int
-	limit     int
-	mu        sync.Mutex
-	waitNums  []int
-	waitChs   []chan struct{}
-	maxLimit  int
-	minLimit  int
+	initLimit     int
+	limit         int
+	mu            sync.Mutex
+	waitNums      []int
+	waitChs       []chan struct{}
+	maxLimit      int
+	minLimit      int
+	allocateLimit int
 }
 
 // NewLimiter creates a new Limiter with the given limit.
@@ -54,6 +55,7 @@ func (l *Limiter) Acquire(n int) {
 		l.limit -= n
 		l.maxLimit = max(l.maxLimit, l.limit)
 		l.minLimit = min(l.minLimit, l.limit)
+		l.allocateLimit += n
 		l.mu.Unlock()
 		return
 	}
