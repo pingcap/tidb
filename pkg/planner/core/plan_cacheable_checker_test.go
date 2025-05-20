@@ -39,8 +39,8 @@ func TestFixControl44823(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int)`)
-	var va []string
-	for i := 0; i < 201; i++ {
+	va := make([]string, 0, 201)
+	for i := range 201 {
 		tk.MustExec(fmt.Sprintf(`set @a%v = %v`, i, i))
 		va = append(va, fmt.Sprintf("@a%v", i))
 	}
@@ -68,7 +68,7 @@ func TestFixControl44823(t *testing.T) {
 
 	// non prepared plan cache
 	values := make([]string, 0, 201)
-	for i := 0; i < 201; i++ {
+	for i := range 201 {
 		values = append(values, fmt.Sprintf("%v", i))
 	}
 	query := fmt.Sprintf("select * from t where a in (%v)", strings.Join(values, ","))
@@ -391,15 +391,18 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select * from test.t where a+b=13",      // '+'
 		"select * from test.t where mod(a, 3)=1", // mod
 		"select * from test.t where d>now()",     // now
+		"select * from test.t where a > 1 and b < 2",
 		"select a+1 from test.t where a<13",
 		"select mod(a, 10) from test.t where a<13",
-		"select * from test.t limit 1",                                  // limit
-		"select distinct a from test.t where a > 1 and b < 2",           // distinct
-		"select distinct a from test.t1 where a > 1 and b < 2",          // distinct & partitioned
-		"select count(*) from test.t where a > 1 and b < 2 group by a",  // group by
-		"select count(*) from test.t1 where a > 1 and b < 2 group by a", // group by & partitioned
-		"select * from test.t order by a",                               // order by
-		"select * from test.t1 order by a",                              // order by & partitioned
+		"select * from test.t limit 1",                                           // limit
+		"select distinct a from test.t where a > 1 and b < 2",                    // distinct
+		"select distinct a from test.t1 where a > 1 and b < 2",                   // distinct & partitioned
+		"select count(*) from test.t where a > 1 and b < 2 group by a",           // group by
+		"select count(*) from test.t1 where a > 1 and b < 2 group by a",          // group by & partitioned
+		"select * from test.t order by a",                                        // order by
+		"select * from test.t1 order by a",                                       // order by & partitioned
+		"select /*+ use_index(t1, idx_b) */ * from test.t where a > 1 and b < 2", // hint
+		"select /*+ use_index(t, idx_b) */ * from test.t1 where a > 1 and b < 2", // hint & partitioned
 
 		// 2-way joins
 		"select * from test.t inner join test.t3 on test.t.a=test.t3.a",
@@ -415,30 +418,31 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select a, sum(b) as c from test.t where a > 1 and b < 2 group by a having sum(b) > 1",
 		// having & partitioned
 		"select a, sum(b) as c from test.t1 where a > 1 and b < 2 group by a having sum(b) > 1",
-		"select /*+ use_index(t1, idx_b) */ * from t where a > 1 and b < 2", // hint
-		"select /*+ use_index(t, idx_b) */ * from t1 where a > 1 and b < 2", // hint & partitioned
 
-		"select * from (select * from test.t) t",        // sub-query
-		"select * from (select * from test.t1) t",       // sub-query & partitioned
-		"insert into test.t values(1, 1, 1, 1)",         // insert
-		"insert into test.t1 values(1, 1)",              // insert & partitioned
-		"insert into t(a, b) select a, b from test.t",   // insert into select
-		"insert into t1(a, b) select a, b from test.t1", // insert into select & partitioned
-		"update test.t set a = 1 where b = 2",           // update
-		"update test.t1 set a = 1 where b = 2",          // update & partitioned
-		"delete from test.t where b = 1",                // delete
-		"delete from test.t1 where b = 1",               // delete & partitioned
-		"select * from test.t for update",               // lock
-		"select * from test.t1 for update",              // lock & partitioned
+		"select * from (select * from test.t) t",  // sub-query
+		"select * from (select * from test.t1) t", // sub-query & partitioned
 
 		// uncorrelated sub-query
-		"select * from test.t where a in (select a from t)",
+		"select * from test.t where a in (select a from test.t)",
 		// uncorrelated sub-query & partitioned
-		"select * from test.t1 where a in (select a from t)",
+		"select * from test.t1 where a in (select a from test.t)",
 		// correlated sub-query
 		"select * from test.t where a in (select a from test.t where a > t1.a)",
 		// correlated sub-query & partitioned
 		"select * from test.t1 where a in (select a from test.t where a > t1.a)",
+	}
+
+	supportedDML := []string{
+		"select * from test.t for update",                    // lock
+		"select * from test.t1 for update",                   // lock & partitioned
+		"insert into test.t values(1, 1, 1, 1)",              // insert
+		"insert into test.t1 values(1, 1)",                   // insert & partitioned
+		"insert into test.t(a, b) select a, b from test.t",   // insert into select
+		"insert into test.t1(a, b) select a, b from test.t1", // insert into select & partitioned
+		"update test.t set a = 1 where b = 2",                // update
+		"update test.t1 set a = 1 where b = 2",               // update & partitioned
+		"delete from test.t where b = 1",                     // delete
+		"delete from test.t1 where b = 1",                    // delete & partitioned
 	}
 
 	sctx := tk.Session()
@@ -450,6 +454,13 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 	}
 
 	for _, q := range supported {
+		stmt, err := p.ParseOneStmt(q, charset, collation)
+		require.NoError(t, err)
+		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
+		require.True(t, ok)
+	}
+
+	for _, q := range supportedDML {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
 		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)

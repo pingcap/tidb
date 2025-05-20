@@ -189,6 +189,7 @@ type Config struct {
 	TiDBEdition                string                  `toml:"tidb-edition" json:"tidb-edition"`
 	TiDBReleaseVersion         string                  `toml:"tidb-release-version" json:"tidb-release-version"`
 	KeyspaceName               string                  `toml:"keyspace-name" json:"keyspace-name"`
+	TiKVWorkerURL              string                  `toml:"tikv-worker-url" json:"tikv-worker-url"`
 	Log                        Log                     `toml:"log" json:"log"`
 	Instance                   Instance                `toml:"instance" json:"instance"`
 	Security                   Security                `toml:"security" json:"security"`
@@ -342,7 +343,7 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 }
 
 func encodeDefTempStorageDir(tempDir string, host, statusHost string, port, statusPort uint) string {
-	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v:%v/%v:%v", host, port, statusHost, statusPort)))
+	dirName := base64.URLEncoding.EncodeToString(fmt.Appendf(nil, "%v:%v/%v:%v", host, port, statusHost, statusPort))
 	osUID := ""
 	currentUser, err := user.Current()
 	if err == nil {
@@ -739,7 +740,8 @@ type Performance struct {
 	// of init stats the optimizer may make bad decisions due to pseudo stats.
 	ForceInitStats bool `toml:"force-init-stats" json:"force-init-stats"`
 
-	// ConcurrentlyInitStats indicates whether to use concurrency to init stats.
+	// Deprecated: This setting has no effect, as stats are now always initialized concurrently.
+	// ConcurrentlyInitStats indicates whether to use concurrency for initializing stats.
 	ConcurrentlyInitStats bool `toml:"concurrently-init-stats" json:"concurrently-init-stats"`
 
 	// Deprecated: this config will not have any effect
@@ -999,12 +1001,13 @@ var defaultConf = Config{
 		EnableLoadFMSketch:                false,
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
-		ConcurrentlyInitStats:             true,
+		// Deprecated: Stats are always initialized concurrently.
+		ConcurrentlyInitStats: true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
-		Fallbackable:  false,
+		Fallbackable:  true,
 	},
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:          true,

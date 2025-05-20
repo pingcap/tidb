@@ -130,6 +130,7 @@ go_library(
         "@com_github_tikv_client_go_v2//error",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//txnkv/transaction",
         "@com_github_tikv_client_go_v2//util",
         "@io_etcd_go_etcd_client_v3//:client",
         "@io_etcd_go_etcd_client_v3//concurrency",
@@ -155,7 +156,6 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/autoid_service",
-        "//pkg/bindinfo",
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/domain",
@@ -165,7 +165,6 @@ go_test(
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/meta",
-        "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/session/types",

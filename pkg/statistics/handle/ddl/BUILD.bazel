@@ -32,7 +32,7 @@ go_test(
     timeout = "short",
     srcs = ["ddl_test.go"],
     flaky = True,
-    shard_count = 22,
+    shard_count = 24,
     deps = [
         ":ddl",
         "//pkg/ddl/notifier",

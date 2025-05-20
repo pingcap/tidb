@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	math2 "math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -387,8 +389,15 @@ func needsPartitionPruning(sctx sessionctx.Context, tblInfo *model.TableInfo, pt
 	}
 
 	partIdx, err := PartitionPruning(sctx.GetPlanCtx(), pt, conds, partitionNames, tblCols, partNameSlice)
-	if err != nil || len(partIdx) != 1 {
+	if err != nil {
 		return nil, true, err
+	}
+	if len(partIdx) == 1 && partIdx[0] == FullRange {
+		ret := make([]int, len(tblInfo.Partition.Definitions))
+		for i := range len(tblInfo.Partition.Definitions) {
+			ret[i] = i
+		}
+		return ret, true, nil
 	}
 	return partIdx, true, nil
 }
@@ -604,12 +613,18 @@ func (p *BatchPointGetPlan) OperatorInfo(normalized bool) string {
 		if normalized {
 			buffer.WriteString("handle:?, ")
 		} else {
+			redactMode := p.SCtx().GetSessionVars().EnableRedactLog
+			redactOn := redactMode == errors.RedactLogEnable
 			buffer.WriteString("handle:[")
 			for i, handle := range p.Handles {
 				if i != 0 {
 					buffer.WriteString(" ")
 				}
-				buffer.WriteString(handle.String())
+				if redactOn {
+					buffer.WriteString("?")
+				} else {
+					redact.WriteRedact(&buffer, handle.String(), redactMode)
+				}
 			}
 			buffer.WriteString("], ")
 		}
@@ -912,7 +927,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 		for i, use := range usedValues {
 			if !use {
 				curr := i - skipped
-				p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[curr+1:]...)
+				p.IndexValues = slices.Delete(p.IndexValues, curr, curr+1)
 				skipped++
 			}
 		}
@@ -926,8 +941,8 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 						partIdxs[i] != p.PartitionIdxs[0]) ||
 					!isInExplicitPartitions(pi, idx, p.PartitionNames) {
 					curr := i - skipped
-					handles = append(handles[:curr], handles[curr+1:]...)
-					p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[curr+1:]...)
+					handles = slices.Delete(handles, curr, curr+1)
+					p.IndexValues = slices.Delete(p.IndexValues, curr, curr+1)
 					skipped++
 					continue
 				} else if !p.SinglePartition {
@@ -1046,6 +1061,7 @@ func newBatchPointGetPlan(
 	ctx base.PlanContext, patternInExpr *ast.PatternInExpr,
 	handleCol *model.ColumnInfo, tbl *model.TableInfo, schema *expression.Schema,
 	names []*types.FieldName, whereColNames []string, indexHints []*ast.IndexHint,
+	dbName string, tblAlias string, tblHints []*ast.TableOptimizerHint,
 ) *BatchPointGetPlan {
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	statsInfo := &property.StatsInfo{RowCount: float64(len(patternInExpr.List))}
@@ -1136,7 +1152,14 @@ func newBatchPointGetPlan(
 	}
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
-			!indexIsAvailableByHints(idxInfo, indexHints) {
+			!indexIsAvailableByHints(
+				ctx.GetSessionVars().CurrentDB,
+				dbName,
+				tblAlias,
+				idxInfo,
+				tblHints,
+				indexHints,
+			) {
 			continue
 		}
 		if len(idxInfo.Columns) != len(whereColNames) || idxInfo.HasPrefixIndex() {
@@ -1178,7 +1201,6 @@ func newBatchPointGetPlan(
 		}
 		var values []types.Datum
 		var valuesParams []*expression.Constant
-		var pairs []nameValuePair
 		switch x := item.(type) {
 		case *ast.RowExpr:
 			// The `len(values) == len(valuesParams)` should be satisfied in this mode
@@ -1186,7 +1208,6 @@ func newBatchPointGetPlan(
 				return nil
 			}
 			values = make([]types.Datum, len(x.Values))
-			pairs = make([]nameValuePair, 0, len(x.Values))
 			valuesParams = make([]*expression.Constant, len(x.Values))
 			initTypes := false
 			if indexTypes == nil { // only init once
@@ -1202,8 +1223,7 @@ func newBatchPointGetPlan(
 					if dval == nil {
 						return nil
 					}
-					values[permIndex] = innerX.Datum
-					pairs = append(pairs, nameValuePair{colName: whereColNames[index], value: innerX.Datum})
+					values[permIndex] = *dval
 				case *driver.ParamMarkerExpr:
 					con, err := expression.ParamMarkerExpression(ctx.GetExprCtx(), innerX, true)
 					if err != nil {
@@ -1217,12 +1237,11 @@ func newBatchPointGetPlan(
 					if dval == nil {
 						return nil
 					}
-					values[permIndex] = innerX.Datum
+					values[permIndex] = *dval
 					valuesParams[permIndex] = con
 					if initTypes {
 						indexTypes[permIndex] = &colInfos[index].FieldType
 					}
-					pairs = append(pairs, nameValuePair{colName: whereColNames[index], value: innerX.Datum})
 				default:
 					return nil
 				}
@@ -1239,7 +1258,6 @@ func newBatchPointGetPlan(
 			}
 			values = []types.Datum{*dval}
 			valuesParams = []*expression.Constant{nil}
-			pairs = append(pairs, nameValuePair{colName: whereColNames[0], value: *dval})
 		case *driver.ParamMarkerExpr:
 			if len(whereColNames) != 1 {
 				return nil
@@ -1261,7 +1279,6 @@ func newBatchPointGetPlan(
 			if indexTypes == nil { // only init once
 				indexTypes = []*types.FieldType{&colInfos[0].FieldType}
 			}
-			pairs = append(pairs, nameValuePair{colName: whereColNames[0], value: *dval})
 
 		default:
 			return nil
@@ -1366,14 +1383,28 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 		return nil
 	}
 
-	p := newBatchPointGetPlan(ctx, in, handleCol, tbl, schema, names, whereColNames, tblName.IndexHints)
+	dbName := tblName.Schema.L
+	if dbName == "" {
+		dbName = ctx.GetSessionVars().CurrentDB
+	}
+	p := newBatchPointGetPlan(
+		ctx,
+		in,
+		handleCol,
+		tbl,
+		schema,
+		names,
+		whereColNames,
+		tblName.IndexHints,
+		dbName,
+		tblAlias.L,
+		selStmt.TableHints,
+	)
 	if p == nil {
 		return nil
 	}
-	p.dbName = tblName.Schema.L
-	if p.dbName == "" {
-		p.dbName = ctx.GetSessionVars().CurrentDB
-	}
+	p.dbName = dbName
+
 	return p
 }
 
@@ -1434,7 +1465,15 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	}
 
 	handlePair, fieldType := findPKHandle(tbl, pairs)
-	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 && indexIsAvailableByHints(nil, tblName.IndexHints) {
+	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 &&
+		indexIsAvailableByHints(
+			ctx.GetSessionVars().CurrentDB,
+			dbName,
+			tblAlias.L,
+			nil,
+			selStmt.TableHints,
+			tblName.IndexHints,
+		) {
 		if isTableDual {
 			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
@@ -1453,10 +1492,11 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 		return nil
 	}
 
-	return checkTblIndexForPointPlan(ctx, tnW, schema, names, pairs, isTableDual, check)
+	return checkTblIndexForPointPlan(ctx, tnW, schema, tblAlias.L, selStmt.TableHints, names, pairs, isTableDual, check)
 }
 
 func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW, schema *expression.Schema,
+	tblAlias string, tblHints []*ast.TableOptimizerHint,
 	names []*types.FieldName, pairs []nameValuePair, isTableDual, check bool) *PointGetPlan {
 	check = check || ctx.GetSessionVars().IsIsolation(ast.ReadCommitted)
 	check = check && ctx.GetSessionVars().ConnectionID > 0
@@ -1470,7 +1510,14 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 	}
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
-			!indexIsAvailableByHints(idxInfo, tblName.IndexHints) {
+			!indexIsAvailableByHints(
+				ctx.GetSessionVars().CurrentDB,
+				dbName,
+				tblAlias,
+				idxInfo,
+				tblHints,
+				tblName.IndexHints,
+			) {
 			continue
 		}
 		if idxInfo.Global {
@@ -1527,8 +1574,58 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 
 // indexIsAvailableByHints checks whether this index is filtered by these specified index hints.
 // idxInfo is PK if it's nil
-func indexIsAvailableByHints(idxInfo *model.IndexInfo, idxHints []*ast.IndexHint) bool {
-	if len(idxHints) == 0 {
+func indexIsAvailableByHints(
+	currentDB string,
+	dbName string,
+	tblAlias string,
+	idxInfo *model.IndexInfo,
+	tblHints []*ast.TableOptimizerHint,
+	idxHints []*ast.IndexHint,
+) bool {
+	combinedHints := idxHints
+
+	// Handle *ast.TableOptimizerHint, which is from the comment style hint in the SQL.
+	// In normal planner code path, it's processed by ParsePlanHints() + getPossibleAccessPaths().
+	// ParsePlanHints() converts the use/force/ignore index hints in []*ast.TableOptimizerHint into *ast.IndexHint, and
+	// put it into *hint.PlanHints.
+	// getPossibleAccessPaths() receives the *hint.PlanHints, matches the table names, and combines the hints with the
+	// USE/IGNORE/FORCE INDEX () syntax hint.
+	// Here we try to remove the logic that is not needed in the fast path, and implement a faster and simpler version
+	// to fit the fast path.
+	for _, h := range tblHints {
+		var hintType ast.IndexHintType
+		// The parsing logic from ParsePlanHints()
+		switch h.HintName.L {
+		case hint.HintUseIndex:
+			hintType = ast.HintUse
+		case hint.HintIgnoreIndex:
+			hintType = ast.HintIgnore
+		case hint.HintForceIndex:
+			hintType = ast.HintForce
+		default:
+			continue
+		}
+		if len(h.Tables) != 1 {
+			// This should not happen. See HintIndexList in hintparser.y.
+			intest.Assert(false)
+			continue
+		}
+		hintDBName := h.Tables[0].DBName
+		if hintDBName.L == "" {
+			hintDBName = ast.NewCIStr(currentDB)
+		}
+		// The table name matching logic from getPossibleAccessPaths()
+		if h.Tables[0].TableName.L == tblAlias &&
+			(hintDBName.L == dbName || hintDBName.L == "*") {
+			combinedHints = append(combinedHints, &ast.IndexHint{
+				IndexNames: h.Indexes,
+				HintType:   hintType,
+				HintScope:  ast.HintForScan,
+			})
+		}
+	}
+
+	if len(combinedHints) == 0 {
 		return true
 	}
 	match := func(name ast.CIStr) bool {
@@ -1540,23 +1637,19 @@ func indexIsAvailableByHints(idxInfo *model.IndexInfo, idxHints []*ast.IndexHint
 	// NOTICE: it's supposed that ignore hints and use/force hints will not be applied together since the effect of
 	// the former will be eliminated by the latter.
 	isIgnore := false
-	for _, hint := range idxHints {
+	for _, hint := range combinedHints {
 		if hint.HintScope != ast.HintForScan {
 			continue
 		}
 		if hint.HintType == ast.HintIgnore && hint.IndexNames != nil {
 			isIgnore = true
-			for _, name := range hint.IndexNames {
-				if match(name) {
-					return false
-				}
+			if slices.ContainsFunc(hint.IndexNames, match) {
+				return false
 			}
 		}
 		if (hint.HintType == ast.HintForce || hint.HintType == ast.HintUse) && hint.IndexNames != nil {
-			for _, name := range hint.IndexNames {
-				if match(name) {
-					return true
-				}
+			if slices.ContainsFunc(hint.IndexNames, match) {
+				return true
 			}
 		}
 	}
@@ -1981,11 +2074,12 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolv
 	}
 
 	selStmt := &ast.SelectStmt{
-		Fields:  &ast.FieldList{},
-		From:    updateStmt.TableRefs,
-		Where:   updateStmt.Where,
-		OrderBy: updateStmt.Order,
-		Limit:   updateStmt.Limit,
+		TableHints: updateStmt.TableHints,
+		Fields:     &ast.FieldList{},
+		From:       updateStmt.TableRefs,
+		Where:      updateStmt.Where,
+		OrderBy:    updateStmt.Order,
+		Limit:      updateStmt.Limit,
 	}
 	pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true)
 	if pointGet != nil {
@@ -2112,11 +2206,12 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 		return nil
 	}
 	selStmt := &ast.SelectStmt{
-		Fields:  &ast.FieldList{},
-		From:    delStmt.TableRefs,
-		Where:   delStmt.Where,
-		OrderBy: delStmt.Order,
-		Limit:   delStmt.Limit,
+		TableHints: delStmt.TableHints,
+		Fields:     &ast.FieldList{},
+		From:       delStmt.TableRefs,
+		Where:      delStmt.Where,
+		OrderBy:    delStmt.Order,
+		Limit:      delStmt.Limit,
 	}
 	if pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true); pointGet != nil {
 		if pointGet.IsTableDual {

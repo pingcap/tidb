@@ -109,12 +109,7 @@ func (helper *extractHelper) setColumnPushedDownFn(
 }
 
 func (extractHelper) isPushDownSupported(fnNameL string) bool {
-	for _, s := range []string{ast.Lower, ast.Upper} {
-		if fnNameL == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains([]string{ast.Lower, ast.Upper}, fnNameL)
 }
 
 // extractColBinaryOpScalarFunc extract the scalar function from a binary operation. For example,
@@ -127,7 +122,7 @@ func (extractHelper) extractColBinaryOpScalarFunc(
 	var constIdx int
 	// c = 'rhs'
 	// 'lhs' = c
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		_, isConst := args[i].(*expression.Constant)
 		if isConst {
 			constIdx = i
@@ -158,7 +153,7 @@ func (helper *extractHelper) tryToFindInnerColAndIdx(args []expression.Expressio
 		return nil, -1
 	}
 	var scalar *expression.ScalarFunction
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		var isScalar bool
 		scalar, isScalar = args[i].(*expression.ScalarFunction)
 		if isScalar {
@@ -193,7 +188,7 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 	var colIdx int
 	// c = 'rhs'
 	// 'lhs' = c
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		var isCol bool
 		col, isCol = args[i].(*expression.Column)
 		if isCol {
@@ -1053,9 +1048,8 @@ func (e *MetricTableExtractor) Extract(ctx base.PlanContext,
 	return remained
 }
 
-func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.Time) {
+func (e *MetricTableExtractor) getTimeRange(start, end int64) (startTime, endTime time.Time) {
 	const defaultMetricQueryDuration = 10 * time.Minute
-	var startTime, endTime time.Time
 	if start == 0 && end == 0 {
 		endTime = time.Now()
 		return endTime.Add(-defaultMetricQueryDuration), endTime

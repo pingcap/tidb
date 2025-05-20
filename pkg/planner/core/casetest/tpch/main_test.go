@@ -19,11 +19,18 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
+var testDataMap = make(testdata.BookKeeper)
+
 func TestMain(m *testing.M) {
+	testsetup.SetupForCommonTest()
+	flag.Parse()
+	testDataMap.LoadTestSuiteData("testdata", "tpch_suite")
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
@@ -41,6 +48,14 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
+	callback := func(i int) int {
+		testDataMap.GenerateOutputIfNeeded()
+		return i
+	}
 
-	goleak.VerifyTestMain(m, opts...)
+	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
+}
+
+func GetTPCHSuiteData() testdata.TestData {
+	return testDataMap["tpch_suite"]
 }
