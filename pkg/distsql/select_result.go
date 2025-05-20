@@ -617,6 +617,7 @@ func (r *selectResult) Close() error {
 		defer func() {
 			if ci, ok := r.resp.(copr.CopInfo); ok {
 				r.stats.buildTaskDuration = ci.GetBuildTaskElapsed()
+				r.stats.fetchRspDuration = r.fetchDuration
 				batched, fallback := ci.GetStoreBatchInfo()
 				if batched != 0 || fallback != 0 {
 					r.stats.storeBatchedNum, r.stats.storeBatchedFallbackNum = batched, fallback
@@ -647,6 +648,7 @@ type selectResultRuntimeStats struct {
 	storeBatchedNum         uint64
 	storeBatchedFallbackNum uint64
 	buildTaskDuration       time.Duration
+	fetchRspDuration        time.Duration
 }
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
@@ -686,6 +688,7 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 		storeBatchedNum:         s.storeBatchedNum,
 		storeBatchedFallbackNum: s.storeBatchedFallbackNum,
 		buildTaskDuration:       s.buildTaskDuration,
+		fetchRspDuration:        s.fetchRspDuration,
 	}
 	newRs.copRespTime.MergePercentile(&s.copRespTime)
 	newRs.procKeys.MergePercentile(&s.procKeys)
@@ -727,6 +730,7 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	s.storeBatchedNum += other.storeBatchedNum
 	s.storeBatchedFallbackNum += other.storeBatchedFallbackNum
 	s.buildTaskDuration += other.buildTaskDuration
+	s.fetchRspDuration += other.fetchRspDuration
 }
 
 func (s *selectResultRuntimeStats) String() string {
@@ -789,6 +793,10 @@ func (s *selectResultRuntimeStats) String() string {
 			buf.WriteString(strconv.FormatInt(int64(s.storeBatchedFallbackNum), 10))
 		}
 		buf.WriteString("}")
+		if s.fetchRspDuration > 0 {
+			buf.WriteString(", fetch_resp_duration: ")
+			buf.WriteString(execdetails.FormatDuration(s.fetchRspDuration))
+		}
 	}
 
 	rpcStatsStr := reqStat.String()
