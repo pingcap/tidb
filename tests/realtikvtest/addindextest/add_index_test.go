@@ -49,6 +49,7 @@ func TestCreateNonUniqueIndex(t *testing.T) {
 }
 
 func TestCreateUniqueIndex(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	var colIDs [][]int = [][]int{
 		{1, 6, 7, 8, 11, 13, 15, 16, 18, 19, 22, 26},
 		{2, 9, 11, 17},
@@ -59,11 +60,13 @@ func TestCreateUniqueIndex(t *testing.T) {
 }
 
 func TestCreatePrimaryKey(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	ctx := testutils.InitTest(t)
 	testutils.TestOneIndexFrame(ctx, 0, testutils.AddIndexPK)
 }
 
 func TestCreateGenColIndex(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	ctx := testutils.InitTest(t)
 	testutils.TestOneIndexFrame(ctx, 29, testutils.AddIndexGenCol)
 }
