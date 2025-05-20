@@ -335,9 +335,9 @@ func adjustVar(varName string, varVal any) (newVarVal any, err error) {
 			return 0.1, nil
 		} else if v+0.1 > 1 {
 			return v, nil
-		} else { // increase 0.1 each step
-			return v + 0.1, nil
 		}
+		// increase 0.1 each step
+		return v + 0.1, nil
 	}
 	return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
 }
@@ -349,9 +349,8 @@ func adjustFix(fixID uint64, fixVal string) (newFixVal string, err error) {
 		fixVal = strings.ToUpper(strings.TrimSpace(fixVal))
 		if fixVal == vardef.Off {
 			return vardef.On, nil
-		} else {
-			return vardef.Off, nil
 		}
+		return vardef.Off, nil
 	case fixcontrol.Fix45132:
 		num, err := strconv.ParseInt(fixVal, 10, 64)
 		if err != nil {
