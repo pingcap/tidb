@@ -1215,7 +1215,12 @@ func (p *PhysicalProjection) MemoryUsage() (sum int64) {
 // SetChildren implements Plan interface.
 func (p *PhysicalProjection) SetChildren(children ...base.PhysicalPlan) {
 	if intest.InTest {
-		logutil.BgLogger().Warn("projection should not be a child of another projection")
+		for _, child := range children {
+			if _, ok := child.(*PhysicalProjection); ok {
+				logutil.BgLogger().Warn("projection should not be a child of another projection")
+				break
+			}
+		}
 	}
 	p.BasePhysicalPlan.SetChildren(children...)
 }
