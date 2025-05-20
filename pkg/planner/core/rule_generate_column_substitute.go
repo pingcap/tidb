@@ -206,7 +206,7 @@ func (gc *GcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 		}
 	case *logicalop.LogicalAggregation:
 		for _, aggFunc := range x.AggFuncs {
-			for i := 0; i < len(aggFunc.Args); i++ {
+			for i := range aggFunc.Args {
 				tp = aggFunc.Args[i].GetType(ectx).EvalType()
 				for candidateExpr, column := range exprToColumn {
 					if aggFunc.Args[i].Equal(ectx, candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
@@ -217,7 +217,7 @@ func (gc *GcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 				}
 			}
 		}
-		for i := 0; i < len(x.GroupByItems); i++ {
+		for i := range x.GroupByItems {
 			tp = x.GroupByItems[i].GetType(ectx).EvalType()
 			for candidateExpr, column := range exprToColumn {
 				if x.GroupByItems[i].Equal(ectx, candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
