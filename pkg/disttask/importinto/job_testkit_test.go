@@ -35,6 +35,15 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
+func switchTaskStep(
+	t *testing.T, ctx context.Context,
+	manager *storage.TaskManager, taskID int64, step proto.Step,
+) {
+	task, err := manager.GetTaskByID(ctx, taskID)
+	require.NoError(t, err)
+	require.NoError(t, manager.SwitchTaskStep(ctx, task, proto.TaskStateRunning, step, nil))
+}
+
 func TestGetTaskImportedRows(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -70,9 +79,12 @@ func TestGetTaskImportedRows(t *testing.T) {
 		testutil.CreateSubTaskWithSummary(t, manager, taskID, proto.ImportStepImport,
 			"", nil, m, proto.SubtaskStatePending, proto.ImportInto, 11)
 	}
+
+	switchTaskStep(t, ctx, manager, taskID, proto.ImportStepImport)
+
 	runInfo, err := importinto.GetRuntimeInfoForJob(ctx, 111)
 	require.NoError(t, err)
-	require.Equal(t, uint64(3), runInfo.ImportRows)
+	require.EqualValues(t, 3, runInfo.ImportRows)
 
 	// global sort
 	taskMeta = importinto.TaskMeta{
@@ -96,9 +108,12 @@ func TestGetTaskImportedRows(t *testing.T) {
 		testutil.CreateSubTaskWithSummary(t, manager, taskID, proto.ImportStepWriteAndIngest,
 			"", bytes, m, proto.SubtaskStatePending, proto.ImportInto, 11)
 	}
+
+	switchTaskStep(t, ctx, manager, taskID, proto.ImportStepWriteAndIngest)
+
 	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, 222)
 	require.NoError(t, err)
-	require.Equal(t, uint64(33), runInfo.ImportRows)
+	require.EqualValues(t, 33, runInfo.ImportRows)
 }
 
 func TestShowImportProgress(t *testing.T) {
@@ -174,9 +189,7 @@ func TestShowImportProgress(t *testing.T) {
 	checkShowInfo("[init] N/A", 0)
 
 	// Encode step
-	task, err := manager.GetTaskByID(ctx, taskID)
-	require.NoError(t, err)
-	require.NoError(t, manager.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.ImportStepEncodeAndSort, nil))
+	switchTaskStep(t, ctx, manager, taskID, proto.ImportStepEncodeAndSort)
 	for _, s := range subtasks {
 		testutil.CreateSubTaskWithSummary(t, manager, taskID, proto.ImportStepEncodeAndSort,
 			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
@@ -191,9 +204,7 @@ func TestShowImportProgress(t *testing.T) {
 	checkShowInfo("[encode] subtasks: 1/3, progress: 50.00", 0)
 
 	// Merge step
-	task, err = manager.GetTaskByID(ctx, taskID)
-	require.NoError(t, err)
-	require.NoError(t, manager.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.ImportStepMergeSort, nil))
+	switchTaskStep(t, ctx, manager, taskID, proto.ImportStepMergeSort)
 
 	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, jobID)
 	require.NoError(t, err)
@@ -208,15 +219,11 @@ func TestShowImportProgress(t *testing.T) {
 			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
 	}
 
-	task, err = manager.GetTaskByID(ctx, taskID)
-	require.NoError(t, err)
-	require.NoError(t, manager.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.ImportStepWriteAndIngest, nil))
+	switchTaskStep(t, ctx, manager, taskID, proto.ImportStepWriteAndIngest)
 	checkShowInfo("[ingest] subtasks: 1/3, progress: 50.00", 60)
 
 	// Post-process step
-	task, err = manager.GetTaskByID(ctx, taskID)
-	require.NoError(t, err)
-	require.NoError(t, manager.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.ImportStepPostProcess, nil))
+	switchTaskStep(t, ctx, manager, taskID, proto.ImportStepPostProcess)
 	checkShowInfo("[post-process] N/A", 100)
 
 	require.NoError(t, importer.FinishJob(ctx, conn, jobID, taskSummary))

@@ -658,8 +658,10 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 	taskHandle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta) error {
 	summary := &importer.Summary{}
-	if err := json.Unmarshal(taskMeta.TaskResult, summary); err != nil {
-		return errors.Trace(err)
+	if len(taskMeta.TaskResult) > 0 {
+		if err := json.Unmarshal(taskMeta.TaskResult, summary); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	// we have already switch import-mode when switch to post-process step.
@@ -684,8 +686,10 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 func (sch *importScheduler) failJob(ctx context.Context, taskHandle storage.TaskHandle, task *proto.Task,
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
 	summary := &importer.Summary{}
-	if err := json.Unmarshal(taskMeta.TaskResult, summary); err != nil {
-		return errors.Trace(err)
+	if len(taskMeta.TaskResult) > 0 {
+		if err := json.Unmarshal(taskMeta.TaskResult, summary); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	sch.switchTiKV2NormalMode(ctx, task, logger)

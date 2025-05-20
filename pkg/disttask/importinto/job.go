@@ -149,15 +149,15 @@ func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*importer.RuntimeIn
 		}, nil
 	}
 
-	// Not started yet
-	if len(taskMeta.TaskResult) == 0 {
-		return nil, nil
+	// Calculate the progress of the task if no error.
+
+	// In some tests, the task result is not set even if subtask summaries exist.
+	if len(taskMeta.TaskResult) != 0 {
+		if err = json.Unmarshal(taskMeta.TaskResult, &summary); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
-	// Calculate the progress of the task if no error.
-	if err = json.Unmarshal(taskMeta.TaskResult, &summary); err != nil {
-		return nil, errors.Trace(err)
-	}
 	states, summaries, duration, err := taskManager.GetSubtaskSummaries(ctx, task.ID, task.Step)
 	if err != nil {
 		return nil, err
