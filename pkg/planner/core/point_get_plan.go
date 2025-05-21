@@ -855,10 +855,11 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 				d.Copy(&r[p.HandleColOffset])
 				pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
 				pIdx, err = pi.ReplaceWithOverlappingPartitionIdx(pIdx, err)
-				if table.ErrNoPartitionForGivenValue.Equal(err) {
-					handles[i] = nil
-					continue
-				} else if err != nil {
+				if err != nil {
+					if table.ErrNoPartitionForGivenValue.Equal(err) {
+						handles[i] = nil
+						continue
+					}
 					return nil, false, err
 				}
 				if pIdx < 0 ||
@@ -922,7 +923,9 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 			if len(partIdxs) == 0 {
 				return nil, true, nil
 			}
-			p.PartitionIdxs = partIdxs
+			if !p.SinglePartition {
+				p.PartitionIdxs = partIdxs
+			}
 			if len(skipped) > 0 {
 				for i := range skipped {
 					handles[i] = nil
