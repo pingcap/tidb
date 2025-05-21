@@ -143,7 +143,10 @@ def check(dataset_path: str, check_tiflash_used_index: bool):
             groundtruth_results_set = set(data_file["neighbors"][test_rowid])
 
             with mysql_db.execute_sql(
-                f"SELECT id FROM {table_name} ORDER BY VEC_L2_Distance(vec, %s) LIMIT 100",
+                # SELECT id FROM {table_name} ORDER BY VEC_L2_Distance(vec, %s) LIMIT 100
+                # In the cluster started by tiup, the tiflash component does not yet include pr-10103, so '*' is used here as a substitute.
+                # For details, see: https://github.com/pingcap/tiflash/pull/10103
+                f"SELECT * FROM {table_name} ORDER BY VEC_L2_Distance(vec, %s) LIMIT 100",
                 (encode_vector(query_row),),
             ) as cursor:
                 actual_results = cursor.fetchall()
