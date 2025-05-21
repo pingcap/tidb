@@ -14,10 +14,12 @@
 package ast_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	. "github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/test_driver"
 	"github.com/stretchr/testify/require"
@@ -243,4 +245,23 @@ func TestGenericFuncRestore(t *testing.T) {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
 	}
 	runNodeRestoreTest(t, testCases, "select %s from t", extractNodeFunc)
+}
+
+func TestRestoreWithError(t *testing.T) {
+	testCases := []string{
+		"json_memberof()",
+	}
+
+	extractNodeFunc := func(node Node) Node {
+		return node.(*SelectStmt).Fields.Fields[0].Expr
+	}
+
+	for _, c := range testCases {
+		sql := "select " + c
+		p := parser.New()
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		var sb strings.Builder
+		require.Error(t, extractNodeFunc(stmt).Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)))
+	}
 }

@@ -71,6 +71,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_opt_table_rowid_scan_cost_factor":           {},
 	"tidb_opt_table_tiflash_scan_cost_factor":         {},
 	"tidb_opt_topn_cost_factor":                       {},
+	"tidb_opt_skew_ratio":                             {},
 	"tidb_index_join_batch_size":                      {},
 	"tidb_index_lookup_size":                          {},
 	"tidb_index_serial_scan_concurrency":              {},

@@ -530,7 +530,7 @@ func TestSelectivity(t *testing.T) {
 		},
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
-			selectivity:              5.870830440255832e-05,
+			selectivity:              0.001851851851851852,
 			selectivityAfterIncrease: 0.21916666666666668,
 		},
 		{
@@ -1324,8 +1324,8 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	// From the real-time stats, we are able to know the total count is 11.
 	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
 	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(
-		"TableReader_7 0.00 root  data:Selection_6",
-		"└─Selection_6 0.00 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
+		"TableReader_7 1.00 root  data:Selection_6",
+		"└─Selection_6 1.00 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
 		"  └─TableFullScan_5 11.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
@@ -1434,13 +1434,13 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
 	expectedA := testkit.Rows(
-		"TableReader 0.08 root  data:Selection",
-		"└─Selection 0.08 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",
+		"TableReader 1.00 root  data:Selection",
+		"└─Selection 1.00 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",
 		"  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	)
 	expectedB := testkit.Rows(
-		"TableReader 0.08 root  data:Selection",
-		"└─Selection 0.08 cop[tikv]  in(test.t.b, 1, 2, 3, 4, 5, 6, 7, 8)",
+		"TableReader 1.00 root  data:Selection",
+		"└─Selection 1.00 cop[tikv]  in(test.t.b, 1, 2, 3, 4, 5, 6, 7, 8)",
 		"  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	)
 	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(expectedA)
@@ -1465,4 +1465,66 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 	for _, col := range tbl.Cols() {
 		require.False(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
 	}
+}
+
+func TestRiskEqSkewRatio(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, index idx(a))")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Insert enough rows to produce a single skewed value.
+	testKit.MustExec("insert into t values (1), (1), (1), (1), (2), (2), (3), (4), (5)")
+	// Do not collect topn to ensure that test will not find value in topn.
+	testKit.MustExec(`analyze table t with 0 topn`)
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+
+	sctx := testKit.Session()
+	idxID := tblInfo.Indices[0].ID
+	statsTbl := h.GetTableStats(tb.Meta())
+	// Search for the value "6" which will not be found in the histogram buckets, and since
+	// there are NO topN values - the value will be considered skewed based upon skew ratio.
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
+	count, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err)
+	require.Equal(t, float64(1.8), count)
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0.5")
+	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err)
+	// Result should be approx 3.4, but due to floating point - result can be flaky
+	require.Less(t, float64(3.3), count)
+	require.Greater(t, float64(3.5), count)
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 1")
+	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err)
+	require.Equal(t, float64(5), count)
+	// reset skew ratio to 0
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
+	// Collect 1 topn to ensure that test will not find value in topn.
+	// With 1 value in topN - value 6 will only be considered skewed within the remaining values.
+	testKit.MustExec(`analyze table t with 1 topn`)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	// Rerun tests with 1 value in the TopN
+	statsTbl = h.GetTableStats(tb.Meta())
+	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err)
+	require.Equal(t, float64(1.25), count)
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0.5")
+	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err)
+	// Result should be approx 1.625, but due to floating point - result can be flaky
+	require.Less(t, float64(1.6), count)
+	require.Greater(t, float64(1.7), count)
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 1")
+	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err)
+	require.Equal(t, float64(2), count)
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
 }

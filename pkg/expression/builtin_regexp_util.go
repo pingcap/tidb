@@ -67,7 +67,7 @@ func isResultNull(columns []*chunk.Column, i int) bool {
 
 func fillNullStringIntoResult(result *chunk.Column, num int) {
 	result.ReserveString(num)
-	for i := 0; i < num; i++ {
+	for range num {
 		result.AppendNull()
 	}
 }

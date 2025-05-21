@@ -14,6 +14,7 @@
 package mock
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
@@ -25,7 +26,7 @@ func newSliceIterWithCopy(data []*kv.Entry) *SliceIter {
 		return NewSliceIter(nil)
 	}
 
-	return NewSliceIter(append([]*kv.Entry{}, data...))
+	return NewSliceIter(slices.Clone(data))
 }
 
 func TestSliceIter(t *testing.T) {

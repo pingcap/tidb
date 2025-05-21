@@ -168,22 +168,22 @@ te.expect_time BETWEEN '2018-04-23 00:00:00.0' AND '2018-04-23 23:59:59.0'
 ORDER BY te.expect_time asc
 LIMIT 0, 5;
 id	estRows	task	access object	operator info
-Limit	0.00	root		offset:0, count:5
-└─IndexJoin	0.00	root		left outer join, inner:IndexReader, left side:TopN, outer key:topn_push_down.tr.id, inner key:topn_push_down.p.relate_id, equal cond:eq(topn_push_down.tr.id, topn_push_down.p.relate_id)
-  ├─TopN(Build)	0.00	root		topn_push_down.te.expect_time, offset:0, count:5
-  │ └─IndexJoin	0.00	root		inner join, inner:IndexLookUp, outer key:topn_push_down.tr.id, inner key:topn_push_down.te.trade_id, equal cond:eq(topn_push_down.tr.id, topn_push_down.te.trade_id)
-  │   ├─IndexLookUp(Build)	0.00	root		
-  │   │ ├─Selection(Build)	0.00	cop[tikv]		eq(topn_push_down.tr.business_type, 18), eq(topn_push_down.tr.trade_type, 1)
+Limit	1.56	root		offset:0, count:5
+└─IndexJoin	1.56	root		left outer join, inner:IndexReader, left side:TopN, outer key:topn_push_down.tr.id, inner key:topn_push_down.p.relate_id, equal cond:eq(topn_push_down.tr.id, topn_push_down.p.relate_id)
+  ├─TopN(Build)	1.25	root		topn_push_down.te.expect_time, offset:0, count:5
+  │ └─IndexJoin	1.25	root		inner join, inner:IndexLookUp, outer key:topn_push_down.tr.id, inner key:topn_push_down.te.trade_id, equal cond:eq(topn_push_down.tr.id, topn_push_down.te.trade_id)
+  │   ├─IndexLookUp(Build)	1.00	root		
+  │   │ ├─Selection(Build)	1.00	cop[tikv]		eq(topn_push_down.tr.business_type, 18), eq(topn_push_down.tr.trade_type, 1)
   │   │ │ └─IndexRangeScan	10.00	cop[tikv]	table:tr, index:idx_shop_identy_trade_status_business_type(shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date)	range:[810094178,810094178], keep order:false, stats:pseudo
-  │   │ └─Selection(Probe)	0.00	cop[tikv]		eq(topn_push_down.tr.brand_identy, 32314), eq(topn_push_down.tr.domain_type, 2)
-  │   │   └─TableRowIDScan	0.00	cop[tikv]	table:tr	keep order:false, stats:pseudo
-  │   └─IndexLookUp(Probe)	0.00	root		
-  │     ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:te, index:idx_trade_id(trade_id)	range: decided by [eq(topn_push_down.te.trade_id, topn_push_down.tr.id)], keep order:false, stats:pseudo
-  │     └─Selection(Probe)	0.00	cop[tikv]		ge(topn_push_down.te.expect_time, 2018-04-23 00:00:00.000000), le(topn_push_down.te.expect_time, 2018-04-23 23:59:59.000000)
-  │       └─TableRowIDScan	0.00	cop[tikv]	table:te	keep order:false, stats:pseudo
-  └─IndexReader(Probe)	0.00	root		index:Selection
-    └─Selection	0.00	cop[tikv]		not(isnull(topn_push_down.p.relate_id))
-      └─IndexRangeScan	0.00	cop[tikv]	table:p, index:payment_relate_id(relate_id)	range: decided by [eq(topn_push_down.p.relate_id, topn_push_down.tr.id)], keep order:false, stats:pseudo
+  │   │ └─Selection(Probe)	1.00	cop[tikv]		eq(topn_push_down.tr.brand_identy, 32314), eq(topn_push_down.tr.domain_type, 2)
+  │   │   └─TableRowIDScan	1.00	cop[tikv]	table:tr	keep order:false, stats:pseudo
+  │   └─IndexLookUp(Probe)	1.25	root		
+  │     ├─IndexRangeScan(Build)	50.00	cop[tikv]	table:te, index:idx_trade_id(trade_id)	range: decided by [eq(topn_push_down.te.trade_id, topn_push_down.tr.id)], keep order:false, stats:pseudo
+  │     └─Selection(Probe)	1.25	cop[tikv]		ge(topn_push_down.te.expect_time, 2018-04-23 00:00:00.000000), le(topn_push_down.te.expect_time, 2018-04-23 23:59:59.000000)
+  │       └─TableRowIDScan	50.00	cop[tikv]	table:te	keep order:false, stats:pseudo
+  └─IndexReader(Probe)	1.56	root		index:Selection
+    └─Selection	1.56	cop[tikv]		not(isnull(topn_push_down.p.relate_id))
+      └─IndexRangeScan	1.56	cop[tikv]	table:p, index:payment_relate_id(relate_id)	range: decided by [eq(topn_push_down.p.relate_id, topn_push_down.tr.id)], keep order:false, stats:pseudo
 desc select 1 as a from dual order by a limit 1;
 id	estRows	task	access object	operator info
 Projection_6	1.00	root		1->Column#1

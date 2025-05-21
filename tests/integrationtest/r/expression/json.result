@@ -873,6 +873,8 @@ select json_search('{"h": "i"}', 'all', 'i', '\\', NULL);
 json_search('{"h": "i"}', 'all', 'i', '\\', NULL)
 NULL
 set tidb_enable_vectorized_expression = default;
+select json_memberof();
+Error 1582 (42000): Incorrect parameter count in the call to native function 'json_memberof'
 drop table if exists unsignedTable;
 CREATE TABLE unsignedTable(i INT PRIMARY KEY, j JSON);
 insert into unsignedTable values(1, "[5, 7]"), (4, "[0, 8]");

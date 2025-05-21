@@ -370,7 +370,7 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 	}
 	for _, idx := range statsTbl.StableOrderIdxSlice() {
 		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
-		for i := 0; i < len(idx.Info.Columns); i++ {
+		for i := range idx.Info.Columns {
 			idxColumnTypes = append(idxColumnTypes, colNameToType[idx.Info.Columns[i].Name.O])
 		}
 		err := e.bucketsToRows(dbName, tblName, partitionName, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram, idxColumnTypes)
@@ -433,7 +433,7 @@ func (e *ShowExec) appendTableForStatsTopN(dbName, tblName, partitionName string
 	}
 	for _, idx := range statsTbl.StableOrderIdxSlice() {
 		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
-		for i := 0; i < len(idx.Info.Columns); i++ {
+		for i := range idx.Info.Columns {
 			idxColumnTypes = append(idxColumnTypes, colNameToType[idx.Info.Columns[i].Name.O])
 		}
 		err := e.topNToRows(dbName, tblName, partitionName, idx.Info.Name.O, len(idx.Info.Columns), 1, idx.TopN, idxColumnTypes)
@@ -449,7 +449,7 @@ func (e *ShowExec) topNToRows(dbName, tblName, partitionName, colName string, nu
 		return nil
 	}
 	var tmpDatum types.Datum
-	for i := 0; i < len(topN.TopN); i++ {
+	for i := range topN.TopN {
 		tmpDatum.SetBytes(topN.TopN[i].Encoded)
 		valStr, err := statistics.ValueToString(e.Ctx().GetSessionVars(), &tmpDatum, numOfCols, columnTypes)
 		if err != nil {
@@ -475,7 +475,7 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string,
 	if numOfCols > 0 {
 		isIndex = 1
 	}
-	for i := 0; i < hist.Len(); i++ {
+	for i := range hist.Len() {
 		lowerBoundStr, err := statistics.ValueToString(e.Ctx().GetSessionVars(), hist.GetLower(i), numOfCols, idxColumnTypes)
 		if err != nil {
 			return errors.Trace(err)

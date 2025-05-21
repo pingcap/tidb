@@ -335,7 +335,7 @@ func prepareData(tk *testkit.TestKit) {
 	tk.MustExec("create table t (a int primary key, b int)")
 	tk.MustExec("create table _t like t")
 	results := make([]string, 0, 100)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 		results = append(results, fmt.Sprintf("%d %d", i, i))
 	}
@@ -541,7 +541,7 @@ func TestPipelinedDMLInsertOnDuplicateKeyUpdateInTxn(t *testing.T) {
 	tk.MustExec("create table t1 (a int, b int, c varchar(128), unique index idx(b))")
 	cnt := 2000
 	values := bytes.NewBuffer(make([]byte, 0, 10240))
-	for i := 0; i < cnt; i++ {
+	for i := range cnt {
 		if i > 0 {
 			values.WriteString(", ")
 		}
@@ -789,7 +789,7 @@ func TestConflictError(t *testing.T) {
 	tk.MustExec("create table _t1(a int primary key, b int)")
 	var insert strings.Builder
 	insert.WriteString("insert into t1 values")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if i > 0 {
 			insert.WriteString(",")
 		}

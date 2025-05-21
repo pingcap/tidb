@@ -95,7 +95,7 @@ func (cc *clientConn) HandleStmtPrepare(ctx context.Context, sql string) error {
 	cc.initResultEncoder(ctx)
 	defer cc.rsEncoder.Clean()
 	if len(params) > 0 {
-		for i := 0; i < len(params); i++ {
+		for i := range params {
 			data = data[0:4]
 			data = params[i].Dump(data, cc.rsEncoder)
 
@@ -113,7 +113,7 @@ func (cc *clientConn) HandleStmtPrepare(ctx context.Context, sql string) error {
 	}
 
 	if len(columns) > 0 {
-		for i := 0; i < len(columns); i++ {
+		for i := range columns {
 			data = data[0:4]
 			data = columns[i].Dump(data, cc.rsEncoder)
 
@@ -231,6 +231,16 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
+
+	fn := func() bool {
+		if cc.bufReadConn != nil {
+			return cc.bufReadConn.IsAlive() != 0
+		}
+		return true
+	}
+	cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(&fn)
+	defer cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(nil)
+
 	//nolint:forcetypeassert
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 	if err != nil {

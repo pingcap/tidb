@@ -220,7 +220,7 @@ func getBindingPlanDigest(sctx sessionctx.Context, schema, bindingSQL string) (p
 		if !hasParam(stmt) {
 			// if there is '?' from `create binding using select a from t where a=?`,
 			// the final plan digest might be incorrect.
-			planDigest, _ = PlanDigestFunc(sctx, stmt)
+			planDigest, _ = CalculatePlanDigest(sctx, stmt)
 		}
 	}
 	return

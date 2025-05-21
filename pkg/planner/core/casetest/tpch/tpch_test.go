@@ -19,7 +19,56 @@ import (
 
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/stretchr/testify/require"
 )
+
+func TestQ1(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+CREATE TABLE lineitem (
+    L_ORDERKEY bigint NOT NULL,
+    L_PARTKEY bigint NOT NULL,
+    L_SUPPKEY bigint NOT NULL,
+    L_LINENUMBER bigint NOT NULL,
+    L_QUANTITY decimal(15,2) NOT NULL,
+    L_EXTENDEDPRICE decimal(15,2) NOT NULL,
+    L_DISCOUNT decimal(15,2) NOT NULL,
+    L_TAX decimal(15,2) NOT NULL,
+    L_RETURNFLAG char(1) NOT NULL,
+    L_LINESTATUS char(1) NOT NULL,
+    L_SHIPDATE date NOT NULL,
+    L_COMMITDATE date NOT NULL,
+    L_RECEIPTDATE date NOT NULL,
+    L_SHIPINSTRUCT char(25) NOT NULL,
+    L_SHIPMODE char(10) NOT NULL,
+    L_COMMENT varchar(44) NOT NULL,
+    PRIMARY KEY (L_ORDERKEY, L_LINENUMBER) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+`)
+	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+	integrationSuiteData := GetTPCHSuiteData()
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+		})
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+		})
+		tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
+}
 
 func TestQ3(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -84,7 +133,7 @@ CREATE TABLE lineitem (
 		}
 	)
 	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i := 0; i < len(input); i++ {
+	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = input[i]
 		})
@@ -92,6 +141,85 @@ CREATE TABLE lineitem (
 			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
 		})
 		tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func TestQ4(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database olap")
+	tk.MustExec("use olap")
+	tk.MustExec(`
+CREATE TABLE orders (
+    O_ORDERKEY bigint NOT NULL,
+    O_CUSTKEY bigint NOT NULL,
+    O_ORDERSTATUS char(1) NOT NULL,
+    O_TOTALPRICE decimal(15,2) NOT NULL,
+    O_ORDERDATE date NOT NULL,
+    O_ORDERPRIORITY char(15) NOT NULL,
+    O_CLERK char(15) NOT NULL,
+    O_SHIPPRIORITY bigint NOT NULL,
+    O_COMMENT varchar(79) NOT NULL,
+    PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`
+CREATE TABLE lineitem (
+    L_ORDERKEY bigint NOT NULL,
+    L_PARTKEY bigint NOT NULL,
+    L_SUPPKEY bigint NOT NULL,
+    L_LINENUMBER bigint NOT NULL,
+    L_QUANTITY decimal(15,2) NOT NULL,
+    L_EXTENDEDPRICE decimal(15,2) NOT NULL,
+    L_DISCOUNT decimal(15,2) NOT NULL,
+    L_TAX decimal(15,2) NOT NULL,
+    L_RETURNFLAG char(1) NOT NULL,
+    L_LINESTATUS char(1) NOT NULL,
+    L_SHIPDATE date NOT NULL,
+    L_COMMITDATE date NOT NULL,
+    L_RECEIPTDATE date NOT NULL,
+    L_SHIPINSTRUCT char(25) NOT NULL,
+    L_SHIPMODE char(10) NOT NULL,
+    L_COMMENT varchar(44) NOT NULL,
+    PRIMARY KEY (L_ORDERKEY, L_LINENUMBER) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+`)
+	testkit.LoadTableStats("lineitem_stats.json", dom)
+	testkit.LoadTableStats("orders_stats.json", dom)
+	testkit.SetTiFlashReplica(t, dom, "olap", "orders")
+	testkit.SetTiFlashReplica(t, dom, "olap", "lineitem")
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+	integrationSuiteData := GetTPCHSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	costTraceFormat := `explain format='cost_trace' `
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+		})
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
+		})
+		tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
+		checkCost(t, tk, input[i])
+	}
+}
+
+// check the cost trace's cost and verbose's cost. they should be the same.
+// it is from https://github.com/pingcap/tidb/issues/61155
+func checkCost(t *testing.T, tk *testkit.TestKit, q4 string) {
+	costTraceFormat := `explain format='cost_trace' `
+	verboseFormat := `explain format='verbose' `
+	costTraceRows := tk.MustQuery(costTraceFormat + q4)
+	verboseRows := tk.MustQuery(verboseFormat + q4)
+	require.Equal(t, len(costTraceRows.Rows()), len(verboseRows.Rows()))
+	for i := 0; i < len(costTraceRows.Rows()); i++ {
+		// check id / estRows / estCost. they should be the same one
+		require.Equal(t, costTraceRows.Rows()[i][:3], verboseRows.Rows()[i][:3])
 	}
 }
 
@@ -187,7 +315,7 @@ CREATE TABLE orders (
 		}
 	)
 	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i := 0; i < len(input); i++ {
+	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = input[i]
 		})
@@ -239,7 +367,7 @@ CREATE TABLE orders (
 		}
 	)
 	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i := 0; i < len(input); i++ {
+	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = input[i]
 		})
@@ -313,7 +441,7 @@ CREATE TABLE lineitem (
 		}
 	)
 	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i := 0; i < len(input); i++ {
+	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = input[i]
 		})
@@ -321,5 +449,86 @@ CREATE TABLE lineitem (
 			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
 		})
 		tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func TestQ21(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE supplier (
+  S_SUPPKEY bigint NOT NULL,
+  S_NAME char(25) NOT NULL,
+  S_ADDRESS varchar(40) NOT NULL,
+  S_NATIONKEY bigint NOT NULL,
+  S_PHONE char(15) NOT NULL,
+  S_ACCTBAL decimal(15,2) NOT NULL,
+  S_COMMENT varchar(101) NOT NULL,
+  PRIMARY KEY (S_SUPPKEY) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	tk.MustExec(`
+CREATE TABLE lineitem (
+    L_ORDERKEY bigint NOT NULL,
+    L_PARTKEY bigint NOT NULL,
+    L_SUPPKEY bigint NOT NULL,
+    L_LINENUMBER bigint NOT NULL,
+    L_QUANTITY decimal(15,2) NOT NULL,
+    L_EXTENDEDPRICE decimal(15,2) NOT NULL,
+    L_DISCOUNT decimal(15,2) NOT NULL,
+    L_TAX decimal(15,2) NOT NULL,
+    L_RETURNFLAG char(1) NOT NULL,
+    L_LINESTATUS char(1) NOT NULL,
+    L_SHIPDATE date NOT NULL,
+    L_COMMITDATE date NOT NULL,
+    L_RECEIPTDATE date NOT NULL,
+    L_SHIPINSTRUCT char(25) NOT NULL,
+    L_SHIPMODE char(10) NOT NULL,
+    L_COMMENT varchar(44) NOT NULL,
+    PRIMARY KEY (L_ORDERKEY, L_LINENUMBER) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+`)
+	tk.MustExec(`
+CREATE TABLE orders (
+    O_ORDERKEY bigint NOT NULL,
+    O_CUSTKEY bigint NOT NULL,
+    O_ORDERSTATUS char(1) NOT NULL,
+    O_TOTALPRICE decimal(15,2) NOT NULL,
+    O_ORDERDATE date NOT NULL,
+    O_ORDERPRIORITY char(15) NOT NULL,
+    O_CLERK char(15) NOT NULL,
+    O_SHIPPRIORITY bigint NOT NULL,
+    O_COMMENT varchar(79) NOT NULL,
+    PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`CREATE TABLE nation (
+  N_NATIONKEY bigint NOT NULL,
+  N_NAME char(25) NOT NULL,
+  N_REGIONKEY bigint NOT NULL,
+  N_COMMENT varchar(152) DEFAULT NULL,
+  PRIMARY KEY (N_NATIONKEY) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	testkit.SetTiFlashReplica(t, dom, "test", "supplier")
+	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
+	testkit.SetTiFlashReplica(t, dom, "test", "orders")
+	testkit.SetTiFlashReplica(t, dom, "test", "nation")
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+	integrationSuiteData := GetTPCHSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	costTraceFormat := `explain format='cost_trace' `
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+		})
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
+		})
+		tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
+		checkCost(t, tk, input[i])
 	}
 }

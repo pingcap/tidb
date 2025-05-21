@@ -472,7 +472,7 @@ func (tc *TransactionContext) DeleteSavepoint(name string) bool {
 	name = strings.ToLower(name)
 	for i, sp := range tc.Savepoints {
 		if sp.Name == name {
-			tc.Savepoints = append(tc.Savepoints[:i], tc.Savepoints[i+1:]...)
+			tc.Savepoints = slices.Delete(tc.Savepoints, i, i+1)
 			return true
 		}
 	}
@@ -513,9 +513,7 @@ func (tc *TransactionContext) FlushStmtPessimisticLockCache() {
 	if tc.pessimisticLockCache == nil {
 		tc.pessimisticLockCache = make(map[string][]byte)
 	}
-	for key, val := range tc.CurrentStmtPessimisticLockCache {
-		tc.pessimisticLockCache[key] = val
-	}
+	maps.Copy(tc.pessimisticLockCache, tc.CurrentStmtPessimisticLockCache)
 	tc.CurrentStmtPessimisticLockCache = nil
 }
 
@@ -1016,6 +1014,9 @@ type SessionVars struct {
 
 	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
 	CorrelationExpFactor int
+
+	// RiskEqSkewRatio is used to control the ratio of skew that is applied to equal predicates not found in TopN/buckets.
+	RiskEqSkewRatio float64
 
 	// cpuFactor is the CPU cost of processing one expression for one row.
 	cpuFactor float64
@@ -1639,6 +1640,15 @@ type SessionVars struct {
 	// 0 > value <= 1 applies that percentage as the estimate when rows are found. For example 0.1 = 10%.
 	OptOrderingIdxSelRatio float64
 
+	// RecordRelevantOptVarsAndFixes indicates whether to record optimizer variables/fixes relevant to this query.
+	RecordRelevantOptVarsAndFixes bool
+
+	// RelevantOptVars is a map of relevant optimizer variables to be recorded.
+	RelevantOptVars map[string]struct{}
+
+	// RelevantOptFixes is a map of relevant optimizer fixes to be recorded.
+	RelevantOptFixes map[uint64]struct{}
+
 	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
 	EnableMPPSharedCTEExecution bool
 
@@ -1720,6 +1730,35 @@ type SessionVars struct {
 
 	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
 	BulkDMLEnabled bool
+}
+
+// ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
+func (s *SessionVars) ResetRelevantOptVarsAndFixes(record bool) {
+	s.RecordRelevantOptVarsAndFixes = record
+	s.RelevantOptVars = nil
+	s.RelevantOptFixes = nil
+}
+
+// RecordRelevantOptVar records the optimizer variable that is relevant to the current query.
+func (s *SessionVars) RecordRelevantOptVar(varName string) {
+	if !s.RecordRelevantOptVarsAndFixes {
+		return
+	}
+	if s.RelevantOptVars == nil {
+		s.RelevantOptVars = make(map[string]struct{})
+	}
+	s.RelevantOptVars[varName] = struct{}{}
+}
+
+// RecordRelevantOptFix records the optimizer fix that is relevant to the current query.
+func (s *SessionVars) RecordRelevantOptFix(fixID uint64) {
+	if !s.RecordRelevantOptVarsAndFixes {
+		return
+	}
+	if s.RelevantOptFixes == nil {
+		s.RelevantOptFixes = make(map[uint64]struct{})
+	}
+	s.RelevantOptFixes[fixID] = struct{}{}
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -2152,6 +2191,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		LimitPushDownThreshold:        vardef.DefOptLimitPushDownThreshold,
 		CorrelationThreshold:          vardef.DefOptCorrelationThreshold,
 		CorrelationExpFactor:          vardef.DefOptCorrelationExpFactor,
+		RiskEqSkewRatio:               vardef.DefOptRiskEqSkewRatio,
 		cpuFactor:                     vardef.DefOptCPUFactor,
 		copCPUFactor:                  vardef.DefOptCopCPUFactor,
 		CopTiFlashConcurrencyFactor:   vardef.DefOptTiFlashConcurrencyFactor,

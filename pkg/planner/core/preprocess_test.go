@@ -298,6 +298,8 @@ func TestValidator(t *testing.T) {
 		{"ALTER TABLE t ADD INDEX (a) USING HNSW", false, errors.New(`[ddl:8200]'USING HNSW' can be only used for VECTOR INDEX`)},
 		{"ALTER TABLE t ADD INDEX (a) USING INVERTED", false, errors.New(`[ddl:8200]'USING INVERTED' can be only used for COLUMNAR INDEX`)},
 		// {"ALTER TABLE t ADD INDEX (a) USING VECTOR", false, errors.New(`[ddl:8200]'USING VECTOR' can be only used for COLUMNAR INDEX`)},
+		{"ALTER TABLE t ADD FULLTEXT INDEX (a) WITH PARSER foo", false, errors.New(`[ddl:8200]Unsupported parser 'foo'`)},
+		{"ALTER TABLE t ADD FULLTEXT INDEX (a) USING HNSW", false, errors.New(`[ddl:8200]'USING HNSW' is not supported for FULLTEXT INDEX`)},
 		{"CREATE VECTOR INDEX idx ON t (a) USING HNSW ", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
 		{"CREATE VECTOR INDEX idx ON t (a, b) USING HNSW", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
 		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a))) TYPE BTREE", false, errors.New(`[ddl:8200]'USING BTREE' is not supported for VECTOR INDEX`)},
@@ -316,6 +318,8 @@ func TestValidator(t *testing.T) {
 		{"CREATE COLUMNAR INDEX ident USING HNSW ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[ddl:8200]'USING HNSW' is not supported for COLUMNAR INDEX`)},
 		// {"CREATE COLUMNAR INDEX ident USING VECTOR ON d_n.t_n (ident)", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
 		{"CREATE COLUMNAR INDEX ident USING INVERTED ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[ddl:8200]COLUMNAR INDEX of INVERTED type must specify one column name`)},
+		{"CREATE FULLTEXT INDEX ident ON d_n.t_n (ident) WITH PARSER foo", false, errors.New(`[ddl:8200]Unsupported parser 'foo'`)},
+		{"CREATE FULLTEXT INDEX ident ON d_n.t_n (ident) USING HNSW", false, errors.New(`[ddl:8200]'USING HNSW' is not supported for FULLTEXT INDEX`)},
 		{"CREATE TABLE t(a int, b vector(3), UNIQUE INDEX(b) USING HNSW)", false, errors.New(`[ddl:8200]'USING HNSW' can be only used for VECTOR INDEX`)},
 		{"CREATE TABLE t(a int, b vector(3), UNIQUE INDEX(b) USING INVERTED)", false, errors.New(`[ddl:8200]'USING INVERTED' can be only used for COLUMNAR INDEX`)},
 		// {"CREATE TABLE t(a int, b vector(3), UNIQUE INDEX(b) USING VECTOR)", false, errors.New(`[ddl:8200]'USING VECTOR' can be only used for COLUMNAR INDEX`)},
@@ -327,11 +331,14 @@ func TestValidator(t *testing.T) {
 		{"CREATE TABLE t(a int, COLUMNAR INDEX(b))", false, errors.New(`[ddl:8200]COLUMNAR INDEX must specify 'USING <index_type>'`)},
 		{"CREATE TABLE t(a int, COLUMNAR INDEX(b) USING HNSW)", false, errors.New(`[ddl:8200]'USING HNSW' is not supported for COLUMNAR INDEX`)},
 		// {"CREATE TABLE t(a int, COLUMNAR INDEX(b) USING VECTOR)", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
+		{"CREATE TABLE t(c TEXT, FULLTEXT INDEX (t) WITH PARSER foo)", false, errors.New(`[ddl:8200]Unsupported parser 'foo'`)},
+		{"CREATE TABLE t(c TEXT, FULLTEXT INDEX (t) USING HNSW)", false, errors.New(`[ddl:8200]'USING HNSW' is not supported for FULLTEXT INDEX`)},
 
 		// The following columnar index usages are valid, they only fail due to table not found.
 		{"CREATE VECTOR INDEX ident USING HNSW ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
 		{"CREATE VECTOR INDEX ident ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
 		// {"CREATE COLUMNAR INDEX ident USING VECTOR ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
+		{"CREATE FULLTEXT INDEX x ON ident (col_x)", false, errors.New(`[schema:1146]Table 'test.ident' doesn't exist`)},
 	}
 
 	store := testkit.CreateMockStore(t)

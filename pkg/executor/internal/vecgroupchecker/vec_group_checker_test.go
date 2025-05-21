@@ -56,7 +56,7 @@ func TestVecGroupCheckerDATARACE(t *testing.T) {
 		case mysql.TypeJSON:
 			chk.Column(0).ReserveJSON(1)
 			j := new(types.BinaryJSON)
-			require.NoError(t, j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, 123, 123))))
+			require.NoError(t, j.UnmarshalJSON(fmt.Appendf(nil, `{"%v":%v}`, 123, 123)))
 			chk.Column(0).AppendJSON(*j)
 		}
 
@@ -83,7 +83,7 @@ func TestVecGroupCheckerDATARACE(t *testing.T) {
 			require.Equal(t, `{"123": 123}`, vgc.lastRowDatums[0].GetMysqlJSON().String())
 			chk.Column(0).ReserveJSON(1)
 			j := new(types.BinaryJSON)
-			require.NoError(t, j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, 456, 456))))
+			require.NoError(t, j.UnmarshalJSON(fmt.Appendf(nil, `{"%v":%v}`, 456, 456)))
 			chk.Column(0).AppendJSON(*j)
 			require.Equal(t, `{"123": 123}`, vgc.firstRowDatums[0].GetMysqlJSON().String())
 			require.Equal(t, `{"123": 123}`, vgc.lastRowDatums[0].GetMysqlJSON().String())
@@ -97,7 +97,7 @@ func genTestChunk4VecGroupChecker(chkRows []int, sameNum int) (expr []expression
 	inputs = make([]*chunk.Chunk, chkNum)
 	fts := make([]*types.FieldType, 1)
 	fts[0] = types.NewFieldType(mysql.TypeLonglong)
-	for i := 0; i < chkNum; i++ {
+	for i := range chkNum {
 		inputs[i] = chunk.New(fts, chkRows[i], chkRows[i])
 		numRows += chkRows[i]
 	}
@@ -111,11 +111,11 @@ func genTestChunk4VecGroupChecker(chkRows []int, sameNum int) (expr []expression
 	nullPos := rand.Intn(numGroups)
 	cnt := 0
 	val := rand.Int63()
-	for i := 0; i < chkNum; i++ {
+	for i := range chkNum {
 		col := inputs[i].Column(0)
 		col.ResizeInt64(chkRows[i], false)
 		i64s := col.Int64s()
-		for j := 0; j < chkRows[i]; j++ {
+		for j := range chkRows[i] {
 			if cnt == sameNum {
 				val = rand.Int63()
 				cnt = 0
@@ -224,7 +224,7 @@ func TestVecGroupChecker(t *testing.T) {
 	groupChecker.Reset()
 	_, err := groupChecker.SplitIntoGroups(chk)
 	require.NoError(t, err)
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		b, e := groupChecker.GetNextGroup()
 		require.Equal(t, b, i)
 		require.Equal(t, e, i+1)
@@ -235,7 +235,7 @@ func TestVecGroupChecker(t *testing.T) {
 	groupChecker.Reset()
 	_, err = groupChecker.SplitIntoGroups(chk)
 	require.NoError(t, err)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		b, e := groupChecker.GetNextGroup()
 		require.Equal(t, b, i*2)
 		require.Equal(t, e, i*2+2)
@@ -246,7 +246,7 @@ func TestVecGroupChecker(t *testing.T) {
 	groupChecker.Reset()
 	_, err = groupChecker.SplitIntoGroups(chk)
 	require.NoError(t, err)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		b, e := groupChecker.GetNextGroup()
 		require.Equal(t, b, i*2)
 		require.Equal(t, e, i*2+2)

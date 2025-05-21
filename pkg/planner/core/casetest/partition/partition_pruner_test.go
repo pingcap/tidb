@@ -634,3 +634,18 @@ func TestIssue59827RangeColumns(t *testing.T) {
 	tk.MustQuery("explain select * from t where a = 'a' and b = '2'").CheckContain("partition:p2")
 	tk.MustQuery("explain select * from t where a = 'a' and (b = '2')").CheckContain("partition:p2")
 }
+
+func TestIssue61134(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (" +
+		"a varchar(291)," +
+		"b int," +
+		"primary key(a)) partition by list columns (a)" +
+		"(partition p0 values in ('', '1'))")
+
+	tk.MustExec("insert into t values ('', 1)")
+	tk.MustQuery("explain select * from t where a in ('')").CheckContain("Point_Get")
+	tk.MustQuery("select * from t where a in ('')").Check(testkit.Rows(" 1"))
+}

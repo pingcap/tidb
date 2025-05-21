@@ -542,7 +542,7 @@ func (b *castJSONAsArrayFunctionSig) evalJSON(ctx EvalContext, row chunk.Row) (r
 		}
 		arrayVals = append(arrayVals, item)
 	} else {
-		for i := 0; i < val.GetElemCount(); i++ {
+		for i := range val.GetElemCount() {
 			item, err := f(fakeSctx, val.ArrayGetElem(i), ft)
 			if err != nil {
 				return types.BinaryJSON{}, false, err

@@ -143,7 +143,7 @@ func verifyJSONArgsType(ctx EvalContext, funcName string, useJSONErr bool, args 
 	if jsonArgsIndex == nil {
 		// if no index is specified, verify all args
 		jsonArgsIndex = make([]int, len(args))
-		for i := 0; i < len(args); i++ {
+		for i := range args {
 			jsonArgsIndex[i] = i
 		}
 	}
@@ -976,7 +976,7 @@ func (b *builtinJSONMemberOfSig) evalInt(ctx EvalContext, row chunk.Row) (res in
 	}
 
 	elemCount := obj.GetElemCount()
-	for i := 0; i < elemCount; i++ {
+	for i := range elemCount {
 		if types.CompareBinaryJSON(obj.ArrayGetElem(i), target) == 0 {
 			return 1, false, nil
 		}
