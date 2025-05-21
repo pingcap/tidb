@@ -259,3 +259,27 @@ func TestIssue59902(t *testing.T) {
 			"        └─Selection 1.00 cop[tikv]  not(isnull(test.t2.a))",
 			"          └─IndexRangeScan 1.00 cop[tikv] table:t2, index:idx(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"))
 }
+
+func TestIssue61118(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test;")
+	tk1.MustExec("set global tidb_enable_instance_plan_cache = 1;")
+	tk1.MustExec("create table t(a timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), b int, c int, primary key(a), unique key(b,c));")
+	tk1.MustExec("insert into t(b,c) value (1,1);")
+	tk1.MustExec("prepare stmt from 'update t set a = NOW(6) where b = ? and c = ?';")
+	tk1.MustExec("set @a = 1;")
+	tk1.MustExec("execute stmt using @a, @a;")
+	tk1.MustExec("set time_zone='+1:00';")
+	tk1.MustExec("execute stmt using @a, @a;")
+	tk1.MustExec("execute stmt using @a, @a;")
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test;")
+	tk2.MustExec("prepare stmt from 'update t set a = NOW(6) where b = ? and c = ?';")
+	tk2.MustExec("set @a = 1;")
+	tk2.MustExec("execute stmt using @a, @a;")
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk2.MustExec("admin check table t;")
+}
