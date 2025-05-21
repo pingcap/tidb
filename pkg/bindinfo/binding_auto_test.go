@@ -148,7 +148,7 @@ func TestRelevantOptVarsAndFixes(t *testing.T) {
 		require.NoError(t, err)
 		vars, fixes, err := bindinfo.RecordRelevantOptVarsAndFixes(tk.Session(), stmt)
 		require.NoError(t, err)
-		 testdata.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].Vars = fmt.Sprintf("%v", vars)
 			output[i].Fixes = fmt.Sprintf("%v", fixes)
 		})
