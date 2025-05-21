@@ -81,6 +81,7 @@ func TestJobHappyPath(t *testing.T) {
 			},
 			SourceFileSize: 123,
 			ImportedRows:   -1,
+			Progress:       importer.DefaultProgressMessage,
 			Status:         "pending",
 		}
 
