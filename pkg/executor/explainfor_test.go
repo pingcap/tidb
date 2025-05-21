@@ -301,7 +301,6 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 		`  ├─Point_Get(Build) 1.00 237.60 root table:t2, index:idx_a(a) `, // use idx_a
 		`  └─TableReader(Probe) 10.00 318.67 root  data:TableRangeScan`,
 		`    └─TableRangeScan 10.00 2404.10 cop[tikv] table:t1 range:[1,1], keep order:false, stats:pseudo`))
-
 	tk.MustExec("set @a=2")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",

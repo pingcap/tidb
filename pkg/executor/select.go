@@ -260,7 +260,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			for tblID, cols := range e.tblID2Handle {
 				for _, col := range cols {
-					handle, err := col.BuildHandle(row)
+					handle, err := col.BuildHandle(e.Ctx().GetSessionVars().StmtCtx, row)
 					if err != nil {
 						return err
 					}
