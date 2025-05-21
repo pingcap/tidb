@@ -252,13 +252,7 @@ func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []
 		newKeys = append(newKeys, oldJoinKeys[offset])
 	}
 	for pos, key := range oldJoinKeys {
-		isExist := false
-		for _, p := range offsets {
-			if p == pos {
-				isExist = true
-				break
-			}
-		}
+		isExist := slices.Contains(offsets, pos)
 		if !isExist {
 			newKeys = append(newKeys, key)
 		}
@@ -272,13 +266,7 @@ func getNewNullEQByOffsets(oldNullEQ []bool, offsets []int) []bool {
 		newNullEQ = append(newNullEQ, oldNullEQ[offset])
 	}
 	for pos, key := range oldNullEQ {
-		isExist := false
-		for _, p := range offsets {
-			if p == pos {
-				isExist = true
-				break
-			}
-		}
+		isExist := slices.Contains(offsets, pos)
 		if !isExist {
 			newNullEQ = append(newNullEQ, key)
 		}
@@ -301,7 +289,7 @@ func getEnforcedMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalPrope
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	for _, item := range prop.SortItems {
 		isExist, hasLeftColInProp, hasRightColInProp := false, false, false
-		for joinKeyPos := 0; joinKeyPos < len(leftJoinKeys); joinKeyPos++ {
+		for joinKeyPos := range leftJoinKeys {
 			var key *expression.Column
 			if item.Col.Equal(evalCtx, leftJoinKeys[joinKeyPos]) {
 				key = leftJoinKeys[joinKeyPos]
@@ -314,7 +302,7 @@ func getEnforcedMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalPrope
 			if key == nil {
 				continue
 			}
-			for i := 0; i < len(offsets); i++ {
+			for i := range offsets {
 				if offsets[i] == joinKeyPos {
 					isExist = true
 					break
@@ -723,7 +711,7 @@ func completePhysicalIndexJoin(physic *PhysicalIndexJoin, rt *RootTask, innerS, 
 						innerHashKeys = append(innerHashKeys, lhs) // nozero
 					}
 					// if not, this EQ function is useless, keep it in new other conditions.
-					newOtherConds = append(newOtherConds[:i], newOtherConds[i+1:]...)
+					newOtherConds = slices.Delete(newOtherConds, i, i+1)
 				}
 			}
 		default:
@@ -832,7 +820,7 @@ func constructIndexJoin(
 						outerHashKeys = append(outerHashKeys, rhs) // nozero
 						innerHashKeys = append(innerHashKeys, lhs) // nozero
 					}
-					newOtherConds = append(newOtherConds[:i], newOtherConds[i+1:]...)
+					newOtherConds = slices.Delete(newOtherConds, i, i+1)
 				}
 			}
 		default:
@@ -2030,12 +2018,10 @@ func filterIndexJoinBySessionVars(sc base.PlanContext, indexJoins []base.Physica
 	if sc.GetSessionVars().EnableIndexMergeJoin {
 		return indexJoins
 	}
-	for i := len(indexJoins) - 1; i >= 0; i-- {
-		if _, ok := indexJoins[i].(*PhysicalIndexMergeJoin); ok {
-			indexJoins = append(indexJoins[:i], indexJoins[i+1:]...)
-		}
-	}
-	return indexJoins
+	return slices.DeleteFunc(indexJoins, func(indexJoin base.PhysicalPlan) bool {
+		_, ok := indexJoin.(*PhysicalIndexMergeJoin)
+		return ok
+	})
 }
 
 const (
@@ -2188,7 +2174,7 @@ func handleFilterIndexJoinHints(p *logicalop.LogicalJoin, candidates []base.Phys
 
 // recordIndexJoinHintWarnings records the warnings msg if no valid preferred physic are picked.
 // todo: extend recordIndexJoinHintWarnings to support all kind of operator's warnings handling.
-func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalProperty) error {
+func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalProperty, inEnforce bool) error {
 	p, ok := lp.(*logicalop.LogicalJoin)
 	if !ok {
 		return nil
@@ -2201,7 +2187,11 @@ func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalPro
 	// Print warning message if any hints cannot work.
 	// If the required property is not empty, we will enforce it and try the hint again.
 	// So we only need to generate warning message when the property is empty.
-	if prop.IsSortItemEmpty() {
+	//
+	// but for warnings handle inside findBestTask here, even the not-empty prop
+	// will be reset to get the planNeedEnforce plans, but the prop passed down here will
+	// still be the same, so here we change the admission to both.
+	if prop.IsSortItemEmpty() || inEnforce {
 		var indexJoinTables, indexHashJoinTables, indexMergeJoinTables []h.HintedTable
 		if p.HintInfo != nil {
 			t := p.HintInfo.IndexJoin
@@ -2779,12 +2769,28 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 		}
 		joins = append(joins, mergeJoins...)
 
-		// todo: feel vars.EnhanceIndexJoinBuildV2 and tryToEnumerateIndexJoin(p, prop)
-		indexJoins, forced := tryToGetIndexJoin(p, prop)
-		if forced {
-			return indexJoins, true, nil
+		if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
+			indexJoins := tryToEnumerateIndexJoin(p, prop)
+			joins = append(joins, indexJoins...)
+
+			failpoint.Inject("MockOnlyEnableIndexHashJoinV2", func(val failpoint.Value) {
+				if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
+					indexHashJoin := make([]base.PhysicalPlan, 0, len(indexJoins))
+					for _, one := range indexJoins {
+						if _, ok := one.(*PhysicalIndexHashJoin); ok {
+							indexHashJoin = append(indexHashJoin, one)
+						}
+					}
+					failpoint.Return(indexHashJoin, true, nil)
+				}
+			})
+		} else {
+			indexJoins, forced := tryToGetIndexJoin(p, prop)
+			if forced {
+				return indexJoins, true, nil
+			}
+			joins = append(joins, indexJoins...)
 		}
-		joins = append(joins, indexJoins...)
 	}
 
 	hashJoins, forced := getHashJoins(p, prop)
@@ -3310,7 +3316,6 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 	if childProp == nil {
 		return nil
 	}
-
 	for _, possibleChildProperty := range la.PossibleProperties {
 		childProp.SortItems = property.SortItemsFromCols(possibleChildProperty[:len(groupByCols)], desc)
 		if !prop.IsPrefix(childProp) {
@@ -3939,7 +3944,7 @@ func exhaustPhysicalPlans4LogicalSequence(lp base.LogicalPlan, prop *property.Ph
 	seqs := make([]base.PhysicalPlan, 0, 2)
 	for _, propChoice := range possibleChildrenProps {
 		childReqs := make([]*property.PhysicalProperty, 0, p.ChildLen())
-		for i := 0; i < p.ChildLen()-1; i++ {
+		for range p.ChildLen() - 1 {
 			childReqs = append(childReqs, propChoice[0].CloneEssentialFields())
 		}
 		childReqs = append(childReqs, propChoice[1])

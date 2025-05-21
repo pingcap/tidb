@@ -199,6 +199,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 				continue
 			}
 			prunedColumns = append(prunedColumns, ds.Schema().Columns[i])
+			// TODO: investigate why we cannot use slices.Delete for these two:
 			ds.Schema().Columns = append(ds.Schema().Columns[:i], ds.Schema().Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
 		}

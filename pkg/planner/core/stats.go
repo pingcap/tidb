@@ -309,7 +309,7 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 				_, rOk := eqFunc.GetArgs()[1].(*expression.CorrelatedColumn)
 				if rOk {
 					path.AccessConds = append(path.AccessConds, filter)
-					path.TableFilters = append(path.TableFilters[:i], path.TableFilters[i+1:]...)
+					path.TableFilters = slices.Delete(path.TableFilters, i, i+1)
 					corColInAccessConds = true
 					break
 				}
@@ -319,7 +319,7 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 				_, lOk := eqFunc.GetArgs()[0].(*expression.CorrelatedColumn)
 				if lOk {
 					path.AccessConds = append(path.AccessConds, filter)
-					path.TableFilters = append(path.TableFilters[:i], path.TableFilters[i+1:]...)
+					path.TableFilters = slices.Delete(path.TableFilters, i, i+1)
 					corColInAccessConds = true
 					break
 				}

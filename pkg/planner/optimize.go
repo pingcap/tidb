@@ -690,6 +690,28 @@ func recordRelevantOptVarsAndFixes(sctx sessionctx.Context, stmt ast.StmtNode) (
 	return
 }
 
+func genBriefPlanWithSCtx(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest, planHintStr string, planText [][]string, err error) {
+	ret := &core.PreprocessorReturn{}
+	nodeW := resolve.NewNodeW(stmt)
+	if err = core.Preprocess(context.Background(), sctx, nodeW,
+		core.WithPreprocessorReturn(ret), core.InitTxnContextProvider,
+	); err != nil {
+		return "", "", nil, err
+	}
+
+	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return "", "", nil, err
+	}
+	flat := core.FlattenPhysicalPlan(p, false)
+	_, digest := core.NormalizeFlatPlan(flat)
+	sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true // ignore operatorID to make the output simpler
+	plan := core.ExplainFlatPlanInRowFormat(flat, types.ExplainFormatBrief, false, nil, nil)
+	hints := core.GenHintsFromFlatPlan(flat)
+
+	return digest.String(), hint.RestoreOptimizerHints(hints), plan, nil
+}
+
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
@@ -699,4 +721,5 @@ func init() {
 	}
 	bindinfo.CalculatePlanDigest = calculatePlanDigestFunc
 	bindinfo.RecordRelevantOptVarsAndFixes = recordRelevantOptVarsAndFixes
+	bindinfo.GenBriefPlanWithSCtx = genBriefPlanWithSCtx
 }

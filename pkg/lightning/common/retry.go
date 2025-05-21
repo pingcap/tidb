@@ -21,6 +21,7 @@ import (
 	goerrors "errors"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"strings"
 	"syscall"
@@ -111,13 +112,22 @@ func isSingleRetryableError(err error) bool {
 
 	switch nerr := err.(type) {
 	case net.Error:
-		if nerr.Timeout() {
+		if nerr.Timeout() || nerr.Temporary() {
 			return true
 		}
 		// the error might be nested, such as *url.Error -> *net.OpError -> *os.SyscallError
 		var syscallErr *os.SyscallError
 		if goerrors.As(nerr, &syscallErr) {
 			return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET
+		}
+		var urlErr *url.Error
+		if goerrors.As(nerr, &urlErr) {
+			if urlErr.Err == nil || urlErr.Err == io.EOF {
+				// we retry when urlErr.Err is nil, the EOF error is a workaround
+				// for https://github.com/golang/go/issues/53472
+				return true
+			}
+			return isSingleRetryableError(urlErr.Err)
 		}
 		return false
 	case *mysql.MySQLError:

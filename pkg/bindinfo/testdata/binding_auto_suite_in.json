@@ -1,0 +1,9 @@
+[
+  {
+    "name": "TestPlanGeneration",
+    "cases": [
+      "explain explore select count(1) from t",
+      "explain explore select max(b) from t where a=1"
+    ]
+  }
+]

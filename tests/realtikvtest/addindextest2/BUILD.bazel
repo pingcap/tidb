@@ -12,8 +12,10 @@ go_test(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/taskexecutor",
         "//pkg/disttask/framework/testutil",
         "//pkg/disttask/operator",
@@ -34,5 +36,6 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//util",
     ],
 )

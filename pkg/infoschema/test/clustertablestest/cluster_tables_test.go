@@ -167,10 +167,10 @@ func TestTestDataLockWaits(t *testing.T) {
 	_, digest1 := parser.NormalizeDigest("select * from test_data_lock_waits for update")
 	_, digest2 := parser.NormalizeDigest("update test_data_lock_waits set f1=1 where id=2")
 	s.store.(mockstorage.MockLockWaitSetter).SetMockLockWaits([]*deadlock.WaitForEntry{
-		{Txn: 1, WaitForTxn: 2, Key: []byte("key1"), ResourceGroupTag: kv.NewResourceGroupTagBuilder().SetSQLDigest(digest1).EncodeTagWithKey([]byte(""))},
-		{Txn: 3, WaitForTxn: 4, Key: []byte("key2"), ResourceGroupTag: kv.NewResourceGroupTagBuilder().SetSQLDigest(digest2).EncodeTagWithKey([]byte(""))},
+		{Txn: 1, WaitForTxn: 2, Key: []byte("key1"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).SetSQLDigest(digest1).EncodeTagWithKey([]byte(""))},
+		{Txn: 3, WaitForTxn: 4, Key: []byte("key2"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).SetSQLDigest(digest2).EncodeTagWithKey([]byte(""))},
 		// Invalid digests
-		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: kv.NewResourceGroupTagBuilder().EncodeTagWithKey([]byte(""))},
+		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).EncodeTagWithKey([]byte(""))},
 		{Txn: 7, WaitForTxn: 8, Key: []byte("key4"), ResourceGroupTag: []byte("asdfghjkl")},
 	})
 	tk := s.newTestKitWithRoot(t)
@@ -1052,7 +1052,7 @@ func TestQuickBinding(t *testing.T) {
 		},
 
 		{`select (select sum(b) from t3 where t2.b=t3.a) from t1 join t2 where t1.a = t2.a and t1.c = ?`,
-			"leading(`test`.`t1`, `test`.`t2`, `test`.`t3`@`sel_2`), inl_hash_join(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` `k_a`), no_order_index(@`sel_2` `test`.`t3` `k_a`), agg_to_cop(@`sel_2`)",
+			"leading(`test`.`t1`, `test`.`t2`, `test`.`t3`@`sel_2`), inl_hash_join(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`), stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` `k_a`), order_index(@`sel_2` `test`.`t3` `k_a`)",
 			nil,
 		},
 

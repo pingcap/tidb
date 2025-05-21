@@ -15,6 +15,7 @@ go_test(
         "//pkg/meta/model",
         "//pkg/testkit",
         "//tests/realtikvtest",
+        "//tests/realtikvtest/testutils",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],

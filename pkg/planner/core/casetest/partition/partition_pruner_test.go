@@ -649,3 +649,109 @@ func TestIssue61134(t *testing.T) {
 	tk.MustQuery("explain select * from t where a in ('')").CheckContain("Point_Get")
 	tk.MustQuery("select * from t where a in ('')").Check(testkit.Rows(" 1"))
 }
+
+func TestIssue61176Char(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	testCase := []struct {
+		partitionBy string
+		partD       string
+		partY       string
+		partNull    string
+	}{
+		{
+			" PARTITION BY RANGE COLUMNS (a) (PARTITION pNULL VALUES LESS THAN (''), PARTITION p0 VALUES LESS THAN ('M'), PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+			"p0",
+			"p1",
+			"pNULL",
+		}, {
+			" PARTITION BY LIST COLUMNS (a) (PARTITION p0 VALUES IN ('D'), PARTITION p1 VALUES IN ('Y'), PARTITION pNULL VALUES IN (NULL))",
+			"p0",
+			"p1",
+			"pNULL",
+		}, {
+			" PARTITION BY KEY (a) PARTITIONS 2",
+			"p0",
+			"p1",
+			"p1",
+		},
+	}
+	for _, t := range testCase {
+		tk.MustExec(`CREATE TABLE t (a varchar(9), unique index (a))` + t.partitionBy)
+		tk.MustExec(`insert into t values ('Y'),('D'),(NULL)`)
+		tk.MustQuery(`select a from t where a <=> 'D'`).Check(testkit.Rows("D"))
+		tk.MustQuery(`select a from t where a <=> 'Y'`).Check(testkit.Rows("Y"))
+		tk.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows("<nil>"))
+		tk.MustQuery(`explain format=brief select a from t where a <=> 'D'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partD})
+		tk.MustQuery(`explain format=brief select a from t where a <=> 'Y'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partY})
+		tk.MustQuery(`explain format=brief select a from t where a <=> NULL`).MultiCheckContain([]string{"IndexRangeScan", "partition:" + t.partNull})
+		tk.MustExec(`drop table t`)
+		tk.MustExec(`CREATE TABLE t (a varchar(9) PRIMARY KEY)` + t.partitionBy)
+		tk.MustExec(`insert into t values ('Y'),('D')`)
+		tk.MustContainErrMsg(`insert into t values (NULL)`, "[table:1048]Column 'a' cannot be null")
+		tk.MustQuery(`select a from t where a <=> 'D'`).Check(testkit.Rows("D"))
+		tk.MustQuery(`select a from t where a <=> 'Y'`).Check(testkit.Rows("Y"))
+		tk.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows())
+		tk.MustQuery(`explain format=brief select a from t where a <=> 'D'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partD})
+		tk.MustQuery(`explain format=brief select a from t where a <=> 'Y'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partY})
+		tk.MustQuery(`explain format=brief select a from t where a <=> NULL`).MultiCheckContain([]string{"TableRangeScan", "partition:" + t.partNull})
+		tk.MustExec(`drop table t`)
+	}
+}
+
+func TestIssue61176Int(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	testCase := []struct {
+		partitionBy string
+		part1       string
+		part5       string
+		partNull    string
+	}{
+		{
+			" PARTITION BY RANGE (a) (PARTITION pNULL VALUES LESS THAN (0), PARTITION p0 VALUES LESS THAN (5), PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+			"p0",
+			"p1",
+			"pNULL",
+		}, {
+			" PARTITION BY LIST (a) (PARTITION p0 VALUES IN (1), PARTITION p1 VALUES IN (5), PARTITION pNULL VALUES IN (NULL))",
+			"p0",
+			"p1",
+			"pNULL",
+		}, {
+			" PARTITION BY KEY (a) PARTITIONS 3",
+			"p2",
+			"p1",
+			"p1",
+		}, {
+			" PARTITION BY HASH (a) PARTITIONS 3",
+			"p1",
+			"p2",
+			"p0",
+		},
+	}
+	for _, t := range testCase {
+		tk.MustExec(`CREATE TABLE t (a int, unique index (a))` + t.partitionBy)
+		tk.MustExec(`insert into t values (1),(5),(NULL)`)
+		tk.MustQuery(`select a from t where a <=> 1`).Check(testkit.Rows("1"))
+		tk.MustQuery(`select a from t where a <=> 5`).Check(testkit.Rows("5"))
+		tk.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows("<nil>"))
+		tk.MustQuery(`explain format=brief select a from t where a <=> 1`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part1})
+		tk.MustQuery(`explain format=brief select a from t where a <=> 5`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part5})
+		tk.MustQuery(`explain format=brief select a from t where a <=> NULL`).MultiCheckContain([]string{"IndexRangeScan", "partition:" + t.partNull})
+		tk.MustExec(`drop table t`)
+		tk.MustExec(`CREATE TABLE t (a int PRIMARY KEY)` + t.partitionBy)
+		tk.MustExec(`insert into t values (1),(5)`)
+		tk.MustContainErrMsg(`insert into t values (NULL)`, "[table:1048]Column 'a' cannot be null")
+		tk.MustQuery(`select a from t where a <=> 1`).Check(testkit.Rows("1"))
+		tk.MustQuery(`select a from t where a <=> 5`).Check(testkit.Rows("5"))
+		tk.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows())
+		tk.MustQuery(`explain format=brief select a from t where a <=> 1`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part1})
+		tk.MustQuery(`explain format=brief select a from t where a <=> 5`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part5})
+		// TODO: Also do this for RANGE COLUMNS? Why is this different?!?
+		tk.MustQuery(`explain format=brief select a from t where a <=> NULL`).CheckContain("TableDual")
+		tk.MustExec(`drop table t`)
+	}
+}

@@ -195,7 +195,7 @@ func (CollectPredicateColumnsPoint) expandStatsNeededColumnsForStaticPruning(
 	tid2pids map[int64][]int64,
 ) []model.StatsLoadItem {
 	curLen := len(histNeededItems)
-	for i := 0; i < curLen; i++ {
+	for i := range curLen {
 		partitionIDs := tid2pids[histNeededItems[i].TableID]
 		if len(partitionIDs) == 0 {
 			continue

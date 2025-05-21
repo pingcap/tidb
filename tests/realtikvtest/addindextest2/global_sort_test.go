@@ -30,8 +30,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	diststorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
@@ -48,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func init() {
@@ -127,13 +130,13 @@ func checkExternalFields(t *testing.T, tk *testkit.TestKit) {
 	}
 }
 
-func getTaskID(t *testing.T, tk *testkit.TestKit) int64 {
-	rs := tk.MustQuery("select id from mysql.tidb_global_task").Rows()
-	require.Len(t, rs, 1)
-	// convert string to int64
-	id, err := strconv.ParseInt(rs[0][0].(string), 10, 64)
+func getTaskID(t *testing.T, jobID int64) int64 {
+	mgr, err := diststorage.GetTaskManager()
 	require.NoError(t, err)
-	return id
+	ctx := util.WithInternalSourceType(context.Background(), "scheduler")
+	task, err := mgr.GetTaskByKeyWithHistory(ctx, fmt.Sprintf("ddl/backfill/%d", jobID))
+	require.NoError(t, err)
+	return task.ID
 }
 
 func TestGlobalSortBasic(t *testing.T) {
@@ -142,7 +145,10 @@ func TestGlobalSortBasic(t *testing.T) {
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	ch := make(chan struct{}, 1)
+	ch := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/doCleanupTask", func() {
+		ch <- struct{}{}
+	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
 		ch <- struct{}{}
 	})
@@ -178,8 +184,9 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec("alter table t add index idx(a);")
 	checkDataAndShowJobs(t, tk, size)
 	checkExternalFields(t, tk)
-	taskID := getTaskID(t, tk)
+	taskID := getTaskID(t, jobID)
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
+	<-ch
 	<-ch
 	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
 
@@ -187,18 +194,20 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec("alter table t add index idx1(a);")
 	checkDataAndShowJobs(t, tk, size)
 	checkExternalFields(t, tk)
-	taskID = getTaskID(t, tk)
+	taskID = getTaskID(t, jobID)
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/merge-sort")
+	<-ch
 	<-ch
 	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
 
 	tk.MustExec("alter table t add unique index idx2(a);")
 	checkDataAndShowJobs(t, tk, size)
 	checkExternalFields(t, tk)
-	taskID = getTaskID(t, tk)
+	taskID = getTaskID(t, jobID)
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/merge-sort")
+	<-ch
 	<-ch
 	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
 }
@@ -246,10 +255,17 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			if kerneltype.IsNextGen() && tc.cloudStorageURI == "" {
+				t.Skip("local sort might ingest duplicate KV, cause overlapped sst")
+			}
 			tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = " + tc.enableFastReorg + ";")
 			tk.MustExec("set @@global.tidb_enable_dist_task = " + tc.enableDistTask + ";")
 			tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + tc.cloudStorageURI + "';")
 			for _, tn := range tableNames {
+				if kerneltype.IsNextGen() && tc.cloudStorageURI != "" && tn == "t_partition" {
+					t.Log("partition table in global sort is ordered by index KV group, cause overlapped sst")
+					continue
+				}
 				tk.MustExec("alter table " + tn + " add index idx_1(a), add index idx_2(b, a);")
 				tk.MustExec("admin check table " + tn + ";")
 				tk.MustExec("alter table " + tn + " drop index idx_1, drop index idx_2;")
@@ -300,6 +316,7 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 }
 
 func TestGlobalSortDuplicateErrMsg(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	server, cloudStorageURI := genServerWithStorage(t)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -435,6 +452,9 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 
 // When meeting a retryable error, the subtask/job should be idempotent.
 func TestGlobalSortAddIndexRecoverFromRetryableError(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("might cause overlapped data")
+	}
 	server, cloudStorageURI := genServerWithStorage(t)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
