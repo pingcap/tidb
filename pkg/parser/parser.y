@@ -984,6 +984,7 @@ import (
 	BRIEStmt                   "BACKUP or RESTORE statement"
 	CalibrateResourceStmt      "CALIBRATE RESOURCE statement"
 	CommitStmt                 "COMMIT statement"
+	CancelDistributionJobStmt  "Cancel DISTRIBUTION JOB statement"
 	CreateTableStmt            "CREATE TABLE statement"
 	CreateViewStmt             "CREATE VIEW  statement"
 	CreateUserStmt             "CREATE User statement"
@@ -3196,6 +3197,14 @@ DistributeTableStmt:
 			PartitionNames: $4.([]ast.CIStr),
 			Rule:           ast.NewCIStr($7),
 			Engine:         ast.NewCIStr($10),
+		}
+	}
+
+CancelDistributionJobStmt:
+	"CANCEL" "DISTRIBUTION" "JOB" Int64Num
+	{
+		$$ = &ast.CancelDistributionJobStmt{
+			JobID: $4.(int64),
 		}
 	}
 
@@ -12381,6 +12390,7 @@ Statement:
 |	ExecuteStmt
 |	ExplainStmt
 |	CalibrateResourceStmt
+|	CancelDistributionJobStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt
