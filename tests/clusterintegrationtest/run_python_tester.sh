@@ -35,3 +35,5 @@ print_versions
 
 echo "+ Running /root/python_testers/vector_recall.py"
 uv run ./python_testers/vector_recall.py || { stop_tiup; }
+
+stop_tiup

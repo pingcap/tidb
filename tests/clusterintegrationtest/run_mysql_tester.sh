@@ -28,3 +28,5 @@ print_versions
 
 echo "+ Running mysql-tester"
 ./mysql-tester -all || { stop_tiup;}
+
+stop_tiup

@@ -41,3 +41,5 @@ print_versions
 echo "+ Starting run vector recall test"
 echo "+ Testing vector recall and index using latest version"
 uv run ./python_testers/vector_recall.py --check-only || { stop_tiup; }
+
+stop_tiup
