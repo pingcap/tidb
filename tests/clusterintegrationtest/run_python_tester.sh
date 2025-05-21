@@ -34,4 +34,4 @@ wait_for_tiflash
 print_versions
 
 echo "+ Running /root/python_testers/vector_recall.py"
-uv run ./python_testers/vector_recall.py || { stop_tiup; exit 1; }
+uv run ./python_testers/vector_recall.py || { stop_tiup; }

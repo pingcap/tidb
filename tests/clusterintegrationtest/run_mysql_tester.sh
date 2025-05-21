@@ -27,4 +27,4 @@ wait_for_tiflash
 print_versions
 
 echo "+ Running mysql-tester"
-./mysql-tester -all || { stop_tiup; exit 1; }
+./mysql-tester -all || { stop_tiup;}

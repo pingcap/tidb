@@ -74,7 +74,7 @@ function stop_tiup() {
     kill $TIUP_PID
   fi
 
-  for i in {1..30}; do
+  for i in {1..60}; do
     if ! pgrep -f "tiup-playground" > /dev/null; then
       echo "  - TiUP stopped successfully"
       return
@@ -82,7 +82,7 @@ function stop_tiup() {
     sleep 1
   done
 
-  echo "* Fail to stop TiUP in 30s"
+  echo "* Fail to stop TiUP in 60s"
   exit 1
 }
 
