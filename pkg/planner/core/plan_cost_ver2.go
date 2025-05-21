@@ -144,14 +144,20 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
-
+	rows := getCardinality(p, option.CostFlag)
 	var columns []*expression.Column
 	if p.StoreType == kv.TiKV { // Assume all columns for TiKV
 		columns = p.tblCols
 	} else { // TiFlash
 		columns = p.schema.Columns
+		if len(p.LateMaterializationFilterCondition) > 0 {
+			// rowCount is computed from result row count of LateMaterializationFilterCondition,
+			// which has already accounted the filters on DataSource,
+			// But here we need to use the original row count,so let's restore the calculation process.
+			rows = rows / p.LateMaterializationFilterSelectivity
+		}
 	}
-	rows := p.getCardinality(option.CostFlag)
+
 	rowSize := getAvgRowSize(p.StatsInfo(), columns)
 	// Ensure rows and rowSize have a reasonable minimum value to avoid underestimation
 	if !p.isChildOfIndexLookUp {
@@ -173,6 +179,7 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	// Apply TiFlash startup cost to prefer TiKV for small table scans
 	if p.StoreType == kv.TiFlash {
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, TiFlashStartupRowPenalty, rowSize, scanFactor))
+		// TODO: we need to add filter cost for LateMaterializationFilterCondition
 	} else if !p.isChildOfIndexLookUp && hasFullRangeScan {
 		newRowCount := getTableScanPenalty(p, rows)
 		if newRowCount > 0 {
@@ -267,6 +274,7 @@ func (p *PhysicalTableReader) GetPlanCostVer2(taskType property.TaskType, option
 	}
 
 	netCost := netCostVer2(option, rows, rowSize, netFactor)
+
 	childCost, err := p.tablePlan.GetPlanCostVer2(childType, option)
 	if err != nil {
 		return costusage.ZeroCostVer2, err

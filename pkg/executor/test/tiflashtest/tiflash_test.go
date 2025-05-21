@@ -2220,8 +2220,8 @@ func TestIndexMergeCarePreferTiflash(t *testing.T) {
 		testkit.Rows("TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
 			"└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
 			"  └─Projection 1.00 mpp[tiflash]  test.t.i",
-			"    └─Selection 1.00 mpp[tiflash]  ge(test.t.m, 1726910326), le(test.t.m, 1726910391), not(in(test.t.a, -1, 0)), or(eq(test.t.w, \"1123\"), eq(test.t.l, \"1123\"))",
-			"      └─TableFullScan 10.00 mpp[tiflash] table:a pushed down filter:eq(test.t.s, 0), keep order:false, stats:pseudo"))
+			"    └─TableFullScan 1.00 mpp[tiflash] table:a pushed down filter:eq(test.t.s, 0), ge(test.t.m, 1726910326), le(test.t.m, 1726910391), not(in(test.t.a, -1, 0)), or(eq(test.t.w, \"1123\"), eq(test.t.l, \"1123\")), keep order:false, stats:pseudo",
+		))
 }
 
 func TestIssue59703(t *testing.T) {
