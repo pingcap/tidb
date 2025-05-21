@@ -1466,6 +1466,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Command:               command,
 		Plan:                  p,
 		PlanExplainRows:       plannercore.GetExplainRowsForPlan(p),
+		BinaryPlan:            plannercore.GetBinaryPlan(p),
 		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:                  t,
 		State:                 s.Status(),
@@ -1492,10 +1493,15 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if p == nil {
 		// Store the last valid plan when the current plan is nil.
 		// This is for `explain for connection` statement has the ability to query the last valid plan.
-		if oldPi != nil && oldPi.Plan != nil && len(oldPi.PlanExplainRows) > 0 {
+		if oldPi != nil && oldPi.Plan != nil {
 			pi.Plan = oldPi.Plan
-			pi.PlanExplainRows = oldPi.PlanExplainRows
 			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
+			if len(oldPi.PlanExplainRows) > 0 {
+				pi.PlanExplainRows = oldPi.PlanExplainRows
+			}
+			if oldPi.BinaryPlan != "" {
+				pi.BinaryPlan = oldPi.BinaryPlan
+			}
 		}
 	}
 	// We set process info before building plan, so we extended execution time.
