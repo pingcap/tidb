@@ -1466,7 +1466,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Command:               command,
 		Plan:                  p,
 		PlanExplainRows:       plannercore.GetExplainRowsForPlan(p),
-		BinaryPlan:            plannercore.GetBinaryPlan(p),
+		BriefBinaryPlan:       plannercore.GetBriefBinaryPlan(p),
 		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:                  t,
 		State:                 s.Status(),
@@ -1497,7 +1497,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 			pi.Plan = oldPi.Plan
 			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
 			pi.PlanExplainRows = oldPi.PlanExplainRows
-			pi.BinaryPlan = oldPi.BinaryPlan
+			pi.BriefBinaryPlan = oldPi.BriefBinaryPlan
 		}
 	}
 	// We set process info before building plan, so we extended execution time.

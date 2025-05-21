@@ -849,9 +849,9 @@ type Explain struct {
 	ExecStmt         ast.StmtNode
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 
-	Rows        [][]string
-	ExplainRows [][]string
-	BinaryPlan  string
+	Rows            [][]string
+	ExplainRows     [][]string
+	BriefBinaryPlan string
 }
 
 // GetExplainRowsForPlan get explain rows for plan.
@@ -870,8 +870,8 @@ func GetExplainRowsForPlan(plan base.Plan) (rows [][]string) {
 	return explain.Rows
 }
 
-// GetBinaryPlan returns the binary plan of the plan for explainfor.
-func GetBinaryPlan(p base.Plan) string {
+// GetBriefBinaryPlan returns the binary plan of the plan for explainfor.
+func GetBriefBinaryPlan(p base.Plan) string {
 	var plan base.Plan = p
 	if plan == nil {
 		return ""
@@ -920,7 +920,7 @@ func (e *Explain) prepareSchema() error {
 	}
 	switch {
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
-		if e.BinaryPlan != "" && format == types.ExplainFormatBrief {
+		if e.BriefBinaryPlan != "" && format == types.ExplainFormatBrief {
 			fieldNames = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
 		} else {
 			fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
@@ -940,7 +940,7 @@ func (e *Explain) prepareSchema() error {
 			fieldNames = []string{"id", "estRows", "estCost", "costFormula", "task", "access object", "operator info"}
 		}
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (e.Analyze || e.RuntimeStatsColl != nil):
-		if e.BinaryPlan != "" && format == types.ExplainFormatBrief {
+		if e.BriefBinaryPlan != "" && format == types.ExplainFormatBrief {
 			fieldNames = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 		} else {
 			fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
@@ -1059,8 +1059,8 @@ func (e *Explain) RenderResult() error {
 		}
 	}
 	// For explain format=brief for connection, we can directly decode the binary plan to get the explain rows.
-	if strings.ToLower(e.Format) == types.ExplainFormatBrief && e.BinaryPlan != "" {
-		rows, err := plancodec.DecodeBinaryPlan4Connection(e.BinaryPlan)
+	if strings.ToLower(e.Format) == types.ExplainFormatBrief && e.BriefBinaryPlan != "" {
+		rows, err := plancodec.DecodeBinaryPlan4Connection(e.BriefBinaryPlan)
 		if err != nil {
 			return err
 		}

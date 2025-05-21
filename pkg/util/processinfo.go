@@ -67,7 +67,7 @@ type ProcessInfo struct {
 	ResourceGroupName     string
 	SessionAlias          string
 	RedactSQL             string
-	BinaryPlan            string
+	BriefBinaryPlan       string
 	IndexNames            []string
 	TableIDs              []int64
 	PlanExplainRows       [][]string
