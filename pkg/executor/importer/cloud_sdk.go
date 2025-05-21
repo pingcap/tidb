@@ -210,7 +210,7 @@ func (sdk *ImportSDK) CreateSchemasAndTables(ctx context.Context) error {
 }
 
 // GetTablesMeta implements the CloudImportSDK interface
-func (sdk *ImportSDK) GetTablesMeta(ctx context.Context) ([]*TableMeta, error) {
+func (sdk *ImportSDK) GetTablesMeta(context.Context) ([]*TableMeta, error) {
 	dbMetas := sdk.loader.GetDatabases()
 	var results []*TableMeta
 
@@ -242,7 +242,7 @@ func (sdk *ImportSDK) GetTablesMeta(ctx context.Context) ([]*TableMeta, error) {
 }
 
 // GetTableMetaByName implements CloudImportSDK interface
-func (sdk *ImportSDK) GetTableMetaByName(ctx context.Context, schema, table string) (*TableMeta, error) {
+func (sdk *ImportSDK) GetTableMetaByName(_ context.Context, schema, table string) (*TableMeta, error) {
 	dbMetas := sdk.loader.GetDatabases()
 
 	// Collect all data files (and schema files) for pattern matching
@@ -305,7 +305,7 @@ func (sdk *ImportSDK) buildTableMeta(
 	}
 
 	// Process data files
-	dataFiles, totalSize, err := sdk.processDataFiles(tblMeta.DataFiles)
+	dataFiles, totalSize, err := processDataFiles(tblMeta.DataFiles)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -318,7 +318,7 @@ func (sdk *ImportSDK) buildTableMeta(
 		tableFilePaths[df.FileMeta.Path] = struct{}{}
 	}
 
-	wildcard, err := sdk.generateWildcard(tblMeta.DataFiles, tableFilePaths, allDataFiles)
+	wildcard, err := generateWildcard(tblMeta.DataFiles, tableFilePaths, allDataFiles)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -340,7 +340,7 @@ func (sdk *ImportSDK) Close() error {
 }
 
 // processDataFiles converts mydump data files to DataFileMeta and calculates total size
-func (sdk *ImportSDK) processDataFiles(files []mydump.FileInfo) ([]DataFileMeta, int64, error) {
+func processDataFiles(files []mydump.FileInfo) ([]DataFileMeta, int64, error) {
 	dataFiles := make([]DataFileMeta, 0, len(files))
 	var totalSize int64
 
@@ -364,7 +364,7 @@ func createDataFileMeta(file mydump.FileInfo) DataFileMeta {
 }
 
 // generateWildcard creates a wildcard pattern that matches only this table's files
-func (sdk *ImportSDK) generateWildcard(
+func generateWildcard(
 	files []mydump.FileInfo,
 	tableFiles map[string]struct{},
 	allFiles map[string]mydump.FileInfo,
@@ -453,7 +453,7 @@ func generateMydumperPattern(paths []string) string {
 }
 
 // extractMydumperNames extracts database and table names from Mydumper-formatted paths
-func extractMydumperNames(paths []string) (string, string) {
+func extractMydumperNames(paths []string) (dbName, tableName string) {
 	// Extract filenames from paths
 	filenames := make([]string, 0, len(paths))
 	for _, path := range paths {
@@ -466,8 +466,6 @@ func extractMydumperNames(paths []string) (string, string) {
 		}
 	}
 
-	// Check if all filenames follow Mydumper data file pattern ({db}.{table}.sql or {db}.{table}.{part}.sql)
-	var dbName, tableName string
 	for i, filename := range filenames {
 		// Skip schema files
 		if strings.HasSuffix(filename, "-schema.sql") || strings.HasSuffix(filename, "-schema-create.sql") {
@@ -531,7 +529,8 @@ func longestCommonPrefix(strs []string) string {
 	prefix := strs[0]
 	for _, s := range strs[1:] {
 		i := 0
-		for ; i < len(prefix) && i < len(s) && prefix[i] == s[i]; i++ {
+		for i < len(prefix) && i < len(s) && prefix[i] == s[i] {
+			i++
 		}
 		prefix = prefix[:i]
 		if prefix == "" {
@@ -551,8 +550,8 @@ func longestCommonSuffix(strs []string) string {
 	suffix := strs[0]
 	for _, s := range strs[1:] {
 		i := 0
-		for ; i < len(suffix) && i < len(s) &&
-			suffix[len(suffix)-i-1] == s[len(s)-i-1]; i++ {
+		for i < len(suffix) && i < len(s) && suffix[len(suffix)-i-1] == s[len(s)-i-1] {
+			i++
 		}
 		suffix = suffix[len(suffix)-i:]
 		if suffix == "" {

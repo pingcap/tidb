@@ -350,12 +350,11 @@ func TestCreateDataFileMeta(t *testing.T) {
 }
 
 func TestProcessDataFiles(t *testing.T) {
-	sdk := &ImportSDK{}
 	files := []mydump.FileInfo{
 		{FileMeta: mydump.SourceFileMeta{Path: "s3://bucket/a", RealSize: 10}},
 		{FileMeta: mydump.SourceFileMeta{Path: "s3://bucket/b", RealSize: 20}},
 	}
-	dfm, total, err := sdk.processDataFiles(files)
+	dfm, total, err := processDataFiles(files)
 	require.NoError(t, err)
 	require.Len(t, dfm, 2)
 	require.Equal(t, int64(30), total)
