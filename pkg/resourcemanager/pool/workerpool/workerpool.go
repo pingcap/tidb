@@ -226,7 +226,7 @@ func (p *WorkerPool[T, R]) Tune(numWorkers int32, wait bool) {
 		// Remove workers
 		var wg sync.WaitGroup
 	outer:
-		for range int(-diff) {
+		for range -diff {
 			wg.Add(1)
 			select {
 			case p.quitChan <- tuneConfig{wg: &wg}:

@@ -116,7 +116,7 @@ func (a *recordSet) Fields() []*resolve.ResultField {
 func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, defaultDB string) []*resolve.ResultField {
 	rfs := make([]*resolve.ResultField, 0, schema.Len())
 	defaultDBCIStr := ast.NewCIStr(defaultDB)
-	for i := 0; i < schema.Len(); i++ {
+	for i := range schema.Len() {
 		dbName := names[i].DBName
 		if dbName.L == "" && names[i].TblName.L != "" {
 			dbName = defaultDBCIStr
@@ -330,6 +330,11 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 			exec.Recreated(pointGetPlan, a.Ctx)
 			a.PsStmt.PointGet.Executor = exec
 			executor = exec
+			// If reuses the executor, the executor build phase is skipped, and the txn will not be activated that
+			// caused `TxnCtx.StartTS` to be 0.
+			// So we should set the `TxnCtx.StartTS` manually here to make sure it is not 0
+			// to provide the right value for `@@tidb_last_txn_info` or other variables.
+			a.Ctx.GetSessionVars().TxnCtx.StartTS = startTs
 		}
 	}
 

@@ -16,15 +16,11 @@ package logclient
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/stream"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"go.uber.org/zap"
 )
 
@@ -62,6 +58,7 @@ func NewRestoreMetaKVProcessor(client *LogClient, schemasReplace *stream.Schemas
 // RestoreAndRewriteMetaKVFiles tries to restore files about meta kv-event from stream-backup.
 func (rp *RestoreMetaKVProcessor) RestoreAndRewriteMetaKVFiles(
 	ctx context.Context,
+	hasExplicitFilter bool,
 	files []*backuppb.DataFileInfo,
 ) error {
 	// starts gc row collector
@@ -84,10 +81,15 @@ func (rp *RestoreMetaKVProcessor) RestoreAndRewriteMetaKVFiles(
 		return errors.Trace(err)
 	}
 
-	// global schema version to trigger a full reload so every TiDB node in the cluster will get synced with
-	// the latest schema update.
-	if err := rp.client.UpdateSchemaVersionFullReload(ctx); err != nil {
-		return errors.Trace(err)
+	if !hasExplicitFilter {
+		// global schema version to trigger a full reload so every TiDB node in the cluster will get synced with
+		// the latest schema update.
+		log.Info("updating schema version to do full reload")
+		if err := rp.client.UpdateSchemaVersionFullReload(ctx); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		log.Info("skip doing full reload for filtered PiTR")
 	}
 	return nil
 }
@@ -159,61 +161,9 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 
 	// process entries to collect table IDs
 	for _, entry := range curSortedEntries {
-		// parse entry and do the table mapping
-		if err = mp.tableMappingManager.ParseMetaKvAndUpdateIdMapping(&entry.E, cf); err != nil {
+		// parse entry and do the table mapping, using tableHistoryManager as the collector
+		if err = mp.tableMappingManager.ParseMetaKvAndUpdateIdMapping(&entry.E, cf, mp.tableHistoryManager); err != nil {
 			return nil, errors.Trace(err)
-		}
-
-		// collect rename/partition exchange history
-		// get value from default cf and get the short value if possible from write cf
-		value, err := stream.ExtractValue(&entry.E, cf)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		// write cf doesn't have short value in it
-		if value == nil {
-			continue
-		}
-
-		if utils.IsMetaDBKey(entry.E.Key) {
-			rawKey, err := stream.ParseTxnMetaKeyFrom(entry.E.Key)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-
-			if meta.IsDBkey(rawKey.Field) {
-				var dbInfo model.DBInfo
-				if err := json.Unmarshal(value, &dbInfo); err != nil {
-					return nil, errors.Trace(err)
-				}
-				// collect db id -> name mapping during log backup, it will contain information about newly created db
-				mp.tableHistoryManager.RecordDBIdToName(dbInfo.ID, dbInfo.Name.O)
-			} else if !meta.IsDBkey(rawKey.Key) {
-				// also see RewriteMetaKvEntry
-				continue
-			} else if meta.IsTableKey(rawKey.Field) {
-				// collect table history indexed by table id, same id may have different table names in history
-				var tableInfo model.TableInfo
-				if err := json.Unmarshal(value, &tableInfo); err != nil {
-					return nil, errors.Trace(err)
-				}
-				// cannot use dbib in the parsed table info cuz it might not set so default to 0
-				dbID, err := meta.ParseDBKey(rawKey.Key)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-
-				// add to table rename history
-				mp.tableHistoryManager.AddTableHistory(tableInfo.ID, tableInfo.Name.String(), dbID)
-
-				// track partitions if this is a partitioned table
-				if tableInfo.Partition != nil {
-					for _, def := range tableInfo.Partition.Definitions {
-						mp.tableHistoryManager.AddPartitionHistory(def.ID, tableInfo.Name.String(), dbID, tableInfo.ID)
-					}
-				}
-			}
 		}
 	}
 	return filteredEntries, nil

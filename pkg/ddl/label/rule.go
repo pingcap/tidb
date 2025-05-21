@@ -137,7 +137,7 @@ func (r *Rule) Reset(dbName, tableName, partName string, ids ...int64) *Rule {
 	r.RuleType = ruleType
 	dataSlice := make([]any, 0, len(ids))
 	slices.Sort(ids)
-	for i := 0; i < len(ids); i++ {
+	for i := range ids {
 		data := map[string]string{
 			"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(ids[i]))),
 			"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(ids[i]+1))),

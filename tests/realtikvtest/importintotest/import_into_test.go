@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
@@ -361,13 +362,13 @@ func (s *mockGCSSuite) TestGeneratedColumnsAndTSVFile() {
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
-	s.tk.MustExec("delete from t_gen1")
+	s.tk.MustExec("truncate table t_gen1")
 
 	// Specify the column, this should also work.
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
-	s.tk.MustExec("delete from t_gen1")
+	s.tk.MustExec("truncate table t_gen1")
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a,@1)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
@@ -377,13 +378,13 @@ func (s *mockGCSSuite) TestGeneratedColumnsAndTSVFile() {
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("3 2", "4 3"))
-	s.tk.MustExec(`delete from t_gen2`)
+	s.tk.MustExec(`truncate table t_gen2`)
 
 	// Specify the column b
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(b)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("2 1", "3 2"))
-	s.tk.MustExec(`delete from t_gen2`)
+	s.tk.MustExec(`truncate table t_gen2`)
 
 	// Specify the column a
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(a)
@@ -682,6 +683,9 @@ func (s *mockGCSSuite) TestOtherCharset() {
 }
 
 func (s *mockGCSSuite) TestMaxWriteSpeed() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("we don't need to limit write speed with next-gen")
+	}
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_test_write_speed;")
 	s.tk.MustExec("CREATE DATABASE load_test_write_speed;")
 	s.tk.MustExec(`CREATE TABLE load_test_write_speed.t(a int, b int)`)
@@ -1154,6 +1158,9 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 }
 
 func (s *mockGCSSuite) TestDiskQuota() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("disk quota will cause range overlap, tikv-worker cannot handle it right now")
+	}
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_test_disk_quota;")
 	s.tk.MustExec("CREATE DATABASE load_test_disk_quota;")
 	s.tk.MustExec(`CREATE TABLE load_test_disk_quota.t(a int, b int)`)

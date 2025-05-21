@@ -81,7 +81,7 @@ func TestSimple(t *testing.T) {
 
 	// Testcase for unreserved keywords
 	unreservedKws := []string{
-		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
+		"add_columnar_replica_on_demand", "auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "extended", "first", "file", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "savepoint", "session", "signed",
 		"start", "global", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
@@ -3245,6 +3245,7 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX IF NOT EXISTS ((VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX IF NOT EXISTS((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
+		{"ALTER TABLE t ADD VECTOR INDEX IF NOT EXISTS ((VEC_COSINE_DISTANCE(a))) ADD_COLUMNAR_REPLICA_ON_DEMAND USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX IF NOT EXISTS((VEC_COSINE_DISTANCE(`a`))) ADD_COLUMNAR_REPLICA_ON_DEMAND USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD COLUMNAR (a) USING INVERTED COMMENT 'a'", false, ""},
 		{"ALTER TABLE t ADD COLUMNAR ((a - 1)) USING INVERTED COMMENT 'a'", false, ""},
 		{"ALTER TABLE t ADD COLUMNAR (a) USING HASH COMMENT 'a'", false, ""},
@@ -7861,6 +7862,163 @@ func TestVector(t *testing.T) {
 		{"CREATE TABLE t (a VECTOR<DOUBLE>)", false, ""},
 		{"CREATE TABLE t (a VECTOR<ABC>)", false, ""},
 		{"CREATE TABLE t (a VECTOR(5)<FLOAT>)", false, ""},
+	}
+
+	RunTest(t, table, false)
+}
+
+func TestExplainExplore(t *testing.T) {
+	cases := []testCase{
+		{`explain explore 'digestxxx'`, true, `EXPLAIN EXPLORE 'digestxxx'`},
+		{`explain explore select 1 from t`, true, "EXPLAIN EXPLORE SELECT 1 FROM `t`"},
+		{`explain explore select 1 from t1, t2`, true, "EXPLAIN EXPLORE SELECT 1 FROM (`t1`) JOIN `t2`"},
+		{`explain explore select 1 from t where t1.a > (select max(a) from t2)`, true, "EXPLAIN EXPLORE SELECT 1 FROM `t` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`)"},
+	}
+	RunTest(t, cases, false)
+}
+
+func TestSecondaryEngineAttribute(t *testing.T) {
+	table := []testCase{
+		// Valid Partition-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'," +
+				"PARTITION p1 VALUES LESS THAN (20) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value2\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT) PARTITION BY RANGE (`id`) (" +
+				"PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}'," +
+				"PARTITION `p1` VALUES LESS THAN (20) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value2\"}')",
+		},
+
+		// Valid Table-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'",
+			true,
+			"CREATE TABLE `t` (`id` INT) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}'",
+		},
+
+		// Valid Table-level and Partition-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}' PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"partition_value\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}' PARTITION BY RANGE (`id`) (" +
+				"PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"partition_value\"}')",
+		},
+
+		// Valid Column-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}')",
+		},
+
+		// Valid: Table-level with tablespace option SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'",
+			true,
+			"CREATE TABLE `t` (`id` INT) TABLESPACE = `ts1` SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}'",
+		},
+
+		// Valid: Index SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT,INDEX idx (id) INVISIBLE SECONDARY_ENGINE_ATTRIBUTE='{\"key1\":\"value1\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT,INDEX `idx`(`id`) INVISIBLE SECONDARY_ENGINE_ATTRIBUTE = '{\"key1\":\"value1\"}')",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Partition-level
+		{
+			"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE=)",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Table-level
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE=",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Column-level
+		{
+			"CREATE TABLE t (id INT SECONDARY_ENGINE_ATTRIBUTE=)",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE in Table-level with tablespace option
+		{
+			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE=",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Index-level
+		{
+			"CREATE TABLE t (id INT, INDEX idx (id) SECONDARY_ENGINE_ATTRIBUTE=)",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE at Partition-level
+		{
+			"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE)",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE at Table-level
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE at Column-level
+		{
+			"CREATE TABLE t (id INT SECONDARY_ENGINE_ATTRIBUTE)",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE in Table-level with tablespace option
+		{
+			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE in Index-level
+		{
+			"CREATE TABLE t (id INT, INDEX idx (id) SECONDARY_ENGINE_ATTRIBUTE)",
+			false,
+			"",
+		},
+
+		// CREATE INDEX syntax for SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE INDEX i ON t (a) SECONDARY_ENGINE_ATTRIBUTE = '{}'",
+			true,
+			"CREATE INDEX `i` ON `t` (`a`) SECONDARY_ENGINE_ATTRIBUTE = '{}'",
+		},
+
+		// CREATE INDEX syntax for SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE INDEX i ON t (a) SECONDARY_ENGINE_ATTRIBUTE '{}'",
+			true,
+			"CREATE INDEX `i` ON `t` (`a`) SECONDARY_ENGINE_ATTRIBUTE = '{}'",
+		},
+
+		// Invalid CREATE INDEX syntax for SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE INDEX i ON t (a) SECONDARY_ENGINE_ATTRIBUTE",
+			false,
+			"",
+		},
 	}
 
 	RunTest(t, table, false)

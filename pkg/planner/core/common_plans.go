@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -843,6 +844,8 @@ type Explain struct {
 	TargetPlan       base.Plan
 	Format           string
 	Analyze          bool
+	Explore          bool   // EXPLAIN EXPLORE statement
+	SQLDigest        string // "EXPLAIN EXPLORE <sql_digest>"
 	ExecStmt         ast.StmtNode
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 
@@ -912,6 +915,9 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"binary plan"}
 	case format == types.ExplainFormatTiDBJSON:
 		fieldNames = []string{"TiDB_JSON"}
+	case e.Explore:
+		fieldNames = []string{"statement", "binding_hint", "plan", "plan_digest", "avg_latency", "exec_times", "avg_scan_rows",
+			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -929,8 +935,48 @@ func (e *Explain) prepareSchema() error {
 	return nil
 }
 
+func (e *Explain) renderResultForExplore() error {
+	bindingHandle := domain.GetDomain(e.SCtx()).BindingHandle()
+	charset, collation := e.SCtx().GetSessionVars().GetCharsetInfo()
+	currentDB := e.SCtx().GetSessionVars().CurrentDB
+
+	sqlOrDigest := e.SQLDigest
+	if sqlOrDigest == "" {
+		sqlOrDigest = e.ExecStmt.Text()
+	}
+	plans, err := bindingHandle.ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation)
+	if err != nil {
+		return err
+	}
+	for _, p := range plans {
+		hintStr, err := p.Binding.Hint.Restore()
+		if err != nil {
+			return err
+		}
+
+		e.Rows = append(e.Rows, []string{
+			p.Binding.OriginalSQL,
+			hintStr,
+			p.Plan,
+			p.PlanDigest,
+			strconv.FormatFloat(p.AvgLatency, 'f', -1, 64),
+			strconv.Itoa(int(p.ExecTimes)),
+			strconv.FormatFloat(p.AvgScanRows, 'f', -1, 64),
+			strconv.FormatFloat(p.AvgReturnedRows, 'f', -1, 64),
+			strconv.FormatFloat(p.LatencyPerReturnRow, 'f', -1, 64),
+			strconv.FormatFloat(p.ScanRowsPerReturnRow, 'f', -1, 64),
+			p.Recommend,
+			p.Reason})
+	}
+	return nil
+}
+
 // RenderResult renders the explain result as specified format.
 func (e *Explain) RenderResult() error {
+	if e.Explore {
+		return e.renderResultForExplore()
+	}
+
 	if e.TargetPlan == nil {
 		return nil
 	}
@@ -975,21 +1021,11 @@ func (e *Explain) RenderResult() error {
 		}
 	}
 
-	if strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
-		if pp, ok := e.TargetPlan.(base.PhysicalPlan); ok {
-			// trigger getPlanCost again with CostFlagTrace to record all cost formulas
-			if _, err := getPlanCost(pp, property.RootTaskType,
-				optimizetrace.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate|costusage.CostFlagTrace)); err != nil {
-				return err
-			}
-		}
-	}
-
 	switch strings.ToLower(e.Format) {
 	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache:
 		if e.Rows == nil || e.Analyze {
 			flat := FlattenPhysicalPlan(e.TargetPlan, true)
-			e.explainFlatPlanInRowFormat(flat)
+			e.Rows = ExplainFlatPlanInRowFormat(flat, e.Format, e.Analyze, e.RuntimeStatsColl, e.ExplainRows)
 			if e.Analyze &&
 				e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
 				e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
@@ -1032,23 +1068,29 @@ func (e *Explain) RenderResult() error {
 	return nil
 }
 
-func (e *Explain) explainFlatPlanInRowFormat(flat *FlatPhysicalPlan) {
+// ExplainFlatPlanInRowFormat returns the explain result in row format.
+func ExplainFlatPlanInRowFormat(flat *FlatPhysicalPlan, format string, analyze bool,
+	runtimeStatsColl *execdetails.RuntimeStatsColl, explainRows [][]string) (rows [][]string) {
 	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
 		return
 	}
 	for _, flatOp := range flat.Main {
-		e.explainFlatOpInRowFormat(flatOp)
+		rows = prepareOperatorInfo(flatOp, format, analyze,
+			runtimeStatsColl, explainRows, rows)
 	}
 	for _, cte := range flat.CTEs {
 		for _, flatOp := range cte {
-			e.explainFlatOpInRowFormat(flatOp)
+			rows = prepareOperatorInfo(flatOp, format, analyze,
+				runtimeStatsColl, explainRows, rows)
 		}
 	}
 	for _, subQ := range flat.ScalarSubQueries {
 		for _, flatOp := range subQ {
-			e.explainFlatOpInRowFormat(flatOp)
+			rows = prepareOperatorInfo(flatOp, format, analyze,
+				runtimeStatsColl, explainRows, rows)
 		}
 	}
+	return
 }
 
 func (e *Explain) explainFlatPlanInJSONFormat(flat *FlatPhysicalPlan) (encodes []*ExplainInfoForEncode) {
@@ -1086,17 +1128,16 @@ func (e *Explain) explainOpRecursivelyInJSONFormat(flatOp *FlatOperator, flats F
 	return cur
 }
 
-func (e *Explain) explainFlatOpInRowFormat(flatOp *FlatOperator) {
-	taskTp := ""
+func getExplainIDAndTaskTp(flatOp *FlatOperator) (taskTp, textTreeExplainID string) {
 	if flatOp.IsRoot {
 		taskTp = "root"
 	} else {
 		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
 	}
-	textTreeExplainID := texttree.PrettyIdentifier(flatOp.Origin.ExplainID().String()+flatOp.Label.String(),
+	textTreeExplainID = texttree.PrettyIdentifier(flatOp.Origin.ExplainID().String()+flatOp.Label.String(),
 		flatOp.TextTreeIndent,
 		flatOp.IsLastChild)
-	e.prepareOperatorInfo(flatOp.Origin, taskTp, textTreeExplainID)
+	return
 }
 
 func getRuntimeInfoStr(ctx base.PlanContext, p base.Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
@@ -1155,36 +1196,39 @@ func getRuntimeInfo(ctx base.PlanContext, p base.Plan, runtimeStatsColl *execdet
 
 // prepareOperatorInfo generates the following information for every plan:
 // operator id, estimated rows, task type, access object and other operator info.
-func (e *Explain) prepareOperatorInfo(p base.Plan, taskType, id string) {
+func prepareOperatorInfo(flatOp *FlatOperator, format string, analyze bool,
+	runtimeStatsColl *execdetails.RuntimeStatsColl, explainRows, rows [][]string) [][]string {
+	p := flatOp.Origin
 	if p.ExplainID().String() == "_0" {
-		return
+		return rows
 	}
+	taskType, id := getExplainIDAndTaskTp(flatOp)
 
-	estRows, estCost, costFormula, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	estRows, estCost, costFormula, accessObject, operatorInfo := getOperatorInfo(p, id, explainRows)
 
 	var row []string
-	if e.Analyze || e.RuntimeStatsColl != nil {
+	if analyze || runtimeStatsColl != nil {
 		row = []string{id, estRows}
-		if e.Format == types.ExplainFormatVerbose || e.Format == types.ExplainFormatTrueCardCost || e.Format == types.ExplainFormatCostTrace {
+		if format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost || format == types.ExplainFormatCostTrace {
 			row = append(row, estCost)
 		}
-		if e.Format == types.ExplainFormatTrueCardCost || e.Format == types.ExplainFormatCostTrace {
+		if format == types.ExplainFormatTrueCardCost || format == types.ExplainFormatCostTrace {
 			row = append(row, costFormula)
 		}
-		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(e.SCtx(), p, e.RuntimeStatsColl)
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, runtimeStatsColl)
 		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
 		row = []string{id, estRows}
-		if e.Format == types.ExplainFormatVerbose || e.Format == types.ExplainFormatTrueCardCost ||
-			e.Format == types.ExplainFormatCostTrace {
+		if format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost ||
+			format == types.ExplainFormatCostTrace {
 			row = append(row, estCost)
 		}
-		if e.Format == types.ExplainFormatCostTrace {
+		if format == types.ExplainFormatCostTrace {
 			row = append(row, costFormula)
 		}
 		row = append(row, taskType, accessObject, operatorInfo)
 	}
-	e.Rows = append(e.Rows, row)
+	return append(rows, row)
 }
 
 func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id string, explainID string) *ExplainInfoForEncode {
@@ -1192,7 +1236,7 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id str
 		return nil
 	}
 
-	estRows, _, _, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	estRows, _, _, accessObject, operatorInfo := getOperatorInfo(p, id, e.ExplainRows)
 	jsonRow := &ExplainInfoForEncode{
 		ID:           explainID,
 		EstRows:      estRows,
@@ -1208,24 +1252,24 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id str
 	return jsonRow
 }
 
-func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
+func getOperatorInfo(p base.Plan, operatorID string, explainRows [][]string) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
 	// For `explain for connection` statement, `e.ExplainRows` will be set.
-	for _, row := range e.ExplainRows {
+	for _, row := range explainRows {
 		if len(row) < 5 {
 			panic("should never happen")
 		}
-		if row[0] == id {
+		if row[0] == operatorID {
 			return row[1], "N/A", "N/A", row[3], row[4]
 		}
 	}
-
 	pp, isPhysicalPlan := p.(base.PhysicalPlan)
 	estRows = "N/A"
 	estCost = "N/A"
 	costFormula = "N/A"
+	sctx := p.SCtx()
 	if isPhysicalPlan {
 		estRows = strconv.FormatFloat(pp.GetEstRowCountForDisplay(), 'f', 2, 64)
-		if e.SCtx() != nil && e.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
+		if sctx != nil && sctx.GetSessionVars().CostModelVersion == modelVer2 {
 			costVer2, _ := pp.GetPlanCostVer2(property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(costVer2.GetCost(), 'f', 2, 64)
 			if costVer2.GetTrace() != nil {
@@ -1243,8 +1287,8 @@ func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, cos
 		accessObject = plan.AccessObject().String()
 		operatorInfo = plan.OperatorInfo(false)
 	} else {
-		if pa, ok := p.(partitionAccesser); ok && e.SCtx() != nil {
-			accessObject = pa.accessObject(e.SCtx()).String()
+		if pa, ok := p.(partitionAccesser); ok && sctx != nil {
+			accessObject = pa.accessObject(sctx).String()
 		}
 		operatorInfo = p.ExplainInfo()
 	}
@@ -1435,7 +1479,7 @@ func (e *Explain) prepareTaskDot(p base.PhysicalPlan, taskTp string, buffer *byt
 			copTasks = append(copTasks, copPlan.tablePlan)
 			copTasks = append(copTasks, copPlan.indexPlan)
 		case *PhysicalIndexMergeReader:
-			for i := 0; i < len(copPlan.partialPlans); i++ {
+			for i := range copPlan.partialPlans {
 				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.partialPlans[i].ExplainID()))
 				copTasks = append(copTasks, copPlan.partialPlans[i])
 			}

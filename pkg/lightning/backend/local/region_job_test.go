@@ -27,6 +27,7 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -34,7 +35,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIsIngestRetryable(t *testing.T) {
+func TestConvertPBError2Error(t *testing.T) {
 	region := &split.RegionInfo{
 		Leader: &metapb.Peer{Id: 1},
 		Region: &metapb.Region{
@@ -117,11 +118,60 @@ func TestIsIngestRetryable(t *testing.T) {
 			if c.res.newRegion == nil {
 				require.Nil(t, err.newRegion)
 			} else {
-				require.EqualValues(t, c.res.newRegion, err.newRegion)
-				require.EqualValues(t, 2, err.newRegion.Region.RegionEpoch.Version)
+				if kerneltype.IsNextGen() {
+					// it's always nil for nextgen
+					require.Nil(t, err.newRegion)
+				} else {
+					require.EqualValues(t, c.res.newRegion, err.newRegion)
+					require.EqualValues(t, 2, err.newRegion.Region.RegionEpoch.Version)
+				}
 			}
 		})
 	}
+}
+
+func TestExtractRegionFromErrForNextGen(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("only run in next gen")
+	}
+	region := &split.RegionInfo{
+		Leader: &metapb.Peer{Id: 1},
+		Region: &metapb.Region{
+			Id:       1,
+			StartKey: []byte{1},
+			EndKey:   []byte{3},
+			RegionEpoch: &metapb.RegionEpoch{
+				ConfVer: 1,
+				Version: 1,
+			},
+		},
+	}
+	// we supply it to make sure that the correct SST metas are used when next gen,
+	// this meta is only used for classical kernel, and it resides in the newRegion.
+	metas := []*sst.SSTMeta{
+		{Range: &sst.Range{Start: []byte{1}, End: []byte{2}}},
+		{Range: &sst.Range{Start: []byte{1, 1}, End: []byte{2}}},
+	}
+	job := &regionJob{
+		stage:    wrote,
+		keyRange: engineapi.Range{Start: []byte{1}, End: []byte{3}},
+		region:   region,
+		writeResult: &tikvWriteResult{
+			sstMeta: metas,
+		},
+	}
+
+	newRegion := &metapb.Region{
+		Id:       1,
+		StartKey: []byte{1},
+		EndKey:   []byte{3},
+		RegionEpoch: &metapb.RegionEpoch{
+			ConfVer: 1,
+			Version: 2,
+		},
+		Peers: []*metapb.Peer{{Id: 1}},
+	}
+	require.Nil(t, extractRegionFromErr(job, []*metapb.Region{newRegion}))
 }
 
 func TestIngestAPIErrorRetryable(t *testing.T) {
@@ -170,7 +220,7 @@ func TestRegionJobRetryer(t *testing.T) {
 		retryer.run()
 	}()
 
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		go func() {
 			job := &regionJob{
 				waitUntil: time.Now().Add(time.Hour),
@@ -271,7 +321,7 @@ func TestRegionJobRetryer(t *testing.T) {
 func TestNewRegionJobs(t *testing.T) {
 	buildRegion := func(regionKeys [][]byte) []*split.RegionInfo {
 		ret := make([]*split.RegionInfo, 0, len(regionKeys)-1)
-		for i := 0; i < len(regionKeys)-1; i++ {
+		for i := range len(regionKeys) - 1 {
 			ret = append(ret, &split.RegionInfo{
 				Region: &metapb.Region{
 					StartKey: codec.EncodeBytes(nil, regionKeys[i]),
@@ -283,7 +333,7 @@ func TestNewRegionJobs(t *testing.T) {
 	}
 	buildJobRanges := func(jobRangeKeys [][]byte) []engineapi.Range {
 		ret := make([]engineapi.Range, 0, len(jobRangeKeys)-1)
-		for i := 0; i < len(jobRangeKeys)-1; i++ {
+		for i := range len(jobRangeKeys) - 1 {
 			ret = append(ret, engineapi.Range{
 				Start: jobRangeKeys[i],
 				End:   jobRangeKeys[i+1],
@@ -455,7 +505,7 @@ func TestStoreBalancerPick(t *testing.T) {
 		jonDone <- struct{}{}
 	}()
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		<-jonDone
 	}
 	checkStoreScoreZero(t, b)
@@ -565,7 +615,7 @@ func TestUpdateAndGetLimiterConcurrencySafety(t *testing.T) {
 
 	var wg sync.WaitGroup
 	concurrentRoutines := 100
-	for i := 0; i < concurrentRoutines; i++ {
+	for i := range concurrentRoutines {
 		wg.Add(2)
 		go func(limit int) {
 			defer wg.Done()

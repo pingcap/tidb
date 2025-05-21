@@ -35,8 +35,8 @@ func TestRangePropertyCodec(t *testing.T) {
 
 	p1, p2, p3 := &rangeProperty{}, &rangeProperty{}, &rangeProperty{}
 	for i, p := range []*rangeProperty{p1, p2, p3} {
-		p.firstKey = []byte(fmt.Sprintf("key%d", i))
-		p.lastKey = []byte(fmt.Sprintf("key%d9", i))
+		p.firstKey = fmt.Appendf(nil, "key%d", i)
+		p.lastKey = fmt.Appendf(nil, "key%d9", i)
 		p.offset = uint64(10 * i)
 		p.size = uint64(20 * i)
 		p.keys = uint64(30 * i)

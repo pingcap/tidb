@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	goerrors "errors"
 	"io"
 	"strings"
 	"sync"
@@ -367,21 +368,17 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 	}, nil
 }
 
-func (w *objStoreRegionJobWorker) ingest(ctx context.Context, j *regionJob) error {
+func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) error {
 	in := &ingestcli.IngestRequest{
-		Region:    j.region,
-		WriteResp: j.writeResult.nextGenWriteResp,
+		Region:    job.region,
+		WriteResp: job.writeResult.nextGenWriteResp,
 	}
 	err := w.ingestCli.Ingest(ctx, in)
 	if err != nil {
-		log.FromContext(ctx).Warn("meet error and handle the job later",
-			zap.Stringer("job stage", j.stage),
-			logutil.ShortError(err),
-			j.region.ToZapFields(),
-			logutil.Key("start", j.keyRange.Start),
-			logutil.Key("end", j.keyRange.End))
-
-		// TODO: choose target stage based on error.
+		pbErr := &ingestcli.PBError{}
+		if goerrors.As(err, &pbErr) {
+			return convertPBError2Error(job, pbErr.Err)
+		}
 		return &ingestAPIError{err: err}
 	}
 	return nil

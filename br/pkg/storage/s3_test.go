@@ -1062,7 +1062,7 @@ func TestS3ReaderResetRetry(t *testing.T) {
 		require.Equal(t, someRandomBytes[offset:offset+cnt], slice[:cnt])
 	}
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		readAndCheck(20, i*20)
 	}
 
