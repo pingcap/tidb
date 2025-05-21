@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -480,7 +481,7 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
 	disableReuseChunkIfNeeded(sctx, plan)
-	tryEnableLateMaterialization(sctx, plan)
+	checkEnableLateMaterialization(sctx, plan)
 	generateRuntimeFilter(sctx, plan)
 	return plan
 }
@@ -501,7 +502,9 @@ func generateRuntimeFilter(sctx base.PlanContext, plan base.PhysicalPlan) {
 		zap.Duration("Cost", time.Since(startRFGenerator)))
 }
 
-// tryEnableLateMaterialization tries to push down some filter conditions to the table scan operator
+// checkEnableLateMaterialization checks whether to push down some filter conditions to the table scan operator.
+// it should have been done in the physical optimization. if we find it can push down some filter conditions,
+// we should panic and report an error when to test.
 // @brief: push down some filter conditions to the table scan operator
 // @param: sctx: session context
 // @param: plan: the physical plan to be pruned
@@ -510,14 +513,17 @@ func generateRuntimeFilter(sctx base.PlanContext, plan base.PhysicalPlan) {
 //   - Only the filter conditions with high selectivity should be pushed down.
 //   - The filter conditions which contain heavy cost functions should not be pushed down.
 //   - Filter conditions that apply to the same column are either pushed down or not pushed down at all.
-func tryEnableLateMaterialization(sctx base.PlanContext, plan base.PhysicalPlan) {
-	// check if EnableLateMaterialization is set
-	if sctx.GetSessionVars().EnableLateMaterialization && !sctx.GetSessionVars().TiFlashFastScan {
-		predicatePushDownToTableScan(sctx, plan)
-	}
+func checkEnableLateMaterialization(sctx base.PlanContext, plan base.PhysicalPlan) {
 	if sctx.GetSessionVars().EnableLateMaterialization && sctx.GetSessionVars().TiFlashFastScan {
 		sc := sctx.GetSessionVars().StmtCtx
 		sc.AppendWarning(errors.NewNoStackError("FastScan is not compatible with late materialization, late materialization is disabled"))
+	}
+	if !intest.InTest || sctx.GetSessionVars().InRestrictedSQL {
+		return
+	}
+	// check if EnableLateMaterialization is set
+	if sctx.GetSessionVars().EnableLateMaterialization && !sctx.GetSessionVars().TiFlashFastScan {
+		predicatePushDownToTableScan(sctx, plan)
 	}
 }
 

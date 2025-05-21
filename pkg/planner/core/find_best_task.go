@@ -3044,9 +3044,15 @@ func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *MppTask, stats
 	ts.filterCondition = filterCondition
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
-		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.SCtx(), stats, ts.QueryBlockOffset())
-		sel.SetChildren(ts)
-		mpp.p = sel
+		lateMaterializationFilterCondition, selectivity := predicatePushDownToTableScanImpl(ts.SCtx(), ts, ts.filterCondition)
+		ts.pushDownLateMaterialization(lateMaterializationFilterCondition, selectivity)
+		if len(ts.filterCondition) > 0 {
+			sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.SCtx(), stats, ts.QueryBlockOffset())
+			sel.SetChildren(ts)
+			mpp.p = sel
+		} else {
+			mpp.p = ts
+		}
 	}
 	return mpp
 }
@@ -3059,17 +3065,36 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *CopTask, stats *pro
 
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
-		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.SCtx(), stats, ts.QueryBlockOffset())
-		if len(copTask.rootTaskConds) != 0 {
-			selectivity, _, err := cardinality.Selectivity(ts.SCtx(), copTask.tblColHists, ts.filterCondition, nil)
-			if err != nil {
-				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-				selectivity = cost.SelectionFactor
+		lateMaterializationFilterCondition, selectivity := predicatePushDownToTableScanImpl(ts.SCtx(), ts, ts.filterCondition)
+		ts.pushDownLateMaterialization(lateMaterializationFilterCondition, selectivity)
+		if len(ts.filterCondition) > 0 {
+			sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.SCtx(), stats, ts.QueryBlockOffset())
+			if len(copTask.rootTaskConds) != 0 {
+				selectivity, _, err := cardinality.Selectivity(ts.SCtx(), copTask.tblColHists, ts.filterCondition, nil)
+				if err != nil {
+					logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+					selectivity = cost.SelectionFactor
+				}
+				sel.SetStats(ts.StatsInfo().Scale(selectivity))
 			}
-			sel.SetStats(ts.StatsInfo().Scale(selectivity))
+			sel.SetChildren(ts)
+			copTask.tablePlan = sel
+		} else {
+			copTask.tablePlan = ts
 		}
-		sel.SetChildren(ts)
-		copTask.tablePlan = sel
+	}
+}
+
+func (ts *PhysicalTableScan) pushDownLateMaterialization(lateMaterializationFilterCondition []expression.Expression, selectivity float64) {
+	if len(lateMaterializationFilterCondition) != 0 {
+		// Must clone, since there may be other copies of the slice.
+		conditions := slices.Clone(ts.filterCondition)
+		ts.filterCondition = slices.DeleteFunc(conditions, func(cond expression.Expression) bool {
+			return expression.Contains(ts.SCtx().GetExprCtx().GetEvalCtx(), lateMaterializationFilterCondition, cond)
+		})
+		ts.LateMaterializationFilterCondition = lateMaterializationFilterCondition
+		ts.LateMaterializationFilterSelectivity = selectivity
+		ts.SetStats(ts.StatsInfo().Scale(selectivity))
 	}
 }
 
