@@ -870,13 +870,13 @@ func GetExplainRowsForPlan(plan base.Plan) (rows [][]string) {
 	return explain.Rows
 }
 
-// getBinaryPlan returns the binary plan of the plan for explainfor.
+// GetBinaryPlan returns the binary plan of the plan for explainfor.
 func GetBinaryPlan(p base.Plan) string {
 	var plan base.Plan = p
 	if plan == nil {
 		return ""
 	}
-	// If the plan is a prepared statement, it will return the binary plan of the prepared statement.
+	// If the plan is a prepared statement, get execute.Plan.
 	if exec, ok := p.(*Execute); ok {
 		plan = exec.Plan
 	}
@@ -890,12 +890,11 @@ func GetBinaryPlan(p base.Plan) string {
 		return ""
 	}
 
-	// Temporarily modify IgnoreExplainIDSuffix
+	// Temporarily modify IgnoreExplainIDSuffix to avoid the explain id suffix.
 	originalValue := stmtCtx.IgnoreExplainIDSuffix
 	stmtCtx.SetIgnoreExplainIDSuffix(true)
 	defer stmtCtx.SetIgnoreExplainIDSuffix(originalValue)
 
-	// Generate binary plan
 	flat := FlattenPhysicalPlan(plan, true)
 	return BinaryPlanStrFromFlatPlan(planCtx, flat)
 }
