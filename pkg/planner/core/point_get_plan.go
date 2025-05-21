@@ -752,7 +752,7 @@ func (p *BatchPointGetPlan) isSinglePartitionAndNotMatch(idx int) bool {
 }
 
 // Map each index value to Partition ID
-func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) ([]int, []int) {
+func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) (idxs []int, skipped []int) {
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	tbl, ok := is.TableByID(context.Background(), p.TblInfo.ID)
 	intest.Assert(ok)
@@ -762,11 +762,10 @@ func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) ([]int, []
 	pi := p.TblInfo.GetPartitionInfo()
 	r := make([]types.Datum, len(pTbl.Cols()))
 	rows := p.IndexValues
-	idxs := p.PartitionIdxs[:0]
+	idxs = p.PartitionIdxs[:0]
 	if p.SinglePartition {
 		idxs = make([]int, 0, 1)
 	}
-	skipped := make([]int, 0, 1)
 	for i := range rows {
 		for j := range rows[i] {
 			rows[i][j].Copy(&r[p.IndexInfo.Columns[j].Offset])
