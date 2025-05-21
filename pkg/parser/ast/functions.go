@@ -608,7 +608,7 @@ const (
 )
 
 // JSONSumCrc32Expr is the function to calculate sum of crc32 values for array in json
-// It's modified from CastFunction to sup00port processing JSON Array.
+// It's modified from CastFunction to support processing JSON Array.
 type JSONSumCrc32Expr struct {
 	funcNode
 	// Expr is the expression to be converted.
