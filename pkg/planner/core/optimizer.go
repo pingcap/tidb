@@ -293,22 +293,31 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	)
 	// At current phase, cascades just iterate every logic plan out for feeding physicalOptimize.
 	// TODO: In the near future, physicalOptimize will be refactored as receiving *Group as param directly.
-	cas.GetMemo().NewIterator().Each(func(oneLogic base.LogicalPlan) bool {
-		planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
-		if planCounter == 0 {
-			planCounter = -1
-		}
-		tmpPhysical, tmpCost, tmpErr := physicalOptimize(oneLogic, &planCounter)
-		if tmpErr != nil {
-			err = tmpErr
-			return false
-		}
-		if tmpCost < cost {
-			physical = tmpPhysical
-			cost = tmpCost
-		}
-		return true
-	})
+	//cas.GetMemo().NewIterator().Each(func(oneLogic base.LogicalPlan) bool {
+	//	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
+	//	if planCounter == 0 {
+	//		planCounter = -1
+	//	}
+	//	tmpPhysical, tmpCost, tmpErr := physicalOptimize(oneLogic, &planCounter)
+	//	if tmpErr != nil {
+	//		err = tmpErr
+	//		return false
+	//	}
+	//	if tmpCost < cost {
+	//		physical = tmpPhysical
+	//		cost = tmpCost
+	//	}
+	//	return true
+	//})
+	//if err != nil {
+	//	return nil, nil, 0, err
+	//}
+
+	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
+	if planCounter == 0 {
+		planCounter = -1
+	}
+	physical, cost, err = implementMemoAndCost(cas.GetMemo().GetRootGroup(), &planCounter)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -1124,7 +1133,7 @@ func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
 }
 
 func implementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, costLimit float64,
-	planCounter *base.PlanCounterTp) (base.Task, int64, error) {
+	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
 	// cache the invalid task for the group.
 	if prop.TaskTp != property.RootTaskType && !prop.IsFlashProp() {
 		// Currently all plan cannot totally push down to TiKV.
@@ -1134,66 +1143,109 @@ func implementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, c
 	// Check whether the child group is already optimized for the physical property.
 	task := group.GetBestTask(prop)
 	if task != nil {
-		if pair.Cost <= costLimit {
+		taskCost, invalid, err := getTaskPlanCost(task, opt)
+		if err != nil || invalid {
+			return base.InvalidTask, 0, err
+		}
+		if taskCost <= costLimit {
 			// the optimized group has a valid cost plan according to this physical prop.
-			return pair.Task, pair.Cost, nil
+			return task, 1, nil
 		} else {
-			// the optimized group has no optimal one, quite fall over.
+			// the optimized task from this group is out of aimed cost limit, quite fall over.
 			return nil, 0, nil
 		}
 	}
 
 	// the group hasn't been optimized, physic it.
-	var implErr error
+	var (
+		implErr  error
+		cntPlan  = int64(0)
+		bestTask = base.InvalidTask
+	)
 	group.ForEachGE(func(ge *memo.GroupExpression) bool {
-		// for each group expression inside group, we will try to find the best physical plan.
-		task, cnt, err := ge.LogicalPlan.FindBestTask(prop, planCounter, nil)
+		// for each group expression inside un-optimized group, try to find the best physical plan prop-accordingly.
+		// GroupExpression overrides the base.LogicalPlan's FindBestTask to do the router job.
+		task, cnt, err := ge.FindBestTask(prop, planCounter, opt)
 		if err != nil {
 			implErr = err
 			return false
 		}
+		cntPlan += cnt
+		// update the best task across the logical alternatives.
+		if curIsBetter, err := compareTaskCost(task, bestTask, opt); err != nil {
+			implErr = err
+			return false
+		} else if curIsBetter {
+			bestTask = task
+		}
+		// continue to next group expression.
+		return true
 	})
+	if implErr != nil {
+		return nil, 0, implErr
+	}
+	// store the best task into the group prop-accordingly.
+	group.SetBestTask(prop, bestTask)
+	return bestTask, cntPlan, nil
 }
 
-func implementAndCost(group *memo.Group, planCounter *base.PlanCounterTp) (base.PhysicalPlan, float64, error) {
-	ctx := group.GetLogicalExpressions().Front().Value.(base.LogicalPlan).SCtx()
-	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ctx)
-		defer debugtrace.LeaveContextCommon(ctx)
+func implementMemoAndCost(group *memo.Group, planCounter *base.PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {
+	sctx := group.GetLogicalExpressions().Front().Value.(base.LogicalPlan).SCtx()
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer debugtrace.LeaveContextCommon(sctx)
 	}
-	// currently, we will derive each node's stats regardless of group logical prop's stats, so we don't
-	// have to prepare logical op's stats each.
+	// currently, we will derive each node's stats regardless of group logical prop's stats in memo.copyIn, so
+	// we don't have to prepare logical op's stats each as what we do in the previous way.
 
-	prop := &property.PhysicalProperty{
+	// prepare root prop.
+	rootProp := &property.PhysicalProperty{
 		TaskTp:      property.RootTaskType,
 		ExpectedCnt: math.MaxFloat64,
 	}
 
-	var implErr error
-	ctx.GetSessionVars().StmtCtx.TaskMapBakTS = 0
-	group.ForEachGE(func(ge *memo.GroupExpression) bool {
-		// for each group expression inside group, we will try to find the best physical plan.
-		task, cnt, err := ge.LogicalPlan.FindBestTask(prop, planCounter, nil)
-		if err != nil {
-			implErr = err
-			return false
+	// prepare physical optimizer tracer.
+	opt := optimizetrace.DefaultPhysicalOptimizeOption()
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	if stmtCtx.EnableOptimizeTrace {
+		tracer := &tracing.PhysicalOptimizeTracer{
+			PhysicalPlanCostDetails: make(map[string]*tracing.PhysicalPlanCostDetail),
+			Candidates:              make(map[int]*tracing.CandidatePlanTrace),
 		}
-	})
-	if *planCounter > 0 {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The parameter of nth_plan() is out of range"))
+		opt = opt.WithEnableOptimizeTracer(tracer)
+		defer func() {
+			r := recover()
+			if r != nil {
+				panic(r) /* pass panic to upper function to handle */
+			}
+			if err == nil {
+				tracer.RecordFinalPlanTrace(plan.BuildPlanTrace())
+				stmtCtx.OptimizeTracer.Physical = tracer
+			}
+		}()
 	}
-	if t.Invalid() {
+
+	task, _, implErr := implementGroupAndCost(group, rootProp, math.MaxFloat64, planCounter, opt)
+	if implErr != nil {
+		return nil, 0, implErr
+	}
+
+	sctx.GetSessionVars().StmtCtx.TaskMapBakTS = 0
+	if *planCounter > 0 {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The parameter of nth_plan() is out of range"))
+	}
+	if task.Invalid() {
 		errMsg := "Can't find a proper physical plan for this query"
-		if config.GetGlobalConfig().DisaggregatedTiFlash && !logic.SCtx().GetSessionVars().IsMPPAllowed() {
+		if config.GetGlobalConfig().DisaggregatedTiFlash && !sctx.GetSessionVars().IsMPPAllowed() {
 			errMsg += ": cop and batchCop are not allowed in disaggregated tiflash mode, you should turn on tidb_allow_mpp switch"
 		}
 		return nil, 0, plannererrors.ErrInternal.GenWithStackByArgs(errMsg)
 	}
-	if err = t.Plan().ResolveIndices(); err != nil {
+	if err = task.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
-	cost, err = getPlanCost(t.Plan(), property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
-	return t.Plan(), cost, err
+	cost, err = getPlanCost(task.Plan(), property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+	return task.Plan(), cost, err
 }
 
 func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {

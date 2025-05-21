@@ -337,6 +337,7 @@ func NewGroup(prop *property.LogicalProperty) *Group {
 				return uint64(uintptr(t))
 			},
 		),
+		bestPhysicalMap: make(map[string]corebase.Task),
 	}
 	return g
 }
@@ -362,10 +363,10 @@ func (g *Group) GetBestTask(prop *property.PhysicalProperty) corebase.Task {
 // group merge is happened, and there is old GE that substituted by new GE inside one
 // group, we should replace the best expression in the group.
 func (g *Group) ReplaceBestExpression(old, new corebase.PhysicalPlan) {
-	for key, costPair := range g.bestPhysicalMap {
-		if costPair.Physical == old {
-			costPair.Physical = new
-			g.bestPhysicalMap[key] = costPair // update it back to map.
-		}
-	}
+	//for key, costPair := range g.bestPhysicalMap {
+	//	if costPair.Physical == old {
+	//		costPair.Physical = new
+	//		g.bestPhysicalMap[key] = costPair // update it back to map.
+	//	}
+	//}
 }
