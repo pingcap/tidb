@@ -61,15 +61,7 @@ type HandleCols interface {
 	// MemoryUsage return the memory usage
 	MemoryUsage() int64
 	// Clone clones the HandleCols.
-<<<<<<< HEAD
-	Clone(newCtx *stmtctx.StatementContext) HandleCols
-=======
 	Clone() HandleCols
-	// IterColumns iterates the columns.
-	IterColumns() iter.Seq[*expression.Column]
-	// IterColumns2 iterates the columns.
-	IterColumns2() iter.Seq2[int, *expression.Column]
->>>>>>> 51659f35539 (*: remove `StatementContext` from `CommonHandleCols` to fix a bug caused by shallow clone in plan cache (#61182))
 }
 
 // CommonHandleCols implements the kv.HandleCols interface.
@@ -99,22 +91,8 @@ func (cb *CommonHandleCols) GetColumns() []*expression.Column {
 	return cb.columns
 }
 
-<<<<<<< HEAD
-func (cb *CommonHandleCols) buildHandleByDatumsBuffer(datumBuf []types.Datum) (kv.Handle, error) {
-=======
-// IterColumns implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) IterColumns() iter.Seq[*expression.Column] {
-	return slices.Values(cb.columns)
-}
-
-// IterColumns2 implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) IterColumns2() iter.Seq2[int, *expression.Column] {
-	return slices.All(cb.columns)
-}
-
 func (cb *CommonHandleCols) buildHandleByDatumsBuffer(sc *stmtctx.StatementContext, datumBuf []types.Datum,
 ) (kv.Handle, error) {
->>>>>>> 51659f35539 (*: remove `StatementContext` from `CommonHandleCols` to fix a bug caused by shallow clone in plan cache (#61182))
 	tablecodec.TruncateIndexValues(cb.tblInfo, cb.idxInfo, datumBuf)
 	handleBytes, err := codec.EncodeKey(sc.TimeZone(), nil, datumBuf...)
 	err = sc.HandleError(err)

@@ -67,11 +67,6 @@ import (
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-=======
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
->>>>>>> 51659f35539 (*: remove `StatementContext` from `CommonHandleCols` to fix a bug caused by shallow clone in plan cache (#61182))
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
