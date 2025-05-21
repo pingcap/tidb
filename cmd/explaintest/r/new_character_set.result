@@ -100,5 +100,5 @@ create table t61085 (a char(255) charset gbk);
 insert into t61085 values ('AAA');
 set SESSION sql_mode = '';
 select * from t61085 where a = cast(0x41414180424242 as char charset gbk);
-Error 1105 (HY000): Cannot convert string 'AAA\\x80BB...' from binary to gbk
+Error 1105 (HY000): Cannot convert string 'AAA\x80BB...' from binary to gbk
 DROP TABLE t61085;
