@@ -303,7 +303,7 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 	}
 	sctx.GetSessionVars().OptimizerFixControl = fixControlMap
 
-	planDigest, planHints, planText, err := GenPlanWithSCtx(sctx, stmt)
+	planDigest, planHints, planText, err := GenBriefPlanWithSCtx(sctx, stmt)
 	if err != nil {
 		return nil, err
 	}
