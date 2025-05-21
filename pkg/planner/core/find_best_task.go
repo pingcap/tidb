@@ -17,6 +17,7 @@ package core
 import (
 	"cmp"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/cascades/impl"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"math"
 	"slices"
@@ -284,7 +285,7 @@ func iteratePhysicalPlan4GroupExpression(
 	curCntPlan := int64(1)
 	for j, childG := range ge.Inputs {
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
-		childTask, cnt, err := implementGroupAndCost(childG, childProp, math.MaxFloat64, &PlanCounterDisabled, opt)
+		childTask, cnt, err := impl.ImplementGroupAndCost(childG, childProp, math.MaxFloat64, &PlanCounterDisabled, opt)
 		childCnts[j] = cnt
 		if err != nil {
 			return nil, 0, childCnts, err
@@ -365,7 +366,7 @@ func iterateChildPlan4LogicalSequenceGE(
 	for j := 0; j < lastIdx; j++ {
 		childG := ge.Inputs[j]
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
-		childTask, cnt, err := implementGroupAndCost(childG, childProp, math.MaxFloat64, &PlanCounterDisabled, opt)
+		childTask, cnt, err := impl.ImplementGroupAndCost(childG, childProp, math.MaxFloat64, &PlanCounterDisabled, opt)
 		childCnts[j] = cnt
 		if err != nil {
 			return nil, 0, nil, err
@@ -390,7 +391,7 @@ func iterateChildPlan4LogicalSequenceGE(
 		lastChildProp.CTEProducerStatus = property.AllCTECanMpp
 	}
 	lastChildG := ge.Inputs[lastIdx]
-	lastChildTask, cnt, err := implementGroupAndCost(lastChildG, lastChildProp, math.MaxFloat64, &PlanCounterDisabled, opt)
+	lastChildTask, cnt, err := impl.ImplementGroupAndCost(lastChildG, lastChildProp, math.MaxFloat64, &PlanCounterDisabled, opt)
 	childCnts[lastIdx] = cnt
 	if err != nil {
 		return nil, 0, nil, err

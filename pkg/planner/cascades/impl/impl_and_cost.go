@@ -29,8 +29,41 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
-// implementMemoAndCost is the cascades physicalization and cost portal, it's quite same as physicalOptimize().
-func implementMemoAndCost(group *memo.Group, planCounter *base.PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {
+// impl pkg is mainly keep the compatibility of cascades based physical optimization and traditional volcano based
+// physical optimization. The start point of this is try to make enumeration of all physical plans from single logical
+// operator to all logical alternatives inside a group, After which we could easily identify and cache the low-cost
+// physical plan based on Group Unit prop-accordingly.
+//
+// Seems it's more like a mutation or so-called intermediate product of cascades and old tidb physical opt? For
+// implementation perspective, it is. While choosing this way could make this product evolution more stable and solid.
+// In our blueprint of post-phase, ImplementGroupAndCost function call can be encapsulated as a kind of schedule task,
+// special for Group implementation and Cost evaluation to find the more optimal one. It can not only be called in the
+// root group down, but also when new group expression generated from middle level of a memo structure, we could choose
+// to physicalize the new subtree halfway to see if it can generate a more optimal physical plan according the history
+// props.
+//
+// For current phase here, logical transformation and physical implementation is seperated. After the logical phase is
+// done, ImplementMemoAndCost is portal for implementing the entire memo and find the most cost-effective physical plan.
+// And since memo structure is made up from tons of Group inside and linked with group expression with more group as its
+// input child. so for each Group unit, ImplementGroupAndCost is responsible for implementing current group, mainly iter
+// all logical alternative inside and try to enumerate possible physical plan for each of them.
+//
+//       tradition:
+//                                                       _______ DataSource.FindBestTask()
+//                                    (logicalOp)      /                                                                                  (child logicalOp)
+//     physicalOptimize()  --->  logic.FindBestTask() ----- BaseLogicalPlan.FindBestTask() -----> iteratePhysicalPlan4BaseLogical() ---> logic.FindBestTask()
+//                                                     \
+//                                                      \__ LogicalCTETable.FindBestTask()
+//
+//       cascades:
+//                                                                  _______ findBestTask4DataSource(ge, ...)
+//                                   (Group)     router&pass GE   /                                                                                             (Child Group)
+//    ImplementMemoAndCost ---> ImplementGroupAndCost ---------------- findBestTask4BaseLogicalPlan(ge, ...) ----> iteratePhysicalPlan4GroupExpression() ---> ImplementGroupAndCost
+//                                                                \
+//                                                                 \__ findBestTask4LogicalCTETable(ge, ...)
+
+// ImplementMemoAndCost is the cascades physicalization and cost portal, it's quite same as physicalOptimize().
+func ImplementMemoAndCost(group *memo.Group, planCounter *base.PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {
 	sctx := group.GetLogicalExpressions().Front().Value.(base.LogicalPlan).SCtx()
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -66,7 +99,7 @@ func implementMemoAndCost(group *memo.Group, planCounter *base.PlanCounterTp) (p
 		}()
 	}
 
-	task, _, implErr := implementGroupAndCost(group, rootProp, math.MaxFloat64, planCounter, opt)
+	task, _, implErr := ImplementGroupAndCost(group, rootProp, math.MaxFloat64, planCounter, opt)
 	if implErr != nil {
 		return nil, 0, implErr
 	}
@@ -89,8 +122,8 @@ func implementMemoAndCost(group *memo.Group, planCounter *base.PlanCounterTp) (p
 	return task.Plan(), cost, err
 }
 
-// implementGroupAndCost is the implementation and cost logic based on ONE group unit.
-func implementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, costLimit float64,
+// ImplementGroupAndCost is the implementation and cost logic based on ONE group unit.
+func ImplementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, costLimit float64,
 	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
 	// cache the invalid task for the group.
 	if prop.TaskTp != property.RootTaskType && !prop.IsFlashProp() {
