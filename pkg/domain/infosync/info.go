@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/tikv/pd/client/pkg/retry"
 	"io"
 	"maps"
 	"net"
@@ -255,7 +257,8 @@ func GlobalInfoSyncerInit(
 	if pdHTTPCli != nil {
 		pdHTTPCli = pdHTTPCli.
 			WithCallerID("tidb-info-syncer").
-			WithRespHandler(pdResponseHandler)
+			WithRespHandler(pdResponseHandler).
+			WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
 	}
 	is := &InfoSyncer{
 		etcdCli:           etcdCli,
