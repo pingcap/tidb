@@ -19,7 +19,6 @@ import (
 	"database/sql"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -73,7 +72,6 @@ type ImportSDK struct {
 	loader     *mydump.MDLoader
 	logger     log.Logger
 	config     *sdkConfig
-	mu         sync.Mutex // Protects concurrent access to internal state
 }
 
 // NewImportSDK creates a new CloudImportSDK instance
@@ -312,13 +310,7 @@ func (sdk *ImportSDK) buildTableMeta(
 	tableMeta.DataFiles = dataFiles
 	tableMeta.TotalSize = totalSize
 
-	// Generate wildcard path for this table's data files
-	tableFilePaths := make(map[string]struct{}, len(tblMeta.DataFiles))
-	for _, df := range tblMeta.DataFiles {
-		tableFilePaths[df.FileMeta.Path] = struct{}{}
-	}
-
-	wildcard, err := generateWildcard(tblMeta.DataFiles, tableFilePaths, allDataFiles)
+	wildcard, err := generateWildcard(tblMeta.DataFiles, allDataFiles)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -329,9 +321,6 @@ func (sdk *ImportSDK) buildTableMeta(
 
 // Close implements CloudImportSDK interface
 func (sdk *ImportSDK) Close() error {
-	sdk.mu.Lock()
-	defer sdk.mu.Unlock()
-
 	// close external storage
 	if sdk.store != nil {
 		sdk.store.Close()
@@ -366,9 +355,13 @@ func createDataFileMeta(file mydump.FileInfo) DataFileMeta {
 // generateWildcard creates a wildcard pattern that matches only this table's files
 func generateWildcard(
 	files []mydump.FileInfo,
-	tableFiles map[string]struct{},
 	allFiles map[string]mydump.FileInfo,
 ) (string, error) {
+	tableFiles := make(map[string]struct{}, len(files))
+	for _, df := range files {
+		tableFiles[df.FileMeta.Path] = struct{}{}
+	}
+
 	if len(files) == 0 {
 		return "", errors.New("no data files to generate wildcard pattern")
 	}
