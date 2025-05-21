@@ -1027,8 +1027,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InExplainStmt = true
 		sc.ExplainFormat = explainStmt.Format
 		sc.InExplainAnalyzeStmt = explainStmt.Analyze
-		sc.IgnoreExplainIDSuffix = strings.ToLower(explainStmt.Format) == types.ExplainFormatBrief
-		sc.InVerboseExplain = strings.ToLower(explainStmt.Format) == types.ExplainFormatVerbose
+		sc.IgnoreExplainIDSuffix =
+			strings.EqualFold(explainStmt.Format, types.ExplainFormatBrief) ||
+				strings.EqualFold(explainStmt.Format, types.ExplainFormatCostTrace)
+		sc.InVerboseExplain = strings.EqualFold(explainStmt.Format, types.ExplainFormatVerbose)
 		s = explainStmt.Stmt
 	} else {
 		sc.ExplainFormat = ""
