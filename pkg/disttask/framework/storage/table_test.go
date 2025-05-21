@@ -1207,7 +1207,7 @@ func TestTaskManagerEntrySize(t *testing.T) {
 			}
 			buf := make([]byte, 8<<20)
 			stackLen := runtime.Stack(buf, true)
-			t.Logf("\n\n\n\n=== dump goroutine stack. ===\n%s\n\n\n\n", string(buf[:stackLen]))
+			t.Logf("\n\n\n\n=== dump goroutine stack. ===\n%s\n\n\n", string(buf[:stackLen]))
 		}
 	})
 	store, tm, ctx := testutil.InitTableTest(t)
