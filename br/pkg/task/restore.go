@@ -33,6 +33,7 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -775,7 +776,7 @@ func printRestoreMetrics() {
 }
 
 // RunRestore starts a restore task inside the current goroutine.
-func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) (restoreErr error) {
 	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
 	if err != nil {
 		return err
@@ -785,7 +786,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			log.Error("failed to close the etcd client", zap.Error(err))
 		}
 	}()
-	if err := checkConflictingLogBackup(c, cfg, etcdCLI); err != nil {
+	logTaskBackend, err := checkConflictingLogBackup(c, cfg, IsStreamRestore(cmdName), etcdCLI)
+	if err != nil {
 		return errors.Annotate(err, "failed to check task exists")
 	}
 	closeF, err := registerTaskToPD(c, etcdCLI)
@@ -807,15 +809,42 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	defer mgr.Close()
 	defer cfg.CloseCheckpointMetaManager()
+	defer func() {
+		if logTaskBackend == nil || restoreErr != nil {
+			return
+		}
+		restoreCommitTs, err := restore.GetTSWithRetry(c, mgr.GetPDClient())
+		if err != nil {
+			restoreErr = err
+			return
+		}
+		tableIds := make([]int64, 0, len(cfg.PiTRTableTracker.TableIdToDBIds))
+		for tableId := range cfg.PiTRTableTracker.TableIdToDBIds {
+			tableIds = append(tableIds, tableId)
+		}
+		filename, data, err := restore.MarshalLogRestoreTableIDsMarkerFile(restoreCommitTs, cfg.StartTS, tableIds)
+		if err != nil {
+			restoreErr = err
+			return
+		}
+		logTaskStorage, err := storage.Create(c, logTaskBackend, false)
+		if err != nil {
+			restoreErr = err
+			return
+		}
+		if err = logTaskStorage.WriteFile(c, filename, data); err != nil {
+			restoreErr = err
+			return
+		}
+	}()
 
 	defer printRestoreMetrics()
 
-	var restoreError error
 	if IsStreamRestore(cmdName) {
 		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBRPiTR); err != nil {
 			return errors.Trace(err)
 		}
-		restoreError = RunStreamRestore(c, mgr, g, cfg)
+		restoreErr = RunStreamRestore(c, mgr, g, cfg)
 	} else {
 		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBR); err != nil {
 			return errors.Trace(err)
@@ -823,10 +852,10 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		snapshotRestoreConfig := SnapshotRestoreConfig{
 			RestoreConfig: cfg,
 		}
-		restoreError = runSnapshotRestore(c, mgr, g, cmdName, &snapshotRestoreConfig)
+		restoreErr = runSnapshotRestore(c, mgr, g, cmdName, &snapshotRestoreConfig)
 	}
-	if restoreError != nil {
-		return errors.Trace(restoreError)
+	if restoreErr != nil {
+		return errors.Trace(restoreErr)
 	}
 	// Clear the checkpoint data
 	if cfg.UseCheckpoint {
@@ -863,6 +892,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 type SnapshotRestoreConfig struct {
 	*RestoreConfig
 	piTRTaskInfo           *PiTRTaskInfo
+	logRestoreStorage      storage.ExternalStorage
 	logTableHistoryManager *stream.LogBackupTableHistoryManager
 	tableMappingManager    *stream.TableMappingManager
 }
@@ -1010,6 +1040,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("adjusted items to restore",
 			zap.Int("tables", len(tableMap)),
 			zap.Int("db", len(dbMap)))
+
+		if err := restore.CheckTableTrackerContainsTableIDsFromMarkerFiles(
+			ctx, cfg.logRestoreStorage, cfg.PiTRTableTracker, backupMeta.GetEndVersion(), cfg.piTRTaskInfo.RestoreTS,
+		); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	tables := utils.Values(tableMap)
 	dbs := utils.Values(dbMap)
