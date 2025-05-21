@@ -140,6 +140,8 @@ type Misc interface {
 	HasTemporaryTable() bool
 	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
 	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
+	// GetDatabaseReferredForeignKeys gets the database's ReferredFKInfo by lowercase schema name.
+	GetDatabaseReferredForeignKeys(schema string) map[string][]*model.ReferredFKInfo
 }
 
 // DBInfoAsInfoSchema is used mainly in test.
