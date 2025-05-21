@@ -25,7 +25,7 @@ echo "+ Starting run python testers"
 python3 -m pip3 install uv
 uv init --python python3.9
 uv venv
-uv pip3 install -r requirements.txt
+uv pip install -r requirements.txt
 
 cd datasets
 wget https://ann-benchmarks.com/fashion-mnist-784-euclidean.hdf5
