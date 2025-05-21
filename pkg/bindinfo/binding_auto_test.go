@@ -132,38 +132,28 @@ func TestRelevantOptVarsAndFixes(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-
 	tk.MustExec(`create table t1 (a int, b int, c varchar(10), key(a), key(b))`)
 	tk.MustExec(`create table t2 (a int, b int, c varchar(10), key(a), key(b))`)
 
-	type testCase struct {
-		query string
-		vars  string
-		fixes string
+	var input []string
+	var output []struct {
+		Vars  string
+		Fixes string
 	}
-	cases := []testCase{
-		{"select 1 from t1", "[tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_table_full_scan_cost_factor tidb_opt_table_reader_cost_factor]", "[45132 52869]"},
-		{"select 1 from t1 where a=1", "[tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor]", "[52869]"},
-		{"select * from t1 where a=1", "[tidb_opt_index_lookup_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_table_rowid_scan_cost_factor]", "[52869]"},
-		{"select * from t1 where a>1", "[tidb_opt_index_lookup_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_table_full_scan_cost_factor tidb_opt_table_reader_cost_factor tidb_opt_table_rowid_scan_cost_factor]", "[45132 52869]"},
-		{"select a from t1 where a=1", "[tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor]", "[52869]"},
-		{"select max(a) from t1 where a=1", "[tidb_opt_hash_agg_cost_factor tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_ordering_index_selectivity_ratio tidb_opt_stream_agg_cost_factor tidb_opt_topn_cost_factor]", "[52869]"},
-		{"select sum(b) from t1 where a=1", "[tidb_opt_hash_agg_cost_factor tidb_opt_index_lookup_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_stream_agg_cost_factor tidb_opt_table_rowid_scan_cost_factor]", "[52869]"},
-		{"select a from t1 where a=1 order by b", "[tidb_opt_index_lookup_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_sort_cost_factor tidb_opt_table_rowid_scan_cost_factor]", "[45132 52869]"},
-		{"select a from t1 where a=1 order by b limit 10", "[tidb_opt_index_lookup_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_table_range_scan_cost_factor tidb_opt_table_rowid_scan_cost_factor tidb_opt_topn_cost_factor]", "[52869]"},
-		{"select 1 from t1, t2 where t1.a=t2.a", "[tidb_opt_hash_join_cost_factor tidb_opt_index_join_cost_factor tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_merge_join_cost_factor]", "[44855 45132 52869]"},
-		{"select 1 from t1, t2 where t1.a=t2.b", "[tidb_opt_hash_join_cost_factor tidb_opt_index_join_cost_factor tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_merge_join_cost_factor]", "[44855 45132 52869]"},
-		{"select 1 from t1, t2 where t1.c=t2.c", "[tidb_opt_hash_join_cost_factor tidb_opt_table_full_scan_cost_factor tidb_opt_table_reader_cost_factor]", "[52869]"},
-	}
-
-	for _, c := range cases {
-		p := parser.New()
-		stmt, err := p.ParseOneStmt(c.query, "", "")
+	bindingAutoSuiteData.LoadTestCases(t, &input, &output)
+	p := parser.New()
+	for i, sql := range input {
+		p.Reset()
+		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 		vars, fixes, err := bindinfo.RecordRelevantOptVarsAndFixes(tk.Session(), stmt)
 		require.NoError(t, err)
-		require.Equal(t, fmt.Sprintf("%v", vars), c.vars)
-		require.Equal(t, fmt.Sprintf("%v", fixes), c.fixes)
+		 testdata.OnRecord(func() {
+			output[i].Vars = fmt.Sprintf("%v", vars)
+			output[i].Fixes = fmt.Sprintf("%v", fixes)
+		})
+		require.Equal(t, fmt.Sprintf("%v", vars), output[i].Vars)
+		require.Equal(t, fmt.Sprintf("%v", fixes), output[i].Fixes)
 	}
 }
 
