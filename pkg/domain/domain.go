@@ -1938,8 +1938,9 @@ func (do *Domain) GetPDHTTPClient() pdhttp.Client {
 	return nil
 }
 
-func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
+func (do *Domain) decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
 	var msg PrivilegeEvent
+	isNewVersionEvents := false
 	for _, event := range resp.Events {
 		if event.Kv != nil {
 			val := event.Kv.Value
@@ -1949,6 +1950,11 @@ func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
 				if err != nil {
 					logutil.BgLogger().Warn("decodePrivilegeEvent unmarshal fail", zap.Error(err))
 					break
+				}
+				isNewVersionEvents = true
+				if do.ServerID() != 0 && tmp.ServerID == do.ServerID() {
+					// Skip the events from this TiDB-Server
+					continue
 				}
 				if tmp.All {
 					msg.All = true
@@ -1962,13 +1968,13 @@ func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
 
 	// In case old version triggers the event, the event value is empty,
 	// Then we fall back to the old way: reload all the users.
-	if len(msg.UserList) == 0 {
+	if len(msg.UserList) == 0 && !isNewVersionEvents {
 		msg.All = true
 	}
 	return msg
 }
 
-func batchReadMoreData(ch clientv3.WatchChan, event PrivilegeEvent) PrivilegeEvent {
+func (do *Domain) batchReadMoreData(ch clientv3.WatchChan, event PrivilegeEvent) PrivilegeEvent {
 	timer := time.NewTimer(5 * time.Millisecond)
 	defer timer.Stop()
 	const maxBatchSize = 128
@@ -1978,7 +1984,7 @@ func batchReadMoreData(ch clientv3.WatchChan, event PrivilegeEvent) PrivilegeEve
 			if !ok {
 				return event
 			}
-			tmp := decodePrivilegeEvent(resp)
+			tmp := do.decodePrivilegeEvent(resp)
 			if tmp.All {
 				event.All = true
 			} else {
@@ -1988,7 +1994,7 @@ func batchReadMoreData(ch clientv3.WatchChan, event PrivilegeEvent) PrivilegeEve
 			}
 			succ := timer.Reset(5 * time.Millisecond)
 			if !succ {
-				break
+				return event
 			}
 		case <-timer.C:
 			return event
@@ -2030,8 +2036,8 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			case resp, ok := <-watchCh:
 				if ok {
 					count = 0
-					event = decodePrivilegeEvent(resp)
-					event = batchReadMoreData(watchCh, event)
+					event = do.decodePrivilegeEvent(resp)
+					event = do.batchReadMoreData(watchCh, event)
 				} else {
 					if do.ctx.Err() == nil {
 						logutil.BgLogger().Error("load privilege loop watch channel closed")
@@ -2045,7 +2051,12 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 				}
 			case <-time.After(duration):
 				event.All = true
-				event = batchReadMoreData(watchCh, event)
+				event = do.batchReadMoreData(watchCh, event)
+			}
+
+			// All events are from this TiDB-Server, skip them
+			if !event.All && len(event.UserList) == 0 {
+				continue
 			}
 
 			err := privReloadEvent(do.privHandle, &event)
@@ -3013,6 +3024,7 @@ const (
 // TiDB old version do not use no such message.
 type PrivilegeEvent struct {
 	All      bool
+	ServerID uint64
 	UserList []string
 }
 
@@ -3033,6 +3045,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 	// Because we need to tell other TiDB instances to update privilege data, say, we're changing the
 	// password using a special TiDB instance and want the new password to take effect.
 	if do.etcdClient != nil {
+		event.ServerID = do.serverID
 		data, err := json.Marshal(event)
 		if err != nil {
 			return errors.Trace(err)
