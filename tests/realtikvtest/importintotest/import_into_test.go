@@ -386,7 +386,7 @@ func (s *mockGCSSuite) TestCSVHeaderOption() {
 	for _, tc := range testCases {
 		s.tk.MustExec("truncate table t")
 		loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://csv-option/%s?endpoint=%s'
-		with remove_csv_header="%s", thread=1`, tc.file, gcsEndpoint, tc.csvOption)
+		with has_csv_header="%s", thread=1`, tc.file, gcsEndpoint, tc.csvOption)
 		if tc.result {
 			s.tk.MustQuery(loadDataSQL)
 			s.tk.MustQuery("SELECT count(*) FROM t;").Check(testkit.Rows(strconv.Itoa(tc.count)))

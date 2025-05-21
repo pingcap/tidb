@@ -76,11 +76,11 @@ import into t from '/file.csv' with skip_rows=-1;
 -- error 8164
 import into t from '/file.csv' with skip_rows=true;
 -- error 8164
-import into t from '/file.csv' with remove_csv_header=null;
+import into t from '/file.csv' with has_csv_header=null;
 -- error 8164
-import into t from '/file.csv' with remove_csv_header="None";
+import into t from '/file.csv' with has_csv_header="None";
 -- error 8164
-import into t from '/file.csv' with remove_csv_header="auto", skip_rows=1;
+import into t from '/file.csv' with has_csv_header="auto", skip_rows=1;
 -- error 8164
 import into t from '/file.csv' with split_file='aa';
 -- error 8164

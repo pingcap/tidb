@@ -89,7 +89,7 @@ const (
 	fieldsEscapedByOption     = "fields_escaped_by"
 	fieldsDefinedNullByOption = "fields_defined_null_by"
 	linesTerminatedByOption   = "lines_terminated_by"
-	csvHeaderOption           = "remove_csv_header"
+	csvHeaderOption           = "has_csv_header"
 	skipRowsOption            = "skip_rows"
 	splitFileOption           = "split_file"
 	diskQuotaOption           = "disk_quota"
