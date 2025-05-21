@@ -56,7 +56,7 @@ func (cli *MockDistributePDCli) CancelSchedulerJob(ctx context.Context, schedule
 		return args.Error(0)
 	}
 	for _, job := range cli.jobs {
-		if job["job-id"] == jobID {
+		if job["job-id"] == float64(jobID) {
 			return nil
 		}
 	}
@@ -244,6 +244,15 @@ func TestCancelDistributionJob(t *testing.T) {
 			Return(nil)
 	}
 	mockCancelJobID(1)
+	// cancel job failed because job not found
 	_, err := tk.Exec("cancel distribution job 1")
-	require.Nil(t, err)
+	require.ErrorContains(t, err, "job not found")
+
+	// cancel job successfully
+	job := map[string]any{
+		"job-id": float64(1),
+	}
+	cli.jobs = append(cli.jobs, job)
+	_, err = tk.Exec("cancel distribution job 1")
+	require.NoError(t, err)
 }
