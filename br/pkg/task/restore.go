@@ -315,7 +315,6 @@ func Hash(cmdName string, cfg *RestoreConfig) ([]byte, error) {
 		CmdName:           cmdName,
 		UpstreamClusterID: cfg.UpstreamClusterID,
 		Storage:           cfg.Storage,
-		ExplictFilter:     cfg.ExplicitFilter,
 		FilterStr:         cfg.FilterStr,
 		WithSysTable:      cfg.WithSysTable,
 	}
@@ -324,7 +323,7 @@ func Hash(cmdName string, cfg *RestoreConfig) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	hash := sha256.Sum256(data)
-	log.Info("hash of restore config", zap.String("hash", hex.EncodeToString(hash[:])))
+	log.Info("hash of restore config", zap.String("hash", hex.EncodeToString(hash[:])), zap.String("config", string(data)))
 	return hash[:], nil
 }
 
@@ -1016,7 +1015,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
-	reusePreallocID, checkpointFirstRun, err := checkRestorefirstRun(ctx, mgr, g, cfg, hash)
+	reusePreallocID, err := checkPreallocIDReusable(ctx, mgr, g, cfg, hash, cpEnabledAndExists)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1126,9 +1125,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if cfg.piTRTaskInfo != nil {
 			logRestoredTS = cfg.piTRTaskInfo.RestoreTS
 		}
-		//TODO: (ris)add prealloc info into checkpoint
 		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(
-			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, hash, checkpointFirstRun, cpEnabledAndExists)
+			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, hash, cpEnabledAndExists)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1383,41 +1381,20 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	return nil
 }
 
-func checkRestorefirstRun(ctx context.Context, mgr *conn.Mgr, g glue.Glue, cfg *SnapshotRestoreConfig, hash []byte) (prealloc *checkpoint.PreallocIDs, checkpointFirstRun bool, err error) {
-	if !cfg.UseCheckpoint {
-		return nil, true, nil
-	}
-
-	if len(cfg.CheckpointStorage) > 0 {
-		clusterID := mgr.PDClient().GetClusterID(ctx)
-		if err = cfg.newStorageCheckpointMetaManagerSnapshot(ctx, clusterID); err != nil {
-			return nil, false, errors.Trace(err)
-		}
-	} else {
-		if err = cfg.newTableCheckpointMetaManagerSnapshot(g, mgr.GetDomain()); err != nil {
-			return nil, false, errors.Trace(err)
-		}
-	}
-
-	// if the checkpoint metadata exists in the checkpoint storage, the restore is not
-	// for the first time.
-	existsCheckpointMetadata, err := cfg.snapshotCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-	if !existsCheckpointMetadata {
-		return nil, true, nil
+func checkPreallocIDReusable(ctx context.Context, mgr *conn.Mgr, g glue.Glue, cfg *SnapshotRestoreConfig, hash []byte, checkpointExist bool) (prealloc *checkpoint.PreallocIDs, err error) {
+	if !checkpointExist {
+		return nil, nil
 	}
 
 	checkpointMeta, err := cfg.snapshotCheckpointMetaManager.LoadCheckpointMetadata(ctx)
 	log.Info("checkpoint metadata exists", zap.String("hash", hex.EncodeToString(hash)), zap.String("checkpoint hash", hex.EncodeToString(checkpointMeta.Hash)))
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	if !bytes.Equal(checkpointMeta.Hash, hash) {
-		return nil, false, errors.Trace(errors.Annotatef(berrors.ErrRestoreCheckpointMismatch, "checkpoint hash mismatch, please use the same setting as the previous restore"))
+		return nil, errors.Trace(errors.Annotatef(berrors.ErrRestoreCheckpointMismatch, "checkpoint hash mismatch, please use the same setting as the previous restore"))
 	}
-	return checkpointMeta.PreallocIDs, false, nil
+	return checkpointMeta.PreallocIDs, nil
 }
 
 func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (cnt uint64, err error) {
