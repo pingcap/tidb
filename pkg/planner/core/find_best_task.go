@@ -1816,7 +1816,7 @@ func calculateIndexMergeOutputColumns(ds *logicalop.DataSource, path *util.Acces
 
 	// Then add any remaining columns that weren't in the partial index paths
 	if ds.HandleCols != nil {
-		for i := 0; i < ds.HandleCols.NumCols(); i++ {
+		for i := range ds.HandleCols.NumCols() {
 			handleCol := ds.HandleCols.GetCol(i)
 			outputColumns = append(outputColumns, handleCol)
 		}

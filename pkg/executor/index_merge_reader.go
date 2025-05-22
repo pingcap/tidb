@@ -1406,7 +1406,7 @@ func (w *intersectionProcessWorker) mergeRowsFromIndices(indexRows map[string]ma
 		mutRow := chunk.MutRowFromTypes(outputTps)
 		currPos := 0
 
-		for i := 0; i < len(w.indexMerge.partialPlans); i++ {
+		for i := range len(w.indexMerge.partialPlans) {
 			row, ok := idxRowsForHandle[uint8(i)]
 			if !ok {
 				continue
@@ -1418,7 +1418,7 @@ func (w *intersectionProcessWorker) mergeRowsFromIndices(indexRows map[string]ma
 				inputColsLen = row.Len()
 			}
 
-			for j := 0; j < inputColsLen; j++ {
+			for j := range inputColsLen {
 				datum := row.GetDatum(j, outputTps[currPos])
 				mutRow.SetDatum(currPos, datum)
 				currPos++
@@ -1450,7 +1450,7 @@ func (w *intersectionProcessWorker) mergeRowsFromIndices(indexRows map[string]ma
 	resultRows := make([]chunk.Row, 0, tempChunk.NumRows())
 
 	// Remap each row to the schemaColumns order
-	for i := 0; i < tempChunk.NumRows(); i++ {
+	for i := range tempChunk.NumRows() {
 		tempRow := tempChunk.GetRow(i)
 		schemaRow := chunk.MutRowFromTypes(schemaTps)
 
@@ -1944,7 +1944,7 @@ func getRetTpsForSingleIndexScan(handleCols plannerutil.HandleCols, outputColumn
 		}
 	}
 	// Directly append all handle columns to the types slice
-	for i := 0; i < handleCols.NumCols(); i++ {
+	for i := range handleCols.NumCols() {
 		handleCol := handleCols.GetCol(i)
 		tps = append(tps, handleCol.RetType)
 	}

@@ -4152,7 +4152,7 @@ func buildIndexReq4IndexMerge(ctx sessionctx.Context, idxCols []*expression.Colu
 		}
 	}
 	// Output handle columns for index merge intersection operations and for some projection columns that need them
-	for i := 0; i < handleCols.NumCols(); i++ {
+	for i := range handleCols.NumCols() {
 		offset := uint32(indexColLen + i)
 		indexReq.OutputOffsets = append(indexReq.OutputOffsets, offset)
 	}
