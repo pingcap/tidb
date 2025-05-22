@@ -41,7 +41,6 @@ go_library(
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_golang//prometheus/collectors",
         "@com_github_tikv_client_go_v2//metrics",
-        "@com_github_tikv_pd_client//pkg/retry",
         "@org_uber_go_zap//:zap",
     ],
 )
