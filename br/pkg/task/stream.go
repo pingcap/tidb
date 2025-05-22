@@ -1555,7 +1555,7 @@ func restoreStream(
 	var rp *logclient.RestoreMetaKVProcessor
 	if err = glue.WithProgress(ctx, g, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress, func(p glue.Progress) error {
 		rp = logclient.NewRestoreMetaKVProcessor(client, schemasReplace, updateStats, p.Inc)
-		return rp.RestoreAndRewriteMetaKVFiles(ctx, cfg.ExplicitFilter, ddlFiles)
+		return rp.RestoreAndRewriteMetaKVFiles(ctx, cfg.ExplicitFilter, ddlFiles, schemasReplace)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
@@ -1636,12 +1636,6 @@ func restoreStream(
 	}
 
 	if cfg.ExplicitFilter {
-		// refresh metadata will sync data from TiKV to info schema one table at a time.
-		// this must succeed to ensure schema consistency
-		if err = client.RefreshMetaForTables(ctx, schemasReplace); err != nil {
-			return errors.Trace(err)
-		}
-
 		failpoint.Inject("before-set-table-mode-to-normal", func(_ failpoint.Value) {
 			failpoint.Return(errors.New("fail before setting table mode to normal"))
 		})
@@ -2104,7 +2098,9 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 
 	// either getting base id map from previous pitr or this is a new task and get base map from snapshot restore phase
 	// do filter
-	cfg.tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
+	if cfg.PiTRTableTracker != nil {
+		cfg.tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
+	}
 	// replace temp id with read global id
 	err = cfg.tableMappingManager.ReplaceTemporaryIDs(ctx, client.GenGlobalIDs)
 	if err != nil {
