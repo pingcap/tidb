@@ -872,8 +872,6 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 		end     kv.Key
 		pid     int64
 		info    reorgInfo
-
-		splitKeys []kv.Key
 	)
 
 	if job.SnapshotVer == 0 {

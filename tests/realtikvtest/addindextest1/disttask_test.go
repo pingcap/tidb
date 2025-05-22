@@ -503,11 +503,11 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 	tk.MustExec("use test;")
 
 	createTables := []string{
-		// "create table t (id int, b int, c int, primary key(id) clustered);",
+		"create table t (id int, b int, c int, primary key(id) clustered);",
 		"create table t (id int, b int, c int, primary key(id) clustered) partition by hash(id) partitions 4;",
 	}
 	createIndexes := []string{
-		// "alter table t add unique index b(b), add index c(c);",
+		"alter table t add unique index b(b), add index c(c);",
 		"alter table t add unique index b(b) global, add index c(c) global;",
 	}
 
