@@ -1126,6 +1126,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		sourceType mydump.SourceType
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
+	isDataFormatAuto := e.Format == DataFormatAuto
 	// check glob pattern is present in filename.
 	idx := strings.IndexAny(fileNameKey, "*[")
 	// simple path when the path represent one file
@@ -1201,7 +1202,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return err
 		}
 	}
-	if err2 = e.checkCSVOnlyOptions(); err2 != nil {
+	if err2 = e.checkNonCSVFormatOptions(isDataFormatAuto); err2 != nil {
 		return err2
 	}
 
@@ -1395,8 +1396,8 @@ func (p *Plan) IsGlobalSort() bool {
 
 // non CSV format should not specify CSV only options, we check it again if the
 // format is detected automatically.
-func (p *Plan) checkNonCSVFormatOptions() error {
-	if !p.InImportInto || p.Format == DataFormatCSV {
+func (p *Plan) checkNonCSVFormatOptions(isDataFormatAuto bool) error {
+	if !p.InImportInto || p.Format == DataFormatCSV || !isDataFormatAuto {
 		return nil
 	}
 	if *p.Charset != defaultCharacterSet {
