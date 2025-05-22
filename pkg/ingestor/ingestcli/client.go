@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -199,6 +200,7 @@ func (w *writeClient) Close() {
 var _ Client = &client{}
 
 type client struct {
+	urlSchema     string
 	tikvWorkerURL string
 	clusterID     uint64
 	httpClient    *http.Client
@@ -207,7 +209,16 @@ type client struct {
 
 // NewClient creates a new Client instance.
 func NewClient(tikvWorkerURL string, clusterID uint64, httpClient *http.Client, splitCli split.SplitClient) Client {
+	urlSchema := "http://"
+	if httpClient.Transport.(*http.Transport).TLSClientConfig != nil {
+		urlSchema = "https://"
+	}
+	// if tikvWorkerURL doesn't contain schema, add it.
+	if !strings.HasPrefix(tikvWorkerURL, "http://") && !strings.HasPrefix(tikvWorkerURL, "https://") {
+		tikvWorkerURL = urlSchema + tikvWorkerURL
+	}
 	return &client{
+		urlSchema:     urlSchema,
 		tikvWorkerURL: tikvWorkerURL,
 		clusterID:     clusterID,
 		httpClient:    httpClient,
@@ -227,8 +238,8 @@ func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	url := fmt.Sprintf("http://%s/ingest_s3?cluster_id=%d&region_id=%d&epoch_version=%d",
-		store.GetStatusAddress(), c.clusterID, ri.Id, ri.RegionEpoch.Version)
+	url := fmt.Sprintf("%s%s/ingest_s3?cluster_id=%d&region_id=%d&epoch_version=%d",
+		c.urlSchema, store.GetStatusAddress(), c.clusterID, ri.Id, ri.RegionEpoch.Version)
 
 	sstMeta := in.WriteResp.nextGenSSTMeta
 	logutil.BgLogger().Debug("calling ingest", in.Region.ToZapFields(), zap.Stringer("sstMeta", sstMeta))
