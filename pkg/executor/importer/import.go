@@ -76,7 +76,7 @@ const (
 	DataFormatSQL = "sql"
 	// DataFormatParquet represents the data source file of IMPORT INTO is parquet.
 	DataFormatParquet = "parquet"
-	// DataFormatAuto represents do not set format in IMPORT INTO stmt, will update when init data files.
+	// DataFormatAuto represents format is not set in IMPORT INTO, we will determine format automatically.
 	DataFormatAuto = "auto"
 
 	// DefaultDiskQuota is the default disk quota for IMPORT INTO
