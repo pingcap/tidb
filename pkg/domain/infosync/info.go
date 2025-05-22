@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/tikv/pd/client/pkg/retry"
 	"io"
 	"maps"
@@ -243,6 +242,11 @@ type infoschemaMinTS interface {
 	GetAndResetRecentInfoSchemaTS(now uint64) uint64
 }
 
+const (
+	// InfoSyncerRetryTime is retry time limit for InfoSyncer.
+	InfoSyncerRetryTime = 120
+)
+
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
 func GlobalInfoSyncerInit(
 	ctx context.Context,
@@ -258,7 +262,7 @@ func GlobalInfoSyncerInit(
 		pdHTTPCli = pdHTTPCli.
 			WithCallerID("tidb-info-syncer").
 			WithRespHandler(pdResponseHandler).
-			WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
+			WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, InfoSyncerRetryTime*time.Second))
 	}
 	is := &InfoSyncer{
 		etcdCli:           etcdCli,
