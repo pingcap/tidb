@@ -44,9 +44,9 @@ run_sql "insert into test.t1 values (11), (111)"
 run_sql "insert into test.t2 values (2), (20), (200)"
 
 # get the checkpoint ts
-sleep 10
+sleep 5
 ok_restored_ts=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
-sleep 10
+sleep 5
 
 ## prepare another log restore
 
@@ -62,7 +62,7 @@ run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full2"
 run_sql "insert into test.t3 values (33), (333)"
 
 # wait checkpoint advance
-sleep 10
+sleep 5
 restored_ts=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
 . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance $TASK_NAME
 
@@ -79,6 +79,9 @@ if [ -z "$(ls -A $TEST_DIR/$PREFIX/log/v1/log_restore_tables_blocklists)" ]; the
     exit 1
 fi
 
+sleep 5
+truncate_ts=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
+
 # prepare the data
 run_sql "create table test.t4(id int)"
 run_sql "insert into test.t4 values (4), (40), (400)"
@@ -91,7 +94,7 @@ run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full3"
 run_sql "insert into test.t4 values (44), (444)"
 
 # wait checkpoint advance
-sleep 10
+sleep 5
 . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance $TASK_NAME
 
 ## test log restore with block list
@@ -120,5 +123,20 @@ success=true
 run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || success=false
 if $success; then
     echo "Error: PITR restore must be failed"
+    exit 1
+fi
+
+# truncate the blocklist
+run_br log truncate -s "local://$TEST_DIR/$PREFIX/log" --until $ok_restored_ts -y
+if [ -z "$(ls -A $TEST_DIR/$PREFIX/log/v1/log_restore_tables_blocklists)" ]; then
+    echo "Error: blocklist is truncated"
+    exit 1
+fi
+
+run_br log truncate -s "local://$TEST_DIR/$PREFIX/log" --until $truncate_ts -y
+if [ -z "$(ls -A $TEST_DIR/$PREFIX/log/v1/log_restore_tables_blocklists)" ]; then
+    echo "blocklist is truncated"
+else
+    echo "Error: blocklist is not truncated"
     exit 1
 fi

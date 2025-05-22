@@ -822,6 +822,9 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		for tableId := range cfg.PiTRTableTracker.TableIdToDBIds {
 			tableIds = append(tableIds, tableId)
 		}
+		for tableId := range cfg.PiTRTableTracker.PartitionIds {
+			tableIds = append(tableIds, tableId)
+		}
 		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, cfg.StartTS, tableIds)
 		if err != nil {
 			restoreErr = err
