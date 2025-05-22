@@ -175,7 +175,7 @@ func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 }
 
 func writeBlocklistFile(
-	t *testing.T, ctx context.Context, s storage.ExternalStorage,
+	ctx context.Context, t *testing.T, s storage.ExternalStorage,
 	restoreCommitTs, snapshotBackupTs uint64, tableIds []int64,
 ) {
 	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, snapshotBackupTs, tableIds)
@@ -197,9 +197,9 @@ func TestCheckTableTrackerContainsTableIDsFromBlocklistFiles(t *testing.T) {
 	base := t.TempDir()
 	stg, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	writeBlocklistFile(t, ctx, stg, 100, 10, []int64{100, 101, 102})
-	writeBlocklistFile(t, ctx, stg, 200, 20, []int64{200, 201, 202})
-	writeBlocklistFile(t, ctx, stg, 300, 30, []int64{300, 301, 302})
+	writeBlocklistFile(ctx, t, stg, 100, 10, []int64{100, 101, 102})
+	writeBlocklistFile(ctx, t, stg, 200, 20, []int64{200, 201, 202})
+	writeBlocklistFile(ctx, t, stg, 300, 30, []int64{300, 301, 302})
 	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 250, 300)
 	require.Error(t, err)
 	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 250, 300)
@@ -215,7 +215,7 @@ func TestCheckTableTrackerContainsTableIDsFromBlocklistFiles(t *testing.T) {
 	require.Error(t, err)
 }
 
-func filesCount(t *testing.T, ctx context.Context, s storage.ExternalStorage) int {
+func filesCount(ctx context.Context, s storage.ExternalStorage) int {
 	count := 0
 	s.WalkDir(ctx, &storage.WalkOption{SubDir: restore.LogRestoreTableIDBlocklistFilePrefix}, func(path string, size int64) error {
 		count += 1
@@ -229,19 +229,19 @@ func TestTruncateLogRestoreTableIDsBlocklistFiles(t *testing.T) {
 	base := t.TempDir()
 	stg, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	writeBlocklistFile(t, ctx, stg, 100, 10, []int64{100, 101, 102})
-	writeBlocklistFile(t, ctx, stg, 200, 20, []int64{200, 201, 202})
-	writeBlocklistFile(t, ctx, stg, 300, 30, []int64{300, 301, 302})
+	writeBlocklistFile(ctx, t, stg, 100, 10, []int64{100, 101, 102})
+	writeBlocklistFile(ctx, t, stg, 200, 20, []int64{200, 201, 202})
+	writeBlocklistFile(ctx, t, stg, 300, 30, []int64{300, 301, 302})
 
 	err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 50)
 	require.NoError(t, err)
-	require.Equal(t, 3, filesCount(t, ctx, stg))
+	require.Equal(t, 3, filesCount(ctx, stg))
 
 	err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 250)
 	require.NoError(t, err)
-	require.Equal(t, 1, filesCount(t, ctx, stg))
+	require.Equal(t, 1, filesCount(ctx, stg))
 
 	err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 350)
 	require.NoError(t, err)
-	require.Equal(t, 0, filesCount(t, ctx, stg))
+	require.Equal(t, 0, filesCount(ctx, stg))
 }

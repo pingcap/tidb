@@ -46,6 +46,7 @@ run_sql "insert into test.t2 values (2), (20), (200)"
 # get the checkpoint ts
 sleep 10
 ok_restored_ts=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
+sleep 10
 
 ## prepare another log restore
 
@@ -97,13 +98,13 @@ sleep 10
 
 # pass because restored ts is less than BackupTS of snapshot backup 2
 restart_services
-run_br --$PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" --restored-ts $ok_restored_ts
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" --restored-ts $ok_restored_ts
 run_sql "select sum(id) as SUM from test.t1"
 check_contains "SUM: 233"
 
 # pass because backup ts is larger than restore commit ts
 restart_services
-run_br --$PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full3"
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full3"
 run_sql "select sum(id) as SUM from test.t1"
 check_contains "SUM: 233"
 run_sql "select sum(id) as SUM from test.t2"
@@ -116,7 +117,7 @@ check_contains "SUM: 932"
 # otherwise, failed
 restart_services
 success=true
-run_br --$PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || success=false
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || success=false
 if $success; then
     echo "Error: PITR restore must be failed"
     exit 1
