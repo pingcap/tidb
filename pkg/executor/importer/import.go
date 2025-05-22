@@ -1226,7 +1226,7 @@ func (e *LoadDataController) getFileRealSize(ctx context.Context,
 }
 
 // update format of the validated file by its extension.
-func (e *LoadDataController) updateFormat(path string) {
+func (e *LoadDataController) detectAndUpdateFormat(path string) {
 	if e.Format == DataFormatAuto {
 		e.Format = parseFileType(path)
 		if e.Parameters != nil {
