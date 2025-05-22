@@ -215,14 +215,12 @@ func generatePlanWithSCtx(sctx sessionctx.Context, defaultSchema, sql, charset, 
 	}
 	tableNames := extractSelectTableNames(defaultSchema, stmt)
 	possibleLeading2 := make([][2]*tableName, 0, 8) // enumerate all possible leading-2 table pairs
-	if len(tableNames) > 1 {
-		for i := 0; i < len(tableNames); i++ {
-			for j := 0; j < len(tableNames); j++ {
-				if i == j {
-					continue
-				}
-				possibleLeading2 = append(possibleLeading2, [2]*tableName{tableNames[i], tableNames[j]})
+	for i := range tableNames {
+		for j := range tableNames {
+			if i == j {
+				continue
 			}
+			possibleLeading2 = append(possibleLeading2, [2]*tableName{tableNames[i], tableNames[j]})
 		}
 	}
 	return breadthFirstPlanSearch(sctx, stmt, vars, fixes, possibleLeading2)
