@@ -462,7 +462,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			if isAnalyzeWorkerPanic(err) {
 				panicCnt++
 			} else {
-				statslogutil.StatsErrVerboseSampleLogger().Error("receive error when saving analyze results", zap.Error(err))
+				statslogutil.StatsErrVerboseLogger().Error("receive error when saving analyze results", zap.Error(err))
 			}
 			finishJobWithLog(statsHandle, results.Job, err)
 			continue
@@ -486,7 +486,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	for tableID := range tableIDs {
 		// Dump stats to historical storage.
 		if err := recordHistoricalStats(e.Ctx(), tableID); err != nil {
-			statslogutil.StatsErrVerboseSampleLogger().Error("record historical stats failed", zap.Error(err))
+			statslogutil.StatsErrVerboseLogger().Error("record historical stats failed", zap.Error(err))
 		}
 	}
 	return err
@@ -507,7 +507,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 				Job: task.job,
 			}:
 			case <-e.errExitCh:
-				statslogutil.StatsErrVerboseSampleLogger().Error("analyze worker exits because the whole analyze task is aborted", zap.Error(err))
+				statslogutil.StatsErrVerboseLogger().Error("analyze worker exits because the whole analyze task is aborted", zap.Error(err))
 			}
 		}
 	}()
@@ -569,7 +569,7 @@ func AddNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
 	err = statsHandle.InsertAnalyzeJob(job, instance, ctx.GetSessionVars().ConnectionID)
 	if err != nil {
-		statslogutil.StatsErrVerboseSampleLogger().Error("failed to insert analyze job", zap.Error(err))
+		statslogutil.StatsErrVerboseLogger().Error("failed to insert analyze job", zap.Error(err))
 	}
 }
 
