@@ -44,6 +44,28 @@ message WorkerNodeHeartbeatResponse {
   repeated uint64 to_remove_shards = 3;
 }
 
+message KeyRange {
+  string start_key = 1;
+  string end_key = 2;
+}
+
+message ShardLocalCacheInfo {
+  indexer.ShardManifestHeader shard = 1;
+  repeated string local_cache_addrs = 2;
+}
+
+message GetShardLocalCacheRequest {
+  repeated KeyRange key_ranges = 1;
+  // at most `limit` shards can be returned
+  int32 limit = 2;
+}
+
+message GetShardLocalCacheResponse {
+  // Operation result status code, 0 means success
+  int32 status = 1;
+  repeated ShardLocalCacheInfo shard_local_cache_infos = 2;
+}
+
 service MetaService {
   // Maintains heartbeat from worker nodes(such as writers, compactors) to meta service.
   rpc WorkerNodeHeartbeat(WorkerNodeHeartbeatRequest) returns (WorkerNodeHeartbeatResponse);
@@ -57,4 +79,7 @@ service MetaService {
   
   // GetIndexProgress retrieves the current progress of an index build
   rpc GetIndexProgress(indexer.GetIndexProgressRequest) returns (indexer.GetIndexProgressResponse);
+
+  // GetShardLocalCacheInfo retrieves the local cache information of shards
+  rpc GetShardLocalCacheInfo(GetShardLocalCacheRequest) returns (GetShardLocalCacheResponse);
 }
