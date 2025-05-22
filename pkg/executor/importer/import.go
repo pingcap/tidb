@@ -1141,7 +1141,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek")
 		}
-		e.updateFormat(fileNameKey)
+		e.detectAndUpdateFormat(fileNameKey)
 		sourceType = e.getSourceType()
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		fileMeta := mydump.SourceFileMeta{
@@ -1175,7 +1175,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					return nil
 				}
 				// pick arbitrary one file to detect the format.
-				e.updateFormat(remotePath)
+				e.detectAndUpdateFormat(remotePath)
 				sourceType = e.getSourceType()
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
 				totalSize += size
@@ -1227,9 +1227,8 @@ func (e *LoadDataController) getFileRealSize(ctx context.Context,
 func (e *LoadDataController) detectAndUpdateFormat(path string) {
 	if e.Format == DataFormatAuto {
 		e.Format = parseFileType(path)
-		if e.Parameters != nil {
-			e.Parameters.Format = e.Format
-		}
+		e.logger.Info("detect and update data format based on file extension", zap.String("file", path), zap.String("detected format", e.Format))
+		e.Parameters.Format = e.Format
 	}
 }
 
