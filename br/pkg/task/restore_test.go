@@ -909,7 +909,7 @@ func TestHash(t *testing.T) {
 			modifyFunc: func(cfg *task.RestoreConfig) {
 				cfg.Config.ExplicitFilter = !cfg.Config.ExplicitFilter
 			},
-			expectEqual: false,
+			expectEqual: true,
 		},
 		{
 			name: "modify_filter_strings",

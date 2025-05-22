@@ -314,7 +314,7 @@ func Hash(cmdName string, cfg *RestoreConfig) ([]byte, error) {
 	config := immutableRestoreConfig{
 		CmdName:           cmdName,
 		UpstreamClusterID: cfg.UpstreamClusterID,
-		Storage:           cfg.Storage,
+		Storage:           ast.RedactURL(cfg.Storage),
 		FilterStr:         cfg.FilterStr,
 		WithSysTable:      cfg.WithSysTable,
 	}
