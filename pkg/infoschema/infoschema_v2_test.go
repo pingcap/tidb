@@ -596,6 +596,7 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 	require.Equal(t, tblInfo.Lock, tblInfo1.Lock)
 	tblInfo.Lock = nil
 	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionUnlockTable, 10, infoschemacontext.TableLockAttribute, false)
+<<<<<<< HEAD
 
 	// test foreign key correctness in schema change
 	tblInfo.ForeignKeys = []*model.FKInfo{{
@@ -611,6 +612,8 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 	require.Equal(t, tblInfo.ForeignKeys, tblInfo1.ForeignKeys)
 	tblInfo.ForeignKeys = nil
 	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropForeignKey, 12, infoschemacontext.ForeignKeysAttribute, false)
+=======
+>>>>>>> fe6d5d6fd40 (infoschema: remove foreign key table from tableInfoResident (#59879))
 }
 
 func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
