@@ -3199,6 +3199,16 @@ DistributeTableStmt:
 			Engine:         ast.NewCIStr($10),
 		}
 	}
+|	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOrAssignmentEq Identifier "ENGINE" EqOrAssignmentEq Identifier "DURATION" EqOrAssignmentEq Identifier
+	{
+		$$ = &ast.DistributeTableStmt{
+			Table:          $3.(*ast.TableName),
+			PartitionNames: $4.([]ast.CIStr),
+			Rule:           ast.NewCIStr($7),
+			Engine:         ast.NewCIStr($10),
+			Duration:       ast.NewCIStr($13),
+		}
+	}
 
 CancelDistributionJobStmt:
 	"CANCEL" "DISTRIBUTION" "JOB" Int64Num
