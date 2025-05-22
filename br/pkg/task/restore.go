@@ -832,6 +832,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			restoreErr = err
 			return
 		}
+		log.Info("save the log restore table IDs blocklist into log backup storage")
 		if err = logTaskStorage.WriteFile(c, filename, data); err != nil {
 			restoreErr = err
 			return
@@ -1041,7 +1042,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			zap.Int("tables", len(tableMap)),
 			zap.Int("db", len(dbMap)))
 
-		if err := restore.CheckTableTrackerContainsTableIDsFromMarkerFiles(
+		if err := restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 			ctx, cfg.logRestoreStorage, cfg.PiTRTableTracker, backupMeta.GetEndVersion(), cfg.piTRTaskInfo.RestoreTS,
 		); err != nil {
 			return errors.Trace(err)

@@ -200,18 +200,18 @@ func TestCheckTableTrackerContainsTableIDsFromMarkerFiles(t *testing.T) {
 	writeMarkerFile(t, ctx, stg, 100, 10, []int64{100, 101, 102})
 	writeMarkerFile(t, ctx, stg, 200, 20, []int64{200, 201, 202})
 	writeMarkerFile(t, ctx, stg, 300, 30, []int64{300, 301, 302})
-	err = restore.CheckTableTrackerContainsTableIDsFromMarkerFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 250, 300)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 250, 300)
 	require.Error(t, err)
-	err = restore.CheckTableTrackerContainsTableIDsFromMarkerFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 250, 300)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 250, 300)
 	require.NoError(t, err)
-	err = restore.CheckTableTrackerContainsTableIDsFromMarkerFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 250, 300)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 250, 300)
 	require.NoError(t, err)
 
-	err = restore.CheckTableTrackerContainsTableIDsFromMarkerFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 1, 25)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 1, 25)
 	require.NoError(t, err)
-	err = restore.CheckTableTrackerContainsTableIDsFromMarkerFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 1, 25)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 1, 25)
 	require.Error(t, err)
-	err = restore.CheckTableTrackerContainsTableIDsFromMarkerFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 1, 25)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 1, 25)
 	require.Error(t, err)
 }
 
@@ -233,15 +233,15 @@ func TestTruncateLogRestoreTableIDsMarkerFiles(t *testing.T) {
 	writeMarkerFile(t, ctx, stg, 200, 20, []int64{200, 201, 202})
 	writeMarkerFile(t, ctx, stg, 300, 30, []int64{300, 301, 302})
 
-	err = restore.TruncateLogRestoreTableIDsMarkerFiles(ctx, stg, 50)
+	err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 50)
 	require.NoError(t, err)
 	require.Equal(t, 3, filesCount(t, ctx, stg))
 
-	err = restore.TruncateLogRestoreTableIDsMarkerFiles(ctx, stg, 250)
+	err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 250)
 	require.NoError(t, err)
 	require.Equal(t, 1, filesCount(t, ctx, stg))
 
-	err = restore.TruncateLogRestoreTableIDsMarkerFiles(ctx, stg, 350)
+	err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 350)
 	require.NoError(t, err)
 	require.Equal(t, 0, filesCount(t, ctx, stg))
 }

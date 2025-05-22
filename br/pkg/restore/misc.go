@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -54,7 +53,7 @@ const (
 	CoarseGrained Granularity = "coarse-grained"
 )
 
-const logRestoreTableIDMarkerFilePrefix = "v1/log_restore_tables"
+const logRestoreTableIDMarkerFilePrefix = "v1/log_restore_tables_blocklists"
 
 type LogRestoreTableIDsMarkerFile struct {
 	// RestoreCommitTs records the timestamp after PITR restore done. Only the later PITR restore from the log backup of the cluster,
@@ -73,8 +72,8 @@ func (m *LogRestoreTableIDsMarkerFile) Reset()         { *m = LogRestoreTableIDs
 func (m *LogRestoreTableIDsMarkerFile) String() string { return proto.CompactTextString(m) }
 func (m *LogRestoreTableIDsMarkerFile) ProtoMessage()  {}
 
-func (l *LogRestoreTableIDsMarkerFile) filename() string {
-	return fmt.Sprintf("%s/R%016X_S%016X.meta", logRestoreTableIDMarkerFilePrefix, l.RestoreCommitTs, l.SnapshotBackupTs)
+func (m *LogRestoreTableIDsMarkerFile) filename() string {
+	return fmt.Sprintf("%s/R%016X_S%016X.meta", logRestoreTableIDMarkerFilePrefix, m.RestoreCommitTs, m.SnapshotBackupTs)
 }
 
 func parseLogRestoreTableIDsMarkerFileName(filename string) (restoreCommitTs, snapshotBackupTs uint64, parsed bool) {
@@ -87,7 +86,7 @@ func parseLogRestoreTableIDsMarkerFileName(filename string) (restoreCommitTs, sn
 	}
 	ts, err := strconv.ParseUint(filename[1:17], 16, 64)
 	if err != nil {
-		log.Warn("failed to parse log restore table IDs marker file name", zap.String("filename", filename), zap.Error(err))
+		log.Warn("failed to parse log restore table IDs blocklist file name", zap.String("filename", filename), zap.Error(err))
 		return 0, 0, false
 	}
 	restoreCommitTs = ts
@@ -96,7 +95,7 @@ func parseLogRestoreTableIDsMarkerFileName(filename string) (restoreCommitTs, sn
 	}
 	ts, err = strconv.ParseUint(filename[19:35], 16, 64)
 	if err != nil {
-		log.Warn("failed to parse log restore table IDs marker file name", zap.String("filename", filename), zap.Error(err))
+		log.Warn("failed to parse log restore table IDs blocklist file name", zap.String("filename", filename), zap.Error(err))
 		return 0, 0, false
 	}
 	snapshotBackupTs = ts
@@ -141,7 +140,7 @@ func unmarshalLogRestoreTableIDsMarkerFile(data []byte) (restoreCommitTs, snapsh
 	}
 	if !bytes.Equal(markerFile.checksumLogRestoreTableIDsMarkerFile(), markerFile.Checksum) {
 		return 0, 0, nil, errors.Errorf(
-			"checksum mismatch (calculated checksum is %s but the recorded checksum is %s), the log restore table IDs marker file may be corrupted.",
+			"checksum mismatch (calculated checksum is %s but the recorded checksum is %s), the log restore table IDs blocklist file may be corrupted",
 			base64.StdEncoding.EncodeToString(markerFile.checksumLogRestoreTableIDsMarkerFile()),
 			base64.StdEncoding.EncodeToString(markerFile.Checksum),
 		)
@@ -168,7 +167,7 @@ func fastWalkLogRestoreTableIDsMarkerFile(
 	}); err != nil {
 		return errors.Trace(err)
 	}
-	workerpool := util.NewWorkerPool(8, "walk dir log restore table IDs marker files")
+	workerpool := tidbutil.NewWorkerPool(8, "walk dir log restore table IDs blocklist files")
 	eg, ectx := errgroup.WithContext(ctx)
 	for _, filename := range filenames {
 		if ectx.Err() != nil {
@@ -193,8 +192,8 @@ func fastWalkLogRestoreTableIDsMarkerFile(
 	return errors.Trace(eg.Wait())
 }
 
-// CheckTableTrackerContainsTableIDsFromMarkerFiles checks whether pitr id tracker contains the filtered table IDs from marker file.
-func CheckTableTrackerContainsTableIDsFromMarkerFiles(
+// CheckTableTrackerContainsTableIDsFromMarkerFiles checks whether pitr id tracker contains the filtered table IDs from blocklist file.
+func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 	ctx context.Context,
 	s storage.ExternalStorage,
 	tracker *utils.PiTRIdTracker,
@@ -216,8 +215,8 @@ func CheckTableTrackerContainsTableIDsFromMarkerFiles(
 	return errors.Trace(err)
 }
 
-// TruncateLogRestoreTableIDsMarkerFiles truncates the marker files whose restore commit ts is not larger than truncate until ts.
-func TruncateLogRestoreTableIDsMarkerFiles(
+// TruncateLogRestoreTableIDsMarkerFiles truncates the blocklist files whose restore commit ts is not larger than truncate until ts.
+func TruncateLogRestoreTableIDsBlocklistFiles(
 	ctx context.Context,
 	s storage.ExternalStorage,
 	untilTs uint64,

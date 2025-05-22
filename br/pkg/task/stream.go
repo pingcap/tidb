@@ -1195,14 +1195,14 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 
-	// begin to remove log restore table IDs marker files
-	removeLogRestoreTableIDsMarkerFilesDone := console.ShowTask("Removing log restore table IDs marker files...", glue.WithTimeCost())
+	// begin to remove log restore table IDs blocklist files
+	removeLogRestoreTableIDsMarkerFilesDone := console.ShowTask("Removing log restore table IDs blocklist files...", glue.WithTimeCost())
 	defer func() {
 		if removeLogRestoreTableIDsMarkerFilesDone != nil {
 			removeLogRestoreTableIDsMarkerFilesDone()
 		}
 	}()
-	if err := restore.TruncateLogRestoreTableIDsMarkerFiles(ctx, extStorage, cfg.Until); err != nil {
+	if err := restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, extStorage, cfg.Until); err != nil {
 		return errors.Trace(err)
 	}
 	removeLogRestoreTableIDsMarkerFilesDone()
@@ -1259,7 +1259,7 @@ func checkConflictingLogBackup(ctx context.Context, cfg *RestoreConfig, streamRe
 	}
 	if streamRestore && len(tasks) > 0 {
 		if tasks[0].Info.Storage == nil {
-			return nil, errors.Errorf("cannot save log restore table IDs marker file because the external storage backend of the task[%s] is empty.", tasks[0].Info.Name)
+			return nil, errors.Errorf("cannot save log restore table IDs blocklist file because the external storage backend of the task[%s] is empty.", tasks[0].Info.Name)
 		}
 		return tasks[0].Info.Storage, nil
 	}
