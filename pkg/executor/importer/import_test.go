@@ -450,3 +450,39 @@ func TestGetDataSourceType(t *testing.T) {
 	}))
 	require.Equal(t, DataSourceTypeFile, getDataSourceType(&plannercore.ImportInto{}))
 }
+func TestParseFileType(t *testing.T) {
+	testCases := []struct {
+		name     string
+		path     string
+		expected string
+	}{
+		// Basic file extensions
+		{name: "sql extension", path: "test.sql", expected: DataFormatSQL},
+		{name: "parquet extension", path: "data.parquet", expected: DataFormatParquet},
+		{name: "csv extension", path: "file.csv", expected: DataFormatCSV},
+		{name: "no extension", path: "noext", expected: DataFormatCSV},
+		// Single compression extension
+		{name: "sql with gz", path: "test.sql.gz", expected: DataFormatSQL},
+		{name: "parquet with zstd", path: "data.parquet.zst", expected: DataFormatParquet},
+		{name: "csv with snappy", path: "file.csv.snappy", expected: DataFormatCSV},
+		// Multiple compression extensions
+		{name: "sql with multiple compressions", path: "test.sql.zst.gz", expected: DataFormatSQL},
+		{name: "parquet with gzip and zstd", path: "data.parquet.gzip.zstd", expected: DataFormatParquet},
+		// Edge cases after removing compression
+		{name: "only compression extension", path: "file.gz", expected: DataFormatCSV},
+		{name: "non-recognized extension after compression", path: "document.txt.gz", expected: DataFormatCSV},
+		// Case insensitivity
+		{name: "uppercase extension", path: "TEST.SQL.GZ", expected: DataFormatSQL},
+		{name: "mixed case extension", path: "file.PARQUET.zst", expected: DataFormatParquet},
+		// Multiple dots in filename
+		{name: "multiple dots in name", path: "backup.file.sql.gz", expected: DataFormatSQL},
+		{name: "hidden file with compression", path: ".hidden.sql.gz", expected: DataFormatSQL},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := parseFileType(tc.path)
+			require.Equal(t, tc.expected, actual)
+		})
+	}
+}
