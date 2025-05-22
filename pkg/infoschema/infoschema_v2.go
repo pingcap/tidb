@@ -293,116 +293,6 @@ func (isd *Data) deleteDB(dbInfo *model.DBInfo, schemaVersion int64) {
 type referredForeignKeysHelper struct {
 	start           referredForeignKeyItem
 	schemaVersion   int64
-	prev            *referredForeignKeyItem
-	referredFKInfos []*model.ReferredFKInfo
-}
-
-func (h *referredForeignKeysHelper) onItem(item *referredForeignKeyItem) bool {
-	if item.dbName != h.start.dbName || item.tableName != h.start.tableName {
-		return false
-	}
-	if item.schemaVersion > h.schemaVersion {
-		return true
-	}
-	if h.prev != nil &&
-		h.prev.referredFKInfo.ChildSchema.L == item.referredFKInfo.ChildSchema.L &&
-		h.prev.referredFKInfo.ChildTable.L == item.referredFKInfo.ChildTable.L &&
-		h.prev.referredFKInfo.ChildFKName.L == item.referredFKInfo.ChildFKName.L {
-		return true
-	}
-	h.prev = item
-	if !item.tomb {
-		h.referredFKInfos = append(h.referredFKInfos, item.referredFKInfo)
-	}
-	return true
-}
-
-func (isd *Data) getTableReferredForeignKeys(schema, table string, schemaMetaVersion int64) []*model.ReferredFKInfo {
-	helper := referredForeignKeysHelper{
-		start:           referredForeignKeyItem{dbName: schema, tableName: table, schemaVersion: math.MaxInt64},
-		schemaVersion:   schemaMetaVersion,
-		referredFKInfos: make([]*model.ReferredFKInfo, 0),
-	}
-	isd.referredForeignKeys.Load().DescendLessOrEqual(&helper.start, helper.onItem)
-
-	sort.Slice(helper.referredFKInfos, func(i, j int) bool {
-		if helper.referredFKInfos[i].ChildSchema.L != helper.referredFKInfos[j].ChildSchema.L {
-			return helper.referredFKInfos[i].ChildSchema.L < helper.referredFKInfos[j].ChildSchema.L
-		}
-		if helper.referredFKInfos[i].ChildTable.L != helper.referredFKInfos[j].ChildTable.L {
-			return helper.referredFKInfos[i].ChildTable.L < helper.referredFKInfos[j].ChildTable.L
-		}
-		return helper.referredFKInfos[i].ChildFKName.L < helper.referredFKInfos[j].ChildFKName.L
-	})
-	return helper.referredFKInfos
-}
-
-func (isd *Data) addReferredForeignKeys(schema ast.CIStr, tbInfo *model.TableInfo, schemaMetaVersion int64) {
-	for _, fk := range tbInfo.ForeignKeys {
-		if fk.Version < model.FKVersion1 {
-			continue
-		}
-		// found if already exists
-		referredFKInfos := isd.getTableReferredForeignKeys(fk.RefSchema.L, fk.RefTable.L, schemaMetaVersion)
-		found := false
-		for _, referredFK := range referredFKInfos {
-			if referredFK.ChildSchema.L == schema.L && referredFK.ChildTable.L == tbInfo.Name.L && referredFK.ChildFKName.L == fk.Name.L {
-				found = true
-				break
-			}
-		}
-		if found {
-			continue
-		}
-		btreeSet(&isd.referredForeignKeys, &referredForeignKeyItem{
-			dbName:        fk.RefSchema.L,
-			tableName:     fk.RefTable.L,
-			schemaVersion: schemaMetaVersion,
-			referredFKInfo: &model.ReferredFKInfo{
-				Cols:        fk.RefCols,
-				ChildSchema: schema,
-				ChildTable:  tbInfo.Name,
-				ChildFKName: fk.Name,
-			},
-		})
-	}
-}
-
-func (isd *Data) deleteReferredForeignKeys(schema ast.CIStr, tbInfo *model.TableInfo, schemaMetaVersion int64) {
-	for _, fk := range tbInfo.ForeignKeys {
-		if fk.Version < model.FKVersion1 {
-			continue
-		}
-		// found if already exists
-		referredFKInfos := isd.getTableReferredForeignKeys(fk.RefSchema.L, fk.RefTable.L, schemaMetaVersion)
-		found := false
-		for _, referredFK := range referredFKInfos {
-			if referredFK.ChildSchema.L == schema.L && referredFK.ChildTable.L == tbInfo.Name.L && referredFK.ChildFKName.L == fk.Name.L {
-				found = true
-				break
-			}
-		}
-		if !found {
-			continue
-		}
-		btreeSet(&isd.referredForeignKeys, &referredForeignKeyItem{
-			dbName:        fk.RefSchema.L,
-			tableName:     fk.RefTable.L,
-			schemaVersion: schemaMetaVersion,
-			tomb:          true,
-			referredFKInfo: &model.ReferredFKInfo{
-				Cols:        fk.RefCols,
-				ChildSchema: schema,
-				ChildTable:  tbInfo.Name,
-				ChildFKName: fk.Name,
-			},
-		})
-	}
-}
-
-type referredForeignKeysHelper struct {
-	start           referredForeignKeyItem
-	schemaVersion   int64
 	referredFKInfos []*model.ReferredFKInfo
 }
 
@@ -627,41 +517,6 @@ func (isd *Data) GCOldVersion(schemaVersion int64) (int, int64) {
 	return len(dels), int64(isd.byName.Load().Len())
 }
 
-// GCOldFKVersion compacts btree nodes by removing items older than schema version.
-func (isd *Data) gcOldFKVersion(schemaVersion int64) {
-	maxv, ok := isd.referredForeignKeys.Load().Max()
-	if !ok {
-		return
-	}
-
-	var total int64
-	var deletes []*referredForeignKeyItem
-	var prev *referredForeignKeyItem
-	isd.referredForeignKeys.Load().DescendLessOrEqual(maxv, func(item *referredForeignKeyItem) bool {
-		total++
-		if item.schemaVersion < schemaVersion {
-			if prev != nil && prev.dbName == item.dbName && prev.tableName == item.tableName && prev.referredFKInfo.ChildSchema.L == item.referredFKInfo.ChildSchema.L && prev.referredFKInfo.ChildTable.L == item.referredFKInfo.ChildTable.L && prev.referredFKInfo.ChildFKName.L == item.referredFKInfo.ChildFKName.L {
-				deletes = append(deletes, item)
-				if len(deletes) > 1024 {
-					return false
-				}
-			}
-		}
-		prev = item
-		return true
-	})
-
-	oldFKs := isd.referredForeignKeys.Load()
-	newFKs := oldFKs.Clone()
-	for _, item := range deletes {
-		newFKs.Delete(item)
-	}
-	succ := isd.referredForeignKeys.CompareAndSwap(oldFKs, newFKs)
-	if !succ {
-		logutil.BgLogger().Info("infoschema v2 GCOldFKVersion() writes conflict, leave it to the next time.")
-	}
-}
-
 // resetBeforeFullLoad is called before a full recreate operation within builder.InitWithDBInfos().
 // TODO: write a generics version to avoid repeated code.
 func (isd *Data) resetBeforeFullLoad(schemaVersion int64) {
@@ -743,47 +598,6 @@ func resetByNameBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*tableItem]], sc
 				tableID:       item.tableID,
 				schemaVersion: schemaVersion,
 				tomb:          true,
-			})
-		}
-		items = items[:0]
-	}
-}
-
-func resetFKBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*referredForeignKeyItem]], schemaVersion int64) {
-	bt := ptr.Load()
-	pivot, ok := bt.Max()
-	if !ok {
-		return
-	}
-
-	batchSize := 1000
-	if bt.Len() < batchSize {
-		batchSize = bt.Len()
-	}
-	items := make([]*referredForeignKeyItem, 0, batchSize)
-
-	var prev *referredForeignKeyItem
-	for {
-		bt.DescendLessOrEqual(pivot, func(item *referredForeignKeyItem) bool {
-			if prev != nil && prev.dbName == item.dbName && prev.tableName == item.tableName && prev.referredFKInfo.ChildSchema.L == item.referredFKInfo.ChildSchema.L && prev.referredFKInfo.ChildTable.L == item.referredFKInfo.ChildTable.L && prev.referredFKInfo.ChildFKName.L == item.referredFKInfo.ChildFKName.L {
-				return true // skip MVCC version
-			}
-			prev = item
-			if !item.tomb {
-				items = append(items, pivot)
-			}
-			return len(items) < cap(items)
-		})
-		if len(items) == 0 {
-			break
-		}
-		for _, item := range items {
-			btreeSet(ptr, &referredForeignKeyItem{
-				dbName:         item.dbName,
-				tableName:      item.tableName,
-				schemaVersion:  schemaVersion,
-				referredFKInfo: item.referredFKInfo,
-				tomb:           true,
 			})
 		}
 		items = items[:0]
