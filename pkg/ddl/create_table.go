@@ -997,7 +997,14 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 		var colName string
 		for _, keyPart := range constr.Keys {
 			if keyPart.Expr != nil {
-				colName = getAnonymousIndexPrefix(constr.Option != nil && constr.Option.Tp == ast.IndexTypeVector)
+				switch constr.Tp {
+				case ast.ConstraintVector:
+					colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeVector, false)
+				case ast.ConstraintFulltext:
+					colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeNA, true)
+				default:
+					colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeNA, false)
+				}
 			}
 		}
 		if colName == "" {
@@ -1323,6 +1330,9 @@ func BuildTableInfo(
 			default:
 				return nil, dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(constr.Option.Tp)
 			}
+			columnarIndexType = model.ColumnarIndexTypeVector
+		case ast.ConstraintFulltext:
+			fulltext = true
 		}
 
 		// check constraint

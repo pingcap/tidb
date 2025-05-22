@@ -1180,10 +1180,8 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			// if the type is still prefixable and larger than old prefix length.
 			prefixLength = ic.Length
 		}
-		if columnarIndexType == model.ColumnarIndexTypeNA {
-			if err := checkIndexColumn(col, prefixLength, false); err != nil {
-				return err
-			}
+		if err := checkIndexColumn(col, prefixLength, false, columnarIndexType, isFulltext); err != nil {
+			return err
 		}
 	}
 	return nil

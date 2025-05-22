@@ -174,22 +174,22 @@ const (
 	ColumnarIndexTypeInverted
 	// ColumnarIndexTypeVector is the vector index type.
 	ColumnarIndexTypeVector
-	// ColumnarIndexTypeFulltext is the fulltext index type.
-	ColumnarIndexTypeFulltext
 )
 
-// SQLName returns the SQL keyword name of the columnar index. Used in log messages or error messages.
-func (c ColumnarIndexType) SQLName() string {
-	switch c {
-	case ColumnarIndexTypeVector:
-		return "vector index"
-	case ColumnarIndexTypeInverted:
-		return "inverted index"
-	case ColumnarIndexTypeFulltext:
-		return "fulltext index"
-	default:
-		return "columnar index"
-	}
+// ParserType is the type of fulltext index.
+type ParserType string
+
+const (
+	ParserTypeAuto         ParserType = "auto"
+	ParserTypeStandard     ParserType = "standard"
+	ParserTypeMultilingual ParserType = "multilingual"
+)
+
+// FulltextIndexInfo is the information of fulltext index of a column.
+type FulltextIndexInfo struct {
+	ParserType ParserType `json:"parser_type"`
+	// not provide any parameters for now
+	IndexParameters map[string]string `json:"index_parameters"`
 }
 
 // IndexInfo provides meta data describing a DB index.
@@ -202,16 +202,15 @@ type IndexInfo struct {
 	Columns       []*IndexColumn     `json:"idx_cols"` // Index columns.
 	State         SchemaState        `json:"state"`
 	BackfillState BackfillState      `json:"backfill_state"`
-	Comment       string             `json:"comment"`         // Comment
-	Tp            ast.IndexType      `json:"index_type"`      // Index type: Btree, Hash, Rtree, Vector, Inverted, Fulltext
-	Unique        bool               `json:"is_unique"`       // Whether the index is unique.
-	Primary       bool               `json:"is_primary"`      // Whether the index is primary key.
-	Invisible     bool               `json:"is_invisible"`    // Whether the index is invisible.
-	Global        bool               `json:"is_global"`       // Whether the index is global.
-	MVIndex       bool               `json:"mv_index"`        // Whether the index is multivalued index.
-	VectorInfo    *VectorIndexInfo   `json:"vector_index"`    // VectorInfo is the vector index information.
-	InvertedInfo  *InvertedIndexInfo `json:"inverted_index"`  // InvertedInfo is the inverted index information.
-	FullTextInfo  *FullTextIndexInfo `json:"full_text_index"` // FullTextInfo is the FULLTEXT index information.
+	Comment       string             `json:"comment"`        // Comment
+	Tp            ast.IndexType      `json:"index_type"`     // Index type: Btree, Hash, Rtree or HNSW
+	Unique        bool               `json:"is_unique"`      // Whether the index is unique.
+	Primary       bool               `json:"is_primary"`     // Whether the index is primary key.
+	Invisible     bool               `json:"is_invisible"`   // Whether the index is invisible.
+	Global        bool               `json:"is_global"`      // Whether the index is global.
+	MVIndex       bool               `json:"mv_index"`       // Whether the index is multivalued index.
+	VectorInfo    *VectorIndexInfo   `json:"vector_index"`   // VectorInfo is the vector index information.
+	FulltextInfo  *FulltextIndexInfo `json:"fulltext_index"` // FulltextInfo is the fulltext index information.
 }
 
 // Hash64 implement HashEquals interface.
@@ -282,7 +281,13 @@ func (index *IndexInfo) IsPublic() bool {
 // IsColumnarIndex checks whether the index is a columnar index.
 // Columnar index only exists in TiFlash, no actual index data need to be written to KV layer.
 func (index *IndexInfo) IsColumnarIndex() bool {
-	return index.VectorInfo != nil || index.InvertedInfo != nil || index.FullTextInfo != nil
+	return index.VectorInfo != nil
+}
+
+// IsFulltextIndex checks whether the index is a fulltext index.
+// Fulltext index only exists in TiCI, no actual index data need to be written to KV layer.
+func (index *IndexInfo) IsFulltextIndex() bool {
+	return index.FulltextInfo != nil
 }
 
 // GetColumnarIndexType returns the type of columnar index.
