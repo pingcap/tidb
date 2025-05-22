@@ -218,15 +218,36 @@ func TestPipelinedDMLPositive(t *testing.T) {
 	// enable by hint
 	// Hint works for DELETE and UPDATE, but not for INSERT if the hint is in its select clause.
 	tk.MustExec("set @@tidb_dml_type = standard")
-	err = panicToErr(
-		func() error {
-			_, err := tk.Exec("delete /*+ SET_VAR(tidb_dml_type=bulk) */ from t")
-			// "insert into t select /*+ SET_VAR(tidb_dml_type=bulk) */ * from t" won't work
-			return err
-		},
-	)
-	require.Error(t, err)
-	require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error())
+	dmls := [][2]string{
+		{"update t set b = b + 1", "update /*+ SET_VAR(tidb_dml_type=bulk) */ t set b = b + 1"},
+		{"insert into t select * from t", "insert /*+ SET_VAR(tidb_dml_type=bulk) */ into t select * from t"},
+		{"delete from t", "delete /*+ SET_VAR(tidb_dml_type=bulk) */ from t"},
+	}
+	for _, dmlPair := range dmls {
+		err := panicToErr(
+			func() error {
+				_, err := tk.Exec(dmlPair[1])
+				return err
+			},
+		)
+		require.Error(t, err)
+		require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error())
+	}
+
+	// test global binding
+	for _, dmlPair := range dmls {
+		tk.MustExec("create global binding for " + dmlPair[0] + " using " + dmlPair[1])
+	}
+	for _, dmlPair := range dmls {
+		err := panicToErr(
+			func() error {
+				_, err := tk.Exec(dmlPair[0])
+				return err
+			},
+		)
+		require.Error(t, err, dmlPair[0])
+		require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error())
+	}
 }
 
 func TestPipelinedDMLNegative(t *testing.T) {
@@ -314,7 +335,7 @@ func prepareData(tk *testkit.TestKit) {
 	tk.MustExec("create table t (a int primary key, b int)")
 	tk.MustExec("create table _t like t")
 	results := make([]string, 0, 100)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 		results = append(results, fmt.Sprintf("%d %d", i, i))
 	}
@@ -520,7 +541,7 @@ func TestPipelinedDMLInsertOnDuplicateKeyUpdateInTxn(t *testing.T) {
 	tk.MustExec("create table t1 (a int, b int, c varchar(128), unique index idx(b))")
 	cnt := 2000
 	values := bytes.NewBuffer(make([]byte, 0, 10240))
-	for i := 0; i < cnt; i++ {
+	for i := range cnt {
 		if i > 0 {
 			values.WriteString(", ")
 		}
@@ -768,7 +789,7 @@ func TestConflictError(t *testing.T) {
 	tk.MustExec("create table _t1(a int primary key, b int)")
 	var insert strings.Builder
 	insert.WriteString("insert into t1 values")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if i > 0 {
 			insert.WriteString(",")
 		}

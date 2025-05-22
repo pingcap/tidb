@@ -311,7 +311,7 @@ func evalSplitDatumFromArgs(
 	if len(opt.Lower) == 0 && len(opt.Upper) == 0 && opt.Num > 0 {
 		lowerVals := make([]types.Datum, 0, len(idxInfo.Columns))
 		upperVals := make([]types.Datum, 0, len(idxInfo.Columns))
-		for i := 0; i < len(idxInfo.Columns); i++ {
+		for range idxInfo.Columns {
 			lowerVals = append(lowerVals, types.MinNotNullDatum())
 			upperVals = append(upperVals, types.MaxValueDatum())
 		}

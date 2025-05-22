@@ -41,6 +41,7 @@ go_library(
         "//pkg/util/deadlockhistory",
         "//pkg/util/disk",
         "//pkg/util/domainutil",
+        "//pkg/util/intest",
         "//pkg/util/kvcache",
         "//pkg/util/logutil",
         "//pkg/util/memory",

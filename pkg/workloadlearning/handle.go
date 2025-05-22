@@ -113,7 +113,7 @@ func (*Handle) analyzeBasedOnStatementSummary() []*TableReadCostMetrics {
 }
 
 // TODO
-func (*Handle) analyzeBasedOnStatementStats() ([]*TableReadCostMetrics, time.Time, time.Time) {
+func (*Handle) analyzeBasedOnStatementStats() (middleMetrics []*TableReadCostMetrics, startTime, endTime time.Time) {
 	// step1: get all record from statement_stats
 	// step2: abstract table cost metrics from each record
 	// TODO change the mock value
