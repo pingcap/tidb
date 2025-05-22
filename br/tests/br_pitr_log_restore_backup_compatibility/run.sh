@@ -84,7 +84,7 @@ run_sql "insert into test.t4 values (4), (40), (400)"
 
 # snapshot backup
 echo "run snapshot backup"
-run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full2"
+run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full3"
 
 # prepare the incremental data
 run_sql "insert into test.t4 values (44), (444)"
