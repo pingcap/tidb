@@ -33,6 +33,8 @@ function start_tidb() {
 }
 
 function start_tidb_fixed_version() {
+  export VERSION_SOURCE="v8.5.1"
+
   echo "Starting TiUP Playground in the background..."
   tiup playground v8.5.1 --db=1 --kv=1 --tiflash=1 --db.config=./config.toml &
 
