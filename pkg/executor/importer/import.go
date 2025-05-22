@@ -1396,8 +1396,8 @@ func (p *Plan) IsGlobalSort() bool {
 	return !p.IsLocalSort()
 }
 
-// checkCSVOnlyOptions check all csc only options is default or not in plan when
-// format is not csv. Skip check for not ImportInto plan and csv format.
+// non CSV format should not specify CSV only options, we check it again if the
+// format is detected automatically.
 func (p *Plan) checkNonCSVFormatOptions() error {
 	if !p.InImportInto || p.Format == DataFormatCSV {
 		return nil
