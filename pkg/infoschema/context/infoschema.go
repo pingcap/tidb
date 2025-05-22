@@ -71,11 +71,6 @@ var TableLockAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.Lock != nil
 }
 
-// ForeignKeysAttribute is the ForeignKeys attribute filter used by ListTablesWithSpecialAttribute.
-var ForeignKeysAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
-	return len(t.ForeignKeys) > 0
-}
-
 // PartitionAttribute is the Partition attribute filter used by ListTablesWithSpecialAttribute.
 var PartitionAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.GetPartitionInfo() != nil
