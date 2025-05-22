@@ -354,13 +354,15 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalIndexLookUpReader:
 		childCtx.isRoot = false
-		childCtx.reqType = Cop
-		childCtx.storeType = kv.TiKV
+		childCtx.storeType = plan.IndexStoreType
+		childCtx.reqType = plan.ReadReqType
 		childCtx.label = BuildSide
 		childCtx.isLastChild = false
 		target, childIdx = f.flattenRecursively(plan.indexPlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
 		childCtx.label = ProbeSide
+		childCtx.reqType = Cop
+		childCtx.storeType = kv.TiKV
 		childCtx.isLastChild = true
 		// set the index lookup child signal.
 		childCtx.isINLProbeChild = true
