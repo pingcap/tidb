@@ -698,13 +698,8 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 
 	mustAnalyzedCols := &calcOnceMap{data: make(map[int64]struct{})}
 
-<<<<<<< HEAD
-	// TODO(hi-rustin): Find a better way to mock SQL execution.
-	// Test case 3: PredicateColumns.
-=======
 	// TODO(0xPoe): Find a better way to mock SQL execution.
-	// Test case 2: PredicateColumns(default)
->>>>>>> 2dce92429d7 (*: update owners aliases (#61164))
+	// Test case 3: PredicateColumns.
 
 	// Test case 4: ColumnList.
 	specifiedCols := []*model.ColumnInfo{columns[0], columns[2]}
