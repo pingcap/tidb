@@ -1733,6 +1733,9 @@ type SessionVars struct {
 
 	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
 	BulkDMLEnabled bool
+
+	// CreateFromSelectUsingImport indicates whether to use import into to create table as select.
+	CreateFromSelectUsingImport bool
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.

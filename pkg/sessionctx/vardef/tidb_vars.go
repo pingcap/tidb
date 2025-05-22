@@ -280,6 +280,9 @@ const (
 	// TiDBExplicitRequestSourceType indicates the source of the request, it's a complement of RequestSourceType.
 	// The value maybe "lightning", "br", "dumpling" etc.
 	TiDBExplicitRequestSourceType = "tidb_request_source_type"
+
+	// TiDBCreateFromSelectUsingImport indicates whether to use import into to create table as select.
+	TiDBCreateFromSelectUsingImport = "tidb_create_from_select_using_import"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -1657,6 +1660,7 @@ const (
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 	DefTiDBCircuitBreakerPDMetaErrorRatePct           = 0
 	DefTiDBAccelerateUserCreationUpdate               = false
+	DefTiDBCreateFromSelectUsingImport                = false
 )
 
 // Process global variables.

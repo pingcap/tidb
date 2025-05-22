@@ -1184,7 +1184,10 @@ type CreateTableStmt struct {
 	Options        []*TableOption
 	Partition      *PartitionOptions
 	OnDuplicate    OnDuplicateKeyHandlingType
-	Select         ResultSetNode
+
+	// used for CREATE TABLE AS SELECT (CTAS)
+	Select        ResultSetNode
+	SelectColumns []*CIStr
 }
 
 // Restore implements Node interface.
