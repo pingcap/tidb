@@ -76,6 +76,14 @@ func attachPlan2Task(p base.PhysicalPlan, t base.Task) base.Task {
 			v.indexPlan = p
 		}
 	case *RootTask:
+		if proj, ok := p.(*PhysicalProjection); ok {
+			if childProj, ok := v.GetPlan().(*PhysicalProjection); ok {
+				if proj.sameProjection(childProj) {
+					//p.SetChildren(childProj.Children()...)
+					//v.SetPlan(p)
+				}
+			}
+		}
 		p.SetChildren(v.GetPlan())
 		v.SetPlan(p)
 	case *MppTask:
@@ -1447,16 +1455,15 @@ func (p *PhysicalProjection) Attach2Task(tasks ...base.Task) base.Task {
 		}
 	} else if mpp, ok := t.(*MppTask); ok {
 		if expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Exprs, kv.TiFlash) {
-			if p.sameProjection(tasks...) {
-				return mpp
+			if p.sameProjectionWithTasks(tasks...) {
+				p.SetChildren(tasks[0].Plan().Children()...)
+				mpp.p = p
+			} else {
+				p.SetChildren(mpp.p)
 			}
-			p.SetChildren(mpp.p)
 			mpp.p = p
 			return mpp
 		}
-	}
-	if p.sameProjection(tasks...) {
-		return tasks[0]
 	}
 	t = t.ConvertToRootTask(p.SCtx())
 	t = attachPlan2Task(p, t)
@@ -1466,20 +1473,25 @@ func (p *PhysicalProjection) Attach2Task(tasks ...base.Task) base.Task {
 	return t
 }
 
-func (p *PhysicalProjection) sameProjection(tasks ...base.Task) bool {
+func (p *PhysicalProjection) sameProjectionWithTasks(tasks ...base.Task) bool {
 	if len(tasks) == 1 {
 		if childProjection, ok := tasks[0].Plan().(*PhysicalProjection); ok {
-			evalExpr := p.SCtx().GetExprCtx().GetEvalCtx()
-			if childProjection.BasePhysicalPlan.GetChildReqProps(0) == nil {
-				return false
-			}
-			if equalExpression(evalExpr, p.Exprs, childProjection.Exprs) {
-				return true
-			}
-			if equalColumns(evalExpr, p.Exprs, childProjection.Schema().Columns) {
-				return true
-			}
+			return p.sameProjection(childProjection)
 		}
+	}
+	return false
+}
+
+func (p *PhysicalProjection) sameProjection(project *PhysicalProjection) bool {
+	evalExpr := p.SCtx().GetExprCtx().GetEvalCtx()
+	if project.BasePhysicalPlan.GetChildReqProps(0) == nil {
+		return false
+	}
+	if equalExpression(evalExpr, p.Exprs, project.Exprs) {
+		return true
+	}
+	if equalColumns(evalExpr, p.Exprs, project.Schema().Columns) {
+		return true
 	}
 	return false
 }
