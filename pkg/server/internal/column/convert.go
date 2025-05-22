@@ -42,6 +42,9 @@ func ConvertColumnInfo(fld *resolve.ResultField) (ci *Info) {
 	}
 	if fld.Column.GetFlen() != types.UnspecifiedLength {
 		ci.ColumnLength = uint32(fld.Column.GetFlen())
+	} else {
+		clen, _ := mysql.GetDefaultFieldLengthAndDecimal(fld.Column.GetType())
+		ci.ColumnLength = uint32(clen)
 	}
 	if fld.Column.GetType() == mysql.TypeNewDecimal {
 		// Consider the negative sign.
