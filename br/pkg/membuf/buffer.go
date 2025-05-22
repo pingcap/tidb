@@ -14,7 +14,10 @@
 
 package membuf
 
-import "unsafe"
+import (
+	"math"
+	"unsafe"
+)
 
 const (
 	defaultPoolSize  = 1024
@@ -95,6 +98,19 @@ func NewPool(opts ...Option) *Pool {
 	return p
 }
 
+func (p *Pool) LogLimierLimit(before bool) (int, int, int) {
+	if p.limiter != nil {
+		if before {
+			p.limiter.maxLimit = math.MinInt
+			p.limiter.minLimit = math.MaxInt
+			p.limiter.allocateLimit = 0
+			return p.limiter.limit, 0, 0
+		}
+		return p.limiter.limit, p.limiter.maxLimit - p.limiter.minLimit, p.limiter.allocateLimit
+	}
+	return -1, -1, -1
+}
+
 func (p *Pool) acquire() []byte {
 	if p.limiter != nil {
 		p.limiter.Acquire(p.blockSize)
@@ -173,6 +189,10 @@ func (p *Pool) NewBuffer(opts ...BufferOption) *Buffer {
 		b.blocks = make([][]byte, 0, 128)
 	}
 	return b
+}
+
+func (b *Buffer) GetSmallObjOverhead() int {
+	return b.smallObjOverhead
 }
 
 // smallObjOverheadBatch is the batch size to acquire memory from limiter. 256KB

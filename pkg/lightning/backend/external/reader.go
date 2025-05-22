@@ -19,8 +19,10 @@ import (
 	"context"
 	"encoding/hex"
 	"io"
+	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -64,7 +66,7 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	concurrences, startOffsets, err := getFilesReadConcurrency(
+	concurrences, startOffsets, err, estimateTotalSize, endOffsets := getFilesReadConcurrency(
 		ctx,
 		store,
 		statsFiles,
@@ -80,6 +82,28 @@ func readAllData(
 	readConn = min(readConn, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
+
+	var allFileKeySize, allFileValSize, allFileKeySizeAdd, allFileValSizeAdd, smallObjMem atomic.Int64
+	beforeLimit, _, _ := smallBlockBufPool.LogLimierLimit(true)
+	defer func() {
+		afterLimit, maxDiff, allocateLimit := smallBlockBufPool.LogLimierLimit(false)
+		logutil.BgLogger().Info("readAllData limiter",
+			zap.Int("before limit", beforeLimit),
+			zap.Int("after limit", afterLimit),
+			zap.Int("read conn", readConn),
+			zap.String("estimated total size", units.BytesSize(float64(estimateTotalSize))),
+			zap.String("limiter max-min diff", units.BytesSize(float64(maxDiff))),
+			zap.String("limiter before-after limiter", units.BytesSize(float64(beforeLimit-afterLimit))),
+			zap.String("read all k+v size", units.BytesSize(float64(allFileKeySize.Load()+allFileValSize.Load()))),
+			zap.String("key size", units.BytesSize(float64(allFileKeySize.Load()))),
+			zap.String("val size", units.BytesSize(float64(allFileValSize.Load()))),
+			zap.String("read all k+v size added", units.BytesSize(float64(allFileKeySizeAdd.Load()+allFileValSizeAdd.Load()))),
+			zap.String("key size added", units.BytesSize(float64(allFileKeySizeAdd.Load()))),
+			zap.String("val size added", units.BytesSize(float64(allFileValSizeAdd.Load()))),
+			zap.String("small object memory", units.BytesSize(float64(smallObjMem.Load()))),
+			zap.Int("limiter allocate memory", allocateLimit),
+		)
+	}()
 	for readIdx := 0; readIdx < readConn; readIdx++ {
 		eg.Go(func() error {
 			output.memKVBuffers[readIdx] = smallBlockBufPool.NewBuffer()
@@ -95,7 +119,7 @@ func readAllData(
 					if !ok {
 						return nil
 					}
-					err2 := readOneFile(
+					err2, keySize, valSize, keySizeAdd, valSizeAdd := readOneFile(
 						egCtx,
 						store,
 						dataFiles[fileIdx],
@@ -110,6 +134,26 @@ func readAllData(
 					if err2 != nil {
 						return errors.Annotatef(err2, "failed to read file %s", dataFiles[fileIdx])
 					}
+					if keySize > 0 {
+						allFileKeySize.Add(int64(keySize))
+					}
+					if valSize > 0 {
+						allFileValSize.Add(int64(valSize))
+					}
+					if keySizeAdd > 0 {
+						allFileKeySizeAdd.Add(int64(keySizeAdd))
+					}
+					if valSizeAdd > 0 {
+						allFileValSizeAdd.Add(int64(valSizeAdd))
+					}
+					smallObjMem.Add(int64(smallBlockBuf.GetSmallObjOverhead()))
+					estimateSize := endOffsets[fileIdx] - startOffsets[fileIdx]
+					logutil.BgLogger().Info("read one file",
+						zap.String("estimated size", units.BytesSize(float64(estimateSize))),
+						zap.String("size added", units.BytesSize(float64(keySizeAdd+valSizeAdd))),
+						zap.String("diff1_added", units.BytesSize(float64(keySizeAdd+valSizeAdd-int(estimateSize)))),
+						zap.String("diff2", units.BytesSize(float64(keySize+valSize-int(estimateSize)))),
+					)
 				}
 			}
 		})
@@ -136,14 +180,14 @@ func readOneFile(
 	smallBlockBuf *membuf.Buffer,
 	largeBlockBuf *membuf.Buffer,
 	output *memKVsAndBuffers,
-) error {
+) (error, int, int, int, int) {
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_one_file")
 
 	ts := time.Now()
 
 	rd, err := newKVReader(ctx, dataFile, storage, startOffset, 64*1024)
 	if err != nil {
-		return err
+		return err, -1, -1, -1, -1
 	}
 	defer rd.Close()
 	if concurrency > 1 {
@@ -156,7 +200,7 @@ func readOneFile(
 		)
 		err = rd.byteReader.switchConcurrentMode(true)
 		if err != nil {
-			return err
+			return err, -1, -1, -1, -1
 		}
 	}
 
@@ -165,14 +209,20 @@ func readOneFile(
 	size := 0
 	droppedSize := 0
 
+	totalKeySize := 0
+	totalValSize := 0
+	totalKeySizeAdd := 0
+	totalValSizeAdd := 0
 	for {
 		k, v, err := rd.nextKV()
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
-			return err
+			return err, -1, -1, -1, -1
 		}
+		totalKeySize += len(k)
+		totalValSize += len(v)
 		if bytes.Compare(k, startKey) < 0 {
 			droppedSize += len(k) + len(v)
 			continue
@@ -185,6 +235,8 @@ func readOneFile(
 		keys = append(keys, smallBlockBuf.AddBytes(k))
 		values = append(values, smallBlockBuf.AddBytes(v))
 		size += len(k) + len(v)
+		totalKeySizeAdd += len(k)
+		totalValSizeAdd += len(v)
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
 	output.mu.Lock()
@@ -193,5 +245,5 @@ func readOneFile(
 	output.size += size
 	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()
-	return nil
+	return nil, totalKeySize, totalValSize, totalKeySizeAdd, totalValSizeAdd
 }

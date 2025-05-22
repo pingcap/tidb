@@ -18,17 +18,21 @@ import (
 	"sync"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 // Limiter will block on Acquire if the number it has acquired and not released
 // exceeds the limit.
 type Limiter struct {
-	initLimit int
-	limit     int
-	mu        sync.Mutex
-	waitNums  []int
-	waitChs   []chan struct{}
+	initLimit     int
+	limit         int
+	mu            sync.Mutex
+	waitNums      []int
+	waitChs       []chan struct{}
+	maxLimit      int
+	minLimit      int
+	allocateLimit int
 }
 
 // NewLimiter creates a new Limiter with the given limit.
@@ -43,7 +47,15 @@ func (l *Limiter) Acquire(n int) {
 	l.mu.Lock()
 
 	if l.limit >= n {
+		logutil.BgLogger().Info("limiter allocate",
+			zap.Int("init limit", l.initLimit),
+			zap.Int("current limit", l.limit),
+			zap.Int("current allocate size", n),
+			zap.Int("total allocate size", l.initLimit-l.limit))
 		l.limit -= n
+		l.maxLimit = max(l.maxLimit, l.limit)
+		l.minLimit = min(l.minLimit, l.limit)
+		l.allocateLimit += n
 		l.mu.Unlock()
 		return
 	}
@@ -52,6 +64,7 @@ func (l *Limiter) Acquire(n int) {
 	l.waitNums = append(l.waitNums, n)
 	l.waitChs = append(l.waitChs, waitCh)
 	l.mu.Unlock()
+	logutil.BgLogger().Info("limiter allocate wait", zap.Int("allocate size", n))
 
 	<-waitCh
 }
