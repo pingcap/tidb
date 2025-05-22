@@ -68,8 +68,8 @@ type infoSchema struct {
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
 
-	//// referredForeignKeyMap records all table's ReferredFKInfo.
-	//// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
+	// referredForeignKeyMap records all table's ReferredFKInfo.
+	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
 	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
 }
 

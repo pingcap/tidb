@@ -873,10 +873,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			if op.UintValue > 0 && tbInfo.HasClusteredIndex() {
 				return dbterror.ErrUnsupportedShardRowIDBits
 			}
-			tbInfo.ShardRowIDBits = op.UintValue
-			if tbInfo.ShardRowIDBits > vardef.MaxShardRowIDBits {
-				tbInfo.ShardRowIDBits = vardef.MaxShardRowIDBits
-			}
+			tbInfo.ShardRowIDBits = min(op.UintValue, vardef.MaxShardRowIDBits)
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		case ast.TableOptionPreSplitRegion:
 			if tbInfo.TempTableType != model.TempTableNone {
@@ -1000,7 +997,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 		var colName string
 		for _, keyPart := range constr.Keys {
 			if keyPart.Expr != nil {
-				colName = getAnonymousIndexPrefix(constr.Tp == ast.ConstraintVector)
+				colName = getAnonymousIndexPrefix(constr.Option != nil && constr.Option.Tp == ast.IndexTypeVector)
 			}
 		}
 		if colName == "" {
@@ -1233,7 +1230,7 @@ func BuildTableInfo(
 	foreignKeyID := tbInfo.MaxForeignKeyID
 	for _, constr := range constraints {
 		var hiddenCols []*model.ColumnInfo
-		if constr.Tp != ast.ConstraintVector && constr.Tp != ast.ConstraintColumnar {
+		if constr.Tp != ast.ConstraintColumnar {
 			// Build hidden columns if necessary.
 			hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, constr.Keys, ast.NewCIStr(constr.Name), tbInfo, tblColumns)
 			if err != nil {
@@ -1301,11 +1298,6 @@ func BuildTableInfo(
 			}
 		}
 
-		if constr.Tp == ast.ConstraintFulltext {
-			ctx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
-			continue
-		}
-
 		var (
 			indexName         = constr.Name
 			primary, unique   bool
@@ -1320,16 +1312,17 @@ func BuildTableInfo(
 			indexName = mysql.PrimaryKeyName
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			unique = true
-		case ast.ConstraintVector:
-			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
-				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
-			}
-			columnarIndexType = model.ColumnarIndexTypeVector
 		case ast.ConstraintColumnar:
-			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
-				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set columnar index invisible")
+			switch constr.Option.Tp {
+			case ast.IndexTypeVector:
+				columnarIndexType = model.ColumnarIndexTypeVector
+			case ast.IndexTypeInverted:
+				columnarIndexType = model.ColumnarIndexTypeInverted
+			case ast.IndexTypeFulltext:
+				columnarIndexType = model.ColumnarIndexTypeFulltext
+			default:
+				return nil, dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(constr.Option.Tp)
 			}
-			columnarIndexType = model.ColumnarIndexTypeInverted
 		}
 
 		// check constraint

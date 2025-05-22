@@ -73,6 +73,7 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 		if err == nil || !retryAble {
 			return errors.Trace(err)
 		}
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		sleepTime := time.Duration(backoff*uint64(i)) * time.Millisecond
 		time.Sleep(sleepTime)
 	}
@@ -583,11 +584,14 @@ func initInternalClient() {
 	}
 	if tlsCfg == nil {
 		internalHTTPSchema = "http"
-		internalHTTPClient = http.DefaultClient
+		internalHTTPClient = &http.Client{
+			Timeout: 5 * time.Minute,
+		}
 		return
 	}
 	internalHTTPSchema = "https"
 	internalHTTPClient = &http.Client{
+		Timeout:   5 * time.Minute,
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
 }

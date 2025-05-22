@@ -192,18 +192,16 @@ func (c *CheckpointAdvancer) GetInResolvingLock() bool {
 // collect them to the collector.
 func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, end []byte,
 	collector *clusterCollector) error {
-	log.Debug("scanning range", logutil.Key("start", start), logutil.Key("end", end))
+	// don't log in this method as huge number of regions will make it a log spam
 	iter := IterateRegion(c.env, start, end)
 	for !iter.Done() {
 		rs, err := iter.Next(ctx)
 		if err != nil {
 			return err
 		}
-		log.Debug("scan region", zap.Int("len", len(rs)))
 		for _, r := range rs {
 			err := collector.CollectRegion(r)
 			if err != nil {
-				log.Warn("meet error during getting checkpoint", logutil.ShortError(err))
 				return err
 			}
 		}
@@ -225,6 +223,11 @@ func (c *CheckpointAdvancer) recordTimeCost(message string, fields ...zap.Field)
 // tryAdvance tries to advance the checkpoint ts of a set of ranges which shares the same checkpoint.
 func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int,
 	getRange func(int) kv.KeyRange) (err error) {
+	// early return if parent context already canceled
+	if ctx.Err() != nil {
+		log.Info("tryAdvance aborted due to context cancellation", zap.Error(ctx.Err()))
+		return ctx.Err()
+	}
 	defer c.recordTimeCost("try advance", zap.Int("len", length))()
 	defer utils.PanicToErr(&err)
 
@@ -247,6 +250,7 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int,
 	}
 	err = eg.Wait()
 	if err != nil {
+		log.Warn("meet error during getting checkpoint", logutil.ShortError(err))
 		return err
 	}
 
@@ -303,7 +307,9 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
 		})
 		minValue = vsf.Min()
 	})
-	sctx, cancel := context.WithTimeout(ctx, time.Second)
+	// use separate context. if parent context deadline exceeded, we still want to know the
+	// last region information.
+	sctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	// Always fetch the hint and update the metrics.
 	hint := c.fetchRegionHint(sctx, minValue.Key.StartKey)
 	logger := log.Debug
@@ -558,7 +564,7 @@ func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
 		log.Warn("Error when updating store topology.",
 			zap.String("category", "log backup advancer"), logutil.ShortError(err))
 	}
-	c.subscriber.HandleErrors(ctx)
+	c.subscriber.HandleErrors()
 	return c.subscriber.PendingErrors()
 }
 

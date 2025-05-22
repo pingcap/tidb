@@ -85,7 +85,7 @@ func TestCostModelTraceVer2(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int primary key, b int, c int, key(b))`)
 	vals := make([]string, 0, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		vals = append(vals, fmt.Sprintf("(%v, %v, %v)", i, i, i))
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(vals, ", ")))
@@ -673,7 +673,19 @@ func TestTiFlashCostFactors(t *testing.T) {
 	require.Nil(t, err3)
 	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
-	// Reset to default
+
+	// Reset TiFlash cost factor to default
 	tk.MustExec("set @@session.tidb_opt_table_tiflash_scan_cost_factor=1")
+
+	// Test TiFlash cost factor increase via hint
+	rs = tk.MustQuery("explain format=verbose select /*+ SET_VAR(tidb_opt_table_tiflash_scan_cost_factor=2) */ * from t").Rows()
+	planCost4, err4 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err4)
+	// 1st query should be cheaper than 4th query
+	require.Less(t, planCost1, planCost4)
+
+	// Reset table scan cost factor to default
 	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=1")
+	// Reset TiFlash cop to default
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=OFF")
 }

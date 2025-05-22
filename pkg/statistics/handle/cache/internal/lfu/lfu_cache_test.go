@@ -121,7 +121,7 @@ func TestLFUCachePutGetWithManyConcurrency(t *testing.T) {
 	require.NoError(t, err)
 	var wg sync.WaitGroup
 	wg.Add(2000)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		go func(i int) {
 			defer wg.Done()
 			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
@@ -146,19 +146,19 @@ func TestLFUCachePutGetWithManyConcurrency2(t *testing.T) {
 	require.NoError(t, err)
 	var wg sync.WaitGroup
 	wg.Add(10)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		go func() {
 			defer wg.Done()
-			for n := 0; n < 1000; n++ {
+			for n := range 1000 {
 				t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 				lfu.Put(int64(n), t1)
 			}
 		}()
 	}
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		go func() {
 			defer wg.Done()
-			for n := 0; n < 1000; n++ {
+			for n := range 1000 {
 				lfu.Get(int64(n))
 			}
 		}()
@@ -177,11 +177,11 @@ func TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency(t *testing.T) {
 	require.NoError(t, err)
 	var wg sync.WaitGroup
 	wg.Add(10)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		go func() {
 			defer wg.Done()
-			for c := 0; c < 1000; c++ {
-				for n := 0; n < 50; n++ {
+			for range 1000 {
+				for n := range 50 {
 					t1 := testutil.NewMockStatisticsTable(1, 1, true, true, true)
 					lfu.Put(int64(n), t1)
 				}
@@ -189,11 +189,11 @@ func TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency(t *testing.T) {
 		}()
 	}
 	time.Sleep(1 * time.Second)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		go func() {
 			defer wg.Done()
-			for c := 0; c < 1000; c++ {
-				for n := 0; n < 50; n++ {
+			for range 1000 {
+				for n := range 50 {
 					tbl, ok := lfu.Get(int64(n))
 					require.True(t, ok)
 					checkTable(t, tbl)
@@ -306,7 +306,7 @@ func TestMemoryControlWithUpdate(t *testing.T) {
 	capacity := int64(100)
 	lfu, err := NewLFU(capacity)
 	require.NoError(t, err)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		t1 := testutil.NewMockStatisticsTable(i, 1, true, false, false)
 		lfu.Put(1, t1)
 	}

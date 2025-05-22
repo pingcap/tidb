@@ -21,6 +21,7 @@ import (
 	"runtime"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/israce"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -63,7 +64,7 @@ func GetTiDBInfo() string {
 	if versioninfo.TiDBEnterpriseExtensionGitHash != "" {
 		enterpriseVersion = fmt.Sprintf("\nEnterprise Extension Commit Hash: %s", versioninfo.TiDBEnterpriseExtensionGitHash)
 	}
-	return fmt.Sprintf("Release Version: %s\n"+
+	info := fmt.Sprintf("Release Version: %s\n"+
 		"Edition: %s\n"+
 		"Git Commit Hash: %s\n"+
 		"Git Branch: %s\n"+
@@ -84,6 +85,10 @@ func GetTiDBInfo() string {
 		config.GetGlobalConfig().Store,
 		enterpriseVersion,
 	)
+	if kerneltype.IsNextGen() {
+		info += "\nKernel Type: Next Generation"
+	}
+	return info
 }
 
 // checkValidity checks whether cols and every data have the same length.

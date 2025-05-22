@@ -38,10 +38,7 @@ func StmtFetchCmd(data []byte) (stmtID uint32, fetchSize uint32, err error) {
 	}
 	// Please refer to https://dev.mysql.com/doc/internals/en/com-stmt-fetch.html
 	stmtID = binary.LittleEndian.Uint32(data[0:4])
-	fetchSize = binary.LittleEndian.Uint32(data[4:8])
-	if fetchSize > maxFetchSize {
-		fetchSize = maxFetchSize
-	}
+	fetchSize = min(binary.LittleEndian.Uint32(data[4:8]), maxFetchSize)
 	return
 }
 

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -242,7 +243,7 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	}
 
 	for _, d := range data {
-		err = checkpoint.AppendForBackup(ctx, checkpointRunner, "a", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
+		err = checkpoint.AppendForBackup(ctx, checkpointRunner, []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
 			{Name: d.Name},
 			{Name: d.Name2},
 		})
@@ -255,7 +256,7 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4)
 
 	for _, d := range data2 {
-		err = checkpoint.AppendForBackup(ctx, checkpointRunner, "+", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
+		err = checkpoint.AppendForBackup(ctx, checkpointRunner, []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
 			{Name: d.Name},
 			{Name: d.Name2},
 		})
@@ -264,7 +265,7 @@ func TestCheckpointBackupRunner(t *testing.T) {
 
 	checkpointRunner.WaitForFinish(ctx, true)
 
-	checker := func(groupKey string, resp checkpoint.BackupValueType) {
+	checker := func(groupKey string, resp checkpoint.BackupValueType) error {
 		require.NotNil(t, resp)
 		d, ok := data[string(resp.StartKey)]
 		if !ok {
@@ -275,6 +276,7 @@ func TestCheckpointBackupRunner(t *testing.T) {
 		require.Equal(t, d.EndKey, string(resp.EndKey))
 		require.Equal(t, d.Name, resp.Files[0].Name)
 		require.Equal(t, d.Name2, resp.Files[1].Name)
+		return nil
 	}
 
 	_, err = checkpoint.WalkCheckpointFileForBackup(ctx, s, cipher, checker)
@@ -370,7 +372,7 @@ func testCheckpointRestoreRunner(
 
 	require.NoError(t, err)
 	respCount := 0
-	checker := func(tableID int64, resp checkpoint.RestoreValueType) {
+	checker := func(tableID int64, resp checkpoint.RestoreValueType) error {
 		require.NotNil(t, resp)
 		d, ok := data[resp.RangeKey]
 		if !ok {
@@ -382,6 +384,7 @@ func testCheckpointRestoreRunner(
 		}
 		require.Equal(t, d.RangeKey, resp.RangeKey)
 		respCount += 1
+		return nil
 	}
 
 	_, err = snapshotMetaManager.LoadCheckpointData(ctx, checker)
@@ -456,8 +459,9 @@ func testCheckpointRunnerRetry(
 	checkpointRunner.WaitForFinish(ctx, true)
 
 	recordSet := make(map[string]int)
-	_, err = snapshotMetaManager.LoadCheckpointData(ctx, func(tableID int64, v checkpoint.RestoreValueType) {
+	_, err = snapshotMetaManager.LoadCheckpointData(ctx, func(tableID int64, v checkpoint.RestoreValueType) error {
 		recordSet[fmt.Sprintf("%d_%s", tableID, v.RangeKey)] += 1
+		return nil
 	})
 	require.NoError(t, err)
 	require.LessOrEqual(t, 1, recordSet["1_123"])
@@ -512,8 +516,9 @@ func testCheckpointRunnerNoRetry(
 
 	require.NoError(t, err)
 	recordSet := make(map[string]int)
-	_, err = snapshotMetaManager.LoadCheckpointData(ctx, func(tableID int64, v checkpoint.RestoreValueType) {
+	_, err = snapshotMetaManager.LoadCheckpointData(ctx, func(tableID int64, v checkpoint.RestoreValueType) error {
 		recordSet[fmt.Sprintf("%d_%s", tableID, v.RangeKey)] += 1
+		return nil
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, recordSet["1_123"])
@@ -597,7 +602,7 @@ func testCheckpointLogRestoreRunner(
 
 	require.NoError(t, err)
 	respCount := 0
-	checker := func(metaKey string, resp checkpoint.LogRestoreValueMarshaled) {
+	checker := func(metaKey string, resp checkpoint.LogRestoreValueMarshaled) error {
 		require.NotNil(t, resp)
 		d, ok := data[metaKey]
 		if !ok {
@@ -611,14 +616,13 @@ func testCheckpointLogRestoreRunner(
 			if !exists {
 				continue
 			}
-			for _, foff := range foffs {
-				if f.foff == foff {
-					respCount += 1
-					return
-				}
+			if slices.Contains(foffs, f.foff) {
+				respCount += 1
+				return nil
 			}
 		}
 		require.FailNow(t, "not found in the original data")
+		return nil
 	}
 
 	_, err = logMetaManager.LoadCheckpointData(ctx, checker)
