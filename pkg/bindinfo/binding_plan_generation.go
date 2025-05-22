@@ -285,6 +285,8 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 			sctx.GetSessionVars().OptOrderingIdxSelRatio = state.varValues[i].(float64)
 		case vardef.TiDBOptRiskEqSkewRatio:
 			sctx.GetSessionVars().RiskEqSkewRatio = state.varValues[i].(float64)
+		case vardef.TiDBOptPreferRangeScan:
+			sctx.GetSessionVars().SetAllowPreferRangeScan(state.varValues[i].(bool))
 		default:
 			return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
 		}
@@ -338,6 +340,8 @@ func adjustVar(varName string, varVal any) (newVarVal any, err error) {
 		}
 		// increase 0.1 each step
 		return v + 0.1, nil
+	case vardef.TiDBOptPreferRangeScan: // flip the switch
+		return !varVal.(bool), nil
 	}
 	return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
 }
@@ -409,6 +413,8 @@ func getStartState(vars []string, fixes []uint64) (*state, error) {
 			s.varValues = append(s.varValues, vardef.DefTiDBOptOrderingIdxSelRatio)
 		case vardef.TiDBOptRiskEqSkewRatio:
 			s.varValues = append(s.varValues, vardef.DefOptRiskEqSkewRatio)
+		case vardef.TiDBOptPreferRangeScan:
+			s.varValues = append(s.varValues, vardef.DefOptPreferRangeScan)
 		default:
 			return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
 		}
