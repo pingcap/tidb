@@ -308,7 +308,7 @@ func TestProcessChunkWith(t *testing.T) {
 			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
 			Chunk:    mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
-		ti := getTableImporter(ctx, t, store, "t", fileName, "csv", []*plannercore.LoadDataOpt{
+		ti := getTableImporter(ctx, t, store, "t", fileName, importer.DataFormatCSV, []*plannercore.LoadDataOpt{
 			{Name: "skip_rows", Value: expression.NewInt64Const(1)}})
 		defer func() {
 			ti.LoadDataController.Close()
@@ -329,7 +329,7 @@ func TestProcessChunkWith(t *testing.T) {
 			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
 			Chunk:    mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
-		ti := getTableImporter(ctx, t, store, "t", "", "csv", nil)
+		ti := getTableImporter(ctx, t, store, "t", "", importer.DataFormatCSV, nil)
 		defer func() {
 			ti.LoadDataController.Close()
 			ti.Backend().CloseEngineMgr()
@@ -389,7 +389,7 @@ func TestPopulateChunks(t *testing.T) {
 		[]byte("8,8,8\n"), 0o644))
 	require.NoError(t, os.WriteFile(path.Join(tidbCfg.TempDir, "test-03.csv"),
 		[]byte("9,9,9\n10,10,10\n"), 0o644))
-	ti := getTableImporter(ctx, t, store, "t", fmt.Sprintf("%s/test-*.csv", tidbCfg.TempDir), "csv", []*plannercore.LoadDataOpt{{Name: "__max_engine_size", Value: expression.NewStrConst("20")}})
+	ti := getTableImporter(ctx, t, store, "t", fmt.Sprintf("%s/test-*.csv", tidbCfg.TempDir), importer.DataFormatCSV, []*plannercore.LoadDataOpt{{Name: "__max_engine_size", Value: expression.NewStrConst("20")}})
 	defer func() {
 		ti.LoadDataController.Close()
 		ti.Backend().CloseEngineMgr()
