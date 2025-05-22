@@ -1467,7 +1467,7 @@ func (w *intersectionProcessWorker) mergeRowsFromIndices(indexRows map[string]ma
 	}
 
 	// Append all rows to resultRows
-	for i := 0; i < resultChunk.NumRows(); i++ {
+	for i := range resultChunk.NumRows() {
 		resultRows = append(resultRows, resultChunk.GetRow(i))
 	}
 	return resultRows, []*chunk.Chunk{resultChunk}
@@ -1932,7 +1932,7 @@ func (w *partialIndexWorker) getRetTpsForIndexScan(handleCols plannerutil.Handle
 
 // getRetTpsForSingleIndexScan is used to get the return types for index merge single index scan.
 func getRetTpsForSingleIndexScan(handleCols plannerutil.HandleCols, outputColumns []*expression.Column, idxCols []*expression.Column, idxColLens []int, indexColLen int) []*types.FieldType {
-	var tps []*types.FieldType
+	tps := make([]*types.FieldType, 0, len(idxCols)+handleCols.NumCols())
 	for i, idxCol := range idxCols {
 		if i < indexColLen && idxColLens[i] == types.UnspecifiedLength {
 			for _, outCol := range outputColumns {
