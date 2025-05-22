@@ -916,9 +916,7 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 					pid = tblInfo.ID
 				}
 			}
-			splitKeys = getSplitKeysForTempIndexRanges(pid, elements)
-			start = splitKeys[0].Clone()
-			end = splitKeys[len(splitKeys)-1].PrefixNext()
+			start, end = encodeTempIndexRange(pid, elements[0].ID, elements[len(elements)-1].ID)
 		} else {
 			start, end, err = getTableRange(ctx, jobCtx.store, tb, ver.Ver, job.Priority)
 			if err != nil {

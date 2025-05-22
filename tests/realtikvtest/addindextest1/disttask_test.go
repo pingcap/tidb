@@ -501,15 +501,33 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("create table t (id int, b int, c int, primary key(id) clustered);")
-	tk.MustExec("insert into t values (1,1,1)")
 
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test;")
+	createTables := []string{
+		// "create table t (id int, b int, c int, primary key(id) clustered);",
+		"create table t (id int, b int, c int, primary key(id) clustered) partition by hash(id) partitions 4;",
+	}
+	createIndexes := []string{
+		// "alter table t add unique index b(b), add index c(c);",
+		"alter table t add unique index b(b) global, add index c(c) global;",
+	}
 
-	var hexKey string
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionBeforeScanV2", func(idxInfo []*model.IndexInfo) {
-		if idxInfo[0].Name.L == "b" {
+	for i := range createTables {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec(createTables[i])
+		tk.MustExec("insert into t values (1,1,1)")
+
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test;")
+		runDMLBeforeScan := false
+		runDMLBeforeMerge := false
+
+		var hexKey string
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionBeforeScanV2", func() {
+			if runDMLBeforeScan {
+				return
+			}
+			runDMLBeforeScan = true
+
 			rows := tk1.MustQuery("select tidb_encode_index_key('test', 't', 'b', 1, null);").Rows()
 			hexKey = rows[0][0].(string)
 			_, err := tk1.Exec("delete from t where id = 1;")
@@ -522,19 +540,21 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 			assert.NoError(t, err)
 			rs = tk.MustQuery(fmt.Sprintf("select tidb_mvcc_info('%s')", hexKey)).Rows()
 			t.Log("after second insertion", rs[0][0].(string))
-		}
-	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge", func(info *model.IndexInfo) {
-		if info.Name.L == "b" {
+		})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge", func() {
+			if runDMLBeforeMerge {
+				return
+			}
+			runDMLBeforeMerge = true
 			_, err := tk1.Exec("insert into t values (3, 1, 1);")
 			assert.NoError(t, err)
 			rs := tk.MustQuery(fmt.Sprintf("select tidb_mvcc_info('%s')", hexKey)).Rows()
 			t.Log("after third insertion", rs[0][0].(string))
-		}
-	})
+		})
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipReorgWorkForTempIndex", "return(false)")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipReorgWorkForTempIndex", "return(false)")
 
-	tk.MustExec("alter table t add unique index b(b), add index c(c);")
-	tk.MustExec("admin check table t;")
+		tk.MustExec(createIndexes[i])
+		tk.MustExec("admin check table t;")
+	}
 }

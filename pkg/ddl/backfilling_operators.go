@@ -183,7 +183,7 @@ func NewAddIndexIngestPipeline(
 			MockDMLExecutionBeforeScan()
 		}
 	})
-	failpoint.InjectCall("mockDMLExecutionBeforeScanV2", idxInfos)
+	failpoint.InjectCall("mockDMLExecutionBeforeScanV2")
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, backendCtx)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,

@@ -556,28 +556,28 @@ func loadTableRanges(
 	return ranges, nil
 }
 
-func splitRangesByKeys(ranges []kv.KeyRange, orderedSplitKeys []kv.Key) []kv.KeyRange {
-	if len(orderedSplitKeys) == 0 {
+// splitRangesByKeys splits the ranges into more ranges by given split keys.
+// The split keys should be ordered.
+func splitRangesByKeys(ranges []kv.KeyRange, splitKeys []kv.Key) []kv.KeyRange {
+	if len(splitKeys) == 0 {
 		return ranges
 	}
-	ret := make([]kv.KeyRange, 0, len(ranges)+len(orderedSplitKeys))
+	ret := make([]kv.KeyRange, 0, len(ranges)+len(splitKeys))
 	for _, r := range ranges {
 		start := r.StartKey
 		finishOneRange := false
 		for !finishOneRange {
-			if len(orderedSplitKeys) == 0 {
+			if len(splitKeys) == 0 {
 				break
 			}
-			split := orderedSplitKeys[0]
+			split := splitKeys[0]
 			switch {
 			case split.Cmp(start) <= 0:
-				orderedSplitKeys = orderedSplitKeys[1:]
-				continue
+				splitKeys = splitKeys[1:]
 			case split.Cmp(r.EndKey) < 0:
-				orderedSplitKeys = orderedSplitKeys[1:]
+				splitKeys = splitKeys[1:]
 				ret = append(ret, kv.KeyRange{StartKey: start, EndKey: split})
 				start = split
-				continue
 			default:
 				finishOneRange = true
 			}

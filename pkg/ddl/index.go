@@ -1488,7 +1488,7 @@ func doReorgWorkForCreateIndex(
 				MockDMLExecutionStateBeforeMerge()
 			}
 		})
-		failpoint.InjectCall("BeforeBackfillMerge", allIndexInfos[0])
+		failpoint.InjectCall("BeforeBackfillMerge")
 		logutil.DDLLogger().Info("index backfill state ready to merge",
 			zap.Int64("job ID", job.ID),
 			zap.String("table", tbl.Meta().Name.O),
@@ -1512,7 +1512,6 @@ func doReorgWorkForCreateIndex(
 				zap.Int64("jobID", job.ID),
 				zap.String("table", tbl.Meta().Name.O))
 		}
-		failpoint.InjectCall("afterBackfillMergeDone", allIndexInfos[0])
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
 		}
