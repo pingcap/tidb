@@ -76,8 +76,8 @@ const (
 	DataFormatSQL = "sql"
 	// DataFormatParquet represents the data source file of IMPORT INTO is parquet.
 	DataFormatParquet = "parquet"
-	// DataFormatNone represents do not set format in IMPORT INTO stmt, will be update in InitDataFiles.
-	DataFormatNone = "none"
+	// DataFormatAuto represents do not set format in IMPORT INTO stmt, will update when init data files.
+	DataFormatAuto = "auto"
 
 	// DefaultDiskQuota is the default disk quota for IMPORT INTO
 	DefaultDiskQuota = config.ByteSize(50 << 30) // 50GiB
@@ -413,7 +413,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	} else {
 		// without FORMAT 'xxx' clause, default to none and will detect file type
 		// when init data files
-		format = DataFormatNone
+		format = DataFormatAuto
 	}
 	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode()
 	lineFieldsInfo := newDefaultLineFieldsInfo()
@@ -539,7 +539,7 @@ func (e *LoadDataController) checkFieldParams() error {
 		return exeerrors.ErrLoadDataEmptyPath
 	}
 	if e.InImportInto {
-		if e.Format != DataFormatCSV && e.Format != DataFormatParquet && e.Format != DataFormatSQL && e.Format != DataFormatNone {
+		if e.Format != DataFormatCSV && e.Format != DataFormatParquet && e.Format != DataFormatSQL && e.Format != DataFormatAuto {
 			return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
 		}
 	} else {
@@ -608,7 +608,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 
 	// DataFormatNone means format is unspecified from stmt,
 	// will validate below CSV options when init data files.
-	if p.Format != DataFormatCSV && p.Format != DataFormatNone {
+	if p.Format != DataFormatCSV && p.Format != DataFormatAuto {
 		for k := range csvOnlyOptions {
 			if _, ok := specifiedOptions[k]; ok {
 				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
@@ -1227,7 +1227,7 @@ func (e *LoadDataController) getFileRealSize(ctx context.Context,
 
 // update format of the validated file by its extension.
 func (e *LoadDataController) updateFormat(path string) {
-	if e.Format == DataFormatNone {
+	if e.Format == DataFormatAuto {
 		e.Format = parseFileType(path)
 		if e.Parameters != nil {
 			e.Parameters.Format = e.Format
