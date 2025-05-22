@@ -2615,8 +2615,8 @@ func TestIndexMergeEliminateTableScan(t *testing.T) {
 	result.Check(testkit.Rows(
 		"Limit 10.00 root  offset:0, count:10",
 		"└─IndexMerge 10.00 root  type: intersection",
-		"  ├─IndexRangeScan 30.00 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
-		"  └─IndexRangeScan 30.00 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo"))
+		"  ├─IndexRangeScan 32.22 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
+		"  └─IndexRangeScan 32.22 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo"))
 
 	result = tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ a, b, b+10 FROM t WHERE a > 5 AND b > 'aaa'")
 	result.Check(testkit.Rows(
@@ -2646,8 +2646,8 @@ func TestIndexMergeEliminateTableScan(t *testing.T) {
 	result.Check(testkit.Rows(
 		"Projection 10.00 root  test.t.a, test.t.c",
 		"└─IndexMerge 10.00 root  type: intersection, limit embedded(offset:0, count:10)",
-		"  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 32.22 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 32.22 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 
 	result = tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ a, b, b+10 FROM t WHERE a > 5 AND b > 'aaa'")
