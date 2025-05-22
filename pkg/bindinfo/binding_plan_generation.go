@@ -531,7 +531,7 @@ func (e *tableNameExtractor) Enter(in ast.Node) (node ast.Node, skipChildren boo
 	return in, false
 }
 
-func (e *tableNameExtractor) Leave(in ast.Node) (node ast.Node, ok bool) {
+func (*tableNameExtractor) Leave(in ast.Node) (node ast.Node, ok bool) {
 	return in, true
 }
 
