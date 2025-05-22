@@ -29,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -134,6 +136,9 @@ func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo,
 	return dtToRestored
 }
 
+// buildDAGPB builds a DAGRequest for the DDL.
+// Usually, it's a table scan executor. If the `colInfo` contains `NoNullIndex` attribute, it'll attach a selection executor.
+// to only fetch the not null rows.
 func buildDAGPB(exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLContext, pushDownFlags uint64, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(exprCtx.GetEvalCtx().Location())
@@ -141,11 +146,62 @@ func buildDAGPB(exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLCont
 	for i := range colInfos {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
-	execPB, err := constructTableScanPB(exprCtx, tblInfo, colInfos)
+	tblScanPB, err := constructTableScanPB(exprCtx, tblInfo, colInfos)
 	if err != nil {
 		return nil, err
 	}
-	dagReq.Executors = append(dagReq.Executors, execPB)
+
+	noNullSelection := make([]expression.Expression, 0)
+	for i, colInfo := range colInfos {
+		if colInfo.NoNullIndex {
+			isNullExpr, err := expression.NewFunction(exprCtx, ast.IsNull, types.NewFieldType(mysql.TypeTiny),
+				&expression.Column{Index: i, RetType: &colInfo.FieldType},
+			)
+			if err != nil {
+				return nil, err
+			}
+
+			notNullExpr, err := expression.NewFunction(exprCtx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullExpr)
+			if err != nil {
+				return nil, err
+			}
+
+			noNullSelection = append(noNullSelection, notNullExpr)
+		}
+	}
+	if len(noNullSelection) > 0 {
+		// build an OR for these expressions, because "multi-schema change" will pack all needed column into this selection.
+		// FIXME: this behavior is not correct, because the `colInfos` also contains the dependency of generated columns which are
+		// not used by the index. It's kept here for demo.
+		var expr expression.Expression
+		for _, e := range noNullSelection {
+			if expr == nil {
+				expr = e
+			} else {
+				expr, err = expression.NewFunction(exprCtx, ast.LogicOr, types.NewFieldType(mysql.TypeTiny), expr, e)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+
+		conditions, err := expression.ExpressionsToPBList(exprCtx.GetEvalCtx(), []expression.Expression{expr}, distSQLCtx.Client)
+		if err != nil {
+			return nil, err
+		}
+
+		selectionPB := &tipb.Executor{
+			Tp: tipb.ExecType_TypeSelection,
+			Selection: &tipb.Selection{
+				Conditions: conditions,
+				Child:      tblScanPB,
+			},
+		}
+		dagReq.Executors = append(dagReq.Executors, tblScanPB, selectionPB)
+	} else {
+		dagReq.Executors = append(dagReq.Executors, tblScanPB)
+	}
+
 	distsql.SetEncodeType(distSQLCtx, dagReq)
 	return dagReq, nil
 }
