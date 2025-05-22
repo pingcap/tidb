@@ -613,7 +613,7 @@ func TestUnalignmentLoad(t *testing.T) {
 	for i := range 20 {
 		unalignData = append(unalignData, byte(i))
 	}
-	alignData := make([]byte, 0) 
+	alignData := make([]byte, 0)
 	for i := range 10 {
 		alignData = append(alignData, byte(i))
 		alignData = append(alignData, byte(i+1))
@@ -624,7 +624,7 @@ func TestUnalignmentLoad(t *testing.T) {
 		alignData = append(alignData, byte(i+6))
 		alignData = append(alignData, byte(i+7))
 	}
-	require.True(t, uintptr(unsafe.Pointer(&alignData[0])) % 4 == 0)
+	require.True(t, uintptr(unsafe.Pointer(&alignData[0]))%4 == 0)
 
 	// loadUint64
 	for i := range 10 {
