@@ -308,6 +308,7 @@ func GetRegisteredJob() map[int64]*metric.Common {
 	return ret
 }
 
+// IncRetryableErrorCount increments the retryable error count metric.
 func IncRetryableErrorCount(err error) {
 	RetryableErrorCount.WithLabelValues(goerrors.Unwrap(err).Error()).Inc()
 }
