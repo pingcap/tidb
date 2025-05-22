@@ -70,7 +70,7 @@ run_sql "drop table test.t3"
 
 # run PITR restore
 echo "run PITR restore"
-run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full2" --filter test.t3 --restore-ts $restored_ts
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full2" --filter test.t3 --restored-ts $restored_ts
 
 # check the blocklist file
 if [ -z "$(ls -A $TEST_DIR/$PREFIX/log/v1/log_restore_tables_blocklists)" ]; then
@@ -97,7 +97,7 @@ sleep 10
 
 # pass because restored ts is less than BackupTS of snapshot backup 2
 restart_services
-run_br --$PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" --restore-ts $ok_restored_ts
+run_br --$PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" --restored-ts $ok_restored_ts
 run_sql "select sum(id) as SUM from test.t1"
 check_contains "SUM: 233"
 

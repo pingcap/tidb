@@ -133,8 +133,8 @@ func TestGetTSWithRetry(t *testing.T) {
 	})
 }
 
-func TestParseLogRestoreTableIDsMarkerFileName(t *testing.T) {
-	restoreCommitTs, snapshotBackupTs, parsed := restore.ParseLogRestoreTableIDsMarkerFileName("RFFFFFFFFFFFFFFFF_SFFFFFFFFFFFFFFFF.meta")
+func TestParseLogRestoreTableIDsBlocklistFileName(t *testing.T) {
+	restoreCommitTs, snapshotBackupTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName("RFFFFFFFFFFFFFFFF_SFFFFFFFFFFFFFFFF.meta")
 	require.True(t, parsed)
 	require.Equal(t, uint64(0xFFFFFFFFFFFFFFFF), restoreCommitTs)
 	require.Equal(t, uint64(0xFFFFFFFFFFFFFFFF), snapshotBackupTs)
@@ -147,19 +147,19 @@ func TestParseLogRestoreTableIDsMarkerFileName(t *testing.T) {
 		"RFFFFFFFFFFFFFFFF_SFFFFFFFFKFFFFFFF.meta",
 	}
 	for _, filename := range unparsedFilenames {
-		_, _, parsed := restore.ParseLogRestoreTableIDsMarkerFileName(filename)
+		_, _, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName(filename)
 		require.False(t, parsed)
 	}
 }
 
-func TestLogRestoreTableIDsMarkerFile(t *testing.T) {
+func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
 	stg, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	name, data, err := restore.MarshalLogRestoreTableIDsMarkerFile(0xFFFFFCDEFFFFF, 0xFFFFFFABCFFFF, []int64{1, 2, 3})
+	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(0xFFFFFCDEFFFFF, 0xFFFFFFABCFFFF, []int64{1, 2, 3})
 	require.NoError(t, err)
-	restoreCommitTs, snapshotBackupTs, parsed := restore.ParseLogRestoreTableIDsMarkerFileName(name)
+	restoreCommitTs, snapshotBackupTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName(name)
 	require.True(t, parsed)
 	require.Equal(t, uint64(0xFFFFFCDEFFFFF), restoreCommitTs)
 	require.Equal(t, uint64(0xFFFFFFABCFFFF), snapshotBackupTs)
@@ -167,18 +167,18 @@ func TestLogRestoreTableIDsMarkerFile(t *testing.T) {
 	require.NoError(t, err)
 	data, err = stg.ReadFile(ctx, name)
 	require.NoError(t, err)
-	restoreCommitTs, snapshotBackupTs, tableIds, err := restore.UnmarshalLogRestoreTableIDsMarkerFile(data)
+	restoreCommitTs, snapshotBackupTs, tableIds, err := restore.UnmarshalLogRestoreTableIDsBlocklistFile(data)
 	require.NoError(t, err)
 	require.Equal(t, uint64(0xFFFFFCDEFFFFF), restoreCommitTs)
 	require.Equal(t, uint64(0xFFFFFFABCFFFF), snapshotBackupTs)
 	require.Equal(t, []int64{1, 2, 3}, tableIds)
 }
 
-func writeMarkerFile(
+func writeBlocklistFile(
 	t *testing.T, ctx context.Context, s storage.ExternalStorage,
 	restoreCommitTs, snapshotBackupTs uint64, tableIds []int64,
 ) {
-	name, data, err := restore.MarshalLogRestoreTableIDsMarkerFile(restoreCommitTs, snapshotBackupTs, tableIds)
+	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, snapshotBackupTs, tableIds)
 	require.NoError(t, err)
 	err = s.WriteFile(ctx, name, data)
 	require.NoError(t, err)
@@ -192,14 +192,14 @@ func fakeTrackerID(tableIds []int64) *utils.PiTRIdTracker {
 	return tracker
 }
 
-func TestCheckTableTrackerContainsTableIDsFromMarkerFiles(t *testing.T) {
+func TestCheckTableTrackerContainsTableIDsFromBlocklistFiles(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
 	stg, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	writeMarkerFile(t, ctx, stg, 100, 10, []int64{100, 101, 102})
-	writeMarkerFile(t, ctx, stg, 200, 20, []int64{200, 201, 202})
-	writeMarkerFile(t, ctx, stg, 300, 30, []int64{300, 301, 302})
+	writeBlocklistFile(t, ctx, stg, 100, 10, []int64{100, 101, 102})
+	writeBlocklistFile(t, ctx, stg, 200, 20, []int64{200, 201, 202})
+	writeBlocklistFile(t, ctx, stg, 300, 30, []int64{300, 301, 302})
 	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 250, 300)
 	require.Error(t, err)
 	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 250, 300)
@@ -217,21 +217,21 @@ func TestCheckTableTrackerContainsTableIDsFromMarkerFiles(t *testing.T) {
 
 func filesCount(t *testing.T, ctx context.Context, s storage.ExternalStorage) int {
 	count := 0
-	s.WalkDir(ctx, &storage.WalkOption{SubDir: restore.LogRestoreTableIDMarkerFilePrefix}, func(path string, size int64) error {
+	s.WalkDir(ctx, &storage.WalkOption{SubDir: restore.LogRestoreTableIDBlocklistFilePrefix}, func(path string, size int64) error {
 		count += 1
 		return nil
 	})
 	return count
 }
 
-func TestTruncateLogRestoreTableIDsMarkerFiles(t *testing.T) {
+func TestTruncateLogRestoreTableIDsBlocklistFiles(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
 	stg, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	writeMarkerFile(t, ctx, stg, 100, 10, []int64{100, 101, 102})
-	writeMarkerFile(t, ctx, stg, 200, 20, []int64{200, 201, 202})
-	writeMarkerFile(t, ctx, stg, 300, 30, []int64{300, 301, 302})
+	writeBlocklistFile(t, ctx, stg, 100, 10, []int64{100, 101, 102})
+	writeBlocklistFile(t, ctx, stg, 200, 20, []int64{200, 201, 202})
+	writeBlocklistFile(t, ctx, stg, 300, 30, []int64{300, 301, 302})
 
 	err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 50)
 	require.NoError(t, err)

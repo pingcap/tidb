@@ -15,7 +15,7 @@
 package restore
 
 var (
-	LogRestoreTableIDMarkerFilePrefix     = logRestoreTableIDMarkerFilePrefix
-	ParseLogRestoreTableIDsMarkerFileName = parseLogRestoreTableIDsMarkerFileName
-	UnmarshalLogRestoreTableIDsMarkerFile = unmarshalLogRestoreTableIDsMarkerFile
+	LogRestoreTableIDBlocklistFilePrefix     = logRestoreTableIDBlocklistFilePrefix
+	ParseLogRestoreTableIDsBlocklistFileName = parseLogRestoreTableIDsBlocklistFileName
+	UnmarshalLogRestoreTableIDsBlocklistFile = unmarshalLogRestoreTableIDsBlocklistFile
 )

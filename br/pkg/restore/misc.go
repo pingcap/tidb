@@ -53,9 +53,9 @@ const (
 	CoarseGrained Granularity = "coarse-grained"
 )
 
-const logRestoreTableIDMarkerFilePrefix = "v1/log_restore_tables_blocklists"
+const logRestoreTableIDBlocklistFilePrefix = "v1/log_restore_tables_blocklists"
 
-type LogRestoreTableIDsMarkerFile struct {
+type LogRestoreTableIDsBlocklistFile struct {
 	// RestoreCommitTs records the timestamp after PITR restore done. Only the later PITR restore from the log backup of the cluster,
 	// whose BackupTS is not less than it, can ignore the restore table IDs blocklist recorded in the file.
 	RestoreCommitTs uint64 `protobuf:"varint,1,opt,name=restore_commit_ts,proto3"`
@@ -68,15 +68,15 @@ type LogRestoreTableIDsMarkerFile struct {
 	Checksum []byte `protobuf:"bytes,4,opt,name=checksum,proto3"`
 }
 
-func (m *LogRestoreTableIDsMarkerFile) Reset()         { *m = LogRestoreTableIDsMarkerFile{} }
-func (m *LogRestoreTableIDsMarkerFile) String() string { return proto.CompactTextString(m) }
-func (m *LogRestoreTableIDsMarkerFile) ProtoMessage()  {}
+func (m *LogRestoreTableIDsBlocklistFile) Reset()         { *m = LogRestoreTableIDsBlocklistFile{} }
+func (m *LogRestoreTableIDsBlocklistFile) String() string { return proto.CompactTextString(m) }
+func (m *LogRestoreTableIDsBlocklistFile) ProtoMessage()  {}
 
-func (m *LogRestoreTableIDsMarkerFile) filename() string {
-	return fmt.Sprintf("%s/R%016X_S%016X.meta", logRestoreTableIDMarkerFilePrefix, m.RestoreCommitTs, m.SnapshotBackupTs)
+func (m *LogRestoreTableIDsBlocklistFile) filename() string {
+	return fmt.Sprintf("%s/R%016X_S%016X.meta", logRestoreTableIDBlocklistFilePrefix, m.RestoreCommitTs, m.SnapshotBackupTs)
 }
 
-func parseLogRestoreTableIDsMarkerFileName(filename string) (restoreCommitTs, snapshotBackupTs uint64, parsed bool) {
+func parseLogRestoreTableIDsBlocklistFileName(filename string) (restoreCommitTs, snapshotBackupTs uint64, parsed bool) {
 	filename = path.Base(filename)
 	if !strings.HasSuffix(filename, ".meta") {
 		return 0, 0, false
@@ -102,61 +102,61 @@ func parseLogRestoreTableIDsMarkerFileName(filename string) (restoreCommitTs, sn
 	return restoreCommitTs, snapshotBackupTs, true
 }
 
-func (markerFile *LogRestoreTableIDsMarkerFile) checksumLogRestoreTableIDsMarkerFile() []byte {
+func (m *LogRestoreTableIDsBlocklistFile) checksumLogRestoreTableIDsBlocklistFile() []byte {
 	hasher := sha256.New()
-	hasher.Write(binary.LittleEndian.AppendUint64(nil, markerFile.RestoreCommitTs))
-	hasher.Write(binary.LittleEndian.AppendUint64(nil, markerFile.SnapshotBackupTs))
-	for _, tableId := range markerFile.TableIds {
+	hasher.Write(binary.LittleEndian.AppendUint64(nil, m.RestoreCommitTs))
+	hasher.Write(binary.LittleEndian.AppendUint64(nil, m.SnapshotBackupTs))
+	for _, tableId := range m.TableIds {
 		hasher.Write(binary.LittleEndian.AppendUint64(nil, uint64(tableId)))
 	}
 	return hasher.Sum(nil)
 }
 
-func (markerFile *LogRestoreTableIDsMarkerFile) setChecksumLogRestoreTableIDsMarkerFile() {
-	markerFile.Checksum = markerFile.checksumLogRestoreTableIDsMarkerFile()
+func (m *LogRestoreTableIDsBlocklistFile) setChecksumLogRestoreTableIDsBlocklistFile() {
+	m.Checksum = m.checksumLogRestoreTableIDsBlocklistFile()
 }
 
-// MarshalLogRestoreTableIDsMarkerFile generates an markerfile and marshals it. It returns its filename and the marshaled data.
-func MarshalLogRestoreTableIDsMarkerFile(restoreCommitTs, snapshotBackupTs uint64, tableIds []int64) (string, []byte, error) {
-	markerFile := &LogRestoreTableIDsMarkerFile{
+// MarshalLogRestoreTableIDsBlocklistFile generates an Blocklist file and marshals it. It returns its filename and the marshaled data.
+func MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, snapshotBackupTs uint64, tableIds []int64) (string, []byte, error) {
+	blocklistFile := &LogRestoreTableIDsBlocklistFile{
 		RestoreCommitTs:  restoreCommitTs,
 		SnapshotBackupTs: snapshotBackupTs,
 		TableIds:         tableIds,
 	}
-	markerFile.setChecksumLogRestoreTableIDsMarkerFile()
-	filename := markerFile.filename()
-	data, err := proto.Marshal(markerFile)
+	blocklistFile.setChecksumLogRestoreTableIDsBlocklistFile()
+	filename := blocklistFile.filename()
+	data, err := proto.Marshal(blocklistFile)
 	if err != nil {
 		return "", nil, errors.Trace(err)
 	}
 	return filename, data, nil
 }
 
-// unmarshalLogRestoreTableIDsMarkerFile unmarshals the given markerfile.
-func unmarshalLogRestoreTableIDsMarkerFile(data []byte) (restoreCommitTs, snapshotBackupTs uint64, tableIds []int64, err error) {
-	markerFile := &LogRestoreTableIDsMarkerFile{}
-	if err = proto.Unmarshal(data, markerFile); err != nil {
+// unmarshalLogRestoreTableIDsBlocklistFile unmarshals the given blocklist file.
+func unmarshalLogRestoreTableIDsBlocklistFile(data []byte) (restoreCommitTs, snapshotBackupTs uint64, tableIds []int64, err error) {
+	blocklistFile := &LogRestoreTableIDsBlocklistFile{}
+	if err = proto.Unmarshal(data, blocklistFile); err != nil {
 		return 0, 0, nil, errors.Trace(err)
 	}
-	if !bytes.Equal(markerFile.checksumLogRestoreTableIDsMarkerFile(), markerFile.Checksum) {
+	if !bytes.Equal(blocklistFile.checksumLogRestoreTableIDsBlocklistFile(), blocklistFile.Checksum) {
 		return 0, 0, nil, errors.Errorf(
 			"checksum mismatch (calculated checksum is %s but the recorded checksum is %s), the log restore table IDs blocklist file may be corrupted",
-			base64.StdEncoding.EncodeToString(markerFile.checksumLogRestoreTableIDsMarkerFile()),
-			base64.StdEncoding.EncodeToString(markerFile.Checksum),
+			base64.StdEncoding.EncodeToString(blocklistFile.checksumLogRestoreTableIDsBlocklistFile()),
+			base64.StdEncoding.EncodeToString(blocklistFile.Checksum),
 		)
 	}
-	return markerFile.RestoreCommitTs, markerFile.SnapshotBackupTs, markerFile.TableIds, nil
+	return blocklistFile.RestoreCommitTs, blocklistFile.SnapshotBackupTs, blocklistFile.TableIds, nil
 }
 
-func fastWalkLogRestoreTableIDsMarkerFile(
+func fastWalkLogRestoreTableIDsBlocklistFile(
 	ctx context.Context,
 	s storage.ExternalStorage,
 	filterOutFn func(restoreCommitTs, snapshotBackupTs uint64) bool,
 	executionFn func(ctx context.Context, filename string, restoreCommitTs uint64, tableIds []int64) error,
 ) error {
 	filenames := make([]string, 0)
-	if err := s.WalkDir(ctx, &storage.WalkOption{SubDir: logRestoreTableIDMarkerFilePrefix}, func(path string, _ int64) error {
-		restoreCommitTs, snapshotBackupTs, parsed := parseLogRestoreTableIDsMarkerFileName(path)
+	if err := s.WalkDir(ctx, &storage.WalkOption{SubDir: logRestoreTableIDBlocklistFilePrefix}, func(path string, _ int64) error {
+		restoreCommitTs, snapshotBackupTs, parsed := parseLogRestoreTableIDsBlocklistFileName(path)
 		if parsed {
 			if filterOutFn(restoreCommitTs, snapshotBackupTs) {
 				return nil
@@ -178,7 +178,7 @@ func fastWalkLogRestoreTableIDsMarkerFile(
 			if err != nil {
 				return errors.Trace(err)
 			}
-			restoreCommitTs, snapshotBackupTs, tableIds, err := unmarshalLogRestoreTableIDsMarkerFile(data)
+			restoreCommitTs, snapshotBackupTs, tableIds, err := unmarshalLogRestoreTableIDsBlocklistFile(data)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -192,14 +192,14 @@ func fastWalkLogRestoreTableIDsMarkerFile(
 	return errors.Trace(eg.Wait())
 }
 
-// CheckTableTrackerContainsTableIDsFromMarkerFiles checks whether pitr id tracker contains the filtered table IDs from blocklist file.
+// CheckTableTrackerContainsTableIDsFromBlocklistFiles checks whether pitr id tracker contains the filtered table IDs from blocklist file.
 func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 	ctx context.Context,
 	s storage.ExternalStorage,
 	tracker *utils.PiTRIdTracker,
 	startTs, restoredTs uint64,
 ) error {
-	err := fastWalkLogRestoreTableIDsMarkerFile(ctx, s, func(restoreCommitTs, snapshotBackupTs uint64) bool {
+	err := fastWalkLogRestoreTableIDsBlocklistFile(ctx, s, func(restoreCommitTs, snapshotBackupTs uint64) bool {
 		return startTs >= restoreCommitTs || restoredTs <= snapshotBackupTs
 	}, func(_ context.Context, _ string, restoreCommitTs uint64, tableIds []int64) error {
 		for _, tableId := range tableIds {
@@ -215,13 +215,13 @@ func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 	return errors.Trace(err)
 }
 
-// TruncateLogRestoreTableIDsMarkerFiles truncates the blocklist files whose restore commit ts is not larger than truncate until ts.
+// TruncateLogRestoreTableIDsBlocklistFiles truncates the blocklist files whose restore commit ts is not larger than truncate until ts.
 func TruncateLogRestoreTableIDsBlocklistFiles(
 	ctx context.Context,
 	s storage.ExternalStorage,
 	untilTs uint64,
 ) error {
-	err := fastWalkLogRestoreTableIDsMarkerFile(ctx, s, func(restoreCommitTs, snapshotBackupTs uint64) bool {
+	err := fastWalkLogRestoreTableIDsBlocklistFile(ctx, s, func(restoreCommitTs, snapshotBackupTs uint64) bool {
 		return untilTs < restoreCommitTs
 	}, func(ctx context.Context, filename string, _ uint64, _ []int64) error {
 		return s.DeleteFile(ctx, filename)
