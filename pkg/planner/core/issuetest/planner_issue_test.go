@@ -283,3 +283,14 @@ func TestIssue61118(t *testing.T) {
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk2.MustExec("admin check table t;")
 }
+
+func TestABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`
+create table t(a int, b int, index idx(a, b));
+`)
+	tk.MustExec(`create table t1 like t;`)
+	tk.MustQuery("explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select /*+ stream_agg() */ b, a from t group by b, a) tmp, t1 where tmp.a=t1.a;").Check(testkit.Rows("1 2"))
+}

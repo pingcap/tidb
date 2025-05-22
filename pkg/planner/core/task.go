@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -75,6 +76,14 @@ func attachPlan2Task(p base.PhysicalPlan, t base.Task) base.Task {
 			v.indexPlan = p
 		}
 	case *RootTask:
+		if proj, ok := p.(*PhysicalProjection); ok {
+			if childProj, ok := v.GetPlan().(*PhysicalProjection); ok {
+				if proj.sameProjection(childProj) {
+					//p.SetChildren(childProj.Children()...)
+					//v.SetPlan(p)
+				}
+			}
+		}
 		p.SetChildren(v.GetPlan())
 		v.SetPlan(p)
 	case *MppTask:
@@ -1446,7 +1455,12 @@ func (p *PhysicalProjection) Attach2Task(tasks ...base.Task) base.Task {
 		}
 	} else if mpp, ok := t.(*MppTask); ok {
 		if expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Exprs, kv.TiFlash) {
-			p.SetChildren(mpp.p)
+			if p.sameProjectionWithTasks(tasks...) {
+				p.SetChildren(tasks[0].Plan().Children()...)
+				mpp.p = p
+			} else {
+				p.SetChildren(mpp.p)
+			}
 			mpp.p = p
 			return mpp
 		}
@@ -1457,6 +1471,81 @@ func (p *PhysicalProjection) Attach2Task(tasks ...base.Task) base.Task {
 		t.(*RootTask).SetEmpty(true)
 	}
 	return t
+}
+
+func (p *PhysicalProjection) sameProjectionWithTasks(tasks ...base.Task) bool {
+	if len(tasks) == 1 {
+		if childProjection, ok := tasks[0].Plan().(*PhysicalProjection); ok {
+			return p.sameProjection(childProjection)
+		}
+	}
+	return false
+}
+
+func (p *PhysicalProjection) sameProjection(project *PhysicalProjection) bool {
+	evalExpr := p.SCtx().GetExprCtx().GetEvalCtx()
+	if project.BasePhysicalPlan.GetChildReqProps(0) == nil {
+		return false
+	}
+	if equalExpression(evalExpr, p.Exprs, project.Exprs) {
+		return true
+	}
+	if equalColumns(evalExpr, p.Exprs, project.Schema().Columns) {
+		return true
+	}
+	return false
+}
+
+func equalColumns(ctx exprctx.EvalContext, parent []expression.Expression, child []*expression.Column) bool {
+	if len(parent) != len(child) {
+		return false
+	}
+	finded := make(map[int]struct{}, len(child))
+	for _, p := range parent {
+		pc, ok := p.(*expression.Column)
+		if !ok {
+			return false
+		}
+		find := false
+		for idx, v := range child {
+			if _, ok := finded[idx]; ok {
+				continue
+			}
+			if pc.Equal(ctx, v) {
+				find = true
+				finded[idx] = struct{}{}
+				break
+			}
+		}
+		if !find {
+			return false
+		}
+	}
+	return true
+}
+
+func equalExpression(ctx exprctx.EvalContext, parent, child []expression.Expression) bool {
+	if len(parent) != len(child) {
+		return false
+	}
+	finded := make(map[int]struct{}, len(child))
+	for _, p := range parent {
+		find := false
+		for idx, v := range child {
+			if _, ok := finded[idx]; ok {
+				continue
+			}
+			if p.Equal(ctx, v) {
+				find = true
+				finded[idx] = struct{}{}
+				break
+			}
+		}
+		if !find {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *PhysicalUnionAll) attach2MppTasks(tasks ...base.Task) base.Task {
