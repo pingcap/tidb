@@ -15,6 +15,7 @@
 package metrics
 
 import (
+	goerrors "errors"
 	"maps"
 	"strconv"
 	"strings"
@@ -305,4 +306,8 @@ func GetRegisteredJob() map[int64]*metric.Common {
 	ret := make(map[int64]*metric.Common, len(registeredJobMetrics))
 	maps.Copy(ret, registeredJobMetrics)
 	return ret
+}
+
+func IncRetryableErrorCount(err error) {
+	RetryableErrorCount.WithLabelValues(goerrors.Unwrap(err).Error()).Inc()
 }
