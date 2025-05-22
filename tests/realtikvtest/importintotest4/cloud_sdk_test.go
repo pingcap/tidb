@@ -38,9 +38,7 @@ func (s *mockGCSSuite) TestCSVSource() {
 	})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
-	// prepare tidb
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
-	s.tk.MustExec(fmt.Sprintf("set GLOBAL tidb_cloud_storage_uri = '%s'", sortStorageURI))
 	sourceURI := fmt.Sprintf("gs://cloud_csv/?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 
 	// create database and table
@@ -69,7 +67,7 @@ func (s *mockGCSSuite) TestCSVSource() {
 	s.Len(tableMetas, 1)
 	tableMeta := tableMetas[0]
 	path := fmt.Sprintf("%s?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", tableMeta.WildcardPath, gcsEndpoint)
-	importSQL := fmt.Sprintf("import into %s.%s from '%s'", tableMeta.Database, tableMeta.Table, path)
+	importSQL := fmt.Sprintf("import into %s.%s from '%s' with cloud_storage_uri='%s'", tableMeta.Database, tableMeta.Table, path, sortStorageURI)
 	result := s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
@@ -115,6 +113,7 @@ func (s *mockGCSSuite) TestDumplingSource() {
 	})
 
 	sourceURI := fmt.Sprintf("gs://cloud_dumpling?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
+	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 
 	db, mock, err := sqlmock.New()
 	s.Require().NoError(err)
@@ -147,7 +146,7 @@ func (s *mockGCSSuite) TestDumplingSource() {
 	for _, tm := range tableMetas {
 		path := fmt.Sprintf("%s?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb",
 			tm.WildcardPath, gcsEndpoint)
-		importSQL := fmt.Sprintf("import into %s.%s from '%s' format 'sql'", tm.Database, tm.Table, path)
+		importSQL := fmt.Sprintf("import into %s.%s from '%s' format 'sql' with cloud_storage_uri='%s'", tm.Database, tm.Table, path, sortStorageURI)
 		result := s.tk.MustQuery(importSQL).Rows()
 		s.Len(result, 1)
 		// verify contents
