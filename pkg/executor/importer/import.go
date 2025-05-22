@@ -606,7 +606,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		specifiedOptions[opt.Name] = opt
 	}
 
-	// DataFormatNone means format is unspecified from stmt,
+	// DataFormatAuto means format is unspecified from stmt,
 	// will validate below CSV options when init data files.
 	if p.Format != DataFormatCSV && p.Format != DataFormatAuto {
 		for k := range csvOnlyOptions {
