@@ -66,7 +66,7 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	concurrences, startOffsets, err, estimateTotalSize := getFilesReadConcurrency(
+	concurrences, startOffsets, err, estimateTotalSize, endOffsets := getFilesReadConcurrency(
 		ctx,
 		store,
 		statsFiles,
@@ -147,6 +147,13 @@ func readAllData(
 						allFileValSizeAdd.Add(int64(valSizeAdd))
 					}
 					smallObjMem.Add(int64(smallBlockBuf.GetSmallObjOverhead()))
+					estimateSize := endOffsets[fileIdx] - startOffsets[fileIdx]
+					logutil.BgLogger().Info("read one file",
+						zap.String("estimated size", units.BytesSize(float64(estimateSize))),
+						zap.String("size added", units.BytesSize(float64(keySizeAdd+valSizeAdd))),
+						zap.String("diff1_added", units.BytesSize(float64(keySizeAdd+valSizeAdd-int(estimateSize)))),
+						zap.String("diff2", units.BytesSize(float64(keySize+valSize-int(estimateSize)))),
+					)
 				}
 			}
 		})
