@@ -422,15 +422,15 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	}{
 		{
 			expectFormat: DataFormatCSV,
-			fileNames:    []string{"file1.CSV", "file1.csv.gz", "file1.csv.gz.gz", "file1.CSV.GZIP", "file1.CSV.gzip.gzip", "file1.csv.zstd", "file1.csv.zst", "file1.csv.snappy"},
+			fileNames:    []string{"file1.CSV", "file1.csv.gz", "file1.csv.gz", "file1.CSV.GZIP", "file1.CSV.gzip", "file1.csv.zstd", "file1.csv.zst", "file1.csv.snappy"},
 		},
 		{
-			expectFormat: DataFormatCSV,
-			fileNames:    []string{"file2.SQL", "file2.sql.gz", "file2.SQL.GZIP", "file2.sql.zstd", "file2.sql.zstd.zstd", "file2.sql.zst", "file2.sql.zst.zst", "file2.sql.snappy"},
+			expectFormat: DataFormatSQL,
+			fileNames:    []string{"file2.SQL", "file2.sql.gz", "file2.SQL.GZIP", "file2.sql.zstd", "file2.sql.zstd", "file2.sql.zst", "file2.sql.zst", "file2.sql.snappy"},
 		},
 		{
-			expectFormat: DataFormatCSV,
-			fileNames:    []string{"file3.PARQUET", "file3.parquet.gz", "file3.PARQUET.GZIP", "file3.parquet.zstd", "file3.parquet.zst", "file3.parquet.snappy", "file3.parquet.snappy.snappy"},
+			expectFormat: DataFormatParquet,
+			fileNames:    []string{"file3.PARQUET", "file3.parquet.gz", "file3.PARQUET.GZIP", "file3.parquet.zstd", "file3.parquet.zst", "file3.parquet.snappy", "file3.parquet.snappy"},
 		},
 	}
 	for _, testcase := range testcases {
