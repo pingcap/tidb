@@ -269,6 +269,8 @@ type Plan struct {
 	DataSourceType DataSourceType
 	// only initialized for IMPORT INTO, used when creating job.
 	Parameters *ImportParameters `json:"-"`
+	// only initialized for IMPORT INTO, used when format is detected automatically
+	specifiedOptions map[string]*plannercore.LoadDataOpt
 	// the user who executes the statement, in the form of user@host
 	// only initialized for IMPORT INTO
 	User string `json:"-"`
@@ -603,6 +605,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 		specifiedOptions[opt.Name] = opt
 	}
+	p.specifiedOptions = specifiedOptions
 
 	// DataFormatAuto means format is unspecified from stmt,
 	// will validate below CSV options when init data files.
@@ -1228,7 +1231,7 @@ func (e *LoadDataController) getFileRealSize(ctx context.Context,
 func (e *LoadDataController) detectAndUpdateFormat(path string) {
 	if e.Format == DataFormatAuto {
 		e.Format = parseFileType(path)
-		e.logger.Info("detect and update data format based on file extension", zap.String("file", path), zap.String("detected format", e.Format))
+		e.logger.Info("detect and update import plan format based on file extension", zap.String("file", path), zap.String("detected format", e.Format))
 		e.Parameters.Format = e.Format
 	}
 }
@@ -1400,30 +1403,10 @@ func (p *Plan) checkNonCSVFormatOptions(isDataFormatAuto bool) error {
 	if !p.InImportInto || p.Format == DataFormatCSV || !isDataFormatAuto {
 		return nil
 	}
-	if *p.Charset != defaultCharacterSet {
-		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(characterSetOption, "non-CSV format")
-	}
-	defaultLineFieldsInfo := newDefaultLineFieldsInfo()
-	if p.FieldsTerminatedBy != defaultLineFieldsInfo.FieldsTerminatedBy {
-		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(fieldsTerminatedByOption, "non-CSV format")
-	}
-	if p.FieldsEnclosedBy != defaultLineFieldsInfo.FieldsEnclosedBy {
-		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(fieldsEnclosedByOption, "non-CSV format")
-	}
-	if p.FieldsEscapedBy != defaultLineFieldsInfo.FieldsEscapedBy {
-		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(fieldsEscapedByOption, "non-CSV format")
-	}
-	if p.LinesTerminatedBy != defaultLineFieldsInfo.LinesTerminatedBy {
-		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(linesTerminatedByOption, "non-CSV format")
-	}
-	if len(p.FieldNullDef) != len(defaultFieldNullDef) || p.FieldNullDef[0] != defaultFieldNullDef[0] {
-		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(fieldsDefinedNullByOption, "non-CSV format")
-	}
-	if p.IgnoreLines != 0 {
-		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(skipRowsOption, "non-CSV format")
-	}
-	if p.SplitFile {
-		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(splitFileOption, "non-CSV format")
+	for k := range csvOnlyOptions {
+		if _, ok := p.specifiedOptions[k]; ok {
+			return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
+		}
 	}
 	return nil
 }
