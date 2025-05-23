@@ -27,12 +27,16 @@ function start_tidb() {
   cd - || exit 1
 
   echo "Starting TiUP Playground in the background..."
-  tiup playground nightly --mode=tidb \
-  --db.binpath=../../bin/tidb-server \
-  --db.config=./config.toml \
-  --kv.binpath=../../bin/tikv-server \
-  --pd.binpath=../../bin/pd-server \
-  --tiflash.binpath=../../bin/tiflash &
+  if [ -f "../../bin/tikv-server" ] && [ -f "../../bin/pd-server" ] && [-f "../../bin/tiflash"]; then
+    tiup playground nightly --mode=tidb \
+    --db.binpath=../../bin/tidb-server \
+    --db.config=./config.toml \
+    --kv.binpath=../../bin/tikv-server \
+    --pd.binpath=../../bin/pd-server \
+    --tiflash.binpath=../../bin/tiflash &
+  else
+    tiup playground nightly --db=1 --kv=1 --tiflash=1 --db.binpath=../../bin/tidb-server --db.config=./config.toml &
+  fi
 
   sleep 30
 }
