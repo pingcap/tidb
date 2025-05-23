@@ -3040,8 +3040,6 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 		if uint64(len(data)) > size.MB {
 			logutil.BgLogger().Warn("notify update privilege message too large", zap.ByteString("value", data))
 		}
-		//row := do.etcdClient.KV
-		//_, err = row.Put(do.ctx, privilegeKey, string(data))
 		err = ddlutil.PutKVToEtcd(do.ctx, do.etcdClient, ddlutil.KeyOpDefaultRetryCnt, privilegeKey, string(data))
 		if err != nil {
 			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
