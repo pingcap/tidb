@@ -215,10 +215,10 @@ func TestAdjustDiskQuota(t *testing.T) {
 func TestGetMsgFromBRError(t *testing.T) {
 	var berr error = berrors.ErrStorageInvalidConfig
 	require.Equal(t, "[BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config", berr.Error())
-	require.Equal(t, "invalid external storage config", GetMsgFromBRError(berr))
+	require.Equal(t, "invalid external storage config", errors.GetErrStackMsg(berr))
 	berr = errors.Annotatef(berr, "some message about error reason")
 	require.Equal(t, "some message about error reason: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config", berr.Error())
-	require.Equal(t, "some message about error reason", GetMsgFromBRError(berr))
+	require.Equal(t, "some message about error reason: invalid external storage config", errors.GetErrStackMsg(berr))
 }
 
 func TestASTArgsFromStmt(t *testing.T) {
