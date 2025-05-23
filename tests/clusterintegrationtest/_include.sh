@@ -27,7 +27,7 @@ function start_tidb() {
   cd - || exit 1
 
   echo "Starting TiUP Playground in the background..."
-  if [ -f "../../bin/tikv-server" ] && [ -f "../../bin/pd-server" ] && [-f "../../bin/tiflash"]; then
+  if [ -f "../../bin/tikv-server" ] && [ -f "../../bin/pd-server" ] && [ -f "../../bin/tiflash"]; then
     tiup playground nightly --mode=tidb \
     --db.binpath=../../bin/tidb-server \
     --db.config=./config.toml \
@@ -135,14 +135,21 @@ function print_versions() {
     echo "+ TiDB Version"
     ../../bin/tidb-server -V
     echo
-    echo "+ TiKV Version"
-    tiup tikv:nightly --version
-    echo
-    echo "+ TiFlash Version"
-    tiup tiflash:nightly --version
-    echo
-    echo "+ TiUP Version"
-    ~/.tiup/bin/tiup playground -v
+    if [ -f "../../bin/tikv-server" ] && [ -f "../../bin/pd-server" ] && [ -f "../../bin/tiflash"]; then
+      echo "+ TiKV Version"
+      tiup ../../bin/tikv-server --version
+      echo
+      echo "+ TiFlash Version"
+      tiup ../../bin/tiflash --version
+      echo
+    else
+      echo "+ TiKV Version"
+      tiup tikv:nightly --version
+      echo
+      echo "+ TiFlash Version"
+      tiup tiflash:nightly --version
+      echo
+    fi
   else
     echo "+ TiDB Version"
     tiup tidb:v8.5.1 -V
@@ -153,8 +160,9 @@ function print_versions() {
     echo "+ TiFlash Version"
     tiup tiflash:v8.5.1 --version
     echo
-    echo "+ TiUP Version"
-    ~/.tiup/bin/tiup playground -v
   fi
+
+  echo "+ TiUP Version"
+  ~/.tiup/bin/tiup playground -v
   
 }
