@@ -136,10 +136,10 @@ func initMetrics() {
 	}
 }
 
-// registerMetricsForNextGen registers metrics for next gen. Currently we assume keyspace_name equals keyspace_id, and is globally unique.
+// registerMetricsForNextGen registers metrics for next gen.
 func registerMetricsForNextGen(keyspaceName string) {
 	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
-		metrics.SetConstLabels("keyspace_id", keyspaceName)
+		metrics.SetConstLabels("keyspace_name", keyspaceName)
 	}
 	initMetrics()
 }
