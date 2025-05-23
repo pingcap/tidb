@@ -1213,19 +1213,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	return nil
 }
 
-func (e *LoadDataController) getFileRealSize(ctx context.Context,
-	fileMeta mydump.SourceFileMeta, store storage.ExternalStorage) int64 {
-	if fileMeta.Compression == mydump.CompressionNone {
-		return fileMeta.FileSize
-	}
-	compressRatio, err := mydump.SampleFileCompressRatio(ctx, fileMeta, store)
-	if err != nil {
-		e.logger.Warn("failed to get compress ratio", zap.String("file", fileMeta.Path), zap.Error(err))
-		return fileMeta.FileSize
-	}
-	return int64(compressRatio * float64(fileMeta.FileSize))
-}
-
 // update format of the validated file by its extension.
 func (e *LoadDataController) detectAndUpdateFormat(path string) {
 	if e.Format == DataFormatAuto {
