@@ -309,6 +309,21 @@ func Call(fn func() error) {
 	}
 }
 
+// CallWithRecover executes a function, checks the returned err and avoids the throw of panic.
+func CallWithRecover(fn func() error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err := errors.Errorf("%v", r)
+			log.Error("function call panicked", zap.Error(err), zap.Stack("stack"))
+		}
+	}()
+
+	err := fn()
+	if err != nil {
+		log.Error("function call errored", zap.Error(err), zap.Stack("stack"))
+	}
+}
+
 // Log logs the error if it is not nil.
 func Log(err error) {
 	if err != nil {
