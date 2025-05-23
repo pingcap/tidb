@@ -321,6 +321,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 			Charset:        &defaultCharacterSet,
 			LineFieldsInfo: newDefaultLineFieldsInfo(),
 			FieldNullDef:   defaultFieldNullDef,
+			Parameters:     &ImportParameters{},
 		},
 		logger: zap.NewExample(),
 	}
@@ -415,32 +416,32 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	}
 	require.ElementsMatch(t, []string{"glob-2.csv", "glob-3.csv"}, gotPath)
 
-	csvFiles := []string{"file1.CSV", "file1.csv.gz", "file1.csv.gz.gz", "file1.CSV.GZIP", "file1.CSV.gzip.gzip", "file1.csv.zstd", "file1.csv.zst", "file1.csv.snappy"}
-	for _, csvFile := range csvFiles {
-		c.Format = DataFormatAuto
-		c.Path = path.Join(tempDir, csvFile)
-		err = os.WriteFile(c.Path, []byte{}, 0o644)
-		require.NoError(t, err)
-		require.NoError(t, c.InitDataFiles(ctx))
-		require.Equal(t, DataFormatCSV, c.Format)
+	testcases := []struct {
+		fileNames    []string
+		expectFormat string
+	}{
+		{
+			expectFormat: DataFormatCSV,
+			fileNames:    []string{"file1.CSV", "file1.csv.gz", "file1.csv.gz.gz", "file1.CSV.GZIP", "file1.CSV.gzip.gzip", "file1.csv.zstd", "file1.csv.zst", "file1.csv.snappy"},
+		},
+		{
+			expectFormat: DataFormatCSV,
+			fileNames:    []string{"file2.SQL", "file2.sql.gz", "file2.SQL.GZIP", "file2.sql.zstd", "file2.sql.zstd.zstd", "file2.sql.zst", "file2.sql.zst.zst", "file2.sql.snappy"},
+		},
+		{
+			expectFormat: DataFormatCSV,
+			fileNames:    []string{"file3.PARQUET", "file3.parquet.gz", "file3.PARQUET.GZIP", "file3.parquet.zstd", "file3.parquet.zst", "file3.parquet.snappy", "file3.parquet.snappy.snappy"},
+		},
 	}
-	sqlFiles := []string{"file2.SQL", "file2.sql.gz", "file2.SQL.GZIP", "file2.sql.zstd", "file2.sql.zstd.zstd", "file2.sql.zst", "file2.sql.zst.zst", "file2.sql.snappy"}
-	for _, sqlFile := range sqlFiles {
-		c.Format = DataFormatAuto
-		c.Path = path.Join(tempDir, sqlFile)
-		err = os.WriteFile(c.Path, []byte{}, 0o644)
-		require.NoError(t, err)
-		require.NoError(t, c.InitDataFiles(ctx))
-		require.Equal(t, DataFormatSQL, c.Format)
-	}
-	parquetFiles := []string{"file3.PARQUET", "file3.parquet.gz", "file3.PARQUET.GZIP", "file3.parquet.zstd", "file3.parquet.zst", "file3.parquet.snappy", "file3.parquet.snappy.snappy"}
-	for _, parquetFile := range parquetFiles {
-		c.Format = DataFormatAuto
-		c.Path = path.Join(tempDir, parquetFile)
-		err = os.WriteFile(c.Path, []byte{}, 0o644)
-		require.NoError(t, err)
-		require.NoError(t, c.InitDataFiles(ctx))
-		require.Equal(t, DataFormatParquet, c.Format)
+	for _, testcase := range testcases {
+		for _, fileName := range testcase.fileNames {
+			c.Format = DataFormatAuto
+			c.Path = path.Join(tempDir, fileName)
+			err = os.WriteFile(c.Path, []byte{}, 0o644)
+			require.NoError(t, err)
+			require.NoError(t, c.InitDataFiles(ctx))
+			require.Equal(t, testcase.expectFormat, c.Format)
+		}
 	}
 }
 
