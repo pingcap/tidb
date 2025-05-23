@@ -121,7 +121,7 @@ func TestConvertColumnInfo(t *testing.T) {
 		mysql.TypeJSON,
 	} {
 		ftb = types.NewFieldTypeBuilder()
-		ftb.SetType(tp)
+		ftb.SetType(tp).SetFlen(types.UnspecifiedLength)
 		resultField = resolve.ResultField{
 			Column: &model.ColumnInfo{
 				Name:      ast.NewCIStr("a"),
@@ -136,6 +136,7 @@ func TestConvertColumnInfo(t *testing.T) {
 		}
 		colInfo = column.ConvertColumnInfo(&resultField)
 		expectedLen, _ := mysql.GetDefaultFieldLengthAndDecimal(tp)
-		require.NotEqual(t, colInfo.ColumnLength, uint32(expectedLen))
+		require.Equal(t, colInfo.ColumnLength, uint32(expectedLen))
+		require.NotZero(t, colInfo.ColumnLength)
 	}
 }
