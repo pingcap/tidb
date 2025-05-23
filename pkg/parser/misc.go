@@ -841,6 +841,7 @@ var tokenMap = map[string]int{
 	"TIMESTAMP":                      timestampType,
 	"TIMESTAMPADD":                   timestampAdd,
 	"TIMESTAMPDIFF":                  timestampDiff,
+	"TIMEOUT":                        timeout,
 	"TINYBLOB":                       tinyblobType,
 	"TINYINT":                        tinyIntType,
 	"TINYTEXT":                       tinytextType,

@@ -3860,7 +3860,7 @@ type DistributeTableStmt struct {
 	PartitionNames []CIStr
 	Rule           CIStr
 	Engine         CIStr
-	Duration       CIStr
+	Timeout        CIStr
 }
 
 // Restore implements Node interface.
@@ -3893,9 +3893,9 @@ func (n *DistributeTableStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.Engine.String())
 	}
 
-	if len(n.Duration.L) > 0 {
-		ctx.WriteKeyWord(" DURATION = ")
-		ctx.WriteName(n.Duration.String())
+	if len(n.Timeout.L) > 0 {
+		ctx.WriteKeyWord(" TIMEOUT = ")
+		ctx.WriteName(n.Timeout.String())
 	}
 	return nil
 }
