@@ -849,8 +849,9 @@ type Explain struct {
 	ExecStmt         ast.StmtNode
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 
-	Rows        [][]string
-	ExplainRows [][]string
+	Rows            [][]string
+	ExplainRows     [][]string
+	BriefBinaryPlan string
 }
 
 // GetExplainRowsForPlan get explain rows for plan.
@@ -867,6 +868,35 @@ func GetExplainRowsForPlan(plan base.Plan) (rows [][]string) {
 		return rows
 	}
 	return explain.Rows
+}
+
+// GetBriefBinaryPlan returns the binary plan of the plan for explainfor.
+func GetBriefBinaryPlan(p base.Plan) string {
+	var plan base.Plan = p
+	if plan == nil {
+		return ""
+	}
+	// If the plan is a prepared statement, get execute.Plan.
+	if exec, ok := p.(*Execute); ok {
+		plan = exec.Plan
+	}
+	// Get plan context and statement context
+	planCtx := plan.SCtx()
+	if planCtx == nil {
+		return ""
+	}
+	stmtCtx := planCtx.GetSessionVars().StmtCtx
+	if stmtCtx == nil {
+		return ""
+	}
+
+	// Temporarily modify IgnoreExplainIDSuffix to avoid the explain id suffix.
+	originalValue := stmtCtx.IgnoreExplainIDSuffix
+	stmtCtx.SetIgnoreExplainIDSuffix(true)
+	defer stmtCtx.SetIgnoreExplainIDSuffix(originalValue)
+
+	flat := FlattenPhysicalPlan(plan, true)
+	return BinaryPlanStrFromFlatPlan(planCtx, flat)
 }
 
 // GetExplainAnalyzeRowsForPlan get explain rows for plan.
@@ -890,7 +920,11 @@ func (e *Explain) prepareSchema() error {
 	}
 	switch {
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
-		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
+		if e.BriefBinaryPlan != "" && format == types.ExplainFormatBrief {
+			fieldNames = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
+		} else {
+			fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
+		}
 	case format == types.ExplainFormatVerbose:
 		if e.Analyze || e.RuntimeStatsColl != nil {
 			fieldNames = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
@@ -906,7 +940,11 @@ func (e *Explain) prepareSchema() error {
 			fieldNames = []string{"id", "estRows", "estCost", "costFormula", "task", "access object", "operator info"}
 		}
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (e.Analyze || e.RuntimeStatsColl != nil):
-		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
+		if e.BriefBinaryPlan != "" && format == types.ExplainFormatBrief {
+			fieldNames = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
+		} else {
+			fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
+		}
 	case format == types.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
 	case format == types.ExplainFormatHint:
@@ -1020,7 +1058,15 @@ func (e *Explain) RenderResult() error {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("'explain format=true_card_cost' cannot support this plan"))
 		}
 	}
-
+	// For explain format=brief for connection, we can directly decode the binary plan to get the explain rows.
+	if strings.ToLower(e.Format) == types.ExplainFormatBrief && e.BriefBinaryPlan != "" {
+		rows, err := plancodec.DecodeBinaryPlan4Connection(e.BriefBinaryPlan)
+		if err != nil {
+			return err
+		}
+		e.Rows = rows
+		return nil
+	}
 	switch strings.ToLower(e.Format) {
 	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache:
 		if e.Rows == nil || e.Analyze {

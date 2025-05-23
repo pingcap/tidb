@@ -103,6 +103,31 @@ func DecodeBinaryPlan(binaryPlan string) (string, error) {
 	return b.String(), nil
 }
 
+// DecodeBinaryPlan4Connection decode the binary plan and display it similar to EXPLAIN ANALYZE statement. Now it only supports types.ExplainFormatBrief.
+func DecodeBinaryPlan4Connection(binaryPlan string) ([][]string, error) {
+	protoBytes, err := decompress(binaryPlan)
+	if err != nil {
+		return nil, err
+	}
+	pb := &tipb.ExplainData{}
+	err = pb.Unmarshal(protoBytes)
+	if err != nil {
+		return nil, err
+	}
+	if pb.DiscardedDueToTooLong {
+		return nil, nil
+	}
+	// decode the protobuf into strings
+	rows := decodeBinaryOperator(pb.Main, "", true, pb.WithRuntimeStats, nil)
+	for _, cte := range pb.Ctes {
+		rows = decodeBinaryOperator(cte, "", true, pb.WithRuntimeStats, rows)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return rows, nil
+}
+
 var (
 	noRuntimeStatsTitleFields = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
 	fullTitleFields           = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
