@@ -156,3 +156,8 @@ func (t *PiTRIdTracker) TrackTableName(dbName, tableName string) {
 
 	t.DBNameToTableNames[dbName][tableName] = struct{}{}
 }
+
+// GetDBNameToTableName returns the map of database names to table names
+func (t *PiTRIdTracker) GetDBNameToTableName() map[string]map[string]struct{} {
+	return t.DBNameToTableNames
+}
