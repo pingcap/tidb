@@ -102,13 +102,13 @@ ANALYZE TABLE t1;
 EXPLAIN FORMAT='brief' SELECT product, country_id , year, SUM(profit)
 FROM t1 GROUP BY product, country_id, year WITH ROLLUP;
 id	estRows	task	access object	operator info
-Projection	8000.00	root		Column#6->Column#11, Column#7->Column#12, Column#8->Column#13, Column#10
-└─HashAgg	8000.00	root		group by:Column#16, Column#17, Column#18, Column#19, funcs:sum(Column#15)->Column#10, funcs:firstrow(Column#16)->Column#6, funcs:firstrow(Column#17)->Column#7, funcs:firstrow(Column#18)->Column#8
-  └─Projection	10000.00	root		cast(executor__expand.t1.profit, decimal(10,0) BINARY)->Column#15, Column#6->Column#16, Column#7->Column#17, Column#8->Column#18, gid->Column#19
-    └─Expand	10000.00	root		level-projection:[executor__expand.t1.profit, <nil>->Column#6, <nil>->Column#7, <nil>->Column#8, 0->gid],[executor__expand.t1.profit, Column#6, <nil>->Column#7, <nil>->Column#8, 1->gid],[executor__expand.t1.profit, Column#6, Column#7, <nil>->Column#8, 3->gid],[executor__expand.t1.profit, Column#6, Column#7, Column#8, 7->gid]; schema: [executor__expand.t1.profit,Column#6,Column#7,Column#8,gid]
-      └─Projection	10000.00	root		executor__expand.t1.profit, executor__expand.t1.product->Column#6, executor__expand.t1.country_id->Column#7, executor__expand.t1.year->Column#8
-        └─TableReader	10000.00	root		data:TableFullScan
-          └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Projection	12.00	root		Column#6->Column#11, Column#7->Column#12, Column#8->Column#13, Column#10
+└─HashAgg	12.00	root		group by:Column#16, Column#17, Column#18, Column#19, funcs:sum(Column#15)->Column#10, funcs:firstrow(Column#16)->Column#6, funcs:firstrow(Column#17)->Column#7, funcs:firstrow(Column#18)->Column#8
+  └─Projection	15.00	root		cast(executor__expand.t1.profit, decimal(10,0) BINARY)->Column#15, Column#6->Column#16, Column#7->Column#17, Column#8->Column#18, gid->Column#19
+    └─Expand	15.00	root		level-projection:[executor__expand.t1.profit, <nil>->Column#6, <nil>->Column#7, <nil>->Column#8, 0->gid],[executor__expand.t1.profit, Column#6, <nil>->Column#7, <nil>->Column#8, 1->gid],[executor__expand.t1.profit, Column#6, Column#7, <nil>->Column#8, 3->gid],[executor__expand.t1.profit, Column#6, Column#7, Column#8, 7->gid]; schema: [executor__expand.t1.profit,Column#6,Column#7,Column#8,gid]
+      └─Projection	15.00	root		executor__expand.t1.profit, executor__expand.t1.product->Column#6, executor__expand.t1.country_id->Column#7, executor__expand.t1.year->Column#8
+        └─TableReader	15.00	root		data:TableFullScan
+          └─TableFullScan	15.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 
 SELECT product, country_id , SUM(profit) FROM t1
 GROUP BY product, country_id WITH ROLLUP

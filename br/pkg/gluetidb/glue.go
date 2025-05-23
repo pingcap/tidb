@@ -66,10 +66,6 @@ func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	se, err := g.createTypesSession(store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	dom, err := session.GetDomain(store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -80,7 +76,7 @@ func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 			return nil, err
 		}
 		// create stats handler for backup and restore.
-		err = dom.UpdateTableStatsLoop(se, initStatsSe)
+		err = dom.UpdateTableStatsLoop(initStatsSe)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

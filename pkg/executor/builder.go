@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/extension"
-	"github.com/pingcap/tidb/pkg/extension/enterprise/audit"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -2404,6 +2403,10 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 		case strings.ToLower(infoschema.TableAuditLog), strings.ToLower(infoschema.ClusterTableAuditLog):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
+			logPath, logFormat := "", ""
+			if GetGlobalAuditLogPathAndType != nil {
+				logPath, logFormat = GetGlobalAuditLogPathAndType()
+			}
 			return &MemTableReaderExec{
 				BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -2412,8 +2415,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 					outputCols: v.Columns,
 					extractor:  v.Extractor.(*plannercore.AuditLogExtractor),
 					memTracker: memTracker,
-					auditLog:   audit.GlobalLogManager.GetLogPath(),
-					logType:    audit.GlobalLogManager.GetLogFormat(),
+					auditLog:   logPath,
+					logType:    logFormat,
 				},
 			}
 		case strings.ToLower(infoschema.TableStorageStats):
@@ -5288,7 +5291,11 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			b.inSelectLockStmt = false
 		}()
 	}
-	handles, isTableDual := plan.PrunePartitionsAndValues(b.ctx)
+	handles, isTableDual, err := plan.PrunePartitionsAndValues(b.ctx)
+	if err != nil {
+		b.err = err
+		return nil
+	}
 	if isTableDual {
 		// No matching partitions
 		return &TableDualExec{
@@ -5751,3 +5758,6 @@ func (b *executorBuilder) buildRecommendIndex(v *plannercore.RecommendIndexPlan)
 		Options:      v.Options,
 	}
 }
+
+// GetGlobalAuditLogPathAndType is used to get audit log path and type
+var GetGlobalAuditLogPathAndType func() (string, string)

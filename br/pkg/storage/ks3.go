@@ -446,6 +446,7 @@ func (rs *KS3Storage) Open(ctx context.Context, path string, o *ReaderOption) (E
 		storage:      rs,
 		name:         path,
 		reader:       reader,
+		pos:          r.Start,
 		rangeInfo:    r,
 		prefetchSize: prefetchSize,
 	}, nil
@@ -508,8 +509,14 @@ func (rs *KS3Storage) open(
 	}
 
 	if startOffset != r.Start || (endOffset != 0 && endOffset != r.End+1) {
-		return nil, r, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed, expected range: %s, got: %v",
-			path, *rangeOffset, result.ContentRange)
+		rangeStr := "<empty>"
+		if result.ContentRange != nil {
+			rangeStr = *result.ContentRange
+		}
+		return nil, r, errors.Annotatef(
+			berrors.ErrStorageUnknown,
+			"open file '%s' failed, expected range: %s, got: %s",
+			path, *rangeOffset, rangeStr)
 	}
 
 	return result.Body, r, nil

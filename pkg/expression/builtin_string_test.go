@@ -1813,26 +1813,26 @@ func TestInstr(t *testing.T) {
 func TestLabelAccessible(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		Args []interface{}
-		Want interface{}
+		Args []any
+		Want any
 	}{
-		{[]interface{}{nil, nil}, nil},
-		{[]interface{}{nil, "30:E:R80"}, nil},
-		{[]interface{}{"30:E:R80", nil}, nil},
-		{[]interface{}{"30:E:R80", "30:E:R60"}, 0},
-		{[]interface{}{"30:E:R80", "30:E:R80"}, 1},
-		{[]interface{}{"30:E:R80", "10:E:R80"}, 0},
-		{[]interface{}{"30:E:R80", "40:E:R80"}, 1},
-		{[]interface{}{"30:E:R80", "40:M,E:R80"}, 1},
-		{[]interface{}{"30:E:R80", "40:M,P,Q,E:R80"}, 1},
-		{[]interface{}{"30:E:R80", "40:M,E:R80,R60"}, 1},
-		{[]interface{}{"30:E:R80", "40:M,E:R70,R60"}, 0},
-		{[]interface{}{"30:E:R80", "30"}, 0},
-		{[]interface{}{"30:E:R80", "30:E"}, 0},
-		{[]interface{}{"30:E:R80", ""}, 0},
-		{[]interface{}{"20", "30:E:R80"}, 1},
-		{[]interface{}{"20:E", "30:E:R80"}, 1},
-		{[]interface{}{"20:E,M", "30:E:R80"}, 0},
+		{[]any{nil, nil}, nil},
+		{[]any{nil, "30:E:R80"}, nil},
+		{[]any{"30:E:R80", nil}, nil},
+		{[]any{"30:E:R80", "30:E:R60"}, 0},
+		{[]any{"30:E:R80", "30:E:R80"}, 1},
+		{[]any{"30:E:R80", "10:E:R80"}, 0},
+		{[]any{"30:E:R80", "40:E:R80"}, 1},
+		{[]any{"30:E:R80", "40:M,E:R80"}, 1},
+		{[]any{"30:E:R80", "40:M,P,Q,E:R80"}, 1},
+		{[]any{"30:E:R80", "40:M,E:R80,R60"}, 1},
+		{[]any{"30:E:R80", "40:M,E:R70,R60"}, 0},
+		{[]any{"30:E:R80", "30"}, 0},
+		{[]any{"30:E:R80", "30:E"}, 0},
+		{[]any{"30:E:R80", ""}, 0},
+		{[]any{"20", "30:E:R80"}, 1},
+		{[]any{"20:E", "30:E:R80"}, 1},
+		{[]any{"20:E,M", "30:E:R80"}, 0},
 	}
 
 	Dtbl := tblToDtbl(tbl)

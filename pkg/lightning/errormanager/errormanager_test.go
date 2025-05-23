@@ -707,4 +707,18 @@ func TestErrorMgrErrorOutput(t *testing.T) {
 		"|\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_view`   \x1b[0m|\n" +
 		"+---+---------------------+-------------+--------------------------------+\n"
 	require.Equal(t, expected, output)
+
+	em.schema = "long_long_long_long_long_long_long_long_dbname"
+	output = em.Output()
+	expected = "\n" +
+		"Import Data Error Summary: \n" +
+		"+---+---------------------+-------------+--------------------------------------------------------------------+\n" +
+		"| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE                                                   |\n" +
+		"+---+---------------------+-------------+--------------------------------------------------------------------+\n" +
+		"|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `long_long_long_long_long_long_long_long_dbname`.`type_error_v2`   \x1b[0m|\n" +
+		"|\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `long_long_long_long_long_long_long_long_dbname`.`syntax_error_v2` \x1b[0m|\n" +
+		"|\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                                                    \x1b[0m|\n" +
+		"|\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `long_long_long_long_long_long_long_long_dbname`.`conflict_view`   \x1b[0m|\n" +
+		"+---+---------------------+-------------+--------------------------------------------------------------------+\n"
+	require.Equal(t, expected, output)
 }

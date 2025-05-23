@@ -15,6 +15,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/usage/indexusage",
@@ -26,6 +27,7 @@ go_library(
         "//pkg/util/sqlescape",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
