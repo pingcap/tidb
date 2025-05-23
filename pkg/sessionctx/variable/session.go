@@ -1610,6 +1610,9 @@ type SessionVars struct {
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
 
+	// EnhanceIndexJoinBuildV2 indicates whether to enhance index join build.
+	EnhanceIndexJoinBuildV2 bool
+
 	// Enable late materialization: push down some selection condition to tablescan.
 	EnableLateMaterialization bool
 
@@ -2370,6 +2373,7 @@ func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
 
 // GetAllowPreferRangeScan get preferRangeScan from SessionVars.preferRangeScan.
 func (s *SessionVars) GetAllowPreferRangeScan() bool {
+	s.RecordRelevantOptVar(vardef.TiDBOptPreferRangeScan)
 	return s.preferRangeScan
 }
 
