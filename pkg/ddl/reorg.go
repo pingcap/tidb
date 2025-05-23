@@ -976,6 +976,19 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 	return &info, nil
 }
 
+func getSplitKeysForTempIndexRanges(pid int64, elements []*meta.Element) []kv.Key {
+	splitKeys := make([]kv.Key, 0, len(elements))
+	for _, e := range elements {
+		if !bytes.Equal(e.TypeKey, meta.IndexElementKey) {
+			continue
+		}
+		tempIdxID := tablecodec.TempIndexPrefix | e.ID
+		splitKey := tablecodec.EncodeIndexSeekKey(pid, tempIdxID, nil)
+		splitKeys = append(splitKeys, splitKey)
+	}
+	return splitKeys
+}
+
 func encodeTempIndexRange(physicalID, firstIdxID, lastIdxID int64) (start kv.Key, end kv.Key) {
 	firstElemTempID := tablecodec.TempIndexPrefix | firstIdxID
 	lastElemTempID := tablecodec.TempIndexPrefix | lastIdxID

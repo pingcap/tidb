@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -259,7 +260,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			for tblID, cols := range e.tblID2Handle {
 				for _, col := range cols {
-					handle, err := col.BuildHandle(row)
+					handle, err := col.BuildHandle(e.Ctx().GetSessionVars().StmtCtx, row)
 					if err != nil {
 						return err
 					}
@@ -322,7 +323,7 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 			}
 			_, planDigest := seVars.StmtCtx.GetPlanDigest()
 
-			return kv.NewResourceGroupTagBuilder().
+			return kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceIDBySettings()).
 				SetPlanDigest(planDigest).
 				SetSQLDigest(digest).
 				EncodeTagWithKey(mutation.Key)
