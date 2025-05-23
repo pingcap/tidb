@@ -5984,13 +5984,13 @@ def go_deps():
         name = "com_github_pingcap_errors",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/errors",
-        sha256 = "30ed52851628abf39242736c113caeafd24cbbbc69a34b93699291dc9adfad83",
-        strip_prefix = "github.com/D3Hunter/errors@v0.0.0-20250522082822-67e1f2d0d238",
+        sha256 = "b696ac3d19b74bd6c3454048767bf145c7d8b4d24c55337b27d2e0960d948949",
+        strip_prefix = "github.com/pingcap/errors@v0.11.5-0.20250523034308-74f78ae071ee",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/D3Hunter/errors/com_github_d3hunter_errors-v0.0.0-20250522082822-67e1f2d0d238.zip",
-            "http://ats.apps.svc/gomod/github.com/D3Hunter/errors/com_github_d3hunter_errors-v0.0.0-20250522082822-67e1f2d0d238.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/D3Hunter/errors/com_github_d3hunter_errors-v0.0.0-20250522082822-67e1f2d0d238.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/D3Hunter/errors/com_github_d3hunter_errors-v0.0.0-20250522082822-67e1f2d0d238.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20250523034308-74f78ae071ee.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20250523034308-74f78ae071ee.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20250523034308-74f78ae071ee.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20250523034308-74f78ae071ee.zip",
         ],
     )
     go_repository(
