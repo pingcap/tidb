@@ -515,6 +515,7 @@ type tableNameExtractor struct {
 	tableNames    map[string]*tableName
 }
 
+// Enter implements ast.Visitor interface.
 func (e *tableNameExtractor) Enter(in ast.Node) (node ast.Node, skipChildren bool) {
 	if name, ok := in.(*ast.TableName); ok {
 		t := &tableName{
@@ -531,6 +532,7 @@ func (e *tableNameExtractor) Enter(in ast.Node) (node ast.Node, skipChildren boo
 	return in, false
 }
 
+// Leave implements ast.Visitor interface.
 func (*tableNameExtractor) Leave(in ast.Node) (node ast.Node, ok bool) {
 	return in, true
 }
