@@ -42,6 +42,12 @@ type AccessPath struct {
 	// CountAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
 	// For index merge path, CountAfterAccess is the row count after partial paths and before we apply table filters.
 	CountAfterAccess float64
+	// CorrCountAfterAccess is the row count after only applying the most filtering index columns.
+	// against the index. This is used when we don't have a full index statistics
+	// and we need to use the exponential backoff to estimate the row count.
+	// Case CorrCountAfterAccess > 0 : we use the exponential backoff to estimate the row count (such as we don't have a full index statistics)
+	// Default CorrCountAfterAccess = 0 : we use index of table estimate row coun directly (such as table full scan, point get etc)
+	CorrCountAfterAccess float64
 	// CountAfterIndex is the row count after we apply filters on index and before we apply the table filters.
 	CountAfterIndex float64
 	// CountFromRisk is the row count attributed to higher risk estimation
@@ -135,6 +141,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		ConstCols:                    slices.Clone(path.ConstCols),
 		Ranges:                       CloneRanges(path.Ranges),
 		CountAfterAccess:             path.CountAfterAccess,
+		CorrCountAfterAccess:         path.CorrCountAfterAccess,
 		CountAfterIndex:              path.CountAfterIndex,
 		AccessConds:                  CloneExprs(path.AccessConds),
 		EqCondCount:                  path.EqCondCount,

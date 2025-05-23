@@ -68,6 +68,15 @@ func TestShowCommentsFromJob(t *testing.T) {
 		ReorgTp:         model.ReorgTypeLitMerge,
 		IsDistReorg:     true,
 		UseCloudStorage: true,
+		MaxNodeCount:    5,
+	}
+	res = showCommentsFromJob(job)
+	require.Equal(t, "ingest, DXF, cloud, max_node_count=5", res)
+
+	job.ReorgMeta = &model.DDLReorgMeta{
+		ReorgTp:         model.ReorgTypeLitMerge,
+		IsDistReorg:     true,
+		UseCloudStorage: true,
 	}
 	job.ReorgMeta.Concurrency.Store(8)
 	job.ReorgMeta.BatchSize.Store(1024)

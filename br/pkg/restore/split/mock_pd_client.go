@@ -5,7 +5,9 @@ package split
 import (
 	"bytes"
 	"context"
+	"maps"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -144,7 +146,7 @@ func (c *TestClient) GetOperator(context.Context, uint64) (*pdpb.GetOperatorResp
 	}, nil
 }
 
-func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*RegionInfo, error) {
+func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, _ ...opt.GetRegionOption) ([]*RegionInfo, error) {
 	if c.InjectErr && c.InjectTimes > 0 {
 		c.InjectTimes -= 1
 		return nil, status.Error(codes.Unavailable, "not leader")
@@ -473,9 +475,7 @@ func (fpdh *FakePDHTTPClient) SetSchedulerDelay(_ context.Context, key string, d
 }
 
 func (fpdh *FakePDHTTPClient) SetConfig(_ context.Context, config map[string]any, ttl ...float64) error {
-	for key, value := range config {
-		fpdh.cfgs[key] = value
-	}
+	maps.Copy(fpdh.cfgs, config)
 	return nil
 }
 
@@ -547,7 +547,7 @@ func (fpdc *FakePDClient) SetRegions(regions []*router.Region) {
 }
 
 func (fpdc *FakePDClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
-	return append([]*metapb.Store{}, fpdc.stores...), nil
+	return slices.Clone(fpdc.stores), nil
 }
 
 func (fpdc *FakePDClient) ScanRegions(
@@ -646,6 +646,7 @@ func (f *FakeSplitClient) ScanRegions(
 	ctx context.Context,
 	startKey, endKey []byte,
 	limit int,
+	_ ...opt.GetRegionOption,
 ) ([]*RegionInfo, error) {
 	result := make([]*RegionInfo, 0)
 	count := 0

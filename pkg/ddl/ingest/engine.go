@@ -53,7 +53,6 @@ type engineInfo struct {
 	openedEngine *backend.OpenedEngine
 
 	uuid        uuid.UUID
-	cfg         *backend.EngineConfig
 	writerCache generic.SyncMap[int, backend.EngineWriter]
 	memRoot     MemRoot
 	flushLock   *sync.RWMutex
@@ -64,7 +63,6 @@ func newEngineInfo(
 	ctx context.Context,
 	jobID, indexID int64,
 	unique bool,
-	cfg *backend.EngineConfig,
 	en *backend.OpenedEngine,
 	uuid uuid.UUID,
 	memRoot MemRoot,
@@ -74,7 +72,6 @@ func newEngineInfo(
 		jobID:        jobID,
 		indexID:      indexID,
 		unique:       unique,
-		cfg:          cfg,
 		openedEngine: en,
 		uuid:         uuid,
 		writerCache:  generic.NewSyncMap[int, backend.EngineWriter](4),

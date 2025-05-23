@@ -32,10 +32,15 @@ import (
 
 // GetCommonTaskExecutorExt returns a common task executor extension.
 func GetCommonTaskExecutorExt(ctrl *gomock.Controller, getStepExecFn func(*proto.Task) (execute.StepExecutor, error)) *mock.MockExtension {
+	return GetTaskExecutorExt(ctrl, getStepExecFn, func(error) bool { return false })
+}
+
+// GetTaskExecutorExt returns a task executor extension.
+func GetTaskExecutorExt(ctrl *gomock.Controller, getStepExecFn func(*proto.Task) (execute.StepExecutor, error), isRetryableErrorFn func(error) bool) *mock.MockExtension {
 	executorExt := mock.NewMockExtension(ctrl)
 	executorExt.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
 	executorExt.EXPECT().GetStepExecutor(gomock.Any()).DoAndReturn(getStepExecFn).AnyTimes()
-	executorExt.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
+	executorExt.EXPECT().IsRetryableError(gomock.Any()).DoAndReturn(isRetryableErrorFn).AnyTimes()
 	return executorExt
 }
 
@@ -108,7 +113,7 @@ func RegisterTaskTypeForRollback(t testing.TB, ctrl *gomock.Controller, schedule
 
 // SubmitAndWaitTask schedule one task.
 func SubmitAndWaitTask(ctx context.Context, t testing.TB, taskKey string, targetScope string, concurrency int) *proto.TaskBase {
-	_, err := handle.SubmitTask(ctx, taskKey, proto.TaskTypeExample, concurrency, targetScope, nil)
+	_, err := handle.SubmitTask(ctx, taskKey, proto.TaskTypeExample, concurrency, targetScope, 0, nil)
 	require.NoError(t, err)
 	return WaitTaskDoneOrPaused(ctx, t, taskKey)
 }

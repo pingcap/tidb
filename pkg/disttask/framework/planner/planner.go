@@ -46,6 +46,8 @@ func (*Planner) Run(planCtx PlanCtx, plan LogicalPlan) (int64, error) {
 		planCtx.TaskType,
 		planCtx.ThreadCnt,
 		config.GetGlobalConfig().Instance.TiDBServiceScope,
+		planCtx.MaxNodeCnt,
+		plan.GetTaskExtraParams(),
 		taskMeta,
 	)
 }

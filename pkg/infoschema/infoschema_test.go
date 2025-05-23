@@ -283,9 +283,9 @@ func TestBasic(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotSchema, gotOK := is.SchemaNameByTableID(tt.tableID)
+			gotItem, gotOK := is.TableItemByID(tt.tableID)
 			require.Equal(t, tt.wantOK, gotOK)
-			require.Equal(t, tt.wantSchema, gotSchema)
+			require.Equal(t, tt.wantSchema, gotItem.DBName)
 		})
 	}
 }
@@ -1311,7 +1311,7 @@ func TestApplyDiff(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if i == 0 {
 			// enable infoschema v2.
 			vardef.SchemaCacheSize.Store(1000000)

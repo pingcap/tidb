@@ -212,7 +212,7 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		ast.FromDays, /* ast.ToDays */
 		ast.PeriodAdd, ast.PeriodDiff, ast.TimestampDiff, ast.FromUnixTime,
 		/* ast.LastDay */
-		ast.Sysdate, ast.StrToDate,
+		ast.Sysdate, /* ast.StrToDate, */
 
 		// encryption functions.
 		ast.MD5, ast.SHA1, ast.UncompressedLength,
@@ -424,6 +424,8 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		return true
 	case ast.VecDims, ast.VecL1Distance, ast.VecL2Distance, ast.VecNegativeInnerProduct, ast.VecCosineDistance, ast.VecL2Norm, ast.VecAsText:
 		return true
+	case ast.FTSMatchWord:
+		return true
 	case ast.Grouping: // grouping function for grouping sets identification.
 		return true
 	}
@@ -523,6 +525,11 @@ func (ctx PushDownContext) AppendWarning(err error) {
 
 // PushDownExprsWithExtraInfo split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
 func PushDownExprsWithExtraInfo(ctx PushDownContext, exprs []Expression, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
+	if len(exprs) == 0 {
+		return nil, nil
+	}
+	pushed = make([]Expression, 0, len(exprs))
+	remained = make([]Expression, 0, len(exprs))
 	for _, expr := range exprs {
 		if canExprPushDown(ctx, expr, storeType, canEnumPush) {
 			pushed = append(pushed, expr)

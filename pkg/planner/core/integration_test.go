@@ -1028,7 +1028,7 @@ func TestExplainAnalyzeDML2(t *testing.T) {
 	}
 
 	for _, ca := range cases {
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			tk.MustExec("drop table if exists t")
 			switch i {
 			case 0:
@@ -1448,7 +1448,7 @@ func TestIssue36194(t *testing.T) {
 		"  └─ExchangeSender 100.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"    └─Limit 100.00 mpp[tiflash]  offset:0, count:100",
 		"      └─Selection 100.00 mpp[tiflash]  gt(plus(test.t.a, 1), 20)",
-		"        └─TableFullScan 125.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"))
+		"        └─TableFullScan 125.00 mpp[tiflash] table:t keep order:false, stats:pseudo"))
 }
 
 func TestGetFormatPushDownToTiFlash(t *testing.T) {
@@ -2181,11 +2181,11 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 	// TopN to tikv.
 	rows := [][]any{
-		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
-		{"└─TableReader_13", "root", "data:TableFullScan_12"},
-		{"  └─TableFullScan_12", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"TopN", "root", "test.t.c2, offset:0, count:2"},
+		{"└─TableReader", "root", "data:TableFullScan"},
+		{"  └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
-	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustQuery("explain format='brief' select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
 
 	// Projection to tikv.
 	rows = [][]any{
@@ -2217,11 +2217,11 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 	// TopN to tiflash.
 	rows = [][]any{
-		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
-		{"└─TableReader_15", "root", "data:TableFullScan_14"},
-		{"  └─TableFullScan_14", "cop[tiflash]", "keep order:false, stats:pseudo"},
+		{"TopN", "root", "test.t.c2, offset:0, count:2"},
+		{"└─TableReader", "root", "data:TableFullScan"},
+		{"  └─TableFullScan", "cop[tiflash]", "keep order:false, stats:pseudo"},
 	}
-	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustQuery("explain format='brief' select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
 
 	// Projection to tiflash.
 	rows = [][]any{
@@ -2331,10 +2331,12 @@ func TestIssue41458(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-	tk.MustExec("use test")
+
+	tk.MustExec("create database special")
+	tk.MustExec("use special")
 	tk.MustExec(`create table t (a int, b int, c int, index ia(a));`)
 	tk.MustExec("select  * from t t1 join t t2 on t1.b = t2.b join t t3 on t2.b=t3.b join t t4 on t3.b=t4.b where t3.a=1 and t2.a=2;")
-	rawRows := tk.MustQuery("select plan from information_schema.statements_summary where SCHEMA_NAME = 'test' and STMT_TYPE = 'Select';").Sort().Rows()
+	rawRows := tk.MustQuery("select plan from information_schema.statements_summary where SCHEMA_NAME = 'special' and STMT_TYPE = 'Select';").Sort().Rows()
 	plan := rawRows[0][0].(string)
 	rows := strings.Split(plan, "\n")
 	rows = rows[1:]
@@ -2445,12 +2447,12 @@ func TestIssue54213(t *testing.T) {
   c bigint(20) ,
   PRIMARY KEY (object_id),
   KEY ab (a,b))`)
-	tk.MustQuery(`explain select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
-		testkit.Rows("StreamAgg_11 1.00 root  funcs:count(1)->Column#6",
-			"└─Limit_12 0.10 root  offset:0, count:100",
-			"  └─IndexReader_16 0.10 root  index:Limit_15",
-			"    └─Limit_15 0.10 cop[tikv]  offset:0, count:100",
-			"      └─IndexRangeScan_14 0.10 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
+	tk.MustQuery(`explain format='brief' select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
+		testkit.Rows("StreamAgg 1.00 root  funcs:count(1)->Column#6",
+			"└─Limit 1.00 root  offset:0, count:100",
+			"  └─IndexReader 1.25 root  index:Limit",
+			"    └─Limit 1.25 cop[tikv]  offset:0, count:100",
+			"      └─IndexRangeScan 1.25 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
 }
 
 func TestIssue54870(t *testing.T) {
@@ -2545,4 +2547,37 @@ func TestIssue58829(t *testing.T) {
 
 	// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
 	tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
+}
+
+func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.t;")
+	tk.MustExec("create table test.t (p int, o int, v int not null);")
+	tk.MustExec("insert into test.t values (0, 0, -1), (1, 0, -1), (1, 1, 0), (1, 3, 4), (1, 6, 6), (1, 7, -5), (1, 8, 3), (1, 18, 1), (1, 30, 30), (2, 0, 2), (2, 1, 0), (2, 4, -4), (2, 7, -2), (2, 8, 1), (2, 15, 2), (2, 30, -11), (3, 0, 7), (3, 4, -3), (3, 6, 9), (3, 10, -9), (3, 20, -3), (3, 40, 2), (3, 41, 1), (4, 0, 4), (5, 0, -5), (6, 0, 2), (6, 10, 5), (6, 30, 0), (7, 0, 3), (7, 1, 3), (7, 2, 2), (7, 3, -4), (7, 4, 9);")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
+
+	rows := [][]any{
+		{"TableReader_24", "root", "MppVersion: 3, data:ExchangeSender_23"},
+		{"└─ExchangeSender_23", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_8", "mpp[tiflash]", "Column#10->Column#15, Column#11->Column#16, Column#12->Column#17, Column#13->Column#18, Column#14->Column#19, stream_count: 8"},
+		{"    └─Window_22", "mpp[tiflash]", "sum(cast(test.t.v, decimal(10,0) BINARY))->Column#10, count(test.t.v)->Column#11, avg(cast(test.t.v, decimal(10,0) BINARY))->Column#12, min(test.t.v)->Column#13, max(test.t.v)->Column#14 over(partition by test.t.p order by test.t.o range between unbounded preceding and current row), stream_count: 8"},
+		{"      └─Sort_14", "mpp[tiflash]", "test.t.p, test.t.o, stream_count: 8"},
+		{"        └─ExchangeReceiver_13", "mpp[tiflash]", "stream_count: 8"},
+		{"          └─ExchangeSender_12", "mpp[tiflash]", "ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.p, collate: binary], stream_count: 8"},
+		{"            └─TableFullScan_11", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select sum(v) over w as res1, count(v) over w as res2, avg(v) over w as res3, min(v) over w as res4, max(v) over w as res5 from t window w as (partition by p order by o);").CheckAt([]int{0, 2, 4}, rows)
 }

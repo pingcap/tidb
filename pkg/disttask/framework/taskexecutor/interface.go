@@ -16,6 +16,7 @@ package taskexecutor
 
 import (
 	"context"
+	goerrors "errors"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -144,10 +145,10 @@ func (*BaseStepExecutor) Cleanup(context.Context) error {
 
 // TaskMetaModified implements the StepExecutor interface.
 func (*BaseStepExecutor) TaskMetaModified(context.Context, []byte) error {
-	panic("not implemented")
+	return goerrors.New("not implemented")
 }
 
 // ResourceModified implements the StepExecutor interface.
 func (*BaseStepExecutor) ResourceModified(context.Context, *proto.StepResource) error {
-	panic("not implemented")
+	return goerrors.New("not implemented")
 }

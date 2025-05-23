@@ -117,7 +117,7 @@ func isValidToAnalyze(
 	lastFailedAnalysisDuration, err :=
 		GetLastFailedAnalysisDuration(sctx, schema, table, partitionNames...)
 	if err != nil {
-		logutil.SingletonStatsSamplerLogger().Warn(
+		logutil.StatsErrVerboseSampleLogger().Warn(
 			"Fail to get last failed analysis duration",
 			zap.String("schema", schema),
 			zap.String("table", table),
@@ -130,7 +130,7 @@ func isValidToAnalyze(
 	averageAnalysisDuration, err :=
 		GetAverageAnalysisDuration(sctx, schema, table, partitionNames...)
 	if err != nil {
-		logutil.SingletonStatsSamplerLogger().Warn(
+		logutil.StatsErrVerboseSampleLogger().Warn(
 			"Fail to get average analysis duration",
 			zap.String("schema", schema),
 			zap.String("table", table),
@@ -143,7 +143,7 @@ func isValidToAnalyze(
 	// Last analysis just failed, we should not analyze it again.
 	if lastFailedAnalysisDuration == justFailed {
 		// The last analysis failed, we should not analyze it again.
-		logutil.SingletonStatsSamplerLogger().Info(
+		logutil.StatsSampleLogger().Info(
 			"Skip analysis because the last analysis just failed",
 			zap.String("schema", schema),
 			zap.String("table", table),
@@ -156,7 +156,7 @@ func isValidToAnalyze(
 	// Skip this table to avoid too much failed analysis.
 	onlyFailedAnalysis := lastFailedAnalysisDuration != NoRecord && averageAnalysisDuration == NoRecord
 	if onlyFailedAnalysis && lastFailedAnalysisDuration < defaultFailedAnalysisWaitTime {
-		logutil.SingletonStatsSamplerLogger().Info(
+		logutil.StatsSampleLogger().Info(
 			fmt.Sprintf("Skip analysis because the last failed analysis duration is less than %v", defaultFailedAnalysisWaitTime),
 			zap.String("schema", schema),
 			zap.String("table", table),
@@ -170,7 +170,7 @@ func isValidToAnalyze(
 	meetSkipCondition := lastFailedAnalysisDuration != NoRecord &&
 		lastFailedAnalysisDuration < 2*averageAnalysisDuration
 	if meetSkipCondition {
-		logutil.SingletonStatsSamplerLogger().Info(
+		logutil.StatsSampleLogger().Info(
 			"Skip analysis because the last failed analysis duration is less than 2 times the average analysis duration",
 			zap.String("schema", schema),
 			zap.String("table", table),

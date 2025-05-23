@@ -16,7 +16,9 @@ package executor_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math/rand"
 	"os"
 	"strconv"
 	"strings"
@@ -25,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -560,6 +563,10 @@ func TestTablesTable(t *testing.T) {
 		}
 	}
 
+	// test table mode
+	tk.MustQuery(`select tidb_table_mode from information_schema.tables where table_schema = 'db1' and
+		table_name = 't1'`).Check(testkit.Rows("Normal"))
+
 	// Predicates are extracted in CNF, so we separate the test cases by the number of disjunctions in the predicate.
 
 	// predicate covers one disjunction
@@ -743,7 +750,7 @@ func TestJoinSystemTableContainsView(t *testing.T) {
 	tk.MustExec("create view v as select * from t;")
 	// This is used by grafana when TiDB is specified as the data source.
 	// See https://github.com/grafana/grafana/blob/e86b6662a187c77656f72bef3b0022bf5ced8b98/public/app/plugins/datasource/mysql/meta_query.ts#L31
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustQueryWithContext(context.Background(), `
 SELECT
     table_name as table_name,
@@ -908,10 +915,10 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		tk.MustExec(fmt.Sprintf("create database d%d", i))
 		tk.MustExec(fmt.Sprintf("use d%d", i))
-		for j := 0; j < 4; j++ {
+		for j := range 4 {
 			tk.MustExec(fmt.Sprintf("create table t%d(id int, col1 int, col2 int)", j))
 			tk.MustExec(fmt.Sprintf("alter table t%d add index (col1)", j))
 		}
@@ -920,22 +927,22 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t1";`).Check(testkit.RowsWithSep("|",
-		"131|add index|public|124|129|t1|synced",
-		"130|create table|public|124|129|t1|synced",
-		"117|add index|public|110|115|t1|synced",
-		"116|create table|public|110|115|t1|synced",
+		"133|add index|public|126|131|t1|synced",
+		"132|create table|public|126|131|t1|synced",
+		"119|add index|public|112|117|t1|synced",
+		"118|create table|public|112|117|t1|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d1" and JOB_TYPE LIKE "add index%%";`).Check(testkit.RowsWithSep("|",
-		"137|add index|public|124|135|t3|synced",
-		"134|add index|public|124|132|t2|synced",
-		"131|add index|public|124|129|t1|synced",
-		"128|add index|public|124|126|t0|synced",
+		"139|add index|public|126|137|t3|synced",
+		"136|add index|public|126|134|t2|synced",
+		"133|add index|public|126|131|t1|synced",
+		"130|add index|public|126|128|t0|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and table_name = "t3";`).Check(testkit.RowsWithSep("|",
-		"123|add index|public|110|121|t3|synced",
-		"122|create table|public|110|121|t3|synced",
+		"125|add index|public|112|123|t3|synced",
+		"124|create table|public|112|123|t3|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 					FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.Rows())
@@ -946,15 +953,15 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 		if job.SchemaState == model.StateWriteOnly && loaded.CompareAndSwap(false, true) {
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t0" and state = "running";`).Check(testkit.RowsWithSep("|",
-				"138 add index write only 110 112 t0 running",
+				"140 add index write only 112 114 t0 running",
 			))
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and state = "running";`).Check(testkit.RowsWithSep("|",
-				"138 add index write only 110 112 t0 running",
+				"140 add index write only 112 114 t0 running",
 			))
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.RowsWithSep("|",
-				"138 add index write only 110 112 t0 running",
+				"140 add index write only 112 114 t0 running",
 			))
 		}
 	})
@@ -970,15 +977,15 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	tk.MustExec("create table test2.t1(id int)")
 	tk.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "test2" and table_name = "t1"`).Check(testkit.RowsWithSep("|",
-		"147|create table|public|144|146|t1|synced",
-		"142|create table|public|139|141|t1|synced",
+		"149|create table|public|146|148|t1|synced",
+		"144|create table|public|141|143|t1|synced",
 	))
 
 	// Test explain output, since the output may change in future.
-	tk.MustQuery(`EXPLAIN SELECT * FROM information_schema.ddl_jobs where db_name = "test2" limit 10;`).Check(testkit.Rows(
-		`Limit_10 10.00 root  offset:0, count:10`,
-		`└─Selection_11 10.00 root  eq(Column#2, "test2")`,
-		`  └─MemTableScan_12 10000.00 root table:DDL_JOBS db_name:["test2"]`,
+	tk.MustQuery(`EXPLAIN FORMAT='brief' SELECT * FROM information_schema.ddl_jobs where db_name = "test2" limit 10;`).Check(testkit.Rows(
+		`Limit 10.00 root  offset:0, count:10`,
+		`└─Selection 10.00 root  eq(Column#2, "test2")`,
+		`  └─MemTableScan 10000.00 root table:DDL_JOBS db_name:["test2"]`,
 	))
 }
 
@@ -995,15 +1002,15 @@ func TestInfoSchemaConditionWorks(t *testing.T) {
 	// - "index_name"
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	for db := 0; db < 2; db++ {
-		for table := 0; table < 2; table++ {
+	for db := range 2 {
+		for table := range 2 {
 			tk.MustExec(fmt.Sprintf("create database if not exists Db%d;", db))
 			tk.MustExec(fmt.Sprintf(`create table Db%d.Table%d (id int primary key, data0 varchar(255), data1 varchar(255))
 				partition by range (id) (
 					partition p0 values less than (10),
 					partition p1 values less than (20)
 				);`, db, table))
-			for index := 0; index < 2; index++ {
+			for index := range 2 {
 				tk.MustExec(fmt.Sprintf("create unique index Idx%d on Db%d.Table%d (id, data%d);", index, db, table, index))
 			}
 		}
@@ -1053,10 +1060,10 @@ func TestInfoSchemaConditionWorks(t *testing.T) {
 			// TODO: find a way to test the table without any rows by adding some rows to them.
 			continue
 		}
-		for i := 0; i < len(cols); i++ {
+		for i := range cols {
 			colName := cols[i].Column.Name.L
 			if valPrefix, ok := testColumns[colName]; ok {
-				for j := 0; j < 2; j++ {
+				for j := range 2 {
 					sql := fmt.Sprintf("select * from information_schema.%s where %s = '%s%d';",
 						table, colName, valPrefix, j)
 					rows := tk.MustQuery(sql).Rows()
@@ -1283,4 +1290,51 @@ func TestIndexUsageWithData(t *testing.T) {
 
 		checkIndexUsage(startQuery, endQuery)
 	})
+}
+
+func TestKeyspaceMeta(t *testing.T) {
+	keyspaceID := rand.Uint32() >> 8
+	keyspaceName := fmt.Sprintf("keyspace-%d", keyspaceID)
+	cfg := map[string]string{
+		"key_a": "a",
+		"key_b": "b",
+	}
+
+	keyspaceMeta := &keyspacepb.KeyspaceMeta{
+		Id:     keyspaceID,
+		Name:   keyspaceName,
+		Config: cfg,
+	}
+
+	store := testkit.CreateMockStore(t, mockstore.WithKeyspaceMeta(keyspaceMeta))
+	tk := testkit.NewTestKit(t, store)
+
+	rows := tk.MustQuery("select * from information_schema.keyspace_meta").Rows()
+	require.Equal(t, 1, len(rows))
+	require.Equal(t, keyspaceMeta.Name, rows[0][0])
+	require.Equal(t, fmt.Sprintf("%d", keyspaceMeta.Id), rows[0][1])
+	actualCfg := make(map[string]string)
+	err := json.Unmarshal([]byte(rows[0][2].(string)), &actualCfg)
+	require.Nil(t, err)
+	require.Equal(t, cfg, actualCfg)
+}
+
+func TestStatisticShowPublicIndexes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.Type != model.ActionAddIndex || job.SchemaState == model.StatePublic {
+			return
+		}
+		rs := tk1.MustQuery(`SELECT count(1) FROM INFORMATION_SCHEMA.STATISTICS where 
+			TABLE_SCHEMA = 'test' and table_name = 't' and index_name = 'idx';`).Rows()
+		require.Equal(t, "0", rs[0][0].(string))
+	})
+	tk.MustExec("alter table t add index idx(b);")
 }

@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "llmtest_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/tests/llmtest",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//tests/llmtest/generator",
+        "//tests/llmtest/logger",
+        "//tests/llmtest/testcase",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_spf13_cobra//:cobra",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "llmtest",
+    embed = [":llmtest_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "llmtest_test",
+    timeout = "short",
+    srcs = ["main_test.go"],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    deps = [
+        "//tests/llmtest/generator",
+        "//tests/llmtest/testcase",
+        "@com_github_stretchr_testify//require",
+    ],
+)

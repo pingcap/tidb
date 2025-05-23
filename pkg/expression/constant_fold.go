@@ -178,7 +178,7 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 		hasNullArg := false
 		allConstArg := true
 		isDeferredConst := false
-		for i := 0; i < len(args); i++ {
+		for i := range args {
 			switch x := args[i].(type) {
 			case *Constant:
 				isDeferredConst = isDeferredConst || x.DeferredExpr != nil || x.ParamMarker != nil

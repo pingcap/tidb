@@ -148,7 +148,7 @@ func TestPostSettings(t *testing.T) {
 
 	// test deadlock_history_capacity
 	deadlockhistory.GlobalDeadlockHistory.Resize(10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
 	}
 	form = make(url.Values)

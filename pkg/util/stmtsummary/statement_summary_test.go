@@ -1255,30 +1255,6 @@ func TestEnableSummaryParallel(t *testing.T) {
 	require.True(t, ssMap.Enabled())
 }
 
-// Test GetMoreThanCntBindableStmt.
-func TestGetMoreThanCntBindableStmt(t *testing.T) {
-	ssMap := newStmtSummaryByDigestMap()
-
-	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.LazyInfo.(*mockLazyInfo).originalSQL = "insert 1"
-	stmtExecInfo1.NormalizedSQL = "insert ?"
-	stmtExecInfo1.StmtCtx.StmtType = "Insert"
-	ssMap.AddStatement(stmtExecInfo1)
-	stmts := ssMap.GetMoreThanCntBindableStmt(1)
-	require.Equal(t, 0, len(stmts))
-
-	stmtExecInfo1.NormalizedSQL = "select ?"
-	stmtExecInfo1.Digest = "digest1"
-	stmtExecInfo1.StmtCtx.StmtType = "Select"
-	ssMap.AddStatement(stmtExecInfo1)
-	stmts = ssMap.GetMoreThanCntBindableStmt(1)
-	require.Equal(t, 0, len(stmts))
-
-	ssMap.AddStatement(stmtExecInfo1)
-	stmts = ssMap.GetMoreThanCntBindableStmt(1)
-	require.Equal(t, 1, len(stmts))
-}
-
 // Test `formatBackoffTypes`.
 func TestFormatBackoffTypes(t *testing.T) {
 	backoffMap := make(map[string]int)

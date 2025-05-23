@@ -147,6 +147,24 @@ func (mm *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, er
 	return groupExpr, nil
 }
 
+// RemoveOut remove the old invalid GE out of target group, make sure insert first, then delete.
+func (mm *Memo) RemoveOut(target *Group, lp base.LogicalPlan) {
+	intest.Assert(target != nil)
+	intest.Assert(lp != nil)
+	ge := lp.(*GroupExpression)
+	intest.Assert(ge != nil)
+	// delete from group
+	target.Delete(ge)
+	// delete from global
+	mm.hash2GlobalGroupExpr.Remove(ge)
+	// maintain the parentGERef.
+	for _, childG := range ge.Inputs {
+		childG.removeParentGEs(ge)
+	}
+	// mark current ge as abandoned in case of it has been used in pushed task.
+	ge.SetAbandoned()
+}
+
 // GetGroups gets all groups in the memo.
 func (mm *Memo) GetGroups() *list.List {
 	return mm.groups
