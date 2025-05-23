@@ -892,6 +892,13 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 		restoreErr = runSnapshotRestore(c, mgr, g, cmdName, &snapshotRestoreConfig)
 	}
+
+	// unregister restore task
+	failpoint.Inject("fail-at-end-of-restore", func() {
+		log.Info("failpoint fail-at-end-of-restore injected, failing at the end of restore task")
+		restoreErr = errors.New("failpoint: fail-at-end-of-restore")
+	})
+
 	if restoreErr != nil {
 		// if err happens at register phase no restoreID will be generated and default is 0.
 		if cfg.RestoreID == 0 {
@@ -1029,7 +1036,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
-	err := RegisterRestoreIfNeeded(ctx, cfg.RestoreConfig, cmdName)
+	err = RegisterRestore(ctx, cfg.RestoreConfig, cmdName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2398,11 +2405,11 @@ func checkpointEnabledAndExists(
 	if cfg.UseCheckpoint {
 		if len(cfg.CheckpointStorage) > 0 {
 			clusterID := mgr.PDClient().GetClusterID(ctx)
-			if err := cfg.newStorageCheckpointMetaManagerSnapshot(ctx, clusterID); err != nil {
+			if err := cfg.newStorageCheckpointMetaManagerSnapshot(ctx, clusterID, cfg.RestoreID); err != nil {
 				return false, errors.Trace(err)
 			}
 		} else {
-			if err := cfg.newTableCheckpointMetaManagerSnapshot(g, mgr.GetDomain()); err != nil {
+			if err := cfg.newTableCheckpointMetaManagerSnapshot(g, mgr.GetDomain(), cfg.RestoreID); err != nil {
 				return false, errors.Trace(err)
 			}
 		}

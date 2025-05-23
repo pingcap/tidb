@@ -161,7 +161,7 @@ test_concurrent_restore_table_conflicts() {
     echo "Test Case 2: Concurrent restore with table conflicts"
 
     # start first task, fail it before finishing so restore task is still registered
-    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/fail-at-end-of-stream-restore=return(true)"
+    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/fail-at-end-of-restore=return(true)"
     restore_fail=0
     run_br restore point --filter "$DB.*" --full-backup-storage "$BACKUP_DIR" -s "$LOG_BACKUP_DIR" || restore_fail=1
     if [ $restore_fail -ne 1 ]; then
@@ -193,11 +193,11 @@ test_concurrent_restore_table_conflicts() {
 test_restore_with_different_systable_settings() {
     echo "Test Case 3: Restore with different system table settings"
 
-    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/fail-before-unregister-restore=return(true)"
+    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/fail-at-end-of-restore=return(true)"
     restore_fail=0
     run_br restore full --filter "mysql.*" --filter "$DB.*" --with-sys-table=true -s "$BACKUP_DIR" || restore_fail=1
     if [ $restore_fail -ne 1 ]; then
-        echo 'expecting failed before unregister restore task but succeeded'
+        echo 'expecting failed before unregistering restore task but succeeded'
         exit 1
     fi
     export GO_FAILPOINTS=""
@@ -211,6 +211,7 @@ test_restore_with_different_systable_settings() {
 
     cleanup
 }
+
 setup_test_environment
 
 test_mixed_parallel_restores

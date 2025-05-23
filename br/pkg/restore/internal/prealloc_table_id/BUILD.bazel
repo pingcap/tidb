@@ -8,7 +8,9 @@ go_library(
     deps = [
         "//br/pkg/metautil",
         "//pkg/meta/model",
+        "@com_github_pingcap_log//:log",
         "@com_github_pkg_errors//:errors",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

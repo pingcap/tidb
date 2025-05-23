@@ -140,7 +140,6 @@ func cleanupRegistry(tk *testkit.TestKit) {
 
 func TestExistedTables(t *testing.T) {
 	tk := initTestKit(t)
-	// Register cleanup function
 	t.Cleanup(func() {
 		cleanupRegistry(tk)
 	})
@@ -222,7 +221,6 @@ func TestExistedTables(t *testing.T) {
 // full backup * -> incremental backup * -> restore full backup * -> restore incremental backup *
 func TestExistedTablesOfIncremental(t *testing.T) {
 	tk := initTestKit(t)
-	// Register cleanup function
 	t.Cleanup(func() {
 		cleanupRegistry(tk)
 	})
@@ -327,7 +325,6 @@ func TestExistedTablesOfIncremental_1(t *testing.T) {
 // full backup `test` -> incremental backup `test` -> restore full backup * -> restore incremental backup *
 func TestExistedTablesOfIncremental_2(t *testing.T) {
 	tk := initTestKit(t)
-	// Register cleanup function
 	t.Cleanup(func() {
 		cleanupRegistry(tk)
 	})

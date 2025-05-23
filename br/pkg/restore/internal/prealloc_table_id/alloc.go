@@ -7,9 +7,11 @@ import (
 	"math"
 	"sync/atomic"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 const (
@@ -87,19 +89,31 @@ func (p *PreallocIDs) GetIDRange() (int64, int64) {
 	return p.start, p.end
 }
 
-// preallocTableIDs peralloc the id for [start, end)
+// Alloc peralloc the id for [start, end)
 func (p *PreallocIDs) Alloc(m Allocator) error {
 	if p.count == 0 {
+		log.Info("skipping table ID allocation as count is 0")
 		return nil
 	}
+
+	// If already allocated (start < end), log warning but continue
+	// This makes the function resilient to transaction retries
 	if p.start < p.end {
-		return errors.Errorf("table ID should only be allocated once")
+		log.Warn("table IDs already allocated, this might be a retry",
+			zap.Int64("start", p.start),
+			zap.Int64("end", p.end),
+			zap.Int64("reusable_border", p.reusableBorder))
 	}
 
 	currentID, err := m.GetGlobalID()
 	if err != nil {
+		log.Error("failed to get global ID", zap.Error(err))
 		return err
 	}
+	log.Info("table ID allocation starting",
+		zap.Int64("current_id", currentID),
+		zap.Int64("count", p.count))
+
 	p.start = currentID + 1
 
 	if p.reusableBorder <= p.start {
