@@ -45,6 +45,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -807,6 +809,16 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	defer mgr.Close()
 	defer cfg.CloseCheckpointMetaManager()
+
+	if err = g.UseOneShotSession(mgr.GetStorage(), false, func(se glue.Session) error {
+		enableFollowerHandleRegion, err := se.GetGlobalSysVar(vardef.PDEnableFollowerHandleRegion)
+		if err != nil {
+			return err
+		}
+		return mgr.SetFollowerHandle(variable.TiDBOptOn(enableFollowerHandleRegion))
+	}); err != nil {
+		return errors.Trace(err)
+	}
 
 	defer printRestoreMetrics()
 
