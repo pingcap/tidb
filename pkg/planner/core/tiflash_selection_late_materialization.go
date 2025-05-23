@@ -240,7 +240,7 @@ func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, expr
 // @param: physicalSelection: the PhysicalSelection containing the conditions to be pushed down
 // @param: physicalTableScan: the PhysicalTableScan to be pushed down to
 func predicatePushDownToTableScanImpl(sctx base.PlanContext, physicalTableScan *PhysicalTableScan, conds []expression.Expression) (selectedConds []expression.Expression, selectedSelectivity float64) {
-	if !sctx.GetSessionVars().EnableLateMaterialization || sctx.GetSessionVars().TiFlashFastScan || physicalTableScan.StoreType != kv.TiFlash ||
+	if physicalTableScan.StoreType != kv.TiFlash || !sctx.GetSessionVars().EnableLateMaterialization || sctx.GetSessionVars().TiFlashFastScan ||
 		physicalTableScan.tblColHists.RealtimeCount <= tiflashDataPackSize || physicalTableScan.KeepOrder {
 		return nil, 0
 	}
