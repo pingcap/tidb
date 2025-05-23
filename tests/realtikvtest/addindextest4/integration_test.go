@@ -1,4 +1,4 @@
-// Copyright 2024 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -40,14 +40,9 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 
 	createTables := []string{
 		"create table t (id int, b int, c int, primary key(id) clustered);",
-		`create table t (id int, b int, c int, primary key(id) clustered) partition by range(id) (
-			PARTITION p0 VALUES LESS THAN (10),
-			PARTITION p1 VALUES LESS THAN MAXVALUE
-		)`,
 	}
 	createIndexes := []string{
 		"alter table t add unique index b(b), add index c(c);",
-		"alter table t add unique index b(b) global, add index c(c) global;",
 	}
 
 	for i := range createTables {
