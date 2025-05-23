@@ -103,6 +103,16 @@ func TestFileChunkProcess(t *testing.T) {
 
 	for _, opt := range []mydump.CSVHeaderOption{mydump.CSVHeaderAuto, mydump.CSVHeaderTrue} {
 		t.Run(fmt.Sprintf("process success with %s", opt), func(t *testing.T) {
+			readRowCnt := int64(0)
+			readBytes := int64(0)
+			collector := execute.NewCollector(
+				func(bytes, rows int64) {
+					readBytes += bytes
+					readRowCnt += rows
+				},
+				nil,
+			)
+
 			var dataKVCnt, indexKVCnt int
 			fileName := path.Join(tempDir, "test.csv")
 			sourceData := []byte("a,b,c\n1,2,3\n4,5,6\n7,8,9\n")
@@ -148,7 +158,7 @@ func TestFileChunkProcess(t *testing.T) {
 			checksum := verify.NewKVGroupChecksumWithKeyspace(nil)
 			processor := importer.NewFileChunkProcessor(
 				csvParser, encoder, nil,
-				chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, checksum, nil,
+				chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, checksum, collector,
 			)
 			require.NoError(t, processor.Process(ctx))
 			require.True(t, ctrl.Satisfied())
@@ -157,8 +167,10 @@ func TestFileChunkProcess(t *testing.T) {
 			require.Equal(t, uint64(6), checksumIndexKVCnt)
 			dataKVSize, indexKVSize := checksum.DataAndIndexSumSize()
 			require.Equal(t, uint64(348), dataKVSize+indexKVSize)
-			require.Equal(t, 3, dataKVCnt)
-			require.Equal(t, 6, indexKVCnt)
+			require.EqualValues(t, 3, checksumDataKVCnt)
+			require.EqualValues(t, 6, checksumIndexKVCnt)
+			require.EqualValues(t, 3, readRowCnt)
+			require.EqualValues(t, len(sourceData), readBytes)
 			require.Equal(t, float64(len(sourceData)), metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateRestored)))
 			require.Equal(t, float64(3), metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.StateRestored, "")))
 			require.Equal(t, uint64(2), *metric.ReadHistogram(metrics.RowEncodeSecondsHistogram).Histogram.SampleCount)
@@ -166,18 +178,7 @@ func TestFileChunkProcess(t *testing.T) {
 		})
 	}
 
-	t.Run("process success", func(t *testing.T) {
-		readRowCnt := int64(0)
-		readBytes := int64(0)
-		collector := execute.NewCollector(
-			func(bytes, rows int64) {
-				readBytes += bytes
-				readRowCnt += rows
-			},
-			nil,
-		)
-
-		var dataKVCnt, indexKVCnt int
+	t.Run("wrong header", func(t *testing.T) {
 		fileName := path.Join(tempDir, "test.csv")
 		sourceData := []byte(`a,b,d\n4,5,6\n7,8,9\n`)
 		require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
@@ -185,15 +186,6 @@ func TestFileChunkProcess(t *testing.T) {
 		csvParser.SetColumns([]string{"a", "b", "c"})
 		defer func() {
 			require.NoError(t, csvParser.Close())
-		}()
-
-		metrics := tidbmetrics.GetRegisteredImportMetrics(promutil.NewDefaultFactory(),
-			prometheus.Labels{
-				proto.TaskIDLabelName: uuid.New().String(),
-			})
-		ctx = metric.WithCommonMetric(ctx, metrics)
-		defer func() {
-			tidbmetrics.UnregisterImportMetrics(metrics)
 		}()
 
 		dataWriter := mock.NewMockEngineWriter(ctrl)
@@ -204,26 +196,12 @@ func TestFileChunkProcess(t *testing.T) {
 		chunkInfo := &checkpoints.ChunkCheckpoint{
 			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
-		checksum := verify.NewKVGroupChecksumWithKeyspace(nil)
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, checksum, collector,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil,
 		)
 		require.ErrorIs(t, processor.Process(ctx), common.ErrEncodeKV)
 		require.True(t, ctrl.Satisfied())
-		checksumDataKVCnt, checksumIndexKVCnt := checksum.DataAndIndexSumKVS()
-		require.EqualValues(t, 3, checksumDataKVCnt)
-		require.EqualValues(t, 6, checksumIndexKVCnt)
-		require.EqualValues(t, 3, readRowCnt)
-		require.EqualValues(t, len(sourceData), readBytes)
-		dataKVSize, indexKVSize := checksum.DataAndIndexSumSize()
-		require.Equal(t, uint64(348), dataKVSize+indexKVSize)
-		require.Equal(t, 3, dataKVCnt)
-		require.Equal(t, 6, indexKVCnt)
-		require.Equal(t, float64(len(sourceData)), metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateRestored)))
-		require.Equal(t, float64(3), metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.StateRestored, "")))
-		require.Equal(t, uint64(2), *metric.ReadHistogram(metrics.RowEncodeSecondsHistogram).Histogram.SampleCount)
-		require.Equal(t, uint64(2), *metric.ReadHistogram(metrics.RowReadSecondsHistogram).Histogram.SampleCount)
 	})
 
 	t.Run("encode error", func(t *testing.T) {
