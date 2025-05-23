@@ -190,3 +190,10 @@ if [ $restore_fail -ne 1 ]; then
     echo 'pitr success on file lost'
     exit 1
 fi
+
+# filter is not allowed with pitr
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" -f "foo.bar*" || restore_fail=1
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success with filter specified'
+    exit 1
+fi
