@@ -795,7 +795,32 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 	return &info, nil
 }
 
+<<<<<<< HEAD
 func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo, tbl table.PartitionedTable, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
+=======
+func getSplitKeysForTempIndexRanges(pid int64, elements []*meta.Element) []kv.Key {
+	splitKeys := make([]kv.Key, 0, len(elements))
+	for _, e := range elements {
+		if !bytes.Equal(e.TypeKey, meta.IndexElementKey) {
+			continue
+		}
+		tempIdxID := tablecodec.TempIndexPrefix | e.ID
+		splitKey := tablecodec.EncodeIndexSeekKey(pid, tempIdxID, nil)
+		splitKeys = append(splitKeys, splitKey)
+	}
+	return splitKeys
+}
+
+func encodeTempIndexRange(physicalID, firstIdxID, lastIdxID int64) (start kv.Key, end kv.Key) {
+	firstElemTempID := tablecodec.TempIndexPrefix | firstIdxID
+	lastElemTempID := tablecodec.TempIndexPrefix | lastIdxID
+	start = tablecodec.EncodeIndexSeekKey(physicalID, firstElemTempID, nil)
+	end = tablecodec.EncodeIndexSeekKey(physicalID, lastElemTempID, []byte{255})
+	return start, end
+}
+
+func getReorgInfoFromPartitions(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo, tbl table.PartitionedTable, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
+>>>>>>> 39128189e93 (ddl: construct separate tasks for different temp indexes (#61250))
 	var (
 		element *meta.Element
 		start   kv.Key

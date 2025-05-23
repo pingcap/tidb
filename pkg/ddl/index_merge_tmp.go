@@ -139,9 +139,7 @@ type mergeIndexWorker struct {
 	originIdxKeys []kv.Key
 	tmpIdxKeys    []kv.Key
 
-	needValidateKey        bool
-	currentTempIndexPrefix []byte
-	currentIndex           *model.IndexInfo
+	currentIndex *model.IndexInfo
 }
 
 func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, elements []*meta.Element) *mergeIndexWorker {
@@ -158,38 +156,26 @@ func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, elements
 	}
 }
 
-func (w *mergeIndexWorker) validateTaskRange(taskRange *reorgBackfillTask) (skip bool, err error) {
+func (w *mergeIndexWorker) setCurrentIndexForRange(taskRange *reorgBackfillTask) (err error) {
 	tmpID, err := tablecodec.DecodeIndexID(taskRange.startKey)
 	if err != nil {
-		return false, err
+		return err
 	}
 	startIndexID := tmpID & tablecodec.IndexIDMask
-	tmpID, err = tablecodec.DecodeIndexID(taskRange.endKey)
-	if err != nil {
-		return false, err
-	}
-	endIndexID := tmpID & tablecodec.IndexIDMask
-
-	w.needValidateKey = startIndexID != endIndexID
-	containsTargetID := false
 	for _, idx := range w.indexes {
 		idxInfo := idx.Meta()
 		if idxInfo.ID == startIndexID {
-			containsTargetID = true
 			w.currentIndex = idxInfo
-			break
-		}
-		if idxInfo.ID == endIndexID {
-			containsTargetID = true
+			return nil
 		}
 	}
-	return !containsTargetID, nil
+	return errors.Errorf("index (id=%d) not found", startIndexID)
 }
 
 // BackfillData merge temp index data in txn.
 func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
-	skip, err := w.validateTaskRange(&taskRange)
-	if skip || err != nil {
+	err := w.setCurrentIndexForRange(&taskRange)
+	if err != nil {
 		return taskCtx, err
 	}
 
@@ -272,39 +258,6 @@ func (w *mergeIndexWorker) GetCtx() *backfillCtx {
 	return w.backfillCtx
 }
 
-func (w *mergeIndexWorker) prefixIsChanged(newKey kv.Key) bool {
-	return len(w.currentTempIndexPrefix) == 0 || !bytes.HasPrefix(newKey, w.currentTempIndexPrefix)
-}
-
-func (w *mergeIndexWorker) updateCurrentIndexInfo(newIndexKey kv.Key) (skip bool, err error) {
-	tempIdxID, err := tablecodec.DecodeIndexID(newIndexKey)
-	if err != nil {
-		return false, err
-	}
-	idxID := tablecodec.IndexIDMask & tempIdxID
-	var curIdx *model.IndexInfo
-	for _, idx := range w.indexes {
-		if idx.Meta().ID == idxID {
-			curIdx = idx.Meta()
-		}
-	}
-	if curIdx == nil {
-		// Index IDs are always increasing, but not always continuous:
-		// if DDL adds another index between these indexes, it is possible that:
-		//   multi-schema add index IDs = [1, 2, 4, 5]
-		//   another index ID = [3]
-		// If the new index get rollback, temp index 0xFFxxx03 may have dirty records.
-		// We should skip these dirty records.
-		return true, nil
-	}
-	pfx := tablecodec.CutIndexPrefix(newIndexKey)
-
-	w.currentTempIndexPrefix = kv.Key(pfx).Clone()
-	w.currentIndex = curIdx
-
-	return false, nil
-}
-
 func (w *mergeIndexWorker) fetchTempIndexVals(
 	txn kv.Transaction,
 	taskRange reorgBackfillTask,
@@ -328,13 +281,6 @@ func (w *mergeIndexWorker) fetchTempIndexVals(
 
 			if taskDone || len(w.tmpIdxRecords) >= w.batchCnt {
 				return false, nil
-			}
-
-			if w.needValidateKey && w.prefixIsChanged(indexKey) {
-				skip, err := w.updateCurrentIndexInfo(indexKey)
-				if err != nil || skip {
-					return skip, err
-				}
 			}
 
 			tempIdxVal, err := tablecodec.DecodeTempIndexValue(rawValue)

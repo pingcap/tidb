@@ -143,10 +143,19 @@ func NewAddIndexIngestPipeline(
 	}
 	readerCnt, writerCnt := expectedIngestWorkerCnt()
 
+<<<<<<< HEAD
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, backendCtx, sessPool, tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, totalRowCount, metricCounter)
+=======
+	failpoint.Inject("mockDMLExecutionBeforeScan", func(_ failpoint.Value) {
+		if MockDMLExecutionBeforeScan != nil {
+			MockDMLExecutionBeforeScan()
+		}
+	})
+	failpoint.InjectCall("mockDMLExecutionBeforeScanV2")
+>>>>>>> 39128189e93 (ddl: construct separate tasks for different temp indexes (#61250))
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
@@ -300,7 +309,12 @@ func (src *TableScanTaskSource) generateTasks() error {
 			src.tbl,
 			src.store,
 			startKey,
+<<<<<<< HEAD
 			endKey,
+=======
+			src.endKey,
+			nil,
+>>>>>>> 39128189e93 (ddl: construct separate tasks for different temp indexes (#61250))
 			backfillTaskChanSize,
 		)
 		if err != nil {
