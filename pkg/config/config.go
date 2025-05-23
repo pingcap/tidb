@@ -1300,7 +1300,7 @@ func (c *Config) Load(confFile string) error {
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
 	if err := naming.Check(c.KeyspaceName); err != nil {
-		return err
+		return errors.Annotate(err, "invalid keyspace name")
 	}
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
 		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead. disable-error-stack is ignored.", c.Log.EnableErrorStack, c.Log.DisableErrorStack))
