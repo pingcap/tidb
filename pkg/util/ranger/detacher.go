@@ -16,6 +16,7 @@ package ranger
 
 import (
 	"math"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -367,8 +368,8 @@ func unionColumnValues(lhs, rhs []*valueInfo) []*valueInfo {
 func chooseBetweenRangeAndPoint(sctx *rangerctx.RangerContext, r1 *DetachRangeResult, r2 *cnfItemRangeResult) {
 	if fixcontrol.GetBoolWithDefault(sctx.OptimizerFixControl, fixcontrol.Fix54337, false) {
 		if r1 != nil && len(r1.Ranges) > 0 && r2 != nil && r2.rangeResult != nil {
-			r1Minusr2 := removeConditions(sctx.ExprCtx.GetEvalCtx(), r1.AccessConds, r2.rangeResult.AccessConds)
-			r2Minusr1 := removeConditions(sctx.ExprCtx.GetEvalCtx(), r2.rangeResult.AccessConds, r1.AccessConds)
+			r1Minusr2 := removeConditions(sctx.ExprCtx.GetEvalCtx(), slices.Clone(r1.AccessConds), r2.rangeResult.AccessConds)
+			r2Minusr1 := removeConditions(sctx.ExprCtx.GetEvalCtx(), slices.Clone(r2.rangeResult.AccessConds), r1.AccessConds)
 			// r2 is considered more selective (and more useful) than r1 if its AccessConds are a superset of r1's AccessConds.
 			// This means that r1.AccessConds minus r2.AccessConds should result in an empty set.
 			// The function `removeConditions` is used to perform this subtraction.
@@ -1119,13 +1120,11 @@ func DetachSimpleCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, condit
 }
 
 func removeConditions(ectx expression.EvalContext, conditions, condsToRemove []expression.Expression) []expression.Expression {
-	filterConds := make([]expression.Expression, 0, len(conditions))
-	for _, cond := range conditions {
-		if !expression.Contains(ectx, condsToRemove, cond) {
-			filterConds = append(filterConds, cond)
-		}
-	}
-	return filterConds
+	return slices.DeleteFunc(conditions, func(expr expression.Expression) bool {
+		return slices.ContainsFunc(conditions, func(cond expression.Expression) bool {
+			return expression.Contains(ectx, condsToRemove, cond)
+		})
+	})
 }
 
 // AppendConditionsIfNotExist appends conditions if they are absent.
@@ -1399,8 +1398,13 @@ func AddExpr4EqAndInCondition(sctx *rangerctx.RangerContext, conditions []expres
 
 	// remove the accesses from newConditions
 	newConditions := make([]expression.Expression, 0, len(conditions))
-	newConditions = append(newConditions, conditions...)
-	newConditions = removeConditions(sctx.ExprCtx.GetEvalCtx(), newConditions, accesses)
+	evalCtx := sctx.ExprCtx.GetEvalCtx()
+	for _, cond := range conditions {
+		if expression.Contains(evalCtx, accesses, cond) {
+			continue
+		}
+		newConditions = append(newConditions, conditions...)
+	}
 
 	// add Gc condition for accesses and return new condition to newAccesses
 	newAccesses, err := AddGcColumnCond(sctx, cols, accesses, columnValues)
