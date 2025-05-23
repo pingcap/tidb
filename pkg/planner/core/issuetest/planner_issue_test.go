@@ -283,3 +283,9 @@ func TestIssue61118(t *testing.T) {
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk2.MustExec("admin check table t;")
 }
+
+func TestIssue45956(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("show databases WHERE TRUE IN (SELECT TRUE) < ALL (SELECT TRUE);").Check(testkit.Rows("INFORMATION_SCHEMA"))
+}
