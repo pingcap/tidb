@@ -1121,9 +1121,7 @@ func DetachSimpleCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, condit
 
 func removeConditions(ectx expression.EvalContext, conditions, condsToRemove []expression.Expression) []expression.Expression {
 	return slices.DeleteFunc(conditions, func(expr expression.Expression) bool {
-		return slices.ContainsFunc(conditions, func(cond expression.Expression) bool {
-			return expression.Contains(ectx, condsToRemove, cond)
-		})
+		return expression.Contains(ectx, condsToRemove, expr)
 	})
 }
 
