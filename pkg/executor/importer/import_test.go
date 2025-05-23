@@ -27,16 +27,17 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -68,6 +69,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, false, plan.SplitFile)
 	require.Equal(t, int64(100), plan.MaxRecordedErrors)
 	require.Equal(t, false, plan.Detached)
+	require.Equal(t, mydump.CSVHeaderFalse, plan.CSVHeaderOption)
 	require.Equal(t, "utf8mb4", *plan.Charset)
 	require.Equal(t, false, plan.DisableTiKVImportMode)
 	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
@@ -105,7 +107,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		fieldsEscapedByOption+"='', "+
 		fieldsDefinedNullByOption+"='N', "+
 		linesTerminatedByOption+"='END', "+
-		skipRowsOption+"=1, "+
+		csvHeaderOption+"='true', "+
 		diskQuotaOption+"='100gib', "+
 		checksumTableOption+"='optional', "+
 		threadOption+"=100000, "+
@@ -128,7 +130,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, "", plan.FieldsEscapedBy, sql)
 	require.Equal(t, []string{"N"}, plan.FieldNullDef, sql)
 	require.Equal(t, "END", plan.LinesTerminatedBy, sql)
-	require.Equal(t, uint64(1), plan.IgnoreLines, sql)
+	require.Equal(t, mydump.CSVHeaderTrue, plan.CSVHeaderOption, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
 	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
 	require.Equal(t, runtime.GOMAXPROCS(0), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
@@ -201,11 +203,7 @@ func TestAdjustOptions(t *testing.T) {
 }
 
 func TestAdjustDiskQuota(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/common/GetStorageSize", "return(2048)")
-	require.NoError(t, err)
-	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/common/GetStorageSize")
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/common/GetStorageSize", "return(2048)")
 	d := t.TempDir()
 	require.Equal(t, int64(1638), adjustDiskQuota(0, d, logutil.BgLogger()))
 	require.Equal(t, int64(1), adjustDiskQuota(1, d, logutil.BgLogger()))
