@@ -144,17 +144,6 @@ func (handle *Handle) analyzeBasedOnStatementStats(infoSchema infoschema.InfoSch
 		sql := row.GetString(1)
 		binaryPlan := row.GetString(2)
 		readFrequency := row.GetInt64(3)
-		// forbidden the cross db query by abstract table name from digest_text
-		crossDB, err := checkCrossDB(sql)
-		if err != nil {
-			logutil.ErrVerboseLogger().Warn("failed to check cross db", zap.Error(err))
-			continue
-		}
-		if crossDB {
-			// Now, we cannot recognize the scan time in plan text if the query from the different dbs.
-			// So now we just ignore this kind of case
-			continue
-		}
 		// Step2.2: extract scan-time, memory-usage from planString
 		currentRecordMetrics, err := extractScanAndMemoryFromBinaryPlan(binaryPlan)
 		if err != nil {
@@ -327,13 +316,13 @@ func extractScanAndMemoryFromBinaryPlan(binaryPlan string) ([]*TableReadCostMetr
 	// Step2: abstract the scan time and memory usage from explainData
 	operatorExtractMetrics := make([]*TableReadCostMetrics, 1)
 	// extract scan and memory from main part plan
-	err = extractScanAndMemoryFromExplainOperator(explainData.Main, operatorExtractMetrics)
+	err = extractMetricsFromOperatorTree(explainData.Main, operatorExtractMetrics)
 	if err != nil {
 		return nil, err
 	}
 	// extract scan and memory from CTES part plan
 	for _, cte := range explainData.Ctes {
-		err = extractScanAndMemoryFromExplainOperator(cte, operatorExtractMetrics)
+		err = extractMetricsFromOperatorTree(cte, operatorExtractMetrics)
 		if err != nil {
 			return nil, err
 		}
@@ -374,14 +363,13 @@ func accumulateMetricsGroupByTableId(currentRecordMetrics []*TableReadCostMetric
 	}
 }
 
-func extractScanAndMemoryFromExplainOperator(op *tipb.ExplainOperator, operatorMetrics []*TableReadCostMetrics) error {
+func extractMetricsFromOperatorTree(op *tipb.ExplainOperator, operatorMetrics []*TableReadCostMetrics) error {
 	// Step1: extract operator metrics
 	// Step1.1: get the operator type from op.name
-	names := strings.Split(op.Name, "_")
-	if len(names) != 2 {
-		return nil
+	operatorType, err := extractOperatorTypeFromName(op.Name)
+	if err != nil {
+		return err
 	}
-	operatorType := names[0]
 	switch operatorType {
 	case plancodec.TypeIndexLookUp:
 	case plancodec.TypeIndexReader:
@@ -390,12 +378,12 @@ func extractScanAndMemoryFromExplainOperator(op *tipb.ExplainOperator, operatorM
 		//    └─xxx
 		//      └─IndexRangeScan_x | IndexFullScan_x
 		// Get the time and memory in this layer and find the table name from child IndexXXXScan layer
+		memUsage := op.MemoryBytes
 		scanTime, err := extractScanTimeFromExecutionInfo(op)
 		if err != nil {
 			return fmt.Errorf("failed to extract scan time from execution info, operator name: %s", op.Name)
 		}
-		memUsage := op.MemoryBytes
-		dbName, tableName := extractTableNameFromChildrenIndexScan(op)
+		dbName, tableName := extractTableNameFromIndexScan(op)
 		if dbName == "" || tableName == "" {
 			return fmt.Errorf("failed to get table name from children index xxx operator, operator name: %s", op.Name)
 		}
@@ -408,6 +396,9 @@ func extractScanAndMemoryFromExplainOperator(op *tipb.ExplainOperator, operatorM
 			})
 	case plancodec.TypePointGet:
 	case plancodec.TypeBatchPointGet:
+		if len(op.AccessObjects) == 0 {
+			return fmt.Errorf("faile to get table name while access object is empty, operator name: %s", op.Name)
+		}
 		// Attention: cannot handle the multi access objects from one operator
 		dbName, tableName := extractTableNameFromAccessObject(op.AccessObjects[0])
 		if dbName == "" || tableName == "" {
@@ -415,7 +406,7 @@ func extractScanAndMemoryFromExplainOperator(op *tipb.ExplainOperator, operatorM
 		}
 		scanTime, err := extractScanTimeFromExecutionInfo(op)
 		if err != nil {
-			return fmt.Errorf("failed to extract scan time from execution info, operator name: %s", op.Name)
+			return fmt.Errorf("failed to extract scan time from execution info, operator name: %s, err: %v", op.Name, err)
 		}
 		memUsage := defaultPointGetMemUsage
 		operatorMetrics = append(operatorMetrics,
@@ -426,6 +417,11 @@ func extractScanAndMemoryFromExplainOperator(op *tipb.ExplainOperator, operatorM
 				TableMemUsage: int64(memUsage),
 			})
 	case plancodec.TypeTableReader:
+		// Ignore TiFlash query
+		isTiFlashOp := checkTiFlashOperator(op)
+		if isTiFlashOp {
+			return nil
+		}
 		// Handle the case like:
 		//  └─TableReader_x
 		//    └─xxx
@@ -454,21 +450,44 @@ func extractScanAndMemoryFromExplainOperator(op *tipb.ExplainOperator, operatorM
 		//      └─IndexxxxScan
 		//      └─IndexxxxScan
 		// Get the memory in this layer and average memory to every single indexxxxscan
-		// Get time and table name from every children indexxxxscan layer
+		// Get time and table name from every child indexxxxscan layer
 		totalMemoryUsage := op.MemoryBytes
-		patialMetrics, err := extractPatialMetricsFromChildrenIndexMerge(op)
+		patialMetrics, err := extractPartialMetricsFromChildrenIndexMerge(op)
 		if err != nil || len(patialMetrics) == 0 {
 			return fmt.Errorf("failed to get time and table name from children operator of index merge, operator name: %s", op.Name)
 		}
 		memUsage := totalMemoryUsage / int64(len(patialMetrics))
 		for _, patialMetric := range patialMetrics {
+			patialMetric.TableMemUsage = memUsage
+			operatorMetrics = append(operatorMetrics, patialMetric)
 		}
 	default:
-		// TODO: extand the operator type
-		// todo indexmerge , indexjoin
-		// todo tiflash
+		// TODO: extand the operator type indexjoin, indexmergejoin, tiflash
 	}
-	// Step2: abstract operator children metrics
+	// Step2: Recursively extract the children layer
+	if len(op.Children) == 0 {
+		return nil
+	}
+	for _, child := range op.Children {
+		err = extractMetricsFromOperatorTree(child, operatorMetrics)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkTiFlashOperator(op *tipb.ExplainOperator) bool {
+	if len(op.Children) == 0 {
+		return false
+	}
+	for _, child := range op.Children {
+		if child.TaskType == tipb.TaskType_mpp {
+			return true
+		}
+		checkTiFlashOperator(child) // Recursive check
+	}
+	return false
 }
 
 func extractTableNameFromAccessObject(accessObject *tipb.AccessObject) (string, string) {
@@ -504,43 +523,93 @@ func extractTableNameFromChildrenTableScan(op *tipb.ExplainOperator) (string, st
 		return "", ""
 	}
 	for _, child := range op.Children {
-		if child.Name == plancodec.TypeTableFullScan || child.Name == plancodec.TypeTableRangeScan {
+		childOT, err := extractOperatorTypeFromName(child.Name)
+		if err != nil {
+			return "", ""
+		}
+		if childOT == plancodec.TypeTableFullScan || childOT == plancodec.TypeTableRangeScan {
 			dbName, tableName := extractTableNameFromAccessObject(child.AccessObjects[0])
 			return dbName, tableName
 		}
-		if len(child.Children) != 0 {
-			dbName, tableName := extractTableNameFromChildrenTableScan(child)
-			if dbName != "" && tableName != "" {
-				return dbName, tableName
-			}
+		// Recursive search for the children layer
+		dbName, tableName := extractTableNameFromChildrenTableScan(child)
+		if dbName != "" && tableName != "" {
+			return dbName, tableName
 		}
 	}
 	return "", ""
 }
 
-func extractTableNameFromChildrenIndexScan(op *tipb.ExplainOperator) (string, string) {
+func extractTableNameFromIndexScan(op *tipb.ExplainOperator) (string, string) {
 	if len(op.Children) == 0 {
 		return "", ""
 	}
 	for _, child := range op.Children {
-		if child.Name == plancodec.TypeIndexRangeScan || child.Name == plancodec.TypeIndexFullScan {
+		childOT, err := extractOperatorTypeFromName(child.Name)
+		if err != nil {
+			return "", ""
+		}
+		if childOT == plancodec.TypeIndexRangeScan || childOT == plancodec.TypeIndexFullScan {
 			dbName, tableName := extractTableNameFromAccessObject(child.AccessObjects[0])
+			return dbName, tableName
+		}
+		// Recursive search for the children layer
+		dbName, tableName := extractTableNameFromIndexScan(child)
+		if dbName != "" && tableName != "" {
 			return dbName, tableName
 		}
 	}
 	return "", ""
 }
 
-func extractPatialMetricsFromChildrenIndexMerge(op *tipb.ExplainOperator) ([]*TableReadCostMetrics, error) {
+func extractPartialMetricsFromChildrenIndexMerge(op *tipb.ExplainOperator) ([]*TableReadCostMetrics, error) {
 	if len(op.Children) == 0 {
-		return nil, fmt.Errorf("empty child of index merge operator")
+		return nil, nil
 	}
-	for _, child := range op.Children {
-		if child.Name == plancodec.TypeIndexRangeScan || child.Name == plancodec.TypeIndexFullScan {
+	// Find the layer of IndexxxxScan
+	children0OperatorType, err := extractOperatorTypeFromName(op.Children[0].Name)
+	if err != nil {
+		return nil, err
+	}
+	if children0OperatorType == plancodec.TypeIndexRangeScan || children0OperatorType == plancodec.TypeIndexFullScan {
+		result := make([]*TableReadCostMetrics, 0, len(op.Children))
+		for _, child := range op.Children {
 			dbName, tableName := extractTableNameFromAccessObject(child.AccessObjects[0])
-			return dbName, tableName
+			if dbName == "" || tableName == "" {
+				return nil, fmt.Errorf("failed to get table name from children index xxx operator, operator name: %s", child.Name)
+			}
+			scanTime, err := extractScanTimeFromExecutionInfo(child)
+			if err != nil {
+				return nil, fmt.Errorf("failed to extract scan time from execution info, operator name: %s", child.Name)
+			}
+			partialMetric := &TableReadCostMetrics{
+				DbName:        ast.NewCIStr(dbName),
+				TableName:     ast.NewCIStr(tableName),
+				TableScanTime: scanTime,
+			}
+			result = append(result, partialMetric)
 		}
+		return result, nil
+	} else {
+		// Recursively find the children layer
+		var err error
+		var result []*TableReadCostMetrics
+		for _, child := range op.Children {
+			result, err = extractPartialMetricsFromChildrenIndexMerge(child)
+			if len(result) != 0 {
+				return result, nil
+			}
+		}
+		return nil, err
 	}
+}
+
+func extractOperatorTypeFromName(name string) (string, error) {
+	names := strings.Split(name, "_")
+	if len(names) != 2 {
+		return "", fmt.Errorf("failed to extract operator type from operator name: %s", name)
+	}
+	return names[0], nil
 }
 
 func extractScanTimeFromExecutionInfo(op *tipb.ExplainOperator) (time.Duration, error) {
