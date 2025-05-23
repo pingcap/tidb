@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
@@ -65,6 +66,8 @@ const (
 	flagOnline                   = "online"
 	flagNoSchema                 = "no-schema"
 	flagLoadStats                = "load-stats"
+	flagLoadStatsPhysical        = "load-stats-physical"
+	flagLoadSysTablePhysical     = "load-sys-table-physical"
 	flagGranularity              = "granularity"
 	flagConcurrencyPerStore      = "tikv-max-restore-concurrency"
 	flagAllowPITRFromIncremental = "allow-pitr-from-incremental"
@@ -240,11 +243,13 @@ type RestoreConfig struct {
 	Config
 	RestoreCommonConfig
 
-	NoSchema           bool          `json:"no-schema" toml:"no-schema"`
-	LoadStats          bool          `json:"load-stats" toml:"load-stats"`
-	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
-	StatsConcurrency   uint          `json:"stats-concurrency" toml:"stats-concurrency"`
-	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
+	NoSchema             bool          `json:"no-schema" toml:"no-schema"`
+	LoadStats            bool          `json:"load-stats" toml:"load-stats"`
+	LoadStatsPhysical    bool          `json:"load-stats-physical" toml:"load-stats-physical"`
+	LoadSysTablePhysical bool          `json:"load-sys-table-physical" toml:"load-sys-table-physical"`
+	PDConcurrency        uint          `json:"pd-concurrency" toml:"pd-concurrency"`
+	StatsConcurrency     uint          `json:"stats-concurrency" toml:"stats-concurrency"`
+	BatchFlushInterval   time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
 	// DdlBatchSize use to define the size of batch ddl to create tables
 	DdlBatchSize uint `json:"ddl-batch-size" toml:"ddl-batch-size"`
 
@@ -299,6 +304,8 @@ func (cfg *RestoreConfig) LocalEncryptionEnabled() bool {
 func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagNoSchema, false, "skip creating schemas and tables, reuse existing empty ones")
 	flags.Bool(flagLoadStats, true, "Run load stats or update stats_meta to trigger auto-analyze at end of snapshot restore task")
+	flags.Bool(flagLoadStatsPhysical, false, "load stats by rename the temporary stats tables")
+	flags.Bool(flagLoadSysTablePhysical, false, "load system tables by rename the temporary system tables")
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
@@ -377,6 +384,14 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 		return errors.Trace(err)
 	}
 	cfg.LoadStats, err = flags.GetBool(flagLoadStats)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.LoadStatsPhysical, err = flags.GetBool(flagLoadStatsPhysical)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.LoadSysTablePhysical, err = flags.GetBool(flagLoadSysTablePhysical)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -916,6 +931,11 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
+	if cfg.LoadSysTablePhysical && !cfg.WithSysTable {
+		return errors.Errorf("cannot set --load-sys-table-physical when --with-sys-table is unset. " +
+			"Please also set --with-sys-table.")
+	}
+
 	// reads out information from backup meta file and do requirement checking if needed
 	u, s, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
 	if err != nil {
@@ -923,6 +943,33 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 	if backupMeta.IsRawKv || backupMeta.IsTxnKv {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
+	}
+	schemaVersionPair := snapclient.SchemaVersionPairT{}
+	if cfg.LoadStatsPhysical || cfg.LoadSysTablePhysical {
+		upstreamClusterVersion, err := semver.NewVersion(backupMeta.ClusterVersion)
+		if err != nil {
+			return errors.Annotatef(berrors.ErrVersionMismatch, "%s: cluster version %s from backupmeta is invalid", err.Error(), backupMeta.ClusterVersion)
+		}
+		downstreamClusterVersionStr, err := mgr.GetClusterVersion(ctx)
+		if err != nil {
+			return errors.Annotatef(berrors.ErrVersionMismatch, "%s: failed to get the downstream cluster version", err.Error())
+		}
+		downstreamClusterVersion, err := semver.NewVersion(downstreamClusterVersionStr)
+		if err != nil {
+			return errors.Annotatef(berrors.ErrVersionMismatch, "%s: the downstream cluster version %s is invalid", err.Error(), downstreamClusterVersionStr)
+		}
+		schemaVersionPair.UpstreamVersionMajor = upstreamClusterVersion.Major
+		schemaVersionPair.UpstreamVersionMinor = upstreamClusterVersion.Minor
+		schemaVersionPair.DownstreamVersionMajor = downstreamClusterVersion.Major
+		schemaVersionPair.DownstreamVersionMinor = downstreamClusterVersion.Minor
+		if cfg.LoadSysTablePhysical {
+			if schemaVersionPair.UpstreamVersionMajor != schemaVersionPair.DownstreamVersionMajor ||
+				schemaVersionPair.UpstreamVersionMinor != schemaVersionPair.DownstreamVersionMinor {
+				return errors.Annotatef(berrors.ErrVersionMismatch,
+					"cannot set --load-sys-table-physical when the cluster version of snapshot backup is different from that of the downstream cluster. "+
+						"Please unset --load-sys-table-physical.")
+			}
+		}
 	}
 	if cfg.CheckRequirements {
 		log.Info("Checking incompatible TiCDC changefeeds before restoring.",
@@ -974,7 +1021,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	metaReader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.LoadSchemaIfNeededAndInitClient(ctx, backupMeta, u, metaReader, cfg.LoadStats, nil, nil,
+	if err = client.LoadSchemaIfNeededAndInitClient(ctx, backupMeta, u, metaReader, cfg.LoadStats && !cfg.LoadStatsPhysical, nil, nil,
 		cfg.ExplicitFilter, isFullRestore(cmdName), cfg.WithSysTable); err != nil {
 		return errors.Trace(err)
 	}
@@ -991,6 +1038,16 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	log.Info("checkpoint status in restore", zap.Bool("enabled", cfg.UseCheckpoint), zap.Bool("exists", cpEnabledAndExists))
 	if err := checkMandatoryClusterRequirements(client, cfg, cpEnabledAndExists, cmdName); err != nil {
 		return errors.Trace(err)
+	}
+	if client.IsIncremental() || cfg.ExplicitFilter || !isFullRestore(cmdName) {
+		if cfg.LoadStatsPhysical {
+			return errors.Errorf("cannot set --load-stats-physical when it is not full restore. " +
+				"Please unset --load-stats-physical or try to full restore.")
+		}
+		if cfg.LoadSysTablePhysical {
+			return errors.Errorf("cannot set --load-sys-table-physical when it is not full restore. " +
+				"Please unset --load-sys-table-physical or try to full restore.")
+		}
 	}
 
 	// filters out db/table/files using filter
@@ -1049,7 +1106,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
-	if err = client.AllocTableIDs(ctx, tables); err != nil {
+	if err := client.AllocTableIDs(ctx, tables, cfg.LoadStatsPhysical && !cpEnabledAndExists); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1145,6 +1202,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	createdTables, err := createDBsAndTables(ctx, client, cfg, mgr, dbs, tables)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// TODO: after ID preallocation supports checkpoint, we can remove this check
+	if cfg.LoadStatsPhysical && cpEnabledAndExists {
+		if err := checkAllUserTableIDsReused(createdTables); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	// update table mapping manager with new table ids if PiTR
@@ -1319,13 +1382,17 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	plCtx := snapclient.PipelineContext{
 		// pipeline checksum only when enabled and is not incremental snapshot repair mode cuz incremental doesn't have
 		// enough information in backup meta to validate checksum
-		Checksum:         cfg.Checksum && !client.IsIncremental(),
-		LoadStats:        cfg.LoadStats,
-		WaitTiflashReady: cfg.WaitTiflashReady,
+		Checksum:             cfg.Checksum && !client.IsIncremental(),
+		LoadStats:            cfg.LoadStats,
+		LoadStatsPhysical:    cfg.LoadStatsPhysical,
+		LoadSysTablePhysical: cfg.LoadSysTablePhysical,
+		WaitTiflashReady:     cfg.WaitTiflashReady,
 
 		LogProgress:         cfg.LogProgress,
 		ChecksumConcurrency: cfg.ChecksumConcurrency,
 		StatsConcurrency:    cfg.StatsConcurrency,
+		SchemaVersionPair:   schemaVersionPair,
+		RestoreTS:           restoreTS,
 
 		KvClient:   mgr.GetStorage().GetClient(),
 		ExtStorage: s,
@@ -1340,7 +1407,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// So leave it out of the pipeline for easier implementation.
 	log.Info("restoring system schemas", zap.Bool("withSys", cfg.WithSysTable),
 		zap.Strings("filter", cfg.FilterStr))
-	err = client.RestoreSystemSchemas(ctx, cfg.TableFilter)
+	err = client.RestoreSystemSchemas(ctx, cfg.TableFilter, cfg.LoadSysTablePhysical)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1505,6 +1572,38 @@ func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.
 	return nil
 }
 
+func checkAllUserTableIDsReused(createdTables []*restoreutils.CreatedTable) error {
+	for _, createdTable := range createdTables {
+		if createdTable.OldTable.Info.ID != createdTable.Table.ID {
+			return errors.Errorf("cannot load stats physically because not all table ids are reused, "+
+				"upstream table ID is %d and downstream table ID is %d",
+				createdTable.OldTable.Info.ID,
+				createdTable.Table.ID,
+			)
+		}
+		if createdTable.OldTable.Info.Partition != nil && createdTable.OldTable.Info.Partition.Definitions != nil {
+			if createdTable.Table.Partition == nil || createdTable.Table.Partition.Definitions == nil {
+				return errors.Errorf("the created table has partitions but the origin table does not, "+
+					"table ID is %d", createdTable.Table.ID,
+				)
+			}
+			downstreamTableIDSet := make(map[int64]struct{})
+			for _, def := range createdTable.Table.Partition.Definitions {
+				downstreamTableIDSet[def.ID] = struct{}{}
+			}
+			for _, def := range createdTable.OldTable.Info.Partition.Definitions {
+				if _, exists := downstreamTableIDSet[def.ID]; !exists {
+					return errors.Errorf("the origin table has the partition but the created table does not, "+
+						"table ID is %d and upstream partition ID is %d",
+						createdTable.Table.ID, def.ID,
+					)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func getAnyFileKeyFromTables(tables []*metautil.Table) []byte {
 	for _, table := range tables {
 		for _, files := range table.FilesOfPhysicals {
@@ -1536,8 +1635,13 @@ func filterRestoreFiles(
 		}
 		dbMap[db.Info.ID] = db
 		for _, table := range db.Tables {
-			if table.Info == nil || !utils.MatchTable(cfg.TableFilter, dbName, table.Info.Name.O, cfg.WithSysTable) {
+			if table.Info == nil {
 				continue
+			}
+			if !(cfg.LoadStatsPhysical && snapclient.IsStatsTemporaryTable(dbName, table.Info.Name.O)) {
+				if !utils.MatchTable(cfg.TableFilter, dbName, table.Info.Name.O, cfg.WithSysTable) {
+					continue
+				}
 			}
 
 			// Add table to tableMap using table ID as key
