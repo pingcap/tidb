@@ -69,7 +69,6 @@ func prepareTopNsAndHists(b *testing.B, partitions int, tz *time.Location) ([]*s
 
 func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
 	loc := time.UTC
-	version := 1
 	killer := sqlkiller.SQLKiller{}
 	topNs, hists := prepareTopNsAndHists(b, partitions, loc)
 
@@ -78,7 +77,6 @@ func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
 		// Benchmark merge 100 topN.
 		_, _, _, _ = MergePartTopN2GlobalTopN(
 			loc,
-			version,
 			topNs,
 			100,
 			hists,
