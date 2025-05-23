@@ -287,6 +287,7 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	vars.StmtCtx.InInsertStmt = true
 	vars.StmtCtx.BatchCheck = true
 	vars.StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
+	vars.StmtCtx.NoDefaultAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
