@@ -366,9 +366,9 @@ func TestIssue40093(t *testing.T) {
 			{"└─HashJoin_23"},
 			{"  ├─IndexReader_25(Build)"},
 			{"  │ └─IndexRangeScan_24"}, // RangeScan instead of FullScan
-			{"  └─TableReader_30(Probe)"},
-			{"    └─Selection_29"},
-			{"      └─TableFullScan_28"},
+			{"  └─TableReader_31(Probe)"},
+			{"    └─Selection_30"},
+			{"      └─TableFullScan_29"},
 		})
 
 	tk.MustExec("execute st using @b")
