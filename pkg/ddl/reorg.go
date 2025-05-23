@@ -606,7 +606,6 @@ type reorgInfo struct {
 	jobCtx        *jobContext
 	first         bool
 	mergingTmpIdx bool
-	splitKeys     []kv.Key
 	// PhysicalTableID is used for partitioned table.
 	// DDL reorganize for a partitioned table will handle partitions one by one,
 	// PhysicalTableID is used to trace the current partition we are handling.

@@ -40,7 +40,10 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 
 	createTables := []string{
 		"create table t (id int, b int, c int, primary key(id) clustered);",
-		"create table t (id int, b int, c int, primary key(id) clustered) partition by hash(id) partitions 4;",
+		`create table t (id int, b int, c int, primary key(id) clustered) partition by range(id) (
+			PARTITION p0 VALUES LESS THAN (10),
+			PARTITION p1 VALUES LESS THAN MAXVALUE
+		)`,
 	}
 	createIndexes := []string{
 		"alter table t add unique index b(b), add index c(c);",
