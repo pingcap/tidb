@@ -253,7 +253,7 @@ func TestPostProcess(t *testing.T) {
 	tk.MustQuery("select * from db.tb2").Check(testkit.Rows("124"))
 }
 
-func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, tableName, path string, opts []*plannercore.LoadDataOpt) *importer.TableImporter {
+func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, tableName, path, format string, opts []*plannercore.LoadDataOpt) *importer.TableImporter {
 	tk := testkit.NewTestKit(t, store)
 	do, err := session.GetDomain(store)
 	require.NoError(t, err)
@@ -266,7 +266,8 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 		selectPlan = &plannercore.PhysicalSelection{}
 	}
 	plan, err := importer.NewImportPlan(ctx, tk.Session(), &plannercore.ImportInto{
-		Path: path,
+		Path:   path,
+		Format: &format,
 		Table: &resolve.TableNameW{
 			TableName: &ast.TableName{Name: table.Meta().Name},
 			DBInfo:    dbInfo,
@@ -306,7 +307,7 @@ func TestProcessChunkWith(t *testing.T) {
 			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
 			Chunk:    mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
-		ti := getTableImporter(ctx, t, store, "t", fileName, []*plannercore.LoadDataOpt{
+		ti := getTableImporter(ctx, t, store, "t", fileName, importer.DataFormatCSV, []*plannercore.LoadDataOpt{
 			{Name: "skip_rows", Value: expression.NewInt64Const(1)}})
 		defer ti.Backend().CloseEngineMgr()
 		kvWriter := mock.NewMockEngineWriter(ctrl)
@@ -324,6 +325,7 @@ func TestProcessChunkWith(t *testing.T) {
 			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
 			Chunk:    mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
+<<<<<<< HEAD
 		ti := getTableImporter(ctx, t, store, "t", "", nil)
 		defer ti.Backend().CloseEngineMgr()
 		rowsCh := make(chan importer.QueryRow, 3)
@@ -336,6 +338,17 @@ func TestProcessChunkWith(t *testing.T) {
 					types.NewIntDatum(int64((i-1)*3 + 3)),
 				},
 			}
+=======
+		ti := getTableImporter(ctx, t, store, "t", "", importer.DataFormatCSV, nil)
+		defer func() {
+			ti.LoadDataController.Close()
+			ti.Backend().CloseEngineMgr()
+		}()
+		chkCh := make(chan importer.QueryChunk, 3)
+		fields := make([]*types.FieldType, 0, 3)
+		for range 3 {
+			fields = append(fields, types.NewFieldType(mysql.TypeLong))
+>>>>>>> 83edc072127 (import into: automatic file type recognition based on file name characteristics (#59543))
 		}
 		close(rowsCh)
 		ti.SetSelectedRowCh(rowsCh)
@@ -365,8 +378,16 @@ func TestPopulateChunks(t *testing.T) {
 		[]byte("8,8,8\n"), 0o644))
 	require.NoError(t, os.WriteFile(path.Join(tidbCfg.TempDir, "test-03.csv"),
 		[]byte("9,9,9\n10,10,10\n"), 0o644))
+<<<<<<< HEAD
 	ti := getTableImporter(ctx, t, store, "t", fmt.Sprintf("%s/test-*.csv", tidbCfg.TempDir), []*plannercore.LoadDataOpt{{Name: "__max_engine_size", Value: expression.NewStrConst("20")}})
 	defer ti.Backend().CloseEngineMgr()
+=======
+	ti := getTableImporter(ctx, t, store, "t", fmt.Sprintf("%s/test-*.csv", tidbCfg.TempDir), importer.DataFormatCSV, []*plannercore.LoadDataOpt{{Name: "__max_engine_size", Value: expression.NewStrConst("20")}})
+	defer func() {
+		ti.LoadDataController.Close()
+		ti.Backend().CloseEngineMgr()
+	}()
+>>>>>>> 83edc072127 (import into: automatic file type recognition based on file name characteristics (#59543))
 	require.NoError(t, ti.InitDataFiles(ctx))
 	engines, err := ti.PopulateChunks(ctx)
 	require.NoError(t, err)
