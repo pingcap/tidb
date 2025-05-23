@@ -109,7 +109,6 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.LoadFile:             {},
 	ast.LocalTime:            {},
 	ast.LocalTimestamp:       {},
-	ast.MasterPosWait:        {},
 	ast.NameConst:            {},
 	ast.Now:                  {},
 	ast.Rand:                 {},
