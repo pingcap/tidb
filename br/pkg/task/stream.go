@@ -1345,7 +1345,7 @@ func RunStreamRestore(
 	}
 
 	// register task
-	err = RegisterRestoreIfNeeded(ctx, cfg, PointRestoreCmd)
+	err = RegisterRestore(ctx, cfg, PointRestoreCmd)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1738,11 +1738,6 @@ func restoreStream(
 		if err := client.FailpointDoChecksumForLogRestore(ctx, mgr.GetStorage().GetClient(), mgr.GetPDClient(), rewriteRules); err != nil {
 			failpoint.Return(errors.Annotate(err, "failed to do checksum"))
 		}
-	})
-
-	failpoint.Inject("fail-at-end-of-stream-restore", func() {
-		log.Info("failpoint fail-at-end-of-stream-restore injected, failing at the end of stream restore task")
-		failpoint.Return(errors.New("failpoint triggered: fail-at-end-of-stream-restore"))
 	})
 
 	gcDisabledRestorable = true
@@ -2170,7 +2165,7 @@ func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *Log
 	return currentTS, nil
 }
 
-func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName string) error {
+func RegisterRestore(ctx context.Context, cfg *RestoreConfig, cmdName string) error {
 	// already registered previously
 	if cfg.RestoreID != 0 {
 		return nil
@@ -2191,5 +2186,8 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 		return errors.Trace(err)
 	}
 	cfg.RestoreID = restoreID
+
+	cfg.RestoreRegistry.StartHeartbeatManager(ctx, restoreID)
+
 	return nil
 }

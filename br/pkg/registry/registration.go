@@ -18,8 +18,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/zap"
 )
@@ -38,33 +39,33 @@ const (
 
 	// createRegistrationTableSQL is the SQL to create the registration table
 	// we use unique index to prevent race condition that two threads inserting tasks with same parameters.
-	// we use uuid to verify the task is indeed created by the current thread, since duplicate key errors thrown by
-	// unique index checking might be silent and not returned to caller.
 	// we initialize auto increment id to be 1 to make sure default value 0 is not used when insertion failed.
 	createRegistrationTableSQL = `CREATE TABLE IF NOT EXISTS %s.%s (
 		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		filter_strings TEXT NOT NULL,
+		filter_hash VARCHAR(64) NOT NULL,
 		start_ts BIGINT UNSIGNED NOT NULL,
 		restored_ts BIGINT UNSIGNED NOT NULL,
 		upstream_cluster_id BIGINT UNSIGNED,
 		with_sys_table BOOLEAN NOT NULL DEFAULT TRUE,
 		status VARCHAR(20) NOT NULL DEFAULT 'running',
 		cmd TEXT,
-		uuid VARCHAR(64),
+		start_timestamp BIGINT UNSIGNED NOT NULL,
+		last_heartbeat BIGINT UNSIGNED NOT NULL,
 		UNIQUE KEY unique_registration_params (
-			filter_strings(255),
+			filter_hash,
 			start_ts,
 			restored_ts,
 			upstream_cluster_id,
 			with_sys_table,
-			cmd(255)
+			cmd(256)
 		)
 	) AUTO_INCREMENT = 1`
 
 	// lookupRegistrationSQLTemplate is the SQL template for looking up a registration by its parameters
 	lookupRegistrationSQLTemplate = `
-		SELECT id, uuid FROM %s.%s
-		WHERE filter_strings = %%?
+		SELECT id, status FROM %s.%s
+		WHERE filter_hash = MD5(%%?)
 		AND start_ts = %%?
 		AND restored_ts = %%?
 		AND upstream_cluster_id = %%?
@@ -78,45 +79,28 @@ const (
 		SET status = %%?
 		WHERE id = %%? AND status = %%?`
 
+	// resumeTaskByIDSQLTemplate is the SQL template for resuming a paused task by its ID
+	resumeTaskByIDSQLTemplate = `
+		UPDATE %s.%s
+		SET status = 'running'
+		WHERE id = %%?`
+
 	// deleteRegistrationSQLTemplate is the SQL template for deleting a registration
 	deleteRegistrationSQLTemplate = `DELETE FROM %s.%s WHERE id = %%?`
 
 	// selectRegistrationsByMaxIDSQLTemplate is the SQL template for selecting registrations by max ID
 	selectRegistrationsByMaxIDSQLTemplate = `
 		SELECT
-		id, filter_strings, start_ts, restored_ts, upstream_cluster_id, with_sys_table, status, cmd
+		id, filter_strings, start_ts, restored_ts, upstream_cluster_id, with_sys_table, status, cmd, filter_hash
 		FROM %s.%s
 		WHERE id < %%?
 		ORDER BY id ASC`
 
-	// resumePausedTaskSQLTemplate is the SQL template for resuming a paused task
-	resumePausedTaskSQLTemplate = `
-		UPDATE %s.%s
-		SET status = 'running', uuid = %%?
-		WHERE filter_strings = %%?
-		AND start_ts = %%?
-		AND restored_ts = %%?
-		AND upstream_cluster_id = %%?
-		AND with_sys_table = %%?
-		AND cmd = %%?
-		AND status = 'paused'`
-
-	// getRunningTaskIDSQLTemplate is the SQL template for getting restore ID of a running task
-	getRunningTaskIDSQLTemplate = `
-		SELECT id FROM %s.%s
-		WHERE filter_strings = %%?
-		AND start_ts = %%?
-		AND restored_ts = %%?
-		AND upstream_cluster_id = %%?
-		AND with_sys_table = %%?
-		AND cmd = %%?
-		AND status = 'running'`
-
 	// createNewTaskSQLTemplate is the SQL template for creating a new task
 	createNewTaskSQLTemplate = `
 		INSERT INTO %s.%s
-		(filter_strings, start_ts, restored_ts, upstream_cluster_id, with_sys_table, status, cmd, uuid)
-		VALUES (%%?, %%?, %%?, %%?, %%?, 'running', %%?, %%?)`
+		(filter_strings, filter_hash, start_ts, restored_ts, upstream_cluster_id, with_sys_table, status, cmd, start_timestamp, last_heartbeat)
+		VALUES (%%?, MD5(%%?), %%?, %%?, %%?, %%?, 'running', %%?, %%?, %%?)`
 )
 
 // TaskStatus represents the current state of a restore task
@@ -155,7 +139,8 @@ type RegistrationInfoWithID struct {
 
 // Registry manages registrations of restore tasks
 type Registry struct {
-	se glue.Session
+	se               glue.Session
+	heartbeatManager *HeartbeatManager
 }
 
 // NewRestoreRegistry creates a new registry using TiDB's session
@@ -175,6 +160,8 @@ func (r *Registry) Close() {
 		r.se.Close()
 		r.se = nil
 	}
+
+	r.StopHeartbeatManager()
 }
 
 // createTableIfNotExist ensures that the registration table exists
@@ -203,135 +190,163 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 		return 0, errors.Trace(err)
 	}
 
-	operationUUID := uuid.New().String()
-
 	filterStrings := strings.Join(info.FilterStrings, ",")
 
-	log.Info("checking for task to resume",
+	log.Info("attempting to resume or create registration",
 		zap.String("filter_strings", filterStrings),
 		zap.Uint64("start_ts", info.StartTS),
 		zap.Uint64("restored_ts", info.RestoredTS),
 		zap.Uint64("upstream_cluster_id", info.UpstreamClusterID),
 		zap.Bool("with_sys_table", info.WithSysTable),
-		zap.String("cmd", info.Cmd),
-		zap.String("uuid", operationUUID))
+		zap.String("cmd", info.Cmd))
 
-	// first try to update if exists and paused
-	updateSQL := fmt.Sprintf(resumePausedTaskSQLTemplate, RegistrationDBName, RegistrationTableName)
+	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
 
-	if err := r.se.ExecuteInternal(ctx, updateSQL,
-		operationUUID, filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID,
-		info.WithSysTable, info.Cmd); err != nil {
-		return 0, errors.Annotatef(err, "failed to update existing registration")
+	// Set transaction mode to pessimistic
+	_, _, err := execCtx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		"SET @@tidb_txn_mode = 'pessimistic'")
+	if err != nil {
+		return 0, errors.Annotate(err, "failed to set pessimistic mode")
 	}
 
-	// check if a task with our parameters and in running state exists
-	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
+	// Begin transaction
+	_, _, err = execCtx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		"BEGIN")
+	if err != nil {
+		return 0, errors.Annotate(err, "failed to begin transaction")
+	}
+
+	defer func() {
+		_, _, _ = execCtx.ExecRestrictedSQL(
+			kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+			"ROLLBACK")
+	}()
+
+	// First look for an existing task with the same parameters
+	lookupSQL := fmt.Sprintf(lookupRegistrationSQLTemplate, RegistrationDBName, RegistrationTableName)
 	rows, _, err := execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-		nil,
-		fmt.Sprintf(lookupRegistrationSQLTemplate, RegistrationDBName, RegistrationTableName),
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		lookupSQL,
 		filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
 	if err != nil {
-		return 0, errors.Annotatef(err, "failed to look up task")
+		return 0, errors.Annotate(err, "failed to look up existing task")
 	}
 
-	// if we found a task, check if it was resumed by us
+	// If task found, check its status
 	if len(rows) > 0 {
 		taskID := rows[0].GetUint64(0)
-		foundUUID := rows[0].GetString(1)
+		status := rows[0].GetString(1)
 
 		if taskID == 0 {
 			return 0, errors.New("invalid task ID: got 0 from lookup")
 		}
 
-		// check if this task has our UUID
-		if foundUUID == operationUUID {
-			log.Info("successfully resumed existing registration by this process",
-				zap.Uint64("restore_id", taskID),
-				zap.String("uuid", operationUUID),
-				zap.Strings("filters", info.FilterStrings))
-			return taskID, nil
-		}
-		// task exists but was either created by another process or has been running
-		// check if it's in running state
-		runningRows, _, err := execCtx.ExecRestrictedSQL(
-			kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-			nil,
-			fmt.Sprintf(getRunningTaskIDSQLTemplate, RegistrationDBName, RegistrationTableName),
-			filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
-		if err != nil {
-			return 0, errors.Annotatef(err, "failed to check for running task")
-		}
-
-		if len(runningRows) > 0 {
-			taskID := runningRows[0].GetUint64(0)
+		// If task exists and is running, return error
+		if status == string(TaskStatusRunning) {
 			log.Warn("task already exists and is running",
 				zap.Uint64("restore_id", taskID))
 			return 0, errors.Annotatef(berrors.ErrInvalidArgument,
 				"task with ID %d already exists and is running", taskID)
 		}
-		// Task exists but is not running - unexpected state
-		log.Warn("task exists but is in an unexpected state",
+
+		// Strictly check for paused status
+		if status == string(TaskStatusPaused) {
+			updateSQL := fmt.Sprintf(resumeTaskByIDSQLTemplate, RegistrationDBName, RegistrationTableName)
+
+			_, _, err = execCtx.ExecRestrictedSQL(
+				kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+				[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+				updateSQL,
+				taskID)
+			if err != nil {
+				return 0, errors.Annotate(err, "failed to resume paused task")
+			}
+
+			// Update the heartbeat
+			currentTime := uint64(time.Now().Unix())
+			updateHeartbeatSQL := fmt.Sprintf(UpdateHeartbeatSQLTemplate, RegistrationDBName, RegistrationTableName)
+			_, _, err = execCtx.ExecRestrictedSQL(
+				kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+				[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+				updateHeartbeatSQL,
+				currentTime, taskID)
+			if err != nil {
+				log.Warn("failed to update heartbeat for resumed task",
+					zap.Uint64("restore_id", taskID),
+					zap.Error(err))
+				// Continue despite heartbeat error
+			}
+
+			_, _, err = execCtx.ExecRestrictedSQL(
+				kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+				[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+				"COMMIT")
+			if err != nil {
+				return 0, errors.Annotate(err, "failed to commit transaction")
+			}
+
+			log.Info("successfully resumed existing registration",
+				zap.Uint64("restore_id", taskID),
+				zap.Strings("filters", info.FilterStrings))
+			return taskID, nil
+		}
+
+		// Task exists but is not running or paused - this is an unexpected state
+		log.Warn("task exists but in unexpected state",
 			zap.Uint64("restore_id", taskID),
-			zap.String("uuid", foundUUID))
-		return 0, errors.New("task exists but is in an unexpected state")
+			zap.String("status", status))
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument,
+			"task with ID %d exists but is in unexpected state: %s", taskID, status)
 	}
 
-	// no existing task found, create a new one
+	// No existing task found, create a new one
+	currentTime := uint64(time.Now().Unix())
 	insertSQL := fmt.Sprintf(createNewTaskSQLTemplate, RegistrationDBName, RegistrationTableName)
-
-	log.Info("attempting to create new registration",
-		zap.String("filter_strings", filterStrings),
-		zap.Uint64("start_ts", info.StartTS),
-		zap.Uint64("restored_ts", info.RestoredTS),
-		zap.Uint64("upstream_cluster_id", info.UpstreamClusterID),
-		zap.Bool("with_sys_table", info.WithSysTable),
-		zap.String("cmd", info.Cmd),
-		zap.String("uuid", operationUUID))
-
-	if err := r.se.ExecuteInternal(ctx, insertSQL,
-		filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable,
-		info.Cmd, operationUUID); err != nil {
-		return 0, errors.Annotatef(err, "failed to create new registration")
+	_, _, err = execCtx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		insertSQL,
+		filterStrings, filterStrings, info.StartTS, info.RestoredTS,
+		info.UpstreamClusterID, info.WithSysTable, info.Cmd, currentTime, currentTime)
+	if err != nil {
+		return 0, errors.Annotate(err, "failed to create new registration")
 	}
 
-	// check if a row with our parameters exists
 	rows, _, err = execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-		nil,
-		fmt.Sprintf(lookupRegistrationSQLTemplate, RegistrationDBName, RegistrationTableName),
-		filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		"SELECT LAST_INSERT_ID()")
 	if err != nil {
-		return 0, errors.Annotatef(err, "failed to look up inserted task")
+		return 0, errors.Annotate(err, "failed to get ID of newly created task")
 	}
 
 	if len(rows) == 0 {
-		// this is really unexpected - record doesn't exist at all
-		log.Error("failed to find task after insertion - record doesn't exist")
-		return 0, errors.New("failed to find task after insertion")
+		return 0, errors.New("failed to get LAST_INSERT_ID()")
 	}
 
 	taskID := rows[0].GetUint64(0)
-	foundUUID := rows[0].GetString(1)
 
 	if taskID == 0 {
-		return 0, errors.New("invalid task ID: got 0 from lookup")
+		return 0, errors.New("invalid task ID: got 0 from LAST_INSERT_ID()")
 	}
 
-	// check if this task was created by us or another process
-	if foundUUID != operationUUID {
-		log.Info("task was created by another process",
-			zap.Uint64("restore_id", taskID),
-			zap.String("our_uuid", operationUUID),
-			zap.String("found_uuid", foundUUID),
-			zap.Strings("filters", info.FilterStrings))
-	} else {
-		log.Info("successfully created new registration by this process",
-			zap.Uint64("restore_id", taskID),
-			zap.String("uuid", operationUUID),
-			zap.Strings("filters", info.FilterStrings))
+	_, _, err = execCtx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		"COMMIT")
+	if err != nil {
+		return 0, errors.Annotate(err, "failed to commit transaction")
 	}
+
+	log.Info("successfully created new registration",
+		zap.Uint64("restore_id", taskID),
+		zap.Strings("filters", info.FilterStrings))
 
 	return taskID, nil
 }
@@ -520,4 +535,24 @@ func (r *Registry) checkForTableConflicts(
 // IsRestoreRegistryDB checks whether the dbname is a restore registry database.
 func IsRestoreRegistryDB(dbname string) bool {
 	return dbname == RegistrationDBName
+}
+
+// StartHeartbeatManager creates and starts a new heartbeat manager for the given restore ID
+func (r *Registry) StartHeartbeatManager(ctx context.Context, restoreID uint64) {
+	r.StopHeartbeatManager()
+
+	manager := NewHeartbeatManager(r, restoreID)
+	r.heartbeatManager = manager
+	manager.Start(ctx)
+
+	log.Info("started heartbeat manager for restore task", zap.Uint64("restore_id", restoreID))
+}
+
+// StopHeartbeatManager stops the heartbeat manager for the given restore ID
+func (r *Registry) StopHeartbeatManager() {
+	if r.heartbeatManager != nil {
+		r.heartbeatManager.Stop()
+		r.heartbeatManager = nil
+		log.Info("stopped heartbeat manager for restore task")
+	}
 }

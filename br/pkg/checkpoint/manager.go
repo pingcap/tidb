@@ -92,7 +92,7 @@ func NewLogTableMetaManager(
 	g glue.Glue,
 	dom *domain.Domain,
 	dbName string,
-	id uint64,
+	restoreID uint64,
 ) (LogMetaManagerT, error) {
 	se, err := g.CreateSession(dom.Store())
 	if err != nil {
@@ -108,7 +108,7 @@ func NewLogTableMetaManager(
 		se:       se,
 		runnerSe: runnerSe,
 		dom:      dom,
-		dbName:   fmt.Sprintf("%s_%d", dbName, id),
+		dbName:   fmt.Sprintf("%s_%d", dbName, restoreID),
 	}, nil
 }
 
@@ -116,7 +116,7 @@ func NewSnapshotTableMetaManager(
 	g glue.Glue,
 	dom *domain.Domain,
 	dbName string,
-	id uint64,
+	restoreID uint64,
 ) (SnapshotMetaManagerT, error) {
 	se, err := g.CreateSession(dom.Store())
 	if err != nil {
@@ -132,7 +132,7 @@ func NewSnapshotTableMetaManager(
 		se:       se,
 		runnerSe: runnerSe,
 		dom:      dom,
-		dbName:   fmt.Sprintf("%s_%d", dbName, id),
+		dbName:   fmt.Sprintf("%s_%d", dbName, restoreID),
 	}, nil
 }
 
@@ -289,7 +289,7 @@ func NewSnapshotStorageMetaManager(
 	cipher *backuppb.CipherInfo,
 	clusterID uint64,
 	prefix string,
-	id uint64,
+	restoreID uint64,
 ) SnapshotMetaManagerT {
 	return &StorageMetaManager[
 		RestoreKeyType, RestoreValueType, RestoreValueType, CheckpointMetadataForSnapshotRestore,
@@ -297,7 +297,7 @@ func NewSnapshotStorageMetaManager(
 		storage:   storage,
 		cipher:    cipher,
 		clusterID: fmt.Sprintf("%d", clusterID),
-		taskName:  fmt.Sprintf("%d/%s_%d", clusterID, prefix, id),
+		taskName:  fmt.Sprintf("%d/%s_%d", clusterID, prefix, restoreID),
 	}
 }
 
@@ -306,7 +306,7 @@ func NewLogStorageMetaManager(
 	cipher *backuppb.CipherInfo,
 	clusterID uint64,
 	prefix string,
-	id uint64,
+	restoreID uint64,
 ) LogMetaManagerT {
 	return &StorageMetaManager[
 		LogRestoreKeyType, LogRestoreValueType, LogRestoreValueMarshaled, CheckpointMetadataForLogRestore,
@@ -314,7 +314,7 @@ func NewLogStorageMetaManager(
 		storage:   storage,
 		cipher:    cipher,
 		clusterID: fmt.Sprintf("%d", clusterID),
-		taskName:  fmt.Sprintf("%d/%s_%d", clusterID, prefix, id),
+		taskName:  fmt.Sprintf("%d/%s_%d", clusterID, prefix, restoreID),
 	}
 }
 
