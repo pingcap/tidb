@@ -315,6 +315,7 @@ import (
 	advise                     "ADVISE"
 	after                      "AFTER"
 	against                    "AGAINST"
+	aggregate                  "AGGREGATE"
 	ago                        "AGO"
 	algorithm                  "ALGORITHM"
 	always                     "ALWAYS"
@@ -582,6 +583,7 @@ import (
 	restore                    "RESTORE"
 	restores                   "RESTORES"
 	resume                     "RESUME"
+	returns                    "RETURNS"
 	reuse                      "REUSE"
 	reverse                    "REVERSE"
 	role                       "ROLE"
@@ -620,6 +622,7 @@ import (
 	slow                       "SLOW"
 	snapshot                   "SNAPSHOT"
 	some                       "SOME"
+	soname                     "SONAME"
 	source                     "SOURCE"
 	sqlBufferResult            "SQL_BUFFER_RESULT"
 	sqlCache                   "SQL_CACHE"
@@ -643,6 +646,7 @@ import (
 	status                     "STATUS"
 	storage                    "STORAGE"
 	strictFormat               "STRICT_FORMAT"
+	stringType                 "STRING"
 	subject                    "SUBJECT"
 	subpartition               "SUBPARTITION"
 	subpartitions              "SUBPARTITIONS"
@@ -993,12 +997,14 @@ import (
 	CreateBindingStmt          "CREATE BINDING statement"
 	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
 	CreateProcedureStmt        "CREATE PROCEDURE statement"
+	CreateLoadableFunctionStmt "CREATE FUNCTION Statement for Loadable Functions"
 	AddQueryWatchStmt          "ADD QUERY WATCH statement"
 	CreateResourceGroupStmt    "CREATE RESOURCE GROUP statement"
 	CreateSequenceStmt         "CREATE SEQUENCE statement"
 	CreateStatisticsStmt       "CREATE STATISTICS statement"
 	DoStmt                     "Do statement"
 	DropDatabaseStmt           "DROP DATABASE statement"
+	DropFunctionStmt           "DROP FUNCTION statement"
 	DropIndexStmt              "DROP INDEX statement"
 	DropProcedureStmt          "DROP PROCEDURE statement"
 	DropQueryWatchStmt         "DROP QUERY WATCH statement"
@@ -1107,6 +1113,7 @@ import (
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
 	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
+	AggregateOpt                           "AGGREGATE option of creating loadable functions"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
 	AlterJobOptionList                     "Alter job option list"
@@ -1237,6 +1244,7 @@ import (
 	LimitOption                            "Limit option could be integer or parameter marker."
 	Lines                                  "Lines clause"
 	LinesTerminated                        "Lines terminated by"
+	LoadableFunctionReturnType             "Return type of loadable function"
 	LoadDataSetSpecOpt                     "Optional load data specification"
 	LoadDataOptionListOpt                  "Optional load data option list"
 	LoadDataOptionList                     "Load data option list"
@@ -6857,6 +6865,7 @@ UnReservedKeyword:
 	"ACTION"
 |	"ADD_COLUMNAR_REPLICA_ON_DEMAND"
 |	"ADVISE"
+|	"AGGREGATE"
 |	"ASCII"
 |	"APPLY"
 |	"ATTRIBUTE"
@@ -6949,6 +6958,7 @@ UnReservedKeyword:
 |	"REORGANIZE"
 |	"RESOURCE"
 |	"RESTART"
+|	"RETURNS"
 |	"ROLE"
 |	"ROLLBACK"
 |	"ROLLUP"
@@ -6958,8 +6968,10 @@ UnReservedKeyword:
 |	"SHARD_ROW_ID_BITS"
 |	"SHUTDOWN"
 |	"SNAPSHOT"
+|	"SONAME"
 |	"START"
 |	"STATUS"
+|	"STRING"
 |	"OPEN"
 |	"POINT"
 |	"SUBPARTITIONS"
@@ -12390,6 +12402,7 @@ Statement:
 |	CreateBindingStmt
 |	CreatePolicyStmt
 |	CreateProcedureStmt
+|	CreateLoadableFunctionStmt
 |	CreateResourceGroupStmt
 |	AddQueryWatchStmt
 |	CreateSequenceStmt
@@ -12397,6 +12410,7 @@ Statement:
 |	DistributeTableStmt
 |	DoStmt
 |	DropDatabaseStmt
+|	DropFunctionStmt
 |	DropIndexStmt
 |	DropTableStmt
 |	DropProcedureStmt
@@ -16634,6 +16648,63 @@ DropProcedureStmt:
 		$$ = &ast.DropProcedureStmt{
 			IfExists:      $3.(bool),
 			ProcedureName: $4.(*ast.TableName),
+		}
+	}
+
+/********************************************************************************************
+* https://dev.mysql.com/doc/refman/8.4/en/create-function-loadable.html
+* CREATE [AGGREGATE] FUNCTION [IF NOT EXISTS] function_name
+*     RETURNS {STRING|INTEGER|REAL|DECIMAL}
+*     SONAME shared_library_name
+********************************************************************************************/
+CreateLoadableFunctionStmt:
+	"CREATE" AggregateOpt "FUNCTION" IfNotExists Identifier "RETURNS" LoadableFunctionReturnType "SONAME" stringLit
+	{
+		$$ = &ast.CreateLoadableFunctionStmt{
+			Aggregate:   $2.(bool),
+			IfNotExists: $4.(bool),
+			Name:        ast.NewCIStr($5),
+			ReturnType:  $7.(types.EvalType),
+			SoName:      $9,
+		}
+	}
+
+AggregateOpt:
+	{
+		$$ = false
+	}
+|	"AGGREGATE"
+	{
+		$$ = true
+	}
+
+LoadableFunctionReturnType:
+	"STRING"
+	{
+		$$ = types.ETString
+	}
+|	OptInteger
+	{
+		$$ = types.ETInt
+	}
+|	"REAL"
+	{
+		$$ = types.ETReal
+	}
+|	"DECIMAL"
+	{
+		$$ = types.ETDecimal
+	}
+
+/********************************************************************
+ * DROP FUNCTION [IF EXISTS] function_name
+ *******************************************************************/
+DropFunctionStmt:
+	"DROP" "FUNCTION" IfExists TableName
+	{
+		$$ = &ast.DropFunctionStmt{
+			IfExists: $3.(bool),
+			Name:     $4.(*ast.TableName),
 		}
 	}
 

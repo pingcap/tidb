@@ -35,6 +35,7 @@ var (
 	_ DDLNode = &CreateSequenceStmt{}
 	_ DDLNode = &CreatePlacementPolicyStmt{}
 	_ DDLNode = &CreateResourceGroupStmt{}
+	_ DDLNode = &CreateLoadableFunctionStmt{}
 	_ DDLNode = &DropDatabaseStmt{}
 	_ DDLNode = &FlashBackDatabaseStmt{}
 	_ DDLNode = &DropIndexStmt{}
@@ -42,6 +43,7 @@ var (
 	_ DDLNode = &DropSequenceStmt{}
 	_ DDLNode = &DropPlacementPolicyStmt{}
 	_ DDLNode = &DropResourceGroupStmt{}
+	_ DDLNode = &DropFunctionStmt{}
 	_ DDLNode = &OptimizeTableStmt{}
 	_ DDLNode = &RenameTableStmt{}
 	_ DDLNode = &TruncateTableStmt{}
