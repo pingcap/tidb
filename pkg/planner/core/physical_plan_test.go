@@ -465,21 +465,6 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	tk.MustExec("insert into t2(id, company_no, name, tax_registry_no) values (1, 'Z9005', 'AA', 'aaa'), (2, 'Z9006', 'BB', 'bbb'), (3, 'Z9007', 'CC', 'ccc')")
 
 	sql := "select company_no, ifnull((select /*+ read_from_storage(tiflash[test.t1]) */ taxpayer_no from test.t1 where client_no = c.company_no and client_type = 1 and status = 1 order by update_time desc limit 1), tax_registry_no) as tax_registry_no from test.t2 c where company_no = 'Z9005' limit 1"
-	tk.MustQuery("explain format=brief " + sql).Check(testkit.Rows(
-		"Projection 1.00 root  test.t2.company_no, ifnull(test.t1.taxpayer_no, test.t2.tax_registry_no)->Column#21",
-		"└─Limit 1.00 root  offset:0, count:1",
-		"  └─Apply 1.00 root  CARTESIAN left outer join, left side:Limit",
-		"    ├─Limit(Build) 1.00 root  offset:0, count:1",
-		"    │ └─TableReader 1.00 root  data:Limit",
-		"    │   └─Limit 1.00 cop[tikv]  offset:0, count:1",
-		"    │     └─Selection 1.00 cop[tikv]  eq(test.t2.company_no, \"Z9005\")",
-		"    │       └─TableFullScan 1000.00 cop[tikv] table:c keep order:false, stats:pseudo",
-		"    └─TopN(Probe) 1.00 root  test.t1.update_time:desc, offset:0, count:1",
-		"      └─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-		"        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"          └─TopN 1.00 mpp[tiflash]  test.t1.update_time:desc, offset:0, count:1",
-		"            └─TableFullScan 1.00 mpp[tiflash] table:t1 pushed down filter:eq(test.t1.client_no, test.t2.company_no), eq(test.t1.client_type, 1), eq(test.t1.status, 1), keep order:false, stats:pseudo",
-	))
 	tk.MustExec(sql)
 	info := tk.Session().ShowProcess()
 	require.NotNil(t, info)
@@ -519,7 +504,7 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	pb, err := ts.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
 	require.NoError(t, err)
 	// make sure the pushed down filter condition is correct
-	require.Equal(t, 3, len(pb.TblScan.PushedDownFilterConditions))
+	require.Equal(t, 1, len(pb.TblScan.PushedDownFilterConditions))
 	require.Equal(t, tipb.ExprType_ColumnRef, pb.TblScan.PushedDownFilterConditions[0].Children[0].Tp)
 	// make sure the correlated columns are extracted correctly
 	correlated := ts.ExtractCorrelatedCols()

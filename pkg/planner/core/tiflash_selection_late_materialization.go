@@ -16,7 +16,10 @@ package core
 
 import (
 	"cmp"
+	"maps"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -79,6 +82,14 @@ func predicatePushDownToTableScan(sctx base.PlanContext, plan base.PhysicalPlan)
 	return plan
 }
 
+func sliceToString(s []int64) string {
+	strSlice := make([]string, len(s))
+	for i, v := range s {
+		strSlice[i] = strconv.FormatInt(v, 10)
+	}
+	return strings.Join(strSlice, ",")
+}
+
 // transformColumnsToCode is used to transform the columns to a string of "0" and "1".
 // @param: cols: the columns of a Expression
 // @param: totalColumnCount: the total number of columns in the tablescan
@@ -91,11 +102,12 @@ func predicatePushDownToTableScan(sctx base.PlanContext, plan base.PhysicalPlan)
 //
 // @return: the string of "0" and "1"
 func transformColumnsToCode(cols []*expression.Column, totalColumnCount int) string {
-	code := make([]byte, totalColumnCount)
+	code := make(map[int64]struct{}, totalColumnCount)
 	for _, col := range cols {
-		code[col.Index] = '1'
+		code[col.UniqueID] = struct{}{}
 	}
-	return string(code)
+	keys := slices.Collect(maps.Keys(code))
+	return sliceToString(keys)
 }
 
 // groupByColumnsSortBySelectivity is used to group the conditions by the column they use
@@ -228,7 +240,7 @@ func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, expr
 // @param: physicalSelection: the PhysicalSelection containing the conditions to be pushed down
 // @param: physicalTableScan: the PhysicalTableScan to be pushed down to
 func predicatePushDownToTableScanImpl(sctx base.PlanContext, physicalTableScan *PhysicalTableScan, conds []expression.Expression) (selectedConds []expression.Expression, selectedSelectivity float64) {
-	if !sctx.GetSessionVars().EnableLateMaterialization || sctx.GetSessionVars().TiFlashFastScan || physicalTableScan.StoreType != kv.TiFlash ||
+	if physicalTableScan.StoreType != kv.TiFlash || !sctx.GetSessionVars().EnableLateMaterialization || sctx.GetSessionVars().TiFlashFastScan ||
 		physicalTableScan.tblColHists.RealtimeCount <= tiflashDataPackSize || physicalTableScan.KeepOrder {
 		return nil, 0
 	}
@@ -281,6 +293,5 @@ func predicatePushDownToTableScanCheck(sctx base.PlanContext, physicalSelection 
 	if len(selectedConds) == 0 {
 		return
 	}
-	// TODO: it shoud be a panic, but it has a problem here
-	logutil.BgLogger().Debug("it is impossible that selectedConds is not empty")
+	panic("it is impossible that selectedConds is not empty")
 }
