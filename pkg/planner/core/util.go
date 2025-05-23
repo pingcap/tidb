@@ -231,7 +231,6 @@ func BuildPhysicalJoinSchema(joinType logicalop.JoinType, join base.PhysicalPlan
 }
 
 // GetStatsInfo gets the statistics info from a physical plan tree.
-// Deprecated: FlattenPhysicalPlan() is preferred.
 func GetStatsInfo(i any) map[string]uint64 {
 	if i == nil {
 		// it's a workaround for https://github.com/pingcap/tidb/issues/17419
