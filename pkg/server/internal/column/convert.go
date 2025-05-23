@@ -43,6 +43,9 @@ func ConvertColumnInfo(fld *resolve.ResultField) (ci *Info) {
 	if fld.Column.GetFlen() != types.UnspecifiedLength {
 		ci.ColumnLength = uint32(fld.Column.GetFlen())
 	} else {
+		// FIX https://github.com/pingcap/tidb/issues/60503
+		// MySQL will always output a usable length
+		// while we cannot output the same length, we can give a default flen
 		clen, _ := mysql.GetDefaultFieldLengthAndDecimal(fld.Column.GetType())
 		ci.ColumnLength = uint32(clen)
 	}
