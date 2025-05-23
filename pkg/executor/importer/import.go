@@ -1219,7 +1219,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 func (e *LoadDataController) detectAndUpdateFormat(path string) {
 	if e.Format == DataFormatAuto {
 		e.Format = parseFileType(path)
-		e.logger.Info("detect and update import plan format based on file extension", zap.String("file", path), zap.String("detected format", e.Format))
+		e.logger.Info("detect and update import plan format based on file extension",
+			zap.String("file", path), zap.String("detected format", e.Format))
 		e.Parameters.Format = e.Format
 	}
 }
