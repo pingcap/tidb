@@ -142,6 +142,10 @@ func (rc *SnapClient) replaceTables(
 		return 0, errors.Trace(err)
 	}
 
+	if err := notifyUpdateAllUsersPrivilege(renamedTables, rc.dom.NotifyUpdateAllUsersPrivilege); err != nil {
+		return 0, errors.Trace(err)
+	}
+
 	return renamedTableCount, nil
 }
 

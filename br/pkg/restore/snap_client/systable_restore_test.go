@@ -19,6 +19,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -413,4 +414,22 @@ func TestUpdateStatsTableSchema(t *testing.T) {
 		DownstreamVersionMinor: 5,
 	}, execution)
 	require.NoError(t, err)
+}
+
+func TestNotifyUpdateAllUsersPrivilege(t *testing.T) {
+	notifier := func() error {
+		return errors.Errorf("test")
+	}
+	err := snapclient.NotifyUpdateAllUsersPrivilege(map[string]map[string]struct{}{
+		"test": {"user": {}},
+	}, notifier)
+	require.NoError(t, err)
+	err = snapclient.NotifyUpdateAllUsersPrivilege(map[string]map[string]struct{}{
+		"mysql": {"use": {}, "test": {}},
+	}, notifier)
+	require.NoError(t, err)
+	err = snapclient.NotifyUpdateAllUsersPrivilege(map[string]map[string]struct{}{
+		"mysql": {"test": {}, "user": {}, "db": {}},
+	}, notifier)
+	require.Error(t, err)
 }

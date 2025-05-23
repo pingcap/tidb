@@ -268,6 +268,24 @@ func updateStatsTableSchema(
 	)
 }
 
+func notifyUpdateAllUsersPrivilege(renamedTables map[string]map[string]struct{}, notifier func() error) error {
+	for dbName, renamedTable := range renamedTables {
+		if dbName != mysql.SystemDB {
+			continue
+		}
+		for tableName := range renamedTable {
+			if _, exists := sysPrivilegeTableMap[tableName]; exists {
+				if err := notifier(); err != nil {
+					log.Warn("failed to flush privileges, please manually execute `FLUSH PRIVILEGES`")
+					return berrors.ErrUnknown.Wrap(err).GenWithStack("failed to flush privileges")
+				}
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
 func isUnrecoverableTable(schemaName string, tableName string) bool {
 	if _, ok := unRecoverableSchema[schemaName]; ok {
 		return true
