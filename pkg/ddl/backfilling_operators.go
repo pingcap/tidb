@@ -246,8 +246,10 @@ func NewWriteIndexToExternalStoragePipeline(
 	}
 	memCap := resource.Mem.Capacity()
 	memSizePerIndex := uint64(memCap / int64(writerCnt*2*len(idxInfos)))
-	failpoint.Inject("mockWriterMemSize", func() {
-		memSizePerIndex = 1 * size.GB
+	failpoint.Inject("mockWriterMemSizeInKB", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			memSizePerIndex = uint64(v) * size.KB
+		}
 	})
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, nil)
