@@ -12,18 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package servicescope
+package naming
 
 import (
 	"fmt"
 	"regexp"
 )
 
-// CheckServiceScope check if the tidb-service-scope set by users is valid.
-func CheckServiceScope(scope string) error {
+// Check if the name is valid.
+// Valid name must be 64 characters or fewer and consist only of letters (a-z, A-Z),
+// numbers (0-9), hyphens (-), and underscores (_).
+// currently, we enforce this rule to tidb_service_scope and keyspace_name
+func Check(scope string) error {
 	re := regexp.MustCompile(`^[a-zA-Z0-9_-]{0,64}$`)
 	if !re.MatchString(scope) {
-		return fmt.Errorf("the tidb-service-scope value '%s' is invalid. It must be 64 characters or fewer and consist only of letters (a-z, A-Z), numbers (0-9), hyphens (-), and underscores (_)", scope)
+		return fmt.Errorf("the value '%s' is invalid. It must be 64 characters or fewer and consist only of letters (a-z, A-Z), numbers (0-9), hyphens (-), and underscores (_)", scope)
 	}
 	return nil
 }
