@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSetKeyspaceNameAndIDInConf(t *testing.T) {
+func TestSetKeyspaceNameInConf(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceName = ""
 	})
@@ -41,7 +41,7 @@ func TestSetKeyspaceNameAndIDInConf(t *testing.T) {
 	require.Equal(t, false, IsKeyspaceNameEmpty(getKeyspaceName))
 }
 
-func TestNoKeyspaceNameAndIDSet(t *testing.T) {
+func TestNoKeyspaceNameSet(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceName = ""
 	})
