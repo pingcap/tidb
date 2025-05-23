@@ -25338,7 +25338,7 @@
               "refId": "A"
             }
           ],
-          "title": "Active parallel Upload Worker Count",
+          "title": "Active Parallel Upload Worker Count",
           "type": "timeseries"
         }
       ],
