@@ -56,6 +56,8 @@ type LogicalPlan struct {
 	Stmt              string
 	EligibleInstances []*infosync.ServerInfo
 	ChunkMap          map[int32][]importer.Chunk
+
+	summary importer.Summary
 }
 
 // GetTaskExtraParams implements the planner.LogicalPlan interface.
@@ -326,6 +328,7 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 		}
 	}
 
+	sm := &p.summary
 	importSpecs := make([]planner.PipelineSpec, 0, len(chunkMap))
 	for id, chunks := range chunkMap {
 		if id == common.IndexEngineID {
@@ -337,6 +340,10 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 				Chunks: chunks,
 			},
 			Plan: p.Plan,
+		}
+		for _, chunk := range chunks {
+			sm.EncodeSummary.RowCnt = max(sm.EncodeSummary.RowCnt, chunk.RowIDMax)
+			sm.EncodeSummary.Bytes += chunk.FileSize
 		}
 		importSpecs = append(importSpecs, importSpec)
 	}
@@ -371,12 +378,18 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 	if err != nil {
 		return nil, err
 	}
+
+	sm := &p.summary
 	for kvGroup, kvMeta := range kvMetas {
 		if !p.Plan.ForceMergeStep && skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
 			logutil.Logger(planCtx.Ctx).Info("skip merge sort for kv group",
 				zap.Int64("task-id", planCtx.TaskID),
 				zap.String("kv-group", kvGroup))
 			continue
+		}
+		sm.MergeSummary.Bytes += int64(kvMeta.TotalKVSize)
+		if kvGroup == dataKVGroup {
+			sm.MergeSummary.RowCnt += int64(kvMeta.TotalKVCnt)
 		}
 		dataFiles := kvMeta.GetDataFiles()
 		length := len(dataFiles)
@@ -431,8 +444,14 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	}
 	ts := oracle.ComposeTS(pTS, lTS)
 
+	sm := &p.summary
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
+		sm.IngestSummary.Bytes += int64(kvMeta.TotalKVSize)
+		if kvGroup == dataKVGroup {
+			sm.IngestSummary.RowCnt += int64(kvMeta.TotalKVCnt)
+		}
+
 		specsForOneSubtask, err3 := splitForOneSubtask(ctx, controller.GlobalSortStore, kvGroup, kvMeta, ts)
 		if err3 != nil {
 			return nil, err3

@@ -19,9 +19,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync/atomic"
+	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
@@ -62,6 +65,7 @@ const (
 	// JobStepGlobalSorting is the first step when using global sort,
 	// step goes from none -> global-sorting -> importing -> validating -> none.
 	JobStepGlobalSorting = "global-sorting"
+	JobStepMerging       = "merging"
 	// JobStepImporting is the first step when using local sort,
 	// step goes from none -> importing -> validating -> none.
 	// when used in global sort, it means importing the sorted data.
@@ -74,6 +78,10 @@ const (
 					table_schema, table_name, table_id, created_by, parameters, source_file_size,
 					status, step, summary, error_message
 				FROM mysql.tidb_import_jobs`
+
+	// DefaultProgressMessage is the default message for import into progress.
+	// Exported for test.
+	DefaultProgressMessage = "[Not Running]"
 )
 
 // ImportParameters is the parameters for import into statement.
@@ -97,10 +105,54 @@ func (ip *ImportParameters) String() string {
 	return string(b)
 }
 
-// JobSummary is the summary info of import into job.
-type JobSummary struct {
-	// ImportedRows is the number of rows imported into TiKV.
-	ImportedRows uint64 `json:"imported-rows,omitempty"`
+// RuntimeInfo is the runtime information of the task for corresponding job.
+type RuntimeInfo struct {
+	Status     proto.TaskState
+	ImportRows int64
+	ErrorMsg   string
+
+	Step               proto.Step
+	FinishedSubtaskCnt int
+	TotalSubtaskCnt    int
+	Processed          int64
+	Total              int64
+	Unit               string
+	Duration           int64
+}
+
+// String returns the string representation of the runtime info
+func (r *RuntimeInfo) String() string {
+	stepStr := proto.Step2Str(proto.ImportInto, r.Step)
+
+	// Currently, we can't track the progress of post process
+	if r.Step == proto.ImportStepPostProcess || r.Step == proto.StepInit {
+		return fmt.Sprintf("[%s] N/A", stepStr)
+	}
+
+	percentage := 0.0
+	if r.Total > 0 {
+		percentage = float64(r.Processed) / float64(r.Total)
+		percentage = min(percentage, 1.0)
+	}
+
+	speed := 0.0
+	if r.Duration > 0 && r.Processed > 0 {
+		speed = float64(r.Processed) / float64(r.Duration)
+	}
+
+	elapsed := time.Duration(r.Duration) * time.Second
+	remainTime := "N/A"
+	if int64(speed) > 0 {
+		remainSecond := max((r.Total-r.Processed)/int64(speed), 0)
+		remain := time.Duration(remainSecond) * time.Second
+		remainTime = remain.String()
+	}
+
+	return fmt.Sprintf("[%s] subtasks: %d/%d, progress: %.2f%%, speed: %s%s/s, elapsed: %s, ETA: %s",
+		stepStr, r.FinishedSubtaskCnt, r.TotalSubtaskCnt,
+		percentage*100, units.HumanSize(speed), r.Unit,
+		elapsed, remainTime,
+	)
 }
 
 // JobInfo is the information of import into job.
@@ -118,10 +170,9 @@ type JobInfo struct {
 	Status         string
 	// in SHOW IMPORT JOB, we name it as phase.
 	// here, we use the same name as in distributed framework.
-	Step string
-	// the summary info of the job, it's updated only when the job is finished.
-	// for running job, we should query the progress from the distributed framework.
-	Summary      *JobSummary
+	Step         string
+	ImportedRows int64
+	Progress     string
 	ErrorMessage string
 }
 
@@ -130,10 +181,7 @@ func (j *JobInfo) CanCancel() bool {
 	return j.Status == jobStatusPending || j.Status == JobStatusRunning
 }
 
-// GetJob returns the job with the given id if the user has privilege.
-// hasSuperPriv: whether the user has super privilege.
-// If the user has super privilege, the user can show or operate all jobs,
-// else the user can only show or operate his own jobs.
+// GetJob returns the job with the given id if the user has privilege to show this job.
 func GetJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, user string, hasSuperPriv bool) (*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 
@@ -251,35 +299,53 @@ func Job2Step(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, step s
 	return err
 }
 
-// FinishJob tries to finish a running job with jobID, change its status to finished, clear its step.
+// FinishJob tries to finish a running job with jobID, change its status to finished, clear its step and update summary.
 // It will not return error when there's no matched job.
-func FinishJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, summary *JobSummary) error {
-	bytes, err := json.Marshal(summary)
-	if err != nil {
-		return err
+func FinishJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, summary *Summary) error {
+	summaryStr := "{}"
+	if summary != nil {
+		bytes, err := json.Marshal(summary)
+		if err != nil {
+			return err
+		}
+		summaryStr = string(bytes)
 	}
+
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	_, err = conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
+	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
 		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, step = %?, summary = %?
 		WHERE id = %? AND status = %?;`,
-		jobStatusFinished, jobStepNone, bytes, jobID, JobStatusRunning)
+		jobStatusFinished, jobStepNone, summaryStr, jobID, JobStatusRunning)
 	return err
 }
 
 // FailJob fails import into job. A job can only be failed once.
 // It will not return error when there's no matched job.
-func FailJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, errorMsg string) error {
+func FailJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, errorMsg string, summary *Summary) error {
+	summaryStr := "{}"
+	if summary != nil {
+		bytes, err := json.Marshal(summary)
+		if err != nil {
+			return err
+		}
+		summaryStr = string(bytes)
+	}
+
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
-		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, error_message = %?
+		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, error_message = %?, summary = %?
 		WHERE id = %? AND status = %?;`,
-		jobStatusFailed, errorMsg, jobID, JobStatusRunning)
+		jobStatusFailed, errorMsg, summaryStr, jobID, JobStatusRunning)
 	return err
 }
 
 func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 	// start_time, end_time, summary, error_message can be NULL, need to use row.IsNull() to check.
-	startTime, endTime := types.ZeroTime, types.ZeroTime
+	var (
+		startTime = types.ZeroTime
+		endTime   = types.ZeroTime
+	)
+
 	if !row.IsNull(2) {
 		startTime = row.GetTime(2)
 	}
@@ -293,15 +359,20 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 		return nil, errors.Trace(err)
 	}
 
-	var summary *JobSummary
-	var summaryStr string
+	importedRows := int64(-1)
+	// Only finished/failed job has summary
+	// For running job, we have to get importedRows from GetRuntimeInfoForJob.
 	if !row.IsNull(12) {
-		summaryStr = row.GetString(12)
-	}
-	if len(summaryStr) > 0 {
-		summary = &JobSummary{}
-		if err := json.Unmarshal([]byte(summaryStr), summary); err != nil {
-			return nil, errors.Trace(err)
+		summaryStr := row.GetString(12)
+		if len(summaryStr) > 0 {
+			summary := &Summary{}
+			if err := json.Unmarshal([]byte(summaryStr), summary); err != nil {
+				return nil, errors.Trace(err)
+			}
+			// Only update importedRows if rowcnt > 0, which means ingest step is finished.
+			if summary.PostProcessSummary.RowCnt > 0 {
+				importedRows = summary.PostProcessSummary.RowCnt
+			}
 		}
 	}
 
@@ -322,12 +393,14 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 		SourceFileSize: row.GetInt64(9),
 		Status:         row.GetString(10),
 		Step:           row.GetString(11),
-		Summary:        summary,
+		ImportedRows:   importedRows,
+		Progress:       DefaultProgressMessage,
 		ErrorMessage:   errMsg,
 	}, nil
 }
 
 // GetAllViewableJobs gets all viewable jobs.
+// If the user has super privilege, he can show all jobs, otherwise he can only show his jobs.
 func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user string, hasSuperPriv bool) ([]*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	sql := baseQuerySQL

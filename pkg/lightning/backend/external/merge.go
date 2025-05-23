@@ -20,6 +20,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -47,6 +48,7 @@ func MergeOverlappingFiles(
 	newFilePrefix string,
 	blockSize int,
 	onClose OnCloseFunc,
+	collector execute.Collector,
 	concurrency int,
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
@@ -76,6 +78,7 @@ func MergeOverlappingFiles(
 				uuid.New().String(),
 				blockSize,
 				onClose,
+				collector,
 				checkHotspot,
 				onDup,
 			)
@@ -141,6 +144,7 @@ func mergeOverlappingFilesInternal(
 	writerID string,
 	blockSize int,
 	onClose OnCloseFunc,
+	collector execute.Collector,
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
 ) (err error) {
@@ -184,13 +188,28 @@ func mergeOverlappingFilesInternal(
 		}
 	}()
 
+	bytes := int64(0)
+	rowCnt := int64(0)
+
 	// currently use same goroutine to do read and write. The main advantage is
 	// there's no KV copy and iter can reuse the buffer.
 	for iter.Next() {
-		err = writer.WriteRow(ctx, iter.Key(), iter.Value())
+		key, value := iter.Key(), iter.Value()
+		err = writer.WriteRow(ctx, key, value)
 		if err != nil {
 			return err
 		}
+
+		bytes += int64(len(key) + len(value))
+		rowCnt++
+		if bytes > 104857600 && collector != nil { // update metrics every 100MB
+			collector.OnRead(bytes, rowCnt)
+			bytes = 0
+			rowCnt = 0
+		}
+	}
+	if collector != nil {
+		collector.OnRead(bytes, rowCnt)
 	}
 	return iter.Error()
 }

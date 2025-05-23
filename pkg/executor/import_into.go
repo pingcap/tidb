@@ -201,7 +201,7 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	}); err != nil {
 		return err
 	}
-	FillOneImportJobInfo(req, info, unknownImportedRowCount)
+	FillOneImportJobInfo(req, info)
 	return nil
 }
 
@@ -328,7 +328,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	}
 
 	stmtCtx := e.userSctx.GetSessionVars().StmtCtx
-	stmtCtx.SetAffectedRows(importResult.Affected)
+	stmtCtx.SetAffectedRows(uint64(importResult.Affected))
 	// TODO: change it after spec is ready.
 	stmtCtx.SetMessage(fmt.Sprintf("Records: %d, ID: %s", importResult.Affected, importID))
 	return nil

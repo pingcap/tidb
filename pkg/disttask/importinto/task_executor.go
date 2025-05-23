@@ -67,6 +67,8 @@ type importStepExecutor struct {
 	importCtx    context.Context
 	importCancel context.CancelFunc
 	wg           sync.WaitGroup
+
+	*execute.RunningSubtaskSummary
 }
 
 func getTableImporter(
@@ -129,6 +131,9 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	defer func() {
 		task.End(zapcore.ErrorLevel, err)
 	}()
+
+	s.ResetMetrics()
+
 	bs := subtask.Meta
 	var subtaskMeta ImportStepMeta
 	err = json.Unmarshal(bs, &subtaskMeta)
@@ -171,8 +176,20 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
+	collector := execute.NewCollector(
+		func(bytes, rows int64) {
+			s.InputBytes.Add(bytes)
+			s.InputRowCnt.Add(rows)
+			if s.tableImporter.IsLocalSort() {
+				s.OutputBytes.Add(bytes)
+				s.OutputRowCnt.Add(rows)
+			}
+		},
+		nil,
+	)
+
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID, int(s.GetResource().CPU.Capacity()))
+	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID, int(s.GetResource().CPU.Capacity()), collector)
 	op.SetSource(source)
 	pipeline := operator.NewAsyncPipeline(op)
 	if err = pipeline.Execute(); err != nil {
@@ -206,8 +223,8 @@ outer:
 	return s.onFinished(ctx, subtask)
 }
 
-func (*importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	return nil
+func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	return s.ToSummary()
 }
 
 func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
@@ -226,7 +243,6 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 		return errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
 	}
 
-	var dataKVCount uint64
 	if s.tableImporter.IsLocalSort() {
 		// TODO: we should close and cleanup engine in all case, since there's no checkpoint.
 		s.logger.Info("import data engine", zap.Int32("engine-id", subtaskMeta.ID))
@@ -234,12 +250,9 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 		if err != nil {
 			return err
 		}
-		dataKVCount2, err := s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
-		if err != nil {
+		if _, err := s.tableImporter.ImportAndCleanup(ctx, closedDataEngine); err != nil {
 			return err
 		}
-		dataKVCount = uint64(dataKVCount2)
-
 		s.logger.Info("import index engine", zap.Int32("engine-id", subtaskMeta.ID))
 		if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
 			return err
@@ -258,9 +271,6 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 			KVs:  c.SumKVS(),
 			Size: c.SumSize(),
 		}
-	}
-	subtaskMeta.Result = Result{
-		LoadedRowCnt: dataKVCount,
 	}
 	allocators := sharedVars.TableImporter.Allocators()
 	subtaskMeta.MaxIDs = map[autoid.AllocatorType]int64{
@@ -307,6 +317,8 @@ type mergeSortStepExecutor struct {
 	// 	max(max-merged-files * max-file-size / max-part-num(10000), min-part-size)
 	dataKVPartSize  int64
 	indexKVPartSize int64
+
+	*execute.RunningSubtaskSummary
 }
 
 var _ execute.StepExecutor = &mergeSortStepExecutor{}
@@ -337,6 +349,9 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	m.ResetMetrics()
+
 	// read merge sort step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {
 		if err := sm.ReadJSONFromExternalStorage(ctx, m.controller.GlobalSortStore, sm); err != nil {
@@ -357,6 +372,17 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 	}
 
+	collector := execute.NewCollector(
+		func(bytes, rows int64) {
+			m.InputBytes.Add(bytes)
+			m.InputRowCnt.Add(rows)
+			if me, ok := metric.GetCommonMetric(ctx); ok {
+				me.BytesCounter.WithLabelValues(metric.StateMerged).Add(float64(bytes))
+			}
+		},
+		nil,
+	)
+
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
 
 	partSize := m.dataKVPartSize
@@ -371,6 +397,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		prefix,
 		getKVGroupBlockSize(sm.KVGroup),
 		onClose,
+		collector,
 		int(m.GetResource().CPU.Capacity()),
 		false,
 		engineapi.OnDuplicateKeyIgnore)
@@ -416,6 +443,10 @@ func (m *mergeSortStepExecutor) Cleanup(ctx context.Context) (err error) {
 	return m.BaseStepExecutor.Cleanup(ctx)
 }
 
+func (m *mergeSortStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	return m.ToSummary()
+}
+
 type writeAndIngestStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 
@@ -424,6 +455,8 @@ type writeAndIngestStepExecutor struct {
 	logger        *zap.Logger
 	tableImporter *importer.TableImporter
 	store         tidbkv.Storage
+
+	*execute.RunningSubtaskSummary
 }
 
 var _ execute.StepExecutor = &writeAndIngestStepExecutor{}
@@ -443,6 +476,8 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	e.ResetMetrics()
 
 	// read write and ingest step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {
@@ -484,6 +519,20 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if err != nil {
 		return err
 	}
+
+	localBackend.SetCollector(execute.NewCollector(
+		func(bytes, rows int64) {
+			e.InputBytes.Add(bytes)
+			e.InputRowCnt.Add(rows)
+		},
+		func(bytes, rows int64) {
+			e.OutputBytes.Add(bytes)
+			if sm.KVGroup == dataKVGroup {
+				e.OutputRowCnt.Add(rows)
+			}
+		},
+	))
+
 	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
 		return errors.Trace(err)
@@ -491,8 +540,8 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	return e.onFinished(ctx, subtask)
 }
 
-func (*writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	return nil
+func (e *writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	return e.ToSummary()
 }
 
 func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
@@ -507,8 +556,6 @@ func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *pr
 	// only data kv group has loaded row count
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
-	_, kvCount := localBackend.GetExternalEngineKVStatistics(engineUUID)
-	subtaskMeta.Result.LoadedRowCnt = uint64(kvCount)
 	err := localBackend.CleanupEngine(ctx, engineUUID)
 	if err != nil {
 		e.logger.Warn("failed to cleanup engine", zap.Error(err))
@@ -610,23 +657,26 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 	switch task.Step {
 	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
 		return &importStepExecutor{
-			taskID:   task.ID,
-			taskMeta: &taskMeta,
-			logger:   logger,
-			store:    e.store,
+			taskID:                task.ID,
+			taskMeta:              &taskMeta,
+			logger:                logger,
+			store:                 e.store,
+			RunningSubtaskSummary: &execute.RunningSubtaskSummary{},
 		}, nil
 	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{
-			taskID:   task.ID,
-			taskMeta: &taskMeta,
-			logger:   logger,
+			taskID:                task.ID,
+			taskMeta:              &taskMeta,
+			logger:                logger,
+			RunningSubtaskSummary: &execute.RunningSubtaskSummary{},
 		}, nil
 	case proto.ImportStepWriteAndIngest:
 		return &writeAndIngestStepExecutor{
-			taskID:   task.ID,
-			taskMeta: &taskMeta,
-			logger:   logger,
-			store:    e.store,
+			taskID:                task.ID,
+			taskMeta:              &taskMeta,
+			logger:                logger,
+			store:                 e.store,
+			RunningSubtaskSummary: &execute.RunningSubtaskSummary{},
 		}, nil
 	case proto.ImportStepPostProcess:
 		return NewPostProcessStepExecutor(task.ID, e.store, &taskMeta, logger), nil

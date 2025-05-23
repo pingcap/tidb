@@ -40,27 +40,28 @@ func TestJobHappyPath(t *testing.T) {
 	conn := tk.Session().GetSQLExecutor()
 
 	cases := []struct {
-		action          func(jobID int64)
-		expectStatus    string
-		expectStep      string
-		expectedSummary *importer.JobSummary
-		expectedErrMsg  string
+		action         func(jobID int64)
+		expectStatus   string
+		expectStep     string
+		expectedRowCnt int64
+		expectedErrMsg string
 	}{
 		{
 			action: func(jobID int64) {
-				require.NoError(t, importer.FinishJob(ctx, conn, jobID, &importer.JobSummary{ImportedRows: 111}))
+				require.NoError(t, importer.FinishJob(ctx, conn, jobID, importer.MockSummary(111)))
 			},
-			expectStatus:    "finished",
-			expectStep:      "",
-			expectedSummary: &importer.JobSummary{ImportedRows: 111},
+			expectStatus:   "finished",
+			expectStep:     "",
+			expectedRowCnt: 111,
 		},
 		{
 			action: func(jobID int64) {
-				require.NoError(t, importer.FailJob(ctx, conn, jobID, "some error"))
+				require.NoError(t, importer.FailJob(ctx, conn, jobID, "some error", importer.MockSummary(111)))
 			},
 			expectStatus:   "failed",
 			expectStep:     importer.JobStepValidating,
 			expectedErrMsg: "some error",
+			expectedRowCnt: 111,
 		},
 	}
 	for _, c := range cases {
@@ -79,6 +80,8 @@ func TestJobHappyPath(t *testing.T) {
 				},
 			},
 			SourceFileSize: 123,
+			ImportedRows:   -1,
+			Progress:       importer.DefaultProgressMessage,
 			Status:         "pending",
 		}
 
@@ -132,7 +135,7 @@ func TestJobHappyPath(t *testing.T) {
 		require.False(t, gotJobInfo.EndTime.IsZero())
 		jobInfo.Status = c.expectStatus
 		jobInfo.Step = c.expectStep
-		jobInfo.Summary = c.expectedSummary
+		jobInfo.ImportedRows = c.expectedRowCnt
 		jobInfo.ErrorMessage = c.expectedErrMsg
 		jobInfoEqual(t, jobInfo, gotJobInfo)
 		cnt, err = importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
@@ -168,6 +171,8 @@ func TestGetAndCancelJob(t *testing.T) {
 			},
 		},
 		SourceFileSize: 123,
+		ImportedRows:   -1,
+		Progress:       importer.DefaultProgressMessage,
 		Status:         "pending",
 	}
 
@@ -298,7 +303,9 @@ func TestGetJobInfoNullField(t *testing.T) {
 				"detached":  nil,
 			},
 		},
+		Progress:       importer.DefaultProgressMessage,
 		SourceFileSize: 123,
+		ImportedRows:   -1,
 		Status:         "pending",
 	}
 	// create jobs
@@ -306,7 +313,7 @@ func TestGetJobInfoNullField(t *testing.T) {
 		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
 	require.NoError(t, importer.StartJob(ctx, conn, jobID1, importer.JobStepImporting))
-	require.NoError(t, importer.FailJob(ctx, conn, jobID1, "failed"))
+	require.NoError(t, importer.FailJob(ctx, conn, jobID1, "failed", nil))
 	jobID2, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
 		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
@@ -317,6 +324,7 @@ func TestGetJobInfoNullField(t *testing.T) {
 	jobInfo.ID = jobID1
 	jobInfo.Status = "failed"
 	jobInfo.Step = importer.JobStepImporting
+	jobInfo.ImportedRows = -1
 	jobInfo.ErrorMessage = "failed"
 	jobInfoEqual(t, jobInfo, gotJobInfos[0])
 	require.False(t, gotJobInfos[0].StartTime.IsZero())
@@ -324,6 +332,7 @@ func TestGetJobInfoNullField(t *testing.T) {
 	jobInfo.ID = jobID2
 	jobInfo.Status = "pending"
 	jobInfo.Step = ""
+	jobInfo.ImportedRows = -1
 	// err msg of jobID2 should be empty
 	jobInfo.ErrorMessage = ""
 	jobInfoEqual(t, jobInfo, gotJobInfos[1])

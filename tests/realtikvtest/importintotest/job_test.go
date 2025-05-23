@@ -59,13 +59,13 @@ func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row 
 	s.Equal(jobInfo.Step, row[4])
 	s.Equal(jobInfo.Status, row[5])
 	s.Equal(units.BytesSize(float64(jobInfo.SourceFileSize)), row[6])
-	if jobInfo.Summary == nil {
+	if jobInfo.ImportedRows < 0 {
 		s.Equal("<nil>", row[7].(string))
 	} else {
-		s.Equal(strconv.Itoa(int(jobInfo.Summary.ImportedRows)), row[7])
+		s.Equal(strconv.Itoa(int(jobInfo.ImportedRows)), row[7])
 	}
-	s.Regexp(jobInfo.ErrorMessage, row[8])
-	s.Equal(jobInfo.CreatedBy, row[12])
+	s.Regexp(jobInfo.ErrorMessage, row[9])
+	s.Equal(jobInfo.CreatedBy, row[13])
 }
 
 func (s *mockGCSSuite) TestShowJob() {
@@ -123,10 +123,8 @@ func (s *mockGCSSuite) TestShowJob() {
 		SourceFileSize: 3,
 		Status:         "finished",
 		Step:           "",
-		Summary: &importer.JobSummary{
-			ImportedRows: 2,
-		},
-		ErrorMessage: "",
+		ImportedRows:   2,
+		ErrorMessage:   "",
 	}
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 
@@ -203,10 +201,8 @@ func (s *mockGCSSuite) TestShowJob() {
 					SourceFileSize: 6,
 					Status:         "running",
 					Step:           "importing",
-					Summary: &importer.JobSummary{
-						ImportedRows: 2,
-					},
-					ErrorMessage: "",
+					ImportedRows:   2,
+					ErrorMessage:   "",
 				}
 				rows = tk2.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
 				s.Len(rows, 1)
@@ -230,7 +226,7 @@ func (s *mockGCSSuite) TestShowJob() {
 			} else if newVal == 2 {
 				rows = tk2.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
 				s.Len(rows, 1)
-				jobInfo.Summary.ImportedRows = 4
+				jobInfo.ImportedRows = 4
 				s.compareJobInfoWithoutTime(jobInfo, rows[0])
 				// resume the taskexecutor, need disable failpoint first, otherwise the post-process subtask will be blocked
 				s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/syncAfterSubtaskFinish"))
@@ -274,6 +270,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
+		ImportedRows:   -1,
 		Status:         "pending",
 		Step:           "",
 	}
@@ -293,9 +290,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID1)).Rows()
 	s.Len(rows, 1)
 	jobInfo.Status = "finished"
-	jobInfo.Summary = &importer.JobSummary{
-		ImportedRows: 2,
-	}
+	jobInfo.ImportedRows = 2
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1", "2"))
 
@@ -316,6 +311,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
+		ImportedRows:   -1,
 		Status:         "pending",
 		Step:           "",
 	}
@@ -327,6 +323,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID2)).Rows()
 	s.Len(rows, 1)
 	jobInfo.Status = "failed"
+	jobInfo.ImportedRows = 2
 	jobInfo.Step = importer.JobStepValidating
 	jobInfo.ErrorMessage = `\[Lighting:Restore:ErrChecksumMismatch]checksum mismatched remote vs local.*`
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
@@ -349,6 +346,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
+		ImportedRows:   -1,
 		Status:         "pending",
 		Step:           "",
 	}
@@ -434,6 +432,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 		SourceFileSize: 3,
 		Status:         "cancelled",
 		Step:           importer.JobStepImporting,
+		ImportedRows:   -1,
 		ErrorMessage:   "cancelled by user",
 	}
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
@@ -494,6 +493,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
+		ImportedRows:   -1,
 		Status:         "cancelled",
 		Step:           importer.JobStepValidating,
 		ErrorMessage:   "cancelled by user",
@@ -562,6 +562,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
+		ImportedRows:   -1,
 		Status:         "cancelled",
 		Step:           "importing",
 		ErrorMessage:   "cancelled by user",
@@ -592,6 +593,7 @@ func (s *mockGCSSuite) TestJobFailWhenDispatchSubtask() {
 		SourceFileSize: 3,
 		Status:         "failed",
 		Step:           importer.JobStepValidating,
+		ImportedRows:   -1,
 		ErrorMessage:   "injected error after ImportStepImport",
 	}
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/failWhenDispatchPostProcessSubtask", "return(true)")

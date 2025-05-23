@@ -679,7 +679,7 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 				defer mu.Unlock()
 				checksum.Add(chunkChecksum)
 			}()
-			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, ti.logger, chunkChecksum)
+			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, ti.logger, chunkChecksum, nil)
 		})
 	}
 	if err = eg.Wait(); err != nil {
@@ -723,7 +723,7 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 	}
 
 	return &JobImportResult{
-		Affected: uint64(dataKVCount),
+		Affected: dataKVCount,
 	}, nil
 }
 
@@ -982,7 +982,7 @@ func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, 
 	sessionVars := se.GetSessionVars()
 	sessionVars.TxnCtxMu.Lock()
 	defer sessionVars.TxnCtxMu.Unlock()
-	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected))
+	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, result.Affected, result.Affected)
 	se.StmtCommit(ctx)
 	return se.CommitTxn(ctx)
 }

@@ -4491,10 +4491,12 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 
 var (
 	importIntoSchemaNames = []string{"Job_ID", "Data_Source", "Target_Table", "Table_ID",
-		"Phase", "Status", "Source_File_Size", "Imported_Rows",
+		"Phase", "Status", "Source_File_Size", "Imported_Rows", "Progress",
 		"Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
-	importIntoSchemaFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
-		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
+
+	// ImportIntoSchemaFTypes is the field types of show import jobs, exported for test.
+	ImportIntoSchemaFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
+		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong, mysql.TypeString,
 		mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString}
 
 	// ImportIntoDataSource used inplannererrors.ErrLoadDataInvalidURI.
@@ -4733,7 +4735,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			return nil, err2
 		}
 	} else {
-		outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, importIntoSchemaFTypes, []uint{})
+		outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, ImportIntoSchemaFTypes, []uint{})
 		p.setSchemaAndNames(outputSchema, outputFields)
 	}
 	return p, nil
@@ -5841,7 +5843,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		ftypes = []byte{mysql.TypeJSON, mysql.TypeJSON}
 	case ast.ShowImportJobs:
 		names = importIntoSchemaNames
-		ftypes = importIntoSchemaFTypes
+		ftypes = ImportIntoSchemaFTypes
 	case ast.ShowDistributionJobs:
 		names = distributionJobsSchemaNames
 		ftypes = distributionJobsSchedulerFTypes
