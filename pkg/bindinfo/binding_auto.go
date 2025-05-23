@@ -30,8 +30,19 @@ import (
 	"go.uber.org/zap"
 )
 
-// PlanDigestFunc is used to get the plan digest of this SQL.
-var PlanDigestFunc func(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error)
+// CalculatePlanDigest is used to get the plan digest of this SQL.
+// This function will call the optimizer.
+var CalculatePlanDigest func(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error)
+
+// RecordRelevantOptVarsAndFixes is used to get the relevant optimizer variables for this SQL.
+// This function will call the optimizer.
+var RecordRelevantOptVarsAndFixes func(sctx sessionctx.Context, stmt ast.StmtNode) (varNames []string, fixIDs []uint64, err error)
+
+// GenPlanWithSCtx generates the plan for the given SQL statement under the given session context.
+// This function will call the optimizer.
+// PlanHintStr is a set of hints to reproduce this plan, which is used to create binding.
+// PlanText is the results of EXPLAIN of the current plan.
+var GenPlanWithSCtx func(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest, planHintStr string, planText [][]string, err error)
 
 // BindingPlanInfo contains the binding info and its corresponding plan execution info, which is used by
 // "SHOW PLAN FOR <SQL>" to help users understand the historical plans for a specific SQL.
@@ -56,8 +67,8 @@ type BindingPlanInfo struct {
 type BindingPlanEvolution interface {
 	// TODO: RecordHistPlansAsBindings records the history plans as bindings for qualified queries.
 
-	// ShowPlansForSQL shows historical plans for a specific SQL.
-	ShowPlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error)
+	// ExplorePlansForSQL explores plans for this SQL.
+	ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error)
 }
 
 type bindingAuto struct {
@@ -70,23 +81,23 @@ type bindingAuto struct {
 func newBindingAuto(sPool util.DestroyableSessionPool) BindingPlanEvolution {
 	return &bindingAuto{
 		sPool:              sPool,
-		planGenerator:      new(knobBasedPlanGenerator),
+		planGenerator:      &planGenerator{sPool: sPool},
 		ruleBasedPredictor: new(ruleBasedPlanPerfPredictor),
 		llmPredictor:       new(llmBasedPlanPerfPredictor),
 	}
 }
 
-// ShowPlansForSQL evolves plans for the specified SQL.
+// ExplorePlansForSQL explores plans for the specified SQL.
 // 1. get historical plan candidates.
 // 2. generate new plan candidates.
 // 3. score all historical and newly-generated plan candidates and recommend the best one.
-func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
+func (ba *bindingAuto) ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
 	historicalPlans, err := ba.getHistoricalPlanInfo(currentDB, sqlOrDigest, charset, collation)
 	if err != nil {
 		return nil, err
 	}
 
-	generatedPlans, err := ba.planGenerator.Generate(currentDB, sqlOrDigest)
+	generatedPlans, err := ba.planGenerator.Generate(currentDB, sqlOrDigest, charset, collation)
 	if err != nil {
 		return nil, err
 	}
