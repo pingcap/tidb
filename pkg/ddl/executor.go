@@ -1814,8 +1814,6 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				err = e.CreateForeignKey(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			case ast.ConstraintPrimaryKey:
 				err = e.CreatePrimaryKey(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
-			case ast.ConstraintFulltext:
-				err = e.createFulltextIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintCheck:
 				if !vardef.EnableCheckConstraint.Load() {
 					sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
@@ -4520,13 +4518,16 @@ func getIdentKey(ident ast.Ident) string {
 	return fmt.Sprintf("%s.%s", ident.Schema.L, ident.Name.L)
 }
 
-func getAnonymousIndexPrefix(columnarIndexType model.ColumnarIndexType, isFulltext bool) string {
-	if isFulltext {
-		return "fulltext_index"
-	}
+// getAnonymousIndexPrefix returns the prefix for anonymous index name.
+// Column name of vector/fulltext index IndexPartSpecifications is nil,
+// so we need a different prefix to distinguish between vector/fulltext
+// index and expression index.
+func getAnonymousIndexPrefix(columnarIndexType model.ColumnarIndexType) string {
 	switch columnarIndexType {
 	case model.ColumnarIndexTypeVector:
 		return "vector_index"
+	case model.ColumnarIndexTypeFulltext:
+		return "fulltext_index"
 	}
 	return "expression_index"
 }
@@ -4695,12 +4696,12 @@ func checkTableTypeForFulltextIndex(tblInfo *model.TableInfo) error {
 	return nil
 }
 
-// TODO: fill buildFulltextInfoWithCheck
-func buildFulltextInfoWithCheck(indexOption *ast.IndexOption, tblInfo *model.TableInfo) (*model.FulltextIndexInfo, string, error) {
-	return &model.FulltextIndexInfo{
-		ParserType: model.ParserType(indexOption.ParserName.L),
+func buildFulltextInfoWithCheck(indexOption *ast.IndexOption, tblInfo *model.TableInfo) (*model.FullTextIndexInfo, string, error) {
+	return &model.FullTextIndexInfo{
+		ParserType: model.GetFullTextParserTypeBySQLName(indexOption.ParserName.L),
 	}, "", nil
 }
+
 func (e *executor) createFulltextIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
@@ -4714,7 +4715,7 @@ func (e *executor) createFulltextIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	}
 
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
-	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, model.ColumnarIndexTypeNA, true, ifNotExists)
+	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, model.ColumnarIndexTypeFulltext, ifNotExists)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4729,7 +4730,7 @@ func (e *executor) createFulltextIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeNA, true)
+	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeFulltext)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4741,7 +4742,7 @@ func (e *executor) createFulltextIndex(ctx sessionctx.Context, ti ast.Ident, ind
 
 	job := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
 	job.Version = model.GetJobVerInUse()
-	job.Type = model.ActionAddFulltextIndex
+	job.Type = model.ActionAddColumnarIndex
 	indexPartSpecifications[0].Expr = nil
 
 	args := &model.ModifyIndexArgs{
@@ -4762,11 +4763,12 @@ func (e *executor) createFulltextIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	}
 	return errors.Trace(err)
 }
+
 func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType, ifNotExists bool) (ast.CIStr, []*model.ColumnInfo, error) {
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
-		colName := ast.NewCIStr(getAnonymousIndexPrefix(columnarIndexType, isFulltext))
+		colName := ast.NewCIStr(getAnonymousIndexPrefix(columnarIndexType))
 		if indexPartSpecifications[0].Column != nil {
 			colName = indexPartSpecifications[0].Column.Name
 		}
@@ -4968,14 +4970,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	// not support Spatial and FullText index
 	switch keyType {
 	case ast.IndexKeyTypeSpatial:
-		return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT and SPATIAL index is not supported")
+		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is not supported")
 	case ast.IndexKeyTypeColumnar:
-		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("not currently supported")
-		// return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists, model.ColumnarIndexTypeInverted)
-	case ast.IndexKeyTypeVector:
-		return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists, model.ColumnarIndexTypeVector)
-	case ast.IndexKeyTypeFullText:
-		return e.createFulltextIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
+		return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
 	}
 	unique := keyType == ast.IndexKeyTypeUnique
 	schema, t, err := e.getSchemaAndTableByIdent(ti)

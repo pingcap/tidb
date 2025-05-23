@@ -116,8 +116,10 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 		}
 
 		// return error in strict sql mode
-		if err := checkIndexColumn(col, ip.Length, ctx != nil && (!ctx.GetSQLMode().HasStrictMode() || ctx.SuppressTooLongIndexErr()), columnarIndexType, isFulltext); err != nil {
-			return nil, false, err
+		if columnarIndexType == model.ColumnarIndexTypeNA {
+			if err := checkIndexColumn(col, ip.Length, ctx != nil && (!ctx.GetSQLMode().HasStrictMode() || ctx.SuppressTooLongIndexErr())); err != nil {
+				return nil, false, err
+			}
 		}
 		if col.FieldType.IsArray() {
 			if mvIndex {
@@ -213,7 +215,8 @@ func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn, col
 	return
 }
 
-func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, suppressTooLongKeyErr bool, columnarIndexType model.ColumnarIndexType, isFulltext bool) error {
+// checkIndexColumn will be run for all non-columnar indexes.
+func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, suppressTooLongKeyErr bool) error {
 	if col.GetFlen() == 0 && (types.IsTypeChar(col.FieldType.GetType()) || types.IsTypeVarchar(col.FieldType.GetType())) {
 		if col.Hidden {
 			return errors.Trace(dbterror.ErrWrongKeyColumnFunctionalIndex.GenWithStackByArgs(col.GeneratedExprString))
@@ -260,15 +263,6 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, suppressTooLong
 		// Length must be non-zero for char.
 		if indexColumnLen == types.ErrorLength {
 			return errors.Trace(dbterror.ErrKeyPart0.GenWithStackByArgs(col.Name.O))
-		}
-	}
-
-	// Fulltext index only support few column types.
-	if isFulltext {
-		switch col.FieldType.GetType() {
-		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		default:
-			return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported adding a fulltext index on a unsupported column")
 		}
 	}
 
@@ -366,17 +360,23 @@ func BuildIndexInfo(
 			return nil, errors.Trace(err)
 		}
 		idxInfo.VectorInfo = vectorInfo
-	case model.ColumnarIndexTypeInverted:
-		// do nothing now
-	}
-
-	if isFulltext {
-		fulltextInfo, _, err := buildFulltextInfoWithCheck(indexOption, tblInfo)
+	case model.ColumnarIndexTypeFulltext:
+		ftsInfo, err := buildFullTextInfoWithCheck(indexPartSpecifications, indexOption, tblInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		idxInfo.FulltextInfo = fulltextInfo
+		idxInfo.FullTextInfo = ftsInfo
+	case model.ColumnarIndexTypeInverted:
+		// do nothing now
 	}
+	// Fulltext index only support few column types.
+	// if isFulltext {
+	// 	switch col.FieldType.GetType() {
+	// 	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	// 	default:
+	// 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported adding a fulltext index on a unsupported column")
+	// 	}
+	// }
 
 	var err error
 	allTableColumns := tblInfo.Columns
