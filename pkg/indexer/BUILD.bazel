@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "indexer.pb.go",
         "indexer_grpc.pb.go",
+        "tici.pb.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/indexer",
     visibility = ["//visibility:public"],

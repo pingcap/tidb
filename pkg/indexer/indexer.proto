@@ -28,6 +28,9 @@ service IndexerService {
   
   // GetIndexProgress retrieves the current progress of an index build
   rpc GetIndexProgress(GetIndexProgressRequest) returns (GetIndexProgressResponse);
+
+  // Add shard for an index
+  rpc AddShard(AddShardRequest) returns (AddShardResponse);
 }
 
 // IndexType represents the type of index
@@ -48,6 +51,28 @@ enum ParserType {
   DEFAULT_PARSER = 1;
   // Other parser types
   OTHER_PARSER = 2;
+}
+
+message ShardManifestHeader {
+  uint64 shard_id = 1;
+  string start_key = 2;
+  string end_key = 3;
+  uint64 epoch = 4;
+}
+
+// AddShardRequest is sent from meta service to worker node
+message AddShardRequest {
+  ShardManifestHeader shard = 1;
+  // Index information
+  IndexInfo index_info = 2;
+  // Table information
+  TableInfo table_info = 3;
+}
+
+// AddShardResponse
+message AddShardResponse {
+  // Operation result status code, 0 means success
+  int32 status = 1;
 }
 
 // CreateIndexRequest is a request to create an index

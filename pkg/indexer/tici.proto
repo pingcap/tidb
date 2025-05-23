@@ -1,0 +1,101 @@
+// Copyright 2025 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package indexer;
+
+import "indexer.proto";
+
+option go_package = "./indexer";
+
+message WorkerNodeStatus {
+  // TODO Need more metrics, such as disk usage, quotas, cache miss rates
+  double cpu_usage = 1;
+  uint64 memory_usage = 2;
+}
+
+// Some fields may be duplicated with ShardManifestHeader,
+// however, just leave them here.
+message WorkerNodeShardStatus {
+  string start_key = 1;
+  string end_key = 2;
+  // TODO shard_id is unique across tables and indexes.
+  // We still need them because in meta service we are not currently maintain this correspondence.
+  int64 table_id = 3;
+  int64 index_id = 4;
+  uint64 shard_id = 5;
+  uint64 epoch = 6;
+  uint64 seq = 7;
+}
+
+message WorkerNodeCompactionStatus {
+
+}
+
+message WorkerNodeHeartbeatRequest {
+  string addr = 1;
+  WorkerNodeStatus status = 2;
+  repeated WorkerNodeShardStatus shards = 3;
+  repeated WorkerNodeCompactionStatus compactions = 4;
+}
+
+message WorkerNodeHeartbeatResponse {
+  // Operation result status code, 0 means success
+  int32 status = 1;
+  repeated indexer.AddShardRequest to_add_shards = 2;
+  // We assume the `shard_id`s are unique across tables,
+  // So using `shard_id` is enough here.
+  repeated uint64 to_remove_shards = 3;
+}
+
+message KeyRange {
+  string start_key = 1;
+  string end_key = 2;
+}
+
+message ShardLocalCacheInfo {
+  indexer.ShardManifestHeader shard = 1;
+  repeated string local_cache_addrs = 2;
+}
+
+message GetShardLocalCacheRequest {
+  repeated KeyRange key_ranges = 1;
+  // at most `limit` shards can be returned
+  int32 limit = 2;
+}
+
+message GetShardLocalCacheResponse {
+  // Operation result status code, 0 means success
+  int32 status = 1;
+  repeated ShardLocalCacheInfo shard_local_cache_infos = 2;
+}
+
+service MetaService {
+  // Maintains heartbeat from worker nodes(such as writers, compactors) to meta service.
+  rpc WorkerNodeHeartbeat(WorkerNodeHeartbeatRequest) returns (WorkerNodeHeartbeatResponse);
+
+  // TODO It will eventually replace the same RPCs in indexer.rs
+  // CreateIndex creates a new index
+  rpc CreateIndex(indexer.CreateIndexRequest) returns (indexer.CreateIndexResponse);
+  
+  // DropIndex removes an existing index
+  rpc DropIndex(indexer.DropIndexRequest) returns (indexer.DropIndexResponse);
+  
+  // GetIndexProgress retrieves the current progress of an index build
+  rpc GetIndexProgress(indexer.GetIndexProgressRequest) returns (indexer.GetIndexProgressResponse);
+
+  // GetShardLocalCacheInfo retrieves the local cache information of shards
+  rpc GetShardLocalCacheInfo(GetShardLocalCacheRequest) returns (GetShardLocalCacheResponse);
+}
