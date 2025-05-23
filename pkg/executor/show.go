@@ -1258,8 +1258,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			fmt.Fprintf(buf, "  UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.VectorInfo != nil {
 			fmt.Fprintf(buf, "  VECTOR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
-		} else if idxInfo.FulltextInfo != nil {
+		} else if idxInfo.FullTextInfo != nil {
 			fmt.Fprintf(buf, "  FULLTEXT INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+		} else if idxInfo.InvertedInfo != nil {
+			fmt.Fprintf(buf, "  COLUMNAR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else {
 			fmt.Fprintf(buf, "  KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		}
@@ -1280,8 +1282,6 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		if idxInfo.VectorInfo != nil {
 			funcName := model.IndexableDistanceMetricToFnName[idxInfo.VectorInfo.DistanceMetric]
 			fmt.Fprintf(buf, "((%s(%s)))", strings.ToUpper(funcName), strings.Join(cols, ","))
-		} else if idxInfo.FulltextInfo != nil {
-			// TODO: no support create table with fulltext index
 		} else {
 			fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
 		}
