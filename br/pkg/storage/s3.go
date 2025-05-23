@@ -1165,8 +1165,6 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 		s3Writer := &s3ObjectWriter{wd: wd, wg: &sync.WaitGroup{}}
 		s3Writer.wg.Add(1)
 		go func() {
-			metrics.GlobalSortUploadWorkerCount.Add(float64(option.Concurrency))
-			defer metrics.GlobalSortUploadWorkerCount.Sub(float64(option.Concurrency))
 			_, err := up.UploadWithContext(ctx, upParams)
 			// like a channel we only let sender close the pipe in happy path
 			if err != nil {
