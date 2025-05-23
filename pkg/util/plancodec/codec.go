@@ -377,64 +377,6 @@ func escapeString(s string) string {
 	return strings.ReplaceAll(s, string([]byte{lineBreaker}), "\\n")
 }
 
-// DecodePlanNode decodes a string into the fields of a plan node.
-// This is the inverse function of EncodePlanNode.
-func DecodePlanNode(str string) (depth int, pid string, planType string, rowCount float64,
-	taskTypeInfo string, explainInfo string, actRows string, analyzeInfo string, memoryInfo string, diskInfo string, err error) {
-	values := strings.Split(str, separatorStr)
-	if len(values) < 5 {
-		err = errors.Errorf("invalid plan node string: %v", str)
-		return
-	}
-
-	// Decode depth
-	depth, err = strconv.Atoi(values[0])
-	if err != nil {
-		err = errors.Errorf("invalid depth: %v", values[0])
-		return
-	}
-
-	// Decode ID
-	planType, pid, err = decodeID(values[1])
-	if err != nil {
-		err = errors.Errorf("invalid id: %v", values[1])
-		return
-	}
-
-	// Decode task type
-	taskTypeInfo = values[2]
-
-	// Decode row count
-	rowCount, err = strconv.ParseFloat(values[3], 64)
-	if err != nil {
-		err = errors.Errorf("invalid row count: %v", values[3])
-		return
-	}
-
-	// Decode explain info
-	explainInfo = unescapeString(values[4])
-
-	// Decode runtime info if present
-	if len(values) > 5 {
-		actRows = values[5]
-	}
-	if len(values) > 6 {
-		analyzeInfo = values[6]
-	}
-	if len(values) > 7 {
-		memoryInfo = values[7]
-	}
-	if len(values) > 8 {
-		diskInfo = values[8]
-	}
-	return
-}
-
-func unescapeString(s string) string {
-	s = strings.ReplaceAll(s, "\\t", string([]byte{separator}))
-	return strings.ReplaceAll(s, "\\n", string([]byte{lineBreaker}))
-}
-
 // NormalizePlanNode is used to normalize the plan to a string.
 func NormalizePlanNode(depth int, planType string, taskTypeInfo string, explainInfo string, buf *bytes.Buffer) {
 	buf.WriteString(strconv.Itoa(depth))
@@ -453,20 +395,6 @@ func encodeID(planType, id string) string {
 	return strconv.Itoa(planID) + idSeparator + id
 }
 
-func decodeID(encodeID string) (planType, id string, err error) {
-	// Decode plan ID and type
-	sepIDs := strings.Split(encodeID, idSeparator)
-	planID, err := strconv.Atoi(sepIDs[0])
-	if err != nil {
-		err = errors.Errorf("invalid plan ID: %v", sepIDs[0])
-		return "", "", err
-	}
-	planType = PhysicalIDToTypeString(planID)
-	id = sepIDs[1]
-	return planType, id, nil
-
-}
-
 // EncodeTaskType is used to encode task type to a string.
 func EncodeTaskType(isRoot bool, storeType kv.StoreType) string {
 	if isRoot {
@@ -483,24 +411,6 @@ func EncodeTaskTypeForNormalize(isRoot bool, storeType kv.StoreType) string {
 		return copTaskType
 	}
 	return copTaskType + idSeparator + strconv.Itoa((int)(storeType))
-}
-
-func DecodeTaskType(str string) (isRoot bool, storeType kv.StoreType, err error) {
-	segs := strings.Split(str, idSeparator)
-	if segs[0] == rootTaskType {
-		isRoot = true
-		return
-	}
-	if len(segs) == 1 {
-		isRoot = false
-		storeTypeInt, err := strconv.Atoi(segs[1])
-		if err != nil {
-			return
-		}
-		storeType = kv.StoreType(storeTypeInt)
-		return
-	}
-	return
 }
 
 func decodeTaskType(str string) (string, error) {
