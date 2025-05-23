@@ -293,6 +293,5 @@ func predicatePushDownToTableScanCheck(sctx base.PlanContext, physicalSelection 
 	if len(selectedConds) == 0 {
 		return
 	}
-	// TODO: it shoud be a panic, but it has a problem here
 	panic("it is impossible that selectedConds is not empty")
 }
