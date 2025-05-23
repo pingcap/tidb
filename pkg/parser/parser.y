@@ -88,8 +88,6 @@ import (
 	binaryType        "BINARY"
 	blobType          "BLOB"
 	both              "BOTH"
-	by                "BY"
-	call              "CALL"
 	cascade           "CASCADE"
 	caseKwd           "CASE"
 	change            "CHANGE"
