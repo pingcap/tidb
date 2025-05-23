@@ -27,9 +27,46 @@ function start_tidb() {
   cd - || exit 1
 
   echo "Starting TiUP Playground in the background..."
-  tiup playground nightly --db=1 --kv=1 --tiflash=1 --db.binpath=../../bin/tidb-server --db.config=./config.toml &
+  tiup playground nightly --mode=tidb \
+  --db.binpath=../../bin/tidb-server \
+  --db.config=./config.toml \
+  --kv.binpath=../../bin/tikv-server \
+  --pd.binpath=../../bin/pd-server \
+  --tiflash.binpath=../../bin/tiflash &
 
-  sleep 20
+  sleep 30
+}
+
+function check_and_prepare_datasets() {
+  if [ -f "./fashion-mnist-784-euclidean.hdf5" ] && [ -f "./mnist-784-euclidean.hdf5" ]; then
+    echo "Datasets already exist, skip"
+    return
+  fi
+
+  if [ -d "${ASSETS_DIR}" ]; then
+    if [ -f "${ASSETS_DIR}/fashion-mnist-784-euclidean.hdf5" ]; then
+      echo "Moving fashion-mnist dataset from ASSETS_DIR..."
+      mv "${ASSETS_DIR}/fashion-mnist-784-euclidean.hdf5" .
+    else
+      echo "Downloading fashion-mnist dataset..."
+      wget https://ann-benchmarks.com/fashion-mnist-784-euclidean.hdf5
+    fi
+
+    if [ -f "${ASSETS_DIR}/mnist-784-euclidean.hdf5" ]; then
+      echo "Moving mnist dataset from ASSETS_DIR..."
+      mv "${ASSETS_DIR}/mnist-784-euclidean.hdf5" .
+    else
+      echo "Downloading mnist dataset..."
+      wget https://ann-benchmarks.com/mnist-784-euclidean.hdf5
+    fi
+  else
+    echo "Downloading fashion-mnist dataset..."
+    wget https://ann-benchmarks.com/fashion-mnist-784-euclidean.hdf5
+
+    echo "Downloading mnist dataset..."
+    wget https://ann-benchmarks.com/mnist-784-euclidean.hdf5
+
+  fi
 }
 
 function start_tidb_fixed_version() {
@@ -38,7 +75,7 @@ function start_tidb_fixed_version() {
   echo "Starting TiUP Playground in the background..."
   tiup playground v8.5.1 --db=1 --kv=1 --tiflash=1 --db.config=./config.toml &
 
-  sleep 20
+  sleep 30
 }
 
 function build_mysql_tester() {
@@ -64,8 +101,8 @@ function wait_for_tidb() {
 
 function wait_for_tiflash() {
   echo
-  echo "+ Waiting TiFlash start up (120s)"
-  sleep 120
+  echo "+ Waiting TiFlash start up (30s)"
+  sleep 30
 }
 
 function stop_tiup() {

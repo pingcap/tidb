@@ -23,8 +23,7 @@ echo "+ Starting run python testers"
 
 # prepare datasets
 cd datasets
-wget https://ann-benchmarks.com/fashion-mnist-784-euclidean.hdf5
-wget https://ann-benchmarks.com/mnist-784-euclidean.hdf5
+check_and_prepare_datasets
 cd ..
 
 start_tidb

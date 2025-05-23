@@ -19,6 +19,11 @@ set -euo pipefail
 CURRENT_DIR="$(dirname "$0")"
 source $CURRENT_DIR/_include.sh
 
+# prepare datasets
+cd datasets
+check_and_prepare_datasets
+cd ..
+
 start_tidb_fixed_version
 wait_for_tidb
 wait_for_tiflash
