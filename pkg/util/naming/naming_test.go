@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package servicescope
+package naming
 
 import (
 	"testing"
@@ -21,10 +21,10 @@ import (
 )
 
 func TestScope(t *testing.T) {
-	require.NoError(t, CheckServiceScope("789z-_"))
-	require.Error(t, CheckServiceScope("789z-_)"))
-	require.Error(t, CheckServiceScope("78912345678982u7389217897238917389127893781278937128973812728397281378932179837"))
-	require.NoError(t, CheckServiceScope("scope1"))
-	require.NoError(t, CheckServiceScope(""))
-	require.NoError(t, CheckServiceScope("-----"))
+	require.NoError(t, Check("789z-_"))
+	require.Error(t, Check("789z-_)"))
+	require.Error(t, Check("78912345678982u7389217897238917389127893781278937128973812728397281378932179837"))
+	require.NoError(t, Check("scope1"))
+	require.NoError(t, Check(""))
+	require.NoError(t, Check("-----"))
 }
