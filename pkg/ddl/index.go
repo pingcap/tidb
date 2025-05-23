@@ -360,23 +360,19 @@ func BuildIndexInfo(
 			return nil, errors.Trace(err)
 		}
 		idxInfo.VectorInfo = vectorInfo
+	case model.ColumnarIndexTypeInverted:
+		invertedInfo, err := buildInvertedInfoWithCheck(indexPartSpecifications, tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		idxInfo.InvertedInfo = invertedInfo
 	case model.ColumnarIndexTypeFulltext:
 		ftsInfo, err := buildFullTextInfoWithCheck(indexPartSpecifications, indexOption, tblInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		idxInfo.FullTextInfo = ftsInfo
-	case model.ColumnarIndexTypeInverted:
-		// do nothing now
 	}
-	// Fulltext index only support few column types.
-	// if isFulltext {
-	// 	switch col.FieldType.GetType() {
-	// 	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-	// 	default:
-	// 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported adding a fulltext index on a unsupported column")
-	// 	}
-	// }
 
 	var err error
 	allTableColumns := tblInfo.Columns

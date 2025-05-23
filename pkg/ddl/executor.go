@@ -4692,7 +4692,6 @@ func checkTableTypeForFulltextIndex(tblInfo *model.TableInfo) error {
 	if tblInfo.GetPartitionInfo() != nil {
 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported partition table")
 	}
-
 	return nil
 }
 
