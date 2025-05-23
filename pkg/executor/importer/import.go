@@ -144,7 +144,6 @@ var (
 		disablePrecheckOption:       false,
 	}
 
-	// need update check options in checkeCSVOnlyOptions
 	csvOnlyOptions = map[string]struct{}{
 		characterSetOption:        {},
 		fieldsTerminatedByOption:  {},
