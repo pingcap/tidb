@@ -137,10 +137,10 @@ function print_versions() {
     echo
     if [ -f "../../bin/tikv-server" ] && [ -f "../../bin/pd-server" ] && [ -f "../../bin/tiflash" ]; then
       echo "+ TiKV Version"
-      tiup ../../bin/tikv-server --version
+      ../../bin/tikv-server --version
       echo
       echo "+ TiFlash Version"
-      tiup ../../bin/tiflash --version
+      ../../bin/tiflash --version
       echo
     else
       echo "+ TiKV Version"
