@@ -27,7 +27,7 @@ function start_tidb() {
   cd - || exit 1
 
   echo "Starting TiUP Playground in the background..."
-  if [ -f "../../bin/tikv-server" ] && [ -f "../../bin/pd-server" ] && [ -f "../../bin/tiflash"]; then
+  if [ -f "../../bin/tikv-server" ] && [ -f "../../bin/pd-server" ] && [ -f "../../bin/tiflash" ]; then
     tiup playground nightly --mode=tidb \
     --db.binpath=../../bin/tidb-server \
     --db.config=./config.toml \
@@ -135,7 +135,7 @@ function print_versions() {
     echo "+ TiDB Version"
     ../../bin/tidb-server -V
     echo
-    if [ -f "../../bin/tikv-server" ] && [ -f "../../bin/pd-server" ] && [ -f "../../bin/tiflash"]; then
+    if [ -f "../../bin/tikv-server" ] && [ -f "../../bin/pd-server" ] && [ -f "../../bin/tiflash" ]; then
       echo "+ TiKV Version"
       tiup ../../bin/tikv-server --version
       echo
