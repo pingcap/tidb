@@ -341,7 +341,7 @@ func (buffer *statsMetaItemBuffer) UpdateMetasRest(ctx context.Context, statsHan
 	if len(metaUpdates) == 0 {
 		return nil
 	}
-	return statsHandler.SaveMetaToStorage("br restore", false, metaUpdates...)
+	return buffer.saveMetaToStorageWithRetry(ctx, statsHandler, metaUpdates)
 }
 
 func (buffer *statsMetaItemBuffer) TryUpdateMetas(ctx context.Context, statsHandler *handle.Handle, physicalID, count int64) error {
@@ -354,7 +354,23 @@ func (buffer *statsMetaItemBuffer) TryUpdateMetas(ctx context.Context, statsHand
 	if len(metaUpdates) == 0 {
 		return nil
 	}
-	return statsHandler.SaveMetaToStorage("br restore", false, metaUpdates...)
+	return buffer.saveMetaToStorageWithRetry(ctx, statsHandler, metaUpdates)
+}
+
+func (buffer *statsMetaItemBuffer) saveMetaToStorageWithRetry(
+	ctx context.Context,
+	statsHandler *handle.Handle,
+	metaUpdates []statstypes.MetaUpdate,
+) error {
+	state := utils.InitialRetryState(8, 500*time.Millisecond, 500*time.Millisecond)
+	err := utils.WithRetry(ctx, func() error {
+		if err := statsHandler.SaveMetaToStorage("br restore", false, metaUpdates...); err != nil {
+			log.Error("failed to save meta to storage", zap.Error(err))
+			return errors.Trace(err)
+		}
+		return nil
+	}, &state)
+	return errors.Trace(err)
 }
 
 func calculateRowCountForPhysicalTable(files []*backuppb.File) int64 {
