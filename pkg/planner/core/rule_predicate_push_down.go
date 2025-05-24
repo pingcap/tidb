@@ -43,8 +43,8 @@ type exprPrefixAdder struct {
 // Optimize implements base.LogicalOptRule.<0th> interface.
 func (*PPDSolver) Optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	_, p := lp.PredicatePushDown(nil, opt)
-	return p, planChanged, nil
+	_, p, err := lp.PredicatePushDown(nil, opt)
+	return p, planChanged, err
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.

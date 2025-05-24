@@ -967,6 +967,7 @@ type PhysicalTableScan struct {
 
 	// UsedColumnarIndexes is used to store the used columnar index for the table scan.
 	UsedColumnarIndexes []*ColumnarIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+	MatchedFTS          *tipb.FTSQueryInfo    `plan-cache-clone:"must-nil"` // plan with FTS is not cached.
 }
 
 // ColumnarIndexExtra is the extra information for columnar index.

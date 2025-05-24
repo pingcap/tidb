@@ -83,29 +83,31 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 	return false
 }
 
-func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression, chIdx int, opt *optimizetrace.LogicalOptimizeOp) {
+// addSelection adds a Selection as the parent of a plan if the conditions are not nil.
+func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression, childIdx int, opt *optimizetrace.LogicalOptimizeOp) error {
 	if len(conditions) == 0 {
-		p.Children()[chIdx] = child
-		return
+		p.Children()[childIdx] = child
+		return nil
 	}
 	conditions = expression.PropagateConstant(p.SCtx().GetExprCtx(), conditions)
 	// Return table dual when filter is constant false or null.
 	dual := Conds2TableDual(child, conditions)
 	if dual != nil {
-		p.Children()[chIdx] = dual
+		p.Children()[childIdx] = dual
 		AppendTableDualTraceStep(child, dual, conditions, opt)
-		return
+		return nil
 	}
 
 	conditions = constraint.DeleteTrueExprs(p, conditions)
 	if len(conditions) == 0 {
-		p.Children()[chIdx] = child
-		return
+		p.Children()[childIdx] = child
+		return nil
 	}
 	selection := LogicalSelection{Conditions: conditions}.Init(p.SCtx(), p.QueryBlockOffset())
 	selection.SetChildren(child)
-	p.Children()[chIdx] = selection
+	p.Children()[childIdx] = selection
 	AppendAddSelectionTraceStep(p, child, selection, opt)
+return nil
 }
 
 // pushDownTopNForBaseLogicalPlan can be moved when LogicalTopN has been moved to logicalop.
