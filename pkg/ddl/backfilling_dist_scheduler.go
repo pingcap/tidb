@@ -102,7 +102,11 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 		}
 		return generateNonPartitionPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs))
 	case proto.BackfillStepMergeSort:
+<<<<<<< HEAD
 		return generateMergePlan(taskHandle, task, logger)
+=======
+		return generateMergePlan(ctx, taskHandle, task, len(execIDs), backfillMeta.CloudStorageURI, logger)
+>>>>>>> 5a00a10d383 (disttask: distribute merge sort subtasks to all available nodes (#60395))
 	case proto.BackfillStepWriteAndIngest:
 		if sch.GlobalSort {
 			failpoint.Inject("mockWriteIngest", func() {
@@ -246,12 +250,44 @@ func generateNonPartitionPlan(
 	tblInfo *model.TableInfo,
 	job *model.Job,
 	useCloud bool,
+<<<<<<< HEAD
 	instanceCnt int,
+=======
+	nodeCnt int,
+	logger *zap.Logger,
+>>>>>>> 5a00a10d383 (disttask: distribute merge sort subtasks to all available nodes (#60395))
 ) (metas [][]byte, err error) {
 	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
+=======
+	if tblInfo.Partition == nil {
+		return generatePlanForPhysicalTable(ctx, d, tbl.(table.PhysicalTable), job, useCloud, nodeCnt, logger)
+	}
+	defs := tblInfo.Partition.Definitions
+	for _, def := range defs {
+		partTbl := tbl.GetPartitionedTable().GetPartition(def.ID)
+		partMeta, err := generatePlanForPhysicalTable(ctx, d, partTbl, job, useCloud, nodeCnt, logger)
+		if err != nil {
+			return nil, err
+		}
+		metas = append(metas, partMeta...)
+	}
+	return metas, nil
+}
+
+func generatePlanForPhysicalTable(
+	ctx context.Context,
+	d *ddl,
+	tbl table.PhysicalTable,
+	job *model.Job,
+	useCloud bool,
+	nodeCnt int,
+	logger *zap.Logger,
+) (metas [][]byte, err error) {
+>>>>>>> 5a00a10d383 (disttask: distribute merge sort subtasks to all available nodes (#60395))
 	ver, err := getValidCurrentVersion(d.store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -294,7 +330,17 @@ func generateNonPartitionPlan(
 			return true, nil
 		}
 
+<<<<<<< HEAD
 		regionBatch := CalculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
+=======
+		regionBatch := CalculateRegionBatch(len(recordRegionMetas), nodeCnt, !useCloud)
+		logger.Info("calculate region batch",
+			zap.Int("totalRegionCnt", len(recordRegionMetas)),
+			zap.Int("regionBatch", regionBatch),
+			zap.Int("instanceCnt", nodeCnt),
+			zap.Bool("useCloud", useCloud),
+		)
+>>>>>>> 5a00a10d383 (disttask: distribute merge sort subtasks to all available nodes (#60395))
 
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
 			end := i + regionBatch
@@ -330,12 +376,12 @@ func generateNonPartitionPlan(
 }
 
 // CalculateRegionBatch is exported for test.
-func CalculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
+func CalculateRegionBatch(totalRegionCnt int, nodeCnt int, useLocalDisk bool) int {
 	failpoint.Inject("mockRegionBatch", func(val failpoint.Value) {
 		failpoint.Return(val.(int))
 	})
 	var regionBatch int
-	avgTasksPerInstance := (totalRegionCnt + instanceCnt - 1) / instanceCnt // ceiling
+	avgTasksPerInstance := (totalRegionCnt + nodeCnt - 1) / nodeCnt // ceiling
 	if useLocalDisk {
 		regionBatch = avgTasksPerInstance
 	} else {
@@ -503,6 +549,11 @@ func splitSubtaskMetaForOneKVMetaGroup(
 func generateMergePlan(
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
+<<<<<<< HEAD
+=======
+	nodeCnt int,
+	cloudStorageURI string,
+>>>>>>> 5a00a10d383 (disttask: distribute merge sort subtasks to all available nodes (#60395))
 	logger *zap.Logger,
 ) ([][]byte, error) {
 	// check data files overlaps,
@@ -561,6 +612,7 @@ func generateMergePlan(
 		if i < len(eleIDs) {
 			eleID = []int64{eleIDs[i]}
 		}
+<<<<<<< HEAD
 		start := 0
 		step := external.MergeSortFileCountStep
 		for start < len(dataFiles) {
@@ -568,10 +620,18 @@ func generateMergePlan(
 			if end > len(dataFiles) {
 				end = len(dataFiles)
 			}
+=======
+		dataFilesGroup, err := external.DivideMergeSortDataFiles(dataFiles, nodeCnt, task.Concurrency)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, files := range dataFilesGroup {
+>>>>>>> 5a00a10d383 (disttask: distribute merge sort subtasks to all available nodes (#60395))
 			m := &BackfillSubTaskMeta{
-				DataFiles: dataFiles[start:end],
+				DataFiles: files,
 				EleIDs:    eleID,
 			}
+<<<<<<< HEAD
 			metaBytes, err := json.Marshal(m)
 			if err != nil {
 				return nil, err
@@ -579,6 +639,9 @@ func generateMergePlan(
 			metaArr = append(metaArr, metaBytes)
 
 			start = end
+=======
+			metaArr = append(metaArr, m)
+>>>>>>> 5a00a10d383 (disttask: distribute merge sort subtasks to all available nodes (#60395))
 		}
 	}
 	return metaArr, nil
