@@ -110,13 +110,6 @@ var optRuleList = []base.LogicalOptRule{
 	&ResolveExpand{},
 }
 
-// Interaction Rule List
-/* The interaction rule will be trigger when it satisfies following conditions:
-1. The related rule has been trigger and changed the plan
-2. The interaction rule is enabled
-*/
-var optInteractionRuleList = map[base.LogicalOptRule]base.LogicalOptRule{}
-
 // BuildLogicalPlanForTest builds a logical plan for testing purpose from ast.Node.
 func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, infoSchema infoschema.InfoSchema) (base.Plan, error) {
 	sctx.GetSessionVars().PlanID.Store(0)
@@ -1101,7 +1094,6 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		}()
 	}
 	var err error
-	var againRuleList []base.LogicalOptRule
 	for i, rule := range logicalRuleList {
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
@@ -1109,21 +1101,6 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
-		var planChanged bool
-		logic, planChanged, err = rule.Optimize(ctx, logic, opt)
-		if err != nil {
-			return nil, err
-		}
-		// Compute interaction rules that should be optimized again
-		interactionRule, ok := optInteractionRuleList[rule]
-		if planChanged && ok && isLogicalRuleDisabled(interactionRule) {
-			againRuleList = append(againRuleList, interactionRule)
-		}
-	}
-
-	// Trigger the interaction rule
-	for i, rule := range againRuleList {
 		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
 		logic, _, err = rule.Optimize(ctx, logic, opt)
 		if err != nil {
