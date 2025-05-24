@@ -471,52 +471,36 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	p, ok := info.Plan.(base.Plan)
 	require.True(t, ok)
 
-	var findSelection func(p base.Plan) *core.PhysicalSelection
-	findSelection = func(p base.Plan) *core.PhysicalSelection {
+	var findTableScan func(p base.Plan) *core.PhysicalTableScan
+	findTableScan = func(p base.Plan) *core.PhysicalTableScan {
 		if p == nil {
 			return nil
 		}
 		switch v := p.(type) {
-		case *core.PhysicalSelection:
-			if len(v.Children()) == 1 {
-				if ts, ok := v.Children()[0].(*core.PhysicalTableScan); ok && ts.Table.Name.L == "t1" {
-					return v
+		case *core.PhysicalTableReader:
+			for _, child := range v.TablePlans {
+				if sel := findTableScan(child); sel != nil {
+					return sel
 				}
 			}
 			return nil
-		case *core.PhysicalTableReader:
-			for _, child := range v.TablePlans {
-				if sel := findSelection(child); sel != nil {
-					return sel
-				}
+		case *core.PhysicalTableScan:
+			if v.Table.Name.L == "t1" {
+				return v
 			}
 			return nil
 		default:
 			physicayPlan := p.(base.PhysicalPlan)
 			for _, child := range physicayPlan.Children() {
-				if sel := findSelection(child); sel != nil {
+				if sel := findTableScan(child); sel != nil {
 					return sel
 				}
 			}
 			return nil
 		}
 	}
-	sel := findSelection(p)
-	require.NotNil(t, sel)
-	ts := sel.Children()[0].(*core.PhysicalTableScan)
+	ts := findTableScan(p)
 	require.NotNil(t, ts)
-	// manually push down the condition `client_no = c.company_no`
-	var selected expression.Expression
-	for _, cond := range sel.Conditions {
-		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.Function.PbCode() == tipb.ScalarFuncSig_EQString {
-			selected = cond
-			break
-		}
-	}
-	if selected != nil {
-		core.PushedDown(sel, ts, []expression.Expression{selected}, 0.1)
-	}
-
 	pb, err := ts.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
 	require.NoError(t, err)
 	// make sure the pushed down filter condition is correct
