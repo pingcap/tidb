@@ -661,6 +661,7 @@ import (
 	tikvImporter               "TIKV_IMPORTER"
 	timeType                   "TIME"
 	timestampType              "TIMESTAMP"
+	timeout                    "TIMEOUT"
 	tokenIssuer                "TOKEN_ISSUER"
 	tpcc                       "TPCC"
 	tpch10                     "TPCH_10"
@@ -983,6 +984,7 @@ import (
 	BinlogStmt                 "Binlog base64 statement"
 	BRIEStmt                   "BACKUP or RESTORE statement"
 	CalibrateResourceStmt      "CALIBRATE RESOURCE statement"
+	CancelDistributionJobStmt  "CANCEL DISTRIBUTION JOB statement"
 	CommitStmt                 "COMMIT statement"
 	CreateTableStmt            "CREATE TABLE statement"
 	CreateViewStmt             "CREATE VIEW  statement"
@@ -3185,7 +3187,7 @@ FlashbackDatabaseStmt:
  *  Distribute Table Statement
  *
  *  Example:
- *      DISTRIBUTE TABLE table_name Partitions(p0,p1) Engine = tikv Rule=leader;
+ *      DISTRIBUTE TABLE table_name Partitions(p0,p1)  Rule= `leader-scatter` Engine = `tikv` timeout = `30m`;
  *
  *******************************************************************/
 DistributeTableStmt:
@@ -3196,6 +3198,24 @@ DistributeTableStmt:
 			PartitionNames: $4.([]ast.CIStr),
 			Rule:           ast.NewCIStr($7),
 			Engine:         ast.NewCIStr($10),
+		}
+	}
+|	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOrAssignmentEq Identifier "ENGINE" EqOrAssignmentEq Identifier "TIMEOUT" EqOrAssignmentEq Identifier
+	{
+		$$ = &ast.DistributeTableStmt{
+			Table:          $3.(*ast.TableName),
+			PartitionNames: $4.([]ast.CIStr),
+			Rule:           ast.NewCIStr($7),
+			Engine:         ast.NewCIStr($10),
+			Timeout:        ast.NewCIStr($13),
+		}
+	}
+
+CancelDistributionJobStmt:
+	"CANCEL" "DISTRIBUTION" "JOB" Int64Num
+	{
+		$$ = &ast.CancelDistributionJobStmt{
+			JobID: $4.(int64),
 		}
 	}
 
@@ -6970,6 +6990,7 @@ UnReservedKeyword:
 |	"THAN"
 |	"TIME" %prec lowerThanStringLitToken
 |	"TIMESTAMP" %prec lowerThanStringLitToken
+|	"TIMEOUT"
 |	"TRACE"
 |	"TRANSACTION"
 |	"TRUNCATE"
@@ -12381,6 +12402,7 @@ Statement:
 |	ExecuteStmt
 |	ExplainStmt
 |	CalibrateResourceStmt
+|	CancelDistributionJobStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt
