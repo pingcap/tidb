@@ -1969,6 +1969,31 @@ func (p *PhysicalExchangeSender) MemoryUsage() (sum int64) {
 	return
 }
 
+// GetCompressionMode returns the compression mode of this exchange sender.
+func (p *PhysicalExchangeSender) GetCompressionMode() vardef.ExchangeCompressionMode {
+	return p.CompressionMode
+}
+
+// GetSelfTasks returns mpp tasks for current PhysicalExchangeSender.
+func (p *PhysicalExchangeSender) GetSelfTasks() []*kv.MPPTask {
+	return p.Tasks
+}
+
+// SetSelfTasks sets mpp tasks for current PhysicalExchangeSender.
+func (p *PhysicalExchangeSender) SetSelfTasks(tasks []*kv.MPPTask) {
+	p.Tasks = tasks
+}
+
+// SetTargetTasks sets mpp tasks for current PhysicalExchangeSender.
+func (p *PhysicalExchangeSender) SetTargetTasks(tasks []*kv.MPPTask) {
+	p.TargetTasks = tasks
+}
+
+// AppendTargetTasks appends mpp tasks for current PhysicalExchangeSender.
+func (p *PhysicalExchangeSender) AppendTargetTasks(tasks []*kv.MPPTask) {
+	p.TargetTasks = append(p.TargetTasks, tasks...)
+}
+
 // Clone implements op.PhysicalPlan interface.
 func (p *PhysicalMergeJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalMergeJoin)

@@ -193,11 +193,11 @@ func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is inf
 }
 
 func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment, allTiFlashZoneInfo map[string]string) error {
-	dagReq, err := builder.ConstructDAGReq(c.sessionCtx, []base.PhysicalPlan{pf.ExchangeSender}, kv.TiFlash)
+	dagReq, err := builder.ConstructDAGReq(c.sessionCtx, []base.PhysicalPlan{pf.Sink}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for i := range pf.ExchangeSender.Schema().Columns {
+	for i := range pf.Sink.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 	if !pf.IsRoot {
@@ -207,7 +207,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment, all
 	}
 	zoneHelper := taskZoneInfoHelper{}
 	zoneHelper.init(allTiFlashZoneInfo)
-	for _, mppTask := range pf.ExchangeSender.Tasks {
+	for _, mppTask := range pf.Sink.GetSelfTasks() {
 		if mppTask.PartitionTableIDs != nil {
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
 		} else if !mppTask.TiFlashStaticPrune {
@@ -237,9 +237,9 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment, all
 		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs),
 			zap.Int64("ID", mppTask.ID), zap.Uint64("QueryTs", mppTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", mppTask.MppQueryID.LocalQueryID),
 			zap.Uint64("ServerID", mppTask.MppQueryID.ServerID), zap.String("address", mppTask.Meta.GetAddress()),
-			zap.String("plan", plannercore.ToString(pf.ExchangeSender)),
+			zap.String("plan", plannercore.ToString(pf.Sink)),
 			zap.Int64("mpp-version", mppTask.MppVersion.ToInt64()),
-			zap.String("exchange-compression-mode", pf.ExchangeSender.CompressionMode.Name()),
+			zap.String("exchange-compression-mode", pf.Sink.GetCompressionMode().Name()),
 			zap.Uint64("GatherID", c.gatherID),
 			zap.String("resource_group", rgName),
 		)
