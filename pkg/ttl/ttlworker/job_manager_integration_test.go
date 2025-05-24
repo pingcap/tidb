@@ -58,6 +58,10 @@ import (
 )
 
 func sessionFactory(t *testing.T, from any) func() (session.Session, func()) {
+	return sessionFactoryWithTimeout(t, from, time.Minute)
+}
+
+func sessionFactoryWithTimeout(t *testing.T, from any, timeout time.Duration) func() (session.Session, func()) {
 	var pool syssession.Pool
 	switch p := from.(type) {
 	case *domain.Domain:
@@ -80,7 +84,7 @@ func sessionFactory(t *testing.T, from any) func() (session.Session, func()) {
 
 				select {
 				case <-ch:
-				case <-time.After(time.Minute):
+				case <-time.After(timeout):
 					require.FailNow(t, "timeout")
 				}
 				return nil
@@ -183,7 +187,11 @@ func TestParallelLockNewJob(t *testing.T) {
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
 
-	sessionFactory := sessionFactory(t, dom)
+	sessionTimeout := time.Minute
+	if testflag.Long() {
+		sessionTimeout = 10 * time.Minute
+	}
+	sessionFactory := sessionFactoryWithTimeout(t, dom, sessionTimeout)
 
 	testTable := &cache.PhysicalTable{ID: 2, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"}}}
 	// simply lock a new job
@@ -1830,7 +1838,6 @@ func overwriteJobInterval(t *testing.T) func() {
 }
 
 func TestJobManagerWithFault(t *testing.T) {
-	// TODO: add a flag `-long` to enable this test
 	skip.NotUnderLong(t)
 
 	defer boostJobScheduleForTest(t)()
