@@ -3,10 +3,13 @@
 package prealloctableid
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"math"
-	"sync/atomic"
+	"sort"
 
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pkg/errors"
@@ -34,45 +37,110 @@ type PreallocIDs struct {
 	start          int64
 	reusableBorder int64
 	end            int64
-	count          int64
-	next           atomic.Int64
+	hash           [32]byte
+	unallocedIDs   []int64
+	allocRule      map[int64]int64
 }
 
 // New collects the requirement of prealloc IDs and return a
 // not-yet-allocated PreallocIDs.
-func New(tables []*metautil.Table) *PreallocIDs {
+func New(tables []*metautil.Table) (*PreallocIDs, error) {
 	if len(tables) == 0 {
 		return &PreallocIDs{
 			start: math.MaxInt64,
-		}
+		}, nil
 	}
 
 	maxID := int64(0)
-	count := int64(len(tables))
+	unallocedIDs := make([]int64, 0, len(tables))
 
 	for _, t := range tables {
 		if t.Info.ID > maxID && t.Info.ID < InsaneTableIDThreshold {
 			maxID = t.Info.ID
 		}
+		unallocedIDs = append(unallocedIDs, t.Info.ID)
 
 		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
-			count += int64(len(t.Info.Partition.Definitions))
 			for _, part := range t.Info.Partition.Definitions {
 				if part.ID > maxID && part.ID < InsaneTableIDThreshold {
 					maxID = part.ID
 				}
+				unallocedIDs = append(unallocedIDs, part.ID)
 			}
 		}
 	}
-	if maxID+count+1 > InsaneTableIDThreshold {
-		return nil
+	if maxID+int64(len(unallocedIDs))+1 > InsaneTableIDThreshold {
+		return nil, errors.Errorf("table ID %d is too large", maxID)
 	}
+
+	sort.Slice(unallocedIDs, func(i, j int) bool { return unallocedIDs[i] < unallocedIDs[j] })
+
 	return &PreallocIDs{
 		start:          math.MaxInt64,
 		reusableBorder: maxID + 1,
-		count:          count,
-		next:           atomic.Int64{},
+		hash:           hashSortedIds(unallocedIDs),
+		unallocedIDs:   unallocedIDs,
+		allocRule:      make(map[int64]int64, len(unallocedIDs)),
+	}, nil
+}
+
+func Reuse(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocIDs, error) {
+	if legacy == nil {
+		return nil, errors.Errorf("no prealloc IDs to be reused")
 	}
+
+	maxID := int64(0)
+	ids := make([]int64, 0, len(tables))
+	for _, t := range tables {
+		if t.Info.ID > maxID && t.Info.ID < InsaneTableIDThreshold {
+			maxID = t.Info.ID
+		}
+		ids = append(ids, t.Info.ID)
+
+		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
+			for _, part := range t.Info.Partition.Definitions {
+				if part.ID > maxID && part.ID < InsaneTableIDThreshold {
+					maxID = part.ID
+				}
+				ids = append(ids, part.ID)
+			}
+		}
+	}
+
+	if legacy.ReusableBorder < maxID+1 {
+		return nil, errors.Errorf("prealloc IDs reusable border %d does not match with the tables max ID %d", legacy.ReusableBorder, maxID+1)
+	}
+	if maxID+int64(len(ids))+1 > InsaneTableIDThreshold {
+		return nil, errors.Errorf("table ID %d is too large", maxID)
+	}
+
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	hash := hashSortedIds(ids)
+	if legacy.Hash != hash {
+		return nil, errors.Errorf("prealloc IDs hash %x are not match with the tables hash %x", legacy.Hash, hash)
+	}
+
+	allocRule := make(map[int64]int64, len(ids))
+	rewriteCnt := int64(0)
+	for _, id := range ids {
+		if id < legacy.Start {
+			allocRule[id] = legacy.ReusableBorder + rewriteCnt
+			rewriteCnt++
+		} else if id < legacy.ReusableBorder {
+			allocRule[id] = id
+		} else if id >= legacy.ReusableBorder {
+			return nil, errors.Errorf("table ID %d is out of range [%d, %d)", id, legacy.Start, legacy.ReusableBorder)
+		}
+	}
+
+	ret := PreallocIDs{
+		start:          legacy.Start,
+		reusableBorder: legacy.ReusableBorder,
+		end:            legacy.End,
+		hash:           legacy.Hash,
+		allocRule:      allocRule,
+	}
+	return &ret, nil
 }
 
 // String implements fmt.Stringer.
@@ -89,7 +157,7 @@ func (p *PreallocIDs) GetIDRange() (int64, int64) {
 
 // preallocTableIDs peralloc the id for [start, end)
 func (p *PreallocIDs) Alloc(m Allocator) error {
-	if p.count == 0 {
+	if len(p.unallocedIDs) == 0 {
 		return nil
 	}
 	if p.start < p.end {
@@ -105,24 +173,35 @@ func (p *PreallocIDs) Alloc(m Allocator) error {
 	if p.reusableBorder <= p.start {
 		p.reusableBorder = p.start
 	}
-	idRange := p.reusableBorder - p.start + p.count
+
+	for i := p.start; i < p.reusableBorder; i++ {
+		p.allocRule[i] = i
+	}
+	rewriteCnt := int64(0)
+	for _, id := range p.unallocedIDs {
+		if _, ok := p.allocRule[id]; ok {
+			continue
+		}
+		p.allocRule[id] = p.reusableBorder + rewriteCnt
+		rewriteCnt++
+	}
+	idRange := p.reusableBorder - p.start + rewriteCnt
 	if _, err := m.AdvanceGlobalIDs(int(idRange)); err != nil {
 		return err
 	}
-
 	p.end = p.start + idRange
-	p.next.Store(p.reusableBorder)
+	p.unallocedIDs = nil
+
 	return nil
 }
 
 func (p *PreallocIDs) allocID(originalID int64) (int64, error) {
-	if originalID >= p.start && originalID < p.reusableBorder {
-		return originalID, nil
+	if p.unallocedIDs != nil {
+		return 0, errors.Errorf("table ID %d is not allocated yet", originalID)
 	}
-
-	rewriteID := p.next.Add(1) - 1
-	if rewriteID >= p.end {
-		return 0, errors.Errorf("no available IDs")
+	rewriteID := p.allocRule[originalID]
+	if rewriteID < p.start || rewriteID >= p.end {
+		return 0, errors.Errorf("table ID %d is not in range [%d, %d)", rewriteID, p.start, p.end)
 	}
 	return rewriteID, nil
 }
@@ -151,4 +230,31 @@ func (p *PreallocIDs) RewriteTableInfo(info *model.TableInfo) (*model.TableInfo,
 	}
 
 	return infoCopy, nil
+}
+
+func (p *PreallocIDs) CreateCheckpoint() *checkpoint.PreallocIDs {
+	if p == nil || p.start >= p.end {
+		return nil
+	}
+
+	return &checkpoint.PreallocIDs{
+		Start:          p.start,
+		ReusableBorder: p.reusableBorder,
+		End:            p.end,
+		Hash:           p.hash,
+	}
+}
+
+func hashSortedIds(ids []int64) [32]byte {
+	h := sha256.New()
+	buffer := make([]byte, 8)
+
+	for _, id := range ids {
+		binary.BigEndian.PutUint64(buffer, uint64(id))
+		h.Write(buffer)
+	}
+
+	var digest [32]byte
+	copy(digest[:], h.Sum(nil))
+	return digest
 }

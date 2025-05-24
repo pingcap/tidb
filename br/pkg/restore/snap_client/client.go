@@ -190,6 +190,14 @@ func (rc *SnapClient) GetRestorer(checkpointRunner *checkpoint.CheckpointRunner[
 	return rc.restorer
 }
 
+func (rc *SnapClient) CreatePreallocIDCheckpoint() *checkpoint.PreallocIDs {
+	if rc.preallocedIDs == nil {
+		return nil
+	}
+
+	return rc.preallocedIDs.CreateCheckpoint()
+}
+
 func (rc *SnapClient) closeConn() {
 	// rc.db can be nil in raw kv mode.
 	if rc.db != nil {
@@ -298,17 +306,26 @@ func (rc *SnapClient) SetPlacementPolicyMode(withPlacementPolicy string) {
 
 // AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
 // the download stage.
-func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table) error {
-	preallocedTableIDs := tidalloc.New(tables)
-	if preallocedTableIDs == nil {
-		return errors.Errorf("failed to pre-alloc table IDs")
-	}
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
-		return preallocedTableIDs.Alloc(meta.NewMutator(txn))
-	})
-	if err != nil {
-		return err
+func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table, reusePreallocID *checkpoint.PreallocIDs) error {
+	var preallocedTableIDs *tidalloc.PreallocIDs
+	var err error
+	if reusePreallocID == nil {
+		preallocedTableIDs, err = tidalloc.New(tables)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+		err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
+			return preallocedTableIDs.Alloc(meta.NewMutator(txn))
+		})
+		if err != nil {
+			return err
+		}
+	} else {
+		preallocedTableIDs, err = tidalloc.Reuse(reusePreallocID, tables)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	log.Info("registering the table IDs", zap.Stringer("ids", preallocedTableIDs))
@@ -331,7 +348,7 @@ func (rc *SnapClient) GetPreAllocedTableIDRange() ([2]int64, error) {
 
 	if start >= end {
 		log.Warn("PreAlloced IDs range is empty, no table to restore")
-		return [2]int64{start, end}, nil
+		return [2]int64{}, nil
 	}
 
 	return [2]int64{start, end}, nil
@@ -346,6 +363,7 @@ func (rc *SnapClient) InitCheckpoint(
 	snapshotCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
 	config *pdutil.ClusterConfig,
 	logRestoredTS uint64,
+	hash []byte,
 	checkpointExists bool,
 ) (checkpointSetWithTableID map[int64]map[string]struct{}, checkpointClusterConfig *pdutil.ClusterConfig, err error) {
 	// checkpoint sets distinguished by range key
@@ -365,6 +383,14 @@ func (rc *SnapClient) InitCheckpoint(
 					"Perhaps you should specify the last full backup storage instead, "+
 					"or just clean the checkpoint %s if the cluster has been cleaned up.",
 				rc.backupMeta.ClusterId, meta.UpstreamClusterID, snapshotCheckpointMetaManager)
+		}
+
+		if !bytes.Equal(meta.Hash, hash) {
+			return checkpointSetWithTableID, nil, errors.Errorf(
+				"The hash of the current snapshot restore does not match that recorded in checkpoint. "+
+					"You should not change the restore config if checkpoint enabled, "+
+					"or just clean the checkpoint %s if the cluster has been cleaned up.",
+				snapshotCheckpointMetaManager)
 		}
 
 		if meta.RestoredTS != rc.backupMeta.EndVersion {
@@ -428,6 +454,8 @@ func (rc *SnapClient) InitCheckpoint(
 			UpstreamClusterID: rc.backupMeta.ClusterId,
 			RestoredTS:        rc.backupMeta.EndVersion,
 			LogRestoredTS:     logRestoredTS,
+			Hash:              hash,
+			PreallocIDs:       rc.CreatePreallocIDCheckpoint(),
 			RestoreUUID:       restoreID,
 		}
 		rc.restoreUUID = restoreID
@@ -1280,6 +1308,7 @@ func (rc *SnapClient) execAndValidateChecksum(
 		checksumMatch = false
 	})
 	if !checksumMatch {
+		// Enhanced logging with more detailed information
 		logger.Error("failed in validate checksum",
 			zap.Uint64("expected tidb crc64", expectedChecksumStats.Crc64Xor),
 			zap.Uint64("calculated crc64", item.Crc64xor),
@@ -1287,8 +1316,20 @@ func (rc *SnapClient) execAndValidateChecksum(
 			zap.Uint64("calculated total kvs", item.TotalKvs),
 			zap.Uint64("expected tidb total bytes", expectedChecksumStats.TotalBytes),
 			zap.Uint64("calculated total bytes", item.TotalBytes),
+			zap.Int64("table_id", tbl.Table.ID),
+			zap.String("table_info", tbl.Table.Name.String()),
 		)
-		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
+
+		// Create an error with more diagnostic details
+		return errors.Annotatef(berrors.ErrRestoreChecksumMismatch,
+			"checksum mismatch for table '%s.%s' (ID: %d): "+
+				"crc64xor (expected: %d, actual: %d), "+
+				"totalKvs (expected: %d, actual: %d), "+
+				"totalBytes (expected: %d, actual: %d)",
+			tbl.OldTable.DB.Name.O, tbl.OldTable.Info.Name.O, tbl.Table.ID,
+			expectedChecksumStats.Crc64Xor, item.Crc64xor,
+			expectedChecksumStats.TotalKvs, item.TotalKvs,
+			expectedChecksumStats.TotalBytes, item.TotalBytes)
 	}
 	logger.Info("success in validating checksum")
 	return nil
