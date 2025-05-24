@@ -73,7 +73,7 @@ func (r *repairInfo) CheckAndFetchRepairedTable(di *model.DBInfo, tbl *model.Tab
 	isRepair := false
 	for _, tn := range r.repairTableList {
 		// Use dbName and tableName to specify a table.
-		if strings.ToLower(tn) == di.Name.L+"."+tbl.Name.L {
+		if strings.ToLower(tn) == di.Name.L.Value()+"."+tbl.Name.L.Value() {
 			isRepair = true
 			break
 		}
@@ -99,11 +99,11 @@ func (r *repairInfo) GetRepairedTableInfoByTableName(schemaLowerName, tableLower
 	r.RLock()
 	defer r.RUnlock()
 	for _, db := range r.repairDBInfoMap {
-		if db.Name.L != schemaLowerName {
+		if db.Name.L.Value() != schemaLowerName {
 			continue
 		}
 		for _, t := range db.Deprecated.Tables {
-			if t.Name.L == tableLowerName {
+			if t.Name.L.Value() == tableLowerName {
 				return t, db
 			}
 		}
@@ -126,10 +126,10 @@ func (r *repairInfo) RemoveFromRepairInfo(schemaLowerName, tableLowerName string
 	}
 	// Remove from the repair map.
 	for _, db := range r.repairDBInfoMap {
-		if db.Name.L == schemaLowerName {
+		if db.Name.L.Value() == schemaLowerName {
 			tables := db.Deprecated.Tables
 			for j, t := range tables {
-				if t.Name.L == tableLowerName {
+				if t.Name.L.Value() == tableLowerName {
 					tables = slices.Delete(tables, j, j+1)
 					break
 				}

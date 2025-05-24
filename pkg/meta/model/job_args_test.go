@@ -17,6 +17,7 @@ package model
 import (
 	"encoding/json"
 	"testing"
+	"unique"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -467,11 +468,13 @@ func TestRenameTableArgs(t *testing.T) {
 func TestGetRenameTablesArgs(t *testing.T) {
 	inArgs := &RenameTablesArgs{
 		RenameTableInfos: []*RenameTableArgs{
-			{OldSchemaID: 1, OldSchemaName: ast.CIStr{O: "db1", L: "db1"},
-				NewTableName: ast.CIStr{O: "tb3", L: "tb3"}, OldTableName: ast.CIStr{O: "tb1", L: "tb1"},
-				NewSchemaID: 3, TableID: 100},
-			{OldSchemaID: 2, OldSchemaName: ast.CIStr{O: "db2", L: "db2"},
-				NewTableName: ast.CIStr{O: "tb2", L: "tb2"}, OldTableName: ast.CIStr{O: "tb4", L: "tb4"},
+			{OldSchemaID: 1, OldSchemaName: ast.CIStr{O: unique.Make("db1"), L: unique.Make("db1")},
+				NewTableName: ast.CIStr{
+					O: unique.Make("tb3"),
+					L: unique.Make("tb3")}, OldTableName: ast.CIStr{O: unique.Make("tb1"), L: unique.Make("tb1")},
+				NewSchemaID:                              3, TableID: 100},
+			{OldSchemaID: 2, OldSchemaName: ast.CIStr{O: unique.Make("db2"), L: unique.Make("db2")},
+				NewTableName: ast.CIStr{O: unique.Make("tb2"), L: unique.Make("tb2")}, OldTableName: ast.CIStr{O: unique.Make("tb4"), L: unique.Make("tb4")},
 				NewSchemaID: 3, TableID: 101},
 		},
 	}

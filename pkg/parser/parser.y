@@ -6668,7 +6668,7 @@ IndexOptionList:
 				opt1.Tp = opt2.Tp
 			} else if opt2.KeyBlockSize > 0 {
 				opt1.KeyBlockSize = opt2.KeyBlockSize
-			} else if len(opt2.ParserName.O) > 0 {
+			} else if len(opt2.ParserName.O.Value()) > 0 {
 				opt1.ParserName = opt2.ParserName
 			} else if opt2.Visibility != ast.IndexVisibilityDefault {
 				opt1.Visibility = opt2.Visibility
@@ -9385,7 +9385,7 @@ SelectStmtFromDualTable:
 	{
 		st := $1.(*ast.SelectStmt)
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
-		if lastField.Expr != nil && lastField.AsName.O == "" {
+		if lastField.Expr != nil && lastField.AsName.O.Value() == "" {
 			lastEnd := yyS[yypt-1].offset - 1
 			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
 		}
@@ -9400,7 +9400,7 @@ SelectStmtFromTable:
 		st := $1.(*ast.SelectStmt)
 		st.From = $3.(*ast.TableRefsClause)
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
-		if lastField.Expr != nil && lastField.AsName.O == "" {
+		if lastField.Expr != nil && lastField.AsName.O.Value() == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-5])
 			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
 		}

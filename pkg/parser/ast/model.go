@@ -16,6 +16,7 @@ package ast
 import (
 	"encoding/json"
 	"strings"
+	"unique"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -267,13 +268,13 @@ func (r ReferOptionType) String() string {
 
 // CIStr is case insensitive string.
 type CIStr struct {
-	O string `json:"O"` // Original string.
-	L string `json:"L"` // Lower case string.
+	O unique.Handle[string] `json:"O"` // Original string.
+	L unique.Handle[string] `json:"L"` // Lower case string.
 }
 
 // Hash64 implements HashEquals interface.
 func (cis *CIStr) Hash64(h types.IHasher) {
-	h.HashString(cis.L)
+	h.HashString(cis.L.Value())
 }
 
 // Equals implements HashEquals interface.
@@ -293,13 +294,13 @@ func (cis *CIStr) Equals(other any) bool {
 
 // String implements fmt.Stringer interface.
 func (cis CIStr) String() string {
-	return cis.O
+	return cis.O.Value()
 }
 
 // NewCIStr creates a new CIStr.
 func NewCIStr(s string) (cs CIStr) {
-	cs.O = s
-	cs.L = strings.ToLower(s)
+	cs.O = unique.Make(s)
+	cs.L = unique.Make(strings.ToLower(s))
 	return
 }
 
@@ -318,7 +319,7 @@ func (cis *CIStr) UnmarshalJSON(b []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cis.L = strings.ToLower(cis.O)
+	cis.L = unique.Make(strings.ToLower(cis.O.Value()))
 	return nil
 }
 
@@ -328,7 +329,7 @@ func (cis *CIStr) MemoryUsage() (sum int64) {
 		return
 	}
 
-	return int64(unsafe.Sizeof(cis.O))*2 + int64(len(cis.O)+len(cis.L))
+	return int64(unsafe.Sizeof(cis.O))*2 + int64(len(cis.O.Value())+len(cis.L.Value()))
 }
 
 // RunawayActionType is the type of runaway action.
