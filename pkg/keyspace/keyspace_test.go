@@ -52,13 +52,15 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 	require.Equal(t, true, IsKeyspaceNameEmpty(getKeyspaceName))
 }
 
-func TestNoKeyspaceIDBySettings(t *testing.T) {
+func TestKeyspaceIDBySettings(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceName = ""
 	})
+	// convert KeyspaceName to uint32 failed
 	getKeyspaceID := GetKeyspaceIDBySettings()
 	require.Nil(t, getKeyspaceID)
 
+	// get keyspaceID normally
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceName = "123"
 	})

@@ -337,7 +337,7 @@ func main() {
 		executor.Stop()
 		close(exited)
 	})
-	topsql.SetupTopSQL(svr)
+	topsql.SetupTopSQL(keyspace.GetKeyspaceIDBySettings(), svr)
 	terror.MustNil(svr.Run(dom))
 	<-exited
 	syncLog()
