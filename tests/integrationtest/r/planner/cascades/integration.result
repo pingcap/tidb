@@ -457,11 +457,10 @@ count(b)	sum(b)	avg(b)	b	max(b)	min(b)	bit_and(b)	bit_or(b)	bit_xor(b)
 1	44	44.0000	44	44	44	44	44	44
 explain format="brief" select group_concat(a, b), min(b), avg(a / b), a from t group by (a+b), a order by a;
 id	estRows	task	access object	operator info
-Sort	8000.00	root		planner__cascades__integration.t.a
-└─HashAgg	8000.00	root		group by:Column#11, Column#12, funcs:group_concat(Column#7, Column#8 separator ",")->Column#3, funcs:min(Column#9)->Column#4, funcs:avg(Column#10)->Column#5, funcs:firstrow(Column#11)->planner__cascades__integration.t.a
-  └─Projection	10000.00	root		cast(planner__cascades__integration.t.a, var_string(20))->Column#7, cast(planner__cascades__integration.t.b, var_string(20))->Column#8, planner__cascades__integration.t.b->Column#9, div(cast(planner__cascades__integration.t.a, decimal(10,0) BINARY), cast(planner__cascades__integration.t.b, decimal(10,0) BINARY))->Column#10, planner__cascades__integration.t.a->Column#11, plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b)->Column#12
-    └─TableReader	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+StreamAgg	8000.00	root		group by:Column#10, funcs:group_concat(Column#6, Column#7 separator ",")->Column#3, funcs:min(Column#8)->Column#4, funcs:avg(Column#9)->Column#5, funcs:firstrow(Column#10)->planner__cascades__integration.t.a
+└─Projection	10000.00	root		cast(planner__cascades__integration.t.a, var_string(20))->Column#6, cast(planner__cascades__integration.t.b, var_string(20))->Column#7, planner__cascades__integration.t.b->Column#8, div(cast(planner__cascades__integration.t.a, decimal(10,0) BINARY), cast(planner__cascades__integration.t.b, decimal(10,0) BINARY))->Column#9, planner__cascades__integration.t.a->Column#10
+  └─TableReader	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:true, stats:pseudo
 select group_concat(a, b), min(b), avg(a / b), a from t group by (a+b), a order by a;
 group_concat(a, b)	min(b)	avg(a / b)	a
 111	11	0.09090909	1
