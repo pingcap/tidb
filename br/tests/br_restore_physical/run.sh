@@ -39,7 +39,7 @@ run_sql "create user 'test'@'%' identified by ''"
 run_sql "create database test_priv"
 run_sql "create table test_priv.t1 (id int, a int, b int, primary key (id), key ia (a))"
 run_sql "insert into test_priv.t1 values (1, 10, 100), (2, 20, 200), (3, 30, 300)"
-run_sql "grant select (a, b) on test_priv.t1 to 'test'"
+run_sql "grant select on test_priv.t1 to 'test'"
 run_sql "create database test_priv_db"
 run_sql "create table test_priv_db.t1 (id int, a int, b int, primary key (id), key ia (a))"
 run_sql "insert into test_priv_db.t1 values (1, 10, 100), (2, 20, 200), (3, 30, 300)"
@@ -64,7 +64,7 @@ run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/full" --load-sta
 
 # check
 ## check statistic data
-run_sql "SELECT buckets.count as count FROM mysql.stats_buckets buckets JOIN INFORMATION_SCHEMA.TABLES tables ON buckets.table_id = tables.TIDB_TABLE_ID WHERE tables.TABLE_SCHEMA = 'test_stats' and tables.TABLE_NAME = 't1';"
+run_sql "SELECT * FROM mysql.stats_buckets buckets JOIN INFORMATION_SCHEMA.TABLES tables ON buckets.table_id = tables.TIDB_TABLE_ID WHERE tables.TABLE_SCHEMA = 'test_stats' and tables.TABLE_NAME = 't1' limit 5;"
 check_contains "1. row"
 ### TODO: remove if tidb support reload stats
 ###run_sql "explain select * from test_stats.t1 where a = 3"

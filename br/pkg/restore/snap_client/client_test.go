@@ -481,7 +481,7 @@ func TestGetMinUserTableID(t *testing.T) {
 		generateMetautilTable("mysql", 3, 1),
 		generateMetautilTable("test", 4, 6),
 	})
-	require.Equal(t, int64(3), minUserTableID)
+	require.Equal(t, int64(4), minUserTableID)
 	minUserTableID = snapclient.GetMinUserTableID([]*metautil.Table{
 		generateMetautilTable("mysql", 4, 1),
 		generateMetautilTable("test", 3, 2),

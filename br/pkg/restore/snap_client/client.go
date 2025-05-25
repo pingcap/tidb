@@ -333,7 +333,7 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 	if mustUserTableIDReused {
 		minUserTableID := getMinUserTableID(tables)
 		start, _ := preallocedTableIDs.GetIDRange()
-		if minUserTableID < start {
+		if minUserTableID != int64(math.MaxInt64) && minUserTableID < start {
 			return errors.Errorf("cannot load stats physically because not all table ids are reused")
 		}
 	}
