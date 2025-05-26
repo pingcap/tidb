@@ -982,6 +982,10 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	if maxCnt > int64(len(p)) {
 		maxCnt = int64(len(p))
 	}
+	failpoint.Inject("S3ReadUnexpectedEOF", func(n failpoint.Value) {
+		log.Info("ingest error in prefetch reader run")
+		failpoint.Return(n.(int), io.ErrUnexpectedEOF)
+	})
 	n, err = r.reader.Read(p[:maxCnt])
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.

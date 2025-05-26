@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
@@ -221,7 +220,7 @@ func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
 	require.ErrorContains(s.T(), err, "746573742d313233")
 }
 
-func (s *mockGCSSuite) TestGlobalSortWithPrefetchError() {
+func (s *mockGCSSuite) TestGlobalSortWithS3ReadError() {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	s.server.CreateObject(fakestorage.Object{
@@ -236,39 +235,30 @@ func (s *mockGCSSuite) TestGlobalSortWithPrefetchError() {
 	s.prepareAndUseDB("gsort_basic")
 	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
 		key(a), key(c,d), key(d));`)
+	defer func() {
+		s.tk.MustExec("drop table t;")
+	}()
 	ch := make(chan struct{}, 1)
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
 		ch <- struct{}{}
 	})
-	deadLoopDetectThreshold := external.DeadLoopDetectThreshold
-	defer func() {
-		external.DeadLoopDetectThreshold = deadLoopDetectThreshold
-	}()
-	external.DeadLoopDetectThreshold = 3
 
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
 		with __max_engine_size = '1', cloud_storage_uri='%s', thread=1`, gcsEndpoint, sortStorageURI)
 
-	taskManager, err := storage.GetTaskManager()
-	s.NoError(err)
-
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/external/AfterNewByteReader", func() {
-		failpoint.Enable("github.com/pingcap/tidb/pkg/util/prefetch/PrefetchReaderUnexpectedEOF", "15*return(true)")
+		failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/S3ReadUnexpectedEOF", "3*return(0)")
 	})
 	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/pkg/util/prefetch/PrefetchReaderUnexpectedEOF")
+		failpoint.Disable("github.com/pingcap/tidb/br/pkg/storage/S3ReadUnexpectedEOF")
 	}()
 	s.tk.MustExec("truncate table t")
-	result := s.tk.MustQuery(importSQL + ", detached").Rows()
-	s.Len(result, 1)
-	jobID, err := strconv.Atoi(result[0][0].(string))
-	s.NoError(err)
-	s.Eventually(func() bool {
-		task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
-		s.NoError(err2)
-		return task.State == proto.TaskStateReverted
-	}, 30*time.Second, 500*time.Millisecond)
+	_ = s.tk.MustQuery(importSQL).Rows()
+	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
+		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
+		"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
+	))
 	// check all sorted data cleaned up
 	<-ch
 

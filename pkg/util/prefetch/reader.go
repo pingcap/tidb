@@ -19,9 +19,6 @@ import (
 	"errors"
 	"io"
 	"sync"
-
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
 // Reader is a reader that prefetches data from the underlying reader.
@@ -63,10 +60,6 @@ func (r *Reader) run() {
 		r.bufIdx = (r.bufIdx + 1) % 2
 		buf := r.buf[r.bufIdx]
 		n, err := io.ReadFull(r.r, buf)
-		failpoint.Inject("PrefetchReaderUnexpectedEOF", func(_ failpoint.Value) {
-			logutil.BgLogger().Info("ingest error in prefetch reader run")
-			n, err = 0, io.ErrUnexpectedEOF
-		})
 		buf = buf[:n]
 		readSize += int64(n)
 		select {
@@ -96,7 +89,10 @@ func (r *Reader) Read(data []byte) (int, error) {
 		if r.curBufReader == nil {
 			b, ok := <-r.bufCh
 			if !ok {
-				return total, r.err
+				if total > 0 {
+					return total, nil
+				}
+				return 0, r.err
 			}
 
 			r.curBufReader = bytes.NewReader(b)

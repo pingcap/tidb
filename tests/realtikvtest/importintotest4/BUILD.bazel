@@ -19,7 +19,6 @@ go_test(
         "//pkg/disttask/importinto",
         "//pkg/executor/importer",
         "//pkg/kv",
-        "//pkg/lightning/backend/external",
         "//pkg/lightning/config",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
