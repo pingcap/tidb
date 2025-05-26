@@ -1324,6 +1324,7 @@ func GetTiFlashStoresStat(ctx context.Context) (*pdhttp.StoresInfo, error) {
 	return is.tiflashReplicaManager.GetStoresStat(ctx)
 }
 
+// CreateFulltextIndex create fulltext infex on TiCI.
 func CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
