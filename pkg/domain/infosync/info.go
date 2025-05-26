@@ -129,7 +129,6 @@ type InfoSyncer struct {
 	tiflashReplicaManager TiFlashReplicaManager
 	resourceManagerClient pd.ResourceManagerClient
 	infoCache             infoschemaMinTS
-	ticiManager           TiCIManager
 }
 
 // ServerInfo represents the server's basic information.
@@ -271,10 +270,6 @@ func GlobalInfoSyncerInit(
 	if err != nil {
 		return nil, err
 	}
-	err = is.initTiCIManager()
-	if err != nil {
-		return nil, err
-	}
 	is.initLabelRuleManager()
 	is.initPlacementManager()
 	is.initScheduleManager()
@@ -379,15 +374,6 @@ func (is *InfoSyncer) initScheduleManager() {
 		return
 	}
 	is.scheduleManager = &PDScheduleManager{is.pdHTTPCli}
-}
-
-func (is *InfoSyncer) initTiCIManager() error {
-	ticiManager, err := NewTiCIManager("0.0.0.0", "50051")
-	if err != nil {
-		return err
-	}
-	is.ticiManager = ticiManager
-	return nil
 }
 
 // GetMockTiFlash can only be used in tests to get MockTiFlash
@@ -1326,11 +1312,12 @@ func GetTiFlashStoresStat(ctx context.Context) (*pdhttp.StoresInfo, error) {
 
 // CreateFulltextIndex create fulltext infex on TiCI.
 func CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
-	is, err := getGlobalInfoSyncer()
+	ticiManager, err := NewTiCIManager("0.0.0.0", "50051")
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	return is.ticiManager.CreateFulltextIndex(ctx, tblInfo, indexInfo, schemaName)
+	defer ticiManager.conn.Close()
+	return ticiManager.CreateFulltextIndex(ctx, tblInfo, indexInfo, schemaName)
 }
 
 // CloseTiFlashManager closes TiFlash manager.

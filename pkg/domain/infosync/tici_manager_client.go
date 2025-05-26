@@ -26,18 +26,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-var (
-	_ TiCIManager = &TiCIManagerCtx{}
-)
-
-// TiCIManager manages fulltext index for TiCI.
-type TiCIManager interface {
-	// CreateFulltextIndex create fulltext index on TiCI
-	CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error
-}
-
 // TiCIManagerCtx manages fulltext index for TiCI.
 type TiCIManagerCtx struct {
+	conn               *grpc.ClientConn
 	indexServiceClient indexer.IndexerServiceClient
 }
 
@@ -49,6 +40,7 @@ func NewTiCIManager(ticiHost string, ticiPort string) (*TiCIManagerCtx, error) {
 	}
 	indexServiceClient := indexer.NewIndexerServiceClient(conn)
 	return &TiCIManagerCtx{
+		conn:               conn,
 		indexServiceClient: indexServiceClient,
 	}, nil
 }
