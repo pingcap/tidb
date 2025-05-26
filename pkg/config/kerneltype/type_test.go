@@ -12,17 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build nextgen
-
 package kerneltype
 
-// IsNextGen returns true if the current kernel type is NextGen.
-// see doc.go for more info.
-func IsNextGen() bool {
-	return true
-}
+import (
+	"testing"
 
-// IsClassic returns true if the current kernel type is Classic.
-func IsClassic() bool {
-	return !IsNextGen()
+	"github.com/stretchr/testify/require"
+)
+
+func TestKernelType(t *testing.T) {
+	require.Equal(t, !IsClassic(), IsNextGen())
+	require.Equal(t, IsClassic(), !IsNextGen())
 }
