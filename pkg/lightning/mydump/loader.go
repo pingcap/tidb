@@ -499,7 +499,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 			s.tableSchemas = append(s.tableSchemas, *info)
 		case SourceTypeViewSchema:
 			s.viewSchemas = append(s.viewSchemas, *info)
-		case SourceTypeSQL, SourceTypeCSV, SourceTypeParquet, SourceTypeORC:
+		case SourceTypeSQL, SourceTypeCSV, SourceTypeParquet:
 			s.tableDatas = append(s.tableDatas, *info)
 		}
 	}
