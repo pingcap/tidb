@@ -6149,7 +6149,10 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 }
 
 // for nextgen import-into with SEM, we disallow user to set S3 external ID explicitly,
-// and we will use the global keyspace name as the S3 external ID.
+// and we will use the keyspace name as the S3 external ID.
+// a nextgen cluster might be shared by multiple tenants, and they might share the
+// same AWS role to access import-into source data bucket, this external ID can
+// be used to restrict the access only to the current tenant.
 func processSemNextGenS3Path(u *url.URL) (string, error) {
 	values := u.Query()
 	for k := range values {
