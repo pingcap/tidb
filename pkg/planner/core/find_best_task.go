@@ -2678,6 +2678,10 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 				ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildInvertedIndexExtra(candidate.path.Index, index.InvertedInfo.ColumnID, index.ID))
 			}
 		}
+		if ds.MatchedFTS != nil {
+			ts.MatchedFTS = ds.MatchedFTS
+			ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildTextInvertedIndexExtra(ds.FtsIndexes[0], ds.MatchedFTS))
+		}
 	}
 
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.

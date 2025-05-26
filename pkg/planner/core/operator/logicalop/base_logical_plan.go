@@ -137,14 +137,17 @@ func (p *BaseLogicalPlan) HashCode() []byte {
 }
 
 // PredicatePushDown implements LogicalPlan.<1st> interface.
-func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	if len(p.children) == 0 {
-		return predicates, p.self
+		return predicates, p.self, nil
 	}
 	child := p.children[0]
-	rest, newChild := child.PredicatePushDown(predicates, opt)
+	rest, newChild, err := child.PredicatePushDown(predicates, opt)
+	if err != nil {
+		return nil, p.self, err
+	}
 	addSelection(p.self, newChild, rest, 0, opt)
-	return nil, p.self
+	return nil, p.self, nil
 }
 
 // PruneColumns implements LogicalPlan.<2nd> interface.

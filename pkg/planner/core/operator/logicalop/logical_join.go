@@ -204,7 +204,7 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 // HashCode inherits the BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
-func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
+func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
@@ -213,7 +213,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, predicates, opt)
-			return ret, dual
+			return ret, dual, nil
 		}
 		// Handle where conditions
 		predicates = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), predicates)
@@ -232,7 +232,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, predicates, opt)
-			return ret, dual
+			return ret, dual, nil
 		}
 		// Handle where conditions
 		predicates = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), predicates)
@@ -259,7 +259,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, tempCond, opt)
-			return ret, dual
+			return ret, dual, nil
 		}
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(tempCond, true, true)
 		p.LeftConditions = nil
@@ -274,7 +274,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, predicates, opt)
-			return ret, dual
+			return ret, dual, nil
 		}
 		// `predicates` should only contain left conditions or constant filters.
 		_, leftPushCond, rightPushCond, _ = p.extractOnCondition(predicates, true, true)
@@ -289,13 +289,20 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	}
 	leftCond = expression.RemoveDupExprs(leftCond)
 	rightCond = expression.RemoveDupExprs(rightCond)
-	leftRet, lCh := p.Children()[0].PredicatePushDown(leftCond, opt)
-	rightRet, rCh := p.Children()[1].PredicatePushDown(rightCond, opt)
+	leftRet, lCh, err := p.Children()[0].PredicatePushDown(leftCond, opt)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	rightRet, rCh, err := p.Children()[1].PredicatePushDown(rightCond, opt)
+	if err != nil {
+		return nil, nil, err
+	}
 	addSelection(p, lCh, leftRet, 0, opt)
 	addSelection(p, rCh, rightRet, 1, opt)
 	p.updateEQCond()
 	ruleutil.BuildKeyInfoPortal(p)
-	return ret, p.Self()
+	return ret, p.Self(), nil
 }
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
