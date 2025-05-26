@@ -634,8 +634,6 @@ func TestIssue59827RangeColumns(t *testing.T) {
 	tk.MustQuery("explain select * from t where a = 'a' and b = '2'").CheckContain("partition:p2")
 	tk.MustQuery("explain select * from t where a = 'a' and (b = '2')").CheckContain("partition:p2")
 }
-<<<<<<< HEAD
-=======
 
 func TestIssue61134(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -757,4 +755,3 @@ func TestIssue61176Int(t *testing.T) {
 		tk.MustExec(`drop table t`)
 	}
 }
->>>>>>> fd839b95229 (planner: Handle NullEQ <=> in range columns partition pruning (#61187))

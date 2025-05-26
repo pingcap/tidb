@@ -1627,36 +1627,7 @@ func (p *rangePruner) extractDataForPrune(sctx base.PlanContext, expr expression
 		// If the partition expression is col, use constExpr.
 		constExpr = con
 	}
-<<<<<<< HEAD
 	c, isNull, err := constExpr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-	if err == nil && !isNull {
-=======
-	evalType := constExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).EvalType()
-	var c int64
-	var isNull bool
-	var err error
-	switch evalType {
-	case types.ETInt:
-		c, isNull, err = constExpr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-	case types.ETReal:
-		var f float64
-		f, isNull, err = constExpr.EvalReal(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-		if err == nil && !isNull {
-			c = int64(f)
-		}
-	case types.ETDecimal:
-		var d *types.MyDecimal
-		d, isNull, err = constExpr.EvalDecimal(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-		if err == nil && !isNull {
-			f, err := d.ToFloat64()
-			if err != nil {
-				return ret, false
-			}
-			c = int64(f)
-		}
-	default:
-		return ret, false
-	}
 	if err != nil {
 		return ret, false
 	}
@@ -1664,7 +1635,6 @@ func (p *rangePruner) extractDataForPrune(sctx base.PlanContext, expr expression
 		if ret.op == ast.NullEQ {
 			ret.op = ast.EQ
 		}
->>>>>>> fd839b95229 (planner: Handle NullEQ <=> in range columns partition pruning (#61187))
 		ret.c = c
 		ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).GetFlag())
 		return ret, true
