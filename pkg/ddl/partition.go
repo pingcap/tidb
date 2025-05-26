@@ -542,9 +542,9 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 		ctx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
 		return nil
 	}
-	if s.Sub != nil {
-		ctx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("Unsupported subpartitioning, only using %v partitioning", s.Tp)))
-	}
+	//if s.Sub != nil {
+	//	ctx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("Unsupported subpartitioning, only using %v partitioning", s.Tp)))
+	//}
 
 	pi := &model.PartitionInfo{
 		Type:   s.Tp,
@@ -553,36 +553,18 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 	}
 	tbInfo.Partition = pi
 	if s.Expr != nil {
-		if err := checkPartitionFuncValid(ctx.GetExprCtx(), tbInfo, s.Expr); err != nil {
-			return errors.Trace(err)
-		}
-		buf := new(bytes.Buffer)
-		restoreFlags := format.DefaultRestoreFlags | format.RestoreBracketAroundBinaryOperation |
-			format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
-		restoreCtx := format.NewRestoreCtx(restoreFlags, buf)
-		if err := s.Expr.Restore(restoreCtx); err != nil {
+		expr, err := buildPartitionExpr(ctx.GetExprCtx(), &s.PartitionMethod, tbInfo)
+		if err != nil {
 			return err
 		}
-		pi.Expr = buf.String()
+		pi.Expr = expr
 	} else if s.ColumnNames != nil {
-		pi.Columns = make([]pmodel.CIStr, 0, len(s.ColumnNames))
-		for _, cn := range s.ColumnNames {
-			pi.Columns = append(pi.Columns, cn.Name)
-		}
-		if pi.Type == pmodel.PartitionTypeKey && len(s.ColumnNames) == 0 {
-			if tbInfo.PKIsHandle {
-				pi.Columns = append(pi.Columns, tbInfo.GetPkName())
-				pi.IsEmptyColumns = true
-			} else if key := tbInfo.GetPrimaryKey(); key != nil {
-				for _, col := range key.Columns {
-					pi.Columns = append(pi.Columns, col.Name)
-				}
-				pi.IsEmptyColumns = true
-			}
-		}
-		if err := checkColumnsPartitionType(tbInfo); err != nil {
+		columns, isEmptyColumns, err := buildPartitionColumns(&s.PartitionMethod, tbInfo)
+		if err != nil {
 			return err
 		}
+		pi.Columns = columns
+		pi.IsEmptyColumns = isEmptyColumns
 	}
 
 	exprCtx := ctx.GetExprCtx()
@@ -591,11 +573,10 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 		return errors.Trace(err)
 	}
 
-	defs, err := buildPartitionDefinitionsInfo(exprCtx, s.Definitions, tbInfo, s.Num)
+	defs, err := buildPartitionDefinitionsInfo(exprCtx, s.Definitions, tbInfo, s.Num, s.Sub)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	tbInfo.Partition.Definitions = defs
 
 	if len(s.UpdateIndexes) > 0 {
@@ -663,6 +644,43 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 	}
 
 	return nil
+}
+
+func buildPartitionExpr(ctx expression.BuildContext, s *ast.PartitionMethod, tbInfo *model.TableInfo) (string, error) {
+	if err := checkPartitionFuncValid(ctx, tbInfo, s.Expr); err != nil {
+		return "", errors.Trace(err)
+	}
+	buf := new(bytes.Buffer)
+	restoreFlags := format.DefaultRestoreFlags | format.RestoreBracketAroundBinaryOperation |
+		format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
+	restoreCtx := format.NewRestoreCtx(restoreFlags, buf)
+	if err := s.Expr.Restore(restoreCtx); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+func buildPartitionColumns(s *ast.PartitionMethod, tbInfo *model.TableInfo) ([]pmodel.CIStr, bool, error) {
+	columns := make([]pmodel.CIStr, 0, len(s.ColumnNames))
+	isEmptyColumns := false
+	for _, cn := range s.ColumnNames {
+		columns = append(columns, cn.Name)
+	}
+	if s.Tp == pmodel.PartitionTypeKey && len(s.ColumnNames) == 0 {
+		if tbInfo.PKIsHandle {
+			columns = append(columns, tbInfo.GetPkName())
+			isEmptyColumns = true
+		} else if key := tbInfo.GetPrimaryKey(); key != nil {
+			for _, col := range key.Columns {
+				columns = append(columns, col.Name)
+			}
+			isEmptyColumns = true
+		}
+	}
+	if err := checkColumnsPartitionType(tbInfo); err != nil {
+		return nil, false, err
+	}
+	return columns, isEmptyColumns, nil
 }
 
 func rewritePartitionQueryString(ctx sessionctx.Context, s *ast.PartitionOptions, tbInfo *model.TableInfo) error {
@@ -1376,7 +1394,7 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 }
 
 // buildPartitionDefinitionsInfo build partition definitions info without assign partition id. tbInfo will be constant
-func buildPartitionDefinitionsInfo(ctx expression.BuildContext, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo, numParts uint64) (partitions []model.PartitionDefinition, err error) {
+func buildPartitionDefinitionsInfo(ctx expression.BuildContext, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo, numParts uint64, sub *ast.PartitionMethod) (partitions []model.PartitionDefinition, err error) {
 	switch tbInfo.Partition.Type {
 	case pmodel.PartitionTypeNone:
 		if len(defs) != 1 {
@@ -1387,7 +1405,7 @@ func buildPartitionDefinitionsInfo(ctx expression.BuildContext, defs []*ast.Part
 			partitions[0].Comment = comment
 		}
 	case pmodel.PartitionTypeRange:
-		partitions, err = buildRangePartitionDefinitions(ctx, defs, tbInfo)
+		partitions, err = buildRangePartitionDefinitions(ctx, defs, tbInfo, sub)
 	case pmodel.PartitionTypeHash, pmodel.PartitionTypeKey:
 		partitions, err = buildHashPartitionDefinitions(defs, tbInfo, numParts)
 	case pmodel.PartitionTypeList:
@@ -1562,7 +1580,7 @@ func collectColumnsType(tbInfo *model.TableInfo) []types.FieldType {
 	return nil
 }
 
-func buildRangePartitionDefinitions(ctx expression.BuildContext, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
+func buildRangePartitionDefinitions(ctx expression.BuildContext, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo, sub *ast.PartitionMethod) ([]model.PartitionDefinition, error) {
 	definitions := make([]model.PartitionDefinition, 0, len(defs))
 	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed)
 	colTypes := collectColumnsType(tbInfo)
@@ -1638,6 +1656,37 @@ func buildRangePartitionDefinitions(ctx expression.BuildContext, defs []*ast.Par
 		}
 		definitions = append(definitions, piDef)
 	}
+	if sub != nil && sub.Num > 0 && (sub.Tp == pmodel.PartitionTypeHash) {
+		subPi := &model.SubPartitionInfo{
+			Type: sub.Tp,
+		}
+		if sub.Expr != nil {
+			expr, err := buildPartitionExpr(ctx, sub, tbInfo)
+			if err != nil {
+				return nil, err
+			}
+			subPi.Expr = expr
+		} else if sub.ColumnNames != nil {
+			columns, isEmptyColumns, err := buildPartitionColumns(sub, tbInfo)
+			if err != nil {
+				return nil, err
+			}
+			subPi.Columns = columns
+			subPi.IsEmptyColumns = isEmptyColumns
+		}
+		for i := range definitions {
+			definitions[i].Sub = subPi.Clone()
+			definitions[i].Sub.Definitions = make([]model.PartitionDefinition, 0, int(sub.Num))
+			for j := uint64(0); j < sub.Num; j++ {
+				name := fmt.Sprintf("%vsp%d", definitions[i].Name.L, j)
+				subPiDef := model.PartitionDefinition{
+					Name: pmodel.NewCIStr(name),
+				}
+				definitions[i].Sub.Definitions = append(definitions[i].Sub.Definitions, subPiDef)
+			}
+		}
+	}
+
 	return definitions, nil
 }
 

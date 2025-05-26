@@ -1071,12 +1071,13 @@ type PartitionState struct {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID                 int64          `json:"id"`
-	Name               model.CIStr    `json:"name"`
-	LessThan           []string       `json:"less_than"`
-	InValues           [][]string     `json:"in_values"`
-	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
-	Comment            string         `json:"comment,omitempty"`
+	ID                 int64             `json:"id"`
+	Name               model.CIStr       `json:"name"`
+	LessThan           []string          `json:"less_than"`
+	InValues           [][]string        `json:"in_values"`
+	PlacementPolicyRef *PolicyRefInfo    `json:"policy_ref_info"`
+	Comment            string            `json:"comment,omitempty"`
+	Sub                *SubPartitionInfo `json:"sub-partition"`
 }
 
 // Clone clones PartitionDefinition.
@@ -1107,6 +1108,45 @@ func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
 		for _, str := range strs {
 			sum += int64(len(str))
 		}
+	}
+	return
+}
+
+type SubPartitionInfo struct {
+	Type           model.PartitionType   `json:"type"`
+	Expr           string                `json:"expr"`
+	Columns        []model.CIStr         `json:"columns"`
+	IsEmptyColumns bool                  `json:"is_empty_columns"`
+	Definitions    []PartitionDefinition `json:"definitions"`
+}
+
+// Clone clones SubPartitionInfo.
+func (pi *SubPartitionInfo) Clone() *SubPartitionInfo {
+	newPi := *pi
+	newPi.Columns = make([]model.CIStr, len(pi.Columns))
+	copy(newPi.Columns, pi.Columns)
+
+	newPi.Definitions = make([]PartitionDefinition, len(pi.Definitions))
+	for i := range pi.Definitions {
+		newPi.Definitions[i] = pi.Definitions[i].Clone()
+	}
+	return &newPi
+}
+
+const emptySubPartitionInfoSize = int64(unsafe.Sizeof(SubPartitionInfo{}))
+
+// MemoryUsage return the memory usage of SubPartitionInfo
+func (pi *SubPartitionInfo) MemoryUsage() (sum int64) {
+	if pi == nil {
+		return
+	}
+
+	sum = emptyPartitionDefinitionSize
+	for _, col := range pi.Columns {
+		sum += col.MemoryUsage()
+	}
+	for _, def := range pi.Definitions {
+		sum += def.MemoryUsage()
 	}
 	return
 }

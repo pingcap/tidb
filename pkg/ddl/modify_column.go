@@ -898,6 +898,7 @@ func GetModifiableColumnJob(
 			_, err = buildPartitionDefinitionsInfo(
 				exprctx.CtxWithHandleTruncateErrLevel(sctx.GetExprCtx(), errctx.LevelError),
 				pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)),
+				nil,
 			)
 			if err != nil {
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())

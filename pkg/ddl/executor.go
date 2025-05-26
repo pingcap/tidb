@@ -5436,8 +5436,8 @@ func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo,
 		Columns: meta.Partition.Columns,
 		Enable:  meta.Partition.Enable,
 	}
-
-	defs, err := buildPartitionDefinitionsInfo(ctx, spec.PartDefinitions, meta, numParts)
+	// todo: add partition needs consider sub partition.
+	defs, err := buildPartitionDefinitionsInfo(ctx, spec.PartDefinitions, meta, numParts, nil)
 	if err != nil {
 		return nil, err
 	}
