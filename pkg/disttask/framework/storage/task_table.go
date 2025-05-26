@@ -844,14 +844,17 @@ func (*TaskManager) splitSubtasks(subtasks []*proto.Subtask) [][]*proto.Subtask 
 	return res
 }
 
-func serializeErr(err error) []byte {
-	if err == nil {
+func serializeErr(inErr error) []byte {
+	if inErr == nil {
 		return nil
 	}
-	originErr := errors.Cause(err)
-	tErr, ok := originErr.(*errors.Error)
-	if !ok {
-		tErr = errors.Normalize(originErr.Error())
+	var tErr *errors.Error
+	if goerrors.As(inErr, &tErr) {
+		// we want to keep the original message to have more context info
+		tErr = errors.Normalize(errors.GetErrStackMsg(inErr), errors.RFCCodeText(string(tErr.RFCCode())),
+			errors.MySQLErrorCode(int(tErr.Code())))
+	} else {
+		tErr = errors.Normalize(inErr.Error())
 	}
 	errBytes, err := tErr.MarshalJSON()
 	if err != nil {

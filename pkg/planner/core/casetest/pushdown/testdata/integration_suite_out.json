@@ -86,7 +86,7 @@
           "└─TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Selection 8000.00 mpp[tiflash]  eq(plus(test.t.a, 1), 3)",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -163,10 +163,10 @@
           "    │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Projection 8000.00 mpp[tiflash]  minus(test.t.id, 2)->Column#13",
           "    │     └─Selection 8000.00 mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "    │       └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─Projection(Probe) 8000.00 mpp[tiflash]  minus(test.t.id, 2)->Column#26",
           "      └─Selection 8000.00 mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -177,11 +177,11 @@
           "│ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─Projection 8000.00 mpp[tiflash]  minus(test.t.id, 2)->Column#25",
           "│     └─Selection 8000.00 mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "│       └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "│       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -192,7 +192,7 @@
           "│ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─Projection 8000.00 mpp[tiflash]  minus(test.t.id, 2)->Column#25",
           "│     └─Selection 8000.00 mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "│       └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "│       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
@@ -209,7 +209,7 @@
           "└─TableReader(Probe) 9990.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -223,10 +223,10 @@
           "      │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Projection 8000.00 mpp[tiflash]  minus(test.t.id, 2)->Column#13",
           "      │     └─Selection 8000.00 mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "      │       └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "      │       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "      └─Projection(Probe) 8000.00 mpp[tiflash]  minus(test.t.id, 2)->Column#26",
           "        └─Selection 8000.00 mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -238,9 +238,9 @@
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:A pushed down filter:empty, keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:A keep order:false, stats:pseudo"
         ]
       },
       {
@@ -334,11 +334,11 @@
           "├─Projection(Build) 8000.00 root  minus(test.t.id, 2)->Column#10",
           "│ └─TableReader 8000.00 root  data:Selection",
           "│   └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "│     └─TableFullScan 10000.00 cop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "│     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
           "└─Projection(Probe) 8000.00 root  minus(test.t.id, 2)->Column#5",
           "  └─TableReader 8000.00 root  data:Selection",
           "    └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "      └─TableFullScan 10000.00 cop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -348,10 +348,10 @@
           "├─Projection(Build) 8000.00 root  minus(test.t.id, 2)->Column#9",
           "│ └─TableReader 8000.00 root  data:Selection",
           "│   └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "│     └─TableFullScan 10000.00 cop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "│     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
           "  └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -361,7 +361,7 @@
           "├─Projection(Build) 8000.00 root  minus(test.t.id, 2)->Column#9",
           "│ └─TableReader 8000.00 root  data:Selection",
           "│   └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "│     └─TableFullScan 10000.00 cop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "│     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
@@ -375,7 +375,7 @@
           "│   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
           "  └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -386,11 +386,11 @@
           "  ├─Projection(Build) 8000.00 root  minus(test.t.id, 2)->Column#10",
           "  │ └─TableReader 8000.00 root  data:Selection",
           "  │   └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "  │     └─TableFullScan 10000.00 cop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "  │     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
           "  └─Projection(Probe) 8000.00 root  minus(test.t.id, 2)->Column#5",
           "    └─TableReader 8000.00 root  data:Selection",
           "      └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "        └─TableFullScan 10000.00 cop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -399,10 +399,10 @@
           "HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t.id, test.t.id)]",
           "├─TableReader(Build) 9990.00 root  data:Selection",
           "│ └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "│   └─TableFullScan 10000.00 cop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "│   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
           "  └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:A pushed down filter:empty, keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tiflash] table:A keep order:false, stats:pseudo"
         ]
       },
       {
@@ -433,7 +433,7 @@
         "Plan": [
           "TableReader 8000.67 root  data:Selection",
           "└─Selection 8000.67 cop[tiflash]  or(and(gt(test.t.a, 1), eq(test.t.b, \"flash\")), eq(plus(test.t.a, mul(3, test.t.a)), 5))",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -441,7 +441,7 @@
         "Plan": [
           "TableReader 8000.00 root  data:Selection",
           "└─Selection 8000.00 cop[tiflash]  eq(plus(cast(test.t.a, double BINARY), 3), 5.1)",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -455,7 +455,7 @@
           "        └─TopN 2.00 batchCop[tiflash]  Column#3, offset:0, count:2",
           "          └─Projection 3333.33 batchCop[tiflash]  test.t.a, test.t.b, cast(test.t.b, bigint(22) UNSIGNED BINARY)->Column#3",
           "            └─Selection 3333.33 batchCop[tiflash]  gt(test.t.b, \"a\")",
-          "              └─TableFullScan 10000.00 batchCop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -465,7 +465,7 @@
           "└─TableReader 2.00 root  data:TopN",
           "  └─TopN 2.00 batchCop[tiflash]  test.t.b, offset:0, count:2",
           "    └─Selection 3333.33 batchCop[tiflash]  gt(test.t.b, \"a\")",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       }
     ]

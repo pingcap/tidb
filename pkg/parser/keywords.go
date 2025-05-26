@@ -607,6 +607,7 @@ var Keywords = []KeywordsType{
 	{"THAN", false, "unreserved"},
 	{"TIKV_IMPORTER", false, "unreserved"},
 	{"TIME", false, "unreserved"},
+	{"TIMEOUT", false, "unreserved"},
 	{"TIMESTAMP", false, "unreserved"},
 	{"TOKEN_ISSUER", false, "unreserved"},
 	{"TPCC", false, "unreserved"},

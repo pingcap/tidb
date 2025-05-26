@@ -510,7 +510,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(
 		nameToCol[c.Name.L] = c
 	}
 	for _, index := range table.Indices {
-		if !ex.HasIndex(index.Name.L) {
+		if !ex.HasIndex(index.Name.L) || index.State != model.StatePublic {
 			continue
 		}
 		nonUnique := "1"

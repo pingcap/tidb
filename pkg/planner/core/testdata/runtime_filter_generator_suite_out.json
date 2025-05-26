@@ -11,9 +11,9 @@
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t1.k1))",
-          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
+          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false",
           "    └─Selection(Probe) 1.00 mpp[tiflash]  eq(test.t2.k2, 1), not(isnull(test.t2.k1))",
-          "      └─TableFullScan 1.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, runtime filter:0[IN] -> test.t2.k1"
+          "      └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false, runtime filter:0[IN] -> test.t2.k1"
         ]
       },
       {
@@ -25,9 +25,9 @@
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t1.k1))",
-          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
+          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false",
           "    └─Selection(Probe) 1.00 mpp[tiflash]  not(isnull(test.t2.k1)), not(isnull(test.t2.k2))",
-          "      └─TableFullScan 1.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, runtime filter:0[IN] -> test.t2.k1, 1[IN] -> test.t2.k2"
+          "      └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false, runtime filter:0[IN] -> test.t2.k1, 1[IN] -> test.t2.k2"
         ]
       },
       {
@@ -39,11 +39,11 @@
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.k1, collate: binary]",
           "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t1.k1))",
-          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
+          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false",
           "    └─ExchangeReceiver(Probe) 1.00 mpp[tiflash]  ",
           "      └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t2.k1, collate: binary]",
           "        └─Selection 1.00 mpp[tiflash]  not(isnull(test.t2.k1))",
-          "          └─TableFullScan 1.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
+          "          └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false"
         ]
       },
       {
@@ -55,13 +55,13 @@
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t2.k1))",
-          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false",
+          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false",
           "    └─Projection(Probe) 1.00 mpp[tiflash]  test.t1.k1",
           "      └─HashAgg 1.00 mpp[tiflash]  group by:test.t1.k1, funcs:firstrow(test.t1.k1)->test.t1.k1",
           "        └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "          └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.k1, collate: binary]",
           "            └─Selection 1.00 mpp[tiflash]  not(isnull(test.t1.k1))",
-          "              └─TableFullScan 1.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false"
+          "              └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false"
         ]
       },
       {
@@ -73,9 +73,9 @@
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t1.k1))",
-          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
+          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false",
           "    └─Selection(Probe) 1.00 mpp[tiflash]  not(isnull(test.t2.k1))",
-          "      └─TableFullScan 1.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, runtime filter:0[IN] -> test.t2.k1"
+          "      └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false, runtime filter:0[IN] -> test.t2.k1"
         ]
       },
       {
@@ -85,7 +85,7 @@
           "├─TableReader(Build) 1.00 root  MppVersion: 3, data:ExchangeSender",
           "│ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t2.k1))",
-          "│     └─TableFullScan 1.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false",
+          "│     └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
           "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1_tikv.k1))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
@@ -114,10 +114,10 @@
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t2.k1))",
-          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false",
+          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false",
           "    └─Projection(Probe) 1.00 mpp[tiflash]  test.t1.k1, plus(test.t1.k1, 1)->Column#7",
           "      └─Selection 1.00 mpp[tiflash]  not(isnull(test.t1.k1))",
-          "        └─TableFullScan 1.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, runtime filter:0[IN] -> test.t1.k1"
+          "        └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false, runtime filter:0[IN] -> test.t1.k1"
         ]
       },
       {
@@ -129,10 +129,10 @@
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t2.k1))",
-          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false",
+          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false",
           "    └─Projection(Probe) 1.00 mpp[tiflash]  test.t1.k1, plus(test.t1.k1, 1)->Column#7",
           "      └─Selection 1.00 mpp[tiflash]  not(isnull(plus(test.t1.k1, 1)))",
-          "        └─TableFullScan 1.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false"
+          "        └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false"
         ]
       },
       {
@@ -158,7 +158,7 @@
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t1.k1))",
-          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
+          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false",
           "    └─TableFullScan(Probe) 1.00 mpp[tiflash] table:t2 keep order:false"
         ]
       },

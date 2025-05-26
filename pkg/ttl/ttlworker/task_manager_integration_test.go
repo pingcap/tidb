@@ -50,7 +50,11 @@ func TestParallelLockNewTask(t *testing.T) {
 	testTable, err := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
-	sessionFactory := sessionFactory(t, dom)
+	sessionTimeout := time.Minute
+	if testflag.Long() {
+		sessionTimeout = 10 * time.Minute
+	}
+	sessionFactory := sessionFactoryWithTimeout(t, dom, sessionTimeout)
 	se, closeSe := sessionFactory()
 	defer closeSe()
 

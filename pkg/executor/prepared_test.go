@@ -822,11 +822,11 @@ func TestIssue29101(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use index-join
 		`StreamAgg_9 1.00 root  funcs:count(distinct test.stock.s_i_id)->Column#11`,
-		`└─IndexJoin_37 1.25 root  inner join, inner:IndexLookUp_50, outer key:test.order_line.ol_i_id, inner key:test.stock.s_i_id, equal cond:eq(test.order_line.ol_i_id, test.stock.s_i_id)`,
+		`└─IndexJoin_36 1.25 root  inner join, inner:IndexLookUp_30, outer key:test.order_line.ol_i_id, inner key:test.stock.s_i_id, equal cond:eq(test.order_line.ol_i_id, test.stock.s_i_id)`,
 		`  ├─IndexLookUp_26(Build) 1.25 root  `,
 		`  │ ├─IndexRangeScan_24(Build) 1.25 cop[tikv] table:order_line, index:PRIMARY(ol_w_id, ol_d_id, ol_o_id, ol_number) range:[391 1 3038,391 1 3058), keep order:false, stats:pseudo`,
 		`  │ └─TableRowIDScan_25(Probe) 1.25 cop[tikv] table:order_line keep order:false, stats:pseudo`,
-		`  └─IndexLookUp_50(Probe) 1.25 root  `,
+		`  └─IndexLookUp_30(Probe) 1.25 root  `,
 		`    ├─IndexRangeScan_27(Build) 1.25 cop[tikv] table:stock, index:PRIMARY(s_w_id, s_i_id) range: decided by [eq(test.stock.s_i_id, test.order_line.ol_i_id) eq(test.stock.s_w_id, 391)], keep order:false, stats:pseudo`,
 		`    └─Selection_29(Probe) 1.25 cop[tikv]  lt(test.stock.s_quantity, 18)`,
 		`      └─TableRowIDScan_28 1.25 cop[tikv] table:stock keep order:false, stats:pseudo`))

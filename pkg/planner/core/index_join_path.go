@@ -652,6 +652,9 @@ func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.Ph
 		return base.InvalidTask, 0, nil
 	}
 	planCounter.Dec(1)
+	if prop.TaskTp == property.RootTaskType {
+		return innerCopTask.ConvertToRootTask(ds.SCtx()), 1, nil
+	}
 	return innerCopTask, 1, nil
 }
 

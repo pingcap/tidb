@@ -17,7 +17,7 @@
           "TableReader 15.95 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 15.95 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Selection 15.95 mpp[tiflash]  lt(test.t1.a, 1)",
-          "    └─TableFullScan 48.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "    └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -27,7 +27,7 @@
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Selection 1.00 mpp[tiflash]  eq(test.t1.vec, [1,1,1])",
-          "    └─TableFullScan 48.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "    └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -37,7 +37,7 @@
           "TableReader 38.40 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 38.40 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Selection 38.40 mpp[tiflash]  lt(vec_cosine_distance(test.t1.vec, [1,1,1]), 0.1)",
-          "    └─TableFullScan 48.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "    └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -48,7 +48,7 @@
           "└─ExchangeSender 38.40 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 38.40 mpp[tiflash]  vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
           "    └─Selection 38.40 mpp[tiflash]  lt(vec_cosine_distance(test.t1.vec, [1,1,1]), 0.1)",
-          "      └─TableFullScan 48.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "      └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -254,7 +254,7 @@
           "    └─TopN 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
           "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
           "        └─Selection 1.00 mpp[tiflash]  eq(test.t1.a, 0)",
-          "          └─TableFullScan 48.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       }

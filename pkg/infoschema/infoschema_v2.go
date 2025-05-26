@@ -151,7 +151,7 @@ type Data struct {
 	// We observe the pattern that list table API always come with filter.
 	// All model.TableInfo with special attributes are here, currently the special attributes including:
 	//     TTLInfo, TiFlashReplica
-	// PlacementPolicyRef, Partition might be added later, and also ForeignKeys, TableLock etc
+	// PlacementPolicyRef, Partition might be added later, and also TableLock etc
 	tableInfoResident atomic.Pointer[btree.BTreeG[tableInfoItem]]
 
 	// the minimum ts of the recent used infoschema

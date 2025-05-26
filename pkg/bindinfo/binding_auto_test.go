@@ -162,6 +162,9 @@ func TestPlanGeneration(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int, b int, c int, key(a))`)
+	tk.MustExec(`create table t1 (a int, b int, c int, key(a), key(b))`)
+	tk.MustExec(`create table t2 (a int, b int, c int, key(a), key(b))`)
+	tk.MustExec(`create table t3 (a int, b int, c int, key(a), key(b))`)
 
 	var input []string
 	var output []struct {
