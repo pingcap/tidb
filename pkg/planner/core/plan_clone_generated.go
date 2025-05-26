@@ -37,7 +37,7 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	cloned.HandleIdx = make([]int, len(op.HandleIdx))
 	copy(cloned.HandleIdx, op.HandleIdx)
 	if op.HandleCols != nil {
-		cloned.HandleCols = op.HandleCols.Clone(newCtx.GetSessionVars().StmtCtx)
+		cloned.HandleCols = op.HandleCols.Clone()
 	}
 	cloned.ByItems = util.CloneByItemss(op.ByItems)
 	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
@@ -49,7 +49,7 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	if op.runtimeFilterList != nil {
 		return nil, false
 	}
-	if op.AnnIndexExtra != nil {
+	if op.UsedColumnarIndexes != nil {
 		return nil, false
 	}
 	return cloned, true
@@ -411,7 +411,7 @@ func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (
 	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
 	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
 	if op.HandleCols != nil {
-		cloned.HandleCols = op.HandleCols.Clone(newCtx.GetSessionVars().StmtCtx)
+		cloned.HandleCols = op.HandleCols.Clone()
 	}
 	return cloned, true
 }
@@ -495,7 +495,7 @@ func (op *PhysicalLock) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 	if op.TblID2Handle != nil {
 		cloned.TblID2Handle = make(map[int64][]util.HandleCols, len(op.TblID2Handle))
 		for k, v := range op.TblID2Handle {
-			cloned.TblID2Handle[k] = util.CloneHandleCols(newCtx.GetSessionVars().StmtCtx, v)
+			cloned.TblID2Handle[k] = util.CloneHandleCols(v)
 		}
 	}
 	if op.TblID2PhysTblIDCol != nil {
@@ -518,7 +518,7 @@ func (op *PhysicalUnionScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	cloned.BasePhysicalPlan = *basePlan
 	cloned.Conditions = cloneExpressionsForPlanCache(op.Conditions, nil)
 	if op.HandleCols != nil {
-		cloned.HandleCols = op.HandleCols.Clone(newCtx.GetSessionVars().StmtCtx)
+		cloned.HandleCols = op.HandleCols.Clone()
 	}
 	return cloned, true
 }

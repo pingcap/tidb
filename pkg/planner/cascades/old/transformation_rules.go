@@ -16,6 +16,7 @@ package old
 
 import (
 	"math"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -547,10 +548,8 @@ func (*PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.
 	proj := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	projSchema := old.Children[0].Prop.Schema
 	childGroup := old.Children[0].GetExpr().Children[0]
-	for _, expr := range proj.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
-			return nil, false, false, nil
-		}
+	if slices.ContainsFunc(proj.Exprs, expression.HasAssignSetVarFunc) {
+		return nil, false, false, nil
 	}
 	canBePushed := make([]expression.Expression, 0, len(sel.Conditions))
 	canNotBePushed := make([]expression.Expression, 0, len(sel.Conditions))
@@ -776,12 +775,7 @@ func NewRulePushLimitDownProjection() Transformation {
 // Match implements Transformation interface.
 func (*PushLimitDownProjection) Match(expr *memo.ExprIter) bool {
 	proj := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
-	for _, expr := range proj.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
-			return false
-		}
-	}
-	return true
+	return !slices.ContainsFunc(proj.Exprs, expression.HasAssignSetVarFunc)
 }
 
 // OnTransform implements Transformation interface.
@@ -1183,7 +1177,7 @@ func (*MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	for i, expr := range proj.Exprs {
 		newExpr := expr.Clone()
 		ruleutil.ResolveExprAndReplace(newExpr, replace)
-		newProj.Exprs[i] = plannercore.ReplaceColumnOfExpr(newExpr, child, childGroup.Prop.Schema)
+		newProj.Exprs[i] = ruleutil.ReplaceColumnOfExpr(newExpr, child.Exprs, childGroup.Prop.Schema)
 	}
 
 	newProjExpr := memo.NewGroupExpr(newProj)
@@ -1294,12 +1288,7 @@ func NewRulePushTopNDownProjection() Transformation {
 // Match implements Transformation interface.
 func (*PushTopNDownProjection) Match(expr *memo.ExprIter) bool {
 	proj := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
-	for _, expr := range proj.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
-			return false
-		}
-	}
-	return true
+	return !slices.ContainsFunc(proj.Exprs, expression.HasAssignSetVarFunc)
 }
 
 // OnTransform implements Transformation interface.
@@ -1463,7 +1452,7 @@ func (*MergeAdjacentTopN) Match(expr *memo.ExprIter) bool {
 	if len(child.ByItems) < len(topN.ByItems) {
 		return false
 	}
-	for i := 0; i < len(topN.ByItems); i++ {
+	for i := range topN.ByItems {
 		if !topN.ByItems[i].Equal(topN.SCtx().GetExprCtx().GetEvalCtx(), child.ByItems[i]) {
 			return false
 		}

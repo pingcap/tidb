@@ -1196,7 +1196,7 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 		paused    bool
 	)
 	// Try to get the minimum safe point across all services as our GC safe point.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		if i > 0 {
 			time.Sleep(time.Second * 3)
 		}
@@ -1443,7 +1443,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
 
-	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
+	for range rc.cfg.App.IndexConcurrency {
 		go func() {
 			for task := range taskCh {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
@@ -1550,7 +1550,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	postProgress = func() error {
 		close(postProcessTaskChan)
 		// otherwise, we should run all tasks in the post-process task chan
-		for i := 0; i < rc.cfg.App.TableConcurrency; i++ {
+		for range rc.cfg.App.TableConcurrency {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -1879,6 +1879,15 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 		}
 
+		pdEnableFollowerHandleRegion, err := common.GetPDEnableFollowerHandleRegion(ctx, rc.db)
+		if err != nil {
+			return common.NormalizeOrWrapErr(common.ErrUpdatePD, err)
+		}
+		err = pdController.SetFollowerHandle(pdEnableFollowerHandleRegion)
+		if err != nil {
+			return common.NormalizeOrWrapErr(common.ErrUpdatePD, err)
+		}
+
 		// PdController will be closed when `taskMetaMgr` closes.
 		rc.taskMgr = rc.metaMgrBuilder.TaskMetaMgr(pdController)
 		taskExist, err = rc.taskMgr.CheckTaskExist(ctx)
@@ -2013,6 +2022,7 @@ func saveCheckpoint(rc *Controller, t *TableImporter, engineID int32, chunk *che
 			Key:               chunk.Key,
 			Checksum:          chunk.Checksum,
 			Pos:               chunk.Chunk.Offset,
+			RealPos:           chunk.Chunk.RealOffset,
 			RowID:             chunk.Chunk.PrevRowIDMax,
 			ColumnPermutation: chunk.ColumnPermutation,
 			EndOffset:         chunk.Chunk.EndOffset,

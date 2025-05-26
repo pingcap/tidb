@@ -663,6 +663,9 @@ func (tr *TableImporter) preprocessEngine(
 	logTask := tr.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
 	dataEngineCfg := &backend.EngineConfig{
 		TableInfo: tr.tableInfo,
+		Local: backend.LocalEngineConfig{
+			BlockSize: int(rc.cfg.TikvImporter.BlockSize),
+		},
 	}
 	if !tr.tableMeta.IsRowOrdered {
 		dataEngineCfg.Local.Compact = true
@@ -1451,10 +1454,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	// Try to add all indexes in one statement.
 	err := tr.executeDDL(ctx, db, singleSQL, func(status *ddlStatus) {
 		if totalRows > 0 {
-			progress := float64(status.rowCount) / float64(totalRows*len(multiSQLs))
-			if progress > 1 {
-				progress = 1
-			}
+			progress := min(float64(status.rowCount)/float64(totalRows*len(multiSQLs)), 1)
 			web.BroadcastTableProgress(tableName, progressStep, progress)
 			logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
 		}

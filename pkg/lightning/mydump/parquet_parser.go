@@ -190,7 +190,7 @@ type convertedType struct {
 func binaryToDecimalStr(rawBytes []byte, scale int) string {
 	negative := rawBytes[0] > 127
 	if negative {
-		for i := 0; i < len(rawBytes); i++ {
+		for i := range rawBytes {
 			rawBytes[i] = ^rawBytes[i]
 		}
 		for i := len(rawBytes) - 1; i >= 0; i-- {

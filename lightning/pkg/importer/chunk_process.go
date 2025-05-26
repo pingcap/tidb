@@ -136,7 +136,7 @@ func openParser(
 
 func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
 	colIndexes := make([]int, 0, len(permutation))
-	for i := 0; i < len(permutation); i++ {
+	for range permutation {
 		colIndexes = append(colIndexes, -1)
 	}
 	colCnt := 0

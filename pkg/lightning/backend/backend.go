@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -132,6 +133,10 @@ type ExternalEngineConfig struct {
 	// TotalKVCount can be an estimated value.
 	TotalKVCount int64
 	CheckHotspot bool
+	// MemCapacity is the memory capacity for the whole subtask.
+	MemCapacity int64
+	// OnDup is the action when a duplicate key is found during global sort.
+	OnDup engineapi.OnDuplicateKey
 }
 
 // CheckCtx contains all parameters used in CheckRequirements
@@ -215,9 +220,6 @@ type Backend interface {
 	// very expensive operation and should only be used in some rare situation
 	// (e.g. preparing to resolve a disk quota violation).
 	FlushAllEngines(ctx context.Context) error
-
-	// ResetEngine clears all written KV pairs in this opened engine.
-	ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 
 	// LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
 	LocalWriter(ctx context.Context, cfg *LocalWriterConfig, engineUUID uuid.UUID) (EngineWriter, error)
@@ -390,7 +392,7 @@ func NewClosedEngine(backend Backend, logger log.Logger, uuid uuid.UUID, id int3
 func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize, regionSplitKeys int64) error {
 	var err error
 
-	for i := 0; i < importMaxRetryTimes; i++ {
+	for i := range importMaxRetryTimes {
 		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
 		err = engine.backend.ImportEngine(ctx, engine.uuid, regionSplitSize, regionSplitKeys)
 		if !common.IsRetryableError(err) {

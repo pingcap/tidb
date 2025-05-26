@@ -195,7 +195,7 @@ func TestWriteOnMultipleCachedTable(t *testing.T) {
 	}
 
 	cached := false
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		tk.MustQuery("select * from ct1")
 		if lastReadFromCache(tk) {
 			cached = true
@@ -480,7 +480,7 @@ func TestRollbackOnCompileError(t *testing.T) {
 
 	tk.MustExec("rename table t to t2")
 	var meetErr bool
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		_, err := tk2.Exec("insert t values (1)")
 		if err != nil {
 			meetErr = true
@@ -491,7 +491,7 @@ func TestRollbackOnCompileError(t *testing.T) {
 
 	tk.MustExec("rename table t2 to t")
 	var recoverErr bool
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		_, err := tk2.Exec("insert t values (1)")
 		if err == nil {
 			recoverErr = true
@@ -1043,4 +1043,16 @@ insert into test.t values ("abc"); -- invalid statement
 	require.Equal(t, 0, req.NumRows())
 	require.NoError(t, r.Close())
 	dom.Close()
+}
+
+func TestIssue60266(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set session sql_mode='NO_BACKSLASH_ESCAPES';")
+	tk.MustExec(`create table t1(id bigint primary key, a text, b text as ((regexp_replace(a, '^[1-9]\d{9,29}$', 'aaaaa'))), c text)`)
+	tk.MustExec(`insert into t1 (id, a, c) values(1,123456, 'ab\\\\c');`)
+	tk.MustExec(`insert into t1 (id, a, c) values(2,1234567890123, 'ab\\c');`)
+	tk.MustQuery("select * from t1;").Sort().
+		Check(testkit.Rows("1 123456 123456 ab\\\\\\\\c", "2 1234567890123 aaaaa ab\\\\c"))
 }

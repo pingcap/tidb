@@ -19,14 +19,16 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -44,9 +46,15 @@ const (
 
 // Session is used to execute queries for TTL case
 type Session interface {
-	sessionctx.Context
+	variable.SessionVarsProvider
+	// GetStore returns the kv store
+	GetStore() kv.Storage
+	// GetDomainInfoSchema returns information schema of domain
+	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
 	// SessionInfoSchema returns information schema of current session
-	SessionInfoSchema() infoschema.InfoSchema
+	SessionInfoSchema() infoschema.MetaOnlyInfoSchema
+	// GetSQLExecutor returns the sql executor
+	GetSQLExecutor() sqlexec.SQLExecutor
 	// ExecuteSQL executes the sql
 	ExecuteSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, error)
 	// RunInTxn executes the specified function in a txn
@@ -57,41 +65,56 @@ type Session interface {
 	GlobalTimeZone(ctx context.Context) (*time.Location, error)
 	// KillStmt kills the current statement execution
 	KillStmt()
-	// Close closes the session
-	Close()
 	// Now returns the current time in location specified by session var
 	Now() time.Time
+	// AvoidReuse is used to avoid reuse the session
+	AvoidReuse()
 }
 
 type session struct {
-	sessionctx.Context
-	sqlExec sqlexec.SQLExecutor
-	closeFn func(Session)
+	sctx       sessionctx.Context
+	sqlExec    sqlexec.SQLExecutor
+	avoidReuse func()
 }
 
 // NewSession creates a new Session
-func NewSession(sctx sessionctx.Context, sqlExec sqlexec.SQLExecutor, closeFn func(Session)) Session {
+func NewSession(sctx sessionctx.Context, avoidReuse func()) Session {
+	intest.AssertNotNil(sctx)
+	intest.AssertNotNil(avoidReuse)
 	return &session{
-		Context: sctx,
-		sqlExec: sqlExec,
-		closeFn: closeFn,
+		sctx:       sctx,
+		sqlExec:    sctx.GetSQLExecutor(),
+		avoidReuse: avoidReuse,
 	}
 }
 
+// GetStore returns kv store
+func (s *session) GetStore() kv.Storage {
+	return s.sctx.GetStore()
+}
+
+// GetSessionVars returns the session variables
+func (s *session) GetSessionVars() *variable.SessionVars {
+	return s.sctx.GetSessionVars()
+}
+
+// GetDomainInfoSchema returns information schema of domain
+func (s *session) GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema {
+	return s.sctx.GetDomainInfoSchema()
+}
+
 // SessionInfoSchema returns information schema of current session
-func (s *session) SessionInfoSchema() infoschema.InfoSchema {
-	if s.Context == nil {
-		return nil
-	}
-	return sessiontxn.GetTxnManager(s.Context).GetTxnInfoSchema()
+func (s *session) SessionInfoSchema() infoschema.MetaOnlyInfoSchema {
+	return sessiontxn.GetTxnManager(s.sctx).GetTxnInfoSchema()
+}
+
+// GetSQLExecutor returns the sql executor
+func (s *session) GetSQLExecutor() sqlexec.SQLExecutor {
+	return s.sqlExec
 }
 
 // ExecuteSQL executes the sql
 func (s *session) ExecuteSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
-	if s.sqlExec == nil {
-		return nil, errors.New("session is closed")
-	}
-
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnTTL)
 	rs, err := s.sqlExec.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
@@ -159,7 +182,7 @@ func (s *session) RunInTxn(ctx context.Context, fn func() error, txnMode TxnMode
 
 // ResetWithGlobalTimeZone resets the session time zone to global time zone
 func (s *session) ResetWithGlobalTimeZone(ctx context.Context) error {
-	sessVar := s.GetSessionVars()
+	sessVar := s.sctx.GetSessionVars()
 	if sessVar.TimeZone != nil {
 		globalTZ, err := sessVar.GetGlobalSystemVar(ctx, vardef.TimeZone)
 		if err != nil {
@@ -182,7 +205,7 @@ func (s *session) ResetWithGlobalTimeZone(ctx context.Context) error {
 
 // GlobalTimeZone returns the global timezone
 func (s *session) GlobalTimeZone(ctx context.Context) (*time.Location, error) {
-	str, err := s.GetSessionVars().GetGlobalSystemVar(ctx, "time_zone")
+	str, err := s.sctx.GetSessionVars().GetGlobalSystemVar(ctx, "time_zone")
 	if err != nil {
 		return nil, err
 	}
@@ -191,20 +214,17 @@ func (s *session) GlobalTimeZone(ctx context.Context) (*time.Location, error) {
 
 // KillStmt kills the current statement execution
 func (s *session) KillStmt() {
-	s.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-}
-
-// Close closes the session
-func (s *session) Close() {
-	if s.closeFn != nil {
-		s.closeFn(s)
-		s.Context = nil
-		s.sqlExec = nil
-		s.closeFn = nil
-	}
+	s.sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 }
 
 // Now returns the current time in the location of time_zone session var
 func (s *session) Now() time.Time {
-	return time.Now().In(s.Context.GetSessionVars().Location())
+	return time.Now().In(s.sctx.GetSessionVars().Location())
+}
+
+// AvoidReuse is used to avoid reuse the session
+func (s *session) AvoidReuse() {
+	if s.avoidReuse != nil {
+		s.avoidReuse()
+	}
 }

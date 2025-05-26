@@ -79,7 +79,7 @@ func TestMemFirstRow(t *testing.T) {
 }
 
 func firstRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
-	for i := 0; i < srcChk.NumRows(); i++ {
+	for i := range srcChk.NumRows() {
 		row := srcChk.GetRow(i)
 		if i > 0 {
 			memDeltas = append(memDeltas, int64(0))

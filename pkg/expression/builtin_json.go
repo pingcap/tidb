@@ -139,7 +139,7 @@ func verifyJSONArgsType(ctx EvalContext, funcName string, useJSONErr bool, args 
 	if jsonArgsIndex == nil {
 		// if no index is specified, verify all args
 		jsonArgsIndex = make([]int, len(args))
-		for i := 0; i < len(args); i++ {
+		for i := range args {
 			jsonArgsIndex[i] = i
 		}
 	}
@@ -866,7 +866,7 @@ func (b *builtinJSONMemberOfSig) evalInt(ctx EvalContext, row chunk.Row) (res in
 	}
 
 	elemCount := obj.GetElemCount()
-	for i := 0; i < elemCount; i++ {
+	for i := range elemCount {
 		if types.CompareBinaryJSON(obj.ArrayGetElem(i), target) == 0 {
 			return 1, false, nil
 		}
@@ -1207,6 +1207,10 @@ func (b *builtinJSONArrayAppendSig) appendJSONArray(res types.BinaryJSON, p stri
 			return res, true, err
 		}
 	}
+
+	// wrap the new value `v` into an array explicitly, in case that the `v` is an array itself.
+	// For example, `JSON_ARRAY_APPEND('[1]', '$', JSON_ARRAY(2, 3))` should return `[1, [2, 3]]`
+	v = types.CreateBinaryJSON([]any{v})
 
 	obj = types.MergeBinaryJSON([]types.BinaryJSON{obj, v})
 	res, err = res.Modify([]types.JSONPathExpression{pathExpr}, []types.BinaryJSON{obj}, types.JSONModifySet)

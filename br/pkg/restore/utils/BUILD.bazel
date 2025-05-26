@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "utils",
     srcs = [
+        "common.go",
         "merge.go",
         "misc.go",
         "rewrite_rule.go",
@@ -12,6 +13,7 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
+        "//br/pkg/metautil",
         "//br/pkg/rtree",
         "//pkg/meta/model",
         "//pkg/tablecodec",
@@ -35,7 +37,7 @@ go_test(
         "rewrite_rule_test.go",
     ],
     flaky = True,
-    shard_count = 15,
+    shard_count = 16,
     deps = [
         ":utils",
         "//br/pkg/conn",

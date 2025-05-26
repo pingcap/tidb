@@ -18,6 +18,8 @@ package logicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/planner/util"
 )
 
 // LogicalJoinShallowRef implements the copy-on-write usage.
@@ -90,4 +92,60 @@ func (op *LogicalProjection) ExprsShallowRef() []expression.Expression {
 	}
 	op.Exprs = ExprsCP
 	return op.Exprs
+}
+
+// LogicalAggregationShallowRef implements the copy-on-write usage.
+func (op *LogicalAggregation) LogicalAggregationShallowRef() *LogicalAggregation {
+	shallow := *op
+	return &shallow
+}
+
+// AggFuncsShallowRef implements the copy-on-write usage.
+func (op *LogicalAggregation) AggFuncsShallowRef() []*aggregation.AggFuncDesc {
+	AggFuncsCP := make([]*aggregation.AggFuncDesc, 0, len(op.AggFuncs))
+	for _, one := range op.AggFuncs {
+		AggFuncsCP = append(AggFuncsCP, one)
+	}
+	op.AggFuncs = AggFuncsCP
+	return op.AggFuncs
+}
+
+// GroupByItemsShallowRef implements the copy-on-write usage.
+func (op *LogicalAggregation) GroupByItemsShallowRef() []expression.Expression {
+	GroupByItemsCP := make([]expression.Expression, 0, len(op.GroupByItems))
+	for _, one := range op.GroupByItems {
+		GroupByItemsCP = append(GroupByItemsCP, one)
+	}
+	op.GroupByItems = GroupByItemsCP
+	return op.GroupByItems
+}
+
+// PossiblePropertiesShallowRef implements the copy-on-write usage.
+func (op *LogicalAggregation) PossiblePropertiesShallowRef() [][]*expression.Column {
+	PossiblePropertiesCP := make([][]*expression.Column, 0, len(op.PossibleProperties))
+	for _, one := range op.PossibleProperties {
+		oneCP := make([]*expression.Column, 0, len(one))
+		for _, onee := range one {
+			oneCP = append(oneCP, onee)
+		}
+		PossiblePropertiesCP = append(PossiblePropertiesCP, one)
+	}
+	op.PossibleProperties = PossiblePropertiesCP
+	return op.PossibleProperties
+}
+
+// LogicalSortShallowRef implements the copy-on-write usage.
+func (op *LogicalSort) LogicalSortShallowRef() *LogicalSort {
+	shallow := *op
+	return &shallow
+}
+
+// ByItemsShallowRef implements the copy-on-write usage.
+func (op *LogicalSort) ByItemsShallowRef() []*util.ByItems {
+	ByItemsCP := make([]*util.ByItems, 0, len(op.ByItems))
+	for _, one := range op.ByItems {
+		ByItemsCP = append(ByItemsCP, one)
+	}
+	op.ByItems = ByItemsCP
+	return op.ByItems
 }

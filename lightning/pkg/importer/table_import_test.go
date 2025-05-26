@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -65,6 +66,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/mock/gomock"
 )
 
@@ -1249,6 +1251,10 @@ func (m *mockPDClient) GetLeaderAddr() string {
 	return m.leaderAddr
 }
 
+func (m *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return m
+}
+
 func (s *tableRestoreSuite) TestCheckClusterRegion() {
 	type testCase struct {
 		stores         pdhttp.StoresInfo
@@ -1259,7 +1265,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 
 	makeRegions := func(regionCnt int, storeID int64) []pdhttp.RegionInfo {
 		var regions []pdhttp.RegionInfo
-		for i := 0; i < regionCnt; i++ {
+		for range regionCnt {
 			regions = append(regions, pdhttp.RegionInfo{Peers: []pdhttp.RegionPeer{{StoreID: storeID}}})
 		}
 		return regions
@@ -1271,7 +1277,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				{Store: pdhttp.MetaStore{ID: 1}, Status: pdhttp.StoreStatus{RegionCount: 200}},
 			}},
 			emptyRegions: pdhttp.RegionsInfo{
-				Regions: append([]pdhttp.RegionInfo(nil), makeRegions(100, 1)...),
+				Regions: slices.Clone(makeRegions(100, 1)),
 			},
 			expectMsgs:     []string{".*Cluster doesn't have too many empty regions.*", ".*Cluster region distribution is balanced.*"},
 			expectErrorCnt: 0,
@@ -1283,10 +1289,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				{Store: pdhttp.MetaStore{ID: 3}, Status: pdhttp.StoreStatus{RegionCount: 2500}},
 			}},
 			emptyRegions: pdhttp.RegionsInfo{
-				Regions: append(append(append([]pdhttp.RegionInfo(nil),
-					makeRegions(600, 1)...),
-					makeRegions(300, 2)...),
-					makeRegions(1200, 3)...),
+				Regions: slices.Concat(makeRegions(600, 1), makeRegions(300, 2), makeRegions(1200, 3)),
 			},
 			expectMsgs: []string{
 				".*TiKV stores \\(3\\) contains more than 1000 empty regions respectively.*",
@@ -1544,7 +1547,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 		// we expect the check failed.
 		{
 			nil,
-			"TiDB schema `db1`.`table1` has 2 columns,and data file has 1 columns, but column colb are missing(.*)",
+			"TiDB schema `db1`.`table1` has 2 columns, and data file has 1 columns, but column colb is missing(.*)",
 			1,
 			false,
 			map[string]*checkpoints.TidbDBInfo{

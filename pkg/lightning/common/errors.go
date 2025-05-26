@@ -82,6 +82,7 @@ var (
 	ErrKVServerIsBusy        = errors.Normalize("server is busy", errors.RFCCodeText("Lightning:KV:ServerIsBusy"))
 	ErrKVRegionNotFound      = errors.Normalize("region not found", errors.RFCCodeText("Lightning:KV:RegionNotFound"))
 	ErrKVReadIndexNotReady   = errors.Normalize("read index not ready", errors.RFCCodeText("Lightning:KV:ReadIndexNotReady"))
+	ErrKVDiskFull            = errors.Normalize("store disk full", errors.RFCCodeText("Lightning:KV:StoreDiskFull"))
 	ErrKVIngestFailed        = errors.Normalize("ingest tikv failed", errors.RFCCodeText("Lightning:KV:ErrKVIngestFailed"))
 	ErrKVRaftProposalDropped = errors.Normalize("raft proposal dropped", errors.RFCCodeText("Lightning:KV:ErrKVRaftProposalDropped"))
 	ErrNoLeader              = errors.Normalize("write to tikv with no leader returned, region '%d', leader: %d", errors.RFCCodeText("Lightning:KV:ErrNoLeader"))

@@ -59,8 +59,8 @@ def	executor__infoschema_reader	v1	VIEW	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	
 drop table if exists t;
 create table t (bit bit(10) DEFAULT b'100');
 SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'executor__infoschema_reader' AND TABLE_NAME = 't';
-TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	COLUMN_DEFAULT	IS_NULLABLE	DATA_TYPE	CHARACTER_MAXIMUM_LENGTH	CHARACTER_OCTET_LENGTH	NUMERIC_PRECISION	NUMERIC_SCALE	DATETIME_PRECISION	CHARACTER_SET_NAME	COLLATION_NAME	COLUMN_TYPE	COLUMN_KEY	EXTRA	PRIVILEGES	COLUMN_COMMENT	GENERATION_EXPRESSION
-def	executor__infoschema_reader	t	bit	1	b'100'	YES	bit	NULL	NULL	10	0	NULL	NULL	NULL	bit(10)			select,insert,update,references		
+TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	COLUMN_DEFAULT	IS_NULLABLE	DATA_TYPE	CHARACTER_MAXIMUM_LENGTH	CHARACTER_OCTET_LENGTH	NUMERIC_PRECISION	NUMERIC_SCALE	DATETIME_PRECISION	CHARACTER_SET_NAME	COLLATION_NAME	COLUMN_TYPE	COLUMN_KEY	EXTRA	PRIVILEGES	COLUMN_COMMENT	GENERATION_EXPRESSION	SRS_ID
+def	executor__infoschema_reader	t	bit	1	b'100'	YES	bit	NULL	NULL	10	0	NULL	NULL	NULL	bit(10)			select,insert,update,references			NULL
 drop table if exists t;
 set time_zone='+08:00';
 drop table if exists t;
@@ -272,8 +272,8 @@ drop table if exists t;
 CREATE TABLE t ( id int DEFAULT NULL);
 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`1.1.1.1` SQL SECURITY DEFINER VIEW `v_test` (`type`) AS SELECT NULL AS `type` FROM `t` AS `f`;
 select * from  information_schema.columns where TABLE_SCHEMA = 'executor__infoschema_reader' and TABLE_NAME = 'v_test';
-TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	COLUMN_DEFAULT	IS_NULLABLE	DATA_TYPE	CHARACTER_MAXIMUM_LENGTH	CHARACTER_OCTET_LENGTH	NUMERIC_PRECISION	NUMERIC_SCALE	DATETIME_PRECISION	CHARACTER_SET_NAME	COLLATION_NAME	COLUMN_TYPE	COLUMN_KEY	EXTRA	PRIVILEGES	COLUMN_COMMENT	GENERATION_EXPRESSION
-def	executor__infoschema_reader	v_test	type	1	NULL	YES	binary	0	0	NULL	NULL	NULL	NULL	NULL	binary(0)			select,insert,update,references		
+TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	COLUMN_DEFAULT	IS_NULLABLE	DATA_TYPE	CHARACTER_MAXIMUM_LENGTH	CHARACTER_OCTET_LENGTH	NUMERIC_PRECISION	NUMERIC_SCALE	DATETIME_PRECISION	CHARACTER_SET_NAME	COLLATION_NAME	COLUMN_TYPE	COLUMN_KEY	EXTRA	PRIVILEGES	COLUMN_COMMENT	GENERATION_EXPRESSION	SRS_ID
+def	executor__infoschema_reader	v_test	type	1	NULL	YES	binary	0	0	NULL	NULL	NULL	NULL	NULL	binary(0)			select,insert,update,references			NULL
 drop user if exists usageuser;
 create user usageuser;
 SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'";
@@ -464,3 +464,54 @@ select table_name from information_schema.referential_constraints where table_na
 table_name
 select table_name from information_schema.referential_constraints where constraint_schema = 'a' and constraint_schema = 'b';
 table_name
+drop database if exists test1;
+create database test1;
+use test1;
+create table t10(id int);
+create table t11 like t10;
+create table t12 like t10;
+create table t13 like t10;
+create table t14 like t10;
+create table t15 like t10;
+create table t16 like t10;
+create table t17 like t10;
+create table t18 like t10;
+create table t19 like t10;
+drop database if exists test2;
+create database test2;
+use test2;
+create table t20(id int);
+create table t21 like t20;
+create table t22 like t20;
+create table t23 like t20;
+create table t24 like t20;
+create table t25 like t20;
+create table t26 like t20;
+create table t27 like t20;
+create table t28 like t20;
+create table t29 like t20;
+SELECT table_schema, table_name,data_length FROM information_schema.TABLES
+WHERE (TABLE_NAME IN ('t10','t11','t12','t13','t14','t15','t16','t17','t18','t19','t20','t21','t22','t23','t24','t25','t26','t27','t28','t29'));
+table_schema	table_name	data_length
+test1	t10	0
+test1	t11	0
+test1	t12	0
+test1	t13	0
+test1	t14	0
+test1	t15	0
+test1	t16	0
+test1	t17	0
+test1	t18	0
+test1	t19	0
+test2	t20	0
+test2	t21	0
+test2	t22	0
+test2	t23	0
+test2	t24	0
+test2	t25	0
+test2	t26	0
+test2	t27	0
+test2	t28	0
+test2	t29	0
+drop database test1;
+drop database test2;

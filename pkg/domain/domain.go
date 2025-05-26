@@ -18,8 +18,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"math/rand"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	disthandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -69,6 +72,7 @@ import (
 	metrics2 "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
@@ -163,8 +167,13 @@ type Domain struct {
 	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
 	schemaLease     time.Duration
+	// advancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
+	// some misuse of the session to avoid potential bugs.
+	// It is recommended to use this pool instead of `sysSessionPool`.
+	advancedSysSessionPool *syssession.AdvancedSessionPool
 	// Note: If you no longer need the session, you must call Destroy to release it.
 	// Otherwise, the session will be leaked. Because there is a strong reference from the domain to the session.
+	// Deprecated: Use `advancedSysSessionPool` instead.
 	sysSessionPool util.DestroyableSessionPool
 	exit           chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
@@ -256,7 +265,7 @@ func (df *deferFn) check() {
 
 	// iterate the slice, call the defer function and remove it.
 	rm := 0
-	for i := 0; i < len(df.data); i++ {
+	for i := range df.data {
 		record := &df.data[i]
 		if now.After(record.fire) {
 			record.fn()
@@ -659,7 +668,7 @@ func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, new
 		}
 		diffTypes = append(diffTypes, diff.Type.String())
 		phyTblIDs = append(phyTblIDs, ids...)
-		for i := 0; i < len(ids); i++ {
+		for range ids {
 			actions = append(actions, uint64(diff.Type))
 		}
 	}
@@ -1043,7 +1052,7 @@ func (do *Domain) refreshMDLCheckTableInfo(ctx context.Context) {
 	do.mdlCheckTableInfo.newestVer = domainSchemaVer
 	do.mdlCheckTableInfo.jobsVerMap = make(map[int64]int64, len(rows))
 	do.mdlCheckTableInfo.jobsIDsMap = make(map[int64]string, len(rows))
-	for i := 0; i < len(rows); i++ {
+	for i := range rows {
 		do.mdlCheckTableInfo.jobsVerMap[rows[i].GetInt64(0)] = rows[i].GetInt64(1)
 		do.mdlCheckTableInfo.jobsIDsMap[rows[i].GetInt64(0)] = rows[i].GetString(2)
 	}
@@ -1087,12 +1096,8 @@ func (do *Domain) mdlCheckLoop() {
 
 		jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
 		jobsIDsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIDsMap))
-		for k, v := range do.mdlCheckTableInfo.jobsVerMap {
-			jobsVerMap[k] = v
-		}
-		for k, v := range do.mdlCheckTableInfo.jobsIDsMap {
-			jobsIDsMap[k] = v
-		}
+		maps.Copy(jobsVerMap, do.mdlCheckTableInfo.jobsVerMap)
+		maps.Copy(jobsIDsMap, do.mdlCheckTableInfo.jobsIDsMap)
 		do.mdlCheckTableInfo.mu.Unlock()
 
 		jobNeedToSync = true
@@ -1304,7 +1309,8 @@ func (do *Domain) Close() {
 	}
 
 	do.sysSessionPool.Close()
-	variable.UnregisterStatistics(do.BindHandle())
+	do.advancedSysSessionPool.Close()
+	variable.UnregisterStatistics(do.BindingHandle())
 	if do.onClose != nil {
 		do.onClose()
 	}
@@ -1369,12 +1375,25 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 		mdlCheckCh: make(chan struct{}),
 	}
 
+	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(capacity, func() (syssession.SessionContext, error) {
+		r, err := factory()
+		if err != nil {
+			return nil, err
+		}
+		sctx, ok := r.(syssession.SessionContext)
+		intest.Assert(ok, "type: %T should be cast to syssession.SessionContext", r)
+		if !ok {
+			return nil, errors.Errorf("type: %T cannot be cast to syssession.SessionContext", r)
+		}
+		return sctx, nil
+	})
 	do.infoCache = infoschema.NewCache(do, int(vardef.SchemaVersionCacheLimit.Load()))
 	do.stopAutoAnalyze.Store(false)
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(schemaLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
-	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
+	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit,
+		&memoryusagealarm.TiDBConfigProvider{})
 	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sysproctrack.TrackProc)}
 	do.initDomainSysVars()
@@ -1720,11 +1739,8 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		})
 	}
 	enabled := true
-	for _, s := range svrIDsInThisZone[enabledCount:] {
-		if s == serverInfo.ID {
-			enabled = false
-			break
-		}
+	if slices.Contains(svrIDsInThisZone[enabledCount:], serverInfo.ID) {
+		enabled = false
 	}
 
 	if variable.SetEnableAdaptiveReplicaRead(enabled) {
@@ -1763,6 +1779,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	if err != nil {
 		return err
 	}
+	disthandle.SetNodeResource(nodeRes)
 	executorManager, err := taskexecutor.NewManager(managerCtx, serverID, taskManager, nodeRes)
 	if err != nil {
 		return err
@@ -1873,8 +1890,16 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 }
 
 // SysSessionPool returns the system session pool.
+// Deprecated: Use AdvancedSysSessionPool instead.
 func (do *Domain) SysSessionPool() util.DestroyableSessionPool {
 	return do.sysSessionPool
+}
+
+// AdvancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
+// some misuse of the session to avoid potential bugs.
+// It is recommended to use this pool instead of `sysSessionPool`.
+func (do *Domain) AdvancedSysSessionPool() syssession.Pool {
+	return do.advancedSysSessionPool
 }
 
 // SysProcTracker returns the system processes tracker.
@@ -1913,8 +1938,9 @@ func (do *Domain) GetPDHTTPClient() pdhttp.Client {
 	return nil
 }
 
-func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
+func (do *Domain) decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
 	var msg PrivilegeEvent
+	isNewVersionEvents := false
 	for _, event := range resp.Events {
 		if event.Kv != nil {
 			val := event.Kv.Value
@@ -1924,6 +1950,11 @@ func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
 				if err != nil {
 					logutil.BgLogger().Warn("decodePrivilegeEvent unmarshal fail", zap.Error(err))
 					break
+				}
+				isNewVersionEvents = true
+				if do.ServerID() != 0 && tmp.ServerID == do.ServerID() {
+					// Skip the events from this TiDB-Server
+					continue
 				}
 				if tmp.All {
 					msg.All = true
@@ -1937,10 +1968,39 @@ func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
 
 	// In case old version triggers the event, the event value is empty,
 	// Then we fall back to the old way: reload all the users.
-	if len(msg.UserList) == 0 {
+	if len(msg.UserList) == 0 && !isNewVersionEvents {
 		msg.All = true
 	}
 	return msg
+}
+
+func (do *Domain) batchReadMoreData(ch clientv3.WatchChan, event PrivilegeEvent) PrivilegeEvent {
+	timer := time.NewTimer(5 * time.Millisecond)
+	defer timer.Stop()
+	const maxBatchSize = 128
+	for range maxBatchSize {
+		select {
+		case resp, ok := <-ch:
+			if !ok {
+				return event
+			}
+			tmp := do.decodePrivilegeEvent(resp)
+			if tmp.All {
+				event.All = true
+			} else {
+				if !event.All {
+					event.UserList = append(event.UserList, tmp.UserList...)
+				}
+			}
+			succ := timer.Reset(5 * time.Millisecond)
+			if !succ {
+				return event
+			}
+		case <-timer.C:
+			return event
+		}
+	}
+	return event
 }
 
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
@@ -1952,7 +2012,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	do.privHandle = privileges.NewHandle(sctx.GetRestrictedSQLExecutor(), sctx.GetSessionVars().GlobalVarsAccessor)
+	do.privHandle = privileges.NewHandle(do.SysSessionPool(), sctx.GetSessionVars().GlobalVarsAccessor)
 
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
@@ -1976,7 +2036,8 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			case resp, ok := <-watchCh:
 				if ok {
 					count = 0
-					event = decodePrivilegeEvent(resp)
+					event = do.decodePrivilegeEvent(resp)
+					event = do.batchReadMoreData(watchCh, event)
 				} else {
 					if do.ctx.Err() == nil {
 						logutil.BgLogger().Error("load privilege loop watch channel closed")
@@ -1990,6 +2051,12 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 				}
 			case <-time.After(duration):
 				event.All = true
+				event = do.batchReadMoreData(watchCh, event)
+			}
+
+			// All events are from this TiDB-Server, skip them
+			if !event.All && len(event.UserList) == 0 {
+				continue
 			}
 
 			err := privReloadEvent(do.privHandle, &event)
@@ -2138,20 +2205,20 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
 }
 
-// BindHandle returns domain's bindHandle.
-func (do *Domain) BindHandle() bindinfo.GlobalBindingHandle {
+// BindingHandle returns domain's bindHandle.
+func (do *Domain) BindingHandle() bindinfo.BindingHandle {
 	v := do.bindHandle.Load()
 	if v == nil {
 		return nil
 	}
-	return v.(bindinfo.GlobalBindingHandle)
+	return v.(bindinfo.BindingHandle)
 }
 
 // InitBindingHandle create a goroutine loads BindInfo in a loop, it should
 // be called only once in BootstrapSession.
 func (do *Domain) InitBindingHandle() error {
-	do.bindHandle.Store(bindinfo.NewGlobalBindingHandle(do.sysSessionPool))
-	err := do.BindHandle().LoadFromStorageToCache(true)
+	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool))
+	err := do.BindingHandle().LoadFromStorageToCache(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -2182,11 +2249,11 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 		for {
 			select {
 			case <-do.exit:
-				do.BindHandle().Close()
+				do.BindingHandle().Close()
 				owner.Close()
 				return
 			case <-bindWorkerTicker.C:
-				bindHandle := do.BindHandle()
+				bindHandle := do.BindingHandle()
 				err := bindHandle.LoadFromStorageToCache(false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
@@ -2195,7 +2262,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				if !owner.IsOwner() {
 					continue
 				}
-				err := do.BindHandle().GCGlobalBinding()
+				err := do.BindingHandle().GCBinding()
 				if err != nil {
 					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
 				}
@@ -2222,7 +2289,7 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 		status: taskStatus,
 	}
 	do.planReplayerHandle.planReplayerTaskDumpHandle.workers = make([]*planReplayerTaskDumpWorker, 0)
-	for i := 0; i < len(workersSctxs); i++ {
+	for i := range workersSctxs {
 		worker := &planReplayerTaskDumpWorker{
 			ctx:    ctx,
 			sctx:   workersSctxs[i],
@@ -2408,12 +2475,11 @@ func (do *Domain) StatsHandle() *handle.Handle {
 }
 
 // CreateStatsHandle is used only for test.
-func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
+func (do *Domain) CreateStatsHandle(ctx context.Context, initStatsCtx sessionctx.Context) error {
 	h, err := handle.NewHandle(
 		ctx,
 		initStatsCtx,
 		do.statsLease,
-		do.InfoSchema(),
 		do.sysSessionPool,
 		&do.sysProcesses,
 		do.ddlNotifier,
@@ -2443,24 +2509,22 @@ func (do *Domain) SetStatsUpdating(val bool) {
 }
 
 // LoadAndUpdateStatsLoop loads and updates stats info.
-func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx sessionctx.Context) error {
-	if err := do.UpdateTableStatsLoop(ctxs[0], initStatsCtx); err != nil {
+func (do *Domain) LoadAndUpdateStatsLoop(concurrency int, initStatsCtx sessionctx.Context) error {
+	if err := do.UpdateTableStatsLoop(initStatsCtx); err != nil {
 		return err
 	}
-	do.StartLoadStatsSubWorkers(ctxs[1:])
+	do.StartLoadStatsSubWorkers(concurrency)
 	return nil
 }
 
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
-func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
-	ctx.GetSessionVars().InRestrictedSQL = true
+func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
 	statsHandle, err := handle.NewHandle(
-		ctx,
+		do.ctx,
 		initStatsCtx,
 		do.statsLease,
-		do.InfoSchema(),
 		do.sysSessionPool,
 		&do.sysProcesses,
 		do.ddlNotifier,
@@ -2568,13 +2632,13 @@ func quitStatsOwner(do *Domain, mgr owner.Manager) {
 }
 
 // StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
-func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
+func (do *Domain) StartLoadStatsSubWorkers(concurrency int) {
 	statsHandle := do.StatsHandle()
-	for _, ctx := range ctxList {
+	for range concurrency {
 		do.wg.Add(1)
-		go statsHandle.SubLoadWorker(ctx, do.exit, do.wg)
+		go statsHandle.SubLoadWorker(do.exit, do.wg)
 	}
-	logutil.BgLogger().Info("start load stats sub workers", zap.Int("worker count", len(ctxList)))
+	logutil.BgLogger().Info("start load stats sub workers", zap.Int("workerCount", concurrency))
 }
 
 // NewOwnerManager returns the owner manager for use outside of the domain.
@@ -2609,9 +2673,9 @@ func (do *Domain) initStats(ctx context.Context) {
 	}
 	initstats.InitStatsPercentage.Store(100)
 	if err != nil {
-		logutil.ErrVerboseLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
+		statslogutil.StatsLogger().Error("Init stats failed", zap.Bool("isLiteInitStats", liteInitStats), zap.Duration("duration", time.Since(t)), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("init stats info time", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)))
+		statslogutil.StatsLogger().Info("Init stats succeed", zap.Bool("isLiteInitStats", liteInitStats), zap.Duration("duration", time.Since(t)))
 	}
 }
 
@@ -2671,7 +2735,7 @@ func (do *Domain) asyncLoadHistogram() {
 		case <-cleanupTicker.C:
 			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
 			if err != nil {
-				logutil.ErrVerboseLogger().Warn("load histograms failed", zap.Error(err))
+				statslogutil.StatsErrVerboseSampleLogger().Warn("Load histograms failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return
@@ -2828,7 +2892,7 @@ func (do *Domain) autoAnalyzeWorker() {
 	analyzeTicker := time.NewTicker(do.statsLease)
 	defer func() {
 		analyzeTicker.Stop()
-		logutil.BgLogger().Info("autoAnalyzeWorker exited.")
+		statslogutil.StatsLogger().Info("autoAnalyzeWorker exited.")
 	}()
 	for {
 		select {
@@ -2960,6 +3024,7 @@ const (
 // TiDB old version do not use no such message.
 type PrivilegeEvent struct {
 	All      bool
+	ServerID uint64
 	UserList []string
 }
 
@@ -2980,6 +3045,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 	// Because we need to tell other TiDB instances to update privilege data, say, we're changing the
 	// password using a special TiDB instance and want the new password to take effect.
 	if do.etcdClient != nil {
+		event.ServerID = do.serverID
 		data, err := json.Marshal(event)
 		if err != nil {
 			return errors.Trace(err)
@@ -3009,8 +3075,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 // synchronously so that the effect is immediate.
 func (do *Domain) NotifyUpdateSysVarCache(updateLocal bool) {
 	if do.etcdClient != nil {
-		row := do.etcdClient.KV
-		_, err := row.Put(context.Background(), sysVarCacheKey, "")
+		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, ddlutil.KeyOpDefaultRetryCnt, sysVarCacheKey, "")
 		if err != nil {
 			logutil.BgLogger().Warn("notify update sysvar cache failed", zap.Error(err))
 		}
@@ -3246,7 +3311,7 @@ func (*Domain) proposeServerID(ctx context.Context, conflictCnt int) (uint64, er
 				}
 			}
 
-			for retry := 0; retry < 15; retry++ {
+			for range 15 {
 				randServerID := randomServerID(1, globalconn.MaxServerID32)
 				if _, ok := serverIDs[randServerID]; !ok {
 					return randServerID, nil
@@ -3361,7 +3426,7 @@ func (do *Domain) serverIDKeeper() {
 
 // StartTTLJobManager creates and starts the ttl job manager
 func (do *Domain) StartTTLJobManager() {
-	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
+	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.advancedSysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
 	do.ttlJobManager.Store(ttlJobManager)
 	ttlJobManager.Start()
 }
@@ -3454,10 +3519,11 @@ func (do *Domain) planCacheEvictTrigger() {
 // SetupWorkloadBasedLearningWorker sets up all of the workload based learning workers.
 func (do *Domain) SetupWorkloadBasedLearningWorker() {
 	wbLearningHandle := workloadlearning.NewWorkloadLearningHandle(do.sysSessionPool)
+	wbCacheWorker := workloadlearning.NewWLCacheWorker(do.sysSessionPool)
 	// Start the workload based learning worker to analyze the read workload by statement_summary.
 	do.wg.Run(
 		func() {
-			do.readTableCostWorker(wbLearningHandle)
+			do.readTableCostWorker(wbLearningHandle, wbCacheWorker)
 		},
 		"readTableCostWorker",
 	)
@@ -3465,7 +3531,7 @@ func (do *Domain) SetupWorkloadBasedLearningWorker() {
 }
 
 // readTableCostWorker is a background worker that periodically analyze the read path table cost by statement_summary.
-func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle) {
+func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle, wbCacheWorker *workloadlearning.WLCacheWorker) {
 	// Recover the panic and log the error when worker exit.
 	defer util.Recover(metrics.LabelDomain, "readTableCostWorker", nil, false)
 	readTableCostTicker := time.NewTicker(vardef.WorkloadBasedLearningInterval.Load())
@@ -3477,7 +3543,8 @@ func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle)
 		select {
 		case <-readTableCostTicker.C:
 			if vardef.EnableWorkloadBasedLearning.Load() && do.statsOwner.IsOwner() {
-				wbLearningHandle.HandleReadTableCost(do.InfoSchema())
+				wbLearningHandle.HandleTableReadCost(do.InfoSchema())
+				wbCacheWorker.UpdateTableReadCostCache()
 			}
 		case <-do.exit:
 			return

@@ -197,6 +197,33 @@ func TestLoadGlobalStats(t *testing.T) {
 	require.Equal(t, 3, len(loadedStats.Partitions)) // p0, p1, global
 }
 
+func TestLastStatsHistUpdateVersionAfterLoadStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, key(a))")
+	tk.MustExec("insert into t values (1), (2)")
+	tk.MustExec("analyze table t")
+
+	statsHandle := dom.StatsHandle()
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	statsTbl := statsHandle.GetTableStats(tableInfo)
+	require.Greater(t, statsTbl.LastStatsHistVersion, uint64(0))
+	origLastStatsHistVersion := statsTbl.LastStatsHistVersion
+
+	jsonTbl := getStatsJSON(t, dom, "test", "t")
+	dom.StatsHandle().Clear()
+	require.Nil(t, statsHandle.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0))
+	require.NoError(t, statsHandle.Update(context.Background(), dom.InfoSchema()))
+	statsTbl = statsHandle.GetTableStats(tableInfo)
+	require.Greater(t, statsTbl.LastStatsHistVersion, origLastStatsHistVersion)
+}
+
 func TestLoadPartitionStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -206,7 +233,7 @@ func TestLoadPartitionStats(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 8")
 	vals := make([]string, 0, 5000)
-	for i := 0; i < 5000; i++ {
+	for i := range 5000 {
 		vals = append(vals, fmt.Sprintf("(%v)", i))
 	}
 	tk.MustExec("insert into t values " + strings.Join(vals, ","))
@@ -298,7 +325,7 @@ func TestLoadPartitionStatsErrPanic(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 8")
 	vals := make([]string, 0, 5000)
-	for i := 0; i < 5000; i++ {
+	for i := range 5000 {
 		vals = append(vals, fmt.Sprintf("(%v)", i))
 	}
 	tk.MustExec("insert into t values " + strings.Join(vals, ","))
@@ -404,13 +431,13 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 
 	// Insert 30 fake data
 	fakeData := make([][]byte, 0, 30)
-	for i := 0; i < 30; i++ {
-		fakeData = append(fakeData, []byte(fmt.Sprintf("%01024d", i)))
+	for i := range 30 {
+		fakeData = append(fakeData, fmt.Appendf(nil, "%01024d", i))
 	}
 	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
 
 	stat := h.GetTableStats(tableInfo)
-	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, 0, &stat.GetCol(tableInfo.Columns[0].ID).Histogram, cms, nil, statistics.Version1, false, handleutil.StatsMetaHistorySourceLoadStats)
+	err = h.SaveColOrIdxStatsToStorage(tableInfo.ID, 1, 0, 0, &stat.GetCol(tableInfo.Columns[0].ID).Histogram, cms, nil, statistics.Version1, false, handleutil.StatsMetaHistorySourceLoadStats)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(context.Background(), is))
 

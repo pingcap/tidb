@@ -33,7 +33,7 @@ import (
 type LogicalSort struct {
 	BaseLogicalPlan
 
-	ByItems []*util.ByItems `hash64-equals:"true"`
+	ByItems []*util.ByItems `hash64-equals:"true" shallow-ref:"true"`
 }
 
 // Init initializes LogicalSort.
@@ -158,6 +158,14 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 // ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
+
+// GetUsedCols extracts all of the Columns used by agg including ByItems.
+func (ls *LogicalSort) GetUsedCols() (usedCols []*expression.Column) {
+	for _, byItem := range ls.ByItems {
+		usedCols = append(usedCols, expression.ExtractColumns(byItem.Expr)...)
+	}
+	return usedCols
+}
 
 func appendSortPassByItemsTraceStep(sort *LogicalSort, topN *LogicalTopN, opt *optimizetrace.LogicalOptimizeOp) {
 	ectx := sort.SCtx().GetExprCtx().GetEvalCtx()

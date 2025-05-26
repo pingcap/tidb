@@ -395,6 +395,8 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			break
 		}
 	}
+	failpoint.InjectCall("afterHandleBackfillTask", task.jobID)
+
 	logutil.DDLLogger().Info("backfill worker finish task",
 		zap.Stringer("worker", w), zap.Stringer("task", task),
 		zap.Int("added count", result.addedCount),
@@ -485,6 +487,7 @@ func loadTableRanges(
 	t table.PhysicalTable,
 	store kv.Storage,
 	startKey, endKey kv.Key,
+	splitKeys []kv.Key,
 	limit int,
 ) ([]kv.KeyRange, error) {
 	if len(startKey) == 0 && len(endKey) == 0 {
@@ -511,7 +514,11 @@ func loadTableRanges(
 	maxSleep := 10000 // ms
 	bo := tikv.NewBackofferWithVars(ctx, maxSleep, nil)
 	var ranges []kv.KeyRange
-	err := util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (bool, error) {
+	maxRetryTimes := util.DefaultMaxRetries
+	failpoint.Inject("loadTableRangesNoRetry", func() {
+		maxRetryTimes = 1
+	})
+	err := util.RunWithRetry(maxRetryTimes, util.RetryInterval, func() (bool, error) {
 		logutil.DDLLogger().Info("load table ranges from PD",
 			zap.Int64("physicalTableID", t.GetPhysicalID()),
 			zap.String("start key", hex.EncodeToString(startKey)),
@@ -539,6 +546,7 @@ func loadTableRanges(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	ranges = splitRangesByKeys(ranges, splitKeys)
 	logutil.DDLLogger().Info("load table ranges from PD done",
 		zap.Int64("physicalTableID", t.GetPhysicalID()),
 		zap.String("range start", hex.EncodeToString(ranges[0].StartKey)),
@@ -548,7 +556,41 @@ func loadTableRanges(
 	return ranges, nil
 }
 
+// splitRangesByKeys splits the ranges into more ranges by given split keys.
+// The split keys should be ordered.
+func splitRangesByKeys(ranges []kv.KeyRange, splitKeys []kv.Key) []kv.KeyRange {
+	if len(splitKeys) == 0 {
+		return ranges
+	}
+	ret := make([]kv.KeyRange, 0, len(ranges)+len(splitKeys))
+	for _, r := range ranges {
+		start := r.StartKey
+		finishOneRange := false
+		for !finishOneRange {
+			if len(splitKeys) == 0 {
+				break
+			}
+			split := splitKeys[0]
+			switch {
+			case split.Cmp(start) <= 0:
+				splitKeys = splitKeys[1:]
+			case split.Cmp(r.EndKey) < 0:
+				splitKeys = splitKeys[1:]
+				ret = append(ret, kv.KeyRange{StartKey: start, EndKey: split})
+				start = split
+			default:
+				finishOneRange = true
+			}
+		}
+		ret = append(ret, kv.KeyRange{StartKey: start, EndKey: r.EndKey})
+	}
+	return ret
+}
+
 func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error {
+	failpoint.Inject("validateAndFillRangesErr", func() {
+		failpoint.Return(dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("mock"))
+	})
 	if len(ranges) == 0 {
 		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]",
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
@@ -559,6 +601,10 @@ func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error 
 			s := r.StartKey
 			if len(s) == 0 || bytes.Compare(s, startKey) < 0 {
 				ranges[i].StartKey = startKey
+			} else if bytes.Compare(s, startKey) > 0 {
+				errMsg := fmt.Sprintf("get empty range at the beginning of ranges, expected %s, but got %s",
+					hex.EncodeToString(startKey), hex.EncodeToString(s))
+				return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 			}
 		}
 		if i == len(ranges)-1 {
@@ -566,12 +612,15 @@ func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error 
 			if len(e) == 0 || bytes.Compare(e, endKey) > 0 {
 				ranges[i].EndKey = endKey
 			}
+			// We don't need to check the end key because a limit may set before scanning regions.
 		}
 		if len(ranges[i].StartKey) == 0 || len(ranges[i].EndKey) == 0 {
-			return errors.Errorf("get empty start/end key in the middle of ranges")
+			return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("get empty start/end key in the middle of ranges")
 		}
 		if i > 0 && !bytes.Equal(ranges[i-1].EndKey, ranges[i].StartKey) {
-			return errors.Errorf("ranges are not continuous")
+			errMsg := fmt.Sprintf("ranges are not continuous, last end key %s, next start key %s",
+				hex.EncodeToString(ranges[i-1].EndKey), hex.EncodeToString(ranges[i].StartKey))
+			return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 		}
 	}
 	return nil
@@ -743,7 +792,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 		err error
 	)
 	if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
-		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, false)
+		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, false, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -814,20 +863,9 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 }
 
 func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) {
-	opR, opW := pipe.GetLocalIngestModeReaderAndWriter()
-	if opR == nil || opW == nil {
+	reader, writer := pipe.GetReaderAndWriter()
+	if reader == nil || writer == nil {
 		logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", job.ID))
-		return
-	}
-	reader, readerOk := opR.(*TableScanOperator)
-	writer, writerOk := opW.(*IndexIngestOperator)
-	if !readerOk || !writerOk {
-		logutil.DDLIngestLogger().Error(
-			"unexpected operator types, config can't be adjusted",
-			zap.Int64("jobID", job.ID),
-			zap.Bool("isReaderValid", readerOk),
-			zap.Bool("isWriterValid", writerOk),
-		)
 		return
 	}
 	ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
@@ -973,6 +1011,11 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		return errors.Trace(err)
 	}
 
+	var splitKeys []kv.Key
+	if reorgInfo.mergingTmpIdx {
+		splitKeys = getSplitKeysForTempIndexRanges(t.GetPhysicalID(), reorgInfo.elements)
+	}
+
 	// process result goroutine
 	eg.Go(func() error {
 		totalAddedCount := reorgInfo.Job.GetRowCount()
@@ -1008,7 +1051,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				} else {
 					totalAddedCount += int64(result.addedCount)
 				}
-				dc.getReorgCtx(reorgInfo.Job.ID).setRowCount(totalAddedCount)
 
 				keeper.updateNextKey(result.taskID, result.nextKey)
 
@@ -1032,7 +1074,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		start, end := startKey, endKey
 		taskIDAlloc := newTaskIDAllocator()
 		for {
-			kvRanges, err2 := loadTableRanges(egCtx, t, dc.store, start, end, backfillTaskChanSize)
+			kvRanges, err2 := loadTableRanges(egCtx, t, dc.store, start, end, splitKeys, backfillTaskChanSize)
 			if err2 != nil {
 				return errors.Trace(err2)
 			}

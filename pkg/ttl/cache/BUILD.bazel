@@ -22,7 +22,6 @@ go_library(
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
-        "//pkg/sessionctx",
         "//pkg/table/tables",
         "//pkg/tablecodec",
         "//pkg/ttl/session",
@@ -75,6 +74,7 @@ go_test(
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//clients/router",
         "@com_github_tikv_pd_client//opt",
+        "@com_github_tikv_pd_client//pkg/caller",
         "@org_uber_go_goleak//:goleak",
     ],
 )

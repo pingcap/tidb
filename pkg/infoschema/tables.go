@@ -218,6 +218,8 @@ const (
 	TableTiDBIndexUsage = "TIDB_INDEX_USAGE"
 	// TableTiDBPlanCache is the plan cache table.
 	TableTiDBPlanCache = "TIDB_PLAN_CACHE"
+	// TableKeyspaceMeta is the table to show the keyspace meta.
+	TableKeyspaceMeta = "KEYSPACE_META"
 )
 
 const (
@@ -346,6 +348,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableTiDBPlanCache:            autoid.InformationSchemaDBID + 97,
 	TableTiDBStatementsStats:             autoid.InformationSchemaDBID + 98,
 	ClusterTableTiDBStatementsStats:      autoid.InformationSchemaDBID + 99,
+	TableKeyspaceMeta:                    autoid.InformationSchemaDBID + 100,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -371,7 +374,7 @@ type columnInfo struct {
 func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
-	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob || col.tp == mysql.TypeLongBlob || col.tp == mysql.TypeEnum {
+	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeMediumBlob || col.tp == mysql.TypeBlob || col.tp == mysql.TypeLongBlob || col.tp == mysql.TypeEnum {
 		mCharset = charset.CharsetUTF8MB4
 		mCollation = charset.CollationUTF8MB4
 	}
@@ -379,7 +382,16 @@ func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	fieldType.SetType(col.tp)
 	fieldType.SetCharset(mCharset)
 	fieldType.SetCollate(mCollation)
-	fieldType.SetFlen(col.size)
+	switch col.tp {
+	case mysql.TypeBlob:
+		fieldType.SetFlen(1 << 16)
+	case mysql.TypeMediumBlob:
+		fieldType.SetFlen(1 << 24)
+	case mysql.TypeLongBlob:
+		fieldType.SetFlen(1 << 32)
+	default:
+		fieldType.SetFlen(col.size)
+	}
 	fieldType.SetDecimal(col.decimal)
 	fieldType.SetFlag(col.flag)
 	fieldType.SetElems(col.enumElems)
@@ -466,31 +478,33 @@ var tablesCols = []columnInfo{
 	{name: "TIDB_ROW_ID_SHARDING_INFO", tp: mysql.TypeVarchar, size: 255},
 	{name: "TIDB_PK_TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_TABLE_MODE", tp: mysql.TypeVarchar, size: 16},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/information-schema-columns-table.html
 var columnsCols = []columnInfo{
-	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512},
+	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "COLUMN_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "ORDINAL_POSITION", tp: mysql.TypeLonglong, size: 21},
-	{name: "COLUMN_DEFAULT", tp: mysql.TypeBlob, size: 196606},
+	{name: "ORDINAL_POSITION", tp: mysql.TypeLong, flag: mysql.UnsignedFlag},
+	{name: "COLUMN_DEFAULT", tp: mysql.TypeBlob},
 	{name: "IS_NULLABLE", tp: mysql.TypeVarchar, size: 3},
-	{name: "DATA_TYPE", tp: mysql.TypeVarchar, size: 64},
-	{name: "CHARACTER_MAXIMUM_LENGTH", tp: mysql.TypeLonglong, size: 21},
-	{name: "CHARACTER_OCTET_LENGTH", tp: mysql.TypeLonglong, size: 21},
-	{name: "NUMERIC_PRECISION", tp: mysql.TypeLonglong, size: 21},
-	{name: "NUMERIC_SCALE", tp: mysql.TypeLonglong, size: 21},
-	{name: "DATETIME_PRECISION", tp: mysql.TypeLonglong, size: 21},
-	{name: "CHARACTER_SET_NAME", tp: mysql.TypeVarchar, size: 32},
-	{name: "COLLATION_NAME", tp: mysql.TypeVarchar, size: 32},
-	{name: "COLUMN_TYPE", tp: mysql.TypeBlob, size: 196606},
+	{name: "DATA_TYPE", tp: mysql.TypeLongBlob},
+	{name: "CHARACTER_MAXIMUM_LENGTH", tp: mysql.TypeLonglong},
+	{name: "CHARACTER_OCTET_LENGTH", tp: mysql.TypeLonglong},
+	{name: "NUMERIC_PRECISION", tp: mysql.TypeLonglong, flag: mysql.UnsignedFlag},
+	{name: "NUMERIC_SCALE", tp: mysql.TypeLonglong, flag: mysql.UnsignedFlag},
+	{name: "DATETIME_PRECISION", tp: mysql.TypeLong, flag: mysql.UnsignedFlag},
+	{name: "CHARACTER_SET_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "COLLATION_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "COLUMN_TYPE", tp: mysql.TypeMediumBlob},
 	{name: "COLUMN_KEY", tp: mysql.TypeVarchar, size: 3},
-	{name: "EXTRA", tp: mysql.TypeVarchar, size: 45},
-	{name: "PRIVILEGES", tp: mysql.TypeVarchar, size: 80},
-	{name: "COLUMN_COMMENT", tp: mysql.TypeVarchar, size: 1024},
-	{name: "GENERATION_EXPRESSION", tp: mysql.TypeBlob, size: 589779, flag: mysql.NotNullFlag},
+	{name: "EXTRA", tp: mysql.TypeVarchar, size: 256},
+	{name: "PRIVILEGES", tp: mysql.TypeVarchar, size: 154},
+	{name: "COLUMN_COMMENT", tp: mysql.TypeBlob},
+	{name: "GENERATION_EXPRESSION", tp: mysql.TypeLongBlob, flag: mysql.NotNullFlag},
+	{name: "SRS_ID", tp: mysql.TypeLong, flag: mysql.UnsignedFlag},
 }
 
 var columnStatisticsCols = []columnInfo{
@@ -1840,6 +1854,12 @@ var tablePlanCache = []columnInfo{
 	{name: "LAST_ACTIVE_TIME", tp: mysql.TypeDatetime, size: 19},
 }
 
+var tableKeyspaceMetaCols = []columnInfo{
+	{name: "KEYSPACE_NAME", tp: mysql.TypeVarchar, size: 128},
+	{name: "KEYSPACE_ID", tp: mysql.TypeVarchar, size: 64},
+	{name: "CONFIG", tp: mysql.TypeJSON, size: types.UnspecifiedLength},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2485,6 +2505,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableKeywords:                           tableKeywords,
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
 	TableTiDBPlanCache:                      tablePlanCache,
+	TableKeyspaceMeta:                       tableKeyspaceMetaCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {

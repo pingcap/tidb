@@ -36,7 +36,7 @@ func TestTTLStatusCache(t *testing.T) {
 	conn := server.CreateMockConn(t, sv)
 	sctx := conn.Context().Session
 	tk := testkit.NewTestKitWithSession(t, store, sctx)
-	ttlSession := session.NewSession(sctx, tk.Session(), func(_ session.Session) {})
+	ttlSession := session.NewSession(sctx, func() {})
 
 	isc := cache.NewTableStatusCache(time.Hour)
 

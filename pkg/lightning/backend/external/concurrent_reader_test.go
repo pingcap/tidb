@@ -16,6 +16,7 @@ package external
 
 import (
 	"context"
+	goerrors "errors"
 	"io"
 	"testing"
 	"time"
@@ -70,7 +71,7 @@ func TestConcurrentRead(t *testing.T) {
 	for {
 		bs, err := rd.read(bufs)
 		if err != nil {
-			if err == io.EOF {
+			if goerrors.Is(err, io.EOF) {
 				break
 			}
 			require.NoError(t, err)
