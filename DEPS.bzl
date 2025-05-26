@@ -1500,6 +1500,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_creasty_defaults",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/creasty/defaults",
+        sha256 = "d9984bcd4b7326a6066f58bc94b46fe8657e50e1ba0a3ef6eb592b0ff96e6712",
+        strip_prefix = "github.com/creasty/defaults@v1.8.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/creasty/defaults/com_github_creasty_defaults-v1.8.0.zip",
+            "http://ats.apps.svc/gomod/github.com/creasty/defaults/com_github_creasty_defaults-v1.8.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/creasty/defaults/com_github_creasty_defaults-v1.8.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/creasty/defaults/com_github_creasty_defaults-v1.8.0.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_curioswitch_go_reassign",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/curioswitch/go-reassign",
@@ -3024,26 +3037,26 @@ def go_deps():
         name = "com_github_golang_jwt_jwt_v4",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/golang-jwt/jwt/v4",
-        sha256 = "ec5ee69a31fd478fc197fddce7c06dad1abe7543095a55c4ee6546ae79d99a0f",
-        strip_prefix = "github.com/golang-jwt/jwt/v4@v4.5.2",
+        sha256 = "a05e4849f6b52d84154e9bc37fca7f340bb85d9cce2ce180a09ae70758f6890c",
+        strip_prefix = "github.com/golang-jwt/jwt/v4@v4.5.1",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.2.zip",
-            "http://ats.apps.svc/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.2.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.2.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.2.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.1.zip",
+            "http://ats.apps.svc/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.1.zip",
         ],
     )
     go_repository(
         name = "com_github_golang_jwt_jwt_v5",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/golang-jwt/jwt/v5",
-        sha256 = "278980d9e52498b7c54baf21fed203b942aa1d08b7f62eec494110b61b6fd3c9",
-        strip_prefix = "github.com/golang-jwt/jwt/v5@v5.2.2",
+        sha256 = "ad5cdc5c6bac562a2b890e96347208ffdb30a940243b558465ab7de90913a180",
+        strip_prefix = "github.com/golang-jwt/jwt/v5@v5.2.1",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golang-jwt/jwt/v5/com_github_golang_jwt_jwt_v5-v5.2.2.zip",
-            "http://ats.apps.svc/gomod/github.com/golang-jwt/jwt/v5/com_github_golang_jwt_jwt_v5-v5.2.2.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/golang-jwt/jwt/v5/com_github_golang_jwt_jwt_v5-v5.2.2.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golang-jwt/jwt/v5/com_github_golang_jwt_jwt_v5-v5.2.2.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golang-jwt/jwt/v5/com_github_golang_jwt_jwt_v5-v5.2.1.zip",
+            "http://ats.apps.svc/gomod/github.com/golang-jwt/jwt/v5/com_github_golang_jwt_jwt_v5-v5.2.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/golang-jwt/jwt/v5/com_github_golang_jwt_jwt_v5-v5.2.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golang-jwt/jwt/v5/com_github_golang_jwt_jwt_v5-v5.2.1.zip",
         ],
     )
     go_repository(
@@ -4303,13 +4316,13 @@ def go_deps():
         name = "com_github_joechenrh_arrow_go_v18",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/joechenrh/arrow-go/v18",
-        sha256 = "f0cfa403295cb81867af7282c5593654c2c659751460dc5d183560528c479fde",
-        strip_prefix = "github.com/joechenrh/arrow-go/v18@v18.0.0-20250215045230-203e420514b7",
+        sha256 = "801a70a732e926caee0cf27b99c95267e6fa7d99deec1e64210d014bd58ab0ae",
+        strip_prefix = "github.com/joechenrh/arrow-go/v18@v18.0.0-20250305032250-07d568e83cc0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250215045230-203e420514b7.zip",
-            "http://ats.apps.svc/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250215045230-203e420514b7.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250215045230-203e420514b7.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250215045230-203e420514b7.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250305032250-07d568e83cc0.zip",
+            "http://ats.apps.svc/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250305032250-07d568e83cc0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250305032250-07d568e83cc0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250305032250-07d568e83cc0.zip",
         ],
     )
     go_repository(
