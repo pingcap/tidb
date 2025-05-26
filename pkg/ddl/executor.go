@@ -4524,15 +4524,11 @@ func getIdentKey(ident ast.Ident) string {
 }
 
 // getAnonymousIndexPrefix returns the prefix for anonymous index name.
-// Column name of vector/fulltext index IndexPartSpecifications is nil,
-// so we need a different prefix to distinguish between vector/fulltext
-// index and expression index.
-func getAnonymousIndexPrefix(columnarIndexType model.ColumnarIndexType) string {
-	switch columnarIndexType {
-	case model.ColumnarIndexTypeVector:
+// Column name of vector index IndexPartSpecifications is nil,
+// so we need a different prefix to distinguish between vector index and expression index.
+func getAnonymousIndexPrefix(isVector bool) string {
+	if isVector {
 		return "vector_index"
-	case model.ColumnarIndexTypeFulltext:
-		return "fulltext_index"
 	}
 	return "expression_index"
 }

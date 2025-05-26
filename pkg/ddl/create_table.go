@@ -997,16 +997,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 		var colName string
 		for _, keyPart := range constr.Keys {
 			if keyPart.Expr != nil {
-				colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeNA)
-			} else {
-				switch constr.Tp {
-				case ast.ConstraintVector:
-					colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeVector)
-				case ast.ConstraintFulltext:
-					colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeFulltext)
-				default:
-					colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeNA)
-				}
+				colName = getAnonymousIndexPrefix(constr.Option != nil && constr.Option.Tp == ast.IndexTypeVector)
 			}
 		}
 		if colName == "" {
