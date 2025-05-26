@@ -66,3 +66,18 @@ func buildInvertedIndexExtra(
 		},
 	}
 }
+
+func buildTextInvertedIndexExtra(
+	indexInfo *model.IndexInfo,
+	queryInfo *tipb.FTSQueryInfo,
+) *ColumnarIndexExtra {
+	return &ColumnarIndexExtra{
+		IndexInfo: indexInfo,
+		QueryInfo: &tipb.ColumnarIndexInfo{
+			IndexType: tipb.ColumnarIndexType_TypeFulltext,
+			Index: &tipb.ColumnarIndexInfo_FtsQueryInfo{
+				FtsQueryInfo: queryInfo,
+			},
+		},
+	}
+}
