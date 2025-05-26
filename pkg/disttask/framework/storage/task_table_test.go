@@ -17,6 +17,7 @@ package storage
 import (
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -35,6 +36,18 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	goleak.VerifyTestMain(m, opts...)
+}
+
+func TestSerializeErr(t *testing.T) {
+	require.Empty(t, serializeErr(nil))
+
+	normalizedErr := errors.Normalize("named err", errors.RFCCodeText("NAMED"))
+	theErr := errors.Annotate(normalizedErr.Wrap(errors.New("inner err")), "annotated err")
+	require.Equal(t, `{"class":0,"code":0,"message":"annotated err: named err: inner err","rfccode":"NAMED"}`,
+		string(serializeErr(theErr)))
+
+	theErr = errors.Annotate(errors.New("some err"), "annotated err")
+	require.Equal(t, `{"class":0,"code":0,"message":"annotated err: some err","rfccode":""}`, string(serializeErr(theErr)))
 }
 
 func TestSplitSubtasks(t *testing.T) {
