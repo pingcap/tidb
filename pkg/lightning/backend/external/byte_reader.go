@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/prometheus/client_golang/prometheus"
@@ -39,11 +40,6 @@ var (
 	// in readAllData, expected concurrency less than this value will not use
 	// concurrent reader.
 	readAllDataConcThreshold = uint64(4)
-
-	// DeadLoopDetectThreshold is used to prevent dead loop in readNBytes()
-	// when next() returns zero readLen continuously.
-	// Exported for test.
-	DeadLoopDetectThreshold = 100
 )
 
 // byteReader provides structured reading on a byte stream of external storage.
@@ -238,7 +234,6 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 		n -= len(b)
 	}
 	hasRead := readLen > 0
-	readNoByteCnt := 0
 	for n > 0 {
 		err := r.reload()
 		if err != nil {
@@ -249,14 +244,6 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 			return nil, errors.Trace(err)
 		}
 		readLen, bs = r.next(n)
-		if readLen == 0 {
-			readNoByteCnt += 1
-			// if readNoByteCnt >= DeadLoopDetectThreshold {
-			// 	return nil, errors.Errorf("read no bytes, remaining %d byte(s)", n)
-			// }
-		} else {
-			readNoByteCnt = 0
-		}
 		hasRead = hasRead || readLen > 0
 		for _, b := range bs {
 			copy(auxBuf[len(auxBuf)-n:], b)
@@ -327,29 +314,33 @@ func (r *byteReader) reload() error {
 		r.curBufOffset = 0
 		return nil
 	}
-	// when not using concurrentReader, len(curBuf) == 1
-	n, err := io.ReadFull(r.storageReader, r.curBuf[0])
-	if err != nil {
-		switch {
-		case goerrors.Is(err, io.EOF):
-			// move curBufIdx so following read will also find EOF
-			r.curBufIdx = len(r.curBuf)
-			return err
-		case goerrors.Is(err, io.ErrUnexpectedEOF):
-			if n > 0 {
+
+	return util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retryable bool, err error) {
+		// when not using concurrentReader, len(curBuf) == 1
+		n, err := io.ReadFull(r.storageReader, r.curBuf[0])
+		if err != nil {
+			switch {
+			case goerrors.Is(err, io.EOF):
+				// move curBufIdx so following read will also find EOF
+				r.curBufIdx = len(r.curBuf)
+				return false, err
+			case goerrors.Is(err, io.ErrUnexpectedEOF):
+				if n == 0 {
+					return true, err
+				}
 				// The last batch.
 				r.curBuf[0] = r.curBuf[0][:n]
+			case goerrors.Is(err, context.Canceled):
+				return false, err
+			default:
+				r.logger.Warn("other error during read", zap.Error(err))
+				return false, err
 			}
-		case goerrors.Is(err, context.Canceled):
-			return err
-		default:
-			r.logger.Warn("other error during read", zap.Error(err))
-			return err
 		}
-	}
-	r.curBufIdx = 0
-	r.curBufOffset = 0
-	return nil
+		r.curBufIdx = 0
+		r.curBufOffset = 0
+		return false, nil
+	})
 }
 
 func (r *byteReader) closeConcurrentReader() (reloadCnt, offsetInOldBuffer int) {

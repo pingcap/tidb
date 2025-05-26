@@ -5,7 +5,10 @@ go_library(
     srcs = ["reader.go"],
     importpath = "github.com/pingcap/tidb/pkg/util/prefetch",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_pingcap_failpoint//:failpoint"],
+    deps = [
+        "//pkg/util/logutil",
+        "@com_github_pingcap_failpoint//:failpoint",
+    ],
 )
 
 go_test(
