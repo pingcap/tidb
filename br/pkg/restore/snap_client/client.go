@@ -312,11 +312,8 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 	if reusePreallocID == nil {
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 		err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
-			preallocedTableIDs, err = tidalloc.New(tables)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			return preallocedTableIDs.Alloc(meta.NewMutator(txn))
+			preallocedTableIDs, err = tidalloc.NewAndAlloc(tables, meta.NewMutator(txn))
+			return err
 		})
 		if err != nil {
 			return err

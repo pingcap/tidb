@@ -42,6 +42,22 @@ type PreallocIDs struct {
 	allocRule      map[int64]int64
 }
 
+func NewAndAlloc(tables []*metautil.Table, m Allocator) (*PreallocIDs, error) {
+	if len(tables) == 0 {
+		return &PreallocIDs{
+			start: math.MaxInt64,
+		}, nil
+	}
+	preallocIDs, err := New(tables)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create preallocIDs")
+	}
+	if err := preallocIDs.Alloc(m); err != nil {
+		return nil, errors.Wrap(err, "failed to allocate prealloc IDs")
+	}
+	return preallocIDs, nil
+}
+
 // New collects the requirement of prealloc IDs and return a
 // not-yet-allocated PreallocIDs.
 func New(tables []*metautil.Table) (*PreallocIDs, error) {
