@@ -176,7 +176,7 @@ run_sql "DROP DATABASE $DB;"
 # restore full
 echo "restore start..."
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/snap_client/restore-createtables-error=return(true)"
-run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $RESTORE_LOG --ddl-batch-size=128 || { cat $RESTORE_LOG; }
+run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $RESTORE_LOG --ddl-batch-size=128 --fast-load-sys-tables=false  || { cat $RESTORE_LOG; }
 export GO_FAILPOINTS=""
 
 panic_count=$(cat $RESTORE_LOG | grep "panic"| wc -l)

@@ -147,6 +147,10 @@ func (rc *SnapClient) replaceTables(
 		return 0, errors.Trace(err)
 	}
 
+	if len(renamedTables) == 0 {
+		return 0, nil
+	}
+
 	if err := rc.updateTemporaryUserTable(ctx, renamedTables); err != nil {
 		return 0, errors.Trace(err)
 	}
