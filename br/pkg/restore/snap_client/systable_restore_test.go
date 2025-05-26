@@ -259,17 +259,16 @@ func TestTemporaryTableChecker(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestGenerateMoveStatsTableSQLPair(t *testing.T) {
-	renameSQL := snapclient.GenerateMoveStatsTableSQLPair(123, map[string]map[string]struct{}{
+func TestGenerateMoveRenamedTableSQLPair(t *testing.T) {
+	renameSQL := snapclient.GenerateMoveRenamedTableSQLPair(123, map[string]map[string]struct{}{
 		"mysql": {"stats_meta": struct{}{}, "stats_buckets": struct{}{}, "stats_top_n": struct{}{}},
 	})
-	require.Equal(t, "RENAME TABLE "+
-		"mysql.stats_meta TO __TiDB_BR_Temporary_mysql.stats_meta_deleted_123,"+
-		"__TiDB_BR_Temporary_mysql.stats_meta TO mysql.stats_meta,"+
-		"mysql.stats_buckets TO __TiDB_BR_Temporary_mysql.stats_buckets_deleted_123,"+
-		"__TiDB_BR_Temporary_mysql.stats_buckets TO mysql.stats_buckets,"+
-		"mysql.stats_top_n TO __TiDB_BR_Temporary_mysql.stats_top_n_deleted_123,"+
-		"__TiDB_BR_Temporary_mysql.stats_top_n TO mysql.stats_top_n", renameSQL)
+	require.Contains(t, renameSQL, "mysql.stats_meta TO __TiDB_BR_Temporary_mysql.stats_meta_deleted_123")
+	require.Contains(t, renameSQL, "__TiDB_BR_Temporary_mysql.stats_meta TO mysql.stats_meta")
+	require.Contains(t, renameSQL, "mysql.stats_buckets TO __TiDB_BR_Temporary_mysql.stats_buckets_deleted_123")
+	require.Contains(t, renameSQL, "__TiDB_BR_Temporary_mysql.stats_buckets TO mysql.stats_buckets")
+	require.Contains(t, renameSQL, "mysql.stats_top_n TO __TiDB_BR_Temporary_mysql.stats_top_n_deleted_123")
+	require.Contains(t, renameSQL, "__TiDB_BR_Temporary_mysql.stats_top_n TO mysql.stats_top_n")
 }
 
 func TestUpdateStatsTableSchema(t *testing.T) {

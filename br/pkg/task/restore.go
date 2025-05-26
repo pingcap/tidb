@@ -927,20 +927,32 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if loadStatsPhysical || loadSysTablePhysical {
 		upstreamClusterVersion, err := semver.NewVersion(backupMeta.ClusterVersion)
 		if err != nil {
-			return errors.Annotatef(berrors.ErrVersionMismatch, "%s: cluster version %s from backupmeta is invalid", err.Error(), backupMeta.ClusterVersion)
+			log.Warn("The cluster version from backupmeta is invalid. Fallback to logically load system tables.",
+				zap.String("backupmeta cluster version", backupMeta.ClusterVersion), zap.Error(err))
+			loadStatsPhysical = false
+			loadSysTablePhysical = false
+		} else {
+			schemaVersionPair.UpstreamVersionMajor = upstreamClusterVersion.Major
+			schemaVersionPair.UpstreamVersionMinor = upstreamClusterVersion.Minor
 		}
 		downstreamClusterVersionStr, err := mgr.GetClusterVersion(ctx)
 		if err != nil {
-			return errors.Annotatef(berrors.ErrVersionMismatch, "%s: failed to get the downstream cluster version", err.Error())
+			log.Warn("Failed to get the downstream cluster version. Fallback to logically load system tables.",
+				zap.Error(err))
+			loadStatsPhysical = false
+			loadSysTablePhysical = false
+		} else {
+			downstreamClusterVersion, err := semver.NewVersion(downstreamClusterVersionStr)
+			if err != nil {
+				log.Warn("The downstream cluster version is invalid. Fallback to logically load system tables.",
+					zap.String("downstream cluster version", downstreamClusterVersionStr), zap.Error(err))
+				loadStatsPhysical = false
+				loadSysTablePhysical = false
+			} else {
+				schemaVersionPair.DownstreamVersionMajor = downstreamClusterVersion.Major
+				schemaVersionPair.DownstreamVersionMinor = downstreamClusterVersion.Minor
+			}
 		}
-		downstreamClusterVersion, err := semver.NewVersion(downstreamClusterVersionStr)
-		if err != nil {
-			return errors.Annotatef(berrors.ErrVersionMismatch, "%s: the downstream cluster version %s is invalid", err.Error(), downstreamClusterVersionStr)
-		}
-		schemaVersionPair.UpstreamVersionMajor = upstreamClusterVersion.Major
-		schemaVersionPair.UpstreamVersionMinor = upstreamClusterVersion.Minor
-		schemaVersionPair.DownstreamVersionMajor = downstreamClusterVersion.Major
-		schemaVersionPair.DownstreamVersionMinor = downstreamClusterVersion.Minor
 		if loadSysTablePhysical {
 			if schemaVersionPair.UpstreamVersionMajor != schemaVersionPair.DownstreamVersionMajor ||
 				schemaVersionPair.UpstreamVersionMinor != schemaVersionPair.DownstreamVersionMinor {

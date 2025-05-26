@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -108,11 +109,23 @@ func (rc *SnapClient) filterAndValidateTemporaryTables(
 	return renamedTables, renamedTableCount, nil
 }
 
-func (rc *SnapClient) moveStatsTable(ctx context.Context, restoreTS uint64, statisticTables map[string]map[string]struct{}) error {
+func (rc *SnapClient) moveRenamedTable(ctx context.Context, restoreTS uint64, statisticTables map[string]map[string]struct{}) error {
 	// the renamed tables will be deleted by DROP DATABASE in the function cleanTemporaryDatabase later
-	renameSQL := GenerateMoveStatsTableSQLPair(restoreTS, statisticTables)
-	err := rc.db.Session().Execute(ctx, renameSQL)
-	return errors.Trace(err)
+	renameSQL := GenerateMoveRenamedTableSQLPair(restoreTS, statisticTables)
+	if err := rc.db.Session().Execute(ctx, renameSQL); err != nil {
+		log.Error("failed to move rename tables", zap.String("sql", renameSQL), zap.Error(err))
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (rc *SnapClient) updateTemporaryUserTable(ctx context.Context, renamedTables map[string]map[string]struct{}) error {
+	if tables, exists := renamedTables[mysql.SystemDB]; exists {
+		if _, exists = tables[sysUserTableName]; exists {
+			return removeUserResourceGroup(ctx, utils.TemporaryDBName(mysql.SystemDB).O, rc.db.Session().Execute)
+		}
+	}
+	return nil
 }
 
 func (rc *SnapClient) replaceTables(
@@ -134,7 +147,11 @@ func (rc *SnapClient) replaceTables(
 		return 0, errors.Trace(err)
 	}
 
-	if err := rc.moveStatsTable(ctx, restoreTS, renamedTables); err != nil {
+	if err := rc.updateTemporaryUserTable(ctx, renamedTables); err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	if err := rc.moveRenamedTable(ctx, restoreTS, renamedTables); err != nil {
 		return 0, errors.Trace(err)
 	}
 

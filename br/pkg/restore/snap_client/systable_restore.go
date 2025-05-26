@@ -349,7 +349,7 @@ func (c *TemporaryTableChecker) CheckTemporaryTables(tempSchemaName, tableName s
 	return "", false
 }
 
-func GenerateMoveStatsTableSQLPair(restoreTS uint64, statisticTables map[string]map[string]struct{}) string {
+func GenerateMoveRenamedTableSQLPair(restoreTS uint64, statisticTables map[string]map[string]struct{}) string {
 	renameBuffer := make([]string, 0, 32)
 	for dbName, tableNames := range statisticTables {
 		for tableName := range tableNames {
@@ -386,6 +386,19 @@ func isPlanReplayerTables(schemaName string, tableName string) bool {
 	}
 	_, ok = tableMap[tableName]
 	return ok
+}
+
+func removeUserResourceGroup(ctx context.Context, dbName string, execSQL func(context.Context, string) error) error {
+	sql := fmt.Sprintf("UPDATE %s SET User_attributes = JSON_REMOVE(User_attributes, '$.resource_group');",
+		utils.EncloseDBAndTable(dbName, sysUserTableName))
+	if err := execSQL(ctx, sql); err != nil {
+		// FIXME: find a better way to check the error or we should check the version here instead.
+		if !strings.Contains(err.Error(), "Unknown column 'User_attributes' in 'field list'") {
+			return err
+		}
+		log.Warn("remove resource group meta failed, please ensure target cluster is newer than v6.6.0", logutil.ShortError(err))
+	}
+	return nil
 }
 
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
@@ -518,7 +531,7 @@ func (rc *SnapClient) afterSystemTablesReplaced(ctx context.Context, db string, 
 func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) error {
 	dbName := db.Name.L
 	tableName := ti.Name.L
-	execSQL := func(sql string) error {
+	execSQL := func(ctx context.Context, sql string) error {
 		// SQLs here only contain table name and database name, seems it is no need to redact them.
 		if err := rc.db.Session().Execute(ctx, sql); err != nil {
 			log.Warn("failed to execute SQL restore system database",
@@ -562,14 +575,8 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 	// TODO: this function should be removed when we support backup and restore
 	// resource group.
 	if dbName == mysql.SystemDB && tableName == sysUserTableName {
-		sql := fmt.Sprintf("UPDATE %s SET User_attributes = JSON_REMOVE(User_attributes, '$.resource_group');",
-			utils.EncloseDBAndTable(db.TemporaryName.L, sysUserTableName))
-		if err := execSQL(sql); err != nil {
-			// FIXME: find a better way to check the error or we should check the version here instead.
-			if !strings.Contains(err.Error(), "Unknown column 'User_attributes' in 'field list'") {
-				return err
-			}
-			log.Warn("remove resource group meta failed, please ensure target cluster is newer than v6.6.0", logutil.ShortError(err))
+		if err := removeUserResourceGroup(ctx, db.TemporaryName.L, execSQL); err != nil {
+			return err
 		}
 	}
 
@@ -587,14 +594,14 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 			utils.EncloseDBAndTable(db.Name.L, tableName),
 			colListStr, colListStr,
 			utils.EncloseDBAndTable(db.TemporaryName.L, tableName))
-		return execSQL(replaceIntoSQL)
+		return execSQL(ctx, replaceIntoSQL)
 	}
 
 	renameSQL := fmt.Sprintf("RENAME TABLE %s TO %s;",
 		utils.EncloseDBAndTable(db.TemporaryName.L, tableName),
 		utils.EncloseDBAndTable(db.Name.L, tableName),
 	)
-	return execSQL(renameSQL)
+	return execSQL(ctx, renameSQL)
 }
 
 func (rc *SnapClient) cleanTemporaryDatabase(ctx context.Context, originDB string) {
