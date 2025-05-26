@@ -532,3 +532,15 @@ CREATE TABLE orders (
 		checkCost(t, tk, input[i])
 	}
 }
+
+func Test54968(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table tt1(c1 int, c2 int, primary key(c1));`)
+	tk.MustExec(`insert into tt1 values(1, 1), (2, 2), (3, 3);`)
+	testkit.SetTiFlashReplica(t, dom, "test", "tt1")
+	tk.MustExec("set @@session.tidb_enforce_mpp=1")
+	tk.MustExec(`set @@session.tidb_allow_tiflash_cop = true;`)
+	tk.MustQuery(`  explain select * from tt1 where c1> 10 order by c1 limit 100;`).Check(testkit.Rows())
+}
