@@ -10,7 +10,11 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     shard_count = 9,
+=======
+    shard_count = 16,
+>>>>>>> fd839b95229 (planner: Handle NullEQ <=> in range columns partition pruning (#61187))
     deps = [
         "//pkg/config",
         "//pkg/planner/core/internal",
