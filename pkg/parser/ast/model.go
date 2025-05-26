@@ -304,6 +304,13 @@ func NewCIStr(s string) (cs CIStr) {
 	return
 }
 
+// NewCIStrWithUnique creates a new CIStr with a unique handle.
+func NewCIStrWithUnique(s unique.Handle[string]) (cs CIStr) {
+	cs.O = s
+	cs.L = unique.Make(strings.ToLower(s.Value()))
+	return
+}
+
 // UnmarshalJSON implements the user defined unmarshal method.
 // CIStr can be unmarshaled from a single string, so PartitionDefinition.Name
 // in this change https://github.com/pingcap/tidb/pull/6460/files would be

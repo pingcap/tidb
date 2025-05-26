@@ -16,6 +16,7 @@ package parser
 
 import (
 	"strings"
+	"unique"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -24,13 +25,13 @@ import (
 )
 
 // GetDefaultDB checks if all tables in the AST have explicit DBName. If not, return specified DBName.
-func GetDefaultDB(sel ast.StmtNode, dbName string) string {
+func GetDefaultDB(sel ast.StmtNode, dbName unique.Handle[string]) unique.Handle[string] {
 	implicitDB := &implicitDatabase{}
 	sel.Accept(implicitDB)
 	if implicitDB.hasImplicit {
 		return dbName
 	}
-	return ""
+	return unique.Make("")
 }
 
 type implicitDatabase struct {
@@ -71,7 +72,7 @@ func findTablePos(s, t string) int {
 
 // SimpleCases captures simple SQL statements and uses string replacement instead of `restore` to improve performance.
 // See https://github.com/pingcap/tidb/issues/22398.
-func SimpleCases(node ast.StmtNode, defaultDB, origin string) (s string, ok bool) {
+func SimpleCases(node ast.StmtNode, defaultDB unique.Handle[string], origin string) (s string, ok bool) {
 	if len(origin) == 0 {
 		return "", false
 	}
@@ -111,7 +112,7 @@ func SimpleCases(node ast.StmtNode, defaultDB, origin string) (s string, ok bool
 	if tn.Schema.String() != "" {
 		builder.WriteString(tn.Schema.String())
 	} else {
-		builder.WriteString(defaultDB)
+		builder.WriteString(defaultDB.Value())
 	}
 	builder.WriteString(".")
 	builder.WriteString(origin[pos:])
@@ -127,7 +128,7 @@ const defaultRestoreFlag = format.RestoreStringSingleQuotes | format.RestoreSpac
 
 // RestoreWithDefaultDB returns restore strings for StmtNode with defaultDB
 // This function is customized for SQL bind usage.
-func RestoreWithDefaultDB(node ast.StmtNode, defaultDB, origin string) string {
+func RestoreWithDefaultDB(node ast.StmtNode, defaultDB unique.Handle[string], origin string) string {
 	if s, ok := SimpleCases(node, defaultDB, origin); ok {
 		return s
 	}

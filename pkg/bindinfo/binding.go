@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"unique"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -57,7 +58,7 @@ const (
 // Binding stores the basic bind hint info.
 type Binding struct {
 	OriginalSQL string
-	Db          string
+	Db          unique.Handle[string]
 	BindSQL     string
 	// Status represents the status of the binding. It can only be one of the following values:
 	// 1. deleted: Bindings is deleted, can not be used anymore.
@@ -86,7 +87,7 @@ func (b *Binding) IsBindingEnabled() bool {
 
 // size calculates the memory size of a bind info.
 func (b *Binding) size() float64 {
-	res := len(b.OriginalSQL) + len(b.Db) + len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
+	res := len(b.OriginalSQL) + len(b.Db.Value()) + len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
 	return float64(res)
 }
 
@@ -287,7 +288,7 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 	tableNames := CollectTableNames(bindingStmt)
 	isCrossDB := isCrossDBBinding(bindingStmt)
 	if isCrossDB {
-		dbName = "*" // ues '*' for universal bindings
+		dbName = unique.Make("*") // ues '*' for universal bindings
 	}
 
 	hintsSet, stmt, warns, err := hint.ParseHintsSet(p, binding.BindSQL, binding.Charset, binding.Collation, dbName)
@@ -379,7 +380,7 @@ func RestoreDBForBinding(node ast.StmtNode, defaultDB string) string {
 // when noDB is true, schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
 //
 //	e.g. `select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (...)`
-func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string, noDB bool) (normalizedStmt, sqlDigest string) {
+func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB unique.Handle[string], noDB bool) (normalizedStmt, sqlDigest string) {
 	normalize := func(n ast.StmtNode) (normalizedStmt, sqlDigest string) {
 		eraseLastSemicolon(n)
 		var digest *parser.Digest
