@@ -1015,11 +1015,20 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	metaReader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.LoadSchemaIfNeededAndInitClient(ctx, backupMeta, u, metaReader, cfg.LoadStats && !loadStatsPhysical, nil, nil,
+	if err = client.LoadSchemaIfNeededAndInitClient(ctx, backupMeta, u, metaReader, cfg.LoadStats, nil, nil,
 		cfg.ExplicitFilter, isFullRestore(cmdName), cfg.WithSysTable); err != nil {
 		return errors.Trace(err)
 	}
-
+	if client.IsIncremental() || cfg.ExplicitFilter || !isFullRestore(cmdName) {
+		if loadStatsPhysical {
+			log.Warn("Cannot set --fast-load-sys-tables when it is not full restore. Fallback to logically load stats.")
+			loadStatsPhysical = false
+		}
+		if loadSysTablePhysical {
+			log.Warn("Cannot set --fast-load-sys-tables when it is not full restore. Fallback to logically load system tables.")
+			loadSysTablePhysical = false
+		}
+	}
 	if client.IsIncremental() {
 		// don't support checkpoint for the ddl restore
 		log.Info("the incremental snapshot restore doesn't support checkpoint mode, disable checkpoint.")
@@ -1032,16 +1041,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	log.Info("checkpoint status in restore", zap.Bool("enabled", cfg.UseCheckpoint), zap.Bool("exists", cpEnabledAndExists))
 	if err := checkMandatoryClusterRequirements(client, cfg, cpEnabledAndExists, cmdName); err != nil {
 		return errors.Trace(err)
-	}
-	if client.IsIncremental() || cfg.ExplicitFilter || !isFullRestore(cmdName) {
-		if loadStatsPhysical {
-			log.Warn("Cannot set --fast-load-sys-tables when it is not full restore. Fallback to logically load stats.")
-			loadStatsPhysical = false
-		}
-		if loadSysTablePhysical {
-			log.Warn("Cannot set --fast-load-sys-tables when it is not full restore. Fallback to logically load system tables.")
-			loadSysTablePhysical = false
-		}
 	}
 
 	// filters out db/table/files using filter
