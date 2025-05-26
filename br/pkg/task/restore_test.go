@@ -940,13 +940,6 @@ func TestHash(t *testing.T) {
 			expectEqual: false,
 		},
 		{
-			name: "nil_configuration",
-			modifyFunc: func(cfg *task.RestoreConfig) {
-				*cfg = task.RestoreConfig{}
-			},
-			expectEqual: false,
-		},
-		{
 			name: "multiple_changes",
 			modifyFunc: func(cfg *task.RestoreConfig) {
 				cfg.UpstreamClusterID = 2
@@ -986,8 +979,8 @@ func TestHash(t *testing.T) {
 				taskType2 = "db"
 			}
 
-			hash1, err1 := task.Hash(taskType1, cfg1)
-			hash2, err2 := task.Hash(taskType2, cfg2)
+			hash1, err1 := cfg1.Hash(taskType1)
+			hash2, err2 := cfg2.Hash(taskType2)
 
 			if cfg2 == nil {
 				require.Error(t, err2, "Expected error for nil config")

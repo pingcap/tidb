@@ -306,11 +306,7 @@ type immutableRestoreConfig struct {
 	WithSysTable      bool
 }
 
-func Hash(cmdName string, cfg *RestoreConfig) ([]byte, error) {
-	if cfg == nil {
-		return nil, errors.New("nil config")
-	}
-
+func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 	config := immutableRestoreConfig{
 		CmdName:           cmdName,
 		UpstreamClusterID: cfg.UpstreamClusterID,
@@ -1007,7 +1003,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		cfg.UseCheckpoint = false
 	}
 
-	hash, err := Hash(cmdName, cfg.RestoreConfig)
+	hash, err := cfg.RestoreConfig.Hash(cmdName)
 	if err != nil {
 		return errors.Trace(err)
 	}
