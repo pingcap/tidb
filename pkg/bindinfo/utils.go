@@ -195,7 +195,7 @@ func newBindingFromStorage(row chunk.Row) *Binding {
 }
 
 // getBindingPlanDigest does the best efforts to fill binding's plan_digest.
-func getBindingPlanDigest(sctx sessionctx.Context, schema, bindingSQL string) (planDigest string) {
+func getBindingPlanDigest(sctx sessionctx.Context, schema unique.Handle[string], bindingSQL string) (planDigest string) {
 	defer func() {
 		if r := recover(); r != nil {
 			bindingLogger().Error("panic when filling plan digest for binding",
@@ -209,7 +209,7 @@ func getBindingPlanDigest(sctx sessionctx.Context, schema, bindingSQL string) (p
 		vars.CurrentDB = originalDB
 	}(vars.UsePlanBaselines, vars.CurrentDB)
 	vars.UsePlanBaselines = false
-	vars.CurrentDB = unique.Make(schema)
+	vars.CurrentDB = schema
 
 	p := utilparser.GetParser()
 	defer utilparser.DestroyParser(p)

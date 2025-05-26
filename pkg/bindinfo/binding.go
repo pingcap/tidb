@@ -133,7 +133,7 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	var noDBDigest string
 	var tableNames []*ast.TableName
 	if info == nil || info.TableNames == nil || info.NoDBDigest == "" {
-		_, noDBDigest = NormalizeStmtForBinding(stmtNode, "", true)
+		_, noDBDigest = NormalizeStmtForBinding(stmtNode, unique.Make(""), true)
 		tableNames = CollectTableNames(stmtNode)
 		if info != nil {
 			info.NoDBDigest = noDBDigest
@@ -166,7 +166,7 @@ func noDBDigestFromBinding(binding *Binding) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_, bindingNoDBDigest := NormalizeStmtForBinding(stmt, "", true)
+	_, bindingNoDBDigest := NormalizeStmtForBinding(stmt, unique.Make(""), true)
 	return bindingNoDBDigest, nil
 }
 
@@ -369,7 +369,7 @@ func pickCachedBinding(cachedBinding *Binding, bindingsFromStorage ...*Binding) 
 }
 
 // RestoreDBForBinding restores the DB name for the binding.
-func RestoreDBForBinding(node ast.StmtNode, defaultDB string) string {
+func RestoreDBForBinding(node ast.StmtNode, defaultDB unique.Handle[string]) string {
 	return utilparser.RestoreWithDefaultDB(node, defaultDB, node.Text())
 }
 

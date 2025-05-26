@@ -298,10 +298,10 @@ func (n *TableName) restoreName(ctx *format.RestoreCtx) {
 		if n.Schema.String() != "" {
 			ctx.WriteName(n.Schema.String())
 			ctx.WritePlain(".")
-		} else if ctx.DefaultDB != "" && !n.IsAlias {
+		} else if ctx.DefaultDB.Value() != "" && !n.IsAlias {
 			// Try CTE, for a CTE table name, we shouldn't write the database name.
 			if !ctx.IsCTETableName(n.Name.L.Value()) {
-				ctx.WriteName(ctx.DefaultDB)
+				ctx.WriteName(ctx.DefaultDB.Value())
 				ctx.WritePlain(".")
 			}
 		}

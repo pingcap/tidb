@@ -109,7 +109,7 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 				`INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
 				binding.OriginalSQL,
 				binding.BindSQL,
-				strings.ToLower(binding.Db),
+				strings.ToLower(binding.Db.Value()),
 				binding.Status,
 				binding.CreateTime.String(),
 				binding.UpdateTime.String(),

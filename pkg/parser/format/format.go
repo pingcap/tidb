@@ -23,6 +23,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"unique"
 )
 
 const (
@@ -368,13 +369,13 @@ type RestoreWriter interface {
 type RestoreCtx struct {
 	Flags     RestoreFlags
 	In        RestoreWriter
-	DefaultDB string
+	DefaultDB unique.Handle[string]
 	CTERestorer
 }
 
 // NewRestoreCtx returns a new `RestoreCtx`.
 func NewRestoreCtx(flags RestoreFlags, in RestoreWriter) *RestoreCtx {
-	return &RestoreCtx{Flags: flags, In: in, DefaultDB: ""}
+	return &RestoreCtx{Flags: flags, In: in, DefaultDB: unique.Make("")}
 }
 
 // WriteKeyWord writes the `keyWord` into writer.
