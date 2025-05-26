@@ -45,8 +45,100 @@ func TestSecurityEnhancedMode(t *testing.T) {
 	// When SEM is enabled these features are restricted to all users
 	// regardless of what privileges they have available.
 	tk.MustGetErrMsg("IMPORT INTO test.t FROM '/file.csv'", "[planner:8132]Feature 'IMPORT INTO from server disk' is not supported when security enhanced mode is enabled")
+}
+
+func TestClassicS3ExternalID(t *testing.T) {
 	if kerneltype.IsNextGen() {
+		t.Skip("only for classic")
+	}
+	store := testkit.CreateMockStore(t)
+	outerTK := testkit.NewTestKit(t, store)
+	outerTK.MustExec("create table test.t (id int);")
+
+	bak := config.GetGlobalKeyspaceName()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "aaa"
+	})
+	t.Cleanup(func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = bak
+		})
+	})
+
+	t.Run("SEM enabled, explicit external ID is allowed, and we don't change it", func(t *testing.T) {
+		sem.Enable()
+		t.Cleanup(func() {
+			sem.Disable()
+		})
+		tk := testkit.NewTestKit(t, store)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+			u, err := url.Parse(plan.Path)
+			require.NoError(t, err)
+			require.Contains(t, u.Query(), storage.S3ExternalID)
+			require.Equal(t, "allowed", u.Query().Get(storage.S3ExternalID))
+			panic("FAIL IT, AS WE CANNOT RUN IT HERE")
+		})
+		tk.MustExec("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'")
+		tk.MustQuery("select * from test.t").Check(testkit.Rows())
+	})
+
+	t.Run("SEM disabled, explicit external ID is also allowed, and we don't change it", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+			u, err := url.Parse(plan.Path)
+			require.NoError(t, err)
+			require.Contains(t, u.Query(), storage.S3ExternalID)
+			require.Equal(t, "allowed", u.Query().Get(storage.S3ExternalID))
+			panic("FAIL IT, AS WE CANNOT RUN IT HERE")
+		})
+		tk.MustExec("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'")
+		tk.MustQuery("select * from test.t").Check(testkit.Rows())
+	})
+}
+
+func TestNextGenS3ExternalID(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen")
+	}
+	store := testkit.CreateMockStore(t)
+	outerTK := testkit.NewTestKit(t, store)
+	outerTK.MustExec("create table test.t (id int);")
+
+	t.Run("SEM enabled, forbid set S3 external ID", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		sem.Enable()
+		t.Cleanup(func() {
+			sem.Disable()
+		})
 		tk.MustGetErrMsg("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=abc'", "[planner:8132]Feature 'IMPORT INTO with S3 external ID' is not supported when security enhanced mode is enabled")
+	})
+
+	t.Run("SEM enabled, set S3 external ID to keyspace name", func(t *testing.T) {
+		sem.Enable()
+		bak := config.GetGlobalKeyspaceName()
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = "aaa"
+		})
+		t.Cleanup(func() {
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.KeyspaceName = bak
+			})
+			sem.Disable()
+		})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+			u, err := url.Parse(plan.Path)
+			require.NoError(t, err)
+			require.Contains(t, u.Query(), storage.S3ExternalID)
+			require.Equal(t, "aaa", u.Query().Get(storage.S3ExternalID))
+			panic("FAIL IT, AS WE CANNOT RUN IT HERE")
+		})
+		tk := testkit.NewTestKit(t, store)
+		err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket'")
+		require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
+	})
+
+	t.Run("SEM disabled, allow explicit S3 external id, should not change it", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
 
 		bak := config.GetGlobalKeyspaceName()
 		config.UpdateGlobal(func(conf *config.Config) {
@@ -61,40 +153,10 @@ func TestSecurityEnhancedMode(t *testing.T) {
 			u, err := url.Parse(plan.Path)
 			require.NoError(t, err)
 			require.Contains(t, u.Query(), storage.S3ExternalID)
-			require.Equal(t, "aaa", u.Query().Get(storage.S3ExternalID))
+			require.Equal(t, "allowed", u.Query().Get(storage.S3ExternalID))
 			panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 		})
-		err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket'")
-		require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
-	}
-}
-
-func TestWithoutSecurityEnhancedMode(t *testing.T) {
-	if !kerneltype.IsNextGen() {
-		t.Skip("only for nextgen")
-	}
-	store := testkit.CreateMockStore(t)
-
-	t.Run("should not set S3 external ID when SEM is disabled", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("create table test.t (id int);")
-
-		bak := config.GetGlobalKeyspaceName()
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.KeyspaceName = "aaa"
-		})
-		t.Cleanup(func() {
-			config.UpdateGlobal(func(conf *config.Config) {
-				conf.KeyspaceName = bak
-			})
-		})
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
-			u, err := url.Parse(plan.Path)
-			require.NoError(t, err)
-			require.NotContains(t, u.Query(), storage.S3ExternalID)
-			panic("FAIL IT, AS WE CANNOT RUN IT HERE")
-		})
-		err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket'")
+		err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket?external-id=allowed'")
 		require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
 	})
 }
