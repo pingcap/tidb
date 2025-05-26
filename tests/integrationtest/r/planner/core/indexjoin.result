@@ -974,16 +974,16 @@ explain format='brief' select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 ,
 id	estRows	task	access object	operator info
 Sort	10000.00	root		Column#22, Column#23, Column#24, Column#25
 └─Projection	10000.00	root		ucase(Column#21)->Column#22, concat_ws(,, planner__core__indexjoin.t1.col_6, planner__core__indexjoin.t1.col_3)->Column#23, lower(planner__core__indexjoin.t1.col_3)->Column#24, ucase(Column#21)->Column#25
-  └─IndexJoin	10000.00	root		left outer join, inner:StreamAgg, left side:UnionScan, outer key:planner__core__indexjoin.t1.col_4, inner key:planner__core__indexjoin.t2.col_4, equal cond:eq(planner__core__indexjoin.t1.col_4, planner__core__indexjoin.t2.col_4)
-    ├─UnionScan(Build)	10000.00	root		
-    │ └─TableReader	10000.00	root		data:TableFullScan
-    │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─StreamAgg(Probe)	10.00	root		group by:planner__core__indexjoin.t2.col_4, funcs:min(planner__core__indexjoin.t2.col_3)->Column#21, funcs:firstrow(planner__core__indexjoin.t2.col_4)->planner__core__indexjoin.t2.col_4
-      └─UnionScan	10.00	root		isnull(planner__core__indexjoin.t2.col_3)
-        └─IndexLookUp	10.00	root		
-          ├─IndexRangeScan(Build)	10000.00	cop[tikv]	table:t2, index:idx_1(col_4)	range: decided by [eq(planner__core__indexjoin.t2.col_4, planner__core__indexjoin.t1.col_4)], keep order:true, stats:pseudo
-          └─Selection(Probe)	10.00	cop[tikv]		isnull(planner__core__indexjoin.t2.col_3)
-            └─TableRowIDScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─HashJoin	10000.00	root		left outer join, left side:UnionScan, equal:[eq(planner__core__indexjoin.t1.col_4, planner__core__indexjoin.t2.col_4)]
+    ├─StreamAgg(Build)	8.00	root		group by:planner__core__indexjoin.t2.col_4, funcs:min(planner__core__indexjoin.t2.col_3)->Column#21, funcs:firstrow(planner__core__indexjoin.t2.col_4)->planner__core__indexjoin.t2.col_4
+    │ └─Sort	10.00	root		planner__core__indexjoin.t2.col_4
+    │   └─UnionScan	10.00	root		isnull(planner__core__indexjoin.t2.col_3)
+    │     └─TableReader	10.00	root		data:Selection
+    │       └─Selection	10.00	cop[tikv]		isnull(planner__core__indexjoin.t2.col_3)
+    │         └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─UnionScan(Probe)	10000.00	root		
+      └─TableReader	10000.00	root		data:TableFullScan
+        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 , concat_ws(',', t1.col_6 , t1.col_3 ) as r1 , lower( t1.col_3 ) as r2 , ucase( st_475.r4 ) as r3 from t1 left join (select /*+  stream_agg() */ t2.col_4 as r0 , max(   t2.col_4 ) as r1 , t2.col_4 as r2 , count(   t2.col_4 ) as r3 , min(   t2.col_3 ) as r4 from t2 where IsNull( t2.col_3 ) group by t2.col_4) st_475 on t1.col_4 = st_475.r0 order by r0,r1,r2,r3;
 r0	r1	r2	r3
 NULL	#35a,^VW2Cc8t	^VW2Cc8t	NULL
@@ -1182,3 +1182,47 @@ Sort	12500.00	root		planner__core__indexjoin.td89f296a.col_64, Column#10, Column
         └─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:tac9d3b07	keep order:false, stats:pseudo
 select /*+ inl_join(st_45) */ td89f296a.col_64 as r0 , substr( st_45.r0 , 2 ) as r1 , ord( st_45.r0 ) as r2 , mid( st_45.r1 , 0 , 6 ) as r3 from td89f296a inner join (select  tac9d3b07.col_61 as r0 , bit_and( tac9d3b07.col_61 ) as r1 from tac9d3b07  group by tac9d3b07.col_61,tac9d3b07.col_60) st_45 on td89f296a.col_64 = st_45.r0 order by r0,r1,r2,r3 ;
 r0	r1	r2	r3
+CREATE TABLE `t5602f14e` (
+`col_51` json NOT NULL,
+`col_52` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT 'Vn',
+`col_53` mediumint NOT NULL DEFAULT '-3927549',
+`col_54` date DEFAULT NULL,
+`col_55` date NOT NULL DEFAULT '1978-05-20',
+`col_56` bigint unsigned NOT NULL DEFAULT '12818995484625953384',
+PRIMARY KEY (`col_55`) /*T![clustered_index] CLUSTERED */,
+UNIQUE KEY `idx_16` (`col_55`,`col_54`) /*T![global_index] GLOBAL */,
+KEY `idx_17` (`col_55`,`col_52`,`col_53`),
+KEY `idx_18` (`col_55`) /*T![global_index] GLOBAL */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+PARTITION BY RANGE COLUMNS(`col_55`)
+(PARTITION `p0` VALUES LESS THAN ('1980-09-26'),
+PARTITION `p1` VALUES LESS THAN ('2023-02-26'),
+PARTITION `p2` VALUES LESS THAN ('2034-03-19'),
+PARTITION `p3` VALUES LESS THAN (MAXVALUE));
+CREATE TABLE `t8e1f515f` (
+`col_39` decimal(64,22) NOT NULL,
+`col_40` json DEFAULT NULL,
+`col_41` date NOT NULL DEFAULT '2022-05-10',
+`col_42` smallint unsigned NOT NULL DEFAULT '54999',
+`col_43` double DEFAULT NULL,
+`col_44` blob DEFAULT NULL,
+`col_45` varchar(365) COLLATE utf8_bin DEFAULT 'GUNcVb8m',
+`col_46` smallint NOT NULL,
+`col_47` binary(149) NOT NULL,
+`col_48` varchar(437) COLLATE utf8_unicode_ci NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+explain select /*+ inl_join(st_984) */ concat( st_984.r1 , st_984.r1 ) as r0 , st_984.r0 as r1 , t8e1f515f.col_44 as r2 from t8e1f515f inner join (select /*+  stream_agg() */ t5602f14e.col_55 as r0 , group_concat(   t5602f14e.col_56 order by t5602f14e.col_56 ) as r1 , bit_and( t5602f14e.col_53 ) as r2 from t5602f14e where not( IsNull( JSON_OVERLAPS( '[15114205522559919477,7224822526648750310]' , t5602f14e.col_51 ) ) ) group by t5602f14e.col_55) st_984 on t8e1f515f.col_48 = st_984.r0 order by r0,r1,r2 ;
+id	estRows	task	access object	operator info
+Sort_13	8000.00	root		Column#20, planner__core__indexjoin.t5602f14e.col_55, planner__core__indexjoin.t8e1f515f.col_44
+└─Projection_15	8000.00	root		concat(Column#18, Column#18)->Column#20, planner__core__indexjoin.t5602f14e.col_55, planner__core__indexjoin.t8e1f515f.col_44
+  └─HashJoin_29	8000.00	root		inner join, equal:[eq(Column#22, planner__core__indexjoin.t5602f14e.col_55)]
+    ├─StreamAgg_49(Build)	6400.00	root		group by:Column#26, funcs:group_concat(Column#24 order by Column#25 separator ",")->Column#18, funcs:firstrow(Column#26)->planner__core__indexjoin.t5602f14e.col_55
+    │ └─Projection_64	8000.00	root		cast(planner__core__indexjoin.t5602f14e.col_56, var_string(20))->Column#24, planner__core__indexjoin.t5602f14e.col_56->Column#25, planner__core__indexjoin.t5602f14e.col_55->Column#26
+    │   └─Selection_56	8000.00	root		not(isnull(json_overlaps(cast("[15114205522559919477,7224822526648750310]", json BINARY), planner__core__indexjoin.t5602f14e.col_51)))
+    │     └─TableReader_58	10000.00	root	partition:all	data:TableFullScan_57
+    │       └─TableFullScan_57	10000.00	cop[tikv]	table:t5602f14e	keep order:true, stats:pseudo
+    └─Projection_31(Probe)	10000.00	root		planner__core__indexjoin.t8e1f515f.col_44, cast(planner__core__indexjoin.t8e1f515f.col_48, datetime(6) BINARY)->Column#22
+      └─TableReader_33	10000.00	root		data:TableFullScan_32
+        └─TableFullScan_32	10000.00	cop[tikv]	table:t8e1f515f	keep order:false, stats:pseudo
+select /*+ inl_join(st_984) */ concat( st_984.r1 , st_984.r1 ) as r0 , st_984.r0 as r1 , t8e1f515f.col_44 as r2 from t8e1f515f inner join (select /*+  stream_agg() */ t5602f14e.col_55 as r0 , group_concat(   t5602f14e.col_56 order by t5602f14e.col_56 ) as r1 , bit_and( t5602f14e.col_53 ) as r2 from t5602f14e where not( IsNull( JSON_OVERLAPS( '[15114205522559919477,7224822526648750310]' , t5602f14e.col_51 ) ) ) group by t5602f14e.col_55) st_984 on t8e1f515f.col_48 = st_984.r0 order by r0,r1,r2 ;
+r0	r1	r2
