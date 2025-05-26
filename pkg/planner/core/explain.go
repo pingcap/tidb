@@ -241,7 +241,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		}
 	}
 	if p.MatchedFTS != nil {
-		buffer.WriteString(", textSearch:(")
+		buffer.WriteString("textSearch:(")
 		if normalized {
 			buffer.WriteString("?")
 		} else {
@@ -249,7 +249,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		}
 		buffer.WriteString(" IN ")
 		buffer.WriteString(p.MatchedFTS.ColumnNames[0])
-		buffer.WriteString(") ")
+		buffer.WriteString("), ")
 	}
 	buffer.WriteString("keep order:")
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))

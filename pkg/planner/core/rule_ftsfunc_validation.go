@@ -31,7 +31,12 @@ func (ftsFuncValidation) Name() string {
 	return "ftsFuncValidation"
 }
 
-func (f *ftsFuncValidation) Optimize(ctx context.Context, p base.LogicalPlan, op *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements the LogicalOptRule interface.
+// The check is performed here because we don't know whether a function is invalid or not until:
+// 1. it's pushed down after applying the predicate push down rule.
+// 2. it's really checked whether can be used to build a fts index request.
+// So final check is performed here.
+func (f *ftsFuncValidation) Optimize(ctx context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	return p, false, f.doQuickValidation(ctx, p)
 }
 
@@ -39,7 +44,7 @@ func (f *ftsFuncValidation) doQuickValidation(ctx context.Context, p base.Logica
 	switch x := p.(type) {
 	case *logicalop.LogicalProjection:
 		if expression.ContainsFullTextSearchFn(x.Exprs...) {
-			return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' cannot be used in SELECT fields. It can be used in WHERE and ORDER BY only")
+			return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' cannot be used in SELECT fields. It can be used in WHERE only")
 		}
 	case *logicalop.LogicalSelection:
 		if expression.ContainsFullTextSearchFn(x.Conditions...) {

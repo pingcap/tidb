@@ -119,7 +119,7 @@ func TestFTSUnsupportedCases(t *testing.T) {
 	tk.MustQuery("explain select * from t where fts_match_word('hello', title)")
 
 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tikv'")
-	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can be only executed in a columnar storag")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can only be executed in a columnar storag")
 
 	tk.MustExec("alter table t set tiflash replica 0")
 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tikv'")

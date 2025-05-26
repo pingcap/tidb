@@ -139,8 +139,7 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	plan, err := builder.Build(context.TODO(), nodeW)
 	require.NoError(t, err)
 	flag := uint64(0)
-	// flagGcSubstitute | flagStabilizeResults | flagSkewDistinctAgg | flagEliminateOuterJoin | flagPushDownAgg
-	flag |= flag | rule.FlagGcSubstitute | rule.FlagStabilizeResults | rule.FlagSkewDistinctAgg | rule.FlagEliminateOuterJoin | rule.FlagPushDownAgg
+	flag |= flag | rule.FlagPruneColumns | rule.FlagBuildKeyInfo | rule.FlagEliminateProjection | rule.FlagPartitionProcessor | rule.FlagDeriveTopNFromWindow
 	_, _, err = core.DoOptimize(context.TODO(), sctx, flag, plan.(base.LogicalPlan))
 	require.NoError(t, err)
 	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,
@@ -125,8 +124,6 @@ type AccessPath struct {
 
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
-
-	FTSInfo *tipb.FTSQueryInfo
 }
 
 // Clone returns a deep copy of the original AccessPath.

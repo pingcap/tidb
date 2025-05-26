@@ -638,9 +638,6 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 // analyzeFTSFunc checks whether FTS function is used and is a valid one.
 // Then convert the function to index call because it can not be executed without the index.
 func (ds *DataSource) analyzeFTSFunc() error {
-	if !ds.SCtx().HasFTSFunc() {
-		return nil
-	}
 	idx2FastCheck := make(map[*model.IndexInfo]intset.FastIntSet)
 	idSetForCheck := intset.NewFastIntSet()
 	for _, index := range ds.FtsIndexes {
@@ -697,7 +694,7 @@ func (ds *DataSource) analyzeFTSFunc() error {
 		return path.StoreType == kv.TiKV
 	})
 	if len(ds.PossibleAccessPaths) == 0 {
-		return plannererrors.ErrWrongUsage.FastGen("Full text search can be only executed in a columnar storage")
+		return plannererrors.ErrWrongUsage.FastGen("Full text search can only be executed in a columnar storage")
 	}
 	// Build protobuf info for the matched index.
 	pbColumns := make([]*tipb.ColumnInfo, 0, len(matchedColumns))
@@ -710,7 +707,7 @@ func (ds *DataSource) analyzeFTSFunc() error {
 	}
 	ds.FtsIndexes[0] = matchedIdx
 	ds.FtsIndexes = ds.FtsIndexes[:1]
-	ds.PushedDownConds = append(ds.PushedDownConds[:matchedCondPos], ds.PushedDownConds[matchedCondPos+1:]...)
+	ds.PushedDownConds = slices.Delete(ds.PushedDownConds, matchedCondPos, matchedCondPos+1)
 	ds.MatchedFTS = &tipb.FTSQueryInfo{
 		QueryType:      tipb.FTSQueryType_FTSQueryTypeFilter,
 		IndexId:        matchedIdx.ID,
