@@ -205,7 +205,6 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
-	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
@@ -409,6 +408,11 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 // DeriveTopN inherits the BaseLogicalPlan.LogicalPlan.<6th> implementation.
 
 // PredicateSimplification inherits the BaseLogicalPlan.LogicalPlan.<7th> implementation.
+func (p *LogicalJoin) PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	p.OtherConditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.OtherConditions)
+	p.BaseLogicalPlan.PredicateSimplification(opt)
+	return p
+}
 
 // ConstantPropagation implements the base.LogicalPlan.<8th> interface.
 // about the logic of constant propagation in From List.
