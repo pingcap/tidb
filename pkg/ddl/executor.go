@@ -4700,12 +4700,6 @@ func checkTableTypeForFulltextIndex(tblInfo *model.TableInfo) error {
 	return nil
 }
 
-func buildFulltextInfoWithCheck(indexOption *ast.IndexOption, tblInfo *model.TableInfo) (*model.FullTextIndexInfo, string, error) {
-	return &model.FullTextIndexInfo{
-		ParserType: model.GetFullTextParserTypeBySQLName(indexOption.ParserName.L),
-	}, "", nil
-}
-
 func (e *executor) createFulltextIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
@@ -4723,7 +4717,7 @@ func (e *executor) createFulltextIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, funcExpr, err := buildFulltextInfoWithCheck(indexOption, tblInfo)
+	_, err = buildFullTextInfoWithCheck(indexPartSpecifications, indexOption, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4754,7 +4748,6 @@ func (e *executor) createFulltextIndex(ctx sessionctx.Context, ti ast.Ident, ind
 			IndexName:               indexName,
 			IndexPartSpecifications: indexPartSpecifications,
 			IndexOption:             indexOption,
-			FuncExpr:                funcExpr,
 		}},
 		OpType: model.OpAddIndex,
 	}
