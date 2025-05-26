@@ -25,10 +25,12 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
@@ -217,4 +219,65 @@ func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
 	// this is the encoded value of "test-123". Because the table ID/ index ID may vary, we can't check the exact key
 	// TODO: decode the key to use readable value in the error message.
 	require.ErrorContains(s.T(), err, "746573742d313233")
+}
+
+func (s *mockGCSSuite) TestGlobalSortWithPrefetchError() {
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.1.csv"},
+		Content:     []byte("1,foo1,bar1,123\n2,foo2,bar2,456\n3,foo3,bar3,789\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.2.csv"},
+		Content:     []byte("4,foo4,bar4,123\n5,foo5,bar5,223\n6,foo6,bar6,323\n"),
+	})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	s.prepareAndUseDB("gsort_basic")
+	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
+		key(a), key(c,d), key(d));`)
+	ch := make(chan struct{}, 1)
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
+		ch <- struct{}{}
+	})
+	deadLoopDetectThreshold := external.DeadLoopDetectThreshold
+	defer func() {
+		external.DeadLoopDetectThreshold = deadLoopDetectThreshold
+	}()
+	external.DeadLoopDetectThreshold = 3
+
+	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
+		with __max_engine_size = '1', cloud_storage_uri='%s', thread=1`, gcsEndpoint, sortStorageURI)
+
+	taskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/external/AfterNewByteReader", func() {
+		failpoint.Enable("github.com/pingcap/tidb/pkg/util/prefetch/PrefetchReaderUnexpectedEOF", "15*return(true)")
+	})
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/pkg/util/prefetch/PrefetchReaderUnexpectedEOF")
+	}()
+	s.tk.MustExec("truncate table t")
+	result := s.tk.MustQuery(importSQL + ", detached").Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+	s.Eventually(func() bool {
+		task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+		s.NoError(err2)
+		return task.State == proto.TaskStateReverted
+	}, 30*time.Second, 500*time.Millisecond)
+	// check all sorted data cleaned up
+	<-ch
+
+	_, files, err := s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
+	s.NoError(err)
+	s.Len(files, 0)
+
+	fmt.Println(s.tk.MustQuery("show import jobs").String())
+
+	// check subtask external field
+	checkExternalFields(s.T(), s.tk)
 }
