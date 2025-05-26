@@ -24,9 +24,9 @@
       {
         "SQL": "explain format = 'brief' select * from t1 where vec = '[1,1,1]'",
         "Plan": [
-          "TableReader 0.05 root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender 0.05 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Selection 0.05 mpp[tiflash]  eq(test.t1.vec, [1,1,1])",
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 1.00 mpp[tiflash]  eq(test.t1.vec, [1,1,1])",
           "    └─TableFullScan 48.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -248,12 +248,12 @@
       {
         "SQL": "explain format = 'brief' select * from t1 where a=0 order by vec_cosine_distance(vec, '[1,1,1]') limit 1",
         "Plan": [
-          "TopN 0.05 root  Column#7, offset:0, count:1",
-          "└─TableReader 0.05 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 0.05 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TopN 0.05 mpp[tiflash]  Column#7, offset:0, count:1",
-          "      └─Projection 0.05 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
-          "        └─Selection 0.05 mpp[tiflash]  eq(test.t1.a, 0)",
+          "TopN 1.00 root  Column#7, offset:0, count:1",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
+          "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "        └─Selection 1.00 mpp[tiflash]  eq(test.t1.a, 0)",
           "          └─TableFullScan 48.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null

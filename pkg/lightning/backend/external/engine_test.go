@@ -396,17 +396,28 @@ func TestEngineOnDup(t *testing.T) {
 		)
 	}
 
-	t.Run("on duplicate ignore and error", func(t *testing.T) {
-		for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyIgnore, engineapi.OnDuplicateKeyError} {
-			store := storage.NewMemStorage()
-			dataFiles, statFiles := prepareKVFiles(t, store, contents)
-			extEngine := getEngineFn(store, od, dataFiles, statFiles)
-			loadDataCh := make(chan engineapi.DataAndRanges, 4)
-			require.ErrorContains(t, extEngine.LoadIngestData(ctx, loadDataCh), "duplicate key found")
-			t.Cleanup(func() {
-				require.NoError(t, extEngine.Close())
-			})
-		}
+	t.Run("on duplicate ignore", func(t *testing.T) {
+		onDup := engineapi.OnDuplicateKeyIgnore
+		store := storage.NewMemStorage()
+		dataFiles, statFiles := prepareKVFiles(t, store, contents)
+		extEngine := getEngineFn(store, onDup, dataFiles, statFiles)
+		loadDataCh := make(chan engineapi.DataAndRanges, 4)
+		require.ErrorContains(t, extEngine.LoadIngestData(ctx, loadDataCh), "duplicate key found")
+		t.Cleanup(func() {
+			require.NoError(t, extEngine.Close())
+		})
+	})
+
+	t.Run("on duplicate error", func(t *testing.T) {
+		onDup := engineapi.OnDuplicateKeyError
+		store := storage.NewMemStorage()
+		dataFiles, statFiles := prepareKVFiles(t, store, contents)
+		extEngine := getEngineFn(store, onDup, dataFiles, statFiles)
+		loadDataCh := make(chan engineapi.DataAndRanges, 4)
+		require.ErrorContains(t, extEngine.LoadIngestData(ctx, loadDataCh), "[Lightning:Restore:ErrFoundDuplicateKey]found duplicate key '\x01', value 'aa'")
+		t.Cleanup(func() {
+			require.NoError(t, extEngine.Close())
+		})
 	})
 
 	t.Run("on duplicate record or remove, no duplicates", func(t *testing.T) {

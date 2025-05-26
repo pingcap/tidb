@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -92,8 +93,8 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-	local := e.backendCtx.GetLocalBackend()
-	if local == nil {
+	localBackend := e.backendCtx.GetLocalBackend()
+	if localBackend == nil {
 		return errors.Errorf("local backend not found")
 	}
 
@@ -132,7 +133,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if jobKeys == nil {
 		jobKeys = sm.RangeSplitKeys
 	}
-	err = local.CloseEngine(ctx, &backend.EngineConfig{
+	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:    e.cloudStoreURI,
 			DataFiles:     sm.DataFiles,
@@ -145,13 +146,14 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			TotalKVCount:  0,
 			CheckHotspot:  true,
 			MemCapacity:   e.GetResource().Mem.Capacity(),
+			OnDup:         engineapi.OnDuplicateKeyError,
 		},
 		TS: sm.TS,
 	}, engineUUID)
 	if err != nil {
 		return err
 	}
-	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded
 	})
@@ -160,7 +162,10 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 
 	if currentIdx != nil {
-		return ingest.TryConvertToKeyExistsErr(err, currentIdx, e.ptbl.Meta())
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			return local.ConvertToErrFoundConflictRecords(err, e.ptbl)
+		}
+		return err
 	}
 
 	// cannot fill the index name for subtask generated from an old version TiDB
