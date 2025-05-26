@@ -29,6 +29,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
@@ -408,6 +409,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 
 // NewImportPlan creates a new import into plan.
 func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
+	failpoint.InjectCall("NewImportPlan", plan)
 	var format string
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
