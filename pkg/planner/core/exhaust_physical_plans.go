@@ -3647,11 +3647,11 @@ func exhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property
 	}
 	preferHash, preferStream := la.ResetHintIfConflicted()
 	hashAggs := getHashAggs(la, prop)
-	if hashAggs != nil && preferHash {
+	if len(hashAggs) > 0 && preferHash {
 		return hashAggs, true, nil
 	}
 	streamAggs := getStreamAggs(la, prop)
-	if streamAggs != nil && preferStream {
+	if len(streamAggs) > 0 && preferStream {
 		return streamAggs, true, nil
 	}
 	aggs := append(hashAggs, streamAggs...)

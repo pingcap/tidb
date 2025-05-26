@@ -974,16 +974,16 @@ explain format='brief' select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 ,
 id	estRows	task	access object	operator info
 Sort	10000.00	root		Column#22, Column#23, Column#24, Column#25
 └─Projection	10000.00	root		ucase(Column#21)->Column#22, concat_ws(,, planner__core__indexjoin.t1.col_6, planner__core__indexjoin.t1.col_3)->Column#23, lower(planner__core__indexjoin.t1.col_3)->Column#24, ucase(Column#21)->Column#25
-  └─HashJoin	10000.00	root		left outer join, left side:UnionScan, equal:[eq(planner__core__indexjoin.t1.col_4, planner__core__indexjoin.t2.col_4)]
-    ├─StreamAgg(Build)	8.00	root		group by:planner__core__indexjoin.t2.col_4, funcs:min(planner__core__indexjoin.t2.col_3)->Column#21, funcs:firstrow(planner__core__indexjoin.t2.col_4)->planner__core__indexjoin.t2.col_4
-    │ └─Sort	10.00	root		planner__core__indexjoin.t2.col_4
-    │   └─UnionScan	10.00	root		isnull(planner__core__indexjoin.t2.col_3)
-    │     └─TableReader	10.00	root		data:Selection
-    │       └─Selection	10.00	cop[tikv]		isnull(planner__core__indexjoin.t2.col_3)
-    │         └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    └─UnionScan(Probe)	10000.00	root		
-      └─TableReader	10000.00	root		data:TableFullScan
-        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─IndexJoin	10000.00	root		left outer join, inner:HashAgg, left side:UnionScan, outer key:planner__core__indexjoin.t1.col_4, inner key:planner__core__indexjoin.t2.col_4, equal cond:eq(planner__core__indexjoin.t1.col_4, planner__core__indexjoin.t2.col_4)
+    ├─UnionScan(Build)	10000.00	root		
+    │ └─TableReader	10000.00	root		data:TableFullScan
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─HashAgg(Probe)	10.00	root		group by:planner__core__indexjoin.t2.col_4, funcs:min(planner__core__indexjoin.t2.col_3)->Column#21, funcs:firstrow(planner__core__indexjoin.t2.col_4)->planner__core__indexjoin.t2.col_4
+      └─UnionScan	10.00	root		isnull(planner__core__indexjoin.t2.col_3)
+        └─IndexLookUp	10.00	root		
+          ├─IndexRangeScan(Build)	10000.00	cop[tikv]	table:t2, index:idx_1(col_4)	range: decided by [eq(planner__core__indexjoin.t2.col_4, planner__core__indexjoin.t1.col_4)], keep order:false, stats:pseudo
+          └─Selection(Probe)	10.00	cop[tikv]		isnull(planner__core__indexjoin.t2.col_3)
+            └─TableRowIDScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 , concat_ws(',', t1.col_6 , t1.col_3 ) as r1 , lower( t1.col_3 ) as r2 , ucase( st_475.r4 ) as r3 from t1 left join (select /*+  stream_agg() */ t2.col_4 as r0 , max(   t2.col_4 ) as r1 , t2.col_4 as r2 , count(   t2.col_4 ) as r3 , min(   t2.col_3 ) as r4 from t2 where IsNull( t2.col_3 ) group by t2.col_4) st_475 on t1.col_4 = st_475.r0 order by r0,r1,r2,r3;
 r0	r1	r2	r3
 NULL	#35a,^VW2Cc8t	^VW2Cc8t	NULL
