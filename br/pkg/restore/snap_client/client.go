@@ -331,11 +331,12 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 	if err != nil {
 		return false, err
 	}
+	userTableIDNotReusedWhenNeedCheck := false
 	if checkUserTableIDReused {
 		minUserTableID := getMinUserTableID(tables)
 		start, _ := preallocedTableIDs.GetIDRange()
 		if minUserTableID != int64(math.MaxInt64) && minUserTableID < start {
-			return true, nil
+			userTableIDNotReusedWhenNeedCheck = true
 		}
 	}
 
@@ -347,7 +348,7 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 		rc.db.RegisterPreallocatedIDs(preallocedTableIDs)
 	}
 	rc.preallocedIDs = preallocedTableIDs
-	return false, nil
+	return userTableIDNotReusedWhenNeedCheck, nil
 }
 
 func (rc *SnapClient) GetPreAllocedTableIDRange() ([2]int64, error) {
