@@ -677,13 +677,13 @@ func (t *Time) FromPackedUint(packed uint64) error {
 // If allowZeroInDate is false, it returns ErrZeroDate when month or day is zero.
 // FIXME: See https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sqlmode_no_zero_in_date
 func (t Time) Check(ctx Context) error {
-	allowZeroInDate := ctx.Flags().IgnoreZeroInDate()
-	allowInvalidDate := ctx.Flags().IgnoreInvalidDateErr()
 	var err error
 	switch t.Type() {
 	case mysql.TypeTimestamp:
-		err = checkTimestampType(t.coreTime, ctx.Location())
+		err = checkTimestampType(ctx, t.coreTime)
 	case mysql.TypeDatetime, mysql.TypeDate:
+		allowZeroInDate := ctx.Flags().IgnoreZeroInDate()
+		allowInvalidDate := ctx.Flags().IgnoreInvalidDateErr()
 		err = checkDatetimeType(t.coreTime, allowZeroInDate, allowInvalidDate)
 	}
 	return errors.Trace(err)
@@ -2007,6 +2007,13 @@ func parseTime(ctx Context, str string, tp byte, fsp int, isFloat bool) (Time, e
 
 	t.SetType(tp)
 	if err = t.Check(ctx); err != nil {
+		if tp == mysql.TypeTimestamp {
+			// Handle the case when the timestamp given is in the DST transition
+			if tAdjusted, err2 := t.AdjustedGoTime(ctx.Location()); err2 == nil {
+				t.SetCoreTime(FromGoTime(tAdjusted))
+				return t, errors.Trace(ErrTimestampInDSTTransition.GenWithStackByArgs(str, ctx.Location().String()))
+			}
+		}
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 	return t, nil
@@ -2158,11 +2165,12 @@ func checkMonthDay(year, month, day int, allowInvalidDate bool) error {
 	return nil
 }
 
-func checkTimestampType(t CoreTime, tz *gotime.Location) error {
+func checkTimestampType(ctx Context, t CoreTime) error {
 	if compareTime(t, ZeroCoreTime) == 0 {
 		return nil
 	}
 
+	tz := ctx.Location()
 	var checkTime CoreTime
 	if tz != BoundTimezone {
 		convertTime := NewTime(t, mysql.TypeTimestamp, DefaultFsp)

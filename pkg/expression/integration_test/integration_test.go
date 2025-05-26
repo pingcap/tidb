@@ -4425,3 +4425,19 @@ func TestIssue57608(t *testing.T) {
 		))
 	}
 }
+
+func TestInsertNoneExstingTimestamp(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("SET time_zone = 'Europe/Stockholm'")
+	tk.MustExec("SET sql_mode = ''")
+	tk.MustExec(`create table t (id int primary key, ts timestamp)`)
+	tk.MustExec(`insert into t values (1,'2025-03-30 01:59:59')`)
+	tk.MustExec(`insert into t values (2,'2025-03-30 02:00:00')`)
+	tk.MustExec(`insert into t values (3,'2025-03-30 02:00:01')`)
+	tk.MustExec(`insert into t values (4,'2025-03-30 02:30:00')`)
+	tk.MustExec(`insert into t values (5,'2025-03-30 02:59:59')`)
+	tk.MustExec(`insert into t values (6,'2025-03-30 03:00:00')`)
+	tk.MustQuery(`select id, ts from t order by id`).Check(testkit.Rows("2025-03-30 03:00:00"))
+}
