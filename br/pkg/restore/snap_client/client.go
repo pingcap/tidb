@@ -318,23 +318,24 @@ func getMinUserTableID(tables []*metautil.Table) int64 {
 
 // AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
 // the download stage.
-func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table, mustUserTableIDReused bool) error {
+// It returns whether any user table ID is not reused when need check.
+func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table, checkUserTableIDReused bool) (bool, error) {
 	preallocedTableIDs := tidalloc.New(tables)
 	if preallocedTableIDs == nil {
-		return errors.Errorf("failed to pre-alloc table IDs")
+		return false, errors.Errorf("failed to pre-alloc table IDs")
 	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
 		return preallocedTableIDs.Alloc(meta.NewMutator(txn))
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
-	if mustUserTableIDReused {
+	if checkUserTableIDReused {
 		minUserTableID := getMinUserTableID(tables)
 		start, _ := preallocedTableIDs.GetIDRange()
 		if minUserTableID != int64(math.MaxInt64) && minUserTableID < start {
-			return errors.Errorf("cannot load stats physically because not all table ids are reused")
+			return true, nil
 		}
 	}
 
@@ -346,7 +347,7 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 		rc.db.RegisterPreallocatedIDs(preallocedTableIDs)
 	}
 	rc.preallocedIDs = preallocedTableIDs
-	return nil
+	return false, nil
 }
 
 func (rc *SnapClient) GetPreAllocedTableIDRange() ([2]int64, error) {

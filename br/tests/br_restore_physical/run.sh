@@ -60,7 +60,8 @@ restart_services
 
 # run snapshot restore
 echo "run snapshot restore"
-run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/full" --load-stats-physical --load-sys-table-physical
+run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/full" --fast-load-sys-tables > $res_file 2>&1
+check_not_contains
 
 # check
 ## check statistic data

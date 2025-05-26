@@ -154,6 +154,14 @@ type SchemaVersionPairT struct {
 	DownstreamVersionMinor int64
 }
 
+func (t *SchemaVersionPairT) UpstreamVersion() string {
+	return fmt.Sprintf("%d.%d", t.UpstreamVersionMajor, t.UpstreamVersionMinor)
+}
+
+func (t *SchemaVersionPairT) DownstreamVersion() string {
+	return fmt.Sprintf("%d.%d", t.DownstreamVersionMajor, t.DownstreamVersionMinor)
+}
+
 type schemaUpdateSQL struct {
 	schemaName string
 	tableName  string
