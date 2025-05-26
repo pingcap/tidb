@@ -161,6 +161,7 @@ func GetFullTextParserTypeBySQLName(name string) FullTextParserType {
 // FullTextIndexInfo is the information of FULLTEXT index of a column.
 type FullTextIndexInfo struct {
 	ParserType FullTextParserType `json:"parser_type"`
+	Mode       string             `json:"mode"`
 	// TODO: Add other options
 }
 

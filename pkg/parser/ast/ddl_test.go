@@ -129,6 +129,7 @@ func TestDDLIndexOption(t *testing.T) {
 		{"COMMENT 'foo'", "COMMENT 'foo'"},
 		{"key_block_size = 32 using hash comment 'hello'", "KEY_BLOCK_SIZE=32 USING HASH COMMENT 'hello'"},
 		{"key_block_size=32 using btree comment 'hello'", "KEY_BLOCK_SIZE=32 USING BTREE COMMENT 'hello'"},
+		{`PARAMETERS '{"idxmode":"basic"}'`, `PARAMETERS '{"idxmode":"basic"}'`},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*CreateIndexStmt).IndexOption
