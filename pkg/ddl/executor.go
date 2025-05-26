@@ -1166,7 +1166,7 @@ func (e *executor) createTableWithInfoPost(
 	if pi := tbInfo.GetPartitionInfo(); pi != nil {
 		partitions = pi.Definitions
 	}
-	preSplitAndScatter(ctx, e.store, tbInfo, partitions)
+	preSplitAndScatter(ctx, e.store, tbInfo, partitions, getScatterScopeFromSessionctx(ctx))
 	if tbInfo.AutoIncID > 1 {
 		// Default tableAutoIncID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
@@ -1376,7 +1376,7 @@ func (e *executor) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy 
 
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
 // If `pi` is not nil, will only split region for `pi`, this is used when add partition.
-func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.TableInfo, parts []model.PartitionDefinition) {
+func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.TableInfo, parts []model.PartitionDefinition, scatterScope string) {
 	if tbInfo.TempTableType != model.TempTableNone {
 		return
 	}
@@ -1384,16 +1384,7 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
 		return
 	}
-	var (
-		preSplit     func()
-		scatterScope string
-	)
-	val, ok := ctx.GetSessionVars().GetSystemVar(vardef.TiDBScatterRegion)
-	if !ok {
-		logutil.DDLLogger().Warn("get system variable met problem, won't scatter region")
-	} else {
-		scatterScope = val
-	}
+	var preSplit func()
 	if len(parts) > 0 {
 		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scatterScope) }
 	} else {
@@ -2288,7 +2279,8 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	args := &model.TablePartitionArgs{
-		PartInfo: partInfo,
+		PartInfo:     partInfo,
+		ScatterScope: getScatterScopeFromSessionctx(ctx),
 	}
 
 	if spec.Tp == ast.AlterTableAddLastPartition && spec.Partition != nil {
@@ -2800,6 +2792,7 @@ func (e *executor) TruncateTablePartition(ctx sessionctx.Context, ident ast.Iden
 	}
 	args := &model.TruncateTableArgs{
 		OldPartitionIDs: pids,
+		ScatterScope:    getScatterScopeFromSessionctx(ctx),
 		// job submitter will fill new partition IDs.
 	}
 
@@ -4303,6 +4296,7 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	args := &model.TruncateTableArgs{
 		FKCheck:         fkCheck,
 		OldPartitionIDs: oldPartitionIDs,
+		ScatterScope:    getScatterScopeFromSessionctx(ctx),
 	}
 	err = e.doDDLJob2(ctx, job, args)
 	if err != nil {
@@ -7079,4 +7073,15 @@ func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaA
 	sctx.SetValue(sessionctx.QueryString, "skip")
 	err := e.doDDLJob2(sctx, job, args)
 	return errors.Trace(err)
+}
+
+func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
+	var scatterScope string
+	val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBScatterRegion)
+	if !ok {
+		logutil.DDLLogger().Warn("get system variable met problem, won't scatter region")
+	} else {
+		scatterScope = val
+	}
+	return scatterScope
 }
