@@ -495,18 +495,31 @@ func buildInvertedInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecific
 
 func buildFullTextInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption,
 	tblInfo *model.TableInfo) (*model.FullTextIndexInfo, error) {
-	if len(indexPartSpecifications) != 1 {
-		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index only support one column")
-	}
-	idxPart := indexPartSpecifications[0]
-	if idxPart.Column == nil {
-		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index only support one column")
-	}
-	if idxPart.Length != types.UnspecifiedLength {
-		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index does not support prefix length")
-	}
-	if idxPart.Desc {
-		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index does not support DESC order")
+	for _, idxPart := range indexPartSpecifications {
+		if idxPart.Column == nil {
+			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index must specific at least one column")
+		}
+		if idxPart.Length != types.UnspecifiedLength {
+			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index does not support prefix length")
+		}
+		if idxPart.Desc {
+			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index does not support DESC order")
+		}
+		colInfo := findColumnByName(idxPart.Column.Name.L, tblInfo)
+		if colInfo == nil {
+			return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(idxPart.Column.Name.L, tblInfo.Name)
+		}
+		for _, idx := range tblInfo.Indices {
+			if idx.FullTextInfo == nil {
+				continue
+			}
+			if idxCol := idx.FindColumnByName(colInfo.Name.L); idxCol == nil {
+				continue
+			}
+			return nil, dbterror.ErrDupKeyName.GenWithStack(
+				fmt.Sprintf("fulltext index '%s' already exist on column %s",
+					idx.Name, colInfo.Name))
+		}
 	}
 	// The Default parser is STANDARD
 	parser := model.FullTextParserTypeStandardV1
@@ -516,21 +529,6 @@ func buildFullTextInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecific
 			// Actually indexOption must be valid. It is already checked in preprocessor.
 			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("fulltext index must specify a valid parser")
 		}
-	}
-	colInfo := findColumnByName(idxPart.Column.Name.L, tblInfo)
-	if colInfo == nil {
-		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(idxPart.Column.Name.L, tblInfo.Name)
-	}
-	for _, idx := range tblInfo.Indices {
-		if idx.FullTextInfo == nil {
-			continue
-		}
-		if idxCol := idx.FindColumnByName(colInfo.Name.L); idxCol == nil {
-			continue
-		}
-		return nil, dbterror.ErrDupKeyName.GenWithStack(
-			fmt.Sprintf("fulltext index '%s' already exist on column %s",
-				idx.Name, colInfo.Name))
 	}
 	return &model.FullTextIndexInfo{
 		ParserType: parser,
@@ -814,6 +812,116 @@ func checkAndBuildIndexInfo(
 	return indexInfo, nil
 }
 
+func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	// Handle the rolling back job.
+	if job.IsRollingback() {
+		ver, err = onDropIndex(jobCtx, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
+	}
+
+	// Handle normal job.
+	schemaID := job.SchemaID
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if err := checkTableTypeForFulltextIndex(tblInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	args, err := model.GetModifyIndexArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	a := args.IndexArgs[0]
+	indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, model.ColumnarIndexTypeFulltext, false, a)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	originalState := indexInfo.State
+	switch indexInfo.State {
+	case model.StateNone:
+		// none -> delete only
+		indexInfo.State = model.StateDeleteOnly
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, err
+		}
+		job.SchemaState = model.StateDeleteOnly
+	case model.StateDeleteOnly:
+		// delete only -> write only
+		indexInfo.State = model.StateWriteOnly
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, err
+		}
+		job.SchemaState = model.StateWriteOnly
+	case model.StateWriteOnly:
+		// write only -> reorganization
+		indexInfo.State = model.StateWriteReorganization
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, err
+		}
+		// Initialize SnapshotVer to 0 for later reorganization check.
+		job.SnapshotVer = 0
+		job.SchemaState = model.StateWriteReorganization
+	case model.StateWriteReorganization:
+		// reorganization -> public
+		tbl, err := getTable(jobCtx.getAutoIDRequirement(), schemaID, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		if job.IsCancelling() {
+			return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, dbterror.ErrCancelledDDLJob)
+		}
+
+		// Send sync schema notification to CI.
+		if job.SnapshotVer == 0 {
+			currVer, err := getValidCurrentVersion(jobCtx.store)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			err = infosync.CreateFulltextIndex(jobCtx.stepCtx, tblInfo, indexInfo, job.SchemaName)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			job.SnapshotVer = currVer.Ver
+			return ver, nil
+		}
+
+		// Don't need to check the progress of TiCI for fulltext index, just mark it as done.
+		indexInfo.State = model.StatePublic
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		finishedArgs := &model.ModifyIndexArgs{
+			IndexArgs:    []*model.IndexArg{{IndexID: indexInfo.ID}},
+			PartitionIDs: getPartitionIDs(tblInfo),
+			OpType:       model.OpAddIndex,
+		}
+		job.FillFinishedArgs(finishedArgs)
+
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		logutil.DDLLogger().Info("[ddl] run add fulltext index job done",
+			zap.Int64("ver", ver),
+			zap.String("charset", job.Charset),
+			zap.String("collation", job.Collate))
+	default:
+		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+	}
+
+	return ver, errors.Trace(err)
+}
 func (w *worker) onCreateColumnarIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {

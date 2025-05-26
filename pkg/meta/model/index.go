@@ -132,7 +132,7 @@ const (
 	// The value matches with the supported tokenizer in Libclara.
 	FullTextParserTypeMultilingualV1 FullTextParserType = "MULTILINGUAL_V1"
 	// FullTextParserTypeNgramV1 is a better recall rate,
-	// but may be not better performed parser
+	// but may be not better performed parser.
 	// The value matches with the supported tokenizer in Libclara.
 	FullTextParserTypeNgramV1 FullTextParserType = "NGRAM_V1"
 )

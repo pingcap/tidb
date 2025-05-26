@@ -1821,7 +1821,12 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					err = e.CreateCheckConstraint(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint)
 				}
 			case ast.ConstraintColumnar:
-				err = e.createColumnarIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+				switch constr.Option.Tp {
+				case ast.IndexTypeFulltext:
+					err = e.createFulltextIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+				default:
+					err = e.createColumnarIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+				}
 			default:
 				// Nothing to do now.
 			}
@@ -4741,7 +4746,7 @@ func (e *executor) createFulltextIndex(ctx sessionctx.Context, ti ast.Ident, ind
 
 	job := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
 	job.Version = model.GetJobVerInUse()
-	job.Type = model.ActionAddColumnarIndex
+	job.Type = model.ActionAddFullTextIndex
 	indexPartSpecifications[0].Expr = nil
 
 	args := &model.ModifyIndexArgs{
@@ -4845,8 +4850,6 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		columnarIndexType = model.ColumnarIndexTypeInverted
 	case ast.IndexTypeVector:
 		columnarIndexType = model.ColumnarIndexTypeVector
-	case ast.IndexTypeFulltext:
-		columnarIndexType = model.ColumnarIndexTypeFulltext
 	default:
 		return dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(indexOption.Tp)
 	}
@@ -4866,10 +4869,6 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		}
 	case model.ColumnarIndexTypeVector:
 		if _, funcExpr, err = buildVectorInfoWithCheck(indexPartSpecifications, tblInfo); err != nil {
-			return errors.Trace(err)
-		}
-	case model.ColumnarIndexTypeFulltext:
-		if _, err = buildFullTextInfoWithCheck(indexPartSpecifications, indexOption, tblInfo); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -4971,7 +4970,12 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	case ast.IndexKeyTypeSpatial:
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is not supported")
 	case ast.IndexKeyTypeColumnar:
-		return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
+		switch indexOption.Tp {
+		case ast.IndexTypeFulltext:
+			return e.createFulltextIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
+		default:
+			return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
+		}
 	}
 	unique := keyType == ast.IndexKeyTypeUnique
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
