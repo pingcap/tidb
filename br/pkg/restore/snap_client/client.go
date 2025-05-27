@@ -306,20 +306,20 @@ func (rc *SnapClient) SetPlacementPolicyMode(withPlacementPolicy string) {
 
 // AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
 // the download stage.
-func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table, reusePreallocID *checkpoint.PreallocIDs) error {
+func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table, reusePreallocIDs *checkpoint.PreallocIDs) error {
 	var preallocedTableIDs *tidalloc.PreallocIDs
 	var err error
-	if reusePreallocID == nil {
+	if reusePreallocIDs == nil {
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 		err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
-			preallocedTableIDs, err = tidalloc.NewAndAlloc(tables, meta.NewMutator(txn))
+			preallocedTableIDs, err = tidalloc.NewAndPrealloc(tables, meta.NewMutator(txn))
 			return err
 		})
 		if err != nil {
 			return err
 		}
 	} else {
-		preallocedTableIDs, err = tidalloc.Reuse(reusePreallocID, tables)
+		preallocedTableIDs, err = tidalloc.ReuseIDs(reusePreallocIDs, tables)
 		if err != nil {
 			return errors.Trace(err)
 		}

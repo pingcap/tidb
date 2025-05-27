@@ -1011,7 +1011,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
-	reusePreallocID, err := checkPreallocIDReusable(ctx, mgr, g, cfg, hash, cpEnabledAndExists)
+	reusePreallocIDs, err := checkPreallocIDReusable(ctx, mgr, g, cfg, hash, cpEnabledAndExists)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1076,7 +1076,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
-	if err = client.AllocTableIDs(ctx, tables, reusePreallocID); err != nil {
+	if err = client.AllocTableIDs(ctx, tables, reusePreallocIDs); err != nil {
 		return errors.Trace(err)
 	}
 

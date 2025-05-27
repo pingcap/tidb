@@ -94,7 +94,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 	preallocId := func(tables []*metautil.Table) {
 		ids, err := prealloctableid.New(tables)
 		require.NoErrorf(t, err, "Error create prealloc ids: %s", err)
-		ids.Alloc(&allocator)
+		ids.PreallocIDs(&allocator)
 		db.RegisterPreallocatedIDs(ids)
 		allocator += testAllocator(len(tables))
 	}
@@ -257,7 +257,7 @@ func cloneTableInfos(
 		if err != nil {
 			return err
 		}
-		return ids.Alloc(allocater)
+		return ids.PreallocIDs(allocater)
 	})
 	require.NoError(t, err)
 	db.RegisterPreallocatedIDs(ids)
@@ -395,7 +395,7 @@ func TestCreateTablesInDb(t *testing.T) {
 
 	preallocId := func(tables []*metautil.Table) {
 		ids, _ := prealloctableid.New(tables)
-		ids.Alloc(&allocator)
+		ids.PreallocIDs(&allocator)
 		db.RegisterPreallocatedIDs(ids)
 		allocator += testAllocator(len(tables))
 	}
@@ -449,7 +449,7 @@ func TestDDLJobMap(t *testing.T) {
 
 	preallocId := func(tables []*metautil.Table) {
 		ids, _ := prealloctableid.New(tables)
-		ids.Alloc(&allocator)
+		ids.PreallocIDs(&allocator)
 		db.RegisterPreallocatedIDs(ids)
 		allocator += testAllocator(len(tables))
 	}
@@ -590,7 +590,7 @@ func TestCreateTableConsistent(t *testing.T) {
 
 	preallocId := func(tables []*metautil.Table) {
 		ids, _ := prealloctableid.New(tables)
-		ids.Alloc(&allocator)
+		ids.PreallocIDs(&allocator)
 		db.RegisterPreallocatedIDs(ids)
 		allocator += testAllocator(len(tables))
 	}

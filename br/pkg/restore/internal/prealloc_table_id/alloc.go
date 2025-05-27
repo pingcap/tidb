@@ -42,7 +42,7 @@ type PreallocIDs struct {
 	allocRule      map[int64]int64
 }
 
-func NewAndAlloc(tables []*metautil.Table, m Allocator) (*PreallocIDs, error) {
+func NewAndPrealloc(tables []*metautil.Table, m Allocator) (*PreallocIDs, error) {
 	if len(tables) == 0 {
 		return &PreallocIDs{
 			start: math.MaxInt64,
@@ -52,7 +52,7 @@ func NewAndAlloc(tables []*metautil.Table, m Allocator) (*PreallocIDs, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create preallocIDs")
 	}
-	if err := preallocIDs.Alloc(m); err != nil {
+	if err := preallocIDs.PreallocIDs(m); err != nil {
 		return nil, errors.Wrap(err, "failed to allocate prealloc IDs")
 	}
 	return preallocIDs, nil
@@ -100,7 +100,7 @@ func New(tables []*metautil.Table) (*PreallocIDs, error) {
 	}, nil
 }
 
-func Reuse(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocIDs, error) {
+func ReuseIDs(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocIDs, error) {
 	if legacy == nil {
 		return nil, errors.Errorf("no prealloc IDs to be reused")
 	}
@@ -172,7 +172,7 @@ func (p *PreallocIDs) GetIDRange() (int64, int64) {
 }
 
 // preallocTableIDs peralloc the id for [start, end)
-func (p *PreallocIDs) Alloc(m Allocator) error {
+func (p *PreallocIDs) PreallocIDs(m Allocator) error {
 	if len(p.unallocedIDs) == 0 {
 		return nil
 	}
