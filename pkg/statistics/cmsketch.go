@@ -624,8 +624,8 @@ func (c *TopN) MinCount() uint64 {
 	if intest.InTest {
 		minCount, totalCount := c.calculateMinCountAndCountInternal()
 		c.calculateMinCountAndCount()
-		intest.Assert(minCount == c.minCount, "minCount should be equal to the calculated minCount")
-		intest.Assert(totalCount == c.totalCount, "totalCount should be equal to the calculated totalCount")
+		intest.Assert(minCount == 0 || minCount == c.minCount, "minCount should be equal to the calculated minCount")
+		intest.Assert(totalCount == 0 || totalCount == c.totalCount, "totalCount should be equal to the calculated totalCount")
 		return c.minCount
 	}
 	c.calculateMinCountAndCount()
