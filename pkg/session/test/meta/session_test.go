@@ -66,6 +66,8 @@ func TestInitMetaTable(t *testing.T) {
 		metaInMySQL.UpdateTS = metaInTest.UpdateTS
 		metaInTest.DBID = 0
 		metaInMySQL.DBID = 0
+		// new table will set to ScatterScopeEmpty from system variables default
+		metaInTest.ScatterScope = metaInMySQL.ScatterScope
 		require.True(t, reflect.DeepEqual(metaInMySQL, metaInTest))
 	}
 }

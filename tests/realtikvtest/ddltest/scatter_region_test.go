@@ -108,10 +108,11 @@ func TestTiDBScatterRegion(t *testing.T) {
 	tk.MustQuery("select @@session.tidb_scatter_region;").Check(testkit.Rows("table"))
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;")
+	tk.MustExec("set @@session.tidb_scatter_region='global';")
 	tk.MustQuery("select @@session.tidb_scatter_region;").Check(testkit.Rows("global"))
 	tk.MustExec("truncate table t")
 	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/preSplitAndScatter", func(v string) {
-		require.Equal(t, "table", v)
+		require.Equal(t, "global", v)
 	})
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -120,6 +121,7 @@ func TestTiDBScatterRegion(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec(`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 (partition p202201 values less than('2022-02-01'), partition p202202 values less than('2022-02-02'));`)
+	tk.MustExec("set @@session.tidb_scatter_region='global';")
 	tk.MustQuery("select @@session.tidb_scatter_region;").Check(testkit.Rows("global"))
 	tk.MustExec("ALTER TABLE t TRUNCATE PARTITION p202201;")
 	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/preSplitAndScatter", func(v string) {
@@ -132,6 +134,7 @@ func TestTiDBScatterRegion(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec(`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'));`)
+	tk.MustExec("set @@session.tidb_scatter_region='global';")
 	tk.MustQuery("select @@session.tidb_scatter_region;").Check(testkit.Rows("global"))
 	tk.MustExec("ALTER TABLE t ADD PARTITION (PARTITION p202203 values less than('2022-02-03'));")
 	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/preSplitAndScatter", func(v string) {
