@@ -4448,9 +4448,9 @@ func (n *PartitionOptions) Validate() error {
 			if n.Sub.Num != 0 && subDefCount != 0 && n.Sub.Num != uint64(subDefCount) {
 				return ErrPartitionWrongNoSubpart
 			}
-			if subDefCount != 0 {
-				n.Sub.Num = uint64(subDefCount)
-			}
+			//if subDefCount != 0 {
+			//	n.Sub.Num = uint64(subDefCount)
+			//}
 		} else if subDefCount != 0 {
 			return ErrSubpartition
 		}

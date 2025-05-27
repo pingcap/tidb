@@ -1079,7 +1079,7 @@ type PartitionDefinition struct {
 	InValues           [][]string            `json:"in_values"`
 	PlacementPolicyRef *PolicyRefInfo        `json:"policy_ref_info"`
 	Comment            string                `json:"comment,omitempty"`
-	SubDefinitions     []PartitionDefinition `json:"sub-definitions"`
+	SubDefinitions     []PartitionDefinition `json:"sub_definitions"`
 }
 
 // Clone clones PartitionDefinition.

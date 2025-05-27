@@ -450,7 +450,7 @@ func TestSubPartitioning(t *testing.T) {
 	tk.MustGetErrMsg(`CREATE TABLE t ( col1 INT NOT NULL, col2 INT NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL, primary KEY (col1,col3) ) PARTITION BY KEY(col1) PARTITIONS 4 SUBPARTITION BY KEY(col3) SUBPARTITIONS 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
 }
 
-func TestSubPartitionError(t *testing.T) {
+func TestSubPartition2(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
@@ -486,6 +486,58 @@ func TestSubPartitionError(t *testing.T) {
             SUBPARTITION s5
         )
     );`, "[ddl:1485]Wrong number of subpartitions defined, mismatch with previous setting")
+	tk.MustExec(`CREATE TABLE ts (id INT, purchased DATE)
+    PARTITION BY RANGE( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES LESS THAN (1990),
+        PARTITION p1 VALUES LESS THAN (2000),
+        PARTITION p2 VALUES LESS THAN MAXVALUE
+    );`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery("SHOW CREATE TABLE ts").Check(testkit.Rows("ts CREATE TABLE `ts` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `purchased` date DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (YEAR(`purchased`))\n" +
+		"SUBPARTITION BY HASH (TO_DAYS(`purchased`))\n" +
+		"SUBPARTITIONS 2\n" +
+		"(PARTITION `p0` VALUES LESS THAN (1990),\n" +
+		" PARTITION `p1` VALUES LESS THAN (2000),\n" +
+		" PARTITION `p2` VALUES LESS THAN (MAXVALUE))"))
+
+	tk.MustExec("drop table ts")
+	tk.MustExec(`CREATE TABLE ts (id INT, purchased DATE)
+    PARTITION BY RANGE( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) ) (
+        PARTITION p0 VALUES LESS THAN (1990) (
+            SUBPARTITION s0,
+            SUBPARTITION s1
+        ),
+        PARTITION p1 VALUES LESS THAN (2000) (
+            SUBPARTITION s2,
+            SUBPARTITION s3
+        ),
+        PARTITION p2 VALUES LESS THAN MAXVALUE (
+            SUBPARTITION s4,
+            SUBPARTITION s5
+        )
+    );`)
+	tk.MustQuery("show create table ts").Check(testkit.Rows("ts CREATE TABLE `ts` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `purchased` date DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (YEAR(`purchased`))\n" +
+		"SUBPARTITION BY HASH (TO_DAYS(`purchased`))\n" +
+		"(PARTITION `p0` VALUES LESS THAN (1990)\n" +
+		"(SUBPARTITION `s0`,\n" +
+		"SUBPARTITION `s1`),\n" +
+		" PARTITION `p1` VALUES LESS THAN (2000)\n" +
+		"(SUBPARTITION `s2`,\n" +
+		"SUBPARTITION `s3`),\n" +
+		" PARTITION `p2` VALUES LESS THAN (MAXVALUE)\n" +
+		"(SUBPARTITION `s4`,\n" +
+		"SUBPARTITION `s5`))"))
 }
 
 func TestSubPartitionDev(t *testing.T) {
@@ -493,33 +545,7 @@ func TestSubPartitionDev(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE ts (id INT, purchased DATE)
-    PARTITION BY RANGE( YEAR(purchased) )
-    SUBPARTITION BY HASH( TO_DAYS(purchased) )
-    SUBPARTITIONS 2 (
-        PARTITION p0 VALUES LESS THAN (1990),
-        PARTITION p1 VALUES LESS THAN (2000),
-        PARTITION p2 VALUES LESS THAN MAXVALUE
-    );`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
-	tk.MustQuery("SHOW CREATE TABLE ts").Check(testkit.Rows(""))
-}
 
-func TestSubPartitioning2(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE ts (id INT, purchased DATE)
-    PARTITION BY RANGE( YEAR(purchased) )
-    SUBPARTITION BY HASH( TO_DAYS(purchased) )
-    SUBPARTITIONS 2 (
-        PARTITION p0 VALUES LESS THAN (1990),
-        PARTITION p1 VALUES LESS THAN (2000),
-        PARTITION p2 VALUES LESS THAN MAXVALUE
-    );`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
-	tk.MustQuery("SHOW CREATE TABLE ts").Check(testkit.Rows(""))
 }
 
 func TestCreateTableWithRangeColumnPartition(t *testing.T) {

@@ -566,7 +566,7 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 		pi.Columns = columns
 		pi.IsEmptyColumns = isEmptyColumns
 	}
-	if s.Sub != nil && s.Sub.Num > 0 && (s.Sub.Tp == pmodel.PartitionTypeHash) {
+	if s.Sub != nil && (s.Sub.Tp == pmodel.PartitionTypeHash) {
 		subPi := &model.SubPartitionInfo{
 			Type: s.Sub.Tp,
 			Num:  s.Sub.Num,
@@ -1683,18 +1683,11 @@ func buildRangePartitionDefinitions(ctx expression.BuildContext, defs []*ast.Par
 				})
 			}
 		}
-		if len(definitions) > 0 && len(definitions[len(definitions)-1].SubDefinitions) != len(piDef.SubDefinitions) {
-			return nil, dbterror.ErrPartitionWrongNoSubpart
-		}
-		//if len(piDef.SubDefinitions)
 		definitions = append(definitions, piDef)
 	}
 	if sub != nil && sub.Num > 0 && (sub.Tp == pmodel.PartitionTypeHash) {
 		for i := range definitions {
 			if len(definitions[i].SubDefinitions) > 0 {
-				if len(definitions[i].SubDefinitions) != int(sub.Num) {
-					return nil, dbterror.ErrPartitionWrongNoSubpart
-				}
 				continue
 			}
 			definitions[i].SubDefinitions = make([]model.PartitionDefinition, 0, int(sub.Num))
@@ -5000,13 +4993,13 @@ func hexIfNonPrint(s string) string {
 	return "0x" + hex.EncodeToString([]byte(driver.UnwrapFromSingleQuotes(s)))
 }
 
-func writeColumnListToBuffer(partitionInfo *model.PartitionInfo, sqlMode mysql.SQLMode, buf *bytes.Buffer) {
-	if partitionInfo.IsEmptyColumns {
+func writeColumnListToBuffer(isEmptyColumns bool, columns []pmodel.CIStr, sqlMode mysql.SQLMode, buf *bytes.Buffer) {
+	if isEmptyColumns {
 		return
 	}
-	for i, col := range partitionInfo.Columns {
+	for i, col := range columns {
 		buf.WriteString(stringutil.Escape(col.O, sqlMode))
-		if i < len(partitionInfo.Columns)-1 {
+		if i < len(columns)-1 {
 			buf.WriteString(",")
 		}
 	}
@@ -5041,7 +5034,7 @@ func AppendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 				fmt.Fprintf(buf, "\nPARTITION BY HASH (%s) PARTITIONS %d", partitionInfo.Expr, partitionInfo.Num)
 			} else {
 				buf.WriteString("\nPARTITION BY KEY (")
-				writeColumnListToBuffer(partitionInfo, sqlMode, buf)
+				writeColumnListToBuffer(partitionInfo.IsEmptyColumns, partitionInfo.Columns, sqlMode, buf)
 				buf.WriteString(")")
 				fmt.Fprintf(buf, " PARTITIONS %d", partitionInfo.Num)
 			}
@@ -5058,12 +5051,29 @@ func AppendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		} else {
 			fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
 		}
-		writeColumnListToBuffer(partitionInfo, sqlMode, buf)
-		buf.WriteString(")\n(")
+		writeColumnListToBuffer(partitionInfo.IsEmptyColumns, partitionInfo.Columns, sqlMode, buf)
+		buf.WriteString(")\n")
 	} else {
-		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)\n(", partitionInfo.Type.String(), partitionInfo.Expr)
+		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)\n", partitionInfo.Type.String(), partitionInfo.Expr)
 	}
-
+	if partitionInfo.Sub != nil {
+		sub := partitionInfo.Sub
+		if len(sub.Columns) > 0 {
+			if sub.Type == pmodel.PartitionTypeKey {
+				fmt.Fprintf(buf, "\nSUBPARTITION BY %s (", sub.Type.String())
+			} else {
+				fmt.Fprintf(buf, "\nSUBPARTITION BY %s COLUMNS(", sub.Type.String())
+			}
+			writeColumnListToBuffer(sub.IsEmptyColumns, sub.Columns, sqlMode, buf)
+			buf.WriteString(")\n")
+		} else {
+			fmt.Fprintf(buf, "SUBPARTITION BY %s (%s)\n", sub.Type.String(), sub.Expr)
+		}
+		if sub.Num > 0 {
+			fmt.Fprintf(buf, "SUBPARTITIONS %d\n", sub.Num)
+		}
+	}
+	buf.WriteString("(")
 	AppendPartitionDefs(partitionInfo, buf, sqlMode)
 	buf.WriteString(")")
 }
@@ -5118,6 +5128,17 @@ func AppendPartitionDefs(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		if def.PlacementPolicyRef != nil {
 			// add placement ref info here
 			fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
+		}
+		// user define sub-partitions.
+		if len(def.SubDefinitions) > 0 && partitionInfo.Sub.Num == 0 {
+			buf.WriteString("\n(")
+			for j, subDef := range def.SubDefinitions {
+				if j > 0 {
+					buf.WriteString(",\n")
+				}
+				fmt.Fprintf(buf, "SUBPARTITION %s", stringutil.Escape(subDef.Name.O, sqlMode))
+			}
+			buf.WriteString(")")
 		}
 	}
 }
