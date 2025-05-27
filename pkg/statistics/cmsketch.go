@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 )
@@ -734,6 +735,7 @@ func (c *TopN) TotalCount() uint64 {
 		return 0
 	}
 	c.once.Do(func() {
+		intest.Assert(c.totalCount == 0, "TopN totalCount should be 0 before first call of TotalCount()")
 		total := uint64(0)
 		for _, t := range c.TopN {
 			total += t.Count
