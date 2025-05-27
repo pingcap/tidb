@@ -213,8 +213,8 @@ type ScatterScope int64
 
 // ScatterScope values.
 const (
-	ScatterScopeDefault ScatterScope = iota
-	ScatterScopeDisable
+	ScatterScopeNA ScatterScope = iota
+	ScatterScopeEmpty
 	ScatterScopeTable
 	ScatterScopeGlobal
 )
@@ -227,7 +227,7 @@ func ScatterScopeFromString(s string) ScatterScope {
 	case "global":
 		return ScatterScopeGlobal
 	default:
-		return ScatterScopeDisable
+		return ScatterScopeEmpty
 	}
 }
 

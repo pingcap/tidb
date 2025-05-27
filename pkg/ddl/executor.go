@@ -1169,7 +1169,7 @@ func (e *executor) createTableWithInfoPost(
 		partitions = pi.Definitions
 	}
 	var scatterScope string
-	if tbInfo.ScatterScope != model.ScatterScopeDefault {
+	if tbInfo.ScatterScope != model.ScatterScopeNA {
 		scatterScope = tbInfo.ScatterScope.String()
 	} else {
 		scatterScope = getScatterScopeFromSessionctx(ctx)
@@ -2290,7 +2290,7 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 	args := &model.TablePartitionArgs{
 		PartInfo: partInfo,
 	}
-	if meta.ScatterScope == model.ScatterScopeDefault {
+	if meta.ScatterScope == model.ScatterScopeNA {
 		args.ScatterScope = getScatterScopeFromSessionctx(ctx)
 	} else {
 		args.ScatterScope = meta.ScatterScope.String()
@@ -2807,7 +2807,7 @@ func (e *executor) TruncateTablePartition(ctx sessionctx.Context, ident ast.Iden
 		OldPartitionIDs: pids,
 		// job submitter will fill new partition IDs.
 	}
-	if meta.ScatterScope == model.ScatterScopeDefault {
+	if meta.ScatterScope == model.ScatterScopeNA {
 		args.ScatterScope = getScatterScopeFromSessionctx(ctx)
 	} else {
 		args.ScatterScope = meta.ScatterScope.String()
@@ -4314,7 +4314,7 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		FKCheck:         fkCheck,
 		OldPartitionIDs: oldPartitionIDs,
 	}
-	if tblInfo.ScatterScope == model.ScatterScopeDefault {
+	if tblInfo.ScatterScope == model.ScatterScopeNA {
 		args.ScatterScope = getScatterScopeFromSessionctx(ctx)
 	} else {
 		args.ScatterScope = tblInfo.ScatterScope.String()
