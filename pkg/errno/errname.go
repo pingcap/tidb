@@ -304,7 +304,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrGetErrmsg:                                mysql.Message("Got error %d '%-.100s' from %s", nil),
 	ErrGetTemporaryErrmsg:                       mysql.Message("Got temporary error %d '%-.100s' from %s", nil),
 	ErrUnknownTimeZone:                          mysql.Message("Unknown or incorrect time zone: '%-.64s'", nil),
-	ErrWarnInvalidTimestamp:                     mysql.Message("Invalid TIMESTAMP value in column '%s'", nil),
+	ErrWarnInvalidTimestamp:                     mysql.Message("Invalid TIMESTAMP value in column '%s' at row %d", nil),
 	ErrInvalidCharacterString:                   mysql.Message("Invalid %s character string: '%.64s'", []int{1}),
 	ErrWarnAllowedPacketOverflowed:              mysql.Message("Result of %s() was larger than max_allowed_packet (%d) - truncated", nil),
 	ErrConflictingDeclarations:                  mysql.Message("Conflicting declarations: '%s%s' and '%s%s'", nil),

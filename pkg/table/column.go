@@ -313,10 +313,10 @@ func handleZeroDatetime(ec errctx.Context, mode mysql.SQLMode, col *model.Column
 		// And refactor this function seems too complicated, so we set the warning message the same to error's.
 		ec.AppendWarning(innerErr)
 		return types.NewDatum(zeroV), true, nil
-	} else if col.GetType() == mysql.TypeTimestamp &&
-		types.ErrTimestampInDSTTransition.Equal(err) {
-		ec.AppendWarning(types.ErrWarnInvalidTimestamp.FastGenByArgs(col.Name.O))
-		return casted, true, nil
+		//} else if col.GetType() == mysql.TypeTimestamp &&
+		//	types.ErrTimestampInDSTTransition.Equal(err) {
+		//	ec.AppendWarning(types.ErrWarnInvalidTimestamp.FastGenByArgs(col.Name.O))
+		//	return casted, true, nil
 	}
 
 	return casted, false, nil

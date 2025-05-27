@@ -322,6 +322,12 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	} else {
 		err = completeInsertErr(c, val, rowIdx, err)
 	}
+	if col != nil && col.GetType() == mysql.TypeTimestamp &&
+		types.ErrTimestampInDSTTransition.Equal(err) {
+		// timestamp already adjusted to end of DST transition, convert error to warning
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(types.ErrWarnInvalidTimestamp.FastGenByArgs(col.Name.O, rowIdx+1))
+		return nil
+	}
 
 	// TODO: should not filter all types of errors here.
 	if err != nil {
