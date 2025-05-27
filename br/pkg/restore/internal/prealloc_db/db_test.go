@@ -394,7 +394,8 @@ func TestCreateTablesInDb(t *testing.T) {
 	require.NoError(t, err)
 
 	preallocId := func(tables []*metautil.Table) {
-		ids, _ := prealloctableid.New(tables)
+		ids, allocErr := prealloctableid.New(tables)
+		require.NoErrorf(t, allocErr, "Error create prealloc ids: %s", allocErr)
 		ids.PreallocIDs(&allocator)
 		db.RegisterPreallocatedIDs(ids)
 		allocator += testAllocator(len(tables))
@@ -448,7 +449,8 @@ func TestDDLJobMap(t *testing.T) {
 	}
 
 	preallocId := func(tables []*metautil.Table) {
-		ids, _ := prealloctableid.New(tables)
+		ids, allocErr := prealloctableid.New(tables)
+		require.NoErrorf(t, allocErr, "Error create prealloc ids: %s", allocErr)
 		ids.PreallocIDs(&allocator)
 		db.RegisterPreallocatedIDs(ids)
 		allocator += testAllocator(len(tables))
@@ -589,7 +591,8 @@ func TestCreateTableConsistent(t *testing.T) {
 	tk.MustExec("drop sequence test.s;")
 
 	preallocId := func(tables []*metautil.Table) {
-		ids, _ := prealloctableid.New(tables)
+		ids, allocErr := prealloctableid.New(tables)
+		require.NoError(t, allocErr)
 		ids.PreallocIDs(&allocator)
 		db.RegisterPreallocatedIDs(ids)
 		allocator += testAllocator(len(tables))

@@ -267,7 +267,10 @@ func computeSortedIDsHash(ids []int64) [32]byte {
 
 	for _, id := range ids {
 		binary.BigEndian.PutUint64(buffer, uint64(id))
-		h.Write(buffer)
+		_, err := h.Write(buffer)
+		if err != nil {
+			panic(errors.Wrapf(err, "failed to write table ID %d to hash", id))
+		}
 	}
 
 	var digest [32]byte
