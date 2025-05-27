@@ -450,13 +450,76 @@ func TestSubPartitioning(t *testing.T) {
 	tk.MustGetErrMsg(`CREATE TABLE t ( col1 INT NOT NULL, col2 INT NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL, primary KEY (col1,col3) ) PARTITION BY KEY(col1) PARTITIONS 4 SUBPARTITION BY KEY(col3) SUBPARTITIONS 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
 }
 
-func TestSubPartitioningDebug(t *testing.T) {
+func TestSubPartitionError(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int) partition by range (a) subpartition by hash (a) subpartitions 2 (partition pMax values less than (maxvalue))`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported subpartitioning, only using RANGE partitioning"))
+	tk.MustGetErrMsg(`CREATE TABLE ts (id INT, purchased DATE)
+    PARTITION BY RANGE( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) ) (
+        PARTITION p0 VALUES LESS THAN (1990) (
+            SUBPARTITION s0,
+            SUBPARTITION s1
+        ),
+        PARTITION p1 VALUES LESS THAN (2000),
+        PARTITION p2 VALUES LESS THAN MAXVALUE (
+            SUBPARTITION s2,
+            SUBPARTITION s3
+        )
+    );`, "[ddl:1485]Wrong number of subpartitions defined, mismatch with previous setting")
+
+	tk.MustGetErrMsg(`CREATE TABLE ts (id INT, purchased DATE)
+    PARTITION BY RANGE( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) )
+    SUBPARTITIONS 3 (
+        PARTITION p0 VALUES LESS THAN (1990) (
+            SUBPARTITION s0,
+            SUBPARTITION s1
+        ),
+        PARTITION p1 VALUES LESS THAN (2000) (
+            SUBPARTITION s2,
+            SUBPARTITION s3
+        ),
+        PARTITION p2 VALUES LESS THAN MAXVALUE (
+            SUBPARTITION s4,
+            SUBPARTITION s5
+        )
+    );`, "[ddl:1485]Wrong number of subpartitions defined, mismatch with previous setting")
+}
+
+func TestSubPartitionDev(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE ts (id INT, purchased DATE)
+    PARTITION BY RANGE( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES LESS THAN (1990),
+        PARTITION p1 VALUES LESS THAN (2000),
+        PARTITION p2 VALUES LESS THAN MAXVALUE
+    );`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery("SHOW CREATE TABLE ts").Check(testkit.Rows(""))
+}
+
+func TestSubPartitioning2(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE ts (id INT, purchased DATE)
+    PARTITION BY RANGE( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES LESS THAN (1990),
+        PARTITION p1 VALUES LESS THAN (2000),
+        PARTITION p2 VALUES LESS THAN MAXVALUE
+    );`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery("SHOW CREATE TABLE ts").Check(testkit.Rows(""))
 }
 
 func TestCreateTableWithRangeColumnPartition(t *testing.T) {

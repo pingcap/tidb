@@ -757,6 +757,8 @@ type PartitionInfo struct {
 	// if index.ID exists in map, then it has changed, true for new copy,
 	// false for old copy (to be removed).
 	DDLChangedIndex map[int64]bool `json:"ddl_changed_index,omitempty"`
+
+	Sub *SubPartitionInfo `json:"sub-partition"`
 }
 
 // Clone clones itself.
@@ -1071,13 +1073,13 @@ type PartitionState struct {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID                 int64             `json:"id"`
-	Name               model.CIStr       `json:"name"`
-	LessThan           []string          `json:"less_than"`
-	InValues           [][]string        `json:"in_values"`
-	PlacementPolicyRef *PolicyRefInfo    `json:"policy_ref_info"`
-	Comment            string            `json:"comment,omitempty"`
-	Sub                *SubPartitionInfo `json:"sub-partition"`
+	ID                 int64                 `json:"id"`
+	Name               model.CIStr           `json:"name"`
+	LessThan           []string              `json:"less_than"`
+	InValues           [][]string            `json:"in_values"`
+	PlacementPolicyRef *PolicyRefInfo        `json:"policy_ref_info"`
+	Comment            string                `json:"comment,omitempty"`
+	SubDefinitions     []PartitionDefinition `json:"sub-definitions"`
 }
 
 // Clone clones PartitionDefinition.
@@ -1113,11 +1115,11 @@ func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
 }
 
 type SubPartitionInfo struct {
-	Type           model.PartitionType   `json:"type"`
-	Expr           string                `json:"expr"`
-	Columns        []model.CIStr         `json:"columns"`
-	IsEmptyColumns bool                  `json:"is_empty_columns"`
-	Definitions    []PartitionDefinition `json:"definitions"`
+	Type           model.PartitionType `json:"type"`
+	Num            uint64              `json:"num"`
+	Expr           string              `json:"expr"`
+	Columns        []model.CIStr       `json:"columns"`
+	IsEmptyColumns bool                `json:"is_empty_columns"`
 }
 
 // Clone clones SubPartitionInfo.
@@ -1125,11 +1127,6 @@ func (pi *SubPartitionInfo) Clone() *SubPartitionInfo {
 	newPi := *pi
 	newPi.Columns = make([]model.CIStr, len(pi.Columns))
 	copy(newPi.Columns, pi.Columns)
-
-	newPi.Definitions = make([]PartitionDefinition, len(pi.Definitions))
-	for i := range pi.Definitions {
-		newPi.Definitions[i] = pi.Definitions[i].Clone()
-	}
 	return &newPi
 }
 
@@ -1144,9 +1141,6 @@ func (pi *SubPartitionInfo) MemoryUsage() (sum int64) {
 	sum = emptyPartitionDefinitionSize
 	for _, col := range pi.Columns {
 		sum += col.MemoryUsage()
-	}
-	for _, def := range pi.Definitions {
-		sum += def.MemoryUsage()
 	}
 	return
 }

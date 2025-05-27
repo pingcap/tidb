@@ -566,6 +566,27 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 		pi.Columns = columns
 		pi.IsEmptyColumns = isEmptyColumns
 	}
+	if s.Sub != nil && s.Sub.Num > 0 && (s.Sub.Tp == pmodel.PartitionTypeHash) {
+		subPi := &model.SubPartitionInfo{
+			Type: s.Sub.Tp,
+			Num:  s.Sub.Num,
+		}
+		if s.Sub.Expr != nil {
+			expr, err := buildPartitionExpr(ctx.GetExprCtx(), s.Sub, tbInfo)
+			if err != nil {
+				return err
+			}
+			subPi.Expr = expr
+		} else if s.Sub.ColumnNames != nil {
+			columns, isEmptyColumns, err := buildPartitionColumns(s.Sub, tbInfo)
+			if err != nil {
+				return err
+			}
+			subPi.Columns = columns
+			subPi.IsEmptyColumns = isEmptyColumns
+		}
+		pi.Sub = subPi
+	}
 
 	exprCtx := ctx.GetExprCtx()
 	err := generatePartitionDefinitionsFromInterval(exprCtx, s, tbInfo)
@@ -1654,35 +1675,35 @@ func buildRangePartitionDefinitions(ctx expression.BuildContext, defs []*ast.Par
 				buf.Reset()
 			}
 		}
+		if len(def.Sub) > 0 {
+			piDef.SubDefinitions = make([]model.PartitionDefinition, 0, len(def.Sub))
+			for _, subDef := range def.Sub {
+				piDef.SubDefinitions = append(piDef.SubDefinitions, model.PartitionDefinition{
+					Name: subDef.Name,
+				})
+			}
+		}
+		if len(definitions) > 0 && len(definitions[len(definitions)-1].SubDefinitions) != len(piDef.SubDefinitions) {
+			return nil, dbterror.ErrPartitionWrongNoSubpart
+		}
+		//if len(piDef.SubDefinitions)
 		definitions = append(definitions, piDef)
 	}
 	if sub != nil && sub.Num > 0 && (sub.Tp == pmodel.PartitionTypeHash) {
-		subPi := &model.SubPartitionInfo{
-			Type: sub.Tp,
-		}
-		if sub.Expr != nil {
-			expr, err := buildPartitionExpr(ctx, sub, tbInfo)
-			if err != nil {
-				return nil, err
-			}
-			subPi.Expr = expr
-		} else if sub.ColumnNames != nil {
-			columns, isEmptyColumns, err := buildPartitionColumns(sub, tbInfo)
-			if err != nil {
-				return nil, err
-			}
-			subPi.Columns = columns
-			subPi.IsEmptyColumns = isEmptyColumns
-		}
 		for i := range definitions {
-			definitions[i].Sub = subPi.Clone()
-			definitions[i].Sub.Definitions = make([]model.PartitionDefinition, 0, int(sub.Num))
+			if len(definitions[i].SubDefinitions) > 0 {
+				if len(definitions[i].SubDefinitions) != int(sub.Num) {
+					return nil, dbterror.ErrPartitionWrongNoSubpart
+				}
+				continue
+			}
+			definitions[i].SubDefinitions = make([]model.PartitionDefinition, 0, int(sub.Num))
 			for j := uint64(0); j < sub.Num; j++ {
 				name := fmt.Sprintf("%vsp%d", definitions[i].Name.L, j)
 				subPiDef := model.PartitionDefinition{
 					Name: pmodel.NewCIStr(name),
 				}
-				definitions[i].Sub.Definitions = append(definitions[i].Sub.Definitions, subPiDef)
+				definitions[i].SubDefinitions = append(definitions[i].SubDefinitions, subPiDef)
 			}
 		}
 	}
