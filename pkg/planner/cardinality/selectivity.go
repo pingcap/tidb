@@ -217,6 +217,9 @@ func Selectivity(
 			}
 			selectivity := cnt / float64(coll.RealtimeCount)
 			corrSelectivity := corrCnt / float64(coll.RealtimeCount)
+			if selectivity < 0.01 && !ctx.GetSessionVars().InRestrictedSQL {
+				fmt.Println("wwz")
+			}
 			nodes = append(nodes, &StatsNode{
 				Tp:                       IndexType,
 				ID:                       id,
@@ -235,7 +238,9 @@ func Selectivity(
 	mask := (int64(1) << uint(len(remainedExprs))) - 1
 	// curExpr records covered expressions by now. It's for cardinality estimation tracing.
 	var curExpr []expression.Expression
-	logutil.BgLogger().Info("fuck usedSets", zap.Any("usedSets", usedSets))
+	if !ctx.GetSessionVars().InRestrictedSQL {
+		logutil.BgLogger().Info("fuck usedSets", zap.Any("usedSets", usedSets))
+	}
 	for _, set := range usedSets {
 		mask &^= set.mask
 		ret *= set.Selectivity

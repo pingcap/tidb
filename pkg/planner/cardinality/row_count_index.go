@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
@@ -68,6 +69,7 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 		}
 		result, err = getPseudoRowCountByIndexRanges(sc.TypeCtx(), indexRanges, float64(coll.RealtimeCount), colsLen)
 		if err == nil && sc.EnableOptimizerCETrace && idx != nil {
+			logutil.BgLogger().Info("fuck Index Stats-Pseudo")
 			ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats-Pseudo", uint64(result))
 		}
 		return result, 0, err
@@ -80,6 +82,7 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 			"Increase Factor", idx.GetIncreaseFactor(realtimeCnt),
 		)
 	}
+	logutil.BgLogger().Info("fuck Histogram NotNull Count")
 	corrResult = float64(0)
 	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
 		result, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
