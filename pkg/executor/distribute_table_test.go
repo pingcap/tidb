@@ -100,13 +100,14 @@ func TestShowDistributionJobs(t *testing.T) {
 	layout := "2006-01-02T15:04:05.999999-07:00"
 	job["create"] = now.Add(-time.Minute).Format(layout)
 	job["start"] = now.Add(-time.Second * 30).Format(layout)
-	job["status"] = "finish"
+	job["status"] = "finished"
+	job["timeout"] = "30m"
 	jobs := make([]map[string]any, 0)
 	jobs = append(jobs, job)
 	cli.jobs = jobs
 
 	tk.MustQuery("show distribution jobs").Check(testkit.Rows(
-		fmt.Sprintf("1 test test partition(P0,P1) tikv leader-scatter finish %s %s <nil>",
+		fmt.Sprintf("1 test test partition(P0,P1) tikv leader-scatter finished 30m %s %s <nil>",
 			now.Add(-time.Minute).Format("2006-01-02 15:04:05"),
 			now.Add(-time.Second*30).Format("2006-01-02 15:04:05"))))
 
@@ -160,6 +161,11 @@ func TestDistributeTable(t *testing.T) {
 	// create new scheduler with the same inputs
 	mockCreateSchedulerWithInput(table, partition, config)
 	tk.MustQuery(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=tikv", table)).Check(testkit.Rows("2"))
+
+	// test for timeout
+	config["timeout"] = "30m"
+	mockCreateSchedulerWithInput(table, partition, config)
+	tk.MustQuery(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=tikv timeout=`30m`", table)).Check(testkit.Rows("3"))
 
 	// test for incorrect arguments
 	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=tiflash", table),

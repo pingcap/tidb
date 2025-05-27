@@ -4508,10 +4508,10 @@ var (
 
 var (
 	distributionJobsSchemaNames = []string{"Job_ID", "Database", "Table", "Partition_List", "Engine", "Rule", "Status",
-		"Create_Time", "Start_Time", "Finish_Time"}
+		"Timeout", "Create_Time", "Start_Time", "Finish_Time"}
 	distributionJobsSchedulerFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeString,
-		mysql.TypeString,
-		mysql.TypeString, mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp}
+		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+		mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp}
 )
 
 // importIntoCollAssignmentChecker implements ast.Visitor interface.
@@ -4814,7 +4814,7 @@ func (b *PlanBuilder) buildDistributeTable(node *ast.DistributeTableStmt) (base.
 		PartitionNames: node.PartitionNames,
 		Engine:         node.Engine,
 		Rule:           node.Rule,
-		Timout:         node.Timeout,
+		Timeout:        node.Timeout,
 	}
 	plan.setSchemaAndNames(buildDistributeTableSchema())
 	return plan, nil

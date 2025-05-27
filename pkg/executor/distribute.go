@@ -108,7 +108,9 @@ func (e *DistributeTableExec) distributeTable(ctx context.Context) error {
 	input["alias"] = e.getAlias()
 	input["engine"] = e.engine.String()
 	input["rule"] = e.rule.String()
-	input["timeout"] = e.timeout.String()
+	if len(e.timeout.L) > 0 {
+		input["timeout"] = e.timeout.String()
+	}
 	startKeys := make([]string, 0, len(e.keyRanges))
 	endKeys := make([]string, 0, len(e.keyRanges))
 	for _, r := range e.keyRanges {
