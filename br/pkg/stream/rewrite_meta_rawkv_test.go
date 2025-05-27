@@ -421,7 +421,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 		Key:   txnKey,
 		Value: value,
 	}
-	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF, NewMockMetaInfoCollector())
+	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF, ts, NewMockMetaInfoCollector())
 	require.Nil(t, err)
 
 	sr := NewSchemasReplace(
@@ -451,7 +451,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 		Key:   txnKey,
 		Value: value,
 	}
-	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF, NewMockMetaInfoCollector())
+	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF, ts, NewMockMetaInfoCollector())
 	require.Nil(t, err)
 
 	value, err = sr.rewriteTableInfo(value, dbID2)

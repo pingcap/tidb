@@ -85,9 +85,9 @@ func (tm *TableMappingManager) FromDBReplaceMap(dbReplaceMap map[UpstreamID]*DBR
 // MetaInfoCollector is an interface for collecting metadata information during parsing
 type MetaInfoCollector interface {
 	// OnDatabaseInfo is called when database information is found in a value
-	OnDatabaseInfo(dbInfo *model.DBInfo)
+	OnDatabaseInfo(dbInfo *model.DBInfo, ts uint64)
 	// OnTableInfo is called when table information is found in a value
-	OnTableInfo(dbID int64, tableInfo *model.TableInfo)
+	OnTableInfo(dbID int64, tableInfo *model.TableInfo, ts uint64)
 }
 
 // ParseMetaKvAndUpdateIdMapping collect table information
@@ -95,7 +95,7 @@ type MetaInfoCollector interface {
 // parsing a subset of these keys/values would suffice, but to make it safe we decide to parse exactly same as
 // in rewrite_meta_rawkv.
 func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(
-	e *kv.Entry, cf string, collector MetaInfoCollector) error {
+	e *kv.Entry, cf string, ts uint64, collector MetaInfoCollector) error {
 	if !utils.IsMetaDBKey(e.Key) {
 		return nil
 	}
@@ -118,7 +118,7 @@ func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(
 			return errors.Trace(err)
 		}
 		if value != nil {
-			return tm.parseDBValueAndUpdateIdMapping(value, collector)
+			return tm.parseDBValueAndUpdateIdMapping(value, ts, collector)
 		}
 	} else if !meta.IsDBkey(rawKey.Key) {
 		return nil
@@ -142,7 +142,7 @@ func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(
 			return errors.Trace(err)
 		}
 		if value != nil {
-			return tm.parseTableValueAndUpdateIdMapping(dbID, value, collector)
+			return tm.parseTableValueAndUpdateIdMapping(dbID, value, ts, collector)
 		}
 	} else if meta.IsAutoIncrementIDKey(rawKey.Field) {
 		// parse auto increment key and update
@@ -183,7 +183,7 @@ func (tm *TableMappingManager) parseDBKeyAndUpdateIdMapping(field []byte) error 
 	return errors.Trace(err)
 }
 
-func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte, collector MetaInfoCollector) error {
+func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte, ts uint64, collector MetaInfoCollector) error {
 	dbInfo := new(model.DBInfo)
 	if err := json.Unmarshal(value, dbInfo); err != nil {
 		return errors.Trace(err)
@@ -196,7 +196,7 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte, coll
 	if dbInfo.Name.O != "" {
 		dbReplace.Name = dbInfo.Name.O
 	}
-	collector.OnDatabaseInfo(dbInfo)
+	collector.OnDatabaseInfo(dbInfo, ts)
 	return nil
 }
 
@@ -253,7 +253,7 @@ func (tm *TableMappingManager) parseTableIdAndUpdateIdMapping(
 	return nil
 }
 
-func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, value []byte,
+func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, value []byte, ts uint64,
 	collector MetaInfoCollector) error {
 	var tableInfo model.TableInfo
 	if err := json.Unmarshal(value, &tableInfo); err != nil {
@@ -288,7 +288,7 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, val
 			}
 		}
 	}
-	collector.OnTableInfo(dbID, &tableInfo)
+	collector.OnTableInfo(dbID, &tableInfo, ts)
 	return nil
 }
 

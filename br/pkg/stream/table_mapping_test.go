@@ -42,11 +42,11 @@ func NewMockMetaInfoCollector() *MockMetaInfoCollector {
 	}
 }
 
-func (m *MockMetaInfoCollector) OnDatabaseInfo(dbInfo *model.DBInfo) {
+func (m *MockMetaInfoCollector) OnDatabaseInfo(dbInfo *model.DBInfo, ts uint64) {
 	m.dbInfos[dbInfo.ID] = dbInfo
 }
 
-func (m *MockMetaInfoCollector) OnTableInfo(dbID int64, tableInfo *model.TableInfo) {
+func (m *MockMetaInfoCollector) OnTableInfo(dbID int64, tableInfo *model.TableInfo, ts uint64) {
 	if _, ok := m.tableInfos[dbID]; !ok {
 		m.tableInfos[dbID] = make(map[int64]*model.TableInfo)
 	}
@@ -1054,7 +1054,7 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 	}
 
 	// Test parsing DB key and value
-	err = tc.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF, collector)
+	err = tc.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF, ts, collector)
 	require.NoError(t, err)
 	require.Contains(t, tc.DBReplaceMap, dbID)
 	require.Equal(t, dbName, tc.DBReplaceMap[dbID].Name)
@@ -1095,7 +1095,7 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 	}
 
 	// Test parsing table key and value
-	err = tc.ParseMetaKvAndUpdateIdMapping(tableEntry, consts.DefaultCF, collector)
+	err = tc.ParseMetaKvAndUpdateIdMapping(tableEntry, consts.DefaultCF, ts, collector)
 	require.NoError(t, err)
 	require.Contains(t, tc.DBReplaceMap[dbID].TableMap, tableID)
 	require.Equal(t, tableName, tc.DBReplaceMap[dbID].TableMap[tableID].Name)
@@ -1114,7 +1114,7 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 		Key:   []byte("not_a_meta_key"),
 		Value: []byte("some_value"),
 	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(nonMetaEntry, consts.DefaultCF, collector)
+	err = tc.ParseMetaKvAndUpdateIdMapping(nonMetaEntry, consts.DefaultCF, ts, collector)
 	require.NoError(t, err)
 
 	// Test auto increment key with different IDs
@@ -1125,7 +1125,7 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 		Key:   autoIncrKey,
 		Value: []byte("1"),
 	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(autoIncrEntry, consts.DefaultCF, collector)
+	err = tc.ParseMetaKvAndUpdateIdMapping(autoIncrEntry, consts.DefaultCF, ts, collector)
 	require.NoError(t, err)
 	require.Contains(t, tc.DBReplaceMap, autoIncrDBID)
 	require.Contains(t, tc.DBReplaceMap[autoIncrDBID].TableMap, autoIncrTableID)
@@ -1138,7 +1138,7 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 		Key:   autoTableKey,
 		Value: []byte("1"),
 	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(autoTableEntry, consts.DefaultCF, collector)
+	err = tc.ParseMetaKvAndUpdateIdMapping(autoTableEntry, consts.DefaultCF, ts, collector)
 	require.NoError(t, err)
 	require.Contains(t, tc.DBReplaceMap, autoTableDBID)
 	require.Contains(t, tc.DBReplaceMap[autoTableDBID].TableMap, autoTableTableID)
@@ -1151,7 +1151,7 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 		Key:   seqKey,
 		Value: []byte("1"),
 	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(seqEntry, consts.DefaultCF, collector)
+	err = tc.ParseMetaKvAndUpdateIdMapping(seqEntry, consts.DefaultCF, ts, collector)
 	require.NoError(t, err)
 	require.Contains(t, tc.DBReplaceMap, seqDBID)
 	require.Contains(t, tc.DBReplaceMap[seqDBID].TableMap, seqTableID)
@@ -1164,8 +1164,133 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 		Key:   autoRandomKey,
 		Value: []byte("1"),
 	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(autoRandomEntry, consts.DefaultCF, collector)
+	err = tc.ParseMetaKvAndUpdateIdMapping(autoRandomEntry, consts.DefaultCF, ts, collector)
 	require.NoError(t, err)
 	require.Contains(t, tc.DBReplaceMap, autoRandomDBID)
 	require.Contains(t, tc.DBReplaceMap[autoRandomDBID].TableMap, autoRandomTableID)
+}
+
+func TestTableHistoryManagerOutOfOrderTS(t *testing.T) {
+	const (
+		dbID     int64 = 40
+		tableID  int64 = 100
+		partID   int64 = 101
+		parentID int64 = 200
+	)
+
+	tests := []struct {
+		name        string
+		description string
+		operations  []struct {
+			ts        uint64
+			operation string // "db", "table", "partition"
+			name      string
+			expected  bool // whether this should be the final state
+		}
+		expectedDBName    string
+		expectedTableName string
+	}{
+		{
+			name:        "database updates out of order",
+			description: "database name updates processed out of chronological order",
+			operations: []struct {
+				ts        uint64
+				operation string
+				name      string
+				expected  bool
+			}{
+				{ts: 100, operation: "db", name: "old_db", expected: false},
+				{ts: 200, operation: "db", name: "new_db", expected: true},
+				{ts: 50, operation: "db", name: "oldest_db", expected: false}, // should be ignored
+			},
+			expectedDBName: "new_db",
+		},
+		{
+			name:        "table updates out of order",
+			description: "table name updates processed out of chronological order",
+			operations: []struct {
+				ts        uint64
+				operation string
+				name      string
+				expected  bool
+			}{
+				{ts: 100, operation: "db", name: "test_db", expected: true},
+				{ts: 150, operation: "table", name: "old_table", expected: false},
+				{ts: 200, operation: "table", name: "new_table", expected: true},
+				{ts: 120, operation: "table", name: "intermediate_table", expected: false}, // should be ignored
+			},
+			expectedDBName:    "test_db",
+			expectedTableName: "new_table",
+		},
+		{
+			name:        "partition updates out of order",
+			description: "partition name updates processed out of chronological order",
+			operations: []struct {
+				ts        uint64
+				operation string
+				name      string
+				expected  bool
+			}{
+				{ts: 100, operation: "db", name: "test_db", expected: true},
+				{ts: 150, operation: "partition", name: "old_partition", expected: false},
+				{ts: 200, operation: "partition", name: "new_partition", expected: true},
+				{ts: 120, operation: "partition", name: "intermediate_partition", expected: false}, // should be ignored
+			},
+			expectedDBName: "test_db",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := NewTableHistoryManager()
+
+			// process operations in the specified order
+			for _, op := range tt.operations {
+				switch op.operation {
+				case "db":
+					manager.RecordDBIdToName(dbID, op.name, op.ts)
+				case "table":
+					manager.AddTableHistory(tableID, op.name, dbID, op.ts)
+				case "partition":
+					manager.AddPartitionHistory(partID, op.name, dbID, parentID, op.ts)
+				default:
+					t.Fatalf("unknown operation type: %s", op.operation)
+				}
+			}
+
+			// verify final state
+			if tt.expectedDBName != "" {
+				dbName, exists := manager.GetDBNameByID(dbID)
+				require.True(t, exists, "database should exist in history")
+				require.Equal(t, tt.expectedDBName, dbName,
+					"database name should match the entry with latest timestamp")
+			}
+
+			if tt.expectedTableName != "" {
+				history := manager.GetTableHistory()
+				require.Contains(t, history, tableID, "table should exist in history")
+				require.Equal(t, tt.expectedTableName, history[tableID][1].TableName,
+					"table name should match the entry with latest timestamp")
+			}
+
+			// verify partition history if applicable
+			if len(tt.operations) > 0 && tt.operations[len(tt.operations)-1].operation == "partition" {
+				history := manager.GetTableHistory()
+				require.Contains(t, history, partID, "partition should exist in history")
+
+				// find the expected partition name from the latest timestamp
+				var expectedPartitionName string
+				var latestTS uint64
+				for _, op := range tt.operations {
+					if op.operation == "partition" && op.ts >= latestTS {
+						latestTS = op.ts
+						expectedPartitionName = op.name
+					}
+				}
+
+				require.Equal(t, expectedPartitionName, history[partID][1].TableName,
+					"partition name should match the entry with latest timestamp")
+			}
+		})
+	}
 }
