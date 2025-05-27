@@ -61,6 +61,9 @@ func RandomErrorForReadWithOnePerPercent(n int, err error) (int, error) {
 		if n == 0 || err != nil || rand.Float64() > 0.01 {
 			failpoint.Return(n, err)
 		}
+		if rand.Float64() < 0.2 {
+			failpoint.Return(0, io.ErrUnexpectedEOF)
+		}
 		failpoint.Return(rand.Intn(n), io.ErrUnexpectedEOF)
 	})
 	return n, err
