@@ -780,7 +780,6 @@ ChunkLoop:
 			break
 		}
 
-		chunk.FileMeta.ParquetMeta.MemoryQuota = mydump.GetMemoryQuota(rc.cfg.App.RegionConcurrency)
 		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo.Core)
 		if err != nil {
 			setError(err)

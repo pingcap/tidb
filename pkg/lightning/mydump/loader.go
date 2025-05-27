@@ -277,9 +277,11 @@ type mdLoaderSetup struct {
 	setupCfg      *MDLoaderSetupConfig
 
 	// store all file infos from parallel reading
-	sampledParquetRowSizes        sync.Map
-	sampledParquetMemoryUsage     sync.Map // sampled memory usage for streaming parquet read
-	sampledParquetMemoryUsageFull sync.Map // sampled memory usage for non-streaming parquet read
+	sampledParquetRowSizes sync.Map
+	// sampled memory usage for streaming parquet read
+	sampledParquetMemoryUsage sync.Map
+	// sampled memory usage for non-streaming parquet read
+	sampledParquetMemoryUsageFull sync.Map
 }
 
 // NewLoader constructs a MyDumper loader that scanns the data source and constructs a set of metadatas.
@@ -498,9 +500,14 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 
 		// process row size for parquet files
 		if info.FileMeta.Type == SourceTypeParquet {
-			v, _ := s.sampledParquetRowSizes.Load(info.TableName.String())
+			tableName := info.TableName.String()
+			v, _ := s.sampledParquetRowSizes.Load(tableName)
 			avgRowSize, _ := v.(float64)
 			info.FileMeta.RealSize = int64(float64(info.FileMeta.Rows) * avgRowSize)
+
+			v, _ = s.sampledParquetMemoryUsage.Load(tableName)
+			info.FileMeta.ParquetMeta.MemoryUsage, _ = v.(int)
+			info.FileMeta.ParquetMeta.UseStreaming = true
 		}
 
 		switch info.FileMeta.Type {

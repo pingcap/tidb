@@ -885,8 +885,7 @@ func NewParquetParser(
 	meta ParquetFileMeta,
 ) (*ParquetParser, error) {
 	// Acquire memory limiter first
-	var memoryUsage int
-	memoryUsage = min(meta.MemoryUsage, readerMemoryLimit)
+	memoryUsage := min(meta.MemoryUsage, readerMemoryLimit)
 	if readerMemoryLimiter != nil {
 		readerMemoryLimiter.Acquire(memoryUsage)
 	}
@@ -1002,7 +1001,7 @@ func estimateNonStreamMemory(
 
 	reader := parser.readers[0]
 	totalReadRows := reader.MetaData().RowGroups[0].NumRows
-	for i := 0; i < int(totalReadRows); i++ {
+	for range totalReadRows {
 		err = parser.ReadRow()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
@@ -1056,7 +1055,7 @@ func SampleStatisticsFromParquet(
 	}
 
 	totalReadRows := reader.MetaData().RowGroups[0].NumRows
-	for i := 0; i < int(totalReadRows); i++ {
+	for range totalReadRows {
 		err = parser.ReadRow()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {

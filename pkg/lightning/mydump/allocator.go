@@ -28,6 +28,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// ImportIntoReaderUsage is the percentage of memory usage for parquet reader
 const ImportIntoReaderUsage = 40
 
 var (
@@ -59,13 +60,16 @@ func ConfigureReaderLimitForParquet(percent int) {
 		return
 	}
 
+	// Set a hard limit to percent, which is derived from manual testing.
+	percent = min(percent, 75)
+
 	memTotal, err := tidbmemory.MemTotal()
 	if err != nil {
 		log.L().Warn("Fail to get total memory")
 		// Set limit to int max, which means no limiter
 		memTotal = math.MaxInt32
 	}
-	readerMemoryLimit = int(memTotal) * min(percent, 75) / 100
+	readerMemoryLimit = int(memTotal) * percent / 100
 	readerMemoryLimiter = membuf.NewLimiter(readerMemoryLimit)
 
 	gcPercent := (10000/percent - 100) / 10 * 10
@@ -100,21 +104,10 @@ func ReleaseMemoryForParquet() {
 	}
 }
 
-// GetMemoryQuota get the memory quota for non-streaming mode read.
-func GetMemoryQuota(concurrency int) int {
-	quotaPerTask := readerMemoryLimit / concurrency
-
-	// Because other parts like encoder also consume memory,
-	// we assume that the reader can use up to 80% of the memroy.
-	quotaPerReader := quotaPerTask * 8 / 10
-	quotaPerReader = quotaPerReader / defaultArenaSize * defaultArenaSize
-	return quotaPerReader
-}
-
 // AdjustEncodeThreadCnt adjust the concurrency in encode&sort step for parquet file.
 // It's used for IMPORT INTO.
-// TODO(joechenrh): let lightning make use of it.
-func AdjustEncodeThreadCnt(memoryUsageStream, memoryUsageFull, threadCnt int,
+func AdjustEncodeThreadCnt(
+	memoryUsageStream, memoryUsageFull, threadCnt int,
 ) (memoryUsage, adjustCnt int, useStream bool) {
 	memTotal, err := tidbmemory.MemTotal()
 	if err != nil {
