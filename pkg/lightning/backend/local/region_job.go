@@ -469,7 +469,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 		log.FromContext(ctx).Info("Injecting a timeout to write context.")
 	})
 
-	// continue the preperation work for write timeout injection, and create a new context if innerTimeout > 0
+	// continue the preparation work for write timeout injection, and create a new context if innerTimeout > 0
 	// with a much shorter timeout, so that the WaitN call will more likely to tigger a context timeout error
 	wctx := originalCtx
 	wcancel := func() {}
