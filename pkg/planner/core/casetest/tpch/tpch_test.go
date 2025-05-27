@@ -26,27 +26,7 @@ func TestQ1(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`
-CREATE TABLE lineitem (
-    L_ORDERKEY bigint NOT NULL,
-    L_PARTKEY bigint NOT NULL,
-    L_SUPPKEY bigint NOT NULL,
-    L_LINENUMBER bigint NOT NULL,
-    L_QUANTITY decimal(15,2) NOT NULL,
-    L_EXTENDEDPRICE decimal(15,2) NOT NULL,
-    L_DISCOUNT decimal(15,2) NOT NULL,
-    L_TAX decimal(15,2) NOT NULL,
-    L_RETURNFLAG char(1) NOT NULL,
-    L_LINESTATUS char(1) NOT NULL,
-    L_SHIPDATE date NOT NULL,
-    L_COMMITDATE date NOT NULL,
-    L_RECEIPTDATE date NOT NULL,
-    L_SHIPINSTRUCT char(25) NOT NULL,
-    L_SHIPMODE char(10) NOT NULL,
-    L_COMMENT varchar(44) NOT NULL,
-    PRIMARY KEY (L_ORDERKEY, L_LINENUMBER) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
-`)
+	createLineItem(tk)
 	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
@@ -74,51 +54,9 @@ func TestQ3(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE customer (
-    C_CUSTKEY bigint NOT NULL,
-    C_NAME varchar(25) NOT NULL,
-    C_ADDRESS varchar(40) NOT NULL,
-    C_NATIONKEY bigint NOT NULL,
-    C_PHONE char(15) NOT NULL,
-    C_ACCTBAL decimal(15,2) NOT NULL,
-    C_MKTSEGMENT char(10) NOT NULL,
-    C_COMMENT varchar(117) NOT NULL,
-    PRIMARY KEY (C_CUSTKEY) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
-	tk.MustExec(`
-CREATE TABLE orders (
-    O_ORDERKEY bigint NOT NULL,
-    O_CUSTKEY bigint NOT NULL,
-    O_ORDERSTATUS char(1) NOT NULL,
-    O_TOTALPRICE decimal(15,2) NOT NULL,
-    O_ORDERDATE date NOT NULL,
-    O_ORDERPRIORITY char(15) NOT NULL,
-    O_CLERK char(15) NOT NULL,
-    O_SHIPPRIORITY bigint NOT NULL,
-    O_COMMENT varchar(79) NOT NULL,
-    PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
-	tk.MustExec(`
-CREATE TABLE lineitem (
-    L_ORDERKEY bigint NOT NULL,
-    L_PARTKEY bigint NOT NULL,
-    L_SUPPKEY bigint NOT NULL,
-    L_LINENUMBER bigint NOT NULL,
-    L_QUANTITY decimal(15,2) NOT NULL,
-    L_EXTENDEDPRICE decimal(15,2) NOT NULL,
-    L_DISCOUNT decimal(15,2) NOT NULL,
-    L_TAX decimal(15,2) NOT NULL,
-    L_RETURNFLAG char(1) NOT NULL,
-    L_LINESTATUS char(1) NOT NULL,
-    L_SHIPDATE date NOT NULL,
-    L_COMMITDATE date NOT NULL,
-    L_RECEIPTDATE date NOT NULL,
-    L_SHIPINSTRUCT char(25) NOT NULL,
-    L_SHIPMODE char(10) NOT NULL,
-    L_COMMENT varchar(44) NOT NULL,
-    PRIMARY KEY (L_ORDERKEY, L_LINENUMBER) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
-`)
+	createCustomer(tk)
+	createOrders(tk)
+	createLineItem(tk)
 	testkit.SetTiFlashReplica(t, dom, "test", "customer")
 	testkit.SetTiFlashReplica(t, dom, "test", "orders")
 	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
@@ -148,45 +86,13 @@ func TestQ4(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database olap")
-	tk.MustExec("use olap")
-	tk.MustExec(`
-CREATE TABLE orders (
-    O_ORDERKEY bigint NOT NULL,
-    O_CUSTKEY bigint NOT NULL,
-    O_ORDERSTATUS char(1) NOT NULL,
-    O_TOTALPRICE decimal(15,2) NOT NULL,
-    O_ORDERDATE date NOT NULL,
-    O_ORDERPRIORITY char(15) NOT NULL,
-    O_CLERK char(15) NOT NULL,
-    O_SHIPPRIORITY bigint NOT NULL,
-    O_COMMENT varchar(79) NOT NULL,
-    PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
-	tk.MustExec(`
-CREATE TABLE lineitem (
-    L_ORDERKEY bigint NOT NULL,
-    L_PARTKEY bigint NOT NULL,
-    L_SUPPKEY bigint NOT NULL,
-    L_LINENUMBER bigint NOT NULL,
-    L_QUANTITY decimal(15,2) NOT NULL,
-    L_EXTENDEDPRICE decimal(15,2) NOT NULL,
-    L_DISCOUNT decimal(15,2) NOT NULL,
-    L_TAX decimal(15,2) NOT NULL,
-    L_RETURNFLAG char(1) NOT NULL,
-    L_LINESTATUS char(1) NOT NULL,
-    L_SHIPDATE date NOT NULL,
-    L_COMMITDATE date NOT NULL,
-    L_RECEIPTDATE date NOT NULL,
-    L_SHIPINSTRUCT char(25) NOT NULL,
-    L_SHIPMODE char(10) NOT NULL,
-    L_COMMENT varchar(44) NOT NULL,
-    PRIMARY KEY (L_ORDERKEY, L_LINENUMBER) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
-`)
+	tk.MustExec("use test")
+	createOrders(tk)
+	createLineItem(tk)
 	testkit.LoadTableStats("lineitem_stats.json", dom)
 	testkit.LoadTableStats("orders_stats.json", dom)
-	testkit.SetTiFlashReplica(t, dom, "olap", "orders")
-	testkit.SetTiFlashReplica(t, dom, "olap", "lineitem")
+	testkit.SetTiFlashReplica(t, dom, "test", "orders")
+	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
 	var (
 		input  []string
 		output []struct {
@@ -227,77 +133,12 @@ func TestQ9(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`
-CREATE TABLE lineitem (
-    L_ORDERKEY bigint NOT NULL,
-    L_PARTKEY bigint NOT NULL,
-    L_SUPPKEY bigint NOT NULL,
-    L_LINENUMBER bigint NOT NULL,
-    L_QUANTITY decimal(15,2) NOT NULL,
-    L_EXTENDEDPRICE decimal(15,2) NOT NULL,
-    L_DISCOUNT decimal(15,2) NOT NULL,
-    L_TAX decimal(15,2) NOT NULL,
-    L_RETURNFLAG char(1) NOT NULL,
-    L_LINESTATUS char(1) NOT NULL,
-    L_SHIPDATE date NOT NULL,
-    L_COMMITDATE date NOT NULL,
-    L_RECEIPTDATE date NOT NULL,
-    L_SHIPINSTRUCT char(25) NOT NULL,
-    L_SHIPMODE char(10) NOT NULL,
-    L_COMMENT varchar(44) NOT NULL,
-    PRIMARY KEY (L_ORDERKEY, L_LINENUMBER) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
-`)
-	tk.MustExec(`CREATE TABLE nation (
-  N_NATIONKEY bigint NOT NULL,
-  N_NAME char(25) NOT NULL,
-  N_REGIONKEY bigint NOT NULL,
-  N_COMMENT varchar(152) DEFAULT NULL,
-  PRIMARY KEY (N_NATIONKEY) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
-	tk.MustExec(`
-CREATE TABLE orders (
-    O_ORDERKEY bigint NOT NULL,
-    O_CUSTKEY bigint NOT NULL,
-    O_ORDERSTATUS char(1) NOT NULL,
-    O_TOTALPRICE decimal(15,2) NOT NULL,
-    O_ORDERDATE date NOT NULL,
-    O_ORDERPRIORITY char(15) NOT NULL,
-    O_CLERK char(15) NOT NULL,
-    O_SHIPPRIORITY bigint NOT NULL,
-    O_COMMENT varchar(79) NOT NULL,
-    PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
-	tk.MustExec(`CREATE TABLE part (
-  P_PARTKEY bigint NOT NULL,
-  P_NAME varchar(55) NOT NULL,
-  P_MFGR char(25) NOT NULL,
-  P_BRAND char(10) NOT NULL,
-  P_TYPE varchar(25) NOT NULL,
-  P_SIZE bigint NOT NULL,
-  P_CONTAINER char(10) NOT NULL,
-  P_RETAILPRICE decimal(15,2) NOT NULL,
-  P_COMMENT varchar(23) NOT NULL,
-  PRIMARY KEY (P_PARTKEY) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
-	tk.MustExec(`CREATE TABLE partsupp (
-  PS_PARTKEY bigint NOT NULL,
-  PS_SUPPKEY bigint NOT NULL,
-  PS_AVAILQTY bigint NOT NULL,
-  PS_SUPPLYCOST decimal(15,2) NOT NULL,
-  PS_COMMENT varchar(199) NOT NULL,
-  PRIMARY KEY (PS_PARTKEY,PS_SUPPKEY) /*T![clustered_index] NONCLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
-	tk.MustExec(`CREATE TABLE supplier (
-  S_SUPPKEY bigint NOT NULL,
-  S_NAME char(25) NOT NULL,
-  S_ADDRESS varchar(40) NOT NULL,
-  S_NATIONKEY bigint NOT NULL,
-  S_PHONE char(15) NOT NULL,
-  S_ACCTBAL decimal(15,2) NOT NULL,
-  S_COMMENT varchar(101) NOT NULL,
-  PRIMARY KEY (S_SUPPKEY) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	createLineItem(tk)
+	createNation(tk)
+	createOrders(tk)
+	createPart(tk)
+	createPartsupp(tk)
+	createSupplier(tk)
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 	testkit.SetTiFlashReplica(t, dom, "test", "orders")
@@ -330,30 +171,8 @@ func TestQ13(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE customer (
-    C_CUSTKEY bigint NOT NULL,
-    C_NAME varchar(25) NOT NULL,
-    C_ADDRESS varchar(40) NOT NULL,
-    C_NATIONKEY bigint NOT NULL,
-    C_PHONE char(15) NOT NULL,
-    C_ACCTBAL decimal(15,2) NOT NULL,
-    C_MKTSEGMENT char(10) NOT NULL,
-    C_COMMENT varchar(117) NOT NULL,
-    PRIMARY KEY (C_CUSTKEY) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
-	tk.MustExec(`
-CREATE TABLE orders (
-    O_ORDERKEY bigint NOT NULL,
-    O_CUSTKEY bigint NOT NULL,
-    O_ORDERSTATUS char(1) NOT NULL,
-    O_TOTALPRICE decimal(15,2) NOT NULL,
-    O_ORDERDATE date NOT NULL,
-    O_ORDERPRIORITY char(15) NOT NULL,
-    O_CLERK char(15) NOT NULL,
-    O_SHIPPRIORITY bigint NOT NULL,
-    O_COMMENT varchar(79) NOT NULL,
-    PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	createCustomer(tk)
+	createOrders(tk)
 	testkit.SetTiFlashReplica(t, dom, "test", "orders")
 	testkit.SetTiFlashReplica(t, dom, "test", "customer")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
@@ -382,51 +201,9 @@ func TestQ18(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE customer (
-    C_CUSTKEY bigint NOT NULL,
-    C_NAME varchar(25) NOT NULL,
-    C_ADDRESS varchar(40) NOT NULL,
-    C_NATIONKEY bigint NOT NULL,
-    C_PHONE char(15) NOT NULL,
-    C_ACCTBAL decimal(15,2) NOT NULL,
-    C_MKTSEGMENT char(10) NOT NULL,
-    C_COMMENT varchar(117) NOT NULL,
-    PRIMARY KEY (C_CUSTKEY) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
-	tk.MustExec(`
-CREATE TABLE orders (
-    O_ORDERKEY bigint NOT NULL,
-    O_CUSTKEY bigint NOT NULL,
-    O_ORDERSTATUS char(1) NOT NULL,
-    O_TOTALPRICE decimal(15,2) NOT NULL,
-    O_ORDERDATE date NOT NULL,
-    O_ORDERPRIORITY char(15) NOT NULL,
-    O_CLERK char(15) NOT NULL,
-    O_SHIPPRIORITY bigint NOT NULL,
-    O_COMMENT varchar(79) NOT NULL,
-    PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
-	tk.MustExec(`
-CREATE TABLE lineitem (
-    L_ORDERKEY bigint NOT NULL,
-    L_PARTKEY bigint NOT NULL,
-    L_SUPPKEY bigint NOT NULL,
-    L_LINENUMBER bigint NOT NULL,
-    L_QUANTITY decimal(15,2) NOT NULL,
-    L_EXTENDEDPRICE decimal(15,2) NOT NULL,
-    L_DISCOUNT decimal(15,2) NOT NULL,
-    L_TAX decimal(15,2) NOT NULL,
-    L_RETURNFLAG char(1) NOT NULL,
-    L_LINESTATUS char(1) NOT NULL,
-    L_SHIPDATE date NOT NULL,
-    L_COMMITDATE date NOT NULL,
-    L_RECEIPTDATE date NOT NULL,
-    L_SHIPINSTRUCT char(25) NOT NULL,
-    L_SHIPMODE char(10) NOT NULL,
-    L_COMMENT varchar(44) NOT NULL,
-    PRIMARY KEY (L_ORDERKEY, L_LINENUMBER) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
-`)
+	createCustomer(tk)
+	createOrders(tk)
+	createLineItem(tk)
 	testkit.SetTiFlashReplica(t, dom, "test", "customer")
 	testkit.SetTiFlashReplica(t, dom, "test", "orders")
 	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
@@ -456,61 +233,45 @@ func TestQ21(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
-	tk.MustExec(`CREATE TABLE supplier (
-  S_SUPPKEY bigint NOT NULL,
-  S_NAME char(25) NOT NULL,
-  S_ADDRESS varchar(40) NOT NULL,
-  S_NATIONKEY bigint NOT NULL,
-  S_PHONE char(15) NOT NULL,
-  S_ACCTBAL decimal(15,2) NOT NULL,
-  S_COMMENT varchar(101) NOT NULL,
-  PRIMARY KEY (S_SUPPKEY) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
-	tk.MustExec(`
-CREATE TABLE lineitem (
-    L_ORDERKEY bigint NOT NULL,
-    L_PARTKEY bigint NOT NULL,
-    L_SUPPKEY bigint NOT NULL,
-    L_LINENUMBER bigint NOT NULL,
-    L_QUANTITY decimal(15,2) NOT NULL,
-    L_EXTENDEDPRICE decimal(15,2) NOT NULL,
-    L_DISCOUNT decimal(15,2) NOT NULL,
-    L_TAX decimal(15,2) NOT NULL,
-    L_RETURNFLAG char(1) NOT NULL,
-    L_LINESTATUS char(1) NOT NULL,
-    L_SHIPDATE date NOT NULL,
-    L_COMMITDATE date NOT NULL,
-    L_RECEIPTDATE date NOT NULL,
-    L_SHIPINSTRUCT char(25) NOT NULL,
-    L_SHIPMODE char(10) NOT NULL,
-    L_COMMENT varchar(44) NOT NULL,
-    PRIMARY KEY (L_ORDERKEY, L_LINENUMBER) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
-`)
-	tk.MustExec(`
-CREATE TABLE orders (
-    O_ORDERKEY bigint NOT NULL,
-    O_CUSTKEY bigint NOT NULL,
-    O_ORDERSTATUS char(1) NOT NULL,
-    O_TOTALPRICE decimal(15,2) NOT NULL,
-    O_ORDERDATE date NOT NULL,
-    O_ORDERPRIORITY char(15) NOT NULL,
-    O_CLERK char(15) NOT NULL,
-    O_SHIPPRIORITY bigint NOT NULL,
-    O_COMMENT varchar(79) NOT NULL,
-    PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
-	tk.MustExec(`CREATE TABLE nation (
-  N_NATIONKEY bigint NOT NULL,
-  N_NAME char(25) NOT NULL,
-  N_REGIONKEY bigint NOT NULL,
-  N_COMMENT varchar(152) DEFAULT NULL,
-  PRIMARY KEY (N_NATIONKEY) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	createSupplier(tk)
+	createLineItem(tk)
+	createOrders(tk)
+	createNation(tk)
 	testkit.SetTiFlashReplica(t, dom, "test", "supplier")
 	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
 	testkit.SetTiFlashReplica(t, dom, "test", "orders")
 	testkit.SetTiFlashReplica(t, dom, "test", "nation")
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+	integrationSuiteData := GetTPCHSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	costTraceFormat := `explain format='cost_trace' `
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+		})
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
+		})
+		tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
+		checkCost(t, tk, input[i])
+	}
+}
+
+func TestQ22(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	createCustomer(tk)
+	createOrders(tk)
+	testkit.SetTiFlashReplica(t, dom, "test", "customer")
+	testkit.SetTiFlashReplica(t, dom, "test", "orders")
+	tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery=true")
 	var (
 		input  []string
 		output []struct {
