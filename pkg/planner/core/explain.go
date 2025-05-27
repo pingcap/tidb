@@ -296,7 +296,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			if normalized {
 				annIndexBuffer.WriteString("?")
 			} else {
-				annIndexBuffer.WriteString(fmt.Sprint(idx.QueryInfo.GetAnnQueryInfo().TopK))
+				fmt.Fprint(annIndexBuffer, idx.QueryInfo.GetAnnQueryInfo().TopK)
 			}
 			annIndexBuffer.WriteString(")")
 
