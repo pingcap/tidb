@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -761,7 +762,7 @@ func (sc *StatementContext) SetBinaryPlan(binaryPlan string) {
 
 // GetResourceGroupTagger returns the implementation of kv.ResourceGroupTagBuilder related to self.
 func (sc *StatementContext) GetResourceGroupTagger() *kv.ResourceGroupTagBuilder {
-	tagger := kv.NewResourceGroupTagBuilder().SetPlanDigest(sc.planDigest)
+	tagger := kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceIDBySettings()).SetPlanDigest(sc.planDigest)
 	normalized, digest := sc.SQLDigest()
 	if len(normalized) > 0 {
 		tagger.SetSQLDigest(digest)

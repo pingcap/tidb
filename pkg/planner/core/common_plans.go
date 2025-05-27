@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -1022,21 +1021,11 @@ func (e *Explain) RenderResult() error {
 		}
 	}
 
-	if strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
-		if pp, ok := e.TargetPlan.(base.PhysicalPlan); ok {
-			// trigger getPlanCost again with CostFlagTrace to record all cost formulas
-			if _, err := getPlanCost(pp, property.RootTaskType,
-				optimizetrace.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate|costusage.CostFlagTrace)); err != nil {
-				return err
-			}
-		}
-	}
-
 	switch strings.ToLower(e.Format) {
 	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache:
 		if e.Rows == nil || e.Analyze {
 			flat := FlattenPhysicalPlan(e.TargetPlan, true)
-			e.explainFlatPlanInRowFormat(flat)
+			e.Rows = ExplainFlatPlanInRowFormat(flat, e.Format, e.Analyze, e.RuntimeStatsColl, e.ExplainRows)
 			if e.Analyze &&
 				e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
 				e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
@@ -1079,23 +1068,29 @@ func (e *Explain) RenderResult() error {
 	return nil
 }
 
-func (e *Explain) explainFlatPlanInRowFormat(flat *FlatPhysicalPlan) {
+// ExplainFlatPlanInRowFormat returns the explain result in row format.
+func ExplainFlatPlanInRowFormat(flat *FlatPhysicalPlan, format string, analyze bool,
+	runtimeStatsColl *execdetails.RuntimeStatsColl, explainRows [][]string) (rows [][]string) {
 	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
 		return
 	}
 	for _, flatOp := range flat.Main {
-		e.explainFlatOpInRowFormat(flatOp)
+		rows = prepareOperatorInfo(flatOp, format, analyze,
+			runtimeStatsColl, explainRows, rows)
 	}
 	for _, cte := range flat.CTEs {
 		for _, flatOp := range cte {
-			e.explainFlatOpInRowFormat(flatOp)
+			rows = prepareOperatorInfo(flatOp, format, analyze,
+				runtimeStatsColl, explainRows, rows)
 		}
 	}
 	for _, subQ := range flat.ScalarSubQueries {
 		for _, flatOp := range subQ {
-			e.explainFlatOpInRowFormat(flatOp)
+			rows = prepareOperatorInfo(flatOp, format, analyze,
+				runtimeStatsColl, explainRows, rows)
 		}
 	}
+	return
 }
 
 func (e *Explain) explainFlatPlanInJSONFormat(flat *FlatPhysicalPlan) (encodes []*ExplainInfoForEncode) {
@@ -1131,11 +1126,6 @@ func (e *Explain) explainOpRecursivelyInJSONFormat(flatOp *FlatOperator, flats F
 			e.explainOpRecursivelyInJSONFormat(flats[idx], flats))
 	}
 	return cur
-}
-
-func (e *Explain) explainFlatOpInRowFormat(flatOp *FlatOperator) {
-	taskTp, textTreeExplainID := getExplainIDAndTaskTp(flatOp)
-	e.prepareOperatorInfo(flatOp.Origin, taskTp, textTreeExplainID)
 }
 
 func getExplainIDAndTaskTp(flatOp *FlatOperator) (taskTp, textTreeExplainID string) {
@@ -1206,36 +1196,39 @@ func getRuntimeInfo(ctx base.PlanContext, p base.Plan, runtimeStatsColl *execdet
 
 // prepareOperatorInfo generates the following information for every plan:
 // operator id, estimated rows, task type, access object and other operator info.
-func (e *Explain) prepareOperatorInfo(p base.Plan, taskType, id string) {
+func prepareOperatorInfo(flatOp *FlatOperator, format string, analyze bool,
+	runtimeStatsColl *execdetails.RuntimeStatsColl, explainRows, rows [][]string) [][]string {
+	p := flatOp.Origin
 	if p.ExplainID().String() == "_0" {
-		return
+		return rows
 	}
+	taskType, id := getExplainIDAndTaskTp(flatOp)
 
-	estRows, estCost, costFormula, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	estRows, estCost, costFormula, accessObject, operatorInfo := getOperatorInfo(p, id, explainRows)
 
 	var row []string
-	if e.Analyze || e.RuntimeStatsColl != nil {
+	if analyze || runtimeStatsColl != nil {
 		row = []string{id, estRows}
-		if e.Format == types.ExplainFormatVerbose || e.Format == types.ExplainFormatTrueCardCost || e.Format == types.ExplainFormatCostTrace {
+		if format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost || format == types.ExplainFormatCostTrace {
 			row = append(row, estCost)
 		}
-		if e.Format == types.ExplainFormatTrueCardCost || e.Format == types.ExplainFormatCostTrace {
+		if format == types.ExplainFormatTrueCardCost || format == types.ExplainFormatCostTrace {
 			row = append(row, costFormula)
 		}
-		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(e.SCtx(), p, e.RuntimeStatsColl)
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, runtimeStatsColl)
 		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
 		row = []string{id, estRows}
-		if e.Format == types.ExplainFormatVerbose || e.Format == types.ExplainFormatTrueCardCost ||
-			e.Format == types.ExplainFormatCostTrace {
+		if format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost ||
+			format == types.ExplainFormatCostTrace {
 			row = append(row, estCost)
 		}
-		if e.Format == types.ExplainFormatCostTrace {
+		if format == types.ExplainFormatCostTrace {
 			row = append(row, costFormula)
 		}
 		row = append(row, taskType, accessObject, operatorInfo)
 	}
-	e.Rows = append(e.Rows, row)
+	return append(rows, row)
 }
 
 func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id string, explainID string) *ExplainInfoForEncode {
@@ -1243,7 +1236,7 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id str
 		return nil
 	}
 
-	estRows, _, _, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	estRows, _, _, accessObject, operatorInfo := getOperatorInfo(p, id, e.ExplainRows)
 	jsonRow := &ExplainInfoForEncode{
 		ID:           explainID,
 		EstRows:      estRows,
@@ -1259,24 +1252,21 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id str
 	return jsonRow
 }
 
-func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
+func getOperatorInfo(p base.Plan, operatorID string, explainRows [][]string) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
 	// For `explain for connection` statement, `e.ExplainRows` will be set.
-	for _, row := range e.ExplainRows {
+	for _, row := range explainRows {
 		if len(row) < 5 {
 			panic("should never happen")
 		}
-		if row[0] == id {
+		if row[0] == operatorID {
 			return row[1], "N/A", "N/A", row[3], row[4]
 		}
 	}
-	return getOperatorInfo(e.SCtx(), p)
-}
-
-func getOperatorInfo(sctx planctx.PlanContext, p base.Plan) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
 	pp, isPhysicalPlan := p.(base.PhysicalPlan)
 	estRows = "N/A"
 	estCost = "N/A"
 	costFormula = "N/A"
+	sctx := p.SCtx()
 	if isPhysicalPlan {
 		estRows = strconv.FormatFloat(pp.GetEstRowCountForDisplay(), 'f', 2, 64)
 		if sctx != nil && sctx.GetSessionVars().CostModelVersion == modelVer2 {

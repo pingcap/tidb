@@ -162,31 +162,6 @@ func (d OperatorLabel) String() string {
 	return ""
 }
 
-// ExplainFlatPlan returns the explain result of the FlatPhysicalPlan in a slice of string slice.
-func ExplainFlatPlan(flatPlan *FlatPhysicalPlan) (plan [][]string) {
-	plan = make([][]string, 0, 4)
-	for _, flatOp := range flatPlan.Main {
-		plan = append(plan, explainFlatPlanOperator(flatOp))
-	}
-	for _, cte := range flatPlan.CTEs {
-		for _, flatOp := range cte {
-			plan = append(plan, explainFlatPlanOperator(flatOp))
-		}
-	}
-	for _, subQ := range flatPlan.ScalarSubQueries {
-		for _, flatOp := range subQ {
-			plan = append(plan, explainFlatPlanOperator(flatOp))
-		}
-	}
-	return
-}
-
-func explainFlatPlanOperator(flatOp *FlatOperator) []string {
-	taskTp, textTreeExplainID := getExplainIDAndTaskTp(flatOp)
-	estRows, _, _, accessObject, operatorInfo := getOperatorInfo(flatOp.Origin.SCtx(), flatOp.Origin)
-	return []string{textTreeExplainID, taskTp, estRows, accessObject, operatorInfo}
-}
-
 type operatorCtx struct {
 	depth       uint32
 	label       OperatorLabel

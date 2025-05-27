@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -52,7 +53,7 @@ type Fragment struct {
 	CTEReaders        []*PhysicalCTE              // The receivers for CTE storage/producer.
 
 	// following fields are filled after scheduling.
-	ExchangeSender *PhysicalExchangeSender // data exporter
+	Sink MPPSink // data exporter
 
 	IsRoot bool
 
@@ -79,14 +80,25 @@ func (f *Fragment) MemoryUsage() (sum int64) {
 	if f.TableScan != nil {
 		sum += f.TableScan.MemoryUsage()
 	}
-	if f.ExchangeSender != nil {
-		sum += f.ExchangeSender.MemoryUsage()
+	if f.Sink != nil {
+		sum += f.Sink.MemoryUsage()
 	}
 
 	for _, receiver := range f.ExchangeReceivers {
 		sum += receiver.MemoryUsage()
 	}
 	return
+}
+
+// MPPSink is the operator to send data to its parent fragment.
+// e.g. ExchangeSender, etc.
+type MPPSink interface {
+	base.PhysicalPlan
+	GetCompressionMode() vardef.ExchangeCompressionMode
+	GetSelfTasks() []*kv.MPPTask
+	SetSelfTasks(tasks []*kv.MPPTask)
+	SetTargetTasks(tasks []*kv.MPPTask)
+	AppendTargetTasks(tasks []*kv.MPPTask)
 }
 
 type tasksAndFrags struct {
@@ -164,7 +176,7 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragm
 		return nil, errors.Trace(err)
 	}
 	for _, frag := range frags {
-		frag.ExchangeSender.TargetTasks = []*kv.MPPTask{tidbTask}
+		frag.Sink.SetTargetTasks([]*kv.MPPTask{tidbTask})
 		frag.IsRoot = true
 	}
 	return e.frags, nil
@@ -340,7 +352,7 @@ func (e *mppTaskGenerator) buildFragments(s *PhysicalExchangeSender) ([]*Fragmen
 	}
 	fragments := make([]*Fragment, 0, len(forest))
 	for _, s := range forest {
-		f := &Fragment{ExchangeSender: s}
+		f := &Fragment{Sink: s}
 		err = f.init(s)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -417,14 +429,14 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 	}
 	for _, r := range f.ExchangeReceivers {
 		for _, frag := range r.frags {
-			frag.ExchangeSender.TargetTasks = append(frag.ExchangeSender.TargetTasks, tasks...)
+			frag.Sink.AppendTargetTasks(tasks)
 		}
 	}
 	for _, cteR := range f.CTEReaders {
 		e.addReaderTasksForCTEStorage(cteR.CTE.IDForStorage, tasks...)
 	}
-	f.ExchangeSender.Tasks = tasks
-	f.flipCTEReader(f.ExchangeSender)
+	f.Sink.SetSelfTasks(tasks)
+	f.flipCTEReader(f.Sink)
 	return tasks, nil
 }
 
@@ -487,7 +499,7 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 func (e *mppTaskGenerator) addReaderTasksForCTEStorage(storageID int, tasks ...*kv.MPPTask) {
 	group := e.CTEGroups[storageID]
 	for _, frag := range group.StorageFragments {
-		frag.ExchangeSender.TargetCTEReaderTasks = append(frag.ExchangeSender.TargetCTEReaderTasks, tasks)
+		frag.Sink.AppendTargetTasks(tasks)
 	}
 }
 

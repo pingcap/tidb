@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -304,9 +305,29 @@ func (rc *SnapClient) SetPlacementPolicyMode(withPlacementPolicy string) {
 	log.Info("set placement policy mode", zap.String("mode", rc.policyMode))
 }
 
+func getMinUserTableID(tables []*metautil.Table) int64 {
+	minUserTableID := int64(math.MaxInt64)
+	for _, table := range tables {
+		if !utils.IsSysOrTempSysDB(table.DB.Name.O) {
+			if table.Info.ID < minUserTableID {
+				minUserTableID = table.Info.ID
+			}
+			if table.Info.Partition != nil && table.Info.Partition.Definitions != nil {
+				for _, part := range table.Info.Partition.Definitions {
+					if part.ID < minUserTableID {
+						minUserTableID = part.ID
+					}
+				}
+			}
+		}
+	}
+	return minUserTableID
+}
+
 // AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
 // the download stage.
-func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table, reusePreallocIDs *checkpoint.PreallocIDs) error {
+// It returns whether any user table ID is not reused when need check.
+func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table, checkUserTableIDReused bool, reusePreallocIDs *checkpoint.PreallocIDs) (bool, error) {
 	var preallocedTableIDs *tidalloc.PreallocIDs
 	var err error
 	if reusePreallocIDs == nil {
@@ -316,12 +337,20 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 			return err
 		})
 		if err != nil {
-			return err
+			return false, err
 		}
 	} else {
 		preallocedTableIDs, err = tidalloc.ReuseIDs(reusePreallocIDs, tables)
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
+		}
+	}
+	userTableIDNotReusedWhenNeedCheck := false
+	if checkUserTableIDReused {
+		minUserTableID := getMinUserTableID(tables)
+		start, _ := preallocedTableIDs.GetIDRange()
+		if minUserTableID != int64(math.MaxInt64) && minUserTableID < start {
+			userTableIDNotReusedWhenNeedCheck = true
 		}
 	}
 
@@ -333,7 +362,7 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 		rc.db.RegisterPreallocatedIDs(preallocedTableIDs)
 	}
 	rc.preallocedIDs = preallocedTableIDs
-	return nil
+	return userTableIDNotReusedWhenNeedCheck, nil
 }
 
 func (rc *SnapClient) GetPreAllocedTableIDRange() ([2]int64, error) {

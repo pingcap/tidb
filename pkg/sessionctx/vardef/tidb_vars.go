@@ -997,6 +997,9 @@ const (
 	// TiDBHashJoinVersion indicates whether to use hash join implementation v2.
 	TiDBHashJoinVersion = "tidb_hash_join_version"
 
+	// TiDBOptIndexJoinBuild indicates which way to build index join.
+	TiDBOptIndexJoinBuild = "tidb_opt_index_join_build_v2"
+
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
 	// Please see comments of SessionVars.OptObjective for details.
 	TiDBOptObjective = "tidb_opt_objective"
@@ -1258,6 +1261,9 @@ const (
 	// TiDBCircuitBreakerPDMetadataErrorRateThresholdPct variable is used to set percent of errors to trip the circuit breaker for get region calls to PD
 	// https://github.com/tikv/rfcs/blob/master/text/0115-circuit-breaker.md
 	TiDBCircuitBreakerPDMetadataErrorRateThresholdPct = "tidb_cb_pd_metadata_error_rate_threshold_pct"
+
+	// TiDBEnableTSValidation controls whether to enable the timestamp validation in client-go.
+	TiDBEnableTSValidation = "tidb_enable_ts_validation"
 )
 
 // TiDB intentional limits, can be raised in the future.
@@ -1611,7 +1617,7 @@ const (
 	DefTiDBLoadBasedReplicaReadThreshold              = time.Second
 	DefTiDBOptEnableLateMaterialization               = true
 	DefTiDBOptOrderingIdxSelThresh                    = 0.0
-	DefTiDBOptOrderingIdxSelRatio                     = -1
+	DefTiDBOptOrderingIdxSelRatio                     = 0.01
 	DefTiDBOptEnableMPPSharedCTEExecution             = false
 	DefTiDBPlanCacheInvalidationOnFreshStats          = true
 	DefTiDBEnableRowLevelChecksum                     = false
@@ -1636,6 +1642,7 @@ const (
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptEnableHashJoin                          = true
 	DefTiDBHashJoinVersion                            = joinversion.HashJoinVersionOptimized
+	DefTiDBOptIndexJoinBuild                          = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0
@@ -1653,6 +1660,7 @@ const (
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 	DefTiDBCircuitBreakerPDMetaErrorRatePct           = 0
 	DefTiDBAccelerateUserCreationUpdate               = false
+	DefTiDBEnableTSValidation                         = true
 )
 
 // Process global variables.
