@@ -525,7 +525,8 @@ type TopN struct {
 
 	totalCount uint64
 	minCount   uint64
-	once       sync.Once
+	// minCount and totalCount are initialized only once.
+	once sync.Once
 }
 
 // Scale scales the TopN by the given factor. It is only used when to build topN from sampled data during analyze.
@@ -536,9 +537,10 @@ func (c *TopN) Scale(scaleFactor float64) {
 		total += c.TopN[i].Count
 		minCount = min(minCount, c.TopN[i].Count)
 	}
-	c.minCount = minCount
-	c.totalCount = total
-	c.once.Do(func() {})
+	c.once.Do(func() {
+		c.minCount = minCount
+		c.totalCount = total
+	})
 }
 
 // AppendTopN appends a topn into the TopN struct.
