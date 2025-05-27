@@ -35,6 +35,8 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -392,4 +394,101 @@ func createTestTable(schemaID, tableID int64) *metautil.Table {
 		DB:   dbInfo,
 		Info: tableInfo,
 	}
+}
+
+func generateMetautilTable(dbName string, tableID int64, partitionIDs ...int64) *metautil.Table {
+	var partition *model.PartitionInfo
+	if len(partitionIDs) > 0 {
+		partition = &model.PartitionInfo{
+			Definitions: make([]model.PartitionDefinition, 0, len(partitionIDs)),
+		}
+		for _, partitionID := range partitionIDs {
+			partition.Definitions = append(partition.Definitions, model.PartitionDefinition{
+				ID: partitionID,
+			})
+		}
+	}
+	return &metautil.Table{
+		DB: &model.DBInfo{
+			Name: pmodel.NewCIStr(dbName),
+		},
+		Info: &model.TableInfo{
+			ID:        tableID,
+			Partition: partition,
+		},
+	}
+}
+
+func TestAllocTableIDs(t *testing.T) {
+	// cannot use shared `mc`, other parallel case may change it.
+	cluster := getStartedMockedCluster(t)
+	defer cluster.Stop()
+
+	g := gluetidb.New()
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	err := client.InitConnections(g, cluster.Storage)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	globalID := int64(0)
+	err = kv.RunInNewTxn(ctx, cluster.Storage, true, func(_ context.Context, txn kv.Transaction) error {
+		id, err := meta.NewMutator(txn).AdvanceGlobalIDs(1000)
+		globalID = id + 1000
+		return err
+	})
+	require.NoError(t, err)
+	userTableIDNotReusedWhenNeedCheck, err := client.AllocTableIDs(ctx, []*metautil.Table{
+		generateMetautilTable("mysql", globalID-1),
+		generateMetautilTable("__TiDB_BR_Temporary_mysql", globalID-2),
+		generateMetautilTable("mysql", globalID-3),
+		generateMetautilTable("__TiDB_BR_Temporary_mysql", globalID-4),
+	}, true)
+	require.NoError(t, err)
+	require.False(t, userTableIDNotReusedWhenNeedCheck)
+	err = kv.RunInNewTxn(ctx, cluster.Storage, true, func(_ context.Context, txn kv.Transaction) error {
+		id, err := meta.NewMutator(txn).AdvanceGlobalIDs(1000)
+		globalID = id + 1000
+		return err
+	})
+	require.NoError(t, err)
+	userTableIDNotReusedWhenNeedCheck, err = client.AllocTableIDs(ctx, []*metautil.Table{
+		generateMetautilTable("mysql", globalID-1, globalID+1),
+		generateMetautilTable("test", globalID+2, globalID+3),
+	}, true)
+	require.NoError(t, err)
+	require.False(t, userTableIDNotReusedWhenNeedCheck)
+	err = kv.RunInNewTxn(ctx, cluster.Storage, true, func(_ context.Context, txn kv.Transaction) error {
+		id, err := meta.NewMutator(txn).AdvanceGlobalIDs(1000)
+		globalID = id + 1000
+		return err
+	})
+	require.NoError(t, err)
+	userTableIDNotReusedWhenNeedCheck, err = client.AllocTableIDs(ctx, []*metautil.Table{
+		generateMetautilTable("mysql", globalID-1, globalID+1),
+		generateMetautilTable("test", globalID+2, globalID),
+		generateMetautilTable("test2", globalID+3, globalID+4),
+	}, true)
+	require.NoError(t, err)
+	require.True(t, userTableIDNotReusedWhenNeedCheck)
+}
+
+func TestGetMinUserTableID(t *testing.T) {
+	minUserTableID := snapclient.GetMinUserTableID([]*metautil.Table{
+		generateMetautilTable("mysql", 1),
+		generateMetautilTable("__TiDB_BR_Temporary_mysql", 2),
+		generateMetautilTable("mysql", 4),
+		generateMetautilTable("__TiDB_BR_Temporary_mysql", 3),
+	})
+	require.Equal(t, int64(math.MaxInt64), minUserTableID)
+	minUserTableID = snapclient.GetMinUserTableID([]*metautil.Table{
+		generateMetautilTable("mysql", 3, 1),
+		generateMetautilTable("test", 4, 6),
+	})
+	require.Equal(t, int64(4), minUserTableID)
+	minUserTableID = snapclient.GetMinUserTableID([]*metautil.Table{
+		generateMetautilTable("mysql", 4, 1),
+		generateMetautilTable("test", 3, 2),
+		generateMetautilTable("test2", 5, 6),
+	})
+	require.Equal(t, int64(2), minUserTableID)
 }

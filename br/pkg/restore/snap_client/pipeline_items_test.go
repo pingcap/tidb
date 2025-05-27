@@ -23,8 +23,11 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	brmock "github.com/pingcap/tidb/br/pkg/mock"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -32,6 +35,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -251,4 +255,73 @@ func TestUpdateStatsMeta(t *testing.T) {
 		116: 233,
 		117: 235,
 	}, rows)
+}
+
+func TestReplaceTables(t *testing.T) {
+	ctx := context.Background()
+	brmk, err := brmock.NewCluster()
+	require.NoError(t, err)
+	require.NoError(t, brmk.Start())
+	defer brmk.Stop()
+	g := gluetidb.New()
+	client := snapclient.NewRestoreClient(brmk.PDClient, brmk.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	err = client.InitConnections(g, brmk.Storage)
+	require.NoError(t, err)
+	tk := testkit.NewTestKit(t, brmk.Storage)
+
+	tk.MustExec("create database __TiDB_BR_Temporary_mysql")
+	tk.MustExec("create table __TiDB_BR_Temporary_mysql.global_priv (" +
+		"Host CHAR(255) NOT NULL DEFAULT ''," +
+		"User CHAR(80) NOT NULL DEFAULT ''," +
+		"Priv LONGTEXT NOT NULL," +
+		"PRIMARY KEY (Host, User)," +
+		"KEY i_user (User))",
+	)
+	tk.MustExec("create table __TiDB_BR_Temporary_mysql.stats_meta (" +
+		"version 					BIGINT(64) UNSIGNED NOT NULL," +
+		"table_id 					BIGINT(64) NOT NULL," +
+		"modify_count				BIGINT(64) NOT NULL DEFAULT 0," +
+		"count 						BIGINT(64) UNSIGNED NOT NULL DEFAULT 0," +
+		"snapshot        			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0," +
+		"INDEX idx_ver(version)," +
+		"UNIQUE INDEX tbl(table_id));",
+	)
+	tk.MustExec("insert into __TiDB_BR_Temporary_mysql.global_priv values ('%', 'test', '')")
+	tk.MustExec("insert into __TiDB_BR_Temporary_mysql.stats_meta values (4, 4, 4, 4, 4)")
+
+	count, err := client.ReplaceTables(ctx, []*restoreutils.CreatedTable{
+		{
+			OldTable: &metautil.Table{
+				DB:   &model.DBInfo{Name: pmodel.NewCIStr("__TiDB_BR_Temporary_mysql")},
+				Info: &model.TableInfo{Name: pmodel.NewCIStr("stats_meta")},
+			},
+		},
+		{
+			OldTable: &metautil.Table{
+				DB:   &model.DBInfo{Name: pmodel.NewCIStr("__TiDB_BR_Temporary_mysql")},
+				Info: &model.TableInfo{Name: pmodel.NewCIStr("global_priv")},
+			},
+		},
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   8,
+		UpstreamVersionMinor:   1,
+		DownstreamVersionMajor: 8,
+		DownstreamVersionMinor: 5,
+	}, 123, true, true, nil, false, 1)
+	require.NoError(t, err)
+	require.Equal(t, 2, count)
+	rows := tk.MustQuery("select * from mysql.global_priv").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "%", rows[0][0])
+	require.Equal(t, "test", rows[0][1])
+	require.Equal(t, "", rows[0][2])
+	rows = tk.MustQuery("select * from mysql.stats_meta").Rows()
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0], 6)
+	require.Equal(t, "4", rows[0][0])
+	require.Equal(t, "4", rows[0][1])
+	require.Equal(t, "4", rows[0][2])
+	require.Equal(t, "4", rows[0][3])
+	require.Equal(t, "4", rows[0][4])
+	require.Equal(t, "<nil>", rows[0][5])
 }
