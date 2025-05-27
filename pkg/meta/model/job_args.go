@@ -1786,6 +1786,25 @@ func GetFinishedModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
 	return getOrDecodeArgsV2[*ModifyColumnArgs](job)
 }
 
+// RefreshMetaArgs is the argument for RefreshMeta.
+type RefreshMetaArgs struct {
+	SchemaID int64 `json:"schema_id,omitempty"`
+	TableID  int64 `json:"table_id,omitempty"`
+}
+
+func (a *RefreshMetaArgs) getArgsV1(*Job) []any {
+	return []any{a}
+}
+
+func (a *RefreshMetaArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(a))
+}
+
+// GetRefreshMetaArgs get the refresh meta argument.
+func GetRefreshMetaArgs(job *Job) (*RefreshMetaArgs, error) {
+	return getOrDecodeArgs[*RefreshMetaArgs](&RefreshMetaArgs{}, job)
+}
+
 // AlterEngineAttributeArgs is the arguments for alter table placements ddl job.
 type AlterEngineAttributeArgs struct {
 	EngineAttribute *string `json:"engine_attribute,omitempty"`

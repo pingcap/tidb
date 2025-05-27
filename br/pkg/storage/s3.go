@@ -43,6 +43,9 @@ import (
 var hardcodedS3ChunkSize = 5 * 1024 * 1024
 
 const (
+	// S3ExternalID is the key for the external ID used in S3 operations.
+	S3ExternalID = "external-id"
+
 	s3EndpointOption     = "s3.endpoint"
 	s3RegionOption       = "s3.region"
 	s3StorageClassOption = "s3.storage-class"
@@ -51,7 +54,7 @@ const (
 	s3ACLOption          = "s3.acl"
 	s3ProviderOption     = "s3.provider"
 	s3RoleARNOption      = "s3.role-arn"
-	s3ExternalIDOption   = "s3.external-id"
+	s3ExternalIDOption   = "s3." + S3ExternalID
 	notFound             = "NotFound"
 	// number of retries to make of operations.
 	maxRetries = 7
@@ -628,7 +631,7 @@ func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error
 		data    []byte
 		readErr error
 	)
-	for retryCnt := 0; retryCnt < maxErrorRetries; retryCnt += 1 {
+	for retryCnt := range maxErrorRetries {
 		input := &s3.GetObjectInput{
 			Bucket: aws.String(rs.options.Bucket),
 			Key:    aws.String(rs.options.Prefix + file),

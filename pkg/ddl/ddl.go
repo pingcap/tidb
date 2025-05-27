@@ -609,7 +609,7 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 			// Try sending the event to the channel with a backoff strategy to avoid blocking indefinitely.
 			// Since most unit tests don't consume events, we make a few attempts and then give up rather
 			// than blocking the DDL job forever on a full channel.
-			for i := 0; i < 10; i++ {
+			for range 10 {
 				select {
 				case ch <- e:
 					break forLoop
@@ -1406,7 +1406,7 @@ func processJobs(
 
 	ns := sess.NewSession(sessCtx)
 	// We should process (and try) all the jobs in one Transaction.
-	for tryN := uint(0); tryN < 3; tryN++ {
+	for range 3 {
 		jobErrs = make([]error, len(ids))
 		// Need to figure out which one could not be paused
 		jobMap := make(map[int64]int, len(ids))

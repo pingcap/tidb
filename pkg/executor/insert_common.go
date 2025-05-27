@@ -542,7 +542,7 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 
 	inLoadData := e.Ctx().GetSessionVars().StmtCtx.InLoadDataStmt
 
-	for i := 0; i < e.rowLen; i++ {
+	for i := range e.rowLen {
 		col := e.insertColumns[i].ToInfo()
 		casted, err := table.CastValue(e.Ctx(), vals[i], col, false, false)
 		if newErr := e.handleErr(e.insertColumns[i], &vals[i], int(e.rowCount), err); newErr != nil {
@@ -885,7 +885,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				e.lastInsertID = uint64(minv)
 			}
 			// Assign autoIDs to rows.
-			for j := 0; j < cnt; j++ {
+			for j := range cnt {
 				offset := j + start
 				id := int64(uint64(minv) + uint64(j)*uint64(increment))
 				err = setDatumAutoIDAndCast(e.Ctx(), &rows[offset][idx], id, col)

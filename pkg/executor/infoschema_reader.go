@@ -511,7 +511,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(
 		nameToCol[c.Name.L] = c
 	}
 	for _, index := range table.Indices {
-		if !ex.HasIndex(index.Name.L) {
+		if !ex.HasIndex(index.Name.L) || index.State != model.StatePublic {
 			continue
 		}
 		nonUnique := "1"
@@ -2115,6 +2115,10 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 			e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], nil)
 		}
 		for j, regionTable := range regionTableList {
+			// Exclude virtual schemas
+			if util.IsMemDB(regionTable.DB.Name.L) {
+				continue
+			}
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, regionTable.DB.Name.L, regionTable.Table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}

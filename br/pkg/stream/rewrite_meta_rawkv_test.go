@@ -32,6 +32,7 @@ func MockEmptySchemasReplace(midr *mockInsertDeleteRange, dbMap map[UpstreamID]*
 		nil,
 		9527,
 		midr.mockRecordDeleteRange,
+		false,
 	)
 }
 
@@ -293,6 +294,7 @@ func TestRewriteTableInfoForPartitionTable(t *testing.T) {
 		nil,
 		0,
 		nil,
+		false,
 	)
 
 	// set restoreKV status, and rewrite it.
@@ -419,7 +421,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 		Key:   txnKey,
 		Value: value,
 	}
-	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF)
+	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF, NewMockMetaInfoCollector())
 	require.Nil(t, err)
 
 	sr := NewSchemasReplace(
@@ -427,6 +429,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 		nil,
 		0,
 		nil,
+		false,
 	)
 
 	// rewrite partition table
@@ -448,7 +451,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 		Key:   txnKey,
 		Value: value,
 	}
-	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF)
+	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF, NewMockMetaInfoCollector())
 	require.Nil(t, err)
 
 	value, err = sr.rewriteTableInfo(value, dbID2)
@@ -781,7 +784,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(rollBackTable0IndexJob)
 	require.NoError(t, err)
 	oldPartitionIDMap := make(map[string]struct{})
-	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+	for range len(mDDLJobALLNewPartitionIDSet) {
 		qargs = <-midr.queryCh
 		require.Equal(t, len(qargs.ParamsList), 2)
 		for _, params := range qargs.ParamsList {
@@ -812,7 +815,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(dropTable0IndexJob)
 	require.NoError(t, err)
 	oldPartitionIDMap = make(map[string]struct{})
-	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+	for range len(mDDLJobALLNewPartitionIDSet) {
 		qargs = <-midr.queryCh
 		require.Equal(t, len(qargs.ParamsList), 1)
 		_, exist := oldPartitionIDMap[qargs.ParamsList[0].StartKey]
@@ -833,7 +836,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(addTable0IndexJob)
 	require.NoError(t, err)
 	oldPartitionIDMap = make(map[string]struct{})
-	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+	for range len(mDDLJobALLNewPartitionIDSet) {
 		qargs = <-midr.queryCh
 		require.Equal(t, len(qargs.ParamsList), 1)
 		_, exist := oldPartitionIDMap[qargs.ParamsList[0].StartKey]
@@ -854,7 +857,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(dropTable0ColumnJob)
 	require.NoError(t, err)
 	oldPartitionIDMap = make(map[string]struct{})
-	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+	for range len(mDDLJobALLNewPartitionIDSet) {
 		qargs = <-midr.queryCh
 		require.Equal(t, len(qargs.ParamsList), 2)
 		for _, params := range qargs.ParamsList {
@@ -885,7 +888,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(modifyTable0ColumnJob)
 	require.NoError(t, err)
 	oldPartitionIDMap = make(map[string]struct{})
-	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+	for range len(mDDLJobALLNewPartitionIDSet) {
 		qargs = <-midr.queryCh
 		require.Equal(t, len(qargs.ParamsList), 2)
 		for _, params := range qargs.ParamsList {
@@ -916,8 +919,8 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(multiSchemaChangeJob0)
 	require.NoError(t, err)
 	oldPartitionIDMap = make(map[string]struct{})
-	for l := 0; l < 2; l++ {
-		for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+	for l := range 2 {
+		for range len(mDDLJobALLNewPartitionIDSet) {
 			qargs = <-midr.queryCh
 			require.Equal(t, len(qargs.ParamsList), 1)
 			_, exist := oldPartitionIDMap[qargs.ParamsList[0].StartKey]

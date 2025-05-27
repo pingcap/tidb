@@ -103,3 +103,22 @@ select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 , concat_ws(',', t1.col_
 rollback;
 
 set @@tidb_enable_inl_join_inner_multi_pattern=default;
+
+CREATE TABLE `td89f296a` (
+  `col_64` tinyint DEFAULT NULL,
+  `col_65` json NOT NULL,
+  `col_66` json DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+
+CREATE TABLE `tac9d3b07` (
+  `col_60` binary(67) DEFAULT '\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0',
+  `col_61` decimal(27,16) NOT NULL,
+  `col_62` time NOT NULL,
+  UNIQUE KEY `idx_19` (`col_60`,`col_61`,`col_62`),
+  UNIQUE KEY `idx_20` (`col_60`(2),`col_62`,`col_61`),
+  KEY `idx_21` (`col_60`(1),`col_61`),
+  UNIQUE KEY `idx_22` (`col_61`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+
+explain format=brief select /*+ inl_join(st_45) */ td89f296a.col_64 as r0 , substr( st_45.r0 , 2 ) as r1 , ord( st_45.r0 ) as r2 , mid( st_45.r1 , 0 , 6 ) as r3 from td89f296a inner join (select  tac9d3b07.col_61 as r0 , bit_and( tac9d3b07.col_61 ) as r1 from tac9d3b07  group by tac9d3b07.col_61,tac9d3b07.col_60) st_45 on td89f296a.col_64 = st_45.r0 order by r0,r1,r2,r3 ;
+select /*+ inl_join(st_45) */ td89f296a.col_64 as r0 , substr( st_45.r0 , 2 ) as r1 , ord( st_45.r0 ) as r2 , mid( st_45.r1 , 0 , 6 ) as r3 from td89f296a inner join (select  tac9d3b07.col_61 as r0 , bit_and( tac9d3b07.col_61 ) as r1 from tac9d3b07  group by tac9d3b07.col_61,tac9d3b07.col_60) st_45 on td89f296a.col_64 = st_45.r0 order by r0,r1,r2,r3 ;

@@ -198,8 +198,8 @@ func NewDistExecutionContextWithLease(t testing.TB, serverNum int, lease time.Du
 	domains := make([]*domain.Domain, 0, serverNum)
 	sm := MockSessionManager{}
 
-	var domInfo []string
-	for i := 0; i < serverNum; i++ {
+	domInfo := make([]string, 0, serverNum)
+	for i := range serverNum {
 		dom := bootstrap4DistExecution(t, store, lease)
 		if i != serverNum-1 {
 			dom.SetOnClose(func() { /* don't delete the store in domain map */ })

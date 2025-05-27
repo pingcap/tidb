@@ -108,6 +108,7 @@ go_library(
         "//pkg/expression/exprstatic",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
+        "//pkg/ingestor/engineapi",
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/lightning/backend",
