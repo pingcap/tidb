@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"slices"
@@ -1173,6 +1174,24 @@ func checkIndexOptions(isColumnar bool, indexOptions *ast.IndexOption) error {
 	if indexOptions == nil {
 		return nil
 	}
+
+	parameters := make(map[string]any)
+	if len(indexOptions.Parameters) > 0 {
+		err := json.Unmarshal([]byte(indexOptions.Parameters), &parameters)
+		if err != nil {
+			return dbterror.ErrUnsupportedIndexType.FastGen("PARAMETERS are not valid JSON")
+		}
+	}
+	if mode, ok := parameters[ast.IndexOptionParamMode]; ok {
+		if modeStr, ok := mode.(string); ok {
+			if modeStr != ast.IndexOptionParamModeBasic && modeStr != ast.IndexOptionParamModeAdvanced {
+				return dbterror.ErrUnsupportedIndexType.FastGen("PARAMETERS.mode must be 'basic' or 'advanced'")
+			}
+		} else {
+			return dbterror.ErrUnsupportedIndexType.FastGen("PARAMETERS.mode must be 'basic' or 'advanced'")
+		}
+	}
+
 	if isColumnar {
 		switch indexOptions.Tp {
 		case ast.IndexTypeVector, ast.IndexTypeInverted:
@@ -1180,6 +1199,11 @@ func checkIndexOptions(isColumnar bool, indexOptions *ast.IndexOption) error {
 		case ast.IndexTypeFulltext:
 			if indexOptions.ParserName.L != "" && model.GetFullTextParserTypeBySQLName(indexOptions.ParserName.L) == model.FullTextParserTypeInvalid {
 				return dbterror.ErrUnsupportedIndexType.FastGen("Unsupported parser '%s'", indexOptions.ParserName.O)
+			}
+			if mode, ok := parameters[ast.IndexOptionParamMode]; ok {
+				if mode.(string) == ast.IndexOptionParamModeAdvanced { // We have checked this is a string before.
+					return dbterror.ErrUnsupportedIndexType.FastGen("Currently FULLTEXT INDEX with PARAMETERS.mode = 'advanced' is not supported, TiCI is required")
+				}
 			}
 		case ast.IndexTypeInvalid:
 			return dbterror.ErrUnsupportedIndexType.FastGen("COLUMNAR INDEX must specify 'USING <index_type>'")

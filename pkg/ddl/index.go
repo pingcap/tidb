@@ -534,6 +534,7 @@ func buildFullTextInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecific
 	}
 	return &model.FullTextIndexInfo{
 		ParserType: parser,
+		Mode:       ast.IndexOptionParamModeBasic, // Currently, we only accept the basic mode.
 	}, nil
 }
 

@@ -746,7 +746,14 @@ type IndexOption struct {
 	SplitOpt                   *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
 	SecondaryEngineAttr        string
 	AddColumnarReplicaOnDemand int
+	Parameters                 string
 }
+
+const (
+	IndexOptionParamMode         = "mode"
+	IndexOptionParamModeBasic    = "basic"
+	IndexOptionParamModeAdvanced = "advanced"
+)
 
 // IsEmpty is true if only default options are given
 // and it should not be added to the output
@@ -759,7 +766,8 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
 		n.SplitOpt != nil ||
-		len(n.SecondaryEngineAttr) > 0 {
+		len(n.SecondaryEngineAttr) > 0 ||
+		n.Parameters != "" {
 		return false
 	}
 	return true
@@ -875,8 +883,17 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE")
 		ctx.WritePlain(" = ")
 		ctx.WriteString(n.SecondaryEngineAttr)
-		// If a new option is added after, please also uncomment:
-		//hasPrevOption = true
+		hasPrevOption = true
+	}
+
+	if n.Parameters != "" {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("PARAMETERS")
+		ctx.WritePlain(" = ")
+		ctx.WriteString(n.Parameters)
+		hasPrevOption = true
 	}
 
 	return nil

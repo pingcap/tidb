@@ -300,6 +300,11 @@ func TestValidator(t *testing.T) {
 		// {"ALTER TABLE t ADD INDEX (a) USING VECTOR", false, errors.New(`[ddl:8200]'USING VECTOR' can be only used for COLUMNAR INDEX`)},
 		{"ALTER TABLE t ADD FULLTEXT INDEX (a) WITH PARSER foo", false, errors.New(`[ddl:8200]Unsupported parser 'foo'`)},
 		{"ALTER TABLE t ADD FULLTEXT INDEX (a) USING HNSW", false, errors.New(`[ddl:8200]'USING HNSW' is not supported for FULLTEXT INDEX`)},
+		{"ALTER TABLE t ADD FULLTEXT INDEX (a) PARAMETERS='null'", true, nil},
+		{"ALTER TABLE t ADD FULLTEXT INDEX (a) PARAMETERS='{not_a_json}'", false, errors.New(`[ddl:8200]PARAMETERS are not valid JSON`)},
+		{"ALTER TABLE t ADD FULLTEXT INDEX (a) PARAMETERS='{\"mode\":\"advanced\"}'", false, errors.New(`[ddl:8200]Currently FULLTEXT INDEX with PARAMETERS.mode = 'advanced' is not supported, TiCI is required`)},
+		{"ALTER TABLE t ADD FULLTEXT INDEX (a) PARAMETERS='{\"mode\":\"xxx\"}'", false, errors.New(`[ddl:8200]PARAMETERS.mode must be 'basic' or 'advanced'`)},
+		{"ALTER TABLE t ADD FULLTEXT INDEX (a) PARAMETERS='{\"mode\":123}'", false, errors.New(`[ddl:8200]PARAMETERS.mode must be 'basic' or 'advanced'`)},
 		{"CREATE VECTOR INDEX idx ON t (a) USING HNSW ", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
 		{"CREATE VECTOR INDEX idx ON t (a, b) USING HNSW", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
 		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a))) TYPE BTREE", false, errors.New(`[ddl:8200]'USING BTREE' is not supported for VECTOR INDEX`)},
@@ -339,6 +344,7 @@ func TestValidator(t *testing.T) {
 		{"CREATE VECTOR INDEX ident ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
 		// {"CREATE COLUMNAR INDEX ident USING VECTOR ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
 		{"CREATE FULLTEXT INDEX x ON ident (col_x)", false, errors.New(`[schema:1146]Table 'test.ident' doesn't exist`)},
+		{"CREATE FULLTEXT INDEX x ON ident (col_x) PARAMETERS='{\"mode\":\"basic\"}'", false, errors.New(`[schema:1146]Table 'test.ident' doesn't exist`)},
 	}
 
 	store := testkit.CreateMockStore(t)

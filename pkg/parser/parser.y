@@ -761,6 +761,7 @@ import (
 	next_row_id           "NEXT_ROW_ID"
 	now                   "NOW"
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
+	parameters            "PARAMETERS"
 	placement             "PLACEMENT"
 	planCache             "PLAN_CACHE"
 	plan                  "PLAN"
@@ -6702,6 +6703,8 @@ IndexOptionList:
 				opt1.SplitOpt = opt2.SplitOpt
 			} else if len(opt2.SecondaryEngineAttr) > 0 {
 				opt1.SecondaryEngineAttr = opt2.SecondaryEngineAttr
+			} else if len(opt2.Parameters) > 0 {
+				opt1.Parameters = opt2.Parameters
 			}
 			$$ = opt1
 		}
@@ -6736,6 +6739,12 @@ IndexOption:
 	{
 		$$ = &ast.IndexOption{
 			Comment: $2,
+		}
+	}
+|	"PARAMETERS" EqOpt stringLit
+	{
+		$$ = &ast.IndexOption{
+			Parameters: $3,
 		}
 	}
 |	IndexInvisible
@@ -7345,6 +7354,7 @@ NotKeywordToken:
 |	"REPLAY"
 |	"REPLAYER"
 |	"RUNNING"
+|	"PARAMETERS"
 |	"PLACEMENT"
 |	"PLAN"
 |	"PLAN_CACHE"
