@@ -7,8 +7,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,10 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
-
-var metaPattern = regexp.MustCompile(`^(\d+)-(\d+)-(\d+)-[^/]+$`)
 
 // MetaIter is the type of iterator of metadata files' content.
 type MetaIter = iter.TryNextor[*backuppb.Metadata]
@@ -177,24 +174,33 @@ func (lm *LogFileManager) loadShiftTS(ctx context.Context) error {
 		value  uint64
 		exists bool
 	}{}
-	err := stream.FastUnmarshalMetaData(ctx, lm.storage, lm.metadataDownloadBatchSize, func(path string, raw []byte) error {
-		m, err := lm.helper.ParseToMetadata(raw)
-		if err != nil {
-			return err
-		}
-		log.Info("read meta from storage and parse", zap.String("path", path), zap.Uint64("min-ts", m.MinTs),
-			zap.Uint64("max-ts", m.MaxTs), zap.Int32("meta-version", int32(m.MetaVersion)))
+	physicalTime := oracle.GetTimeFromTS(lm.startTS)
+	// Assumes transactions do not lag more than 12 hours.
+	newTime := physicalTime.Add(-12 * time.Hour)
+	newBeginTs := oracle.GoTimeToTS(newTime)
 
-		ts, ok := stream.UpdateShiftTS(m, lm.startTS, lm.restoreTS)
-		shiftTS.Lock()
-		if ok && (!shiftTS.exists || shiftTS.value > ts) {
-			shiftTS.value = ts
-			shiftTS.exists = true
-		}
-		shiftTS.Unlock()
+	err := stream.FastUnmarshalMetaData(ctx,
+		lm.storage,
+		newBeginTs,
+		lm.restoreTS,
+		lm.metadataDownloadBatchSize, func(path string, raw []byte) error {
+			m, err := lm.helper.ParseToMetadata(raw)
+			if err != nil {
+				return err
+			}
+			log.Info("read meta from storage and parse", zap.String("path", path), zap.Uint64("min-ts", m.MinTs),
+				zap.Uint64("max-ts", m.MaxTs), zap.Int32("meta-version", int32(m.MetaVersion)))
 
-		return nil
-	})
+			ts, ok := stream.UpdateShiftTS(m, lm.startTS, lm.restoreTS)
+			shiftTS.Lock()
+			if ok && (!shiftTS.exists || shiftTS.value > ts) {
+				shiftTS.value = ts
+				shiftTS.exists = true
+			}
+			shiftTS.Unlock()
+
+			return nil
+		})
 	if err != nil {
 		return err
 	}
@@ -223,40 +229,6 @@ func (lm *LogFileManager) streamingMetaByTS(ctx context.Context) (MetaNameIter, 
 	return filtered, nil
 }
 
-func FilterPathByTs(path string, shiftStartTS, restoreTS uint64) string {
-	filename := strings.TrimSuffix(path, ".meta")
-	filename = filename[strings.LastIndex(filename, "/")+1:]
-
-	if metaPattern.MatchString(filename) {
-		matches := metaPattern.FindStringSubmatch(filename)
-		if len(matches) < 4 {
-			log.Warn("invalid meta file name format", zap.String("file", path))
-			// consider compatible with future file path change
-			return path
-		}
-
-		minTs, _ := strconv.ParseUint(matches[1], 10, 64)
-		maxTs, _ := strconv.ParseUint(matches[2], 10, 64)
-		minDefaultTs, _ := strconv.ParseUint(matches[3], 10, 64)
-
-		if minDefaultTs == 0 || minDefaultTs > minTs {
-			log.Warn("minDefaultTs is not correct, fallback to minTs",
-				zap.String("file", path),
-				zap.Uint64("minTs", minTs),
-				zap.Uint64("minDefaultTs", minDefaultTs),
-			)
-			minDefaultTs = minTs
-		}
-
-		if restoreTS < minDefaultTs || maxTs < shiftStartTS {
-			return ""
-		}
-	}
-
-	// keep consistency with old behaviour
-	return path
-}
-
 func (lm *LogFileManager) createMetaIterOver(ctx context.Context, s storage.ExternalStorage) (MetaNameIter, error) {
 	opt := &storage.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
 	names := []string{}
@@ -264,7 +236,7 @@ func (lm *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 		if !strings.HasSuffix(path, ".meta") {
 			return nil
 		}
-		newPath := FilterPathByTs(path, lm.shiftStartTS, lm.restoreTS)
+		newPath := stream.FilterPathByTs(path, lm.shiftStartTS, lm.restoreTS)
 		if len(newPath) > 0 {
 			names = append(names, newPath)
 		}
