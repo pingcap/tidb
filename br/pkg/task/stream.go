@@ -1259,7 +1259,8 @@ func checkConflictingLogBackup(ctx context.Context, cfg *RestoreConfig, streamRe
 	}
 	if streamRestore && len(tasks) > 0 {
 		if tasks[0].Info.Storage == nil {
-			return nil, errors.Errorf("cannot save log restore table IDs blocklist file because the external storage backend of the task[%s] is empty", tasks[0].Info.Name)
+			return nil, errors.Annotatef(berrors.ErrStreamLogTaskHasNoStorage,
+				"cannot save log restore table IDs blocklist file because the external storage backend of the task[%s] is empty", tasks[0].Info.Name)
 		}
 		return tasks[0].Info.Storage, nil
 	}

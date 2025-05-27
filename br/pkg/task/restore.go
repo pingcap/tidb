@@ -810,7 +810,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	defer mgr.Close()
 	defer cfg.CloseCheckpointMetaManager()
 	defer func() {
-		if logTaskBackend == nil || restoreErr != nil {
+		if logTaskBackend == nil || restoreErr != nil || cfg.PiTRTableTracker == nil {
 			return
 		}
 		restoreCommitTs, err := restore.GetTSWithRetry(c, mgr.GetPDClient())
