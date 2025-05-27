@@ -456,6 +456,18 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 		regionMaxSize = j.regionSplitSize * 4 / 3
 	}
 
+	// preparation work for the write timeout fault injection, worked only if the following failpoint is enabled
+	originalCtx := ctx                 // save the original context with 15 minutes timeout
+	var innerTimeout time.Duration = 0 // disabled if 0
+	failpoint.Inject("shortWaitNTimeout", func(val failpoint.Value) {
+		// GO_FAILPOINTS action supplies the duration in ms
+		if ms, ok := val.(int); ok && ms > 0 {
+			innerTimeout = time.Duration(ms) * time.Millisecond
+		} else {
+			innerTimeout = 5 * time.Millisecond // default
+		}
+	})
+
 	flushKVs := func() error {
 		req.Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 		preparedMsg := &grpc.PreparedMsg{}
@@ -465,12 +477,29 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 			return err
 		}
 
+		// continue the work for write timeout injection, and create a new context if innerTimeout > 0
+		// with a much shorter timeout, so that the WaitN call will return with common.ErrWriteTooSlow
+		wctx := originalCtx
+		wcancel := func() {}
+		if innerTimeout > 0 {
+			wctx, wcancel = context.WithTimeoutCause(
+				originalCtx, innerTimeout, common.ErrWriteTooSlow)
+
+			// ensure subsequent WaitN calls fall back to outerCtx
+			innerTimeout = 0
+		}
+		defer wcancel()
+
 		for i := range clients {
-			err := writeLimiter.WaitN(ctx, allPeers[i].StoreId, int(size))
+			// original ctx would be used when failpoint is not enabled
+			// that new context would be used when failpoint is enabled
+			err := writeLimiter.WaitN(wctx, allPeers[i].StoreId, int(size))
 			if err != nil {
 				if goerrors.Is(err, context.DeadlineExceeded) {
 					if cause := context.Cause(ctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
-						log.FromContext(ctx).Info("Experiencing a wait timeout while writing to tikv", zap.Int("store-write-bwlimit", local.BackendConfig.StoreWriteBWLimit), zap.Int("limit-size", writeLimiter.Limit()))
+						log.FromContext(ctx).Info("Experiencing a wait timeout while writing to tikv",
+							zap.Int("store-write-bwlimit", local.BackendConfig.StoreWriteBWLimit),
+							zap.Int("limit-size", writeLimiter.Limit()))
 						return errors.Trace(cause) // return the common.ErrWriteTooSlow to let caller retry it
 					}
 				}
