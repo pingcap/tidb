@@ -621,18 +621,18 @@ func (c *TopN) MinCount() uint64 {
 	if c == nil || len(c.TopN) == 0 {
 		return 0
 	}
-	if intest.InTest {
-		minCount, totalCount := c.calculateMinCountAndCountInternal()
-		c.calculateMinCountAndCount()
-		intest.Assert(minCount == c.minCount, "minCount should be equal to the calculated minCount")
-		intest.Assert(totalCount == c.totalCount, "totalCount should be equal to the calculated totalCount")
-		return c.minCount
-	}
 	c.calculateMinCountAndCount()
 	return c.minCount
 }
 
 func (c *TopN) calculateMinCountAndCount() {
+	if intest.InTest {
+		// In test, After the sync.Once is called, topN will not be modified anymore.
+		minCount, totalCount := c.calculateMinCountAndCountInternal()
+		c.calculateMinCountAndCount()
+		intest.Assert(minCount == c.minCount, "minCount should be equal to the calculated minCount")
+		intest.Assert(totalCount == c.totalCount, "totalCount should be equal to the calculated totalCount")
+	}
 	c.once.Do(func() {
 		// Initialize to the first value in TopN
 		minCount, total := c.calculateMinCountAndCountInternal()
@@ -759,13 +759,6 @@ func (c *TopN) Sort() {
 func (c *TopN) TotalCount() uint64 {
 	if c == nil || len(c.TopN) == 0 {
 		return 0
-	}
-	if intest.InTest {
-		minCount, totalCount := c.calculateMinCountAndCountInternal()
-		c.calculateMinCountAndCount()
-		intest.Assert(minCount == c.minCount, "minCount should be equal to the calculated minCount")
-		intest.Assert(totalCount == c.totalCount, "totalCount should be equal to the calculated totalCount")
-		return c.totalCount
 	}
 	c.calculateMinCountAndCount()
 	return c.totalCount
