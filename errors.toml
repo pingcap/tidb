@@ -1696,6 +1696,11 @@ error = '''
 This command is not supported in the prepared statement protocol yet
 '''
 
+["executor:1299"]
+error = '''
+Invalid TIMESTAMP value in column '%s' at row %d
+'''
+
 ["executor:1305"]
 error = '''
 %s %s does not exist
@@ -1989,6 +1994,11 @@ Your query has been cancelled due to exceeding the allowed memory limit for the 
 ["executor:8177"]
 error = '''
 Delete can not find column %s for table %s
+'''
+
+["executor:8179"]
+error = '''
+Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'
 '''
 
 ["executor:8212"]
