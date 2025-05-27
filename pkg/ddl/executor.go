@@ -7079,7 +7079,7 @@ func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
 	var scatterScope string
 	val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBScatterRegion)
 	if !ok {
-		logutil.DDLLogger().Warn("get system variable met problem, won't scatter region")
+		logutil.DDLLogger().Info("system variable didn't set, won't scatter region")
 	} else {
 		scatterScope = val
 	}
