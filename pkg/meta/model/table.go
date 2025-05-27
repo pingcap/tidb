@@ -209,7 +209,7 @@ type TableInfo struct {
 }
 
 // ScatterScope is the type of the table scatter scope
-type ScatterScope int64
+type ScatterScope int8
 
 // ScatterScope values.
 const (
