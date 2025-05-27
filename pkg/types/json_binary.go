@@ -20,7 +20,9 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
+	"io"
 	"math"
 	"math/bits"
 	"reflect"
@@ -531,17 +533,35 @@ func jsonMarshalDurationTo(buf []byte, duration Duration) []byte {
 
 // ParseBinaryJSONFromString parses a json from string.
 func ParseBinaryJSONFromString(s string) (bj BinaryJSON, err error) {
+	var serr *json.SyntaxError
+
 	if len(s) == 0 {
 		err = ErrInvalidJSONText.GenWithStackByArgs("The document is empty")
 		return
 	}
 	data := hack.Slice(s)
-	if !json.Valid(data) {
-		err = ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
-		return
-	}
-	if err = bj.UnmarshalJSON(data); err != nil && !ErrJSONObjectKeyTooLong.Equal(err) && !ErrJSONDocumentTooDeep.Equal(err) {
-		err = ErrInvalidJSONText.GenWithStackByArgs(err)
+
+	if err = bj.UnmarshalJSON(data); err != nil {
+		if ErrJSONObjectKeyTooLong.Equal(err) {
+			return
+		}
+		if ErrJSONDocumentTooDeep.Equal(err) {
+			return
+		}
+		if ErrInvalidJSONText.Equal(err) {
+			return
+		}
+		if strings.Contains(err.Error(), "unexpected EOF") {
+			err = ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
+			return
+		}
+		if goerrors.As(err, &serr) {
+			if strings.Contains(err.Error(), "exceeded max depth") {
+				err = ErrJSONDocumentTooDeep
+			}
+		} else {
+			err = ErrInvalidJSONText.GenWithStackByArgs(err)
+		}
 	}
 	return
 }
@@ -554,6 +574,12 @@ func (bj *BinaryJSON) UnmarshalJSON(data []byte) error {
 	err := decoder.Decode(&in)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if int64(len(data)) != decoder.InputOffset() {
+		_, err := decoder.Token()
+		if err != io.EOF {
+			return ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
+		}
 	}
 	newBj, err := CreateBinaryJSONWithCheck(in)
 	if err != nil {
