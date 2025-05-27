@@ -486,6 +486,7 @@ func TestSubPartition2(t *testing.T) {
             SUBPARTITION s5
         )
     );`, "[ddl:1485]Wrong number of subpartitions defined, mismatch with previous setting")
+	// test for range-hash partition
 	tk.MustExec(`CREATE TABLE ts (id INT, purchased DATE)
     PARTITION BY RANGE( YEAR(purchased) )
     SUBPARTITION BY HASH( TO_DAYS(purchased) )
@@ -538,6 +539,62 @@ func TestSubPartition2(t *testing.T) {
 		" PARTITION `p2` VALUES LESS THAN (MAXVALUE)\n" +
 		"(SUBPARTITION `s4`,\n" +
 		"SUBPARTITION `s5`))"))
+
+	// test for list-hash subpartition
+	tk.MustExec("drop table ts")
+	tk.MustExec(`CREATE TABLE ts (id INT, purchased DATE)
+    PARTITION BY LIST( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES IN (2020),
+        PARTITION p1 VALUES IN (2021),
+        PARTITION p2 VALUES IN (2022)
+    );`)
+	tk.MustQuery("SHOW CREATE TABLE ts").Check(testkit.Rows("ts CREATE TABLE `ts` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `purchased` date DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (YEAR(`purchased`))\n" +
+		"SUBPARTITION BY HASH (TO_DAYS(`purchased`))\n" +
+		"SUBPARTITIONS 2\n" +
+		"(PARTITION `p0` VALUES IN (2020),\n" +
+		" PARTITION `p1` VALUES IN (2021)," +
+		"\n PARTITION `p2` VALUES IN (2022))"))
+	tk.MustExec("insert into ts values (1, '2020-05-27'), (2, '2021-05-27'), (3, '2022-05-27')")
+
+	tk.MustExec("drop table ts")
+	tk.MustExec(`CREATE TABLE ts (id INT, purchased DATE)
+    PARTITION BY LIST( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) ) (
+        PARTITION p0 VALUES IN (2020) (
+            SUBPARTITION s0,
+            SUBPARTITION s1
+        ),
+        PARTITION p1 VALUES IN (2021) (
+            SUBPARTITION s2,
+            SUBPARTITION s3
+        ),
+        PARTITION p2 VALUES IN (2022) (
+            SUBPARTITION s4,
+            SUBPARTITION s5
+        )
+    );`)
+	tk.MustQuery("SHOW CREATE TABLE ts").Check(testkit.Rows("ts CREATE TABLE `ts` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `purchased` date DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (YEAR(`purchased`))\n" +
+		"SUBPARTITION BY HASH (TO_DAYS(`purchased`))\n" +
+		"(PARTITION `p0` VALUES IN (2020)\n" +
+		"(SUBPARTITION `s0`,\n" +
+		"SUBPARTITION `s1`),\n" +
+		" PARTITION `p1` VALUES IN (2021)\n" +
+		"(SUBPARTITION `s2`,\n" +
+		"SUBPARTITION `s3`),\n" +
+		" PARTITION `p2` VALUES IN (2022)\n" +
+		"(SUBPARTITION `s4`,\n" +
+		"SUBPARTITION `s5`))"))
+	tk.MustExec("insert into ts values (1, '2020-05-27'), (2, '2021-05-27'), (3, '2022-05-27')")
 }
 
 func TestSubPartitionDev(t *testing.T) {

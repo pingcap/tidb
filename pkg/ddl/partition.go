@@ -1435,6 +1435,22 @@ func buildPartitionDefinitionsInfo(ctx expression.BuildContext, defs []*ast.Part
 		err = dbterror.ErrUnsupportedPartitionType
 	}
 
+	if sub != nil && sub.Num > 0 && (sub.Tp == pmodel.PartitionTypeHash) {
+		for i := range partitions {
+			if len(partitions[i].SubDefinitions) > 0 {
+				continue
+			}
+			partitions[i].SubDefinitions = make([]model.PartitionDefinition, 0, int(sub.Num))
+			for j := uint64(0); j < sub.Num; j++ {
+				name := fmt.Sprintf("%vsp%d", partitions[i].Name.L, j)
+				subPiDef := model.PartitionDefinition{
+					Name: pmodel.NewCIStr(name),
+				}
+				partitions[i].SubDefinitions = append(partitions[i].SubDefinitions, subPiDef)
+			}
+		}
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -1579,6 +1595,14 @@ func buildListPartitionDefinitions(ctx expression.BuildContext, defs []*ast.Part
 			piDef.InValues = append(piDef.InValues, inValue)
 			buf.Reset()
 		}
+		if len(def.Sub) > 0 {
+			piDef.SubDefinitions = make([]model.PartitionDefinition, 0, len(def.Sub))
+			for _, subDef := range def.Sub {
+				piDef.SubDefinitions = append(piDef.SubDefinitions, model.PartitionDefinition{
+					Name: subDef.Name,
+				})
+			}
+		}
 		definitions = append(definitions, piDef)
 	}
 	return definitions, nil
@@ -1685,22 +1709,6 @@ func buildRangePartitionDefinitions(ctx expression.BuildContext, defs []*ast.Par
 		}
 		definitions = append(definitions, piDef)
 	}
-	if sub != nil && sub.Num > 0 && (sub.Tp == pmodel.PartitionTypeHash) {
-		for i := range definitions {
-			if len(definitions[i].SubDefinitions) > 0 {
-				continue
-			}
-			definitions[i].SubDefinitions = make([]model.PartitionDefinition, 0, int(sub.Num))
-			for j := uint64(0); j < sub.Num; j++ {
-				name := fmt.Sprintf("%vsp%d", definitions[i].Name.L, j)
-				subPiDef := model.PartitionDefinition{
-					Name: pmodel.NewCIStr(name),
-				}
-				definitions[i].SubDefinitions = append(definitions[i].SubDefinitions, subPiDef)
-			}
-		}
-	}
-
 	return definitions, nil
 }
 
