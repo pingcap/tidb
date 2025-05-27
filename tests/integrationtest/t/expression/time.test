@@ -98,6 +98,7 @@ insert t values (20010101100000.123456, 20110707101112.123456);
 select * from t;
 
 # TestDateAddForNonExistingTimestamp
+-- enable_warnings
 set time_zone = 'CET';
 drop table if exists t;
 create table t(ts timestamp);
