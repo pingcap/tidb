@@ -211,6 +211,8 @@ func (t IndexType) String() string {
 		return "VECTOR"
 	case IndexTypeInverted:
 		return "INVERTED"
+	case IndexTypeFulltext:
+		return "FULLTEXT"
 	default:
 		return ""
 	}
@@ -230,6 +232,7 @@ const (
 	// IndexTypeHNSW is only used in AST.
 	// It will be rewritten into IndexTypeVector after preprocessor phase.
 	IndexTypeHNSW
+	IndexTypeFulltext
 )
 
 // ReferOptionType is the type for refer options.

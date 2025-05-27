@@ -2010,7 +2010,7 @@ func TestFormat(t *testing.T) {
 		if tt.warnings > 0 {
 			warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 			require.Lenf(t, warnings, tt.warnings, "test %v", tt)
-			for i := 0; i < tt.warnings; i++ {
+			for i := range tt.warnings {
 				require.Truef(t, terror.ErrorEqual(types.ErrTruncatedWrongVal, warnings[i].Err), "test %v", tt)
 			}
 			ctx.GetSessionVars().StmtCtx.SetWarnings([]contextutil.SQLWarn{})
@@ -2040,7 +2040,7 @@ func TestFormat(t *testing.T) {
 	testutil.DatumEqual(t, types.NewDatum(formatTests4.ret), r4)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	require.Equal(t, 3, len(warnings))
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		require.True(t, terror.ErrorEqual(errUnknownLocale, warnings[i].Err))
 	}
 	ctx.GetSessionVars().StmtCtx.SetWarnings([]contextutil.SQLWarn{})

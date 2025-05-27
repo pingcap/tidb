@@ -75,5 +75,5 @@ func userKeysToHashVals(keys ...y.Key) []uint64 {
 }
 
 func safeCopy(b []byte) []byte {
-	return append([]byte{}, b...)
+	return slices.Clone(b)
 }

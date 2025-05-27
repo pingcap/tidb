@@ -238,7 +238,7 @@ func TestExpBackoffEstimation(t *testing.T) {
 	// Query a = 1, b = 1, c = 1, d >= 3 and d <= 5 separately. We got 5, 3, 2, 3.
 	// And then query and a = 1 and b = 1 and c = 1 and d >= 3 and d <= 5. It's result should follow the exp backoff,
 	// which is 2/5 * (3/5)^{1/2} * (3/5)*{1/4} * 1^{1/8} * 5 = 1.3634.
-	for i := 0; i < inputLen-1; i++ {
+	for i := range inputLen - 1 {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
 		})
@@ -281,7 +281,7 @@ func TestNULLOnFullSampling(t *testing.T) {
 	integrationSuiteData := statistics.GetIntegrationSuiteData()
 	integrationSuiteData.LoadTestCases(t, &input, &output)
 	// Check the topn and buckets contains no null values.
-	for i := 0; i < len(input); i++ {
+	for i := range input {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
 		})
@@ -431,7 +431,7 @@ func TestSingleColumnIndexNDV(t *testing.T) {
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("insert into t values (1, 1, 'xxx', 'zzz'), (2, 2, 'yyy', 'zzz'), (1, 3, null, 'zzz')")
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		tk.MustExec("insert into t select * from t")
 	}
 	tk.MustExec("analyze table t")
@@ -594,7 +594,7 @@ func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
 
 	tblID := dom.MustGetTableID(t, "test", "t")
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("analyze table t")
 	}
 	// Each analyze will only generate one record

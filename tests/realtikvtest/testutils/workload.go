@@ -123,7 +123,7 @@ func (w *worker) run(ctx *SuiteContext, wl *workload) {
 func (w *workload) start(ctx *SuiteContext, colIDs ...int) {
 	initWorkLoadContext(w, colIDs...)
 	w.wr = w.wr[:0]
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		worker := newWorker(i, i)
 		w.wr = append(w.wr, worker)
 		go worker.run(ctx, w)
@@ -133,7 +133,7 @@ func (w *workload) start(ctx *SuiteContext, colIDs ...int) {
 func (w *workload) stop(ctx *SuiteContext, tableID int) (err error) {
 	ctx.cancel()
 	count := 3
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		wChan := <-w.wr[i].wChan
 		if wChan.err != nil {
 			require.NoError(ctx.t, wChan.err)
@@ -195,7 +195,7 @@ func insertWorker(ctx *SuiteContext, tk *testkit.TestKit) error {
 func updateStr(ctx *SuiteContext, tableName string, colID []int) (uStr string) {
 	var updateStr string
 	id := rand.Intn(ctx.rowNum + 1)
-	for i := 0; i < len(colID); i++ {
+	for i := range colID {
 		colNewValue := genColval(colID[i])
 		if colNewValue == "" {
 			return ""

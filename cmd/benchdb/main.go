@@ -212,7 +212,7 @@ func (ut *benchDB) runCountTimes(name string, count int, f func()) {
 		maxv             = time.Nanosecond
 	)
 	cLogf("%s started", name)
-	for i := 0; i < count; i++ {
+	for range count {
 		before := time.Now()
 		f()
 		dur := time.Since(before)
@@ -240,7 +240,7 @@ func (ut *benchDB) insertRows(spec string) {
 	ut.runCountTimes("insert", loopCount, func() {
 		ut.mustExec("begin")
 		buf := make([]byte, *blobSize/2)
-		for i := 0; i < *batchSize; i++ {
+		for range *batchSize {
 			if id == end {
 				break
 			}
@@ -260,7 +260,7 @@ func (ut *benchDB) updateRandomRows(spec string) {
 	var runCount = 0
 	ut.runCountTimes("update-random", loopCount, func() {
 		ut.mustExec("begin")
-		for i := 0; i < *batchSize; i++ {
+		for range *batchSize {
 			if runCount == totalCount {
 				break
 			}

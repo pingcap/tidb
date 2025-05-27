@@ -192,6 +192,7 @@ go_library(
         "//pkg/statistics",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/cache",
+        "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
@@ -395,6 +396,7 @@ go_test(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/util",
         "//pkg/distsql",

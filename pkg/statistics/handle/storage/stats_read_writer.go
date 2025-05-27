@@ -573,7 +573,7 @@ func (s *statsReadWriter) LoadStatsFromJSONConcurrently(
 
 	var wg sync.WaitGroup
 	e := new(atomic.Pointer[error])
-	for i := 0; i < concurrencyForPartition; i++ {
+	for range concurrencyForPartition {
 		wg.Add(1)
 		s.statsHandler.GPool().Go(func() {
 			defer func() {

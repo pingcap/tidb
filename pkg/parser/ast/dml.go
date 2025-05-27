@@ -2343,7 +2343,7 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 	if len(n.PartitionNames) != 0 {
 		ctx.WriteKeyWord(" PARTITION")
 		ctx.WritePlain("(")
-		for i := 0; i < len(n.PartitionNames); i++ {
+		for i := range n.PartitionNames {
 			if i != 0 {
 				ctx.WritePlain(", ")
 			}
@@ -3860,6 +3860,7 @@ type DistributeTableStmt struct {
 	PartitionNames []CIStr
 	Rule           CIStr
 	Engine         CIStr
+	Timeout        CIStr
 }
 
 // Restore implements Node interface.
@@ -3890,6 +3891,11 @@ func (n *DistributeTableStmt) Restore(ctx *format.RestoreCtx) error {
 	if len(n.Engine.L) > 0 {
 		ctx.WriteKeyWord(" ENGINE = ")
 		ctx.WriteName(n.Engine.String())
+	}
+
+	if len(n.Timeout.L) > 0 {
+		ctx.WriteKeyWord(" TIMEOUT = ")
+		ctx.WriteName(n.Timeout.String())
 	}
 	return nil
 }

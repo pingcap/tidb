@@ -48,7 +48,7 @@ func genLeftOuterJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFilter
 			filterVector, err = expression.VectorizedFilter(sessCtx.GetExprCtx().GetEvalCtx(), sessCtx.GetSessionVars().EnableVectorizedExpression, leftFilter, chunk.NewIterator4Chunk(leftChunk), filterVector)
 			require.NoError(t, err)
 		}
-		for leftIndex := 0; leftIndex < leftChunk.NumRows(); leftIndex++ {
+		for leftIndex := range leftChunk.NumRows() {
 			filterIndex := leftIndex
 			if leftChunk.Sel() != nil {
 				filterIndex = leftChunk.Sel()[leftIndex]
@@ -65,7 +65,7 @@ func genLeftOuterJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFilter
 			leftRow := leftChunk.GetRow(leftIndex)
 			hasAtLeastOneMatch := false
 			for _, rightChunk := range rightChunks {
-				for rightIndex := 0; rightIndex < rightChunk.NumRows(); rightIndex++ {
+				for rightIndex := range rightChunk.NumRows() {
 					if resultChk.IsFull() {
 						returnChks = append(returnChks, resultChk)
 						resultChk = chunk.New(resultTypes, sessCtx.GetSessionVars().MaxChunkSize, sessCtx.GetSessionVars().MaxChunkSize)
@@ -213,7 +213,7 @@ func TestLeftOuterJoinProbeAllJoinKeys(t *testing.T) {
 	rightAsBuildSide := []bool{true, false}
 
 	// single key
-	for i := 0; i < len(lTypes); i++ {
+	for i := range lTypes {
 		lKeyTypes := []*types.FieldType{lTypes[i]}
 		rKeyTypes := []*types.FieldType{rTypes[i]}
 		for _, rightAsBuild := range rightAsBuildSide {

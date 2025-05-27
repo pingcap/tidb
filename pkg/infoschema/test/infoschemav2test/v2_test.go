@@ -339,7 +339,7 @@ func BenchmarkTableByName(t *testing.B) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.tidb_schema_cache_size = 512 * 1024 * 1024")
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		tk.MustExec(fmt.Sprintf("create table t%d (id int)", i))
 	}
 	is := dom.InfoSchema()

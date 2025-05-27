@@ -230,17 +230,15 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		}
 	}
 	if p.SCtx().GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 && p.StoreType == kv.TiFlash {
-		buffer.WriteString("pushed down filter:")
 		if len(p.LateMaterializationFilterCondition) > 0 {
+			buffer.WriteString("pushed down filter:")
 			if normalized {
 				buffer.Write(expression.SortedExplainNormalizedExpressionList(p.LateMaterializationFilterCondition))
 			} else {
 				buffer.Write(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.LateMaterializationFilterCondition))
 			}
-		} else {
-			buffer.WriteString("empty")
+			buffer.WriteString(", ")
 		}
-		buffer.WriteString(", ")
 	}
 	buffer.WriteString("keep order:")
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
@@ -536,7 +534,7 @@ func (p *basePhysicalAgg) explainInfo(normalized bool) string {
 		builder.Write(sortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.GroupByItems))
 		builder.WriteString(", ")
 	}
-	for i := 0; i < len(p.AggFuncs); i++ {
+	for i := range p.AggFuncs {
 		builder.WriteString("funcs:")
 		var colName string
 		if normalized {

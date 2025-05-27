@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -392,10 +393,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				if !matchPartitionNames(tblID, e.partitionNames, pi) {
 					return nil
 				}
-				for _, id := range pi.IDsInDDLToIgnore() {
-					if id == pid {
-						return nil
-					}
+				if slices.Contains(pi.IDsInDDLToIgnore(), pid) {
+					return nil
 				}
 			}
 		}
@@ -810,12 +809,7 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 }
 
 func notPKPrefixCol(colID int64, prefixColIDs []int64) bool {
-	for _, pCol := range prefixColIDs {
-		if pCol == colID {
-			return false
-		}
-	}
-	return true
+	return !slices.Contains(prefixColIDs, colID)
 }
 
 func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {

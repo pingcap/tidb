@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 	"go.uber.org/multierr"
@@ -237,6 +239,17 @@ func FlattenValues[K comparable, V any](m map[K][]V) []V {
 		result = append(result, v...)
 	}
 	return result
+}
+
+// GetPartitionByName gets the partition ID from the given tableInfo if its name matches
+func GetPartitionByName(tableInfo *model.TableInfo, name ast.CIStr) (int64, error) {
+	if tableInfo.Partition == nil {
+		return 0, errors.Errorf("the table %s[id=%d] does not have parition", tableInfo.Name.O, tableInfo.ID)
+	}
+	if partID := tableInfo.Partition.GetPartitionIDByName(name.L); partID > 0 {
+		return partID, nil
+	}
+	return 0, errors.Errorf("partition is not found in the table %s[id=%d]", tableInfo.Name.O, tableInfo.ID)
 }
 
 func SummaryFiles(files []*backuppb.File) (crc, kvs, bytes uint64) {

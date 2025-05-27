@@ -139,7 +139,7 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return errors.Trace(err)
 		}
 		iter := chunk.NewIterator4Chunk(e.result)
-		for colIdx := 0; colIdx < e.Schema().Len(); colIdx++ {
+		for colIdx := range e.Schema().Len() {
 			retType := e.Schema().Columns[colIdx].RetType
 			if !types.IsTypeVarchar(retType.GetType()) {
 				continue
@@ -385,7 +385,7 @@ func (e *ShowExec) fetchPlanForSQL() error {
 	bindingHandle := domain.GetDomain(e.Ctx()).BindingHandle()
 	charset, collation := e.Ctx().GetSessionVars().GetCharsetInfo()
 	currentDB := e.Ctx().GetSessionVars().CurrentDB
-	plans, err := bindingHandle.ShowPlansForSQL(currentDB, e.SQLOrDigest, charset, collation)
+	plans, err := bindingHandle.ExplorePlansForSQL(currentDB, e.SQLOrDigest, charset, collation)
 	if err != nil {
 		return err
 	}
@@ -1258,6 +1258,8 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			fmt.Fprintf(buf, "  UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.VectorInfo != nil {
 			fmt.Fprintf(buf, "  VECTOR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+		} else if idxInfo.FullTextInfo != nil {
+			fmt.Fprintf(buf, "  FULLTEXT INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.InvertedInfo != nil {
 			fmt.Fprintf(buf, "  COLUMNAR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else {
@@ -1286,6 +1288,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 
 		if idxInfo.InvertedInfo != nil {
 			fmt.Fprintf(buf, " USING INVERTED")
+		}
+		if idxInfo.FullTextInfo != nil {
+			fmt.Fprintf(buf, " WITH PARSER %s", idxInfo.FullTextInfo.ParserType.SQLName())
 		}
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
@@ -2132,7 +2137,7 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	physicalIDs := []int64{}
-	partitonNames := make([]string, 0)
+	partitionNames := make([]string, 0)
 	if pi := tb.Meta().GetPartitionInfo(); pi != nil {
 		for _, name := range e.Table.PartitionNames {
 			pid, err := tables.FindPartitionByName(tb.Meta(), name.L)
@@ -2140,12 +2145,12 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 				return err
 			}
 			physicalIDs = append(physicalIDs, pid)
-			partitonNames = append(partitonNames, name.L)
+			partitionNames = append(partitionNames, name.L)
 		}
 		if len(physicalIDs) == 0 {
 			for _, p := range pi.Definitions {
 				physicalIDs = append(physicalIDs, p.ID)
-				partitonNames = append(partitonNames, p.Name.L)
+				partitionNames = append(partitionNames, p.Name.L)
 			}
 		}
 	} else {
@@ -2153,11 +2158,11 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 			return plannererrors.ErrPartitionClauseOnNonpartitioned
 		}
 		physicalIDs = append(physicalIDs, tb.Meta().ID)
-		partitonNames = append(partitonNames, tb.Meta().Name.L)
+		partitionNames = append(partitionNames, tb.Meta().Name.L)
 	}
 	distributions := make([]*pdHttp.RegionDistribution, 0)
 	var resp *pdHttp.RegionDistributions
-	for _, pid := range physicalIDs {
+	for idx, pid := range physicalIDs {
 		startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
 		endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
 		// todo： support engine type
@@ -2165,9 +2170,9 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		e.fillDistributionsToChunk(partitionNames[idx], resp.RegionDistributions)
 		distributions = append(distributions, resp.RegionDistributions...)
 	}
-	e.fillDistributionsToChunk(partitonNames, distributions)
 	return nil
 }
 
@@ -2328,9 +2333,9 @@ func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvS
 	return regions, nil
 }
 
-func (e *ShowExec) fillDistributionsToChunk(partitionNams []string, distributions []*pdHttp.RegionDistribution) {
-	for idx, dis := range distributions {
-		e.result.AppendString(0, partitionNams[idx])
+func (e *ShowExec) fillDistributionsToChunk(partitionName string, distributions []*pdHttp.RegionDistribution) {
+	for _, dis := range distributions {
+		e.result.AppendString(0, partitionName)
 		e.result.AppendUint64(1, dis.StoreID)
 		e.result.AppendString(2, dis.EngineType)
 		e.result.AppendInt64(3, int64(dis.RegionLeaderCount))

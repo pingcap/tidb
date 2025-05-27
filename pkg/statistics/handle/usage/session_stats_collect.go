@@ -115,10 +115,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 
 	// Dump stats delta in batches.
 	for i := 0; i < len(tableIDs); i += dumpDeltaBatchSize {
-		end := i + dumpDeltaBatchSize
-		if end > len(tableIDs) {
-			end = len(tableIDs)
-		}
+		end := min(i+dumpDeltaBatchSize, len(tableIDs))
 
 		batchTableIDs := tableIDs[i:end]
 		var (
@@ -340,10 +337,7 @@ func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 	})
 	// Use batch insert to reduce cost.
 	for i := 0; i < len(pairs); i += batchInsertSize {
-		end := i + batchInsertSize
-		if end > len(pairs) {
-			end = len(pairs)
-		}
+		end := min(i+batchInsertSize, len(pairs))
 		sql := new(strings.Builder)
 		sqlescape.MustFormatSQL(sql, "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES ")
 		for j := i; j < end; j++ {
