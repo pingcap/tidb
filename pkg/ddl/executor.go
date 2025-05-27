@@ -1210,6 +1210,7 @@ func (e *executor) CreateTableWithInfo(
 	cs ...CreateTableOption,
 ) (err error) {
 	c := GetCreateTableConfig(cs)
+
 	jobW, err := e.createTableWithInfoJob(ctx, dbName, tbInfo, involvingRef, c)
 	if err != nil {
 		return err
