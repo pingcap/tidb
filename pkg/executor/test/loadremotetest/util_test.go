@@ -54,7 +54,6 @@ func (s *mockGCSSuite) SetupSuite() {
 		PublicHost: gcsHost,
 	}
 	s.server, err = fakestorage.NewServerWithOptions(opt)
-	s.server.URL()
 	s.Require().NoError(err)
 	s.store = testkit.CreateMockStore(s.T())
 	s.tk = testkit.NewTestKit(s.T(), s.store)
