@@ -176,13 +176,14 @@ LIMIT
 240;
 id	estRows	task	access object	operator info
 Projection	41.67	root		planner__core__casetest__predicate_simplification.dt.a, planner__core__casetest__predicate_simplification.dt.pk, planner__core__casetest__predicate_simplification.dt.b, planner__core__casetest__predicate_simplification.dt.c
-└─IndexHashJoin	41.67	root		left outer join, inner:TableReader, outer key:planner__core__casetest__predicate_simplification.it.pk, inner key:planner__core__casetest__predicate_simplification.dt.pk, equal cond:eq(planner__core__casetest__predicate_simplification.it.pk, planner__core__casetest__predicate_simplification.dt.pk), other cond:or(gt(planner__core__casetest__predicate_simplification.it.a, "a"), and(eq(planner__core__casetest__predicate_simplification.it.a, "a"), gt(planner__core__casetest__predicate_simplification.dt.pk, 1)))
+└─IndexJoin	41.67	root		left outer join, inner:TableReader, outer key:planner__core__casetest__predicate_simplification.it.pk, inner key:planner__core__casetest__predicate_simplification.dt.pk, equal cond:eq(planner__core__casetest__predicate_simplification.it.pk, planner__core__casetest__predicate_simplification.dt.pk)
   ├─Limit(Build)	33.33	root		offset:0, count:240
   │ └─IndexReader	33.33	root		index:Limit
   │   └─Limit	33.33	cop[tikv]		offset:0, count:240
   │     └─IndexRangeScan	33.33	cop[tikv]	table:it, index:f(a, pk)	range:("a" 1,"a" +inf], keep order:true, stats:pseudo
-  └─TableReader(Probe)	33.33	root		data:TableRangeScan
-    └─TableRangeScan	33.33	cop[tikv]	table:dt	range: decided by [planner__core__casetest__predicate_simplification.it.pk], keep order:false, stats:pseudo
+  └─TableReader(Probe)	11.11	root		data:Selection
+    └─Selection	11.11	cop[tikv]		gt(planner__core__casetest__predicate_simplification.dt.pk, 1)
+      └─TableRangeScan	33.33	cop[tikv]	table:dt	range: decided by [planner__core__casetest__predicate_simplification.it.pk], keep order:false, stats:pseudo
 explain  format='brief' SELECT * FROM
 (
 SELECT
@@ -349,7 +350,7 @@ SELECT 1 FROM t1 AS tab WHERE a1 > 5 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )
 id	estRows	task	access object	operator info
 Projection	8000.00	root		1->Column#10
 └─Selection	8000.00	root		or(gt(planner__core__casetest__predicate_simplification.t1.a1, 5), Column#9)
-  └─HashJoin	10000.00	root		left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__predicate_simplification.t1.a1, planner__core__casetest__predicate_simplification.t2.a2)]
+  └─HashJoin	10000.00	root		left outer semi join, equal:[eq(planner__core__casetest__predicate_simplification.t1.a1, planner__core__casetest__predicate_simplification.t2.a2)]
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -404,8 +405,8 @@ SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1));
 id	estRows	task	access object	operator info
 Union	18000.00	root		
 ├─Projection	8000.00	root		1->Column#21
-│ └─Selection	8000.00	root		or(0, Column#9)
-│   └─HashJoin	10000.00	root		left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__predicate_simplification.t1.a1, planner__core__casetest__predicate_simplification.t2.a2)]
+│ └─Selection	8000.00	root		Column#9
+│   └─HashJoin	10000.00	root		left outer semi join, equal:[eq(planner__core__casetest__predicate_simplification.t1.a1, planner__core__casetest__predicate_simplification.t2.a2)]
 │     ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 │     └─TableReader(Probe)	10000.00	root		data:TableFullScan

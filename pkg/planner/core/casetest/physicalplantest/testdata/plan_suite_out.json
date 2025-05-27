@@ -2457,7 +2457,7 @@
       },
       {
         "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a = all(select t2.b from t t2)",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))->HashAgg->Sel([or(and(le(Column#26, 1), if(ne(Column#27, 0), <nil>, 1)), or(eq(Column#28, 0), 0))])}",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))->HashAgg->Sel([or(and(le(Column#26, 1), if(ne(Column#27, 0), <nil>, 1)), eq(Column#28, 0))])}",
         "Warning": ""
       },
       {
