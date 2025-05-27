@@ -621,23 +621,33 @@ func (c *TopN) MinCount() uint64 {
 	if c == nil || len(c.TopN) == 0 {
 		return 0
 	}
+	if intest.InTest {
+		minCount, totalCount := c.calculateMinCountAndCountInternal()
+		c.calculateMinCountAndCount()
+		intest.Assert(minCount == c.minCount, "minCount should be equal to the calculated minCount")
+		intest.Assert(totalCount == c.totalCount, "totalCount should be equal to the calculated totalCount")
+		return c.minCount
+	}
 	c.calculateMinCountAndCount()
 	return c.minCount
 }
 
 func (c *TopN) calculateMinCountAndCount() {
 	c.once.Do(func() {
-		intest.Assert(c.minCount == 0 && c.totalCount == 0, "minCount and totalCount should be initialized only once")
 		// Initialize to the first value in TopN
-		minCount := c.TopN[0].Count
-		var total uint64
-		for _, t := range c.TopN {
-			minCount = min(minCount, t.Count)
-			total += t.Count
-		}
+		minCount, total := c.calculateMinCountAndCountInternal()
 		c.minCount = minCount
 		c.totalCount = total
 	})
+}
+
+func (c *TopN) calculateMinCountAndCountInternal() (minCount, total uint64) {
+	minCount = c.TopN[0].Count
+	for _, t := range c.TopN {
+		minCount = min(minCount, t.Count)
+		total += t.Count
+	}
+	return minCount, total
 }
 
 // TopNMeta stores the unit of the TopN.
@@ -749,6 +759,13 @@ func (c *TopN) Sort() {
 func (c *TopN) TotalCount() uint64 {
 	if c == nil || len(c.TopN) == 0 {
 		return 0
+	}
+	if intest.InTest {
+		minCount, totalCount := c.calculateMinCountAndCountInternal()
+		c.calculateMinCountAndCount()
+		intest.Assert(minCount == c.minCount, "minCount should be equal to the calculated minCount")
+		intest.Assert(totalCount == c.totalCount, "totalCount should be equal to the calculated totalCount")
+		return c.totalCount
 	}
 	c.calculateMinCountAndCount()
 	return c.totalCount
