@@ -4528,7 +4528,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	// 1. We should build MV Index scan.
 	// 2. We should NEVER add table scan to possible access path, otherwise
 	//    we can't guarentee index scan is choosen after cost estimation.
-	forceMVIndexScan := GetForceMVIndexScan(ctx) == true
+	forceMVIndexScan := GetForceMVIndexScan(ctx)
 	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0, forceMVIndexScan)
 	if err != nil {
 		return nil, err
