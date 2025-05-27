@@ -1575,7 +1575,7 @@ func (p *rangePruner) extractDataForPrune(sctx base.PlanContext, expr expression
 		return ret, false
 	}
 	switch op.FuncName.L {
-	case ast.EQ, ast.LT, ast.GT, ast.LE, ast.GE:
+	case ast.EQ, ast.LT, ast.GT, ast.LE, ast.GE, ast.NullEQ:
 		ret.op = op.FuncName.L
 	case ast.IsNull:
 		// isnull(col)
@@ -1628,9 +1628,19 @@ func (p *rangePruner) extractDataForPrune(sctx base.PlanContext, expr expression
 		constExpr = con
 	}
 	c, isNull, err := constExpr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-	if err == nil && !isNull {
+	if err != nil {
+		return ret, false
+	}
+	if !isNull {
+		if ret.op == ast.NullEQ {
+			ret.op = ast.EQ
+		}
 		ret.c = c
 		ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).GetFlag())
+		return ret, true
+	} else if ret.op == ast.NullEQ {
+		// Mark it as IsNull, which is already handled in pruneUseBinarySearch.
+		ret.op = ast.IsNull
 		return ret, true
 	}
 	return ret, false
@@ -1995,7 +2005,7 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx base.PlanContext, expr e
 	}
 
 	switch op.FuncName.L {
-	case ast.EQ, ast.LT, ast.GT, ast.LE, ast.GE:
+	case ast.EQ, ast.LT, ast.GT, ast.LE, ast.GE, ast.NullEQ:
 	case ast.IsNull:
 		// isnull(col)
 		if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && len(p.partCols) == 1 && arg0.ID == p.partCols[0].ID {
@@ -2030,6 +2040,12 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx base.PlanContext, expr e
 		return 0, len(p.lessThan), false
 	}
 
+	if opName == ast.NullEQ {
+		if con.Value.IsNull() {
+			return 0, 1, true
+		}
+		opName = ast.EQ
+	}
 	// If different collation, we can only prune if:
 	// - expression is binary collation (can only be found in one partition)
 	// - EQ operator, consider values 'a','b','ä' where 'ä' would be in the same partition as 'a' if general_ci, but is binary after 'b'

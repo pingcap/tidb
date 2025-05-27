@@ -720,7 +720,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 
 	mustAnalyzedCols := &calcOnceMap{data: make(map[int64]struct{})}
 
-	// TODO(hi-rustin): Find a better way to mock SQL execution.
+	// TODO(0xPoe): Find a better way to mock SQL execution.
 	// Test case 2: PredicateColumns(default)
 
 	// Test case 3: ColumnList.
