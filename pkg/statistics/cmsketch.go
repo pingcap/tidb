@@ -733,6 +733,7 @@ func (c *TopN) TotalCount() uint64 {
 	c.once.Do(func() {
 		if c == nil {
 			c.totalCount = 0
+			return
 		}
 		total := uint64(0)
 		for _, t := range c.TopN {
