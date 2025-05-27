@@ -343,12 +343,14 @@ type TruncateTableArgs struct {
 	NewTableID      int64   `json:"new_table_id,omitempty"`
 	NewPartitionIDs []int64 `json:"new_partition_ids,omitempty"`
 	OldPartitionIDs []int64 `json:"old_partition_ids,omitempty"`
-	ScatterScope    string  `json:"scatter_scope,omitempty"`
 
 	// context vars
 	NewPartIDsWithPolicy           []int64 `json:"-"`
 	OldPartIDsWithPolicy           []int64 `json:"-"`
 	ShouldUpdateAffectedPartitions bool    `json:"-"`
+
+	// used for scatter region
+	ScatterScope string `json:"scatter_scope,omitempty"`
 }
 
 func (a *TruncateTableArgs) getArgsV1(job *Job) []any {
@@ -422,9 +424,8 @@ type TableIDIndexID struct {
 // as ActionDropTablePartition, and it will have finished args, but not used anywhere,
 // for other types, their args will be decoded as if its args is the same of ActionDropTablePartition.
 type TablePartitionArgs struct {
-	PartNames    []string       `json:"part_names,omitempty"`
-	PartInfo     *PartitionInfo `json:"part_info,omitempty"`
-	ScatterScope string         `json:"scatter_scope,omitempty"`
+	PartNames []string       `json:"part_names,omitempty"`
+	PartInfo  *PartitionInfo `json:"part_info,omitempty"`
 
 	// set on finished
 	OldPhysicalTblIDs []int64          `json:"old_physical_tbl_ids,omitempty"`
@@ -432,6 +433,9 @@ type TablePartitionArgs struct {
 
 	// runtime info
 	NewPartitionIDs []int64 `json:"-"`
+
+	// only used by ActionAddTablePartition for scatter region
+	ScatterScope string `json:"scatter_scope,omitempty"`
 }
 
 func (a *TablePartitionArgs) getArgsV1(job *Job) []any {
