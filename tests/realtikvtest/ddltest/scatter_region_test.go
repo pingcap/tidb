@@ -63,7 +63,6 @@ func TestTiDBScatterRegion(t *testing.T) {
 		}
 		failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/preSplitAndScatter", func(v string) {
 			require.Equal(t, tt.scatterScope, v)
-
 		})
 		counts := getTableLeaderDistribute(t, tk, tt.tableName)
 		for _, count := range counts {
@@ -81,7 +80,6 @@ func TestTiDBScatterRegion(t *testing.T) {
 		}
 		failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/preSplitAndScatter", func(v string) {
 			require.Equal(t, tt.scatterScope, v)
-
 		})
 		counts = getTableLeaderDistribute(t, tk, tt.tableName)
 		for _, count := range counts {
