@@ -1048,17 +1048,24 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		tableNameByTableID := func(tableID int64) string {
 			dbName := ""
 			tableName := ""
+			dbID := int64(0)
 			history := cfg.logTableHistoryManager.GetTableHistory()
 			if locations, exists := history[tableID]; exists {
 				if name, exists := cfg.logTableHistoryManager.GetDBNameByID(locations[1].DbID); exists {
 					dbName = name
 				}
+				dbID = locations[1].DbID
 				tableName = locations[1].TableName
 			} else if tableMeta, exists := tableMap[tableID]; exists && tableMeta != nil && tableMeta.Info != nil {
 				if tableMeta.DB != nil && len(dbName) == 0 {
 					dbName = tableMeta.DB.Name.O
 				}
 				tableName = tableMeta.Info.Name.O
+			}
+			if len(dbName) == 0 && dbID > 0 {
+				if dbInfo, exists := dbMap[dbID]; exists {
+					dbName = dbInfo.Info.Name.O
+				}
 			}
 			return fmt.Sprintf("%s.%s", dbName, tableName)
 		}
