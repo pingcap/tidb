@@ -83,6 +83,9 @@ func Selectivity(
 			ceTraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression",
 				expression.ComposeCNFCondition(ctx.GetExprCtx(), exprs...), ret*float64(coll.RealtimeCount))
 		}
+		if !ctx.GetSessionVars().InRestrictedSQL {
+			logutil.BgLogger().Info("fuck pseudo", zap.Float64("selectivity", ret))
+		}
 		return ret, nil, nil
 	}
 
@@ -325,6 +328,9 @@ func Selectivity(
 
 	// Try to cover remaining DNF conditions using independence assumption,
 	// i.e., sel(condA or condB) = sel(condA) + sel(condB) - sel(condA) * sel(condB)
+	if !ctx.GetSessionVars().InRestrictedSQL && len(notCoveredDNF) > 0 {
+		logutil.BgLogger().Info("fuck notCoveredDNF")
+	}
 OUTER:
 	for i, scalarCond := range notCoveredDNF {
 		// If there are columns not in stats, we won't handle them. This case might happen after DDL operations.
@@ -389,6 +395,9 @@ OUTER:
 
 	// Try to cover remaining string matching functions by evaluating the expressions with TopN to estimate.
 	if ctx.GetSessionVars().EnableEvalTopNEstimationForStrMatch() {
+		if !ctx.GetSessionVars().InRestrictedSQL && len(notCoveredStrMatch) > 0 {
+			logutil.BgLogger().Info("fuck notCoveredStrMatch")
+		}
 		for i, scalarCond := range notCoveredStrMatch {
 			ok, sel, err := GetSelectivityByFilter(ctx, coll, []expression.Expression{scalarCond})
 			if err != nil {
@@ -403,6 +412,9 @@ OUTER:
 			if sc.EnableOptimizerDebugTrace {
 				debugtrace.RecordAnyValuesWithNames(ctx, "Expression", remainedExprStrs[i], "Selectivity", sel)
 			}
+		}
+		if !ctx.GetSessionVars().InRestrictedSQL && len(notCoveredNegateStrMatch) > 0 {
+			logutil.BgLogger().Info("fuck notCoveredStrMatch")
 		}
 		for i, scalarCond := range notCoveredNegateStrMatch {
 			ok, sel, err := GetSelectivityByFilter(ctx, coll, []expression.Expression{scalarCond})
@@ -426,6 +438,9 @@ OUTER:
 	// Currently, only string matching functions (like and regexp) may have a different default selectivity,
 	// other expressions' default selectivity is selectionFactor.
 	if mask > 0 {
+		if !ctx.GetSessionVars().InRestrictedSQL {
+			logutil.BgLogger().Info("fuck mask")
+		}
 		minSelectivity := 1.0
 		if len(notCoveredConstants) > 0 || len(notCoveredDNF) > 0 || len(notCoveredOtherExpr) > 0 {
 			minSelectivity = math.Min(minSelectivity, selectionFactor)
@@ -454,6 +469,12 @@ OUTER:
 	) {
 		// Don't allow the result to be less than 1 row
 		ret = max(ret, 1.0/float64(coll.RealtimeCount))
+		if !ctx.GetSessionVars().InRestrictedSQL {
+			logutil.BgLogger().Info("fuck Fix47400", zap.Float64("selectivity", ret), zap.Int64("row count", coll.RealtimeCount))
+		}
+	}
+	if !ctx.GetSessionVars().InRestrictedSQL {
+		logutil.BgLogger().Info("fuck", zap.Float64("selectivity", ret), zap.Int64("row count", coll.RealtimeCount))
 	}
 	return ret, nodes, nil
 }
