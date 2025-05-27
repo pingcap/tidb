@@ -94,7 +94,7 @@ func New(tables []*metautil.Table) (*PreallocIDs, error) {
 	return &PreallocIDs{
 		start:          math.MaxInt64,
 		reusableBorder: maxID + 1,
-		hash:           hashSortedIds(unallocedIDs),
+		hash:           computeSortedIDsHash(unallocedIDs),
 		unallocedIDs:   unallocedIDs,
 		allocRule:      make(map[int64]int64, len(unallocedIDs)),
 	}, nil
@@ -131,7 +131,7 @@ func Reuse(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocI
 	}
 
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	hash := hashSortedIds(ids)
+	hash := computeSortedIDsHash(ids)
 	if legacy.Hash != hash {
 		return nil, errors.Errorf("prealloc IDs hash %x are not match with the tables hash %x", legacy.Hash, hash)
 	}
