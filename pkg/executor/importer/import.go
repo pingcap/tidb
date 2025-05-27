@@ -156,6 +156,14 @@ var (
 		splitFileOption:           {},
 	}
 
+	// when SEM enabled on nextgen cluster, we only support global sort, we disallow
+	// user set below options.
+	disallowedOptionsOfSemNextGen = map[string]struct{}{
+		diskQuotaOption:       {},
+		maxWriteSpeedOption:   {},
+		cloudStorageURIOption: {},
+	}
+
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
 		threadOption:          {},
 		disablePrecheckOption: {},

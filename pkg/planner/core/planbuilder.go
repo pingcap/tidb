@@ -4626,6 +4626,9 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 				}
 				ld.Path = newPath
 			}
+			if kerneltype.IsNextGen() && vardef.CloudStorageURI.Load() == "" {
+				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with local sort")
+			}
 		}
 	}
 
