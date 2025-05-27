@@ -1432,3 +1432,17 @@ func TestKeyspaceName(t *testing.T) {
 	conf.KeyspaceName = "abc"
 	require.NoError(t, conf.Valid())
 }
+
+func TestUpdateGlobal(t *testing.T) {
+	originalPort := GetGlobalConfig().Port
+	
+	restore := UpdateGlobal(func(conf *Config) {
+		conf.Port = 9999
+	})
+	
+	require.Equal(t, uint(9999), GetGlobalConfig().Port)
+	
+	restore()
+	
+	require.Equal(t, originalPort, GetGlobalConfig().Port)
+}
