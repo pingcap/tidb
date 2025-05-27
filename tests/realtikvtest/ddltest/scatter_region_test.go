@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -60,6 +61,10 @@ func TestTiDBScatterRegion(t *testing.T) {
 		for _, sql := range tt.sqls {
 			tk.MustExec(sql)
 		}
+		failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/preSplitAndScatter", func(v string) {
+			require.Equal(t, tt.scatterScope, v)
+
+		})
 		counts := getTableLeaderDistribute(t, tk, tt.tableName)
 		for _, count := range counts {
 			require.True(t, count >= tt.minRegionCount && count <= tt.maxRegionCount)
@@ -74,6 +79,10 @@ func TestTiDBScatterRegion(t *testing.T) {
 		for _, sql := range tt.sqls {
 			tk.MustExec(sql)
 		}
+		failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/preSplitAndScatter", func(v string) {
+			require.Equal(t, tt.scatterScope, v)
+
+		})
 		counts = getTableLeaderDistribute(t, tk, tt.tableName)
 		for _, count := range counts {
 			require.True(t, count >= tt.minRegionCount && count <= tt.maxRegionCount)
