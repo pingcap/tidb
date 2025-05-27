@@ -134,7 +134,7 @@ func getTableLeaderDistribute(t *testing.T, tk *testkit.TestKit, table string) [
 		require.NoError(t, err)
 		regionCount[leaderStoreID]++
 	}
-	var counts []int
+	counts := []int{}
 	for _, count := range regionCount {
 		counts = append(counts, count)
 	}
