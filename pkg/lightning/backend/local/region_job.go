@@ -457,8 +457,8 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 	}
 
 	// preparation work for the write timeout fault injection, worked only if the following failpoint is enabled
-	originalCtx := ctx                 // save the original context with 15 minutes timeout
-	var innerTimeout time.Duration = 0 // disabled if 0
+	originalCtx := ctx             // save the original context with 15 minutes timeout
+	var innerTimeout time.Duration // disabled if 0
 	failpoint.Inject("shortWaitNTimeout", func(val failpoint.Value) {
 		// GO_FAILPOINTS action supplies the duration in ms
 		if ms, ok := val.(int); ok && ms > 0 {
