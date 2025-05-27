@@ -629,16 +629,15 @@ func (c *TopN) calculateMinCountAndCount() {
 	if intest.InTest {
 		// In test, After the sync.Once is called, topN will not be modified anymore.
 		minCount, totalCount := c.calculateMinCountAndCountInternal()
-		c.once.Do(func() {
-			// Initialize to the first value in TopN
-			minCount, total := c.calculateMinCountAndCountInternal()
-			c.minCount = minCount
-			c.totalCount = total
-		})
+		c.onceCalculateMinCountAndCount()
 		intest.Assert(minCount == c.minCount, "minCount should be equal to the calculated minCount")
 		intest.Assert(totalCount == c.totalCount, "totalCount should be equal to the calculated totalCount")
 		return
 	}
+	c.onceCalculateMinCountAndCount()
+}
+
+func (c *TopN) onceCalculateMinCountAndCount() {
 	c.once.Do(func() {
 		// Initialize to the first value in TopN
 		minCount, total := c.calculateMinCountAndCountInternal()
