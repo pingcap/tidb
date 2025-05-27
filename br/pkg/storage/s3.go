@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"path"
 	"regexp"
@@ -85,6 +86,10 @@ var WriteBufferSize = 5 * 1024 * 1024
 type S3Storage struct {
 	svc     s3iface.S3API
 	options *backuppb.S3
+	// we store this client to close all idle connections on Close, to make sure
+	// we can notice the change of S3 or role policy immediately next time, as their
+	// change doesn't affect active valid sessions.
+	httpClient *http.Client
 }
 
 func (*S3Storage) MarkStrongConsistency() {
@@ -354,9 +359,12 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	if qs.Endpoint != "" {
 		awsConfig.WithEndpoint(qs.Endpoint)
 	}
-	if opts.HTTPClient != nil {
-		awsConfig.WithHTTPClient(opts.HTTPClient)
+	httpClient := opts.HTTPClient
+	if httpClient == nil {
+		trans := http.DefaultTransport.(*http.Transport).Clone()
+		httpClient = &http.Client{Transport: trans}
 	}
+	awsConfig.WithHTTPClient(httpClient)
 	cred, err := autoNewCred(&qs)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -456,8 +464,9 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	}
 
 	s3Storage := &S3Storage{
-		svc:     c,
-		options: &qs,
+		svc:        c,
+		options:    &qs,
+		httpClient: httpClient,
 	}
 	if opts.CheckS3ObjectLockOptions {
 		backend.ObjectLockEnabled = s3Storage.IsObjectLockEnabled()
@@ -1204,7 +1213,12 @@ func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string
 }
 
 // Close implements ExternalStorage interface.
-func (*S3Storage) Close() {}
+func (rs *S3Storage) Close() {
+	// it might be nil in UT.
+	if rs.httpClient != nil {
+		rs.httpClient.CloseIdleConnections()
+	}
+}
 
 // retryerWithLog wrappes the client.DefaultRetryer, and logging when retry triggered.
 type retryerWithLog struct {

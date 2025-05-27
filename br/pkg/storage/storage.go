@@ -192,6 +192,7 @@ type ExternalStorageOptions struct {
 	// directly using HTTP (e.g. the local storage).
 	// NOTICE: the HTTPClient is only used by s3/azure/gcs.
 	// For GCS, we will use this as base client to init a client with credentials.
+	// For S3, Storage will close idle connections on Close.
 	HTTPClient *http.Client
 
 	// CheckPermissions check the given permission in New() function.
