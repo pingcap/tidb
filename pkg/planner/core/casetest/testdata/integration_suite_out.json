@@ -119,9 +119,9 @@
         "SQL": "explain format = 'verbose' select count(*) from t3 t join t3 on t.a = t3.b",
         "Plan": [
           "StreamAgg_10 1.00 2128.93 root  funcs:count(1)->Column#7",
-          "└─HashJoin_46 3.00 1979.23 root  inner join, equal:[eq(test.t3.a, test.t3.b)]",
-          "  ├─IndexReader_33(Build) 3.00 45.23 root  index:IndexFullScan_32",
-          "  │ └─IndexFullScan_32 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false",
+          "└─HashJoin_45 3.00 1979.23 root  inner join, equal:[eq(test.t3.a, test.t3.b)]",
+          "  ├─IndexReader_32(Build) 3.00 45.23 root  index:IndexFullScan_31",
+          "  │ └─IndexFullScan_31 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false",
           "  └─TableReader_27(Probe) 3.00 68.11 root  data:Selection_26",
           "    └─Selection_26 3.00 831.62 cop[tikv]  not(isnull(test.t3.a))",
           "      └─TableFullScan_25 3.00 681.92 cop[tikv] table:t keep order:false"
@@ -147,7 +147,7 @@
         "SQL": "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
         "Plan": [
           "StreamAgg_15 1.00 71701.80 root  funcs:count(1)->Column#10",
-          "└─HashJoin_81 3.00 71552.10 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
+          "└─HashJoin_80 3.00 71552.10 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
           "  ├─TableReader_53(Build) 3.00 69645.79 root  MppVersion: 3, data:ExchangeSender_52",
           "  │ └─ExchangeSender_52 3.00 1044634.01 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─Projection_51 3.00 1044634.01 mpp[tiflash]  test.t1.b",
@@ -158,8 +158,8 @@
           "  │       │     └─TableFullScan_45 3.00 580174.00 mpp[tiflash] table:t1 keep order:false",
           "  │       └─Selection_50(Probe) 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
           "  │         └─TableFullScan_49 3.00 464139.20 mpp[tiflash] table:t2 keep order:false",
-          "  └─IndexReader_67(Probe) 3.00 45.23 root  index:IndexFullScan_66",
-          "    └─IndexFullScan_66 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false"
+          "  └─IndexReader_66(Probe) 3.00 45.23 root  index:IndexFullScan_65",
+          "    └─IndexFullScan_65 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false"
         ]
       },
       {

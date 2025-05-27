@@ -101,7 +101,6 @@ go_library(
         "//br/pkg/utils",
         "//pkg/bindinfo",
         "//pkg/config",
-        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/label",
         "//pkg/ddl/placement",
@@ -397,6 +396,7 @@ go_test(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/util",
         "//pkg/distsql",

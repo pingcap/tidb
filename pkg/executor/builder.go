@@ -935,6 +935,11 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 			tp:           s.Tp,
 			jobID:        s.JobID,
 		}
+	case *ast.CancelDistributionJobStmt:
+		return &CancelDistributionJobExec{
+			BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, 0),
+			jobID:        uint64(s.JobID),
+		}
 	}
 	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.SetInitCap(chunk.ZeroCapacity)

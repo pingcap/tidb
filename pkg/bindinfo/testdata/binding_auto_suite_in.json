@@ -5,7 +5,9 @@
       "explain explore select count(1) from t",
       "explain explore select max(b) from t where a=1",
       "explain explore select * from t where a=1",
-      "explain explore select * from t where b=1"
+      "explain explore select * from t where b=1",
+      "explain explore select * from t1, t2, t3",
+      "explain explore select * from t1, t2 where t1.a=t2.a"
     ]
   },
   {

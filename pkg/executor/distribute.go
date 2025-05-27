@@ -166,3 +166,23 @@ func (e *DistributeTableExec) getKeyRanges() ([]*pdhttp.KeyRange, error) {
 	}
 	return ranges, nil
 }
+
+// CancelDistributionJobExec represents a cancel distribution job executor.
+type CancelDistributionJobExec struct {
+	exec.BaseExecutor
+	jobID uint64
+	done  bool
+}
+
+var (
+	_ exec.Executor = (*CancelDistributionJobExec)(nil)
+)
+
+// Next implements the Executor Next interface.
+func (e *CancelDistributionJobExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+	if e.done {
+		return nil
+	}
+	e.done = true
+	return infosync.CancelSchedulerJob(ctx, schedulerName, e.jobID)
+}
