@@ -16,6 +16,7 @@ package cardinality
 
 import (
 	"cmp"
+	"fmt"
 	"math"
 	"math/bits"
 	"slices"
@@ -58,6 +59,9 @@ func Selectivity(
 	retStatsNodes []*StatsNode,
 	err error,
 ) {
+	if !ctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	var exprStrs []string
 	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(ctx)
@@ -116,6 +120,7 @@ func Selectivity(
 		if sc.EnableOptimizerDebugTrace {
 			debugtrace.RecordAnyValuesWithNames(ctx, "Expression", expr.StringWithCtx(ctx.GetExprCtx().GetEvalCtx(), errors.RedactLogDisable), "Selectivity", sel)
 		}
+		logutil.BgLogger().Info("fuck the expr", zap.Float64("selectivity", ret), zap.String("expr", expr.StringWithCtx(ctx.GetExprCtx().GetEvalCtx(), errors.RedactLogDisable)))
 		ret *= sel
 	}
 
@@ -230,7 +235,7 @@ func Selectivity(
 	mask := (int64(1) << uint(len(remainedExprs))) - 1
 	// curExpr records covered expressions by now. It's for cardinality estimation tracing.
 	var curExpr []expression.Expression
-
+	logutil.BgLogger().Info("fuck usedSets", zap.Any("usedSets", usedSets))
 	for _, set := range usedSets {
 		mask &^= set.mask
 		ret *= set.Selectivity
