@@ -97,7 +97,10 @@ var (
 	// ErrJSONBadOneOrAllArg is returned when the one_or_all argument isn't 'one' or 'all'.
 	ErrJSONBadOneOrAllArg = dbterror.ClassTypes.NewStd(mysql.ErrJSONBadOneOrAllArg)
 	// ErrJSONVacuousPath is returned for path expressions that are not allowed in that context.
-	ErrJSONVacuousPath          = dbterror.ClassTypes.NewStd(mysql.ErrJSONVacuousPath)
+	ErrJSONVacuousPath = dbterror.ClassTypes.NewStd(mysql.ErrJSONVacuousPath)
+	// ErrTimestampInDSTTransition is returned if the converted timestamp is in the Daylight Saving Time
+	// transition when time leaps forward (normally skips one hour).
 	ErrTimestampInDSTTransition = dbterror.ClassExecutor.NewStd(mysql.ErrTimeStampInDSTTransition)
-	ErrWarnInvalidTimestamp     = dbterror.ClassExecutor.NewStd(mysql.ErrWarnInvalidTimestamp)
+	// ErrWarnInvalidTimestamp returns the MySQL compatible error/warning for ErrTimestampInDSTTransition
+	ErrWarnInvalidTimestamp = dbterror.ClassExecutor.NewStd(mysql.ErrWarnInvalidTimestamp)
 )
