@@ -466,7 +466,21 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 		} else {
 			innerTimeout = 5 * time.Millisecond // default
 		}
+		log.FromContext(ctx).Info("Injecting a timeout to write context.")
 	})
+
+	// continue the preperation work for write timeout injection, and create a new context if innerTimeout > 0
+	// with a much shorter timeout, so that the WaitN call will more likely to tigger a context timeout error
+	wctx := originalCtx
+	wcancel := func() {}
+	if innerTimeout > 0 {
+		wctx, wcancel = context.WithTimeoutCause(
+			originalCtx, innerTimeout, common.ErrWriteTooSlow)
+
+		// ensure subsequent WaitN calls fall back to outerCtx
+		innerTimeout = 0
+	}
+	defer wcancel()
 
 	flushKVs := func() error {
 		req.Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
@@ -477,26 +491,19 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 			return err
 		}
 
-		// continue the work for write timeout injection, and create a new context if innerTimeout > 0
-		// with a much shorter timeout, so that the WaitN call will return with common.ErrWriteTooSlow
-		wctx := originalCtx
-		wcancel := func() {}
-		if innerTimeout > 0 {
-			wctx, wcancel = context.WithTimeoutCause(
-				originalCtx, innerTimeout, common.ErrWriteTooSlow)
-
-			// ensure subsequent WaitN calls fall back to outerCtx
-			innerTimeout = 0
-		}
-		defer wcancel()
-
 		for i := range clients {
 			// original ctx would be used when failpoint is not enabled
 			// that new context would be used when failpoint is enabled
 			err := writeLimiter.WaitN(wctx, allPeers[i].StoreId, int(size))
 			if err != nil {
+				// We expect to encounter two types of errors here:
+				// 1. context.DeadlineExceeded — occurs when the calculated delay is less than the remaining time in the context, but the context expires while sleeping.
+				// 2. "rate: Wait(n=%d) would exceed context deadline" — a fast-fail path triggered when the delay already exceeds the remaining time for context before sleeping.
+				//
+				// Unfortunately, we cannot precisely control when the context will expire, so both scenarios are valid and expected.
+				// Fortunately, the "rate: Wait" error is already treated as retryable, so we only need to explicitly handle context.DeadlineExceeded here.
 				if goerrors.Is(err, context.DeadlineExceeded) {
-					if cause := context.Cause(ctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
+					if cause := context.Cause(wctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
 						log.FromContext(ctx).Info("Experiencing a wait timeout while writing to tikv",
 							zap.Int("store-write-bwlimit", local.BackendConfig.StoreWriteBWLimit),
 							zap.Int("limit-size", writeLimiter.Limit()))
