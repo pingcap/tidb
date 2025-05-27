@@ -637,6 +637,7 @@ func (c *TopN) calculateMinCountAndCount() {
 		})
 		intest.Assert(minCount == c.minCount, "minCount should be equal to the calculated minCount")
 		intest.Assert(totalCount == c.totalCount, "totalCount should be equal to the calculated totalCount")
+		return
 	}
 	c.once.Do(func() {
 		// Initialize to the first value in TopN
