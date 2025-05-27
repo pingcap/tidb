@@ -29,6 +29,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
@@ -1211,6 +1212,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 	}
 
+	failpoint.Inject("skipReadFiles", func() {
+		failpoint.Goto("afterReadFiles")
+	})
+
 	// Fill memory usage info
 	if sourceType == mydump.SourceTypeParquet && len(dataFiles) > 0 {
 		_, memoryUsageStream, memoryUsageFull, err := mydump.SampleStatisticsFromParquet(ctx, *dataFiles[0], e.dataStore)
@@ -1231,6 +1236,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// we can adjust thread count for parquet here.
 		e.Plan.EncodeThreadCnt = encodeThreadCnt
 	}
+
+	failpoint.Label("afterReadFiles")
 
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
