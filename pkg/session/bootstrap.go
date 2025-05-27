@@ -705,13 +705,16 @@ const (
 		KEY (status));`
 
 	// CreatePITRIDMap is a table that records the id map from upstream to downstream for PITR.
+	// set restore id default to 0 to make it compatible for old BR tool to restore to a new TiDB, such case should be
+	// rare though.
 	CreatePITRIDMap = `CREATE TABLE IF NOT EXISTS mysql.tidb_pitr_id_map (
+		restore_id BIGINT NOT NULL DEFAULT 0,
 		restored_ts BIGINT NOT NULL,
 		upstream_cluster_id BIGINT NOT NULL,
 		segment_id BIGINT NOT NULL,
 		id_map BLOB(524288) NOT NULL,
 		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		PRIMARY KEY (restored_ts, upstream_cluster_id, segment_id));`
+		PRIMARY KEY (restore_id, restored_ts, upstream_cluster_id, segment_id));`
 
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
 	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
@@ -1198,6 +1201,10 @@ const (
 	// add modify_params to tidb_global_task and tidb_global_task_history.
 	version219 = 219
 
+	// version 220
+	// Update mysql.tidb_pitr_id_map to add restore_id as a primary key field
+	version220 = 220
+
 	// ...
 	// [version220, version238] is the version range reserved for patches of 8.5.x
 	// ...
@@ -1207,7 +1214,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version219
+var currentBootstrapVersion int64 = version220
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1382,6 +1389,7 @@ var (
 		upgradeToVer217,
 		upgradeToVer218,
 		upgradeToVer219,
+		upgradeToVer220,
 	}
 )
 
@@ -1576,31 +1584,6 @@ func upgrade(s sessiontypes.Session) {
 			zap.Int64("from", ver),
 			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
-	}
-}
-
-// checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.
-func checkOwnerVersion(ctx context.Context, dom *domain.Domain) (bool, error) {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	logutil.BgLogger().Info("Waiting for the DDL owner to be elected in the cluster")
-	for {
-		select {
-		case <-ctx.Done():
-			return false, ctx.Err()
-		case <-ticker.C:
-			ownerID, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
-			if err == concurrency.ErrElectionNoLeader {
-				continue
-			}
-			info, err := infosync.GetAllServerInfo(ctx)
-			if err != nil {
-				return false, err
-			}
-			if s, ok := info[ownerID]; ok {
-				return s.Version == mysql.ServerVersion, nil
-			}
-		}
 	}
 }
 
@@ -3296,6 +3279,15 @@ func upgradeToVer219(s sessiontypes.Session, ver int64) {
 	}
 	doReentrantDDL(s, addAnalyzeJobsSchemaTableStateIndex, dbterror.ErrDupKeyName)
 	doReentrantDDL(s, addAnalyzeJobsSchemaTablePartitionStateIndex, dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer220(s sessiontypes.Session, ver int64) {
+	if ver >= version220 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD COLUMN restore_id BIGINT NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map DROP PRIMARY KEY")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD PRIMARY KEY(restore_id, restored_ts, upstream_cluster_id, segment_id)")
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
