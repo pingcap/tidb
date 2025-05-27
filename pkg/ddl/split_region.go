@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -40,10 +39,20 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 	if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
 		for _, def := range parts {
 			regionIDs = append(regionIDs, preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, def.ID, scatterScope)...)
+			for _, subDef := range def.SubDefinitions {
+				if subDef.ID > 0 {
+					regionIDs = append(regionIDs, preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, subDef.ID, scatterScope)...)
+				}
+			}
 		}
 	} else {
 		for _, def := range parts {
 			regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, def.ID, tbInfo.ID, scatterScope))
+			for _, subDef := range def.SubDefinitions {
+				if subDef.ID > 0 {
+					regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, subDef.ID, tbInfo.ID, scatterScope))
+				}
+			}
 		}
 	}
 	if scatterScope != variable.ScatterOff {
