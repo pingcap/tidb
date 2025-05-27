@@ -1046,14 +1046,21 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			zap.Int("db", len(dbMap)))
 
 		tableNameByTableID := func(tableID int64) string {
+			dbName := ""
+			tableName := ""
 			history := cfg.logTableHistoryManager.GetTableHistory()
 			if locations, exists := history[tableID]; exists {
-				return locations[1].TableName
+				if name, exists := cfg.logTableHistoryManager.GetDBNameByID(locations[1].DbID); exists {
+					dbName = name
+				}
+				tableName = locations[1].TableName
+			} else if tableMeta, exists := tableMap[tableID]; exists && tableMeta != nil && tableMeta.Info != nil {
+				if tableMeta.DB != nil && len(dbName) == 0 {
+					dbName = tableMeta.DB.Name.O
+				}
+				tableName = tableMeta.Info.Name.O
 			}
-			if tableMeta, exists := tableMap[tableID]; exists && tableMeta != nil && tableMeta.Info != nil {
-				return tableMeta.Info.Name.O
-			}
-			return ""
+			return fmt.Sprintf("%s.%s", dbName, tableName)
 		}
 		if err := restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 			ctx, cfg.logRestoreStorage, cfg.PiTRTableTracker, backupMeta.GetEndVersion(), cfg.piTRTaskInfo.RestoreTS, tableNameByTableID,
