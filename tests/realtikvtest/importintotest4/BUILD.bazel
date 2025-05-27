@@ -25,7 +25,6 @@ go_test(
         "//tests/realtikvtest",
         "//tests/realtikvtest/testutils",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
-        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
         "@com_github_tikv_client_go_v2//util",

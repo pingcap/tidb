@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
@@ -220,9 +219,7 @@ func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
 	require.ErrorContains(s.T(), err, "746573742d313233")
 }
 
-func (s *mockGCSSuite) TestGlobalSortWithS3ReadError() {
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "taskManager")
+func (s *mockGCSSuite) TestGlobalSortWithGCSReadError() {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.1.csv"},
 		Content:     []byte("1,foo1,bar1,123\n2,foo2,bar2,456\n3,foo3,bar3,789\n"),
@@ -247,26 +244,24 @@ func (s *mockGCSSuite) TestGlobalSortWithS3ReadError() {
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
 		with __max_engine_size = '1', cloud_storage_uri='%s', thread=1`, gcsEndpoint, sortStorageURI)
 
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/external/AfterNewByteReader", func() {
-		failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/S3ReadUnexpectedEOF", "3*return(0)")
-	})
-	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/br/pkg/storage/S3ReadUnexpectedEOF")
-	}()
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/br/pkg/storage/GCSReadUnexpectedEOF", "return(0)")
 	s.tk.MustExec("truncate table t")
-	_ = s.tk.MustQuery(importSQL).Rows()
-	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
-		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
-		"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
-	))
+	_ = s.tk.MustQuery(importSQL + ", detached").Rows()
+	s.Eventually(func() bool {
+		rows := s.tk.MustQuery("select * from t").Sort().Rows()
+		expected := testkit.Rows(
+			"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
+			"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
+		)
+		return len(rows) == len(expected)
+	}, 30*time.Second, 1*time.Second)
+
 	// check all sorted data cleaned up
 	<-ch
 
 	_, files, err := s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)
 	s.Len(files, 0)
-
-	fmt.Println(s.tk.MustQuery("show import jobs").String())
 
 	// check subtask external field
 	checkExternalFields(s.T(), s.tk)

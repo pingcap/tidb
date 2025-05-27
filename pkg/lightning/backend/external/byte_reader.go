@@ -104,7 +104,6 @@ func newByteReader(
 		if err != nil && r != nil {
 			_ = r.Close()
 		}
-		failpoint.InjectCall("AfterNewByteReader")
 	}()
 	r = &byteReader{
 		ctx:           ctx,
