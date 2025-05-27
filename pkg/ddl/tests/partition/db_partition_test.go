@@ -506,6 +506,14 @@ func TestSubPartition2(t *testing.T) {
 		"(PARTITION `p0` VALUES LESS THAN (1990),\n" +
 		" PARTITION `p1` VALUES LESS THAN (2000),\n" +
 		" PARTITION `p2` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec("insert into ts values (1, '1989-05-27'), (2, '1996-05-27'), (3, '2005-05-27')")
+	tk.MustQuery("select PARTITION_NAME,SUBPARTITION_NAME,PARTITION_ORDINAL_POSITION,SUBPARTITION_ORDINAL_POSITION,PARTITION_METHOD,SUBPARTITION_METHOD,PARTITION_EXPRESSION, SUBPARTITION_EXPRESSION from information_schema.partitions where table_name='ts';").
+		Check(testkit.Rows("p0 p0sp0 1 1 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p0 p0sp1 1 2 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p1 p1sp0 2 1 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p1 p1sp1 2 2 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p2 p2sp0 3 1 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p2 p2sp1 3 2 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)"))
 
 	tk.MustExec("drop table ts")
 	tk.MustExec(`CREATE TABLE ts (id INT, purchased DATE)
@@ -539,6 +547,14 @@ func TestSubPartition2(t *testing.T) {
 		" PARTITION `p2` VALUES LESS THAN (MAXVALUE)\n" +
 		"(SUBPARTITION `s4`,\n" +
 		"SUBPARTITION `s5`))"))
+	tk.MustExec("insert into ts values (1, '1989-05-27'), (2, '1996-05-27'), (3, '2005-05-27')")
+	tk.MustQuery("select PARTITION_NAME,SUBPARTITION_NAME,PARTITION_ORDINAL_POSITION,SUBPARTITION_ORDINAL_POSITION,PARTITION_METHOD,SUBPARTITION_METHOD,PARTITION_EXPRESSION, SUBPARTITION_EXPRESSION from information_schema.partitions where table_name='ts';").
+		Check(testkit.Rows("p0 s0 1 1 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p0 s1 1 2 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p1 s2 2 1 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p1 s3 2 2 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p2 s4 3 1 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p2 s5 3 2 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)"))
 
 	// test for list-hash subpartition
 	tk.MustExec("drop table ts")
@@ -561,6 +577,13 @@ func TestSubPartition2(t *testing.T) {
 		" PARTITION `p1` VALUES IN (2021)," +
 		"\n PARTITION `p2` VALUES IN (2022))"))
 	tk.MustExec("insert into ts values (1, '2020-05-27'), (2, '2021-05-27'), (3, '2022-05-27')")
+	tk.MustQuery("select PARTITION_NAME,SUBPARTITION_NAME,PARTITION_ORDINAL_POSITION,SUBPARTITION_ORDINAL_POSITION,PARTITION_METHOD,SUBPARTITION_METHOD,PARTITION_EXPRESSION, SUBPARTITION_EXPRESSION from information_schema.partitions where table_name='ts';").
+		Check(testkit.Rows("p0 p0sp0 1 1 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p0 p0sp1 1 2 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p1 p1sp0 2 1 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p1 p1sp1 2 2 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p2 p2sp0 3 1 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p2 p2sp1 3 2 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)"))
 
 	tk.MustExec("drop table ts")
 	tk.MustExec(`CREATE TABLE ts (id INT, purchased DATE)
@@ -595,6 +618,13 @@ func TestSubPartition2(t *testing.T) {
 		"(SUBPARTITION `s4`,\n" +
 		"SUBPARTITION `s5`))"))
 	tk.MustExec("insert into ts values (1, '2020-05-27'), (2, '2021-05-27'), (3, '2022-05-27')")
+	tk.MustQuery("select PARTITION_NAME,SUBPARTITION_NAME,PARTITION_ORDINAL_POSITION,SUBPARTITION_ORDINAL_POSITION,PARTITION_METHOD,SUBPARTITION_METHOD,PARTITION_EXPRESSION, SUBPARTITION_EXPRESSION from information_schema.partitions where table_name='ts';").
+		Check(testkit.Rows("p0 s0 1 1 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p0 s1 1 2 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p1 s2 2 1 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p1 s3 2 2 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p2 s4 3 1 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p2 s5 3 2 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)"))
 }
 
 func TestSubPartitionDev(t *testing.T) {

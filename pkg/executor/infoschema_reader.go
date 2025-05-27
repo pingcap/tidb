@@ -1351,36 +1351,95 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				if pi.PlacementPolicyRef != nil {
 					policyName = pi.PlacementPolicyRef.Name.O
 				}
-				record := types.MakeDatums(
-					infoschema.CatalogVal, // TABLE_CATALOG
-					schema.O,              // TABLE_SCHEMA
-					table.Name.O,          // TABLE_NAME
-					pi.Name.O,             // PARTITION_NAME
-					nil,                   // SUBPARTITION_NAME
-					i+1,                   // PARTITION_ORDINAL_POSITION
-					nil,                   // SUBPARTITION_ORDINAL_POSITION
-					partitionMethod,       // PARTITION_METHOD
-					nil,                   // SUBPARTITION_METHOD
-					partitionExpr,         // PARTITION_EXPRESSION
-					nil,                   // SUBPARTITION_EXPRESSION
-					partitionDesc,         // PARTITION_DESCRIPTION
-					rowCount,              // TABLE_ROWS
-					avgRowLength,          // AVG_ROW_LENGTH
-					dataLength,            // DATA_LENGTH
-					uint64(0),             // MAX_DATA_LENGTH
-					indexLength,           // INDEX_LENGTH
-					uint64(0),             // DATA_FREE
-					createTime,            // CREATE_TIME
-					nil,                   // UPDATE_TIME
-					nil,                   // CHECK_TIME
-					nil,                   // CHECKSUM
-					pi.Comment,            // PARTITION_COMMENT
-					nil,                   // NODEGROUP
-					nil,                   // TABLESPACE_NAME
-					pi.ID,                 // TIDB_PARTITION_ID
-					policyName,            // TIDB_PLACEMENT_POLICY_NAME
-				)
-				rows = append(rows, record)
+				if len(pi.SubDefinitions) > 0 {
+					subpartitionMethod := table.Partition.Sub.Type.String()
+					subpartitionExpr := table.Partition.Sub.Expr
+					if len(table.Partition.Sub.Columns) > 0 {
+						switch table.Partition.Sub.Type {
+						case pmodel.PartitionTypeRange:
+							subpartitionMethod = "RANGE COLUMNS"
+						case pmodel.PartitionTypeList:
+							subpartitionMethod = "LIST COLUMNS"
+						case pmodel.PartitionTypeKey:
+							subpartitionMethod = "KEY"
+						default:
+							return errors.Errorf("Inconsistent partition type, have type %v, but with COLUMNS > 0 (%d)", table.Partition.Sub.Type, len(table.Partition.Sub.Columns))
+						}
+						buf := bytes.NewBuffer(nil)
+						for i, col := range table.Partition.Sub.Columns {
+							if i > 0 {
+								buf.WriteString(",")
+							}
+							buf.WriteString("`")
+							buf.WriteString(col.String())
+							buf.WriteString("`")
+						}
+						subpartitionExpr = buf.String()
+					}
+					for j, subPi := range pi.SubDefinitions {
+						record := types.MakeDatums(
+							infoschema.CatalogVal, // TABLE_CATALOG
+							schema.O,              // TABLE_SCHEMA
+							table.Name.O,          // TABLE_NAME
+							pi.Name.O,             // PARTITION_NAME
+							subPi.Name.O,          // SUBPARTITION_NAME
+							i+1,                   // PARTITION_ORDINAL_POSITION
+							j+1,                   // SUBPARTITION_ORDINAL_POSITION
+							partitionMethod,       // PARTITION_METHOD
+							subpartitionMethod,    // SUBPARTITION_METHOD
+							partitionExpr,         // PARTITION_EXPRESSION
+							subpartitionExpr,      // SUBPARTITION_EXPRESSION
+							partitionDesc,         // PARTITION_DESCRIPTION
+							rowCount,              // TABLE_ROWS
+							avgRowLength,          // AVG_ROW_LENGTH
+							dataLength,            // DATA_LENGTH
+							uint64(0),             // MAX_DATA_LENGTH
+							indexLength,           // INDEX_LENGTH
+							uint64(0),             // DATA_FREE
+							createTime,            // CREATE_TIME
+							nil,                   // UPDATE_TIME
+							nil,                   // CHECK_TIME
+							nil,                   // CHECKSUM
+							pi.Comment,            // PARTITION_COMMENT
+							nil,                   // NODEGROUP
+							nil,                   // TABLESPACE_NAME
+							subPi.ID,              // TIDB_PARTITION_ID
+							policyName,            // TIDB_PLACEMENT_POLICY_NAME
+						)
+						rows = append(rows, record)
+					}
+				} else {
+					record := types.MakeDatums(
+						infoschema.CatalogVal, // TABLE_CATALOG
+						schema.O,              // TABLE_SCHEMA
+						table.Name.O,          // TABLE_NAME
+						pi.Name.O,             // PARTITION_NAME
+						nil,                   // SUBPARTITION_NAME
+						i+1,                   // PARTITION_ORDINAL_POSITION
+						nil,                   // SUBPARTITION_ORDINAL_POSITION
+						partitionMethod,       // PARTITION_METHOD
+						nil,                   // SUBPARTITION_METHOD
+						partitionExpr,         // PARTITION_EXPRESSION
+						nil,                   // SUBPARTITION_EXPRESSION
+						partitionDesc,         // PARTITION_DESCRIPTION
+						rowCount,              // TABLE_ROWS
+						avgRowLength,          // AVG_ROW_LENGTH
+						dataLength,            // DATA_LENGTH
+						uint64(0),             // MAX_DATA_LENGTH
+						indexLength,           // INDEX_LENGTH
+						uint64(0),             // DATA_FREE
+						createTime,            // CREATE_TIME
+						nil,                   // UPDATE_TIME
+						nil,                   // CHECK_TIME
+						nil,                   // CHECKSUM
+						pi.Comment,            // PARTITION_COMMENT
+						nil,                   // NODEGROUP
+						nil,                   // TABLESPACE_NAME
+						pi.ID,                 // TIDB_PARTITION_ID
+						policyName,            // TIDB_PLACEMENT_POLICY_NAME
+					)
+					rows = append(rows, record)
+				}
 			}
 		}
 	}
