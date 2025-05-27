@@ -101,6 +101,4 @@ var (
 	// ErrTimestampInDSTTransition is returned if the converted timestamp is in the Daylight Saving Time
 	// transition when time leaps forward (normally skips one hour).
 	ErrTimestampInDSTTransition = dbterror.ClassExecutor.NewStd(mysql.ErrTimeStampInDSTTransition)
-	// ErrWarnInvalidTimestamp returns the MySQL compatible error/warning for ErrTimestampInDSTTransition
-	ErrWarnInvalidTimestamp = dbterror.ClassExecutor.NewStd(mysql.ErrWarnInvalidTimestamp)
 )

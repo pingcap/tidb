@@ -1696,11 +1696,6 @@ error = '''
 This command is not supported in the prepared statement protocol yet
 '''
 
-["executor:1299"]
-error = '''
-Invalid TIMESTAMP value in column '%s' at row %d
-'''
-
 ["executor:1305"]
 error = '''
 %s %s does not exist
