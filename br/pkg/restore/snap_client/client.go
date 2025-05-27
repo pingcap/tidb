@@ -385,8 +385,8 @@ func (rc *SnapClient) InitCheckpoint(
 		if !bytes.Equal(meta.Hash, hash) {
 			return checkpointSetWithTableID, nil, errors.Errorf(
 				"The hash of the current snapshot restore does not match that recorded in checkpoint. "+
-					"You should not change the restore config if checkpoint enabled, "+
-					"or just clean the checkpoint %s if the cluster has been cleaned up.",
+					"Please don't use the checkpoint, "+
+					"or use the the same restore command.",
 				snapshotCheckpointMetaManager)
 		}
 
