@@ -4803,6 +4803,7 @@ func (b *PlanBuilder) buildDistributeTable(node *ast.DistributeTableStmt) (base.
 		PartitionNames: node.PartitionNames,
 		Engine:         node.Engine,
 		Rule:           node.Rule,
+		Timout:         node.Timeout,
 	}
 	plan.setSchemaAndNames(buildDistributeTableSchema())
 	return plan, nil

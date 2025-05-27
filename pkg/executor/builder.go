@@ -2690,6 +2690,7 @@ func (b *executorBuilder) buildDistributeTable(v *plannercore.DistributeTable) e
 		rule:           v.Rule,
 		engine:         v.Engine,
 		is:             b.is,
+		timeout:        v.Timeout,
 	}
 }
 

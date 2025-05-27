@@ -3860,6 +3860,7 @@ type DistributeTableStmt struct {
 	PartitionNames []CIStr
 	Rule           CIStr
 	Engine         CIStr
+	Timeout        CIStr
 }
 
 // Restore implements Node interface.

@@ -42,6 +42,7 @@ type DistributeTableExec struct {
 	partitionNames []ast.CIStr
 	rule           ast.CIStr
 	engine         ast.CIStr
+	timeout        ast.CIStr
 
 	done      bool
 	keyRanges []*pdhttp.KeyRange
@@ -107,6 +108,7 @@ func (e *DistributeTableExec) distributeTable(ctx context.Context) error {
 	input["alias"] = e.getAlias()
 	input["engine"] = e.engine.String()
 	input["rule"] = e.rule.String()
+	input["timeout"] = e.timeout.String()
 	startKeys := make([]string, 0, len(e.keyRanges))
 	endKeys := make([]string, 0, len(e.keyRanges))
 	for _, r := range e.keyRanges {
