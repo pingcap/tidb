@@ -45,7 +45,7 @@ func TestResourceGroupTagEncoding(t *testing.T) {
 	resTag := &tipb.ResourceGroupTag{}
 	err = resTag.Unmarshal(tag)
 	require.NoError(t, err)
-	require.Nil(t, resTag.KeyspaceId)
+	require.Nil(t, resTag.KeyspaceName)
 
 	sqlDigest = parser.NewDigest([]byte{'a', 'a'})
 	tag = NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).SetSQLDigest(sqlDigest).EncodeTagWithKey([]byte(""))
@@ -65,8 +65,8 @@ func TestResourceGroupTagEncoding(t *testing.T) {
 	resTag = &tipb.ResourceGroupTag{}
 	err = resTag.Unmarshal(tag)
 	require.NoError(t, err)
-	require.NotNil(t, resTag.KeyspaceId)
-	require.Equal(t, resTag.KeyspaceId, keyspaceName)
+	require.NotNil(t, resTag.KeyspaceName)
+	require.Equal(t, resTag.KeyspaceName, keyspaceName)
 
 	sqlDigest = parser.NewDigest(genRandHex(510))
 	tag = NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).SetSQLDigest(sqlDigest).EncodeTagWithKey([]byte(""))
@@ -76,5 +76,5 @@ func TestResourceGroupTagEncoding(t *testing.T) {
 	resTag = &tipb.ResourceGroupTag{}
 	err = resTag.Unmarshal(tag)
 	require.NoError(t, err)
-	require.Nil(t, resTag.KeyspaceId)
+	require.Nil(t, resTag.KeyspaceName)
 }

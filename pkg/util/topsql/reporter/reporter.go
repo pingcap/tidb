@@ -71,7 +71,6 @@ var _ DataSinkRegisterer = &RemoteTopSQLReporter{}
 // RemoteTopSQLReporter implements TopSQLReporter that sends data to a remote agent.
 // This should be called periodically to collect TopSQL resource usage metrics.
 type RemoteTopSQLReporter struct {
-	keyspaceName            []byte
 	ctx                     context.Context
 	reportCollectedDataChan chan collectedData
 	cancel                  context.CancelFunc
@@ -87,6 +86,7 @@ type RemoteTopSQLReporter struct {
 	// Instead of dropping large plans, we compress it into encoded format and report
 	compressPlan planBinaryCompressFunc
 	DefaultDataSinkRegisterer
+	keyspaceName []byte
 }
 
 // NewRemoteTopSQLReporter creates a new RemoteTopSQLReporter.
