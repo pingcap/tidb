@@ -126,7 +126,6 @@ if $success; then
     exit 1
 fi
 check_contains "cannot restore the table"
-check_contains "name=test.t3 at"
 
 # truncate the blocklist
 run_br log truncate -s "local://$TEST_DIR/$PREFIX/log" --until $ok_restored_ts -y

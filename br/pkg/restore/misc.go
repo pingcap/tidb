@@ -199,6 +199,7 @@ func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 	tracker *utils.PiTRIdTracker,
 	startTs, restoredTs uint64,
 	tableNameByTableID func(tableID int64) string,
+	checkTableIDLost func(tableId int64) bool,
 ) error {
 	err := fastWalkLogRestoreTableIDsBlocklistFile(ctx, s, func(restoreCommitTs, snapshotBackupTs uint64) bool {
 		return startTs >= restoreCommitTs || restoredTs <= snapshotBackupTs
@@ -209,6 +210,14 @@ func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 					"cannot restore the table(Id=%d, name=%s at %d) because it is log restored(at %d) before snapshot backup(at %d). "+
 						"Please respecify the filter that does not contain the table or replace with a newer snapshot backup.",
 					tableId, tableNameByTableID(tableId), restoredTs, restoreCommitTs, startTs)
+			}
+			// the meta kv may not be backed by log restore
+			if checkTableIDLost(tableId) {
+				return errors.Errorf(
+					"cannot restore the table(Id=%d) because it is log restored(at %d) before snapshot backup(at %d). "+
+						"Please respecify the filter that does not contain the table or replace with a newer snapshot backup.",
+					tableId, restoreCommitTs, startTs,
+				)
 			}
 		}
 		return nil

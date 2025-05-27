@@ -1026,13 +1026,14 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 	// only run when this full restore is part of the PiTR
 	if isPiTR {
+		snapshotTableMap := client.GetTableMap()
 		// adjust tables to restore in the snapshot restore phase since it will later be renamed during
 		// log restore and will fall into or out of the filter range.
 		err = AdjustTablesToRestoreAndCreateTableTracker(
 			cfg.logTableHistoryManager,
 			cfg.RestoreConfig,
 			client.GetDatabaseMap(),
-			client.GetTableMap(),
+			snapshotTableMap,
 			client.GetPartitionMap(),
 			tableMap,
 			dbMap,
@@ -1046,9 +1047,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			zap.Int("db", len(dbMap)))
 
 		tableNameByTableID := func(tableID int64) string {
-			dbName := ""
-			tableName := ""
-			dbID := int64(0)
+			dbName, tableName, dbID := "", "", int64(0)
 			history := cfg.logTableHistoryManager.GetTableHistory()
 			if locations, exists := history[tableID]; exists {
 				if name, exists := cfg.logTableHistoryManager.GetDBNameByID(locations[1].DbID); exists {
@@ -1069,8 +1068,20 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			}
 			return fmt.Sprintf("%s.%s", dbName, tableName)
 		}
+		checkTableIDLost := func(tableId int64) bool {
+			// check whether exists in log backup
+			if _, exists := cfg.logTableHistoryManager.GetTableHistory()[tableId]; exists {
+				return false
+			}
+			// check whether exists in snapshot backup
+			if _, exists := snapshotTableMap[tableId]; exists {
+				return false
+			}
+			return true
+		}
 		if err := restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(
-			ctx, cfg.logRestoreStorage, cfg.PiTRTableTracker, backupMeta.GetEndVersion(), cfg.piTRTaskInfo.RestoreTS, tableNameByTableID,
+			ctx, cfg.logRestoreStorage, cfg.PiTRTableTracker, backupMeta.GetEndVersion(), cfg.piTRTaskInfo.RestoreTS,
+			tableNameByTableID, checkTableIDLost,
 		); err != nil {
 			return errors.Trace(err)
 		}
