@@ -476,9 +476,6 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 	if innerTimeout > 0 {
 		wctx, wcancel = context.WithTimeoutCause(
 			originalCtx, innerTimeout, common.ErrWriteTooSlow)
-
-		// ensure subsequent WaitN calls fall back to outerCtx
-		innerTimeout = 0
 	}
 	defer wcancel()
 
