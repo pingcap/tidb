@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -520,6 +521,9 @@ func (c *CMSketch) CalcDefaultValForAnalyze(ndv uint64) {
 // TopN stores most-common values, which is used to estimate point queries.
 type TopN struct {
 	TopN []TopNMeta
+
+	totalCount uint64
+	once       sync.Once
 }
 
 // Scale scales the TopN by the given factor.
@@ -726,14 +730,18 @@ func (c *TopN) Sort() {
 
 // TotalCount returns how many data is stored in TopN.
 func (c *TopN) TotalCount() uint64 {
-	if c == nil {
-		return 0
-	}
-	total := uint64(0)
-	for _, t := range c.TopN {
-		total += t.Count
-	}
-	return total
+	c.once.Do(func() {
+		if c == nil {
+			c.totalCount = 0
+		}
+		total := uint64(0)
+		for _, t := range c.TopN {
+			total += t.Count
+		}
+		c.totalCount = total
+	})
+
+	return c.totalCount
 }
 
 // Equal checks whether the two TopN are equal.
