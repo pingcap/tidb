@@ -1033,6 +1033,8 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 		return err
 	}
 
+	tbInfo.ScatterScope = model.ScatterScopeFromString(getScatterScopeFromSessionctx(ctx))
+
 	onExist := OnExistError
 	if s.IfNotExists {
 		onExist = OnExistIgnore
