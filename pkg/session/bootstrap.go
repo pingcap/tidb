@@ -719,8 +719,10 @@ const (
 		KEY (status));`
 
 	// CreatePITRIDMap is a table that records the id map from upstream to downstream for PITR.
+	// set restore id default to 0 to make it compatible for old BR tool to restore to a new TiDB, such case should be
+	// rare though.
 	CreatePITRIDMap = `CREATE TABLE IF NOT EXISTS mysql.tidb_pitr_id_map (
-		restore_id BIGINT NOT NULL,
+		restore_id BIGINT NOT NULL DEFAULT 0,
 		restored_ts BIGINT NOT NULL,
 		upstream_cluster_id BIGINT NOT NULL,
 		segment_id BIGINT NOT NULL,
@@ -3460,7 +3462,7 @@ func upgradeToVer248(s sessiontypes.Session, ver int64) {
 	if ver >= version248 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD COLUMN restore_id BIGINT NOT NULL", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD COLUMN restore_id BIGINT NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map DROP PRIMARY KEY")
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD PRIMARY KEY(restore_id, restored_ts, upstream_cluster_id, segment_id)")
 }
