@@ -730,11 +730,10 @@ func (c *TopN) Sort() {
 
 // TotalCount returns how many data is stored in TopN.
 func (c *TopN) TotalCount() uint64 {
+	if c == nil {
+		return 0
+	}
 	c.once.Do(func() {
-		if c == nil {
-			c.totalCount = 0
-			return
-		}
 		total := uint64(0)
 		for _, t := range c.TopN {
 			total += t.Count
