@@ -34,6 +34,7 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -783,7 +784,7 @@ func printRestoreMetrics() {
 }
 
 // RunRestore starts a restore task inside the current goroutine.
-func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) (restoreErr error) {
 	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
 	if err != nil {
 		return err
@@ -793,7 +794,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			log.Error("failed to close the etcd client", zap.Error(err))
 		}
 	}()
-	if err := checkConflictingLogBackup(c, cfg, etcdCLI); err != nil {
+	logTaskBackend, err := checkConflictingLogBackup(c, cfg, IsStreamRestore(cmdName), etcdCLI)
+	if err != nil {
 		return errors.Annotate(err, "failed to check task exists")
 	}
 	closeF, err := registerTaskToPD(c, etcdCLI)
@@ -815,15 +817,46 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	defer mgr.Close()
 	defer cfg.CloseCheckpointMetaManager()
+	defer func() {
+		if logTaskBackend == nil || restoreErr != nil || cfg.PiTRTableTracker == nil {
+			return
+		}
+		restoreCommitTs, err := restore.GetTSWithRetry(c, mgr.GetPDClient())
+		if err != nil {
+			restoreErr = err
+			return
+		}
+		tableIds := make([]int64, 0, len(cfg.PiTRTableTracker.TableIdToDBIds))
+		for tableId := range cfg.PiTRTableTracker.TableIdToDBIds {
+			tableIds = append(tableIds, tableId)
+		}
+		for tableId := range cfg.PiTRTableTracker.PartitionIds {
+			tableIds = append(tableIds, tableId)
+		}
+		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, cfg.StartTS, tableIds)
+		if err != nil {
+			restoreErr = err
+			return
+		}
+		logTaskStorage, err := storage.Create(c, logTaskBackend, false)
+		if err != nil {
+			restoreErr = err
+			return
+		}
+		log.Info("save the log restore table IDs blocklist into log backup storage")
+		if err = logTaskStorage.WriteFile(c, filename, data); err != nil {
+			restoreErr = err
+			return
+		}
+	}()
 
 	defer printRestoreMetrics()
 
-	var restoreError error
 	if IsStreamRestore(cmdName) {
 		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBRPiTR); err != nil {
 			return errors.Trace(err)
 		}
-		restoreError = RunStreamRestore(c, mgr, g, cfg)
+		restoreErr = RunStreamRestore(c, mgr, g, cfg)
 	} else {
 		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBR); err != nil {
 			return errors.Trace(err)
@@ -831,10 +864,10 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		snapshotRestoreConfig := SnapshotRestoreConfig{
 			RestoreConfig: cfg,
 		}
-		restoreError = runSnapshotRestore(c, mgr, g, cmdName, &snapshotRestoreConfig)
+		restoreErr = runSnapshotRestore(c, mgr, g, cmdName, &snapshotRestoreConfig)
 	}
-	if restoreError != nil {
-		return errors.Trace(restoreError)
+	if restoreErr != nil {
+		return errors.Trace(restoreErr)
 	}
 	// Clear the checkpoint data
 	if cfg.UseCheckpoint {
@@ -866,6 +899,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 type SnapshotRestoreConfig struct {
 	*RestoreConfig
 	piTRTaskInfo           *PiTRTaskInfo
+	logRestoreStorage      storage.ExternalStorage
 	logTableHistoryManager *stream.LogBackupTableHistoryManager
 	tableMappingManager    *stream.TableMappingManager
 }
@@ -1049,13 +1083,14 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 	// only run when this full restore is part of the PiTR
 	if isPiTR {
+		snapshotTableMap := client.GetTableMap()
 		// adjust tables to restore in the snapshot restore phase since it will later be renamed during
 		// log restore and will fall into or out of the filter range.
 		err = AdjustTablesToRestoreAndCreateTableTracker(
 			cfg.logTableHistoryManager,
 			cfg.RestoreConfig,
 			client.GetDatabaseMap(),
-			client.GetTableMap(),
+			snapshotTableMap,
 			client.GetPartitionMap(),
 			tableMap,
 			dbMap,
@@ -1067,6 +1102,46 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("adjusted items to restore",
 			zap.Int("tables", len(tableMap)),
 			zap.Int("db", len(dbMap)))
+
+		tableNameByTableID := func(tableID int64) string {
+			dbName, tableName, dbID := "", "", int64(0)
+			history := cfg.logTableHistoryManager.GetTableHistory()
+			if locations, exists := history[tableID]; exists {
+				if name, exists := cfg.logTableHistoryManager.GetDBNameByID(locations[1].DbID); exists {
+					dbName = name
+				}
+				dbID = locations[1].DbID
+				tableName = locations[1].TableName
+			} else if tableMeta, exists := tableMap[tableID]; exists && tableMeta != nil && tableMeta.Info != nil {
+				if tableMeta.DB != nil && len(dbName) == 0 {
+					dbName = tableMeta.DB.Name.O
+				}
+				tableName = tableMeta.Info.Name.O
+			}
+			if len(dbName) == 0 && dbID > 0 {
+				if dbInfo, exists := dbMap[dbID]; exists {
+					dbName = dbInfo.Info.Name.O
+				}
+			}
+			return fmt.Sprintf("%s.%s", dbName, tableName)
+		}
+		checkTableIDLost := func(tableId int64) bool {
+			// check whether exists in log backup
+			if _, exists := cfg.logTableHistoryManager.GetTableHistory()[tableId]; exists {
+				return false
+			}
+			// check whether exists in snapshot backup
+			if _, exists := snapshotTableMap[tableId]; exists {
+				return false
+			}
+			return true
+		}
+		if err := restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(
+			ctx, cfg.logRestoreStorage, cfg.PiTRTableTracker, backupMeta.GetEndVersion(), cfg.piTRTaskInfo.RestoreTS,
+			tableNameByTableID, checkTableIDLost,
+		); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	tables := utils.Values(tableMap)
 	dbs := utils.Values(dbMap)

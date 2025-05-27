@@ -76,7 +76,8 @@ var (
 	ErrTablesAlreadyExisted    = errors.Normalize("tables already existed in restored cluster", errors.RFCCodeText("BR:Restore:ErrTablesAlreadyExisted"))
 
 	// ErrStreamLogTaskExist is the error when stream log task already exists, because of supporting single task currently.
-	ErrStreamLogTaskExist = errors.Normalize("stream task already exists", errors.RFCCodeText("BR:Stream:ErrStreamLogTaskExist"))
+	ErrStreamLogTaskExist        = errors.Normalize("stream task already exists", errors.RFCCodeText("BR:Stream:ErrStreamLogTaskExist"))
+	ErrStreamLogTaskHasNoStorage = errors.Normalize("stream task has no storage", errors.RFCCodeText("BR:Stream:ErrStreamLogTaskHasNoStorage"))
 
 	// TODO maybe it belongs to PiTR.
 	ErrRestoreRTsConstrain = errors.Normalize("resolved ts constrain violation", errors.RFCCodeText("BR:Restore:ErrRestoreResolvedTsConstrain"))
