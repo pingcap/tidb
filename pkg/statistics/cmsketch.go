@@ -537,10 +537,9 @@ func (c *TopN) Scale(scaleFactor float64) {
 		total += c.TopN[i].Count
 		minCount = min(minCount, c.TopN[i].Count)
 	}
-	c.once.Do(func() {
-		c.minCount = minCount
-		c.totalCount = total
-	})
+	c.minCount = minCount
+	c.totalCount = total
+	c.once.Do(func() {})
 }
 
 // AppendTopN appends a topn into the TopN struct.
