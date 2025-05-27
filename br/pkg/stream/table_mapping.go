@@ -183,7 +183,8 @@ func (tm *TableMappingManager) parseDBKeyAndUpdateIdMapping(field []byte) error 
 	return errors.Trace(err)
 }
 
-func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte, ts uint64, collector MetaInfoCollector) error {
+func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte, ts uint64,
+	collector MetaInfoCollector) error {
 	dbInfo := new(model.DBInfo)
 	if err := json.Unmarshal(value, dbInfo); err != nil {
 		return errors.Trace(err)
