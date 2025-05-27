@@ -2007,7 +2007,8 @@ func parseTime(ctx Context, str string, tp byte, fsp int, isFloat bool) (Time, e
 
 	t.SetType(tp)
 	if err = t.Check(ctx); err != nil {
-		if tp == mysql.TypeTimestamp {
+		if tp == mysql.TypeTimestamp && !t.IsZero() &&
+			t.Compare(MinTimestamp) > 0 && t.Compare(MaxTimestamp) < 0 {
 			// Handle the case when the timestamp given is in the DST transition
 			if tAdjusted, err2 := t.AdjustedGoTime(ctx.Location()); err2 == nil {
 				t.SetCoreTime(FromGoTime(tAdjusted))
