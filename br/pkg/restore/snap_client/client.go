@@ -378,7 +378,7 @@ func (rc *SnapClient) InitCheckpoint(
 			return checkpointSetWithTableID, nil, errors.Errorf(
 				"The upstream cluster id[%d] of the current snapshot restore does not match that[%d] recorded in checkpoint. "+
 					"Perhaps you should specify the last full backup storage instead, "+
-					"or just clean the checkpoint %s if the cluster has been cleaned up.",
+					"or just clean the checkpoint %v if the cluster has been cleaned up.",
 				rc.backupMeta.ClusterId, meta.UpstreamClusterID, snapshotCheckpointMetaManager)
 		}
 
@@ -386,7 +386,7 @@ func (rc *SnapClient) InitCheckpoint(
 			return checkpointSetWithTableID, nil, errors.Errorf(
 				"The hash of the current snapshot restore does not match that recorded in checkpoint. "+
 					"Please don't use the checkpoint, "+
-					"or use the the same restore command.",
+					"or use the the same restore command. checkpoint manager: %v",
 				snapshotCheckpointMetaManager)
 		}
 
