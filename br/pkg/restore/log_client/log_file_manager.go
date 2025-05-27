@@ -7,6 +7,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 )
+
+var metaPattern = regexp.MustCompile(`^(\d+)-(\d+)-(\d+)-[^/]+$`)
 
 // MetaIter is the type of iterator of metadata files' content.
 type MetaIter = iter.TryNextor[*backuppb.Metadata]
@@ -205,18 +209,52 @@ func (lm *LogFileManager) loadShiftTS(ctx context.Context) error {
 }
 
 func (lm *LogFileManager) streamingMeta(ctx context.Context) (MetaNameIter, error) {
-	return lm.streamingMetaByTS(ctx, lm.restoreTS)
+	return lm.streamingMetaByTS(ctx)
 }
 
-func (lm *LogFileManager) streamingMetaByTS(ctx context.Context, restoreTS uint64) (MetaNameIter, error) {
+func (lm *LogFileManager) streamingMetaByTS(ctx context.Context) (MetaNameIter, error) {
 	it, err := lm.createMetaIterOver(ctx, lm.storage)
 	if err != nil {
 		return nil, err
 	}
 	filtered := iter.FilterOut(it, func(metaname *MetaName) bool {
-		return restoreTS < metaname.meta.MinTs || metaname.meta.MaxTs < lm.shiftStartTS
+		return lm.restoreTS < metaname.meta.MinTs || metaname.meta.MaxTs < lm.shiftStartTS
 	})
 	return filtered, nil
+}
+
+func FilterPathByTs(path string, shiftStartTS, restoreTS uint64) string {
+	filename := strings.TrimSuffix(path, ".meta")
+	filename = filename[strings.LastIndex(filename, "/")+1:]
+
+	if metaPattern.MatchString(filename) {
+		matches := metaPattern.FindStringSubmatch(filename)
+		if len(matches) < 4 {
+			log.Warn("invalid meta file name format", zap.String("file", path))
+			// consider compatible with future file path change
+			return path
+		}
+
+		minTs, _ := strconv.ParseUint(matches[1], 10, 64)
+		maxTs, _ := strconv.ParseUint(matches[2], 10, 64)
+		minDefaultTs, _ := strconv.ParseUint(matches[3], 10, 64)
+
+		if minDefaultTs == 0 || minDefaultTs > minTs {
+			log.Warn("minDefaultTs is not correct, fallback to minTs",
+				zap.String("file", path),
+				zap.Uint64("minTs", minTs),
+				zap.Uint64("minDefaultTs", minDefaultTs),
+			)
+			minDefaultTs = minTs
+		}
+
+		if restoreTS < minDefaultTs || maxTs < shiftStartTS {
+			return ""
+		}
+	}
+
+	// keep consistency with old behaviour
+	return path
 }
 
 func (lm *LogFileManager) createMetaIterOver(ctx context.Context, s storage.ExternalStorage) (MetaNameIter, error) {
@@ -226,7 +264,10 @@ func (lm *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 		if !strings.HasSuffix(path, ".meta") {
 			return nil
 		}
-		names = append(names, path)
+		newPath := FilterPathByTs(path, lm.shiftStartTS, lm.restoreTS)
+		if len(newPath) > 0 {
+			names = append(names, newPath)
+		}
 		return nil
 	})
 	if err != nil {
