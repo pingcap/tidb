@@ -333,7 +333,9 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 	})
 
 	var cancel context.CancelFunc
-	ctx, cancel = context.WithTimeoutCause(ctx, 15*time.Minute, common.ErrWriteTooSlow)
+	// set a timeout for the write operation, if it takes too long, we will return with common.ErrWriteTooSlow and let caller retry the whole job instead of being stuck forever.
+	timeout := 15 * time.Minute
+	ctx, cancel = context.WithTimeoutCause(ctx, timeout, common.ErrWriteTooSlow)
 	defer cancel()
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
@@ -464,7 +466,13 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 		}
 
 		for i := range clients {
-			if err := writeLimiter.WaitN(ctx, allPeers[i].StoreId, int(size)); err != nil {
+			err := writeLimiter.WaitN(ctx, allPeers[i].StoreId, int(size))
+			if err != nil {
+				if goerrors.Is(err, context.DeadlineExceeded) {
+					if cause := context.Cause(ctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
+						return errors.Trace(cause) // return the common.ErrWriteTooSlow to let caller handle it
+					}
+				}
 				return errors.Trace(err)
 			}
 			if err := clients[i].SendMsg(preparedMsg); err != nil {
