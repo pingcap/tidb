@@ -524,14 +524,20 @@ type TopN struct {
 	TopN []TopNMeta
 
 	totalCount uint64
+	minCount   uint64
 	once       sync.Once
 }
 
 // Scale scales the TopN by the given factor.
 func (c *TopN) Scale(scaleFactor float64) {
+	var total, minCount uint64
 	for i := range c.TopN {
 		c.TopN[i].Count = uint64(float64(c.TopN[i].Count) * scaleFactor)
+		total += c.TopN[i].Count
+		minCount = min(minCount, c.TopN[i].Count)
 	}
+	c.minCount = minCount
+	c.totalCount = total
 }
 
 // AppendTopN appends a topn into the TopN struct.
@@ -616,12 +622,23 @@ func (c *TopN) MinCount() uint64 {
 	if c == nil || len(c.TopN) == 0 {
 		return 0
 	}
-	// Initialize to the first value in TopN
-	minCount := c.TopN[0].Count
-	for _, t := range c.TopN {
-		minCount = min(minCount, t.Count)
-	}
-	return minCount
+	c.calculateMinCountAndCount()
+	return c.minCount
+}
+
+func (c *TopN) calculateMinCountAndCount() {
+	c.once.Do(func() {
+		intest.Assert(c.minCount == 0 && c.totalCount == 0, "minCount and totalCount should be initialized only once")
+		// Initialize to the first value in TopN
+		minCount := c.TopN[0].Count
+		var total uint64
+		for _, t := range c.TopN {
+			minCount = min(minCount, t.Count)
+			total += t.Count
+		}
+		c.minCount = minCount
+		c.totalCount = total
+	})
 }
 
 // TopNMeta stores the unit of the TopN.
@@ -731,18 +748,10 @@ func (c *TopN) Sort() {
 
 // TotalCount returns how many data is stored in TopN.
 func (c *TopN) TotalCount() uint64 {
-	if c == nil {
+	if c == nil || len(c.TopN) == 0 {
 		return 0
 	}
-	c.once.Do(func() {
-		intest.Assert(c.totalCount == 0, "TopN totalCount should be 0 before first call of TotalCount()")
-		total := uint64(0)
-		for _, t := range c.TopN {
-			total += t.Count
-		}
-		c.totalCount = total
-	})
-
+	c.calculateMinCountAndCount()
 	return c.totalCount
 }
 
