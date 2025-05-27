@@ -1464,7 +1464,7 @@ func NewConfig() *Config {
 			RegionConcurrency:  runtime.NumCPU(),
 			TableConcurrency:   0,
 			IndexConcurrency:   0,
-			MaxMemoryUsage:     0,
+			MaxMemoryUsage:     40,
 			IOConcurrency:      5,
 			CheckRequirements:  true,
 			TaskInfoSchemaName: defaultTaskInfoSchemaName,
