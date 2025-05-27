@@ -261,7 +261,7 @@ func (p *PreallocIDs) CreateCheckpoint() *checkpoint.PreallocIDs {
 	}
 }
 
-func hashSortedIds(ids []int64) [32]byte {
+func computeSortedIDsHash(ids []int64) [32]byte {
 	h := sha256.New()
 	buffer := make([]byte, 8)
 
