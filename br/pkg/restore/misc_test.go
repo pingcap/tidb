@@ -200,19 +200,25 @@ func TestCheckTableTrackerContainsTableIDsFromBlocklistFiles(t *testing.T) {
 	writeBlocklistFile(ctx, t, stg, 100, 10, []int64{100, 101, 102})
 	writeBlocklistFile(ctx, t, stg, 200, 20, []int64{200, 201, 202})
 	writeBlocklistFile(ctx, t, stg, 300, 30, []int64{300, 301, 302})
-	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 250, 300)
+	tableNameByTableID := func(tableID int64) string {
+		return fmt.Sprintf("table_%d", tableID)
+	}
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 250, 300, tableNameByTableID)
 	require.Error(t, err)
-	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 250, 300)
+	require.Contains(t, err.Error(), "table_300")
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 250, 300, tableNameByTableID)
 	require.NoError(t, err)
-	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 250, 300)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 250, 300, tableNameByTableID)
 	require.NoError(t, err)
 
-	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 1, 25)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 1, 25, tableNameByTableID)
 	require.NoError(t, err)
-	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 1, 25)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 1, 25, tableNameByTableID)
 	require.Error(t, err)
-	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 1, 25)
+	require.Contains(t, err.Error(), "table_200")
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 1, 25, tableNameByTableID)
 	require.Error(t, err)
+	require.Contains(t, err.Error(), "table_100")
 }
 
 func filesCount(ctx context.Context, s storage.ExternalStorage) int {

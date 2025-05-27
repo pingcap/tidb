@@ -120,11 +120,13 @@ check_contains "SUM: 932"
 # otherwise, failed
 restart_services
 success=true
-run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || success=false
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1 || success=false
 if $success; then
     echo "Error: PITR restore must be failed"
     exit 1
 fi
+check_contains "cannot restore the table"
+check_contains "name=test.t3 at"
 
 # truncate the blocklist
 run_br log truncate -s "local://$TEST_DIR/$PREFIX/log" --until $ok_restored_ts -y

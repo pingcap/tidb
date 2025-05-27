@@ -198,6 +198,7 @@ func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 	s storage.ExternalStorage,
 	tracker *utils.PiTRIdTracker,
 	startTs, restoredTs uint64,
+	tableNameByTableID func(tableID int64) string,
 ) error {
 	err := fastWalkLogRestoreTableIDsBlocklistFile(ctx, s, func(restoreCommitTs, snapshotBackupTs uint64) bool {
 		return startTs >= restoreCommitTs || restoredTs <= snapshotBackupTs
@@ -205,9 +206,9 @@ func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 		for _, tableId := range tableIds {
 			if tracker.ContainsTableId(tableId) || tracker.ContainsPartitionId(tableId) {
 				return errors.Errorf(
-					"cannot restore the table(Id=%d) because it is restored(at %d) before snapshot backup(at %d). "+
+					"cannot restore the table(Id=%d, name=%s at %d) because it is log restored(at %d) before snapshot backup(at %d). "+
 						"Please respecify the filter that does not contain the table or replace with a newer snapshot backup.",
-					tableId, restoreCommitTs, startTs)
+					tableId, tableNameByTableID(tableId), restoredTs, restoreCommitTs, startTs)
 			}
 		}
 		return nil
