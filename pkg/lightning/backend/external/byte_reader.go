@@ -325,6 +325,7 @@ func (r *byteReader) reload() error {
 				return false, err
 			case goerrors.Is(err, io.ErrUnexpectedEOF):
 				if n == 0 {
+					r.logger.Warn("encounter (0, ErrUnexpectedEOF) during during read, retry it")
 					return true, err
 				}
 				// The last batch.
