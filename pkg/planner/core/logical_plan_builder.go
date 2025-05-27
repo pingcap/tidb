@@ -90,6 +90,27 @@ const (
 	ErrExprInOrderBy = "ORDER BY"
 )
 
+type forceMVIndexOption struct{}
+
+var forceMVIndexOptionKey forceMVIndexOption
+
+// WithForceMVIndexScan controls how the optimizer process MV Index.
+// If it's true, it indicated we want to use MV Index for scan.
+// NOTE: It should only be used in fast admin check table,
+// see check_table_index.go for more details.
+func WithForceMVIndexScan(ctx context.Context) context.Context {
+	return context.WithValue(ctx, forceMVIndexOptionKey, true)
+}
+
+// GetForceMVIndexScan check whether the force MV index scan option is set.
+func GetForceMVIndexScan(ctx context.Context) bool {
+	force := false
+	if opt := ctx.Value(forceMVIndexOptionKey); opt != nil {
+		force = opt.(bool)
+	}
+	return force
+}
+
 // aggOrderByResolver is currently resolving expressions of order by clause
 // in aggregate function GROUP_CONCAT.
 type aggOrderByResolver struct {
@@ -4503,7 +4524,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
 	}
 
-	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0)
+	// If forceMVIndexScan is true, it means:
+	// 1. We should build MV Index scan.
+	// 2. We should NEVER add table scan to possible access path, otherwise
+	//    we can't guarentee index scan is choosen after cost estimation.
+	forceMVIndexScan := GetForceMVIndexScan(ctx) == true
+	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0, forceMVIndexScan)
 	if err != nil {
 		return nil, err
 	}
@@ -4653,11 +4679,18 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		PreferPartitions:       make(map[int][]ast.CIStr),
 		IS:                     b.is,
 		IsForUpdateRead:        b.isForUpdateRead,
+		EnableMVIndexScan:      forceMVIndexScan,
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols util.HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, countCnt)...)
 	names := make([]*types.FieldName, 0, countCnt)
 	for i, col := range columns {
+		retType := col.FieldType.Clone()
+		// TODO(joechenrh): we must discard array type when building DataSource, which is a bit ugly...
+		if forceMVIndexScan {
+			retType.SetArray(false)
+		}
+
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{
 			DBName:      dbName,
@@ -4671,7 +4704,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		newCol := &expression.Column{
 			UniqueID: sessionVars.AllocPlanColumnID(),
 			ID:       col.ID,
-			RetType:  col.FieldType.Clone(),
+			RetType:  retType,
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
 		}

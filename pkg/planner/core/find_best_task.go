@@ -2215,7 +2215,7 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *logicalop.DataSource) (*ex
 // convertToIndexScan converts the DataSource to index scan with idx.
 func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty,
 	candidate *candidatePath, _ *optimizetrace.PhysicalOptimizeOp) (task base.Task, err error) {
-	if candidate.path.Index.MVIndex {
+	if candidate.path.Index.MVIndex && !ds.EnableMVIndexScan {
 		// MVIndex is special since different index rows may return the same _row_id and this can break some assumptions of IndexReader.
 		// Currently only support using IndexMerge to access MVIndex instead of IndexReader.
 		// TODO: make IndexReader support accessing MVIndex directly.

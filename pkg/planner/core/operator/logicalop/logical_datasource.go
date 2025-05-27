@@ -111,6 +111,10 @@ type DataSource struct {
 	// such as (tidb_shard(a), a ...), the fields are more than 2
 	ContainExprPrefixUk bool
 
+	// EnableMVIndexScan indicates whether we can build index scan from MV-Index.
+	// Currently it's only used by admin check MV-Index.
+	EnableMVIndexScan bool
+
 	// ColsRequiringFullLen is the columns that must be fetched with full length.
 	// It is used to decide whether single scan is enough when reading from an index.
 	ColsRequiringFullLen []*expression.Column
