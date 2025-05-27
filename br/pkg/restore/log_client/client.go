@@ -213,6 +213,7 @@ type LogClient struct {
 	currentTS uint64
 
 	upstreamClusterID uint64
+	restoreID         uint64
 
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
 	deleteRangeQuery          []*stream.PreDelRangeQuery

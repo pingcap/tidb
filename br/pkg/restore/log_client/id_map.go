@@ -107,14 +107,14 @@ func (rc *LogClient) saveIDMap2Table(ctx context.Context, dbMaps []*backuppb.Pit
 		return errors.Trace(err)
 	}
 	// clean the dirty id map at first
-	err = rc.unsafeSession.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %?;", rc.restoreTS, rc.upstreamClusterID)
+	err = rc.unsafeSession.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? and restore_id = %?;", rc.restoreTS, rc.upstreamClusterID, rc.restoreID)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restored_ts, upstream_cluster_id, segment_id, id_map) VALUES (%?, %?, %?, %?);"
+	replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restore_id, restored_ts, upstream_cluster_id, segment_id, id_map) VALUES (%?, %?, %?, %?, %?);"
 	for startIdx, segmentId := 0, 0; startIdx < len(data); segmentId += 1 {
 		endIdx := min(startIdx+PITRIdMapBlockSize, len(data))
-		err := rc.unsafeSession.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreTS, rc.upstreamClusterID, segmentId, data[startIdx:endIdx])
+		err := rc.unsafeSession.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreID, rc.restoreTS, rc.upstreamClusterID, segmentId, data[startIdx:endIdx])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -173,12 +173,13 @@ func (rc *LogClient) loadSchemasMapFromTable(
 	ctx context.Context,
 	restoredTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
-	getPitrIDMapSQL := "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
+	getPitrIDMapSQL := "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restore_id = %? and restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
 	execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
 	rows, _, errSQL := execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
 		nil,
 		getPitrIDMapSQL,
+		rc.restoreID,
 		restoredTS,
 		rc.upstreamClusterID,
 	)
