@@ -528,7 +528,7 @@ type TopN struct {
 	once       sync.Once
 }
 
-// Scale scales the TopN by the given factor.
+// Scale scales the TopN by the given factor. It is only used when to build topN from sampled data during analyze.
 func (c *TopN) Scale(scaleFactor float64) {
 	var total, minCount uint64
 	for i := range c.TopN {
@@ -538,6 +538,7 @@ func (c *TopN) Scale(scaleFactor float64) {
 	}
 	c.minCount = minCount
 	c.totalCount = total
+	c.once.Do(func() {})
 }
 
 // AppendTopN appends a topn into the TopN struct.
