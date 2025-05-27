@@ -746,6 +746,7 @@ import (
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 	jsonArrayagg          "JSON_ARRAYAGG"
 	jsonObjectAgg         "JSON_OBJECTAGG"
+	jsonSumCrc32          "JSON_SUM_CRC32"
 	leader                "LEADER"
 	leaderConstraints     "LEADER_CONSTRAINTS"
 	learner               "LEARNER"
@@ -7391,6 +7392,7 @@ NotKeywordToken:
 |	"FLASHBACK"
 |	"JSON_OBJECTAGG"
 |	"JSON_ARRAYAGG"
+|	"JSON_SUM_CRC32"
 |	"TLS"
 |	"FOLLOWER"
 |	"FOLLOWERS"
@@ -8105,6 +8107,30 @@ SimpleExpr:
 			Expr:            $3,
 			Tp:              tp,
 			FunctionType:    ast.CastFunction,
+			ExplicitCharSet: explicitCharset,
+		}
+	}
+|	jsonSumCrc32 '(' Expression "AS" CastType "ARRAY" ')'
+	{
+		/* Copied from CAST function, except that ARRAY is enforced to be true */
+		tp := $5.(*types.FieldType)
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.GetType())
+		if tp.GetFlen() == types.UnspecifiedLength {
+			tp.SetFlen(defaultFlen)
+		}
+		if tp.GetDecimal() == types.UnspecifiedLength {
+			tp.SetDecimal(defaultDecimal)
+		}
+		tp.SetArray(true)
+		explicitCharset := parser.explicitCharset
+		if !explicitCharset && tp.GetCharset() != charset.CharsetBin {
+			tp.SetCharset(charset.CharsetUTF8MB4)
+			tp.SetCollate(charset.CollationUTF8MB4)
+		}
+		parser.explicitCharset = false
+		$$ = &ast.JSONSumCrc32Expr{
+			Expr:            $3,
+			Tp:              tp,
 			ExplicitCharSet: explicitCharset,
 		}
 	}
