@@ -495,7 +495,7 @@
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
           "   └─Selection       cop[tiflash] lt(test.t1.a, ?)",
-          "     └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), range:[?,?], pushed down filter:empty, keep order:false, invertedindex:idx_a"
+          "     └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), range:[?,?], keep order:false, invertedindex:idx_a"
         ]
       },
       {
@@ -504,7 +504,7 @@
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
           "   └─Selection       cop[tiflash] gt(test.t1.a, ?)",
-          "     └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), range:[?,?], pushed down filter:empty, keep order:false, invertedindex:idx_a"
+          "     └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), range:[?,?], keep order:false, invertedindex:idx_a"
         ]
       },
       {
@@ -513,7 +513,7 @@
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
           "   └─Selection       cop[tiflash] eq(test.t1.a, ?)",
-          "     └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), range:[?,?], pushed down filter:empty, keep order:false, invertedindex:idx_a"
+          "     └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), range:[?,?], keep order:false, invertedindex:idx_a"
         ]
       },
       {
@@ -522,7 +522,7 @@
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
           "   └─Selection       cop[tiflash] in(test.t1.a, ?, ?, ?)",
-          "     └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), range:[?,?], pushed down filter:empty, keep order:false, invertedindex:idx_a"
+          "     └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), range:[?,?], keep order:false, invertedindex:idx_a"
         ]
       },
       {
@@ -531,7 +531,7 @@
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
           "   └─Selection       cop[tiflash] eq(test.t1.b, ?)",
-          "     └─TableFullScan cop[tiflash] table:t1, index:idx_b(b), range:[?,?], pushed down filter:empty, keep order:false, invertedindex:idx_b"
+          "     └─TableFullScan cop[tiflash] table:t1, index:idx_b(b), range:[?,?], keep order:false, invertedindex:idx_b"
         ]
       },
       {
@@ -542,7 +542,7 @@
           "   └─ExchangeSender      cop[tiflash] ",
           "     └─TopN              cop[tiflash] test.t1.c",
           "       └─Selection       cop[tiflash] ne(test.t1.a, ?)",
-          "         └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:empty, keep order:false"
+          "         └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
         ]
       },
       {
@@ -551,7 +551,7 @@
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
           "   └─Selection       cop[tiflash] gt(test.t1.a, ?)",
-          "     └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), range:[?,?], pushed down filter:empty, keep order:false, invertedindex:idx_a"
+          "     └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), range:[?,?], keep order:false, invertedindex:idx_a"
         ]
       },
       {
@@ -561,7 +561,7 @@
           " └─ExchangeSender      cop[tiflash] ",
           "   └─Projection        cop[tiflash] test.t1.a",
           "     └─Selection       cop[tiflash] gt(test.t1.a, ?), gt(test.t1.b, ?)",
-          "       └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), index:idx_b(b), range:[?,?], pushed down filter:empty, keep order:false, invertedindex:idx_a, idx_b"
+          "       └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), index:idx_b(b), range:[?,?], keep order:false, invertedindex:idx_a, idx_b"
         ]
       },
       {
@@ -579,7 +579,7 @@
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
           "   └─Selection       cop[tiflash] or(lt(test.t1.a, ?), lt(test.t1.b, ?))",
-          "     └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), index:idx_b(b), range:[?,?], pushed down filter:empty, keep order:false, invertedindex:idx_a, idx_b"
+          "     └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), index:idx_b(b), range:[?,?], keep order:false, invertedindex:idx_a, idx_b"
         ]
       },
       {
@@ -588,7 +588,7 @@
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
           "   └─Selection       cop[tiflash] gt(test.t1.a, ?), gt(test.t1.b, ?), or(lt(test.t1.a, ?), lt(test.t1.b, ?))",
-          "     └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), index:idx_b(b), range:[?,?], pushed down filter:empty, keep order:false, invertedindex:idx_a, idx_b"
+          "     └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), index:idx_b(b), range:[?,?], keep order:false, invertedindex:idx_a, idx_b"
         ]
       },
       {
@@ -616,7 +616,7 @@
           " └─TableReader         root         ",
           "   └─ExchangeSender    cop[tiflash] ",
           "     └─Selection       cop[tiflash] gt(test.t1.a, ?)",
-          "       └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), range:[?,?], pushed down filter:empty, keep order:false, invertedindex:idx_a"
+          "       └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), range:[?,?], keep order:false, invertedindex:idx_a"
         ]
       }
     ]
