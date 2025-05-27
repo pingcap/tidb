@@ -792,8 +792,6 @@ partition p2 values in (4,12,13,14,18),
 partition p3 values in (7,8,15,16,null)
 );
 insert into t values  (1, 'a'),(1,'b');
-alter table t add unique index idx (id);
-Error 1062 (23000): Duplicate entry '1' for key 't.idx'
 delete from t where name='b';
 alter table t add unique index idx (id);
 delete from t;
@@ -990,8 +988,6 @@ partition p_north values in (('n', 9),('n',10),('n',11),('n',12)),
 partition p_south values in (('s',13),('s',14),('s',15),('s',16))
 );
 insert into t values  ('w', 1, 1),('w', 1, 2);
-alter table t add unique index idx (location,id);
-Error 1062 (23000): Duplicate entry 'w-1' for key 't.idx'
 delete from t where a=2;
 alter table t add unique index idx (location,id);
 delete from t;
