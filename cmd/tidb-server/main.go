@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -275,6 +276,12 @@ func main() {
 	if *version {
 		setVersions()
 		fmt.Println(printer.GetTiDBInfo())
+		os.Exit(0)
+	}
+	// we cannot add this check inside config.Valid(), as previous '-V' also relies
+	// on initialized global config.
+	if kerneltype.IsNextGen() && len(config.GetGlobalConfig().KeyspaceName) == 0 {
+		fmt.Fprintln(os.Stderr, "invalid config: keyspace name is required for nextgen TiDB")
 		os.Exit(0)
 	}
 	registerStores()
