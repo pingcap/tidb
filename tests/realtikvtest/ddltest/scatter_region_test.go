@@ -82,7 +82,7 @@ func TestTiDBScatterRegion(t *testing.T) {
 			// table's regions are distributed across multiple stores. If the table
 			// is not scattered, all leaders would be concentrated on a single store.
 			for _, count := range counts {
-				require.True(t, count < tt.totalRegionCount)
+				require.Less(t, count, tt.totalRegionCount)
 			}
 
 			tk2 := testkit.NewTestKit(t, store)
@@ -102,7 +102,7 @@ func TestTiDBScatterRegion(t *testing.T) {
 			require.Equal(t, true, checkScatterScope)
 			counts = getTableLeaderDistribute(t, tk, tt.tableName)
 			for _, count := range counts {
-				require.True(t, count < tt.totalRegionCount)
+				require.Less(t, count, tt.totalRegionCount)
 			}
 		}
 	}
