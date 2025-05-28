@@ -120,6 +120,7 @@ func (handle *Handle) analyzeBasedOnStatementStats(infoSchema infoschema.InfoSch
 	// Step2: extract metrics from ClusterTableTiDBStatementsStats
 	// TODO: use constant for table name and field name/values
 	// TODO: control the cpu, memory , concurrency and timeout for the query
+	// TODO: change to the snapshot id
 	sql := `select summary_latest.DIGEST, summary_latest.DIGEST_TEXT, summary_latest.BINARY_PLAN,
             ifNULL(summary_start.EXEC_COUNT, summary_latest.EXEC_COUNT, summary_latest.EXEC_COUNT - summary_start.EXEC_COUNT) as EXEC_COUNT
             (SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT
