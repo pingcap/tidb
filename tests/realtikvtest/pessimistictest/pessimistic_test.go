@@ -2155,7 +2155,7 @@ func TestAsyncCommitWithSchemaChange(t *testing.T) {
 	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-	})
+	})()
 	require.NoError(t, failpoint.Enable("tikvclient/asyncCommitDoNothing", "return"))
 	defer func() { require.NoError(t, failpoint.Disable("tikvclient/asyncCommitDoNothing")) }()
 
