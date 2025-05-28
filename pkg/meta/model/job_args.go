@@ -348,9 +348,6 @@ type TruncateTableArgs struct {
 	NewPartIDsWithPolicy           []int64 `json:"-"`
 	OldPartIDsWithPolicy           []int64 `json:"-"`
 	ShouldUpdateAffectedPartitions bool    `json:"-"`
-
-	// used for scatter region
-	ScatterScope string `json:"scatter_scope,omitempty"`
 }
 
 func (a *TruncateTableArgs) getArgsV1(job *Job) []any {
@@ -433,9 +430,6 @@ type TablePartitionArgs struct {
 
 	// runtime info
 	NewPartitionIDs []int64 `json:"-"`
-
-	// only used by ActionAddTablePartition for scatter region
-	ScatterScope string `json:"scatter_scope,omitempty"`
 }
 
 func (a *TablePartitionArgs) getArgsV1(job *Job) []any {

@@ -1128,6 +1128,7 @@ func (e *executor) createTableWithInfoJob(
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involvingSchemas,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
+		ScatterScope:        getScatterScopeFromSessionctx(ctx),
 	}
 	args := &model.CreateTableArgs{
 		TableInfo:      tbInfo,
@@ -1160,13 +1161,14 @@ func (e *executor) createTableWithInfoPost(
 	ctx sessionctx.Context,
 	tbInfo *model.TableInfo,
 	schemaID int64,
+	scatterScope string,
 ) error {
 	var err error
 	var partitions []model.PartitionDefinition
 	if pi := tbInfo.GetPartitionInfo(); pi != nil {
 		partitions = pi.Definitions
 	}
-	preSplitAndScatter(ctx, e.store, tbInfo, partitions, getScatterScopeFromSessionctx(ctx))
+	preSplitAndScatter(ctx, e.store, tbInfo, partitions, scatterScope)
 	if tbInfo.AutoIncID > 1 {
 		// Default tableAutoIncID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
@@ -1221,7 +1223,7 @@ func (e *executor) CreateTableWithInfo(
 			err = nil
 		}
 	} else {
-		err = e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID)
+		err = e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID, jobW.ScatterScope)
 	}
 
 	return errors.Trace(err)
@@ -1313,7 +1315,7 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	}
 
 	for _, tblArgs := range args.Tables {
-		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID); err != nil {
+		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID, jobW.ScatterScope); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -2278,10 +2280,10 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+		ScatterScope:   getScatterScopeFromSessionctx(ctx),
 	}
 	args := &model.TablePartitionArgs{
-		PartInfo:     partInfo,
-		ScatterScope: getScatterScopeFromSessionctx(ctx),
+		PartInfo: partInfo,
 	}
 
 	if spec.Tp == ast.AlterTableAddLastPartition && spec.Partition != nil {
@@ -2790,11 +2792,11 @@ func (e *executor) TruncateTablePartition(ctx sessionctx.Context, ident ast.Iden
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+		ScatterScope:   getScatterScopeFromSessionctx(ctx),
 	}
 	args := &model.TruncateTableArgs{
 		OldPartitionIDs: pids,
 		// job submitter will fill new partition IDs.
-		ScatterScope: getScatterScopeFromSessionctx(ctx),
 	}
 
 	err = e.doDDLJob2(ctx, job, args)
@@ -4293,11 +4295,11 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+		ScatterScope:   getScatterScopeFromSessionctx(ctx),
 	}
 	args := &model.TruncateTableArgs{
 		FKCheck:         fkCheck,
 		OldPartitionIDs: oldPartitionIDs,
-		ScatterScope:    getScatterScopeFromSessionctx(ctx),
 	}
 	err = e.doDDLJob2(ctx, job, args)
 	if err != nil {
