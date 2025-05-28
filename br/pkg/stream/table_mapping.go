@@ -112,7 +112,7 @@ func (tm *TableMappingManager) FromDBReplaceMap(dbReplaceMap map[UpstreamID]*DBR
 // MetaInfoCollector is an interface for collecting metadata information during parsing
 type MetaInfoCollector interface {
 	// OnDatabaseInfo is called when database information is found in a value
-	OnDatabaseInfo(dbId int64, dbName string, ts uint64)
+	OnDatabaseInfo(dbId int64, dbName string, commitTs uint64)
 	// OnTableInfo is called when table information is found in a value
 	OnTableInfo(dbID, tableId int64, tableSimpleInfo *tableSimpleInfo, commitTs uint64)
 }
@@ -224,19 +224,21 @@ func extractDBName(value []byte) (string, error) {
 	return dbInfo.Name.O, nil
 }
 
-func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForDefaultCf(dbId int64, value []byte, ts uint64) error {
+func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForDefaultCf(
+	dbId int64, value []byte, startTs uint64) error {
 	dbName, err := extractDBName(value)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	tm.tempDefaultKVDbMap[dbMetaKey{
 		dbId: dbId,
-		ts:   ts,
+		ts:   startTs,
 	}] = dbName
 	return nil
 }
 
-func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForWriteCf(dbId int64, value []byte, commitTs uint64, collector MetaInfoCollector) error {
+func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForWriteCf(
+	dbId int64, value []byte, commitTs uint64, collector MetaInfoCollector) error {
 	startTs, value, err := parsePutValueForWriteCf(value)
 	if err != nil {
 		return errors.Trace(err)
@@ -261,7 +263,8 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForWriteCf(dbId int
 	)
 }
 
-func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(dbId int64, dbName string, commitTs uint64, collector MetaInfoCollector) error {
+func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(
+	dbId int64, dbName string, commitTs uint64, collector MetaInfoCollector) error {
 	dbReplace, err := tm.getOrCreateDBReplace(dbId)
 	if err != nil {
 		return errors.Trace(err)
@@ -345,7 +348,8 @@ func extractTableSimpleInfo(value []byte) (int64, *tableSimpleInfo, error) {
 	}, nil
 }
 
-func (tm *TableMappingManager) parseTableValueAndUpdateIdMappingForDefaultCf(dbID int64, value []byte, ts uint64) error {
+func (tm *TableMappingManager) parseTableValueAndUpdateIdMappingForDefaultCf(
+	dbID int64, value []byte, ts uint64) error {
 	tableId, tableSimpleInfo, err := extractTableSimpleInfo(value)
 	if err != nil {
 		return errors.Trace(err)
@@ -358,7 +362,8 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMappingForDefaultCf(dbI
 	return nil
 }
 
-func (tm *TableMappingManager) parseTableValueAndUpdateIdMappingForWriteCf(dbId, tableId int64, value []byte, commitTs uint64, collector MetaInfoCollector) error {
+func (tm *TableMappingManager) parseTableValueAndUpdateIdMappingForWriteCf(
+	dbId, tableId int64, value []byte, commitTs uint64, collector MetaInfoCollector) error {
 	startTs, value, err := parsePutValueForWriteCf(value)
 	if err != nil {
 		return errors.Trace(err)
@@ -379,12 +384,14 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMappingForWriteCf(dbId,
 		delete(tm.tempDefaultKVTableMap, idx)
 		return tm.parseTableValueAndUpdateIdMapping(dbId, tableId, commitTs, tableSimpleInfo, collector)
 	}
-	return errors.Errorf("the default cf kv is lost when there is its write cf kv(db id:%d, table id:%d, value %s)",
+	return errors.Errorf(
+		"the default cf kv is lost when there is its write cf kv(db id:%d, table id:%d, value %s)",
 		dbId, tableId, base64.StdEncoding.EncodeToString(value),
 	)
 }
 
-func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbId, tableId int64, commitTs uint64, tableSimpleInfo *tableSimpleInfo, collector MetaInfoCollector) error {
+func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(
+	dbId, tableId int64, commitTs uint64, tableSimpleInfo *tableSimpleInfo, collector MetaInfoCollector) error {
 	dbReplace, err := tm.getOrCreateDBReplace(dbId)
 	if err != nil {
 		return errors.Trace(err)
@@ -678,7 +685,8 @@ func parsePutValueForWriteCf(value []byte) (uint64, []byte, error) {
 		return 0, rawWriteCFValue.GetShortValue(), nil
 	}
 	if rawWriteCFValue.GetStartTs() == 0 {
-		return 0, nil, errors.Errorf("the start ts is 0 when it is a put key(%s)", base64.StdEncoding.EncodeToString(value))
+		return 0, nil, errors.Errorf(
+			"the start ts is 0 when it is a put key(%s)", base64.StdEncoding.EncodeToString(value))
 	}
 	return rawWriteCFValue.GetStartTs(), nil, nil
 }

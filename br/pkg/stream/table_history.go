@@ -108,7 +108,8 @@ func (info *LogBackupTableHistoryManager) OnDatabaseInfo(dbId int64, dbName stri
 }
 
 // OnTableInfo implements MetaInfoCollector.OnTableInfo
-func (info *LogBackupTableHistoryManager) OnTableInfo(dbID, tableId int64, tableSimpleInfo *tableSimpleInfo, commitTs uint64) {
+func (info *LogBackupTableHistoryManager) OnTableInfo(
+	dbID, tableId int64, tableSimpleInfo *tableSimpleInfo, commitTs uint64) {
 	info.AddTableHistory(tableId, tableSimpleInfo.Name, dbID, commitTs)
 
 	// add history for all partitions if this is a partitioned table
