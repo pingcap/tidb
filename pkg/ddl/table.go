@@ -581,7 +581,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		partitions = tblInfo.GetPartitionInfo().Definitions
 	}
-	preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, partitions, args.ScatterScope)
+	preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, partitions, job.ScatterScope)
 
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {

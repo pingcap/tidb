@@ -389,6 +389,9 @@ type Job struct {
 
 	// SQLMode for executing DDL query.
 	SQLMode mysql.SQLMode `json:"sql_mode"`
+
+	// ScatterScope used for scatter region
+	ScatterScope string `json:"scatter_scope"`
 }
 
 // FinishTableJob is called when a job is finished.
