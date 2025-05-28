@@ -1152,7 +1152,8 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		// allSameIndex limitation is lifted.
 		lowestCountAfterAccessIdx := matchIdxes.matchIdx[0]
 		// For MV index, we just choose the first (best) one.
-		if alternatives[lowestCountAfterAccessIdx][0].Index.MVIndex {
+		if alternatives[lowestCountAfterAccessIdx][0].Index != nil &&
+			alternatives[lowestCountAfterAccessIdx][0].Index.MVIndex {
 			useMVIndex = true
 		}
 		determinedIndexPartialPaths = append(determinedIndexPartialPaths,
