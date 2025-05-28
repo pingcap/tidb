@@ -910,7 +910,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.TTLInfo = ttlInfo
 			ttlOptionsHandled = true
 		case ast.TableOptionEngineAttribute:
-			if !kerneltype.IsNextGen() {
+			if kerneltype.IsClassic() {
 				return errors.Trace(dbterror.ErrUnsupportedEngineAttribute)
 			}
 			if err := handleEngineAttributeForCreateTable(op.StrValue, tbInfo); err != nil {

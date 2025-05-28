@@ -40,7 +40,7 @@ func handleEngineAttributeForCreateTable(input string, tbInfo *model.TableInfo) 
 			return errors.Trace(err)
 		}
 
-		logutil.DDLLogger().Info("storage class: create table with settings",
+		logutil.DDLLogger().Info("create table with storage class settings",
 			zap.Int64("tableID", tbInfo.ID), zap.Any("settings", settings))
 
 		if err = BuildStorageClassForTable(tbInfo, settings); err != nil {

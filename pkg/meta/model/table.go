@@ -1415,7 +1415,8 @@ func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
 // EngineAttribute is the JSON format of ENGINE_ATTRIBUTE property of tables.
 type EngineAttribute struct {
 	// StorageClass is the storage class tier of the table.
-	// It is a JSON object, which can be used to define the storage class tier and scope.
+	// It is either a string literal, a JSON object, or a slice of JSON object,
+	// which can be used to define the storage class tier and scope.
 	// For example, the storage class tier can be one of the following:
 	// - STANDARD: The standard storage class tier, used for frequently accessed
 	//   data that is stored on TiKV's local disk.
@@ -1429,6 +1430,7 @@ type EngineAttribute struct {
 	//   defined as LESS THAN (<VALUE>, ...) where (<VALUE>, ...) <= (<less-than-value>, ...)
 	// - `values_in`: A JSON array to match partitions defined by VALUES_IN
 	//   where the values are FULLY covered by <in-values>.
+	// Note: Currently, the scope only supports `names_in`.
 	StorageClass json.RawMessage `json:"storage_class"`
 }
 

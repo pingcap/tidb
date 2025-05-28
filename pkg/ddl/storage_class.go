@@ -54,10 +54,10 @@ func BuildStorageClassSettingsFromJSON(input json.RawMessage) (*model.StorageCla
 	decoder.DisallowUnknownFields()
 
 	var def model.StorageClassDef
-	if err := decoder.Decode(&def); err == nil {
+	if err1 := decoder.Decode(&def); err1 == nil {
 		def.Tier = strings.ToUpper(def.Tier)
-		if err := checkStorageClassDef(&def); err != nil {
-			return nil, err
+		if err2 := checkStorageClassDef(&def); err2 != nil {
+			return nil, err2
 		}
 
 		for i, name := range def.NamesIn {
@@ -77,7 +77,7 @@ func BuildStorageClassSettingsFromJSON(input json.RawMessage) (*model.StorageCla
 
 	// Try parsing as a slice of objects
 	var defs []*model.StorageClassDef
-	if err := json.Unmarshal(input, &defs); err == nil {
+	if err1 := json.Unmarshal(input, &defs); err1 == nil {
 		return &model.StorageClassSettings{
 			Defs: defs,
 		}, nil
@@ -126,7 +126,7 @@ func checkStorageClassDef(def *model.StorageClassDef) error {
 		scopeFields++
 	}
 	if scopeFields > 1 {
-		msg := "can not specify 'names_in', 'less_than', or 'values_in' together"
+		msg := "can only specify one of 'names_in', 'less_than', and 'values_in'"
 		return dbterror.ErrStorageClassInvalidSpec.GenWithStackByArgs(msg)
 	}
 

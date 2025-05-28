@@ -26,7 +26,7 @@ import (
 )
 
 func TestEngineAttribute(t *testing.T) {
-	if !kerneltype.IsNextGen() {
+	if kerneltype.IsClassic() {
 		t.Skip("skip test not in nextgen")
 	}
 	store := testkit.CreateMockStore(t)
