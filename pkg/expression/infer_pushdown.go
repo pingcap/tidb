@@ -102,7 +102,7 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 		if DefaultExprPushDownBlacklistMap == nil {
 			return true
 		}
-		// ScalarFuncSigLowerNameMap is to string.TOLower the function name in tipb.ScalarFuncSig_name.
+		// ScalarFuncSigLowerNameMap is to string.ToLower the function name in tipb.ScalarFuncSig_name.
 		// ref https://github.com/pingcap/tidb/issues/61375
 		funcFullName := fmt.Sprintf("%s.%s", sf.FuncName.L, ScalarFuncSigLowerNameMap[sf.Function.PbCode().String()])
 		// Aside from checking function name, also check the pb name in case only the specific push down is disabled.
