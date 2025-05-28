@@ -188,7 +188,8 @@ func (r *Registry) createTableIfNotExist(ctx context.Context) error {
 }
 
 // executeInTransaction executes a function within a pessimistic transaction
-func (r *Registry) executeInTransaction(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor, []sqlexec.OptionFuncAlias) error) error {
+func (r *Registry) executeInTransaction(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor,
+	[]sqlexec.OptionFuncAlias) error) error {
 	sessCtx := r.se.GetSessionCtx()
 	execCtx := sessCtx.GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
@@ -201,20 +202,23 @@ func (r *Registry) executeInTransaction(ctx context.Context, fn func(context.Con
 		return errors.Annotate(err, "failed to begin transaction")
 	}
 
-	defer func() {
-		if err != nil {
-			if _, _, rollbackErr := execCtx.ExecRestrictedSQL(ctx, sessionOpts, "ROLLBACK"); rollbackErr != nil {
-				log.Error("failed to rollback transaction", zap.Error(rollbackErr))
-			}
-		} else {
-			if _, _, commitErr := execCtx.ExecRestrictedSQL(ctx, sessionOpts, "COMMIT"); commitErr != nil {
-				log.Error("failed to commit transaction", zap.Error(commitErr))
-				err = commitErr
-			}
-		}
-	}()
+	// Execute the function and capture its error
+	fnErr := fn(ctx, execCtx, sessionOpts)
 
-	return fn(ctx, execCtx, sessionOpts)
+	// Handle commit/rollback based on fn() result
+	if fnErr != nil {
+		if _, _, rollbackErr := execCtx.ExecRestrictedSQL(ctx, sessionOpts, "ROLLBACK"); rollbackErr != nil {
+			log.Error("failed to rollback transaction", zap.Error(rollbackErr))
+		}
+		return fnErr
+	} else {
+		if _, _, commitErr := execCtx.ExecRestrictedSQL(ctx, sessionOpts, "COMMIT"); commitErr != nil {
+			log.Error("failed to commit transaction", zap.Error(commitErr))
+			return commitErr
+		}
+	}
+
+	return nil
 }
 
 // ResumeOrCreateRegistration first looks for an existing registration with the given parameters.
@@ -236,7 +240,8 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 
 	var taskID uint64
 
-	err := r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor, sessionOpts []sqlexec.OptionFuncAlias) error {
+	err := r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor,
+		sessionOpts []sqlexec.OptionFuncAlias) error {
 		// first look for an existing task with the same parameters
 		lookupSQL := fmt.Sprintf(lookupRegistrationSQLTemplate, RegistrationDBName, RegistrationTableName)
 		rows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, lookupSQL,
@@ -357,7 +362,8 @@ func (r *Registry) updateTaskStatusConditional(ctx context.Context, restoreID ui
 
 // Unregister removes a restore registration and cleans up empty table/database atomically
 func (r *Registry) Unregister(ctx context.Context, restoreID uint64) error {
-	return r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor, sessionOpts []sqlexec.OptionFuncAlias) error {
+	return r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor,
+		sessionOpts []sqlexec.OptionFuncAlias) error {
 		// first, delete the specific registration
 		deleteSQL := fmt.Sprintf(deleteRegistrationSQLTemplate, RegistrationDBName, RegistrationTableName)
 		_, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, deleteSQL, restoreID)
@@ -399,7 +405,8 @@ func (r *Registry) Unregister(ctx context.Context, restoreID uint64) error {
 				zap.String("table", RegistrationTableName))
 
 			// check if the database has any other tables
-			checkDBSQL := fmt.Sprintf("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = %q", RegistrationDBName)
+			checkDBSQL := fmt.Sprintf(
+				"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = %q", RegistrationDBName)
 			dbCountRows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, checkDBSQL)
 			if err != nil {
 				log.Warn("failed to check if registration database is empty, skipping database cleanup",

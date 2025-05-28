@@ -242,10 +242,58 @@ test_restore_with_different_systable_settings() {
     cleanup
 }
 
+test_restore_registry_database_exclusion() {
+    echo "Test Case 4: Restore registry database exclusion from backup and restore"
+    
+    # create a restore registry database manually to simulate what happens during restore
+    run_sql "CREATE DATABASE __TiDB_BR_Temporary_Restore_Registration_DB;"
+    run_sql "CREATE TABLE __TiDB_BR_Temporary_Restore_Registration_DB.restore_registry(id int, data varchar(100));"
+    run_sql "INSERT INTO __TiDB_BR_Temporary_Restore_Registration_DB.restore_registry VALUES (1, 'test_data');"
+    
+    # create some normal test data
+    run_sql "CREATE DATABASE test_registry_exclusion;"
+    run_sql "CREATE TABLE test_registry_exclusion.normal_table(id int, value varchar(50));"
+    run_sql "INSERT INTO test_registry_exclusion.normal_table VALUES (1, 'normal_data');"
+    
+    echo "backing up data including restore registry database..."
+    run_br backup full -s "local://$TEST_DIR/registry_exclusion_backup"
+    
+    # verify that the restore registry database was excluded from backup
+    # by checking that it doesn't appear in the backup metadata
+    if run_br restore full --dry-run -s "local://$TEST_DIR/registry_exclusion_backup" 2>&1 | grep -q "__TiDB_BR_Temporary_Restore_Registration_DB"; then
+        echo "Error: Restore registry database was included in backup when it should have been excluded!"
+        exit 1
+    fi
+    
+    # clean up the databases
+    run_sql "DROP DATABASE __TiDB_BR_Temporary_Restore_Registration_DB;"
+    run_sql "DROP DATABASE test_registry_exclusion;"
+    
+    echo "restoring data to verify normal tables are restored but registry database is not..."
+    run_br restore full -s "local://$TEST_DIR/registry_exclusion_backup"
+    
+    # verify that normal table was restored
+    run_sql "SELECT value FROM test_registry_exclusion.normal_table WHERE id = 1;" | grep "normal_data"
+    
+    # verify that restore registry database was not restored
+    if run_sql "SHOW DATABASES LIKE '__TiDB_BR_Temporary_Restore_Registration_DB';" | grep -q "__TiDB_BR_Temporary_Restore_Registration_DB"; then
+        echo "Error: Restore registry database was restored when it should have been excluded!"
+        exit 1
+    fi
+    
+    echo "Restore registry database exclusion test completed successfully"
+    
+    # clean up
+    run_sql "DROP DATABASE test_registry_exclusion;"
+    
+    verify_no_temporary_databases "Test Case 4: Restore registry database exclusion"
+}
+
 setup_test_environment
 
 test_mixed_parallel_restores
 test_concurrent_restore_table_conflicts
 test_restore_with_different_systable_settings
+test_restore_registry_database_exclusion
 
 echo "Parallel restore tests completed successfully"

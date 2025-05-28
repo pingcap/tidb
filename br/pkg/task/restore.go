@@ -877,7 +877,6 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	defer restoreRegistry.Close()
 	cfg.RestoreRegistry = restoreRegistry
 
-	var restoreError error
 	if IsStreamRestore(cmdName) {
 		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBRPiTR); err != nil {
 			return errors.Trace(err)
@@ -907,21 +906,21 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// if checkpoint is not persisted, let's just unregister the task since we don't need it
 		if hasCheckpointPersisted(c, cfg) {
 			log.Info("pausing restore task from registry",
-				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(restoreError))
+				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(restoreErr))
 			if err := restoreRegistry.PauseTask(c, cfg.RestoreID); err != nil {
 				log.Error("failed to pause restore task from registry",
 					zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
 			}
 		} else {
 			log.Info("unregistering restore task from registry",
-				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(restoreError))
+				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(restoreErr))
 			if err := restoreRegistry.Unregister(c, cfg.RestoreID); err != nil {
 				log.Error("failed to unregister restore task from registry",
 					zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
 			}
 		}
 
-		return errors.Trace(restoreError)
+		return errors.Trace(restoreErr)
 	}
 
 	// unregister restore task

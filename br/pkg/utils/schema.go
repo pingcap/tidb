@@ -57,10 +57,10 @@ func StripTempDBPrefixIfNeeded(tempDB string) string {
 
 // StripTempDBPrefix get the original name of temporary system DB
 func StripTempDBPrefix(tempDB string) (string, bool) {
-	if ok := strings.HasPrefix(tempDB, temporaryDBNamePrefix); !ok {
+	if ok := strings.HasPrefix(tempDB, TemporaryDBNamePrefix); !ok {
 		return tempDB, false
 	}
-	return tempDB[len(temporaryDBNamePrefix):], true
+	return tempDB[len(TemporaryDBNamePrefix):], true
 }
 
 // IsSysOrTempSysDB tests whether the database is system DB or prefixed with temp.
