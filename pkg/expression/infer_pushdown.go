@@ -48,8 +48,8 @@ var ExprPushDownBlackListReloadTimeStamp *atomic.Int64
 var scalarFuncSigLowerNameMap map[string]string
 
 func init() {
-	DefaultExprPushDownBlacklistMap := make(map[string]uint32)
-	DefaultExprPushDownBlacklist.Store(&DefaultExprPushDownBlacklistMap)
+	defaultExprPushDownBlacklistMap := make(map[string]uint32)
+	DefaultExprPushDownBlacklist.Store(&defaultExprPushDownBlacklistMap)
 	ExprPushDownBlackListReloadTimeStamp = new(atomic.Int64)
 	nameSlices := slices.Collect(maps.Values(tipb.ScalarFuncSig_name))
 	scalarFuncSigLowerNameMap = make(map[string]string, len(nameSlices))
