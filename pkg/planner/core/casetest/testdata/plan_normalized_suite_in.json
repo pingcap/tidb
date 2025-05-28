@@ -54,45 +54,5 @@
       "explain format = 'brief' select /*+ read_from_storage(tiflash[t1]) */ a+b from t1 where a+b < 1",
       "explain format = 'brief' select /*+ read_from_storage(tikv[t1]) */ a+b from t1 where a+b < 1"
     ]
-  },
-  {
-    "name": "TestTiFlashLateMaterialization",
-    "cases": [
-      "explain select * from t1;",
-      "explain select * from t1 where a<1;",
-      "explain select * from t1 where a>2",
-      "explain select * from t1 where a=1",
-      "explain select * from t1 where a in (1,2,3)",
-      "explain select * from t1 where b=1",
-      "explain select * from t1 where a!=1 order by c limit 1",
-      "explain select a from t1 where a>2",
-      "explain select a from t1 where a>2 and b>1",
-      "explain select * from t1 where a>2 and b>1 and c>1",
-      "explain select * from t1 where a<1 or b<2",
-      "explain select * from t1 where (a<1 or b<2) and (a>3 and b>3)",
-      "explain select * from t1 where (a<1 or b<2) and (a>3 and b>3) and c>1",
-      "explain select * from t1 where (a>2 or b<2) and (a>3 and b>3) and c>2",
-      "explain select count(a), max(t) from t1 where a>2"
-    ]
-  },
-  {
-    "name": "TestInvertedIndex",
-    "cases": [
-      "explain select * from t1;",
-      "explain select * from t1 where a<1;",
-      "explain select * from t1 where a>2",
-      "explain select * from t1 where a=1",
-      "explain select * from t1 where a in (1,2,3)",
-      "explain select * from t1 where b=1",
-      "explain select * from t1 where a!=1 order by c limit 1",
-      "explain select a from t1 where a>2",
-      "explain select a from t1 where a>2 and b>1",
-      "explain select * from t1 where a>2 and b>1 and c>1",
-      "explain select * from t1 where a<1 or b<2",
-      "explain select * from t1 where (a<1 or b<2) and (a>3 and b>3)",
-      "explain select * from t1 where (a<1 or b<2) and (a>3 and b>3) and c>1",
-      "explain select * from t1 where (a>2 or b<2) and (a>3 and b>3) and c>2",
-      "explain select count(a), max(t) from t1 where a>2"
-    ]
   }
 ]

@@ -160,7 +160,6 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	}
 
 	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
-	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 
 	var unsignedIntHandle bool
 	if p.Table.PKIsHandle {
@@ -170,20 +169,34 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	}
 	hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
 
-	if p.StoreType == kv.TiFlash {
+	if p.StoreType == kv.TiFlash && len(p.LateMaterializationFilterCondition) > 0 {
+		// For late materialization, we will scan all rows of filter columns in the table or given range first.
+		// And the rows of rest columns after filtering may be discrete, so we need to add some penalty for it.
+		// so late materialization cost = lmRowSize * scanFactor * totalRowCount + restRowSize * scanFactor * rows * lateMaterializationFactor
+		// And for small tables, len(p.LateMaterializationFilterCondition) always equal to 0, so do
+		cols := make([]*expression.Column, 0, len(p.Columns))
+		cols = expression.ExtractColumnsFromExpressions(cols, p.LateMaterializationFilterCondition, nil)
+		lmRowSize := getAvgRowSize(p.StatsInfo(), cols)
+		totalRowCount := rows/p.lateMaterializationSelectivity + TiFlashStartupRowPenalty
+		p.PlanCostVer2 = costusage.NewCostVer2(option, scanFactor,
+			totalRowCount*max(math.Log2(lmRowSize), 0)*scanFactor.Value,
+			func() string {
+				return fmt.Sprintf("lm_col_scan(%v*logrowsize(%v)*%v)", totalRowCount, lmRowSize, scanFactor)
+			})
+		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, scanFactor,
+			rows*max(math.Log2(rowSize-lmRowSize), 0)*scanFactor.Value*defaultVer2Factors.LateMaterializationScan.Value,
+			func() string {
+				return fmt.Sprintf("lm_rest_col_scan(%v*logrowsize(%v)*%v*lm_scan_factor(%v))", rows, rowSize-lmRowSize, scanFactor, defaultVer2Factors.LateMaterializationScan.Value)
+			}))
+	} else if p.StoreType == kv.TiFlash {
+		p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 		// Apply TiFlash startup cost to prefer TiKV for small table scans
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, TiFlashStartupRowPenalty, rowSize, scanFactor))
-		// Add penalty for late materialization
-		if len(p.LateMaterializationFilterCondition) > 0 {
-			// For late materialization, we will scan all rows of filter columns in the table or given range first.
-			// And the rows of rest columns after filtering may be discrete, so we need to add some penalty for it.
-			// so late materialization cost = lmRowSize * scanFactor * scanRowCount + restRowSize * scanFactor * rowCount * lateMaterializationFactor
-			cols := make([]*expression.Column, 0, len(p.Columns))
-			cols = expression.ExtractColumnsFromExpressions(cols, p.LateMaterializationFilterCondition, nil)
-			lmRowSize := getAvgRowSize(p.StatsInfo(), cols)
-			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, lmRowSize/rowSize*defaultVer2Factors.LateMaterializationScan.Value)
-			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, rows/p.lateMaterializationSelectivity, lmRowSize, scanFactor))
-		}
+	} else {
+		p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
+	}
+
+	if p.StoreType == kv.TiFlash {
 		// Add penalty for search index
 		for _, idx := range p.UsedColumnarIndexes {
 			if idx == nil {
@@ -1101,9 +1114,9 @@ var defaultVer2Factors = costVer2Factors{
 	ANNIndexStart:           costusage.CostVer2Factor{Name: "ann_index_start_factor", Value: 0.000144},
 	ANNIndexScanRow:         costusage.CostVer2Factor{Name: "ann_index_scan_factor", Value: 1.65},
 	ANNIndexNoTopK:          costusage.CostVer2Factor{Name: "ann_index_no_topk_factor", Value: math.MaxUint64},
-	InvertedIndexSearch:     costusage.CostVer2Factor{Name: "inverted_index_scan_factor", Value: 139.2}, // (8 + 4) * TiFlashScan, 8 for 8 bytes of key, 4 for 4 bytes of RowID
-	InvertedIndexScan:       costusage.CostVer2Factor{Name: "late_materialization_scan_factor", Value: 1.5},
-	LateMaterializationScan: costusage.CostVer2Factor{Name: "late_materialization_scan_factor", Value: 1.5},
+	InvertedIndexSearch:     costusage.CostVer2Factor{Name: "inverted_index_search_factor", Value: 139.2}, // (8 + 4) * TiFlashScan, 8 for 8 bytes of key, 4 for 4 bytes of RowID
+	InvertedIndexScan:       costusage.CostVer2Factor{Name: "inverted_index_scan_factor", Value: 1.5},
+	LateMaterializationScan: costusage.CostVer2Factor{Name: "lm_scan_factor", Value: 1.5},
 }
 
 func getTaskCPUFactorVer2(_ base.PhysicalPlan, taskType property.TaskType) costusage.CostVer2Factor {

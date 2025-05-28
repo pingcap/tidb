@@ -107,7 +107,7 @@ func groupByColumnsSortBySelectivity(sctx base.PlanContext, conds []expression.E
 	for _, group := range groupMap {
 		selectivity, _, err := cardinality.Selectivity(sctx, ts.tblColHists, group, nil)
 		if err != nil {
-			logutil.BgLogger().Debug("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
+			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
 		}
 		if selectivity <= selectivityThreshold {
@@ -203,7 +203,7 @@ func predicatePushDownToTableScan(sctx base.PlanContext, conds []expression.Expr
 		mergedConds := append(selectedConds, exprGroup.exprs...)
 		selectivity, _, err := cardinality.Selectivity(sctx, ts.tblColHists, mergedConds, nil)
 		if err != nil {
-			logutil.BgLogger().Debug("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
+			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
 		}
 		colCnt := expression.ExtractColumnSet(mergedConds...).Len()
@@ -334,7 +334,7 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 		// 3. The selectivity of the predicate is less than 60%.
 		selectivity, _, err := cardinality.Selectivity(pctx, ts.tblColHists, []expression.Expression{cond}, nil)
 		if err != nil {
-			logutil.BgLogger().Debug("calculate selectivity failed", zap.Error(err))
+			logutil.BgLogger().Warn("calculate selectivity failed", zap.Error(err))
 			continue
 		}
 		if selectivity > selectivityThreshold {
@@ -375,8 +375,12 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 	selectedConditions = append(selectedConditions, ts.LateMaterializationFilterCondition...)
 	selectivity, _, err := cardinality.Selectivity(ts.SCtx(), ts.tblColHists, selectedConditions, nil)
 	if err != nil {
-		logutil.BgLogger().Debug("calculate selectivity failed", zap.Error(err))
+		logutil.BgLogger().Warn("calculate selectivity failed", zap.Error(err))
 		selectivity = selectivityThreshold
 	}
 	ts.SetStats(ts.StatsInfo().Scale(selectivity))
+	// just to make explain result stable
+	slices.SortFunc(ts.UsedColumnarIndexes, func(lhs, rhs *ColumnarIndexExtra) int {
+		return cmp.Compare(lhs.IndexInfo.ID, rhs.IndexInfo.ID)
+	})
 }
