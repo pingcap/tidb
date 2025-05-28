@@ -25,6 +25,7 @@ function start_tidb() {
     make
     echo "build successfully"
     cd - || exit 1
+  fi
 
   echo "Starting TiUP Playground in the background..."
   if [ -f "../../bin/tikv-server" ] && [ -f "../../bin/pd-server" ] && [ -f "../../bin/tiflash" ]; then
