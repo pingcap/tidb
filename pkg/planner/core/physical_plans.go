@@ -1849,6 +1849,11 @@ type PhysicalCTESource struct {
 	IDForStorage int
 	Tasks        []*kv.MPPTask
 	frags        []*Fragment
+
+	// Current MPP side doesn't implement the UNION ALL executor. The Sink will be duplicated x times if it has UNION ALL inside it.
+	// The DuplicatedSinkNum is used to indicate how many times the CTE sink has been copied.
+	DuplicatedSinkNum   uint32
+	DuplicatedSourceNum uint32
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -2020,6 +2025,10 @@ type PhysicalCTESink struct {
 	TargetTasks     []*kv.MPPTask
 	Tasks           []*kv.MPPTask
 	CompressionMode vardef.ExchangeCompressionMode
+	// Current MPP side doesn't implement the UNION ALL executor. The Sink will be duplicated x times if it has UNION ALL inside it.
+	// The DuplicatedSinkNum is used to indicate how many times the CTE sink has been copied.
+	DuplicatedSinkNum   uint32
+	DuplicatedSourceNum uint32
 }
 
 func (p *PhysicalCTESink) GetCompressionMode() vardef.ExchangeCompressionMode {

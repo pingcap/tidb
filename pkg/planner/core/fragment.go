@@ -168,7 +168,72 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragm
 		frag.MPPSink.SetTargetTasks([]*kv.MPPTask{tidbTask})
 		frag.IsRoot = true
 	}
+	e.fixDuplicatedTimesForCTE(frags)
 	return e.frags, nil
+}
+
+type cteHelper struct {
+	cteMap map[int]struct {
+		sinks   []*PhysicalCTESink
+		sources []*PhysicalCTESource
+	}
+}
+
+func (e *mppTaskGenerator) traverseFragForCTE(p base.PhysicalPlan, cteMap map[int]struct {
+	sinks   []*PhysicalCTESink
+	sources []*PhysicalCTESource
+}) {
+	switch x := p.(type) {
+	case *PhysicalCTESink:
+		if _, ok := cteMap[x.IDForStorage]; !ok {
+			cteMap[x.IDForStorage] = struct {
+				sinks   []*PhysicalCTESink
+				sources []*PhysicalCTESource
+			}{sinks: make([]*PhysicalCTESink, 0, 1), sources: make([]*PhysicalCTESource, 0, 1)}
+		}
+		cteHelper := cteMap[x.IDForStorage]
+		cteHelper.sinks = append(cteHelper.sinks, x)
+		cteMap[x.IDForStorage] = cteHelper
+	case *PhysicalCTESource:
+		if _, ok := cteMap[x.IDForStorage]; !ok {
+			cteMap[x.IDForStorage] = struct {
+				sinks   []*PhysicalCTESink
+				sources []*PhysicalCTESource
+			}{sinks: make([]*PhysicalCTESink, 0, 1), sources: make([]*PhysicalCTESource, 0, 1)}
+		}
+		cteHelper := cteMap[x.IDForStorage]
+		cteHelper.sources = append(cteHelper.sources, x)
+		cteMap[x.IDForStorage] = cteHelper
+		return
+	case *PhysicalExchangeReceiver, *PhysicalTableScan:
+		return
+	}
+	for _, child := range p.Children() {
+		e.traverseFragForCTE(child, cteMap)
+	}
+}
+
+func (e *mppTaskGenerator) fixDuplicatedTimesForCTE(frags []*Fragment) {
+	// We need to fix the duplicated times for CTE, because the CTE may be used in multiple fragments.
+	// The CTE should only be executed once, so we need to set the times to 1.
+	cteMap := make(map[int]struct {
+		sinks   []*PhysicalCTESink
+		sources []*PhysicalCTESource
+	})
+
+	for _, f := range frags {
+		e.traverseFragForCTE(f.MPPSink, cteMap)
+	}
+	for _, cte := range cteMap {
+		for _, sink := range cte.sinks {
+			sink.DuplicatedSinkNum = uint32(len(cte.sinks))
+			sink.DuplicatedSourceNum = uint32(len(cte.sources))
+		}
+		for _, source := range cte.sources {
+			source.DuplicatedSinkNum = uint32(len(cte.sinks))
+			source.DuplicatedSourceNum = uint32(len(cte.sources))
+		}
+	}
 }
 
 type mppAddr struct {
