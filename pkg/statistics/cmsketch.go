@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 )
@@ -523,13 +525,11 @@ func (c *CMSketch) CalcDefaultValForAnalyze(ndv uint64) {
 // TopN stores most-common values, which is used to estimate point queries.
 type TopN struct {
 	TopN []TopNMeta
-}
 
-// Scale scales the TopN by the given factor.
-func (c *TopN) Scale(scaleFactor float64) {
-	for i := range c.TopN {
-		c.TopN[i].Count = uint64(float64(c.TopN[i].Count) * scaleFactor)
-	}
+	totalCount uint64
+	minCount   uint64
+	// minCount and totalCount are initialized only once.
+	once sync.Once
 }
 
 // AppendTopN appends a topn into the TopN struct.
@@ -609,6 +609,48 @@ func (c *TopN) Copy() *TopN {
 	}
 }
 
+<<<<<<< HEAD
+=======
+// MinCount returns the minimum count in the TopN.
+func (c *TopN) MinCount() uint64 {
+	if c == nil || len(c.TopN) == 0 {
+		return 0
+	}
+	c.calculateMinCountAndCount()
+	return c.minCount
+}
+
+func (c *TopN) calculateMinCountAndCount() {
+	if intest.InTest {
+		// In test, After the sync.Once is called, topN will not be modified anymore.
+		minCount, totalCount := c.calculateMinCountAndCountInternal()
+		c.onceCalculateMinCountAndCount()
+		intest.Assert(minCount == c.minCount, "minCount should be equal to the calculated minCount")
+		intest.Assert(totalCount == c.totalCount, "totalCount should be equal to the calculated totalCount")
+		return
+	}
+	c.onceCalculateMinCountAndCount()
+}
+
+func (c *TopN) onceCalculateMinCountAndCount() {
+	c.once.Do(func() {
+		// Initialize to the first value in TopN
+		minCount, total := c.calculateMinCountAndCountInternal()
+		c.minCount = minCount
+		c.totalCount = total
+	})
+}
+
+func (c *TopN) calculateMinCountAndCountInternal() (minCount, total uint64) {
+	minCount = c.TopN[0].Count
+	for _, t := range c.TopN {
+		minCount = min(minCount, t.Count)
+		total += t.Count
+	}
+	return minCount, total
+}
+
+>>>>>>> 5c86ca816c5 (statistics: the totalCount/minCount of TopN is calculated only once (#61340))
 // TopNMeta stores the unit of the TopN.
 type TopNMeta struct {
 	Encoded []byte
@@ -716,14 +758,11 @@ func (c *TopN) Sort() {
 
 // TotalCount returns how many data is stored in TopN.
 func (c *TopN) TotalCount() uint64 {
-	if c == nil {
+	if c == nil || len(c.TopN) == 0 {
 		return 0
 	}
-	total := uint64(0)
-	for _, t := range c.TopN {
-		total += t.Count
-	}
-	return total
+	c.calculateMinCountAndCount()
+	return c.totalCount
 }
 
 // Equal checks whether the two TopN are equal.
