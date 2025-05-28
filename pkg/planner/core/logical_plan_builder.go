@@ -3692,6 +3692,9 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
+	if !b.ctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {
@@ -3765,7 +3768,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			return nil, err
 		}
 	}
-
+	if !b.ctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	p, err = b.buildTableRefs(ctx, sel.From)
 	if err != nil {
 		return nil, err

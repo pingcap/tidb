@@ -96,6 +96,10 @@ func (p *LogicalSelection) HashCode() []byte {
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("fuck:", p.Conditions)
+	}
+
 	predicates = constraint.DeleteTrueExprs(p, predicates)
 	p.Conditions = constraint.DeleteTrueExprs(p, p.Conditions)
 	var child base.LogicalPlan

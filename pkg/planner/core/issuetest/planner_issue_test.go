@@ -281,3 +281,15 @@ func TestIssue61118(t *testing.T) {
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk2.MustExec("admin check table t;")
 }
+
+func TestIssue61306(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t1 (c0 INT);")
+	tk.MustExec("create table t3 (c0 INT);")
+	tk.MustExec("INSERT INTO t1 VALUES (1), (2);")
+	tk.MustExec("INSERT INTO t3(c0) VALUES (-63595);")
+	tk.MustExec("ALTER TABLE t1 ADD PRIMARY KEY (c0);")
+	tk.MustQuery("explain SELECT t3.c0 FROM t3 INNER  JOIN t1 ON (CASE 1 WHEN ((((t3.c0)))) THEN -10 ELSE ((((t1.c0) IS NOT NULL)) / (t3.c0)) END);").Check(testkit.Rows("0"))
+}
