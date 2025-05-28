@@ -306,31 +306,25 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			"create table t (id int, data varchar(255));",
 			"",
 			"insert into t values (1, '1'), (2, '1');",
-			"alter table t add unique index i(data);",
-			"[kv:1062]Duplicate entry '1' for key 't.i'",
+			"alter table t add unique index idx(data);",
+			"[kv:1062]Duplicate entry '1' for key 't.idx'",
 		},
 		{
 			"combined index",
 			"create table t (id int, data varchar(255));",
 			"",
 			"insert into t values (1, '1'), (1, '1');",
-			"alter table t add unique index i(id, data);",
-			"[kv:1062]Duplicate entry '1-1' for key 't.i'",
+			"alter table t add unique index idx(id, data);",
+			"[kv:1062]Duplicate entry '1-1' for key 't.idx'",
 		},
 		{
 			"multi value index",
 			"create table t (id int, data json);",
 			"",
 			`insert into t values (1, '{"code":[1,1]}'), (2, '{"code":[1,1]}');`,
-			"alter table t add unique index zips( (CAST(data->'$.code' AS UNSIGNED ARRAY)));",
-			"Duplicate entry '1' for key 't.zips",
+			"alter table t add unique index idx( (CAST(data->'$.code' AS UNSIGNED ARRAY)));",
+			"Duplicate entry '1' for key 't.idx",
 		},
-	}
-
-	checkSubtaskErr := func(t *testing.T) {
-		errorSubtask := taskexecutor.GetErrorSubtask4Test.Swap(nil)
-		require.NotEmpty(t, errorSubtask)
-		require.Equal(t, proto.BackfillStepWriteAndIngest, errorSubtask.Step)
 	}
 
 	for _, tc := range testcases {
@@ -353,7 +347,13 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			}
 
 			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
-			checkSubtaskErr(tt)
+			errorSubtask := taskexecutor.GetErrorSubtask4Test.Swap(nil)
+			require.NotEmpty(tt, errorSubtask)
+			require.Equal(tt, proto.BackfillStepWriteAndIngest, errorSubtask.Step)
+
+			tk.MustExec("set session tidb_redact_log = on;")
+			tk.MustContainErrMsg(tc.addUniqueKeySQL, "[kv:1062]Duplicate entry '?' for key 't.idx'")
+			tk.MustExec("set session tidb_redact_log = off;")
 		})
 	}
 }
