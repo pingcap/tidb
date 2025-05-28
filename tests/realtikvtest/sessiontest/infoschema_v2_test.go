@@ -30,10 +30,9 @@ import (
 )
 
 func TestGCOldVersion(t *testing.T) {
-	defer config.RestoreFunc()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.CoprCache.CapacityMB = 0
-	})
+	})()
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_schema_cache_size = 512 * 1024 * 1024")

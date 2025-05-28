@@ -41,12 +41,11 @@ import (
 )
 
 func TestTxnScopeAndValidateReadTs(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Labels = map[string]string{
 			"zone": "bj",
 		}
-	})
+	})()
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)

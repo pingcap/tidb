@@ -39,11 +39,9 @@ import (
 
 func TestCursorFetchErrorInFetch(t *testing.T) {
 	tmpStoragePath := t.TempDir()
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = tmpStoragePath
-	})
+	})()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := server2.CreateMockServer(t, store)
@@ -93,11 +91,9 @@ func TestCursorFetchErrorInFetch(t *testing.T) {
 }
 
 func TestCursorFetchShouldSpill(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = t.TempDir()
-	})
+	})()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := server2.CreateMockServer(t, store)
