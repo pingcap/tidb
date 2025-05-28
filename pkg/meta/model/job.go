@@ -697,12 +697,8 @@ func (job *Job) InFinalState() bool {
 }
 
 // AddSessionVars add a session variable in DDL job.
-func (job *Job) AddSessionVars(name, value string) error {
-	if _, ok := job.SessionVars[name]; ok {
-		return errors.New("add session variables conflict")
-	}
+func (job *Job) AddSessionVars(name, value string) {
 	job.SessionVars[name] = value
-	return nil
 }
 
 // GetSessionVars get a session variable in DDL job.
