@@ -9,10 +9,11 @@ import (
 	"math"
 	"sort"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -124,7 +125,7 @@ func ReuseIDs(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*Preall
 	}
 
 	if legacy.ReusableBorder < maxID+1 {
-		return nil, errors.Errorf("prealloc IDs reusable border %d does not match with the tables max ID %d", legacy.ReusableBorder, maxID+1)
+		return nil, errors.Annotatef(berrors.ErrInvalidRange,"prealloc IDs reusable border %d does not match with the tables max ID %d", legacy.ReusableBorder, maxID+1)
 	}
 	if maxID+int64(len(ids))+1 > InsaneTableIDThreshold {
 		return nil, errors.Errorf("table ID %d is too large", maxID)
@@ -133,7 +134,7 @@ func ReuseIDs(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*Preall
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	hash := computeSortedIDsHash(ids)
 	if legacy.Hash != hash {
-		return nil, errors.Errorf("prealloc IDs hash %x are not match with the tables hash %x", legacy.Hash, hash)
+		return nil, errors.Annotatef(berrors.ErrInvalidRange,"prealloc IDs hash %x does not match with the tables hash %x", legacy.Hash, hash)	
 	}
 
 	allocRule := make(map[int64]int64, len(ids))
@@ -145,7 +146,7 @@ func ReuseIDs(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*Preall
 		} else if id < legacy.ReusableBorder {
 			allocRule[id] = id
 		} else if id >= legacy.ReusableBorder {
-			return nil, errors.Errorf("table ID %d is out of range [%d, %d)", id, legacy.Start, legacy.ReusableBorder)
+			return nil, errors.Annotatef(berrors.ErrInvalidRange,"table ID %d is out of range [%d, %d)", id, legacy.Start, legacy.ReusableBorder)
 		}
 	}
 
