@@ -1453,16 +1453,6 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp 
 				return idx, -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("matching a partition being dropped, '%s'", pi.Definitions[idx].Name.String()))
 			}
 		}
-		if t.subpartitionExpr != nil && pi.Sub != nil && pi.Sub.Type == pmodel.PartitionTypeHash {
-			subNum := pi.Sub.Num
-			if subNum == 0 && len(pi.Definitions) > 0 {
-				subNum = uint64(len(pi.Definitions[0].SubDefinitions))
-			}
-			subIdx, err = t.locateHashPartition(ctx, t.subpartitionExpr, subNum, r)
-			if err != nil {
-				return -1, -1, err
-			}
-		}
 	case pmodel.PartitionTypeHash:
 		// Note that only LIST and RANGE supports REORGANIZE PARTITION
 		idx, err = t.locateHashPartition(ctx, partitionExpr, num, r)
@@ -1479,6 +1469,20 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp 
 	}
 	if err != nil {
 		return -1, -1, errors.Trace(err)
+	}
+	switch tp {
+	case pmodel.PartitionTypeRange, pmodel.PartitionTypeList:
+		pi := t.Meta().Partition
+		if t.subpartitionExpr != nil && pi.Sub != nil && pi.Sub.Type == pmodel.PartitionTypeHash {
+			subNum := pi.Sub.Num
+			if subNum == 0 && len(pi.Definitions) > 0 {
+				subNum = uint64(len(pi.Definitions[0].SubDefinitions))
+			}
+			subIdx, err = t.locateHashPartition(ctx, t.subpartitionExpr, subNum, r)
+			if err != nil {
+				return -1, -1, err
+			}
+		}
 	}
 	return idx, subIdx, nil
 }

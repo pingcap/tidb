@@ -629,9 +629,9 @@ func TestSubPartitionInfo(t *testing.T) {
 
 func TestSubPartitionInsertSelect(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	// test for range-hash partition
 	tk.MustExec(`CREATE TABLE t_range_hash (id INT, purchased DATE)
     PARTITION BY RANGE( YEAR(purchased) )
     SUBPARTITION BY HASH( TO_DAYS(purchased) )
@@ -642,7 +642,6 @@ func TestSubPartitionInsertSelect(t *testing.T) {
     );`)
 	tk.MustExec("insert into t_range_hash values (1, '1989-05-27'), (2, '1989-05-28'), (3, '1996-05-27'), (4, '1996-05-28'), (5, '2005-05-27'),(6, '2005-05-28');")
 	tk.MustQuery("select * from t_range_hash order by id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28", "3 1996-05-27", "4 1996-05-28", "5 2005-05-27", "6 2005-05-28"))
-
 	// test select by partition name
 	tk.MustQuery("select * from t_range_hash partition (p0) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
 	tk.MustQuery("select * from t_range_hash partition (p1) order by  id;").Check(testkit.Rows("3 1996-05-27", "4 1996-05-28"))
@@ -661,13 +660,8 @@ func TestSubPartitionInsertSelect(t *testing.T) {
 	// test select by condition
 	tk.MustQuery("select * from t_range_hash where purchased < '1990-01-01' order by id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
 	tk.MustQuery("select * from t_range_hash where purchased > '1996-05-27' and purchased < '2005-05-28' order by id;").Check(testkit.Rows("4 1996-05-28", "5 2005-05-27"))
-}
 
-func TestSubPartitionDev(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	// test for list-hash partition
 	tk.MustExec(`CREATE TABLE t_list_hash (id INT, purchased DATE)
     PARTITION BY LIST( YEAR(purchased) )
     SUBPARTITION BY HASH( TO_DAYS(purchased) )
@@ -678,7 +672,6 @@ func TestSubPartitionDev(t *testing.T) {
     );`)
 	tk.MustExec("insert into t_list_hash values (1, '1989-05-27'), (2, '1989-05-28'), (3, '1996-05-27'), (4, '1996-05-28'), (5, '2005-05-27'),(6, '2005-05-28');")
 	tk.MustQuery("select * from t_list_hash order by id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28", "3 1996-05-27", "4 1996-05-28", "5 2005-05-27", "6 2005-05-28"))
-
 	// test select by partition name
 	tk.MustQuery("select * from t_list_hash partition (p0) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
 	tk.MustQuery("select * from t_list_hash partition (p1) order by  id;").Check(testkit.Rows("3 1996-05-27", "4 1996-05-28"))
@@ -697,6 +690,13 @@ func TestSubPartitionDev(t *testing.T) {
 	// test select by condition
 	tk.MustQuery("select * from t_list_hash where purchased < '1990-01-01' order by id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
 	tk.MustQuery("select * from t_list_hash where purchased > '1996-05-27' and purchased < '2005-05-28' order by id;").Check(testkit.Rows("4 1996-05-28", "5 2005-05-27"))
+}
+
+func TestSubPartitionDev(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 }
 
 func TestCreateTableWithRangeColumnPartition(t *testing.T) {
