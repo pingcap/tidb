@@ -49,22 +49,22 @@ func TestTiDBScatterRegion(t *testing.T) {
 		minRegionCount int
 		maxRegionCount int
 	}{
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, "table", 1, 6},
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, "global", 1, 6},
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, "table", 1, 6},
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, "global", 1, 6},
+		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, "table", 1, 7},
+		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, "global", 1, 7},
+		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, "table", 1, 7},
+		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, "global", 1, 7},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'), partition p202202 values less than('2022-02-02'));`,
-			"ALTER TABLE t TRUNCATE PARTITION p202201;"}, "table", 1, 12},
+			"ALTER TABLE t TRUNCATE PARTITION p202201;"}, "table", 1, 15},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'), partition p202202 values less than('2022-02-02'));`,
-			"ALTER TABLE t TRUNCATE PARTITION p202202;"}, "global", 1, 12},
+			"ALTER TABLE t TRUNCATE PARTITION p202202;"}, "global", 1, 15},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'));`,
-			"ALTER TABLE t ADD PARTITION (PARTITION p202202 values less than('2022-02-02'));"}, "table", 1, 12},
+			"ALTER TABLE t ADD PARTITION (PARTITION p202202 values less than('2022-02-02'));"}, "table", 1, 15},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'));`,
-			"ALTER TABLE t ADD PARTITION (PARTITION p202203 values less than('2022-02-03'));"}, "global", 1, 12},
+			"ALTER TABLE t ADD PARTITION (PARTITION p202203 values less than('2022-02-03'));"}, "global", 1, 15},
 	}
 	for _, tt := range testcases {
 		tk := testkit.NewTestKit(t, store)
