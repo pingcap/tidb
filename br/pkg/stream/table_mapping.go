@@ -16,6 +16,7 @@ package stream
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -35,6 +36,22 @@ import (
 )
 
 const InitialTempId int64 = 0
+
+type tableMetaKey struct {
+	dbId    int64
+	tableId int64
+	ts      uint64
+}
+
+type tableSimpleInfo struct {
+	Name         string
+	PartitionIds []int64
+}
+
+type dbMetaKey struct {
+	dbId int64
+	ts   uint64
+}
 
 // TableMappingManager processes each log backup meta kv and generate new id for DB, table and partition for
 // downstream cluster. It maintains the id mapping and passes down later to the rewrite logic.
@@ -57,14 +74,24 @@ type TableMappingManager struct {
 	// a counter for temporary IDs, need to get real global id
 	// once full restore completes
 	tempIDCounter DownstreamID
+
+	tempDefaultKVTableMap map[tableMetaKey]*tableSimpleInfo
+	tempDefaultKVDbMap    map[dbMetaKey]string
 }
 
 func NewTableMappingManager() *TableMappingManager {
 	return &TableMappingManager{
-		DBReplaceMap:  make(map[UpstreamID]*DBReplace),
-		globalIdMap:   make(map[UpstreamID]DownstreamID),
-		tempIDCounter: InitialTempId,
+		DBReplaceMap:          make(map[UpstreamID]*DBReplace),
+		globalIdMap:           make(map[UpstreamID]DownstreamID),
+		tempIDCounter:         InitialTempId,
+		tempDefaultKVTableMap: make(map[tableMetaKey]*tableSimpleInfo),
+		tempDefaultKVDbMap:    make(map[dbMetaKey]string),
 	}
+}
+
+func (tm *TableMappingManager) CleanTempKV() {
+	tm.tempDefaultKVDbMap = nil
+	tm.tempDefaultKVTableMap = nil
 }
 
 func (tm *TableMappingManager) FromDBReplaceMap(dbReplaceMap map[UpstreamID]*DBReplace) error {
@@ -85,9 +112,9 @@ func (tm *TableMappingManager) FromDBReplaceMap(dbReplaceMap map[UpstreamID]*DBR
 // MetaInfoCollector is an interface for collecting metadata information during parsing
 type MetaInfoCollector interface {
 	// OnDatabaseInfo is called when database information is found in a value
-	OnDatabaseInfo(dbInfo *model.DBInfo, ts uint64)
+	OnDatabaseInfo(dbId int64, dbName string, ts uint64)
 	// OnTableInfo is called when table information is found in a value
-	OnTableInfo(dbID int64, tableInfo *model.TableInfo, ts uint64)
+	OnTableInfo(dbID, tableId int64, tableSimpleInfo *tableSimpleInfo, commitTs uint64)
 }
 
 // ParseMetaKvAndUpdateIdMapping collect table information
@@ -107,18 +134,19 @@ func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(
 
 	if meta.IsDBkey(rawKey.Field) {
 		// parse db key
-		err := tm.parseDBKeyAndUpdateIdMapping(rawKey.Field)
+		dbID, err := tm.parseDBKeyAndUpdateIdMapping(rawKey.Field)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		// parse value and update if exists
-		value, err := ExtractValue(e, cf)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if value != nil {
-			return tm.parseDBValueAndUpdateIdMapping(value, ts, collector)
+		switch cf {
+		case consts.DefaultCF:
+			return tm.parseDBValueAndUpdateIdMappingForDefaultCf(dbID, e.Value, ts)
+		case consts.WriteCF:
+			return tm.parseDBValueAndUpdateIdMappingForWriteCf(dbID, e.Value, ts, collector)
+		default:
+			return errors.Errorf("unsupported column family: %s", cf)
 		}
 	} else if !meta.IsDBkey(rawKey.Key) {
 		return nil
@@ -137,12 +165,17 @@ func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(
 		}
 
 		// parse value and update if exists
-		value, err := ExtractValue(e, cf)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if value != nil {
-			return tm.parseTableValueAndUpdateIdMapping(dbID, value, ts, collector)
+		switch cf {
+		case consts.DefaultCF:
+			return tm.parseTableValueAndUpdateIdMappingForDefaultCf(dbID, e.Value, ts)
+		case consts.WriteCF:
+			tableId, err := meta.ParseTableKey(rawKey.Field)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return tm.parseTableValueAndUpdateIdMappingForWriteCf(dbID, tableId, e.Value, ts, collector)
+		default:
+			return errors.Errorf("unsupported column family: %s", cf)
 		}
 	} else if meta.IsAutoIncrementIDKey(rawKey.Field) {
 		// parse auto increment key and update
@@ -173,31 +206,70 @@ func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(
 	return nil
 }
 
-func (tm *TableMappingManager) parseDBKeyAndUpdateIdMapping(field []byte) error {
+func (tm *TableMappingManager) parseDBKeyAndUpdateIdMapping(field []byte) (int64, error) {
 	dbID, err := meta.ParseDBKey(field)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 
 	_, err = tm.getOrCreateDBReplace(dbID)
-	return errors.Trace(err)
+	return dbID, errors.Trace(err)
 }
 
-func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte, ts uint64,
-	collector MetaInfoCollector) error {
+func extractDBName(value []byte) (string, error) {
 	dbInfo := new(model.DBInfo)
 	if err := json.Unmarshal(value, dbInfo); err != nil {
-		return errors.Trace(err)
+		return "", errors.Trace(err)
 	}
+	return dbInfo.Name.O, nil
+}
 
-	dbReplace, err := tm.getOrCreateDBReplace(dbInfo.ID)
+func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForDefaultCf(dbId int64, value []byte, ts uint64) error {
+	dbName, err := extractDBName(value)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if dbInfo.Name.O != "" {
-		dbReplace.Name = dbInfo.Name.O
+	tm.tempDefaultKVDbMap[dbMetaKey{
+		dbId: dbId,
+		ts:   ts,
+	}] = dbName
+	return nil
+}
+
+func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForWriteCf(dbId int64, value []byte, commitTs uint64, collector MetaInfoCollector) error {
+	startTs, value, err := parsePutValueForWriteCf(value)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	collector.OnDatabaseInfo(dbInfo, ts)
+	if len(value) > 0 {
+		dbName, err := extractDBName(value)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return tm.parseDBValueAndUpdateIdMapping(dbId, dbName, commitTs, collector)
+	}
+	idx := dbMetaKey{
+		dbId: dbId,
+		ts:   startTs,
+	}
+	if dbName, exists := tm.tempDefaultKVDbMap[idx]; exists {
+		delete(tm.tempDefaultKVDbMap, idx)
+		return tm.parseDBValueAndUpdateIdMapping(dbId, dbName, commitTs, collector)
+	}
+	return errors.Errorf("the default cf kv is lost when there is its write cf kv(db id:%d, value %s)",
+		dbId, base64.StdEncoding.EncodeToString(value),
+	)
+}
+
+func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(dbId int64, dbName string, commitTs uint64, collector MetaInfoCollector) error {
+	dbReplace, err := tm.getOrCreateDBReplace(dbId)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if dbName != "" {
+		dbReplace.Name = dbName
+	}
+	collector.OnDatabaseInfo(dbId, dbName, commitTs)
 	return nil
 }
 
@@ -254,42 +326,91 @@ func (tm *TableMappingManager) parseTableIdAndUpdateIdMapping(
 	return nil
 }
 
-func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, value []byte, ts uint64,
-	collector MetaInfoCollector) error {
+func extractTableSimpleInfo(value []byte) (int64, *tableSimpleInfo, error) {
 	var tableInfo model.TableInfo
 	if err := json.Unmarshal(value, &tableInfo); err != nil {
+		return 0, nil, errors.Trace(err)
+	}
+	var partitionIds []int64
+	partitions := tableInfo.GetPartitionInfo()
+	if partitions != nil {
+		partitionIds = make([]int64, 0, len(partitions.Definitions))
+		for _, def := range partitions.Definitions {
+			partitionIds = append(partitionIds, def.ID)
+		}
+	}
+	return tableInfo.ID, &tableSimpleInfo{
+		Name:         tableInfo.Name.O,
+		PartitionIds: partitionIds,
+	}, nil
+}
+
+func (tm *TableMappingManager) parseTableValueAndUpdateIdMappingForDefaultCf(dbID int64, value []byte, ts uint64) error {
+	tableId, tableSimpleInfo, err := extractTableSimpleInfo(value)
+	if err != nil {
 		return errors.Trace(err)
 	}
+	tm.tempDefaultKVTableMap[tableMetaKey{
+		dbId:    dbID,
+		tableId: tableId,
+		ts:      ts,
+	}] = tableSimpleInfo
+	return nil
+}
 
-	dbReplace, err := tm.getOrCreateDBReplace(dbID)
+func (tm *TableMappingManager) parseTableValueAndUpdateIdMappingForWriteCf(dbId, tableId int64, value []byte, commitTs uint64, collector MetaInfoCollector) error {
+	startTs, value, err := parsePutValueForWriteCf(value)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(value) > 0 {
+		tableId, tableSimpleInfo, err := extractTableSimpleInfo(value)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return tm.parseTableValueAndUpdateIdMapping(dbId, tableId, commitTs, tableSimpleInfo, collector)
+	}
+	idx := tableMetaKey{
+		dbId:    dbId,
+		tableId: tableId,
+		ts:      startTs,
+	}
+	if tableSimpleInfo, exists := tm.tempDefaultKVTableMap[idx]; exists {
+		delete(tm.tempDefaultKVTableMap, idx)
+		return tm.parseTableValueAndUpdateIdMapping(dbId, tableId, commitTs, tableSimpleInfo, collector)
+	}
+	return errors.Errorf("the default cf kv is lost when there is its write cf kv(db id:%d, table id:%d, value %s)",
+		dbId, tableId, base64.StdEncoding.EncodeToString(value),
+	)
+}
+
+func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbId, tableId int64, commitTs uint64, tableSimpleInfo *tableSimpleInfo, collector MetaInfoCollector) error {
+	dbReplace, err := tm.getOrCreateDBReplace(dbId)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	tableReplace, err := tm.getOrCreateTableReplace(dbReplace, tableInfo.ID)
+	tableReplace, err := tm.getOrCreateTableReplace(dbReplace, tableId)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if tableInfo.Name.O != "" {
-		tableReplace.Name = tableInfo.Name.O
+	if tableSimpleInfo.Name != "" {
+		tableReplace.Name = tableSimpleInfo.Name
 	}
 
 	// update table ID and partition ID.
-	partitions := tableInfo.GetPartitionInfo()
-	if partitions != nil {
-		for _, partition := range partitions.Definitions {
-			_, exist := tableReplace.PartitionMap[partition.ID]
+	for _, partitionId := range tableSimpleInfo.PartitionIds {
+		_, exist := tableReplace.PartitionMap[partitionId]
+		if !exist {
+			newID, exist := tm.globalIdMap[partitionId]
 			if !exist {
-				newID, exist := tm.globalIdMap[partition.ID]
-				if !exist {
-					newID = tm.generateTempID()
-					tm.globalIdMap[partition.ID] = newID
-				}
-				tableReplace.PartitionMap[partition.ID] = newID
+				newID = tm.generateTempID()
+				tm.globalIdMap[partitionId] = newID
 			}
+			tableReplace.PartitionMap[partitionId] = newID
 		}
 	}
-	collector.OnTableInfo(dbID, &tableInfo, ts)
+	collector.OnTableInfo(dbId, tableId, tableSimpleInfo, commitTs)
 	return nil
 }
 
@@ -543,24 +664,23 @@ func FromDBMapProto(dbMaps []*backuppb.PitrDBMap) map[UpstreamID]*DBReplace {
 	return dbReplaces
 }
 
-func ExtractValue(e *kv.Entry, cf string) ([]byte, error) {
-	switch cf {
-	case consts.DefaultCF:
-		return e.Value, nil
-	case consts.WriteCF:
-		rawWriteCFValue := new(RawWriteCFValue)
-		if err := rawWriteCFValue.ParseFrom(e.Value); err != nil {
-			return nil, errors.Trace(err)
-		}
-		// have to be consistent with rewrite_meta_rawkv.go otherwise value like p/xxx/xxx will fall through
-		// and fail to parse
-		if rawWriteCFValue.IsDelete() || rawWriteCFValue.IsRollback() || !rawWriteCFValue.HasShortValue() {
-			return nil, nil
-		}
-		return rawWriteCFValue.GetShortValue(), nil
-	default:
-		return nil, errors.Errorf("unsupported column family: %s", cf)
+func parsePutValueForWriteCf(value []byte) (uint64, []byte, error) {
+	rawWriteCFValue := new(RawWriteCFValue)
+	if err := rawWriteCFValue.ParseFrom(value); err != nil {
+		return 0, nil, errors.Trace(err)
 	}
+	// have to be consistent with rewrite_meta_rawkv.go otherwise value like p/xxx/xxx will fall through
+	// and fail to parse
+	if !rawWriteCFValue.IsPut() {
+		return 0, nil, nil
+	}
+	if rawWriteCFValue.HasShortValue() {
+		return 0, rawWriteCFValue.GetShortValue(), nil
+	}
+	if rawWriteCFValue.GetStartTs() == 0 {
+		return 0, nil, errors.Errorf("the start ts is 0 when it is a put key(%s)", base64.StdEncoding.EncodeToString(value))
+	}
+	return rawWriteCFValue.GetStartTs(), nil, nil
 }
 
 func (tm *TableMappingManager) generateTempID() DownstreamID {
