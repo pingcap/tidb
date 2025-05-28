@@ -450,7 +450,7 @@ func TestSubPartitioning(t *testing.T) {
 	tk.MustGetErrMsg(`CREATE TABLE t ( col1 INT NOT NULL, col2 INT NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL, primary KEY (col1,col3) ) PARTITION BY KEY(col1) PARTITIONS 4 SUBPARTITION BY KEY(col3) SUBPARTITIONS 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
 }
 
-func TestSubPartition2(t *testing.T) {
+func TestSubPartitionInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
@@ -627,7 +627,7 @@ func TestSubPartition2(t *testing.T) {
 			"p2 s5 3 2 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)"))
 }
 
-func TestSubPartitionDev(t *testing.T) {
+func TestSubPartitionInsertSelect(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
@@ -661,7 +661,42 @@ func TestSubPartitionDev(t *testing.T) {
 	// test select by condition
 	tk.MustQuery("select * from t_range_hash where purchased < '1990-01-01' order by id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
 	tk.MustQuery("select * from t_range_hash where purchased > '1996-05-27' and purchased < '2005-05-28' order by id;").Check(testkit.Rows("4 1996-05-28", "5 2005-05-27"))
+}
 
+func TestSubPartitionDev(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t_list_hash (id INT, purchased DATE)
+    PARTITION BY LIST( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES IN (1989),
+        PARTITION p1 VALUES IN (1996),
+        PARTITION p2 VALUES IN (2005)
+    );`)
+	tk.MustExec("insert into t_list_hash values (1, '1989-05-27'), (2, '1989-05-28'), (3, '1996-05-27'), (4, '1996-05-28'), (5, '2005-05-27'),(6, '2005-05-28');")
+	tk.MustQuery("select * from t_list_hash order by id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28", "3 1996-05-27", "4 1996-05-28", "5 2005-05-27", "6 2005-05-28"))
+
+	// test select by partition name
+	tk.MustQuery("select * from t_list_hash partition (p0) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p1) order by  id;").Check(testkit.Rows("3 1996-05-27", "4 1996-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p2) order by  id;").Check(testkit.Rows("5 2005-05-27", "6 2005-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p0sp0);").Check(testkit.Rows("1 1989-05-27"))
+	tk.MustQuery("select * from t_list_hash partition (p0sp1);").Check(testkit.Rows("2 1989-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p1sp0);").Check(testkit.Rows("4 1996-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p1sp1);").Check(testkit.Rows("3 1996-05-27"))
+	tk.MustQuery("select * from t_list_hash partition (p2sp0);").Check(testkit.Rows("5 2005-05-27"))
+	tk.MustQuery("select * from t_list_hash partition (p2sp1);").Check(testkit.Rows("6 2005-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p0sp0) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p1, p1sp1) order by  id;").Check(testkit.Rows("3 1996-05-27", "4 1996-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p2, p2sp0, p2sp1) order by  id;").Check(testkit.Rows("5 2005-05-27", "6 2005-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p1sp0) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28", "4 1996-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p1sp0, p2sp1) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28", "4 1996-05-28", "6 2005-05-28"))
+	// test select by condition
+	tk.MustQuery("select * from t_list_hash where purchased < '1990-01-01' order by id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
+	tk.MustQuery("select * from t_list_hash where purchased > '1996-05-27' and purchased < '2005-05-28' order by id;").Check(testkit.Rows("4 1996-05-28", "5 2005-05-27"))
 }
 
 func TestCreateTableWithRangeColumnPartition(t *testing.T) {

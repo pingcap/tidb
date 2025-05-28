@@ -817,7 +817,16 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 				continue
 			}
 			if len(l.partitionNames) > 0 && !l.findByName(l.partitionNames, l.pi.Definitions[idx].Name.L) {
-				continue
+				found := false
+				for _, subDef := range l.pi.Definitions[idx].SubDefinitions {
+					found = l.findByName(l.partitionNames, subDef.Name.L)
+					if found {
+						break
+					}
+				}
+				if !found {
+					continue
+				}
 			}
 			used[idx] = struct{}{}
 		}
@@ -845,7 +854,16 @@ func (s *PartitionProcessor) findUsedListPartitions(ctx base.PlanContext, tbl ta
 		ret := make([]int, 0, len(pi.Definitions))
 		for i := 0; i < len(pi.Definitions); i++ {
 			if len(partitionNames) > 0 && !listPruner.findByName(partitionNames, pi.Definitions[i].Name.L) {
-				continue
+				found := false
+				for _, subDef := range pi.Definitions[i].SubDefinitions {
+					found = s.findByName(partitionNames, subDef.Name.L)
+					if found {
+						break
+					}
+				}
+				if !found {
+					continue
+				}
 			}
 			if i != pi.GetOverlappingDroppingPartitionIdx(i) {
 				continue
@@ -1882,7 +1900,16 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 			// This is for `table partition (p0,p1)` syntax, only union the specified partition if has specified partitions.
 			if len(ds.PartitionNames) != 0 {
 				if !s.findByName(ds.PartitionNames, pi.Definitions[partIdx].Name.L) {
-					continue
+					found := false
+					for _, subDef := range pi.Definitions[partIdx].SubDefinitions {
+						found = s.findByName(ds.PartitionNames, subDef.Name.L)
+						if found {
+							break
+						}
+					}
+					if !found {
+						continue
+					}
 				}
 			}
 			if _, found := usedDefinition[pi.Definitions[partIdx].ID]; found {
