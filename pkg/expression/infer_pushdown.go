@@ -48,6 +48,8 @@ var ExprPushDownBlackListReloadTimeStamp *atomic.Int64
 var scalarFuncSigLowerNameMap map[string]string
 
 func init() {
+	DefaultExprPushDownBlacklist.Store(make(map[string]uint32))
+	ExprPushDownBlackListReloadTimeStamp = new(atomic.Int64)
 	nameSlices := slices.Collect(maps.Values(tipb.ScalarFuncSig_name))
 	scalarFuncSigLowerNameMap = make(map[string]string, len(nameSlices))
 	for _, name := range nameSlices {
@@ -588,10 +590,4 @@ func storeTypeMask(storeType kv.StoreType) uint32 {
 		return 1<<kv.TiKV | 1<<kv.TiFlash | 1<<kv.TiDB
 	}
 	return 1 << storeType
-}
-
-func init() {
-	DefaultExprPushDownBlacklist = new(atomic.Value)
-	DefaultExprPushDownBlacklist.Store(make(map[string]uint32))
-	ExprPushDownBlackListReloadTimeStamp = new(atomic.Int64)
 }
