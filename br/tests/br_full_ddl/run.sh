@@ -15,6 +15,7 @@
 # limitations under the License.
 
 set -eu
+source $UTILS_DIR/run_services
 DB="$TEST_NAME"
 TABLE="usertable"
 DDL_COUNT=5
@@ -176,7 +177,7 @@ run_sql "DROP DATABASE $DB;"
 # restore full
 echo "restore start..."
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/snap_client/restore-createtables-error=return(true)"
-run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $RESTORE_LOG --ddl-batch-size=128  || { cat $RESTORE_LOG; }
+run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $RESTORE_LOG --ddl-batch-size=128 || { cat $RESTORE_LOG; }
 export GO_FAILPOINTS=""
 
 panic_count=$(cat $RESTORE_LOG | grep "panic"| wc -l)
@@ -186,11 +187,13 @@ if [ "${panic_count}" != "0" ];then
 fi
 
 # clear restore environment
-restart_services
+run_sql "DROP DATABASE $DB;"
+run_sql "DROP DATABASE __tidb_br_temporary_mysql;"
+run_sql "DROP DATABASE __TiDB_BR_Temporary_Snapshot_Restore_Checkpoint;"
 # restore full
 echo "restore start..."
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/pdutil/PDEnabledPauseConfig=return(true)"
-run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $LOG --fast-load-sys-tables=false  || { cat $LOG; exit 1; }
+run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $LOG --fast-load-sys-tables=false || { cat $LOG; exit 1; }
 export GO_FAILPOINTS=""
 
 pause_count=$(cat $LOG | grep "pause configs successful"| wc -l | xargs)
