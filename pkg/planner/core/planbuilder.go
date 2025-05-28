@@ -524,6 +524,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildLoadData(ctx, x)
 	case *ast.LoadStatsStmt:
 		return b.buildLoadStats(x), nil
+	case *ast.RefreshStatsStmt:
+		return b.buildRefreshStats(x), nil
 	case *ast.LockStatsStmt:
 		return b.buildLockStats(x), nil
 	case *ast.UnlockStatsStmt:
@@ -4764,6 +4766,16 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 
 func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) base.Plan {
 	p := &LoadStats{Path: ld.Path}
+	return p
+}
+
+func (b *PlanBuilder) buildRefreshStats(ld *ast.RefreshStatsStmt) base.Plan {
+	// TODO: We need to check the select privilege here.
+	p := &Simple{
+		Statement:    ld,
+		IsFromRemote: false,
+		ResolveCtx:   b.resolveCtx,
+	}
 	return p
 }
 
