@@ -640,8 +640,27 @@ func TestSubPartitionDev(t *testing.T) {
         PARTITION p1 VALUES LESS THAN (2000),
         PARTITION p2 VALUES LESS THAN MAXVALUE
     );`)
-	tk.MustExec("insert into t_range_hash values (1, '2020-05-27'), (2, '2020-05-28'), (3, '2021-05-27'), (4, '2021-05-28'), (5, '2022-05-27'),(6, '2022-05-28');")
-	tk.MustQuery("select * from t_list_hash;").Check(testkit.Rows("xx"))
+	tk.MustExec("insert into t_range_hash values (1, '1989-05-27'), (2, '1989-05-28'), (3, '1996-05-27'), (4, '1996-05-28'), (5, '2005-05-27'),(6, '2005-05-28');")
+	tk.MustQuery("select * from t_range_hash order by id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28", "3 1996-05-27", "4 1996-05-28", "5 2005-05-27", "6 2005-05-28"))
+
+	// test select by partition name
+	tk.MustQuery("select * from t_range_hash partition (p0) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p1) order by  id;").Check(testkit.Rows("3 1996-05-27", "4 1996-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p2) order by  id;").Check(testkit.Rows("5 2005-05-27", "6 2005-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p0sp0);").Check(testkit.Rows("1 1989-05-27"))
+	tk.MustQuery("select * from t_range_hash partition (p0sp1);").Check(testkit.Rows("2 1989-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p1sp0);").Check(testkit.Rows("4 1996-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p1sp1);").Check(testkit.Rows("3 1996-05-27"))
+	tk.MustQuery("select * from t_range_hash partition (p2sp0);").Check(testkit.Rows("5 2005-05-27"))
+	tk.MustQuery("select * from t_range_hash partition (p2sp1);").Check(testkit.Rows("6 2005-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p0, p0sp0) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p1, p1sp1) order by  id;").Check(testkit.Rows("3 1996-05-27", "4 1996-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p2, p2sp0, p2sp1) order by  id;").Check(testkit.Rows("5 2005-05-27", "6 2005-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p0, p1sp0) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28", "4 1996-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p0, p1sp0, p2sp1) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28", "4 1996-05-28", "6 2005-05-28"))
+	// test select by condition
+	tk.MustQuery("select * from t_range_hash where purchased < '1990-01-01' order by id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
+	tk.MustQuery("select * from t_range_hash where purchased > '1996-05-27' and purchased < '2005-05-28' order by id;").Check(testkit.Rows("4 1996-05-28", "5 2005-05-27"))
 
 }
 

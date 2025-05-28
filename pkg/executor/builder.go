@@ -5384,6 +5384,19 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, planPa
 		for _, def := range pi.Definitions {
 			p := tbl.GetPartition(def.ID)
 			ret = append(ret, p)
+			filterSubPartion := false
+			if len(partitionNames) > 0 {
+				if !findByName(partitionNames, def.Name.L) {
+					filterSubPartion = true
+				}
+			}
+			for _, subDef := range def.SubDefinitions {
+				if filterSubPartion && !findByName(partitionNames, subDef.Name.L) {
+					continue
+				}
+				subP := tbl.GetPartition(subDef.ID)
+				ret = append(ret, subP)
+			}
 		}
 	} else {
 		ret = make([]table.PhysicalTable, 0, len(idxArr))
@@ -5391,9 +5404,31 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, planPa
 			pid := pi.Definitions[idx].ID
 			p := tbl.GetPartition(pid)
 			ret = append(ret, p)
+			filterSubPartion := false
+			if len(partitionNames) > 0 {
+				if !findByName(partitionNames, pi.Definitions[idx].Name.L) {
+					filterSubPartion = true
+				}
+			}
+			for _, subDef := range pi.Definitions[idx].SubDefinitions {
+				if filterSubPartion && !findByName(partitionNames, subDef.Name.L) {
+					continue
+				}
+				subP := tbl.GetPartition(subDef.ID)
+				ret = append(ret, subP)
+			}
 		}
 	}
 	return ret, nil
+}
+
+func findByName(partitionNames []pmodel.CIStr, partitionName string) bool {
+	for _, s := range partitionNames {
+		if s.L == partitionName {
+			return true
+		}
+	}
+	return false
 }
 
 func getPartitionIDsAfterPruning(ctx sessionctx.Context, tbl table.PartitionedTable, physPlanPartInfo *plannercore.PhysPlanPartInfo) (map[int64]struct{}, error) {

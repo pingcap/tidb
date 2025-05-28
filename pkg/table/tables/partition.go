@@ -188,6 +188,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		partitions[p.ID] = &t
 
 		for _, subP := range p.SubDefinitions {
+			var t partition
 			err := initTableCommonWithIndices(&t.TableCommon, tblInfo, subP.ID, tbl.Columns, tbl.allocs, tbl.Constraints)
 			if err != nil {
 				return nil, errors.Trace(err)

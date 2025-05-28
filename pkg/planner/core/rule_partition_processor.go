@@ -429,7 +429,16 @@ func (s *PartitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.Pa
 	for i := 0; i < len(or); i++ {
 		for pos := or[i].start; pos < or[i].end; pos++ {
 			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[pos].Name.L) {
-				continue
+				found := false
+				for _, subDef := range pi.Definitions[pos].SubDefinitions {
+					found = s.findByName(partitionNames, subDef.Name.L)
+					if found {
+						break
+					}
+				}
+				if !found {
+					continue
+				}
 			}
 			ret = append(ret, pos)
 		}
