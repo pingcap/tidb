@@ -309,6 +309,8 @@ type immutableRestoreConfig struct {
 	ExplictFilter     bool
 	FilterStr         []string
 	WithSysTable      bool
+	FastLoadSysTables bool
+	LoadStats         bool
 }
 
 func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
@@ -318,6 +320,8 @@ func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 		Storage:           ast.RedactURL(cfg.Storage),
 		FilterStr:         cfg.FilterStr,
 		WithSysTable:      cfg.WithSysTable,
+		FastLoadSysTables: cfg.FastLoadSysTables,
+		LoadStats:         cfg.LoadStats,
 	}
 	data, err := json.Marshal(config)
 	if err != nil {
