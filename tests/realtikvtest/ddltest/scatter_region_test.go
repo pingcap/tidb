@@ -45,27 +45,27 @@ func TestTiDBScatterRegion(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	testcases := []struct {
-		tableName      string
-		sqls           []string
-		scatterScope   string
-		maxRegionCount int
+		tableName        string
+		sqls             []string
+		scatterScope     string
+		totalRegionCount int
 	}{
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, "table", 7},
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, "global", 7},
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, "table", 7},
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, "global", 7},
+		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, "table", 8},
+		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, "global", 8},
+		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, "table", 8},
+		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, "global", 8},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'), partition p202202 values less than('2022-02-02'));`,
-			"ALTER TABLE t TRUNCATE PARTITION p202201;"}, "table", 15},
+			"ALTER TABLE t TRUNCATE PARTITION p202201;"}, "table", 16},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'), partition p202202 values less than('2022-02-02'));`,
-			"ALTER TABLE t TRUNCATE PARTITION p202202;"}, "global", 15},
+			"ALTER TABLE t TRUNCATE PARTITION p202202;"}, "global", 16},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'));`,
-			"ALTER TABLE t ADD PARTITION (PARTITION p202202 values less than('2022-02-02'));"}, "table", 15},
+			"ALTER TABLE t ADD PARTITION (PARTITION p202202 values less than('2022-02-02'));"}, "table", 16},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'));`,
-			"ALTER TABLE t ADD PARTITION (PARTITION p202203 values less than('2022-02-03'));"}, "global", 15},
+			"ALTER TABLE t ADD PARTITION (PARTITION p202203 values less than('2022-02-03'));"}, "global", 16},
 	}
 	for _, tt := range testcases {
 		tk := testkit.NewTestKit(t, store)
@@ -87,7 +87,7 @@ func TestTiDBScatterRegion(t *testing.T) {
 		// table's regions are distributed across multiple stores. If the table
 		// is not scattered, all leaders would be concentrated on a single store.
 		for _, count := range counts {
-			require.True(t, count <= tt.maxRegionCount)
+			require.True(t, count < tt.totalRegionCount)
 		}
 
 		tk2 := testkit.NewTestKit(t, store)
@@ -104,7 +104,7 @@ func TestTiDBScatterRegion(t *testing.T) {
 		})
 		counts = getTableLeaderDistribute(t, tk, tt.tableName)
 		for _, count := range counts {
-			require.True(t, count <= tt.maxRegionCount)
+			require.True(t, count < tt.totalRegionCount)
 		}
 	}
 }
