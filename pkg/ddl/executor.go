@@ -1234,7 +1234,7 @@ func (e *executor) CreateTableWithInfo(
 	return errors.Trace(err)
 }
 
-func (e *executor) zBatchCreateTableWithInfo(ctx sessionctx.Context,
+func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	dbName ast.CIStr,
 	infos []*model.TableInfo,
 	cs ...CreateTableOption,
