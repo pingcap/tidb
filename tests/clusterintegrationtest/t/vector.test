@@ -7,7 +7,7 @@ select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 explain select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 select vec from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 explain select vec from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
-select sleep(5);
+select sleep(10);
 set @@tidb_isolation_read_engines="tidb,tiflash";
 select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 explain select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;

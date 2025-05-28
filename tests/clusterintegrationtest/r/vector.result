@@ -25,8 +25,8 @@ TopN_7	2.00	root		Column#3, offset:0, count:2
   └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
     └─Projection_12	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
       └─TableFullScan_11	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-select sleep(5);
-sleep(5)
+select sleep(10);
+sleep(10)
 0
 set @@tidb_isolation_read_engines="tidb,tiflash";
 select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
