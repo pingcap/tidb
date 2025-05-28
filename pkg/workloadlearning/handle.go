@@ -32,12 +32,15 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/workloadrepo"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -83,6 +86,10 @@ func NewWorkloadLearningHandle(pool util.DestroyableSessionPool) *Handle {
 func (handle *Handle) HandleTableReadCost(infoSchema infoschema.InfoSchema) {
 	// step1: abstract middle table cost metrics from every record in statement_summary
 	tableIdToMetrics, startTime, endTime := handle.analyzeBasedOnStatementStats(infoSchema)
+	if tableIdToMetrics == nil {
+		logutil.BgLogger().Warn("Failed to analyze table cost metrics from statement stats, skip saving table read cost metrics")
+		return
+	}
 	// step5: save the table cost metrics to table "mysql.tidb_workload_values"
 	handle.SaveTableReadCostMetrics(tableIdToMetrics, startTime, endTime)
 }
@@ -120,19 +127,33 @@ func (handle *Handle) analyzeBasedOnStatementStats(infoSchema infoschema.InfoSch
 	// Step2: extract metrics from ClusterTableTiDBStatementsStats
 	// TODO: use constant for table name and field name/values
 	// TODO: control the cpu, memory , concurrency and timeout for the query
-	// TODO: change to the snapshot id
+	startSnapshotId, err := findClosestSnapshotIdByTime(ctx, exec, startTime)
+	if err != nil {
+		logutil.ErrVerboseLogger().Warn("Failed to query HIST_SNAPSHOTS table to find start snapshot id",
+			zap.Time("start_time", startTime),
+			zap.Error(err))
+		return nil, startTime, startTime
+	}
+	endSnapshotId, err := findClosestSnapshotIdByTime(ctx, exec, endTime)
+	if err != nil {
+		logutil.ErrVerboseLogger().Warn("Failed to query HIST_SNAPSHOTS table to find end snapshot id",
+			zap.Time("end_time", endTime),
+			zap.Error(err))
+		return nil, startTime, startTime
+	}
 	sql := `select summary_latest.DIGEST, summary_latest.DIGEST_TEXT, summary_latest.BINARY_PLAN,
             ifNULL(summary_start.EXEC_COUNT, summary_latest.EXEC_COUNT, summary_latest.EXEC_COUNT - summary_start.EXEC_COUNT) as EXEC_COUNT
             (SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT
-	        FROM INFORMATION_SCHEMA.CLUSTER_TIDB_STATEMENTS_STATS
-	        WHERE LOWER(STMT_TYPE) = 'Select'
-	        AND SUMMARY_END_TIME >= '%?') summary_latest left join
+	        FROM ` + mysql.WorkloadSchema + `.HIST_TIDB_STATEMENTS_STATS
+            WHERE LOWER(STMT_TYPE) = 'Select'
+	        AND SNAP_ID = '%?') summary_latest
+            left join
             (SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT
-	        FROM INFORMATION_SCHEMA.CLUSTER_TIDB_STATEMENTS_STATS
+	        FROM ` + mysql.WorkloadSchema + `.HIST_TIDB_STATEMENTS_STATS
 	        WHERE LOWER(STMT_TYPE) = 'Select'
-	        AND SUMMARY_END_TIME >= '%?') summary_start on summary_latest.DIGEST = summary_start.DIGEST`
+	        AND SNAP_ID = '%?') summary_start on summary_latest.DIGEST = summary_start.DIGEST`
 	// Step2.1: get statements stats record from ClusterTableTiDBStatementsStats
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, endTime.Format("2006-01-02 15:04:05"))
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, endSnapshotId, startSnapshotId)
 	if err != nil {
 		logutil.ErrVerboseLogger().Warn("Failed to query CLUSTER_TIDB_STATEMENTS_STATS table",
 			zap.Time("end_time", endTime),
@@ -179,6 +200,22 @@ func (handle *Handle) analyzeBasedOnStatementStats(infoSchema infoschema.InfoSch
 	}
 
 	return tableIdToMetrics, startTime, endTime
+}
+
+func findClosestSnapshotIdByTime(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, time time.Time) (uint64, error) {
+	sql := `select SNAPSHOT_ID from ` + mysql.WorkloadSchema + `.` + workloadrepo.HistSnapshotsTable + ` where BEGIN_TIME > '%?' and END_TIME != NULL order by ('%?' - BEGIN_TIME) asc limit 1`
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, time.AddDate(0, 0, -1), time)
+	if err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 {
+		return 0, fmt.Errorf("no closest snapshot found by time in hist_snapshot table, time: %v", time)
+	}
+	for _, row := range rows {
+		snapshotID := row.GetUint64(0)
+		return snapshotID, nil
+	}
+	return 0, fmt.Errorf("failed to find closest snapshot by time in hist_snapshot table, time: %v", time)
 }
 
 // SaveTableReadCostMetrics table cost metrics, workload-based start and end time, version,
