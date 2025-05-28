@@ -1320,12 +1320,11 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		}
 		return errors.Trace(err)
 	}
-
+	var scatterScope string
+	if val, ok := jobW.GetSessionVars(vardef.TiDBScatterRegion); ok {
+		scatterScope = val
+	}
 	for _, tblArgs := range args.Tables {
-		var scatterScope string
-		if val, ok := jobW.GetSessionVars(vardef.TiDBScatterRegion); ok {
-			scatterScope = val
-		}
 		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID, scatterScope); err != nil {
 			return errors.Trace(err)
 		}
