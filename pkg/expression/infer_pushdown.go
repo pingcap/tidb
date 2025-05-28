@@ -92,15 +92,11 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 	}
 
 	if ret {
-		result := IsPushDownEnabled(sf.FuncName.L, storeType)
-		// if DefaultExprPushDownBlacklist is nil, it means that the push down blacklist is not initialized yet.
-		// so we return true to allow the push down.
-		// but `storeType != kv.TiFlash && name == ast.AggFuncApproxCountDistinct`
-		// is a special case, we should not allow the push down.
-		// next we will check the funcFullName which contains `.` , this special case will not match the funcFullName.
-		// If the DefaultExprPushDownBlacklist is nil, we can return true directly.
 		defaultExprPushDownBlacklistMap := DefaultExprPushDownBlacklist.Load()
-		if len(*defaultExprPushDownBlacklistMap) == 0 || !result {
+		if len(*defaultExprPushDownBlacklistMap) == 0 {
+			return false
+		}
+		if result := IsPushDownEnabled(sf.FuncName.L, storeType); !result {
 			return result
 		}
 		// scalarFuncSigLowerNameMap is to string.ToLower the function name in tipb.ScalarFuncSig_name.
