@@ -281,3 +281,47 @@ func TestIssue61118(t *testing.T) {
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk2.MustExec("admin check table t;")
 }
+
+func TestABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	//tk.MustExec(`set @@session.tidb_opt_index_join_build_v2=false`)
+	tk.MustExec(`CREATE TABLE t0da79f8d (
+  col7de8 float DEFAULT '1.3466417',
+  col648a smallint DEFAULT '-9828',
+  col7a22 enum('jmh0','2','zenk','ct','47wiw','4u4','omqm','efomv','hnx','kgq1i','h5bl') DEFAULT 'h5bl',
+  col321f datetime DEFAULT '3590-08-12 04:04:02',
+  col39cb double DEFAULT '1.5620021842250698',
+  colda50 timestamp DEFAULT '2012-08-16 23:00:06',
+  cola612 tinytext DEFAULT NULL,
+  col4191 float DEFAULT '1.5678482',
+  col5a63 set('1czti','nleu','2','p0','d42','qep7','5','iyw','tl8p','3h','tz') DEFAULT '1czti,nleu,2,p0,d42,iyw',
+  colf2af enum('xrsg','go9yf','mj4','u1l','8c','at','o','e9','bh','r','yah') DEFAULT 'r',
+  UNIQUE KEY 6ecefbaf (col5a63),
+  UNIQUE KEY afb40fea (col321f),
+  KEY 4cfcc236 (col648a,col5a63,col4191,col7a22,col39cb),
+  KEY 0eee9ef2 (colf2af,col7a22,col648a,col39cb,col321f,col4191),
+  KEY a0fda2c5 (colf2af),
+  KEY 9548713e (col321f,col39cb,col648a,col7a22)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin /*T! SHARD_ROW_ID_BITS=5 */ COMMENT='4a7c214f'
+`)
+	tk.MustExec(`CREATE TABLE t19f3e4f1 (
+  col3c14 year(4) DEFAULT '2039',
+  colb388 decimal(51,17) DEFAULT '9958507938396396959524543944875944.76662769765947763',
+  col6446 tinytext DEFAULT NULL,
+  colc864 enum('d9','dt5w4','wsg','i','3','5ur3','s0m4','mmhw6','rh','ge9d','nm') DEFAULT 'dt5w4',
+  colaadb smallint DEFAULT '7697',
+  colfee4 enum('i','lnc','29n','vsm6','me','4','ajkgo','cd','2wz','yhv6','k0l') DEFAULT '29n',
+  KEY ddd371a7 (colb388),
+  UNIQUE KEY c0534725 (colb388),
+  UNIQUE KEY ee56e6aa (colc864),
+  KEY 5756be09 (colfee4),
+  KEY c9a93757 (colfee4),
+  KEY 9f8dd46c (col3c14),
+  KEY c951668d (colfee4,col3c14,colc864,colb388),
+  UNIQUE KEY 69091c4b (col3c14)
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci COMMENT='39b1fa3b'`)
+	tk.MustQuery(`explain select /*+ nth_plan(7) */ * from t19f3e4f1  where   colc864 in ( select     colc864 from      t19f3e4f1  where  colaadb in ( select    colf2af
+ from    t0da79f8d where    not ( t19f3e4f1.colc864 <> null ))) limit 2837;`).Check(testkit.Rows("1 2 3"))
+}

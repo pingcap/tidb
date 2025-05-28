@@ -38,7 +38,7 @@ import (
 )
 
 // DefaultExprPushDownBlacklist indicates the expressions which can not be pushed down to TiKV.
-var DefaultExprPushDownBlacklist *atomic.Value
+var DefaultExprPushDownBlacklist *atomic.Pointer[map[string]uint32]
 
 // ExprPushDownBlackListReloadTimeStamp is used to record the last time when the push-down black list is reloaded.
 // This is for plan cache, when the push-down black list is updated, we invalid all cached plans to avoid error.
@@ -48,7 +48,8 @@ var ExprPushDownBlackListReloadTimeStamp *atomic.Int64
 var scalarFuncSigLowerNameMap map[string]string
 
 func init() {
-	DefaultExprPushDownBlacklist.Store(make(map[string]uint32))
+	DefaultExprPushDownBlacklistMap := make(map[string]uint32)
+	DefaultExprPushDownBlacklist.Store(&DefaultExprPushDownBlacklistMap)
 	ExprPushDownBlackListReloadTimeStamp = new(atomic.Int64)
 	nameSlices := slices.Collect(maps.Values(tipb.ScalarFuncSig_name))
 	scalarFuncSigLowerNameMap = make(map[string]string, len(nameSlices))
@@ -99,7 +100,7 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 		// next we will check the funcFullName which contains `.` , this special case will not match the funcFullName.
 		// If the DefaultExprPushDownBlacklist is nil, we can return true directly.
 		defaultExprPushDownBlacklistMap := DefaultExprPushDownBlacklist.Load()
-		if len(defaultExprPushDownBlacklistMap) == 0 {
+		if len(*defaultExprPushDownBlacklistMap) == 0 {
 			return result
 		}
 		// scalarFuncSigLowerNameMap is to string.ToLower the function name in tipb.ScalarFuncSig_name.
@@ -472,7 +473,7 @@ func canEnumPushdownPreliminarily(scalarFunc *ScalarFunction) bool {
 
 // IsPushDownEnabled returns true if the input expr is not in the expr_pushdown_blacklist
 func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
-	value, exists := DefaultExprPushDownBlacklist.Load().(map[string]uint32)[name]
+	value, exists := (*DefaultExprPushDownBlacklist.Load())[name]
 	if exists {
 		mask := storeTypeMask(storeType)
 		return !(value&mask == mask)

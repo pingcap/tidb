@@ -2770,6 +2770,9 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 		joins = append(joins, mergeJoins...)
 
 		if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
+			if !p.SCtx().GetSessionVars().InRestrictedSQL {
+				fmt.Println("wwz")
+			}
 			indexJoins := tryToEnumerateIndexJoin(p, prop)
 			joins = append(joins, indexJoins...)
 

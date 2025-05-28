@@ -72,7 +72,7 @@ func LoadExprPushdownBlacklist(sctx sessionctx.Context) (err error) {
 		return nil
 	}
 	expression.ExprPushDownBlackListReloadTimeStamp.Store(time.Now().UnixNano())
-	expression.DefaultExprPushDownBlacklist.Store(newBlocklist)
+	expression.DefaultExprPushDownBlacklist.Store(&newBlocklist)
 	return nil
 }
 
