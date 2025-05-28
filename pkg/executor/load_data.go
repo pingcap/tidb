@@ -388,9 +388,6 @@ func (w *encodeWorker) processStream(
 			if err != nil {
 				return err
 			}
-			if err = w.controller.HandleSkipNRows(dataParser); err != nil {
-				return err
-			}
 			err = w.processOneStream(ctx, dataParser, outCh)
 			terror.Log(dataParser.Close())
 			if err != nil {
@@ -719,11 +716,6 @@ func (e *LoadDataWorker) TestLoadLocal(parser mydump.Parser) error {
 	err = sessiontxn.NewTxn(ctx, e.UserSctx)
 	if err != nil {
 		return err
-	}
-
-	for range e.controller.IgnoreLines {
-		//nolint: errcheck
-		_ = parser.ReadRow()
 	}
 
 	err = encoder.readOneBatchRows(ctx, parser)
