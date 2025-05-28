@@ -7,9 +7,10 @@ go_library(
     visibility = ["//br/pkg/restore:__subpackages__"],
     deps = [
         "//br/pkg/checkpoint",
+        "//br/pkg/errors",
         "//br/pkg/metautil",
         "//pkg/meta/model",
-        "@com_github_pkg_errors//:errors",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
 
