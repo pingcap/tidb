@@ -239,17 +239,42 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForDefaultCf(
 
 func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForWriteCf(
 	dbId int64, value []byte, commitTs uint64, collector MetaInfoCollector) error {
-	startTs, value, err := parsePutValueForWriteCf(value)
-	if err != nil {
+	rawWriteCFValue := new(RawWriteCFValue)
+	if err := rawWriteCFValue.ParseFrom(value); err != nil {
 		return errors.Trace(err)
 	}
-	if len(value) > 0 {
-		dbName, err := extractDBName(value)
+
+	// handle different write types
+	if rawWriteCFValue.IsDelete() || rawWriteCFValue.IsRollback() {
+		// for delete operations, we should clear the tempDBInfo if it exists
+		// but not process it as a database creation/update
+		idx := dbMetaKey{
+			dbId: dbId,
+			ts:   rawWriteCFValue.GetStartTs(),
+		}
+		delete(tm.tempDefaultKVDbMap, idx)
+		return nil
+	}
+
+	if !rawWriteCFValue.IsPut() {
+		// skip other write types (like lock)
+		return nil
+	}
+
+	startTs := rawWriteCFValue.GetStartTs()
+	var dbValue []byte
+	if rawWriteCFValue.HasShortValue() {
+		dbValue = rawWriteCFValue.GetShortValue()
+	}
+
+	if len(dbValue) > 0 {
+		dbName, err := extractDBName(dbValue)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		return tm.parseDBValueAndUpdateIdMapping(dbId, dbName, commitTs, collector)
 	}
+
 	idx := dbMetaKey{
 		dbId: dbId,
 		ts:   startTs,
@@ -364,17 +389,43 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMappingForDefaultCf(
 
 func (tm *TableMappingManager) parseTableValueAndUpdateIdMappingForWriteCf(
 	dbId, tableId int64, value []byte, commitTs uint64, collector MetaInfoCollector) error {
-	startTs, value, err := parsePutValueForWriteCf(value)
-	if err != nil {
+	rawWriteCFValue := new(RawWriteCFValue)
+	if err := rawWriteCFValue.ParseFrom(value); err != nil {
 		return errors.Trace(err)
 	}
-	if len(value) > 0 {
-		tableId, tableSimpleInfo, err := extractTableSimpleInfo(value)
+
+	// handle different write types
+	if rawWriteCFValue.IsDelete() || rawWriteCFValue.IsRollback() {
+		// for delete operations, we should clear the tempTableInfo if it exists
+		// but not process it as a table creation/update
+		idx := tableMetaKey{
+			dbId:    dbId,
+			tableId: tableId,
+			ts:      rawWriteCFValue.GetStartTs(),
+		}
+		delete(tm.tempDefaultKVTableMap, idx)
+		return nil
+	}
+
+	if !rawWriteCFValue.IsPut() {
+		// skip other write types (like lock)
+		return nil
+	}
+
+	startTs := rawWriteCFValue.GetStartTs()
+	var tableValue []byte
+	if rawWriteCFValue.HasShortValue() {
+		tableValue = rawWriteCFValue.GetShortValue()
+	}
+
+	if len(tableValue) > 0 {
+		tableId, tableSimpleInfo, err := extractTableSimpleInfo(tableValue)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		return tm.parseTableValueAndUpdateIdMapping(dbId, tableId, commitTs, tableSimpleInfo, collector)
 	}
+
 	idx := tableMetaKey{
 		dbId:    dbId,
 		tableId: tableId,
@@ -669,26 +720,6 @@ func FromDBMapProto(dbMaps []*backuppb.PitrDBMap) map[UpstreamID]*DBReplace {
 		}
 	}
 	return dbReplaces
-}
-
-func parsePutValueForWriteCf(value []byte) (uint64, []byte, error) {
-	rawWriteCFValue := new(RawWriteCFValue)
-	if err := rawWriteCFValue.ParseFrom(value); err != nil {
-		return 0, nil, errors.Trace(err)
-	}
-	// have to be consistent with rewrite_meta_rawkv.go otherwise value like p/xxx/xxx will fall through
-	// and fail to parse
-	if !rawWriteCFValue.IsPut() {
-		return 0, nil, nil
-	}
-	if rawWriteCFValue.HasShortValue() {
-		return 0, rawWriteCFValue.GetShortValue(), nil
-	}
-	if rawWriteCFValue.GetStartTs() == 0 {
-		return 0, nil, errors.Errorf(
-			"the start ts is 0 when it is a put key(%s)", base64.StdEncoding.EncodeToString(value))
-	}
-	return rawWriteCFValue.GetStartTs(), nil, nil
 }
 
 func (tm *TableMappingManager) generateTempID() DownstreamID {
