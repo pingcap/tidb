@@ -96,8 +96,8 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 		// is a special case, we should not allow the push down.
 		// next we will check the funcFullName which contains `.` , this special case will not match the funcFullName.
 		// If the DefaultExprPushDownBlacklist is nil, we can return true directly.
-		DefaultExprPushDownBlacklistMap := DefaultExprPushDownBlacklist.Load()
-		if DefaultExprPushDownBlacklistMap == nil {
+		defaultExprPushDownBlacklistMap := DefaultExprPushDownBlacklist.Load()
+		if defaultExprPushDownBlacklistMap == nil {
 			return result
 		}
 		// scalarFuncSigLowerNameMap is to string.ToLower the function name in tipb.ScalarFuncSig_name.
