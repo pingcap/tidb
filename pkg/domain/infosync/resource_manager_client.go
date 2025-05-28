@@ -24,8 +24,10 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 	"github.com/tikv/pd/client/opt"
 )
 
@@ -146,7 +148,11 @@ func (*mockResourceManagerClient) LoadResourceGroups(context.Context) ([]*rmpb.R
 }
 
 func (m *mockResourceManagerClient) Watch(_ context.Context, key []byte, _ ...opt.MetaStorageOption) (chan []*meta_storagepb.Event, error) {
-	if bytes.Equal(pd.GroupSettingsPathPrefixBytes, key) {
+	keyspaceID := constants.NullKeyspaceID
+	if v := keyspace.GetKeyspaceIDBySettings(); v != nil {
+		keyspaceID = *v
+	}
+	if bytes.Equal(pd.GroupSettingsPathPrefixBytes(keyspaceID), key) {
 		return m.eventCh, nil
 	}
 	return nil, nil
