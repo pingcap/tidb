@@ -14,10 +14,6 @@
 
 package stream
 
-import (
-	"github.com/pingcap/tidb/pkg/meta/model"
-)
-
 // TableLocationInfo stores the table name, db id, and parent table id if is a partition
 type TableLocationInfo struct {
 	DbID          int64
@@ -107,18 +103,16 @@ func (info *LogBackupTableHistoryManager) GetNewlyCreatedDBHistory() map[int64]s
 }
 
 // OnDatabaseInfo implements MetaInfoCollector.OnDatabaseInfo
-func (info *LogBackupTableHistoryManager) OnDatabaseInfo(dbInfo *model.DBInfo, ts uint64) {
-	info.RecordDBIdToName(dbInfo.ID, dbInfo.Name.O, ts)
+func (info *LogBackupTableHistoryManager) OnDatabaseInfo(dbId int64, dbName string, ts uint64) {
+	info.RecordDBIdToName(dbId, dbName, ts)
 }
 
 // OnTableInfo implements MetaInfoCollector.OnTableInfo
-func (info *LogBackupTableHistoryManager) OnTableInfo(dbID int64, tableInfo *model.TableInfo, ts uint64) {
-	info.AddTableHistory(tableInfo.ID, tableInfo.Name.O, dbID, ts)
+func (info *LogBackupTableHistoryManager) OnTableInfo(dbID, tableId int64, tableSimpleInfo *tableSimpleInfo, commitTs uint64) {
+	info.AddTableHistory(tableId, tableSimpleInfo.Name, dbID, commitTs)
 
 	// add history for all partitions if this is a partitioned table
-	if tableInfo.Partition != nil && tableInfo.Partition.Definitions != nil {
-		for _, partition := range tableInfo.Partition.Definitions {
-			info.AddPartitionHistory(partition.ID, tableInfo.Name.O, dbID, tableInfo.ID, ts)
-		}
+	for _, partitionId := range tableSimpleInfo.PartitionIds {
+		info.AddPartitionHistory(partitionId, tableSimpleInfo.Name, dbID, tableId, commitTs)
 	}
 }

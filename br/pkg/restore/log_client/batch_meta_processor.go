@@ -144,6 +144,7 @@ func (mp *MetaKVInfoProcessor) ReadMetaKVFilesAndBuildInfo(
 	); err != nil {
 		return errors.Trace(err)
 	}
+	mp.tableMappingManager.CleanTempKV()
 	return nil
 }
 
