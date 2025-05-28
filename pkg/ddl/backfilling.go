@@ -169,8 +169,7 @@ type backfillCtx struct {
 	metricCounter prometheus.Counter
 }
 
-func newBackfillCtx(id int, rInfo *reorgInfo,
-	schemaName string, tbl table.Table, jobCtx *ReorgContext, label string, isDistributed bool, isUpdateColumn bool) (*backfillCtx, error) {
+func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table, jobCtx *ReorgContext, label string, isUpdateColumn bool) (*backfillCtx, error) {
 	warnHandler := contextutil.NewStaticWarnHandler(0)
 	exprCtx, err := newReorgExprCtxWithReorgMeta(rInfo.ReorgMeta, warnHandler)
 	if err != nil {
@@ -193,9 +192,6 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 	}
 
 	tblCtx := newReorgTableMutateContext(exprCtx)
-	if isDistributed {
-		id = int(backfillContextID.Add(1))
-	}
 
 	colOrIdxName := ""
 	switch rInfo.Job.Type {
