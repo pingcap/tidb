@@ -166,7 +166,7 @@ func TestFilterPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := logclient.FilterPathByTs(tt.args.path, tt.args.shiftStartTS, tt.args.restoreTS)
+			got := stream.FilterPathByTs(tt.args.path, tt.args.shiftStartTS, tt.args.restoreTS)
 			require.Equal(t, tt.expected, got)
 		})
 	}
