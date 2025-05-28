@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
@@ -33,9 +34,14 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"go.uber.org/zap"
 )
 
 const InitialTempId int64 = 0
+
+const (
+	errMsgDefaultCFKVLost = "the default cf kv is lost when there is its write cf kv"
+)
 
 type tableMetaKey struct {
 	dbId    int64
@@ -51,6 +57,16 @@ type tableSimpleInfo struct {
 type dbMetaKey struct {
 	dbId int64
 	ts   uint64
+}
+
+type dbMetaValue struct {
+	name  string
+	count int
+}
+
+type tableMetaValue struct {
+	info  *tableSimpleInfo
+	count int
 }
 
 // TableMappingManager processes each log backup meta kv and generate new id for DB, table and partition for
@@ -75,8 +91,8 @@ type TableMappingManager struct {
 	// once full restore completes
 	tempIDCounter DownstreamID
 
-	tempDefaultKVTableMap map[tableMetaKey]*tableSimpleInfo
-	tempDefaultKVDbMap    map[dbMetaKey]string
+	tempDefaultKVTableMap map[tableMetaKey]*tableMetaValue
+	tempDefaultKVDbMap    map[dbMetaKey]*dbMetaValue
 }
 
 func NewTableMappingManager() *TableMappingManager {
@@ -84,8 +100,8 @@ func NewTableMappingManager() *TableMappingManager {
 		DBReplaceMap:          make(map[UpstreamID]*DBReplace),
 		globalIdMap:           make(map[UpstreamID]DownstreamID),
 		tempIDCounter:         InitialTempId,
-		tempDefaultKVTableMap: make(map[tableMetaKey]*tableSimpleInfo),
-		tempDefaultKVDbMap:    make(map[dbMetaKey]string),
+		tempDefaultKVTableMap: make(map[tableMetaKey]*tableMetaValue),
+		tempDefaultKVDbMap:    make(map[dbMetaKey]*dbMetaValue),
 	}
 }
 
@@ -230,10 +246,19 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForDefaultCf(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tm.tempDefaultKVDbMap[dbMetaKey{
+	key := dbMetaKey{
 		dbId: dbId,
 		ts:   startTs,
-	}] = dbName
+	}
+	if existingValue, exists := tm.tempDefaultKVDbMap[key]; exists {
+		existingValue.count++
+		return nil
+	}
+
+	tm.tempDefaultKVDbMap[key] = &dbMetaValue{
+		name:  dbName,
+		count: 1,
+	}
 	return nil
 }
 
@@ -279,11 +304,21 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForWriteCf(
 		dbId: dbId,
 		ts:   startTs,
 	}
-	if dbName, exists := tm.tempDefaultKVDbMap[idx]; exists {
-		delete(tm.tempDefaultKVDbMap, idx)
-		return tm.parseDBValueAndUpdateIdMapping(dbId, dbName, commitTs, collector)
+
+	if dbValue, exists := tm.tempDefaultKVDbMap[idx]; exists {
+		dbValue.count--
+		if dbValue.count <= 0 {
+			delete(tm.tempDefaultKVDbMap, idx)
+		}
+		return tm.parseDBValueAndUpdateIdMapping(dbId, dbValue.name, commitTs, collector)
 	}
-	return errors.Errorf("the default cf kv is lost when there is its write cf kv(db id:%d, value %s)",
+	log.Error("default cf kv is lost when processing write cf kv for database",
+		zap.Int64("db-id", dbId),
+		zap.Uint64("start-ts", startTs),
+		zap.Uint64("commit-ts", commitTs),
+		zap.String("value", base64.StdEncoding.EncodeToString(value)),
+		zap.Int("temp-default-kv-db-map-size", len(tm.tempDefaultKVDbMap)))
+	return errors.Errorf(errMsgDefaultCFKVLost+"(db id:%d, value %s)",
 		dbId, base64.StdEncoding.EncodeToString(value),
 	)
 }
@@ -379,11 +414,20 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMappingForDefaultCf(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tm.tempDefaultKVTableMap[tableMetaKey{
+	key := tableMetaKey{
 		dbId:    dbID,
 		tableId: tableId,
 		ts:      ts,
-	}] = tableSimpleInfo
+	}
+	if existingValue, exists := tm.tempDefaultKVTableMap[key]; exists {
+		existingValue.count++
+		return nil
+	}
+
+	tm.tempDefaultKVTableMap[key] = &tableMetaValue{
+		info:  tableSimpleInfo,
+		count: 1,
+	}
 	return nil
 }
 
@@ -431,12 +475,22 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMappingForWriteCf(
 		tableId: tableId,
 		ts:      startTs,
 	}
-	if tableSimpleInfo, exists := tm.tempDefaultKVTableMap[idx]; exists {
-		delete(tm.tempDefaultKVTableMap, idx)
-		return tm.parseTableValueAndUpdateIdMapping(dbId, tableId, commitTs, tableSimpleInfo, collector)
+	if tableValue, exists := tm.tempDefaultKVTableMap[idx]; exists {
+		tableValue.count--
+		if tableValue.count <= 0 {
+			delete(tm.tempDefaultKVTableMap, idx)
+		}
+		return tm.parseTableValueAndUpdateIdMapping(dbId, tableId, commitTs, tableValue.info, collector)
 	}
+	log.Error("default cf kv is lost when processing write cf kv for table",
+		zap.Int64("db-id", dbId),
+		zap.Int64("table-id", tableId),
+		zap.Uint64("start-ts", startTs),
+		zap.Uint64("commit-ts", commitTs),
+		zap.String("value", base64.StdEncoding.EncodeToString(value)),
+		zap.Int("temp-default-kv-table-map-size", len(tm.tempDefaultKVTableMap)))
 	return errors.Errorf(
-		"the default cf kv is lost when there is its write cf kv(db id:%d, table id:%d, value %s)",
+		errMsgDefaultCFKVLost+"(db id:%d, table id:%d, value %s)",
 		dbId, tableId, base64.StdEncoding.EncodeToString(value),
 	)
 }
