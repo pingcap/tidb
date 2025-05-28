@@ -632,6 +632,16 @@ func TestSubPartitionDev(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t_range_hash (id INT, purchased DATE)
+    PARTITION BY RANGE( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES LESS THAN (1990),
+        PARTITION p1 VALUES LESS THAN (2000),
+        PARTITION p2 VALUES LESS THAN MAXVALUE
+    );`)
+	tk.MustExec("insert into t_range_hash values (1, '2020-05-27'), (2, '2020-05-28'), (3, '2021-05-27'), (4, '2021-05-28'), (5, '2022-05-27'),(6, '2022-05-28');")
+	tk.MustQuery("select * from t_list_hash;").Check(testkit.Rows("xx"))
 
 }
 

@@ -93,10 +93,11 @@ func (t *partitionedTable) GetPartitionedTable() table.PartitionedTable {
 // partitionedTable is a table, it contains many Partitions.
 type partitionedTable struct {
 	TableCommon
-	partitionExpr   *PartitionExpr
-	partitions      map[int64]*partition
-	evalBufferTypes []*types.FieldType
-	evalBufferPool  sync.Pool
+	partitionExpr    *PartitionExpr
+	subpartitionExpr *PartitionExpr
+	partitions       map[int64]*partition
+	evalBufferTypes  []*types.FieldType
+	evalBufferPool   sync.Pool
 
 	// Only used during Reorganize partition
 	// reorganizePartitions is the currently used partitions that are reorganized
@@ -119,6 +120,13 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		return nil, errors.Trace(err)
 	}
 	ret.partitionExpr = partitionExpr
+	if pi.Sub != nil && pi.Sub.Type == pmodel.PartitionTypeHash {
+		subpartitionExpr, err := newPartitionExpr(tblInfo, pi.Sub.Type, pi.Sub.Expr, pi.Sub.Columns, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		ret.subpartitionExpr = subpartitionExpr
+	}
 	initEvalBufferType(ret)
 	ret.evalBufferPool = sync.Pool{
 		New: func() any {
@@ -178,6 +186,15 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		}
 		t.table = ret
 		partitions[p.ID] = &t
+
+		for _, subP := range p.SubDefinitions {
+			err := initTableCommonWithIndices(&t.TableCommon, tblInfo, subP.ID, tbl.Columns, tbl.allocs, tbl.Constraints)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			t.table = ret
+			partitions[subP.ID] = &t
+		}
 	}
 	ret.partitions = partitions
 	switch pi.DDLAction {
@@ -1412,9 +1429,9 @@ func (t *partitionedTable) CheckForExchangePartition(ctx expression.EvalContext,
 }
 
 // locatePartitionCommon returns the partition idx of the input record.
-func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp pmodel.PartitionType, partitionExpr *PartitionExpr, num uint64, columnsPartitioned bool, r []types.Datum) (int, error) {
+func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp pmodel.PartitionType, partitionExpr *PartitionExpr, num uint64, columnsPartitioned bool, r []types.Datum) (int, int, error) {
 	var err error
-	var idx int
+	var idx, subIdx int
 	switch tp {
 	case pmodel.PartitionTypeRange:
 		if columnsPartitioned {
@@ -1423,7 +1440,7 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp 
 			idx, err = t.locateRangePartition(ctx, partitionExpr, r)
 		}
 		if err != nil {
-			return -1, err
+			return -1, -1, err
 		}
 		pi := t.Meta().Partition
 		if pi.CanHaveOverlappingDroppingPartition() {
@@ -1432,7 +1449,17 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp 
 				// For read it can check the Overlapping partition and ignore the error.
 				// One should use the next non-dropping partition for range, or the default
 				// partition for list partitioned table with default partition, for read.
-				return idx, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("matching a partition being dropped, '%s'", pi.Definitions[idx].Name.String()))
+				return idx, -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("matching a partition being dropped, '%s'", pi.Definitions[idx].Name.String()))
+			}
+		}
+		if t.subpartitionExpr != nil && pi.Sub != nil && pi.Sub.Type == pmodel.PartitionTypeHash {
+			subNum := pi.Sub.Num
+			if subNum == 0 && len(pi.Definitions) > 0 {
+				subNum = uint64(len(pi.Definitions[0].SubDefinitions))
+			}
+			subIdx, err = t.locateHashPartition(ctx, t.subpartitionExpr, subNum, r)
+			if err != nil {
+				return -1, -1, err
 			}
 		}
 	case pmodel.PartitionTypeHash:
@@ -1444,29 +1471,32 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp 
 		idx, err = partitionExpr.locateListPartition(ctx, r)
 		pi := t.Meta().Partition
 		if idx != pi.GetOverlappingDroppingPartitionIdx(idx) {
-			return idx, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("matching a partition being dropped, '%s'", pi.Definitions[idx].Name.String()))
+			return idx, -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("matching a partition being dropped, '%s'", pi.Definitions[idx].Name.String()))
 		}
 	case pmodel.PartitionTypeNone:
 		idx = 0
 	}
 	if err != nil {
-		return -1, errors.Trace(err)
+		return -1, -1, errors.Trace(err)
 	}
-	return idx, nil
+	return idx, subIdx, nil
 }
 
-func (t *partitionedTable) locatePartitionIdx(ctx expression.EvalContext, r []types.Datum) (int, error) {
+func (t *partitionedTable) locatePartitionIdx(ctx expression.EvalContext, r []types.Datum) (int, int, error) {
 	pi := t.Meta().GetPartitionInfo()
 	columnsSet := len(t.meta.Partition.Columns) > 0
 	return t.locatePartitionCommon(ctx, pi.Type, t.partitionExpr, pi.Num, columnsSet, r)
 }
 
 func (t *partitionedTable) locatePartition(ctx expression.EvalContext, r []types.Datum) (int64, error) {
-	idx, err := t.locatePartitionIdx(ctx, r)
+	idx, subIdx, err := t.locatePartitionIdx(ctx, r)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	pi := t.Meta().GetPartitionInfo()
+	if subIdx >= 0 {
+		return pi.Definitions[idx].SubDefinitions[subIdx].ID, nil
+	}
 	return pi.Definitions[idx].ID, nil
 }
 
@@ -1489,7 +1519,7 @@ func (t *partitionedTable) locateReorgPartition(ctx expression.EvalContext, r []
 			reorgDefs = pi.DroppingDefinitions
 		}
 	}
-	idx, err := t.locatePartitionCommon(ctx, pi.DDLType, t.reorgPartitionExpr, uint64(len(reorgDefs)), columnsSet, r)
+	idx, _, err := t.locatePartitionCommon(ctx, pi.DDLType, t.reorgPartitionExpr, uint64(len(reorgDefs)), columnsSet, r)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -1689,7 +1719,9 @@ func (t *partitionedTable) GetPartitionByRow(ctx expression.EvalContext, r []typ
 
 // GetPartitionIdxByRow returns the index in PartitionDef for the matching partition
 func (t *partitionedTable) GetPartitionIdxByRow(ctx expression.EvalContext, r []types.Datum) (int, error) {
-	return t.locatePartitionIdx(ctx, r)
+	idx, _, err := t.locatePartitionIdx(ctx, r)
+	// todo: fix this.
+	return idx, err
 }
 
 // GetPartitionByRow returns a Table, which is actually a Partition.
@@ -2014,6 +2046,11 @@ func FindPartitionByName(meta *model.TableInfo, parName string) (int64, error) {
 	for _, def := range meta.Partition.Definitions {
 		if strings.EqualFold(def.Name.L, parName) {
 			return def.ID, nil
+		}
+		for _, subDef := range def.SubDefinitions {
+			if strings.EqualFold(subDef.Name.L, parName) {
+				return subDef.ID, nil
+			}
 		}
 	}
 	return -1, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs(parName, meta.Name.O))
