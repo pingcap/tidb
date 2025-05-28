@@ -7,27 +7,27 @@
 ## Table of Contents
 
 - [Refresh Stats Command](#refresh-stats-command)
-  - [Table of Contents](#table-of-contents)
-  - [Introduction](#introduction)
-  - [Motivation or Background](#motivation-or-background)
-  - [Detailed Design](#detailed-design)
-    - [Guide-level explanation](#guide-level-explanation)
-    - [Reference-level explanation](#reference-level-explanation)
-      - [Goals](#goals)
-      - [Solution](#solution)
-        - [Broadcast Query Executor](#broadcast-query-executor)
-        - [Workflow](#workflow)
-        - [Concurrency Control](#concurrency-control)
-        - [Timeout](#timeout)
-      - [FAQ](#faq)
-  - [Test Design](#test-design)
-    - [Functional Tests](#functional-tests)
-    - [Scenario Tests](#scenario-tests)
-    - [Compatibility Tests](#compatibility-tests)
-    - [Performance Tests](#performance-tests)
-  - [Impacts \& Risks](#impacts--risks)
-  - [Investigation \& Alternatives](#investigation--alternatives)
-  - [Unresolved Questions](#unresolved-questions)
+	- [Table of Contents](#table-of-contents)
+	- [Introduction](#introduction)
+	- [Motivation or Background](#motivation-or-background)
+	- [Detailed Design](#detailed-design)
+		- [Guide-level explanation](#guide-level-explanation)
+		- [Reference-level explanation](#reference-level-explanation)
+			- [Goals](#goals)
+			- [Solution](#solution)
+				- [Broadcast Query Executor](#broadcast-query-executor)
+				- [Workflow](#workflow)
+				- [Concurrency Control](#concurrency-control)
+				- [Timeout](#timeout)
+			- [FAQ](#faq)
+	- [Test Design](#test-design)
+		- [Functional Tests](#functional-tests)
+		- [Scenario Tests](#scenario-tests)
+		- [Compatibility Tests](#compatibility-tests)
+		- [Performance Tests](#performance-tests)
+	- [Impacts \& Risks](#impacts--risks)
+	- [Investigation \& Alternatives](#investigation--alternatives)
+	- [Unresolved Questions](#unresolved-questions)
 
 ## Introduction
 
@@ -35,8 +35,8 @@ This document proposes a new SQL command to refresh the statistics for the speci
 
 ## Motivation or Background
 
-Recently, the BR team has been working on a new solution to speed up statistics backup and restore for some key customers.
-In the proposal, the BR team wants to perform the physical backup and restore for the stats-related tables; it would significantly reduce the time for reading and writing the stats by using JSON files.
+Recently, we have a project that aims to speed up statistics backup and restore for some key customers.
+In the proposal, we want to perform the physical backup and restore for the stats-related tables; it would significantly reduce the time for reading and writing the stats by using JSON files.
 
 If we implement this solution, it would introduce another problem. The backup and restore operations happen after the cluster has started, which means they occur after the statistics are initialized. Therefore, we still need a mechanism to ensure that TiDB nodes load the latest statistics into memory and are ready to serve user queries after the restore operation. Otherwise, it wouldn't be able to use the latest statistics in time.
 One workaround is to ask users to perform a full restart of the TiDB nodes, which would trigger stats initialization again during startup. However, this is obviously not ideal for users. Therefore, we plan to introduce a new SQL command that the BR tool can use to trigger stats refreshment for the tables that have been restored.
