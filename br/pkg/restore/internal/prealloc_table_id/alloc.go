@@ -59,55 +59,12 @@ func NewAndPrealloc(tables []*metautil.Table, m Allocator) (*PreallocIDs, error)
 	return preallocIDs, nil
 }
 
-// New collects the requirement of prealloc IDs and return a
-// not-yet-allocated PreallocIDs.
-func New(tables []*metautil.Table) (*PreallocIDs, error) {
-	if len(tables) == 0 {
-		return &PreallocIDs{
-			start: math.MaxInt64,
-		}, nil
-	}
-
-	maxID := int64(0)
-	unallocedIDs := make([]int64, 0, len(tables))
-
-	for _, t := range tables {
-		if t.Info.ID > maxID && t.Info.ID < InsaneTableIDThreshold {
-			maxID = t.Info.ID
-		}
-		unallocedIDs = append(unallocedIDs, t.Info.ID)
-
-		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
-			for _, part := range t.Info.Partition.Definitions {
-				if part.ID > maxID && part.ID < InsaneTableIDThreshold {
-					maxID = part.ID
-				}
-				unallocedIDs = append(unallocedIDs, part.ID)
-			}
-		}
-	}
-	if maxID+int64(len(unallocedIDs))+1 > InsaneTableIDThreshold {
-		return nil, errors.Errorf("table ID %d is too large", maxID)
-	}
-
-	sort.Slice(unallocedIDs, func(i, j int) bool { return unallocedIDs[i] < unallocedIDs[j] })
-
-	return &PreallocIDs{
-		start:          math.MaxInt64,
-		reusableBorder: maxID + 1,
-		hash:           computeSortedIDsHash(unallocedIDs),
-		unallocedIDs:   unallocedIDs,
-		allocRule:      make(map[int64]int64, len(unallocedIDs)),
-	}, nil
-}
-
-func ReuseIDs(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocIDs, error) {
-	if legacy == nil {
-		return nil, errors.Errorf("no prealloc IDs to be reused")
-	}
-
+// collectTableIDs collects table and partition IDs from the given tables.
+// Returns the maximum ID and a sorted slice of IDs.
+func collectTableIDs(tables []*metautil.Table) (int64, []int64, error) {
 	maxID := int64(0)
 	ids := make([]int64, 0, len(tables))
+
 	for _, t := range tables {
 		if t.Info.ID > maxID && t.Info.ID < InsaneTableIDThreshold {
 			maxID = t.Info.ID
@@ -124,17 +81,51 @@ func ReuseIDs(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*Preall
 		}
 	}
 
-	if legacy.ReusableBorder < maxID+1 {
-		return nil, errors.Annotatef(berrors.ErrInvalidRange, "prealloc IDs reusable border %d does not match with the tables max ID %d", legacy.ReusableBorder, maxID+1)
-	}
 	if maxID+int64(len(ids))+1 > InsaneTableIDThreshold {
-		return nil, errors.Errorf("table ID %d is too large", maxID)
+		return 0, nil, errors.Errorf("table ID %d is too large", maxID)
 	}
 
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	hash := computeSortedIDsHash(ids)
-	if legacy.Hash != hash {
-		return nil, errors.Annotatef(berrors.ErrInvalidRange, "prealloc IDs hash %x does not match with the tables hash %x", legacy.Hash, hash)
+	return maxID, ids, nil
+}
+
+// New collects the requirement of prealloc IDs and returns a not-yet-allocated PreallocIDs.
+func New(tables []*metautil.Table) (*PreallocIDs, error) {
+	if len(tables) == 0 {
+		return &PreallocIDs{
+			start: math.MaxInt64,
+		}, nil
+	}
+
+	maxID, unallocedIDs, err := collectTableIDs(tables)
+	if err != nil {
+		return nil, err
+	}
+
+	return &PreallocIDs{
+		start:          math.MaxInt64,
+		reusableBorder: maxID + 1,
+		hash:           computeSortedIDsHash(unallocedIDs),
+		unallocedIDs:   unallocedIDs,
+		allocRule:      make(map[int64]int64, len(unallocedIDs)),
+	}, nil
+}
+
+func ReuseIDs(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocIDs, error) {
+	if legacy == nil {
+		return nil, errors.Errorf("no prealloc IDs to be reused")
+	}
+
+	maxID, ids, err := collectTableIDs(tables)
+	if err != nil {
+		return nil, err
+	}
+
+	if legacy.ReusableBorder < maxID+1 {
+		return nil, errors.Annotatef(berrors.ErrInvalidRange, "prealloc IDs reusable border %d does not match with the tables max ID %d", legacy.ReusableBorder, maxID+1)
+	}
+	if legacy.Hash != computeSortedIDsHash(ids) {
+		return nil, errors.Annotatef(berrors.ErrInvalidRange, "prealloc IDs hash mismatch")
 	}
 
 	allocRule := make(map[int64]int64, len(ids))
@@ -150,14 +141,13 @@ func ReuseIDs(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*Preall
 		}
 	}
 
-	ret := PreallocIDs{
+	return &PreallocIDs{
 		start:          legacy.Start,
 		reusableBorder: legacy.ReusableBorder,
 		end:            legacy.End,
 		hash:           legacy.Hash,
 		allocRule:      allocRule,
-	}
-	return &ret, nil
+	}, nil
 }
 
 // String implements fmt.Stringer.
