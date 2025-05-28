@@ -456,27 +456,21 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 		regionMaxSize = j.regionSplitSize * 4 / 3
 	}
 
-	// preparation work for the write timeout fault injection, worked only if the following failpoint is enabled
-	originalCtx := ctx             // save the original context with 15 minutes timeout
-	var innerTimeout time.Duration // disabled if 0
+	// preparation work for the write timeout fault injection, only enabled if the following failpoint is enabled
+	wctx := ctx
+	wcancel := func() {}
 	failpoint.Inject("shortWaitNTimeout", func(val failpoint.Value) {
+		var innerTimeout time.Duration
 		// GO_FAILPOINTS action supplies the duration in ms
-		if ms, ok := val.(int); ok && ms > 0 {
+		if ms := val.(int); ms > 0 {
 			innerTimeout = time.Duration(ms) * time.Millisecond
 		} else {
 			innerTimeout = 5 * time.Millisecond // default
 		}
 		log.FromContext(ctx).Info("Injecting a timeout to write context.")
-	})
-
-	// continue the preparation work for write timeout injection, and create a new context if innerTimeout > 0
-	// with a much shorter timeout, so that the WaitN call will more likely to trigger a context timeout error
-	wctx := originalCtx
-	wcancel := func() {}
-	if innerTimeout > 0 {
 		wctx, wcancel = context.WithTimeoutCause(
-			originalCtx, innerTimeout, common.ErrWriteTooSlow)
-	}
+			ctx, innerTimeout, common.ErrWriteTooSlow)
+	})
 	defer wcancel()
 
 	flushKVs := func() error {
