@@ -39,6 +39,8 @@ func init() {
 // the distribution of the table on each store after adding pd scatter region.
 // The distribution of leaders is related to PD scheduling. In some cases,
 // it is unbalanced. Testcase compares the number of regions by range.
+// Since realtikv test deployment has 3 TiKV nodes, we will validate scatter in
+// table/global level in integration test.
 func TestTiDBScatterRegion(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
@@ -78,7 +80,7 @@ func TestTiDBScatterRegion(t *testing.T) {
 			require.Equal(t, tt.scatterScope, v)
 		})
 		counts := getTableLeaderDistribute(t, tk, tt.tableName)
-		// realtikv test deployment has 3 stores. Validate scatter region by:
+		// Validate scatter region by:
 		// 1. Get the number of leaders for this table on each store.
 		// 2. Check the number of leaders on each store must be less than the
 		// total number of regions for this table. This indicates that the
