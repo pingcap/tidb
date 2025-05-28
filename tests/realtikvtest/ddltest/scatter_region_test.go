@@ -20,10 +20,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -47,64 +47,65 @@ func TestTiDBScatterRegion(t *testing.T) {
 	testcases := []struct {
 		tableName        string
 		sqls             []string
-		scatterScope     string
 		totalRegionCount int
 	}{
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, "table", 8},
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, "global", 8},
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, "table", 8},
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, "global", 8},
+		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, 8},
+		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, 8},
+		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, 8},
+		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, 8},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'), partition p202202 values less than('2022-02-02'));`,
-			"ALTER TABLE t TRUNCATE PARTITION p202201;"}, "table", 16},
+			"ALTER TABLE t TRUNCATE PARTITION p202201;"}, 16},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'), partition p202202 values less than('2022-02-02'));`,
-			"ALTER TABLE t TRUNCATE PARTITION p202202;"}, "global", 16},
+			"ALTER TABLE t TRUNCATE PARTITION p202202;"}, 16},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'));`,
-			"ALTER TABLE t ADD PARTITION (PARTITION p202202 values less than('2022-02-02'));"}, "table", 16},
+			"ALTER TABLE t ADD PARTITION (PARTITION p202202 values less than('2022-02-02'));"}, 16},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'));`,
-			"ALTER TABLE t ADD PARTITION (PARTITION p202203 values less than('2022-02-03'));"}, "global", 16},
+			"ALTER TABLE t ADD PARTITION (PARTITION p202203 values less than('2022-02-03'));"}, 16},
 	}
-	for _, tt := range testcases {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec(fmt.Sprintf("set @@session.tidb_scatter_region='%s';", tt.scatterScope))
-		tk.MustQuery("select @@session.tidb_scatter_region;").Check(testkit.Rows(tt.scatterScope))
-		tk.MustExec(fmt.Sprintf("drop table if exists %s;", tt.tableName))
-		for _, sql := range tt.sqls {
-			tk.MustExec(sql)
-		}
-		failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/preSplitAndScatter", func(v string) {
-			require.Equal(t, tt.scatterScope, v)
-		})
-		counts := getTableLeaderDistribute(t, tk, tt.tableName)
-		// Validate scatter region by:
-		// 1. Get the number of leaders for this table on each store.
-		// 2. Check the number of leaders on each store must be less than the
-		// total number of regions for this table. This indicates that the
-		// table's regions are distributed across multiple stores. If the table
-		// is not scattered, all leaders would be concentrated on a single store.
-		for _, count := range counts {
-			require.True(t, count < tt.totalRegionCount)
-		}
+	for _, scatterScope := range []string{"table", "global"} {
+		for _, tt := range testcases {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec(fmt.Sprintf("set @@session.tidb_scatter_region='%s';", scatterScope))
+			tk.MustQuery("select @@session.tidb_scatter_region;").Check(testkit.Rows(scatterScope))
+			tk.MustExec(fmt.Sprintf("drop table if exists %s;", tt.tableName))
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/preSplitAndScatter", func(v string) {
+				require.Equal(t, scatterScope, v)
+			})
+			for _, sql := range tt.sqls {
+				tk.MustExec(sql)
+			}
+			counts := getTableLeaderDistribute(t, tk, tt.tableName)
+			// Validate scatter region by:
+			// 1. Get the number of leaders for this table on each store.
+			// 2. Check the number of leaders on each store must be less than the
+			// total number of regions for this table. This indicates that the
+			// table's regions are distributed across multiple stores. If the table
+			// is not scattered, all leaders would be concentrated on a single store.
+			for _, count := range counts {
+				require.True(t, count < tt.totalRegionCount)
+			}
 
-		tk2 := testkit.NewTestKit(t, store)
-		tk2.MustExec(fmt.Sprintf("set @@global.tidb_scatter_region='%s';", tt.scatterScope))
-		tk = testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustQuery("select @@session.tidb_scatter_region;").Check(testkit.Rows(tt.scatterScope))
-		tk.MustExec(fmt.Sprintf("drop table if exists %s;", tt.tableName))
-		for _, sql := range tt.sqls {
-			tk.MustExec(sql)
-		}
-		failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/preSplitAndScatter", func(v string) {
-			require.Equal(t, tt.scatterScope, v)
-		})
-		counts = getTableLeaderDistribute(t, tk, tt.tableName)
-		for _, count := range counts {
-			require.True(t, count < tt.totalRegionCount)
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec(fmt.Sprintf("set @@global.tidb_scatter_region='%s';", scatterScope))
+			tk = testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustQuery("select @@session.tidb_scatter_region;").Check(testkit.Rows(scatterScope))
+			tk.MustExec(fmt.Sprintf("drop table if exists %s;", tt.tableName))
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/preSplitAndScatter", func(v string) {
+				require.Equal(t, scatterScope, v)
+			})
+			for _, sql := range tt.sqls {
+				tk.MustExec(sql)
+			}
+			counts = getTableLeaderDistribute(t, tk, tt.tableName)
+			for _, count := range counts {
+				require.True(t, count < tt.totalRegionCount)
+			}
 		}
 	}
 }
