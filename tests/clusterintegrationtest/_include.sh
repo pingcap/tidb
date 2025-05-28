@@ -19,12 +19,12 @@ set -euo pipefail
 function start_tidb() {
   export VERSION_SOURCE="nightly"
 
-  cd ../../ || exit 1
-  echo "building tidb-server..."
-  make
-  echo "build successfully"
-
-  cd - || exit 1
+  if [ ! -f "../../bin/tidb-server" ]; then
+    cd ../../ || exit 1
+    echo "building tidb-server..."
+    make
+    echo "build successfully"
+    cd - || exit 1
 
   echo "Starting TiUP Playground in the background..."
   if [ -f "../../bin/tikv-server" ] && [ -f "../../bin/pd-server" ] && [ -f "../../bin/tiflash" ]; then
