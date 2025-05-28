@@ -44,6 +44,7 @@ var DefaultExprPushDownBlacklist *atomic.Value
 // This is for plan cache, when the push-down black list is updated, we invalid all cached plans to avoid error.
 var ExprPushDownBlackListReloadTimeStamp *atomic.Int64
 
+// ScalarFuncSigLowerNameMap is a map from the upper case function name in tipb.ScalarFuncSig_name to the lower case function name.
 var ScalarFuncSigLowerNameMap map[string]string
 
 func init() {
@@ -95,6 +96,8 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 		// so we return true to allow the push down.
 		// but `storeType != kv.TiFlash && name == ast.AggFuncApproxCountDistinct`
 		// is a special case, we should not allow the push down.
+		// next we will check the funcFullName which contains `.` , this special case will not match the funcFullName.
+		// If the DefaultExprPushDownBlacklist is nil, we can return true directly.
 		DefaultExprPushDownBlacklistMap := DefaultExprPushDownBlacklist.Load()
 		if DefaultExprPushDownBlacklistMap == nil {
 			return true
