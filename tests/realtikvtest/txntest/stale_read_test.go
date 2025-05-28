@@ -1492,7 +1492,9 @@ func TestStaleReadNoBackoff(t *testing.T) {
 
 func TestStaleReadAllCombinations(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
-	defer config.RestoreFunc()()
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		// Restore to original config
+	})()
 
 	tk := testkit.NewTestKit(t, store)
 

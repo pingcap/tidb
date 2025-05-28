@@ -28,11 +28,9 @@ import (
 )
 
 func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.LiteInitStats = false
-	})
+	})()
 	handle.IsFullCacheFunc = func(cache types.StatsCache, total uint64) bool {
 		return true
 	}
@@ -40,11 +38,9 @@ func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 }
 
 func TestConcurrentlyInitStatsWithoutMemoryLimit(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.LiteInitStats = false
-	})
+	})()
 	handle.IsFullCacheFunc = func(cache types.StatsCache, total uint64) bool {
 		return false
 	}
@@ -102,20 +98,16 @@ func testConcurrentlyInitStats(t *testing.T) {
 }
 
 func TestDropTableBeforeConcurrentlyInitStats(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.LiteInitStats = false
-	})
+	})()
 	testDropTableBeforeInitStats(t)
 }
 
 func TestDropTableBeforeNonLiteInitStats(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.LiteInitStats = false
-	})
+	})()
 	testDropTableBeforeInitStats(t)
 }
 
