@@ -97,7 +97,7 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 		// next we will check the funcFullName which contains `.` , this special case will not match the funcFullName.
 		// If the DefaultExprPushDownBlacklist is nil, we can return true directly.
 		defaultExprPushDownBlacklistMap := DefaultExprPushDownBlacklist.Load()
-		if defaultExprPushDownBlacklistMap == nil {
+		if len(defaultExprPushDownBlacklistMap) == 0 {
 			return result
 		}
 		// scalarFuncSigLowerNameMap is to string.ToLower the function name in tipb.ScalarFuncSig_name.
