@@ -46,25 +46,24 @@ func TestTiDBScatterRegion(t *testing.T) {
 		tableName      string
 		sqls           []string
 		scatterScope   string
-		minRegionCount int
 		maxRegionCount int
 	}{
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, "table", 1, 7},
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, "global", 1, 7},
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, "table", 1, 7},
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, "global", 1, 7},
+		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, "table", 7},
+		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, "global", 7},
+		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, "table", 7},
+		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, "global", 7},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'), partition p202202 values less than('2022-02-02'));`,
-			"ALTER TABLE t TRUNCATE PARTITION p202201;"}, "table", 1, 15},
+			"ALTER TABLE t TRUNCATE PARTITION p202201;"}, "table", 15},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'), partition p202202 values less than('2022-02-02'));`,
-			"ALTER TABLE t TRUNCATE PARTITION p202202;"}, "global", 1, 15},
+			"ALTER TABLE t TRUNCATE PARTITION p202202;"}, "global", 15},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'));`,
-			"ALTER TABLE t ADD PARTITION (PARTITION p202202 values less than('2022-02-02'));"}, "table", 1, 15},
+			"ALTER TABLE t ADD PARTITION (PARTITION p202202 values less than('2022-02-02'));"}, "table", 15},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'));`,
-			"ALTER TABLE t ADD PARTITION (PARTITION p202203 values less than('2022-02-03'));"}, "global", 1, 15},
+			"ALTER TABLE t ADD PARTITION (PARTITION p202203 values less than('2022-02-03'));"}, "global", 15},
 	}
 	for _, tt := range testcases {
 		tk := testkit.NewTestKit(t, store)
@@ -79,8 +78,14 @@ func TestTiDBScatterRegion(t *testing.T) {
 			require.Equal(t, tt.scatterScope, v)
 		})
 		counts := getTableLeaderDistribute(t, tk, tt.tableName)
+		// realtikv test deployment has 3 stores. Validate scatter region by:
+		// 1. Get the number of leaders for this table on each store.
+		// 2. Check the number of leaders on each store must be less than the
+		// total number of regions for this table. This indicates that the
+		// table's regions are distributed across multiple stores. If the table
+		// is not scattered, all leaders would be concentrated on a single store.
 		for _, count := range counts {
-			require.True(t, count >= tt.minRegionCount && count <= tt.maxRegionCount)
+			require.True(t, count <= tt.maxRegionCount)
 		}
 
 		tk2 := testkit.NewTestKit(t, store)
@@ -97,12 +102,29 @@ func TestTiDBScatterRegion(t *testing.T) {
 		})
 		counts = getTableLeaderDistribute(t, tk, tt.tableName)
 		for _, count := range counts {
-			require.True(t, count >= tt.minRegionCount && count <= tt.maxRegionCount)
+			require.True(t, count <= tt.maxRegionCount)
 		}
 	}
 }
 
-// getTableLeaderDistribute get leader distribution of the table on all stores.
+// getTableLeaderDistribute query `show table TABLE regions;` to get all leader's
+// distribution by LEADER_STORE_ID. Return the number of leaders on each store.
+// +-----------+-----------------------------+-----------------------------+-----------+-----------------+---------------------+------------+---------------+------------+----------------------+------------------+------------------------+------------------+
+// | REGION_ID | START_KEY                   | END_KEY                     | LEADER_ID | LEADER_STORE_ID | PEERS               | SCATTERING | WRITTEN_BYTES | READ_BYTES | APPROXIMATE_SIZE(MB) | APPROXIMATE_KEYS | SCHEDULING_CONSTRAINTS | SCHEDULING_STATE |
+// +-----------+-----------------------------+-----------------------------+-----------+-----------------+---------------------+------------+---------------+------------+----------------------+------------------+------------------------+------------------+
+// |     44861 | t_615_                      | t_615_r_2305843009213693952 |     44864 |               2 | 44862, 44863, 44864 |          0 |            39 |          0 |                    1 |                0 |                        |                  |
+// |     44865 | t_615_r_2305843009213693952 | t_615_r_4611686018427387904 |     44867 |               7 | 44866, 44867, 44868 |          0 |            39 |          0 |                    1 |                0 |                        |                  |
+// |     44869 | t_615_r_4611686018427387904 | t_615_r_6917529027641081856 |     44870 |               1 | 44870, 44871, 44872 |          0 |            39 |          0 |                    1 |                0 |                        |                  |
+// |     44897 | t_615_r_6917529027641081856 | t_616_                      |     44900 |               2 | 44898, 44899, 44900 |          0 |             0 |          0 |                    1 |                0 |                        |                  |
+// |     44901 | t_616_                      | t_616_r_2305843009213693952 |     44902 |               1 | 44902, 44903, 44904 |          0 |            39 |          0 |                    1 |                0 |                        |                  |
+// |     44905 | t_616_r_2305843009213693952 | t_616_r_4611686018427387904 |     44907 |               7 | 44906, 44907, 44908 |          0 |            27 |          0 |                    1 |                0 |                        |                  |
+// |     44909 | t_616_r_4611686018427387904 | t_616_r_6917529027641081856 |     44912 |               2 | 44910, 44911, 44912 |          0 |             0 |          0 |                    1 |                0 |                        |                  |
+// |     44913 | t_616_r_6917529027641081856 | t_617_                      |     44914 |               1 | 44914, 44915, 44916 |          0 |            39 |          0 |                    1 |                0 |                        |                  |
+// |     44917 | t_617_                      | t_617_r_2305843009213693952 |     44919 |               7 | 44918, 44919, 44920 |          0 |            39 |          0 |                    1 |                0 |                        |                  |
+// |     44921 | t_617_r_2305843009213693952 | t_617_r_4611686018427387904 |     44924 |               2 | 44922, 44923, 44924 |          0 |             0 |          0 |                    1 |                0 |                        |                  |
+// |     44925 | t_617_r_4611686018427387904 | t_617_r_6917529027641081856 |     44926 |               1 | 44926, 44927, 44928 |          0 |             0 |          0 |                    1 |                0 |                        |                  |
+// |     41001 | t_617_r_6917529027641081856 | t_281474976710654_          |     41003 |               7 | 41002, 41003, 41004 |          0 |           657 |       4177 |                    1 |                0 |                        |                  |
+// +-----------+-----------------------------+-----------------------------+-----------+-----------------+---------------------+------------+---------------+------------+----------------------+------------------+------------------------+------------------+
 func getTableLeaderDistribute(t *testing.T, tk *testkit.TestKit, table string) []int {
 	regionCount := make(map[int]int)
 	re := tk.MustQuery(fmt.Sprintf("show table %s regions", table))
