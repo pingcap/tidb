@@ -529,18 +529,6 @@ type TopN struct {
 	once sync.Once
 }
 
-// Scale scales the TopN by the given factor and return the total row count.
-// It is only used when to build topN from sampled data during analyze.
-func (c *TopN) Scale(scaleFactor float64) uint64 {
-	intest.Assert(c.minCount == 0 && c.totalCount == 0, "minCount and totalCount should be 0 before scaling and should not call the TotalCount/MinCount methods before scaling")
-	var total uint64
-	for i := range c.TopN {
-		c.TopN[i].Count = uint64(float64(c.TopN[i].Count) * scaleFactor)
-		total += c.TopN[i].Count
-	}
-	return total
-}
-
 // AppendTopN appends a topn into the TopN struct.
 func (c *TopN) AppendTopN(data []byte, count uint64) {
 	if c == nil {
