@@ -159,8 +159,8 @@ var (
 		splitFileOption:           {},
 	}
 
-	// we only support global sort on nextgen cluster, and doesn't allow set separate
-	// cloud storage URI.
+	// we only support global sort on nextgen cluster when SEM enabled, and doesn't
+	// allow set separate cloud storage URI.
 	disallowedOptionsOfNextGen = map[string]struct{}{
 		diskQuotaOption:       {},
 		maxWriteSpeedOption:   {},
