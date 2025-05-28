@@ -643,15 +643,24 @@ func TestDistSQLSharedKVRequestRace(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("set session tidb_enable_index_merge = ON")
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec(`create table t (a int, b int, c int, d int, primary key (a, d), index idx(c))
+	tk.MustExec(`create table t (
+			a int,
+			b int,
+			c int,
+			d int,
+			primary key (a, d),
+			index ib(b),
+			index ic(c)
+		)
 		partition by range(d) (
 			partition p1 values less than(1),
 			partition p2 values less than(2),
 			partition p3 values less than(3),
 			partition p4 values less than (4)
-		);`)
+		)`)
 	tk.MustExec("begin")
 	for i := 0; i < 1000; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d, %d);", i*1000, i*1000, i*1000, i%4))
@@ -660,9 +669,6 @@ func TestDistSQLSharedKVRequestRace(t *testing.T) {
 
 	expects := make([]string, 0, 500)
 	for i := 0; i < 1000; i++ {
-		if i%4 == 3 {
-			continue
-		}
 		expect := fmt.Sprintf("%d %d %d %d", i*1000, i*1000, i*1000, i%4)
 		expects = append(expects, expect)
 		if len(expects) == 500 {
@@ -679,7 +685,8 @@ func TestDistSQLSharedKVRequestRace(t *testing.T) {
 	for _, mode := range replicaReadModes {
 		tk.MustExec(fmt.Sprintf("set session tidb_replica_read = '%s'", mode))
 		for i := 0; i < 20; i++ {
-			tk.MustQuery("select * from t force index(idx) where d in (0, 1, 2) order by c asc limit 500;").Check(testkit.Rows(expects...))
+			tk.MustQuery("select * from t force index(ic) order by c asc limit 500").Check(testkit.Rows(expects...))
+			tk.MustQuery("select * from t where b >= 0 or c >= 0 order by c asc limit 500").Check(testkit.Rows(expects...))
 		}
 	}
 }
