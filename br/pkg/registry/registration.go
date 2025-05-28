@@ -37,6 +37,10 @@ const (
 	RegistrationDBName    string = utils.TemporaryDBNamePrefix + "Restore_Registration_DB"
 	RegistrationTableName        = "restore_registry"
 
+	// FilterSeparator is used to join/split filter strings safely.
+	// Using ASCII Unit Separator (US) character which never appears in SQL identifiers or expressions.
+	FilterSeparator = "\x1F"
+
 	// createRegistrationTableSQL is the SQL to create the registration table
 	// we use unique index to prevent race condition that two threads inserting tasks with same parameters.
 	// we initialize auto increment id to be 1 to make sure default value 0 is not used when insertion failed.
@@ -183,6 +187,36 @@ func (r *Registry) createTableIfNotExist(ctx context.Context) error {
 	return nil
 }
 
+// executeInTransaction executes a function within a pessimistic transaction
+func (r *Registry) executeInTransaction(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor, []sqlexec.OptionFuncAlias) error) error {
+	sessCtx := r.se.GetSessionCtx()
+	execCtx := sessCtx.GetRestrictedSQLExecutor()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+
+	// use ExecOptionUseCurSession to ensure all statements run in the same session
+	sessionOpts := []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
+
+	_, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, "BEGIN PESSIMISTIC")
+	if err != nil {
+		return errors.Annotate(err, "failed to begin transaction")
+	}
+
+	defer func() {
+		if err != nil {
+			if _, _, rollbackErr := execCtx.ExecRestrictedSQL(ctx, sessionOpts, "ROLLBACK"); rollbackErr != nil {
+				log.Error("failed to rollback transaction", zap.Error(rollbackErr))
+			}
+		} else {
+			if _, _, commitErr := execCtx.ExecRestrictedSQL(ctx, sessionOpts, "COMMIT"); commitErr != nil {
+				log.Error("failed to commit transaction", zap.Error(commitErr))
+				err = commitErr
+			}
+		}
+	}()
+
+	return fn(ctx, execCtx, sessionOpts)
+}
+
 // ResumeOrCreateRegistration first looks for an existing registration with the given parameters.
 // If found and paused, it tries to resume it. Otherwise, it creates a new registration.
 func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info RegistrationInfo) (uint64, error) {
@@ -190,7 +224,7 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 		return 0, errors.Trace(err)
 	}
 
-	filterStrings := strings.Join(info.FilterStrings, ",")
+	filterStrings := strings.Join(info.FilterStrings, FilterSeparator)
 
 	log.Info("attempting to resume or create registration",
 		zap.String("filter_strings", filterStrings),
@@ -200,153 +234,104 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 		zap.Bool("with_sys_table", info.WithSysTable),
 		zap.String("cmd", info.Cmd))
 
-	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
+	var taskID uint64
 
-	// Set transaction mode to pessimistic
-	_, _, err := execCtx.ExecRestrictedSQL(
-		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-		"SET @@tidb_txn_mode = 'pessimistic'")
-	if err != nil {
-		return 0, errors.Annotate(err, "failed to set pessimistic mode")
-	}
-
-	// Begin transaction
-	_, _, err = execCtx.ExecRestrictedSQL(
-		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-		"BEGIN")
-	if err != nil {
-		return 0, errors.Annotate(err, "failed to begin transaction")
-	}
-
-	defer func() {
-		_, _, _ = execCtx.ExecRestrictedSQL(
-			kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-			"ROLLBACK")
-	}()
-
-	// First look for an existing task with the same parameters
-	lookupSQL := fmt.Sprintf(lookupRegistrationSQLTemplate, RegistrationDBName, RegistrationTableName)
-	rows, _, err := execCtx.ExecRestrictedSQL(
-		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-		lookupSQL,
-		filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
-	if err != nil {
-		return 0, errors.Annotate(err, "failed to look up existing task")
-	}
-
-	// If task found, check its status
-	if len(rows) > 0 {
-		taskID := rows[0].GetUint64(0)
-		status := rows[0].GetString(1)
-
-		if taskID == 0 {
-			return 0, errors.New("invalid task ID: got 0 from lookup")
+	err := r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor, sessionOpts []sqlexec.OptionFuncAlias) error {
+		// first look for an existing task with the same parameters
+		lookupSQL := fmt.Sprintf(lookupRegistrationSQLTemplate, RegistrationDBName, RegistrationTableName)
+		rows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, lookupSQL,
+			filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
+		if err != nil {
+			return errors.Annotate(err, "failed to look up existing task")
 		}
 
-		// If task exists and is running, return error
-		if status == string(TaskStatusRunning) {
-			log.Warn("task already exists and is running",
-				zap.Uint64("restore_id", taskID))
-			return 0, errors.Annotatef(berrors.ErrInvalidArgument,
-				"task with ID %d already exists and is running", taskID)
+		// if task found, check its status
+		if len(rows) > 0 {
+			existingTaskID := rows[0].GetUint64(0)
+			status := rows[0].GetString(1)
+
+			if existingTaskID == 0 {
+				return errors.New("invalid task ID: got 0 from lookup")
+			}
+
+			// if task exists and is running, return error
+			if status == string(TaskStatusRunning) {
+				log.Warn("task already exists and is running",
+					zap.Uint64("restore_id", existingTaskID))
+				return errors.Annotatef(berrors.ErrInvalidArgument,
+					"task with ID %d already exists and is running", existingTaskID)
+			}
+
+			// strictly check for paused status
+			if status == string(TaskStatusPaused) {
+				updateSQL := fmt.Sprintf(resumeTaskByIDSQLTemplate, RegistrationDBName, RegistrationTableName)
+				_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, updateSQL, existingTaskID)
+				if err != nil {
+					return errors.Annotate(err, "failed to resume paused task")
+				}
+
+				// update the heartbeat
+				currentTime := uint64(time.Now().Unix())
+				updateHeartbeatSQL := fmt.Sprintf(UpdateHeartbeatSQLTemplate, RegistrationDBName, RegistrationTableName)
+				_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, updateHeartbeatSQL, currentTime, existingTaskID)
+				if err != nil {
+					log.Warn("failed to update heartbeat for resumed task",
+						zap.Uint64("restore_id", existingTaskID),
+						zap.Error(err))
+					// continue despite heartbeat error
+				}
+
+				log.Info("successfully resumed existing registration",
+					zap.Uint64("restore_id", existingTaskID),
+					zap.Strings("filters", info.FilterStrings))
+
+				taskID = existingTaskID
+				return nil
+			}
+
+			// task exists but is not running or paused - this is an unexpected state
+			log.Warn("task exists but in unexpected state",
+				zap.Uint64("restore_id", existingTaskID),
+				zap.String("status", status))
+			return errors.Annotatef(berrors.ErrInvalidArgument,
+				"task with ID %d exists but is in unexpected state: %s", existingTaskID, status)
 		}
 
-		// Strictly check for paused status
-		if status == string(TaskStatusPaused) {
-			updateSQL := fmt.Sprintf(resumeTaskByIDSQLTemplate, RegistrationDBName, RegistrationTableName)
-
-			_, _, err = execCtx.ExecRestrictedSQL(
-				kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-				[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-				updateSQL,
-				taskID)
-			if err != nil {
-				return 0, errors.Annotate(err, "failed to resume paused task")
-			}
-
-			// Update the heartbeat
-			currentTime := uint64(time.Now().Unix())
-			updateHeartbeatSQL := fmt.Sprintf(UpdateHeartbeatSQLTemplate, RegistrationDBName, RegistrationTableName)
-			_, _, err = execCtx.ExecRestrictedSQL(
-				kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-				[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-				updateHeartbeatSQL,
-				currentTime, taskID)
-			if err != nil {
-				log.Warn("failed to update heartbeat for resumed task",
-					zap.Uint64("restore_id", taskID),
-					zap.Error(err))
-				// Continue despite heartbeat error
-			}
-
-			_, _, err = execCtx.ExecRestrictedSQL(
-				kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-				[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-				"COMMIT")
-			if err != nil {
-				return 0, errors.Annotate(err, "failed to commit transaction")
-			}
-
-			log.Info("successfully resumed existing registration",
-				zap.Uint64("restore_id", taskID),
-				zap.Strings("filters", info.FilterStrings))
-			return taskID, nil
+		// no existing task found, create a new one
+		currentTime := uint64(time.Now().Unix())
+		insertSQL := fmt.Sprintf(createNewTaskSQLTemplate, RegistrationDBName, RegistrationTableName)
+		_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, insertSQL,
+			filterStrings, filterStrings, info.StartTS, info.RestoredTS,
+			info.UpstreamClusterID, info.WithSysTable, info.Cmd, currentTime, currentTime)
+		if err != nil {
+			return errors.Annotate(err, "failed to create new registration")
 		}
 
-		// Task exists but is not running or paused - this is an unexpected state
-		log.Warn("task exists but in unexpected state",
-			zap.Uint64("restore_id", taskID),
-			zap.String("status", status))
-		return 0, errors.Annotatef(berrors.ErrInvalidArgument,
-			"task with ID %d exists but is in unexpected state: %s", taskID, status)
-	}
+		lastIDRows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, "SELECT LAST_INSERT_ID()")
+		if err != nil {
+			return errors.Annotate(err, "failed to get ID of newly created task")
+		}
 
-	// No existing task found, create a new one
-	currentTime := uint64(time.Now().Unix())
-	insertSQL := fmt.Sprintf(createNewTaskSQLTemplate, RegistrationDBName, RegistrationTableName)
-	_, _, err = execCtx.ExecRestrictedSQL(
-		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-		insertSQL,
-		filterStrings, filterStrings, info.StartTS, info.RestoredTS,
-		info.UpstreamClusterID, info.WithSysTable, info.Cmd, currentTime, currentTime)
+		if len(lastIDRows) == 0 {
+			return errors.New("failed to get LAST_INSERT_ID()")
+		}
+
+		newTaskID := lastIDRows[0].GetUint64(0)
+		if newTaskID == 0 {
+			return errors.New("invalid task ID: got 0 from LAST_INSERT_ID()")
+		}
+
+		log.Info("successfully created new registration",
+			zap.Uint64("restore_id", newTaskID),
+			zap.Strings("filters", info.FilterStrings))
+
+		taskID = newTaskID
+		return nil
+	})
+
 	if err != nil {
-		return 0, errors.Annotate(err, "failed to create new registration")
+		return 0, err
 	}
-
-	rows, _, err = execCtx.ExecRestrictedSQL(
-		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-		"SELECT LAST_INSERT_ID()")
-	if err != nil {
-		return 0, errors.Annotate(err, "failed to get ID of newly created task")
-	}
-
-	if len(rows) == 0 {
-		return 0, errors.New("failed to get LAST_INSERT_ID()")
-	}
-
-	taskID := rows[0].GetUint64(0)
-
-	if taskID == 0 {
-		return 0, errors.New("invalid task ID: got 0 from LAST_INSERT_ID()")
-	}
-
-	_, _, err = execCtx.ExecRestrictedSQL(
-		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-		"COMMIT")
-	if err != nil {
-		return 0, errors.Annotate(err, "failed to commit transaction")
-	}
-
-	log.Info("successfully created new registration",
-		zap.Uint64("restore_id", taskID),
-		zap.Strings("filters", info.FilterStrings))
 
 	return taskID, nil
 }
@@ -370,16 +355,83 @@ func (r *Registry) updateTaskStatusConditional(ctx context.Context, restoreID ui
 	return nil
 }
 
-// Unregister removes a restore registration
+// Unregister removes a restore registration and cleans up empty table/database atomically
 func (r *Registry) Unregister(ctx context.Context, restoreID uint64) error {
-	deleteSQL := fmt.Sprintf(deleteRegistrationSQLTemplate, RegistrationDBName, RegistrationTableName)
+	return r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor, sessionOpts []sqlexec.OptionFuncAlias) error {
+		// first, delete the specific registration
+		deleteSQL := fmt.Sprintf(deleteRegistrationSQLTemplate, RegistrationDBName, RegistrationTableName)
+		_, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, deleteSQL, restoreID)
+		if err != nil {
+			return errors.Annotatef(err, "failed to unregister restore %d", restoreID)
+		}
 
-	if err := r.se.ExecuteInternal(ctx, deleteSQL, restoreID); err != nil {
-		return errors.Annotatef(err, "failed to unregister restore %d", restoreID)
-	}
+		log.Info("unregistered restore task", zap.Uint64("restore_id", restoreID))
 
-	log.Info("unregistered restore task", zap.Uint64("restore_id", restoreID))
-	return nil
+		// check if the table is now empty
+		countSQL := fmt.Sprintf("SELECT COUNT(*) FROM %s.%s", RegistrationDBName, RegistrationTableName)
+		countRows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, countSQL)
+		if err != nil {
+			log.Warn("failed to check if registration table is empty, skipping cleanup",
+				zap.Error(err))
+			// continue without cleanup - the unregister operation itself succeeded
+			return nil
+		}
+
+		if len(countRows) == 0 {
+			log.Warn("unexpected empty result when checking table count, skipping cleanup")
+			return nil
+		}
+
+		remainingCount := countRows[0].GetInt64(0)
+		if remainingCount == 0 {
+			// table is empty, drop it
+			dropTableSQL := fmt.Sprintf("DROP TABLE IF EXISTS %s.%s", RegistrationDBName, RegistrationTableName)
+			_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, dropTableSQL)
+			if err != nil {
+				log.Warn("failed to drop empty registration table, skipping table cleanup",
+					zap.Error(err))
+				// continue without table cleanup - the unregister operation itself succeeded
+				return nil
+			}
+
+			log.Info("dropped empty registration table",
+				zap.String("db", RegistrationDBName),
+				zap.String("table", RegistrationTableName))
+
+			// check if the database has any other tables
+			checkDBSQL := fmt.Sprintf("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = %q", RegistrationDBName)
+			dbCountRows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, checkDBSQL)
+			if err != nil {
+				log.Warn("failed to check if registration database is empty, skipping database cleanup",
+					zap.Error(err))
+				// continue without database cleanup
+				return nil
+			}
+
+			if len(dbCountRows) == 0 {
+				log.Warn("unexpected empty result when checking database table count, skipping database cleanup")
+				return nil
+			}
+
+			dbTableCount := dbCountRows[0].GetInt64(0)
+			if dbTableCount == 0 {
+				// database is empty, drop it
+				dropDBSQL := fmt.Sprintf("DROP DATABASE IF EXISTS %s", RegistrationDBName)
+				_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, dropDBSQL)
+				if err != nil {
+					log.Warn("failed to drop empty registration database, skipping database cleanup",
+						zap.Error(err))
+					// continue without database cleanup
+					return nil
+				}
+
+				log.Info("dropped empty registration database",
+					zap.String("db", RegistrationDBName))
+			}
+		}
+
+		return nil
+	})
 }
 
 // PauseTask marks a task as paused only if it's currently running
@@ -420,7 +472,7 @@ func (r *Registry) GetRegistrationsByMaxID(ctx context.Context, maxID uint64) ([
 		)
 
 		info := RegistrationInfo{
-			FilterStrings:     strings.Split(filterStrings, ","),
+			FilterStrings:     strings.Split(filterStrings, FilterSeparator),
 			StartTS:           startTS,
 			RestoredTS:        restoredTS,
 			UpstreamClusterID: upstreamClusterID,

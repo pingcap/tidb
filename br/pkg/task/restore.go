@@ -874,8 +874,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer restoreRegistry.Close()
 	cfg.RestoreRegistry = restoreRegistry
-	defer cfg.RestoreRegistry.Close()
 
 	var restoreError error
 	if IsStreamRestore(cmdName) {

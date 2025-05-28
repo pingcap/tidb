@@ -39,6 +39,27 @@ cleanup_and_exit() {
 }
 trap cleanup_and_exit EXIT
 
+verify_no_temporary_databases() {
+    local test_case="${1:-unknown test}"
+    # this function verifies that BR has properly cleaned up all temporary databases
+    # after successful restore operations. temporary databases are used internally
+    # by BR during restore operations and should be automatically cleaned up
+    # when the restore completes successfully.
+    echo "Verifying no temporary databases remain after restore in $test_case..."
+    
+    # check for BR temporary database prefix
+    local temp_dbs=$(run_sql "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME LIKE '__TiDB_BR_Temporary_%';" | grep -v "SCHEMA_NAME" | grep -v "^$" || true)
+    
+    if [ -n "$temp_dbs" ]; then
+        echo "Error: Found temporary databases that should have been cleaned up in $test_case:"
+        echo "$temp_dbs" | sed 's/^/  /'
+        echo "Temporary database cleanup verification failed in $test_case!"
+        exit 1
+    fi
+    
+    echo "Verification passed: No temporary databases found in $test_case"
+}
+
 create_tables_with_values() {
     local prefix=$1    # table name prefix
     local count=$2     # number of tables to create
@@ -154,6 +175,8 @@ test_mixed_parallel_restores() {
     
     echo "Mixed parallel restores with specified parameters completed successfully"
     
+    verify_no_temporary_databases "Test Case 1: Multiple parallel restores"
+    
     cleanup
 }
 
@@ -187,6 +210,8 @@ test_concurrent_restore_table_conflicts() {
         run_sql "select c from $DB.full_$i;" | grep $i
     done
 
+    verify_no_temporary_databases "Test Case 2: Concurrent restore with table conflicts"
+    
     cleanup
 }
 
@@ -209,6 +234,11 @@ test_restore_with_different_systable_settings() {
         run_sql "select c from $DB2.full_$i;" | grep $i
     done
 
+    # complete the first one
+    run_br restore full --filter "mysql.*" --filter "$DB.*" --with-sys-table=true -s "$BACKUP_DIR"
+
+    verify_no_temporary_databases "Test Case 3: Restore with different system table settings"
+    
     cleanup
 }
 
