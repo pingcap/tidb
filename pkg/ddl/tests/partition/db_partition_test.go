@@ -625,6 +625,27 @@ func TestSubPartitionInfo(t *testing.T) {
 			"p1 s3 2 2 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
 			"p2 s4 3 1 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
 			"p2 s5 3 2 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)"))
+
+	tk.MustExec("drop table if exists t_list_hash;")
+	tk.MustExec(`CREATE TABLE t_list_hash (id INT, name varchar(100), primary key (id))
+    PARTITION BY LIST COLUMNS ( id )
+    SUBPARTITION BY HASH( id )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES IN (0,1),
+        PARTITION p1 VALUES IN (2,3),
+        PARTITION p2 VALUES IN (4,5)
+    );`)
+	tk.MustQuery("show create table t_list_hash;").Check(testkit.Rows("t_list_hash CREATE TABLE `t_list_hash` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `name` varchar(100) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(`id`)\n" +
+		"SUBPARTITION BY HASH (`id`)\n" +
+		"SUBPARTITIONS 2\n" +
+		"(PARTITION `p0` VALUES IN (0,1),\n" +
+		" PARTITION `p1` VALUES IN (2,3),\n" +
+		" PARTITION `p2` VALUES IN (4,5))"))
 }
 
 func TestSubPartitionInsertSelect(t *testing.T) {
@@ -661,6 +682,10 @@ func TestSubPartitionInsertSelect(t *testing.T) {
 	tk.MustQuery("select * from t_range_hash where purchased < '1990-01-01' order by id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
 	tk.MustQuery("select * from t_range_hash where purchased > '1996-05-27' and purchased < '2005-05-28' order by id;").Check(testkit.Rows("4 1996-05-28", "5 2005-05-27"))
 
+	tk.MustExec("update t_range_hash set purchased = '1989-06-01' where purchased = '1989-05-27';")
+	tk.MustQuery("select * from t_range_hash order by id;").Check(testkit.Rows("1 1989-06-01", "2 1989-05-28", "3 1996-05-27", "4 1996-05-28", "5 2005-05-27", "6 2005-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p0) order by  id;").Check(testkit.Rows("1 1989-06-01", "2 1989-05-28"))
+
 	// test for list-hash partition
 	tk.MustExec(`CREATE TABLE t_list_hash (id INT, purchased DATE)
     PARTITION BY LIST( YEAR(purchased) )
@@ -690,13 +715,83 @@ func TestSubPartitionInsertSelect(t *testing.T) {
 	// test select by condition
 	tk.MustQuery("select * from t_list_hash where purchased < '1990-01-01' order by id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
 	tk.MustQuery("select * from t_list_hash where purchased > '1996-05-27' and purchased < '2005-05-28' order by id;").Check(testkit.Rows("4 1996-05-28", "5 2005-05-27"))
-}
 
-func TestSubPartitionDev(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	// add test for point-get/batch-get access path.
+	tk.MustExec("drop table if exists t_range_hash;")
+	tk.MustExec(`CREATE TABLE t_range_hash (id INT, name varchar(100), primary key (id))
+    PARTITION BY RANGE( id )
+    SUBPARTITION BY HASH( id )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES LESS THAN (2),
+        PARTITION p1 VALUES LESS THAN (4),
+        PARTITION p2 VALUES LESS THAN MAXVALUE
+    );`)
+	tk.MustExec("insert into t_range_hash values (0, 'a'), (1, 'b'), (2, 'c'), (3, 'd'), (4, 'e'),(5, 'f');")
+	tk.MustQuery("select * from t_range_hash partition (p0) order by  id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_range_hash partition (p1) order by  id;").Check(testkit.Rows("2 c", "3 d"))
+	tk.MustQuery("select * from t_range_hash partition (p2) order by  id;").Check(testkit.Rows("4 e", "5 f"))
+	tk.MustQuery("select * from t_range_hash partition (p0sp0);").Check(testkit.Rows("0 a"))
+	tk.MustQuery("select * from t_range_hash partition (p0sp1);").Check(testkit.Rows("1 b"))
+	tk.MustQuery("select * from t_range_hash partition (p0, p0sp0) order by  id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_range_hash partition (p0, p1sp0) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c"))
+	tk.MustQuery("select * from t_range_hash partition (p0, p1sp0, p2sp0) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c", "4 e"))
 
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	tk.MustQuery("select * from t_range_hash where id=0;").Check(testkit.Rows("0 a"))
+	tk.MustQuery("select * from t_range_hash where id in (0,1) order by id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_range_hash where id in (0,1,2,5) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c", "5 f"))
+
+	tk.MustQuery("select * from t_range_hash where id>0 and id < 2;").Check(testkit.Rows("1 b"))
+	tk.MustQuery("select * from t_range_hash where id>0 and id < 5 order by id;").Check(testkit.Rows("1 b", "2 c", "3 d", "4 e"))
+
+	tk.MustExec("drop table if exists t_list_hash;")
+	tk.MustExec(`CREATE TABLE t_list_hash (id INT, name varchar(100), primary key (id))
+    PARTITION BY LIST ( id )
+    SUBPARTITION BY HASH( id )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES IN (0,1),
+        PARTITION p1 VALUES IN (2,3),
+        PARTITION p2 VALUES IN (4,5)
+    );`)
+	tk.MustExec("insert into t_list_hash values (0, 'a'), (1, 'b'), (2, 'c'), (3, 'd'), (4, 'e'),(5, 'f');")
+	tk.MustQuery("select * from t_list_hash partition (p0) order by  id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_list_hash partition (p1) order by  id;").Check(testkit.Rows("2 c", "3 d"))
+	tk.MustQuery("select * from t_list_hash partition (p2) order by  id;").Check(testkit.Rows("4 e", "5 f"))
+	tk.MustQuery("select * from t_list_hash partition (p0sp0);").Check(testkit.Rows("0 a"))
+	tk.MustQuery("select * from t_list_hash partition (p0sp1);").Check(testkit.Rows("1 b"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p0sp0) order by  id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p1sp0) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p1sp0, p2sp0) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c", "4 e"))
+
+	tk.MustQuery("select * from t_list_hash where id=0;").Check(testkit.Rows("0 a"))
+	tk.MustQuery("select * from t_list_hash where id in (0,1) order by id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_list_hash where id in (0,1,2,5) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c", "5 f"))
+
+	tk.MustQuery("select * from t_list_hash where id>0 and id < 2;").Check(testkit.Rows("1 b"))
+	tk.MustQuery("select * from t_list_hash where id>0 and id < 5 order by id;").Check(testkit.Rows("1 b", "2 c", "3 d", "4 e"))
+
+	tk.MustExec("drop table if exists t_list_hash;")
+	tk.MustExec(`CREATE TABLE t_list_hash (id INT, name varchar(100), primary key (id))
+    PARTITION BY LIST COLUMNS ( id )
+    SUBPARTITION BY HASH( id )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES IN (0,1),
+        PARTITION p1 VALUES IN (2,3),
+        PARTITION p2 VALUES IN (4,5)
+    );`)
+	tk.MustExec("insert into t_list_hash values (0, 'a'), (1, 'b'), (2, 'c'), (3, 'd'), (4, 'e'),(5, 'f');")
+	tk.MustQuery("select * from t_list_hash partition (p0) order by  id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_list_hash partition (p1) order by  id;").Check(testkit.Rows("2 c", "3 d"))
+	tk.MustQuery("select * from t_list_hash partition (p2) order by  id;").Check(testkit.Rows("4 e", "5 f"))
+	tk.MustQuery("select * from t_list_hash partition (p0sp0);").Check(testkit.Rows("0 a"))
+	tk.MustQuery("select * from t_list_hash partition (p0sp1);").Check(testkit.Rows("1 b"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p0sp0) order by  id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p1sp0) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p1sp0, p2sp0) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c", "4 e"))
+	tk.MustQuery("select * from t_list_hash where id=0;").Check(testkit.Rows("0 a"))
+	tk.MustQuery("select * from t_list_hash where id in (0,1) order by id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_list_hash where id in (0,1,2,5) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c", "5 f"))
+	tk.MustQuery("select * from t_list_hash where id>0 and id < 2;").Check(testkit.Rows("1 b"))
+	tk.MustQuery("select * from t_list_hash where id>0 and id < 5 order by id;").Check(testkit.Rows("1 b", "2 c", "3 d", "4 e"))
 }
 
 func TestCreateTableWithRangeColumnPartition(t *testing.T) {

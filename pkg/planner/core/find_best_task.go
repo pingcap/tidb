@@ -2684,6 +2684,10 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 		return base.InvalidTask
 	}
 
+	if pi := ds.TableInfo.GetPartitionInfo(); pi != nil && pi.Sub != nil {
+		return base.InvalidTask
+	}
+
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(1))
 	pointGetPlan := PointGetPlan{
 		ctx:              ds.SCtx(),
@@ -2753,6 +2757,10 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 	}
 	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IsSingleScan ||
 		prop.TaskTp == property.CopSingleReadTaskType && !candidate.path.IsSingleScan {
+		return base.InvalidTask
+	}
+
+	if pi := ds.TableInfo.GetPartitionInfo(); pi != nil && pi.Sub != nil {
 		return base.InvalidTask
 	}
 
