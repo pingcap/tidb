@@ -21,7 +21,6 @@ import (
 	"encoding/hex"
 	"math"
 	"net"
-	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -1452,8 +1451,7 @@ func (local *Backend) newRegionJobWorker(
 		regenerateJobsFn: local.generateJobForRange,
 	}
 	if kerneltype.IsNextGen() {
-		// TODO: add support for TLS.
-		httpClient := &http.Client{}
+		httpClient := util.ClientWithTLS(local.tls.TLSConfig())
 		cloudW := &objStoreRegionJobWorker{
 			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, clusterID, httpClient, local.splitCli),
 			writeBatchSize: local.KVWriteBatchSize,

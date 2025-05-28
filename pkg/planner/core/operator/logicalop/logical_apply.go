@@ -15,6 +15,8 @@
 package logicalop
 
 import (
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -136,6 +138,7 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 		RowCount: leftProfile.RowCount,
 		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	})
+	// TODO: investigate why this cannot be replaced with maps.Copy()
 	for id, c := range leftProfile.ColNDVs {
 		la.StatsInfo().ColNDVs[id] = c
 	}
@@ -181,12 +184,9 @@ func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
 func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := la.LogicalJoin.ExtractCorrelatedCols()
-	for i := len(corCols) - 1; i >= 0; i-- {
-		if la.Children()[0].Schema().Contains(&corCols[i].Column) {
-			corCols = append(corCols[:i], corCols[i+1:]...)
-		}
-	}
-	return corCols
+	return slices.DeleteFunc(corCols, func(col *expression.CorrelatedColumn) bool {
+		return la.Children()[0].Schema().Contains(&col.Column)
+	})
 }
 
 // MaxOneRow inherits BaseLogicalPlan.LogicalPlan.<16th> implementation.

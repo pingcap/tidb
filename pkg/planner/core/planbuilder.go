@@ -18,7 +18,9 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"maps"
 	"math"
+	"net/url"
 	"reflect"
 	"slices"
 	"strconv"
@@ -29,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -55,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -358,12 +362,7 @@ func (b *PlanBuilder) GetIsForUpdateRead() bool {
 func GetDBTableInfo(visitInfo []visitInfo) []stmtctx.TableEntry {
 	var tables []stmtctx.TableEntry
 	existsFunc := func(tbls []stmtctx.TableEntry, tbl *stmtctx.TableEntry) bool {
-		for _, t := range tbls {
-			if t == *tbl {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(tbls, *tbl)
 	}
 	for _, v := range visitInfo {
 		if v.db == "" && v.table == "" {
@@ -558,7 +557,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		*ast.BeginStmt, *ast.CommitStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.AlterRangeStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
-		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt,
+		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt, *ast.CancelDistributionJobStmt,
 		*ast.ImportIntoActionStmt, *ast.CalibrateResourceStmt, *ast.AddQueryWatchStmt, *ast.DropQueryWatchStmt, *ast.DropProcedureStmt:
 		return b.buildSimple(ctx, node.Node.(ast.StmtNode))
 	case ast.DDLNode:
@@ -1038,12 +1037,7 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (base.Plan, 
 
 // detectAggInExprNode detects an aggregate function in its exprs.
 func (*PlanBuilder) detectAggInExprNode(exprs []ast.ExprNode) bool {
-	for _, expr := range exprs {
-		if ast.HasAggFlag(expr) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(exprs, ast.HasAggFlag)
 }
 
 // detectSelectAgg detects an aggregate function or GROUP BY clause.
@@ -1386,7 +1380,7 @@ func filterPathByIsolationRead(ctx base.PlanContext, paths []*util.AccessPath, t
 			availableEngineStr += paths[i].StoreType.Name()
 		}
 		if _, ok := isolationReadEngines[paths[i].StoreType]; !ok && paths[i].StoreType != kv.TiDB {
-			paths = append(paths[:i], paths[i+1:]...)
+			paths = slices.Delete(paths, i, i+1)
 		}
 	}
 	var err error
@@ -1961,7 +1955,9 @@ func (b *PlanBuilder) getColsInfo(tn *ast.TableName) (indicesInfo []*model.Index
 }
 
 // BuildHandleColsForAnalyze returns HandleCols for ANALYZE.
-func BuildHandleColsForAnalyze(ctx base.PlanContext, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) util.HandleCols {
+func BuildHandleColsForAnalyze(
+	_ base.PlanContext, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo,
+) util.HandleCols {
 	var handleCols util.HandleCols
 	switch {
 	case tblInfo.PKIsHandle:
@@ -1983,7 +1979,7 @@ func BuildHandleColsForAnalyze(ctx base.PlanContext, tblInfo *model.TableInfo, a
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
 		pkColLen := len(pkIdx.Columns)
 		columns := make([]*expression.Column, pkColLen)
-		for i := 0; i < pkColLen; i++ {
+		for i := range pkColLen {
 			colInfo := tblInfo.Columns[pkIdx.Columns[i].Offset]
 			var index int
 			if allColumns {
@@ -2005,7 +2001,7 @@ func BuildHandleColsForAnalyze(ctx base.PlanContext, tblInfo *model.TableInfo, a
 		// The second reason is that in (cb *CommonHandleCols).BuildHandleByDatums, tablecodec.TruncateIndexValues(cb.tblInfo, cb.idxInfo, datumBuf)
 		// is called, which asks that IndexColumn.Offset of cb.idxInfo must be according to cb,tblInfo.
 		// TODO: find a better way to find handle columns in ANALYZE rather than use Column.Index
-		handleCols = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, tblInfo, pkIdx, columns)
+		handleCols = util.NewCommonHandlesColsWithoutColsAlign(tblInfo, pkIdx, columns)
 	}
 	return handleCols
 }
@@ -2193,7 +2189,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 			return columns, nil, nil
 		default:
 			// Usually, this won't happen.
-			logutil.BgLogger().Warn("Unknown default column choice, analyze all columns", zap.String("choice", columnOptions))
+			statslogutil.StatsLogger().Warn("Unknown default column choice, analyze all columns", zap.String("choice", columnOptions))
 			return tbl.TableInfo.Columns, nil, nil
 		}
 	case ast.AllColumns:
@@ -2489,9 +2485,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	if err != nil {
 		return err
 	}
-	for physicalID, opts := range optionsMap {
-		analyzePlan.OptionsMap[physicalID] = opts
-	}
+	maps.Copy(analyzePlan.OptionsMap, optionsMap)
 
 	var indexes, independentIndexes, specialGlobalIndexes []*model.IndexInfo
 
@@ -3070,13 +3064,9 @@ func fillAnalyzeOptionsV2(optMap map[ast.AnalyzeOptionType]uint64) map[ast.Analy
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeOptionType]uint64, error) {
 	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
 	if statsVer == statistics.Version1 {
-		for key, val := range analyzeOptionDefault {
-			optMap[key] = val
-		}
+		maps.Copy(optMap, analyzeOptionDefault)
 	} else {
-		for key, val := range analyzeOptionDefaultV2 {
-			optMap[key] = val
-		}
+		maps.Copy(optMap, analyzeOptionDefaultV2)
 	}
 	sampleNum, sampleRate := uint64(0), 0.0
 	for _, opt := range opts {
@@ -4420,7 +4410,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	schema4NewRow := expression.NewSchema(make([]*expression.Column, len(insertPlan.Table.Cols()))...)
 	names4NewRow := make(types.NameSlice, len(insertPlan.Table.Cols()))
 	// TODO: don't clone it.
-	for i := 0; i < actualColLen; i++ {
+	for i := range actualColLen {
 		selCol := insertPlan.SelectPlan.Schema().Columns[i]
 		ordinal := affectedValuesCols[i].Offset
 		schema4NewRow.Columns[ordinal] = &expression.Column{}
@@ -4620,14 +4610,23 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	)
 
 	if ld.Select == nil {
-		importFromServer, err = storage.IsLocalPath(ld.Path)
+		u, err := url.Parse(ld.Path)
 		if err != nil {
 			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
 		}
-	}
-
-	if importFromServer && sem.IsEnabled() {
-		return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
+		importFromServer = storage.IsLocal(u)
+		if sem.IsEnabled() {
+			if importFromServer {
+				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
+			}
+			if kerneltype.IsNextGen() && storage.IsS3(u) {
+				newPath, err := processSemNextGenS3Path(u)
+				if err != nil {
+					return nil, err
+				}
+				ld.Path = newPath
+			}
+		}
 	}
 
 	for _, opt := range ld.Options {
@@ -4794,21 +4793,21 @@ func (b *PlanBuilder) requireInsertAndSelectPriv(tables []*ast.TableName) {
 	}
 }
 
-var ruleList = []string{"leader", "peer", "learner"}
+var ruleList = []string{"leader-scatter", "peer-scatter", "learner-scatter"}
 var engineList = []string{"tikv", "tiflash"}
 
 func (b *PlanBuilder) buildDistributeTable(node *ast.DistributeTableStmt) (base.Plan, error) {
 	tnW := b.resolveCtx.GetTableName(node.Table)
 	tblInfo := tnW.TableInfo
 	if !slices.Contains(ruleList, node.Rule.L) {
-		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("rule must be leader, follower or learner")
+		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("rule must be leader-scatter, follower-scatter or learner-scatter")
 	}
 	if !slices.Contains(engineList, node.Engine.L) {
 		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("engine must be tikv or tiflash")
 	}
 
-	if node.Engine.L == "tiflash" && node.Rule.L != "learner" {
-		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("the rule of tiflash must be learner")
+	if node.Engine.L == "tiflash" && node.Rule.L != "learner-scatter" {
+		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("the rule of tiflash must be learner-scatter")
 	}
 	plan := &DistributeTable{
 		TableInfo:      tblInfo,
@@ -5564,6 +5563,13 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 
 	var targetPlan base.Plan
 	if explain.Stmt != nil && !explain.Explore {
+		if strings.EqualFold(explain.Format, types.ExplainFormatCostTrace) {
+			origin := sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace
+			sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+			defer func() {
+				sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = origin
+			}()
+		}
 		nodeW := resolve.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
 		targetPlan, _, err = OptimizeAstNode(ctx, sctx, nodeW, b.is)
 		if err != nil {
@@ -6140,6 +6146,25 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 		}
 	}
 	return nil
+}
+
+// for nextgen import-into with SEM, we disallow user to set S3 external ID explicitly,
+// and we will use the keyspace name as the S3 external ID.
+// a nextgen cluster might be shared by multiple tenants, and they might share the
+// same AWS role to access import-into source data bucket, this external ID can
+// be used to restrict the access only to the current tenant.
+func processSemNextGenS3Path(u *url.URL) (string, error) {
+	values := u.Query()
+	for k := range values {
+		lowerK := strings.ToLower(k)
+		if lowerK == storage.S3ExternalID {
+			return "", plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with S3 external ID")
+		}
+	}
+	values.Set(storage.S3ExternalID, config.GetGlobalKeyspaceName())
+	u.RawQuery = values.Encode()
+
+	return u.String(), nil
 }
 
 // GetThreadOrBatchSizeFromExpression gets the numeric value of the thread or batch size from the expression.

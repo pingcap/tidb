@@ -884,7 +884,7 @@ func TestRequestBuilderHandle(t *testing.T) {
 	handles := []kv.Handle{kv.IntHandle(0), kv.IntHandle(2), kv.IntHandle(3), kv.IntHandle(4),
 		kv.IntHandle(5), kv.IntHandle(10), kv.IntHandle(11), kv.IntHandle(100)}
 
-	resourceTagBuilder := kv.NewResourceGroupTagBuilder()
+	resourceTagBuilder := kv.NewResourceGroupTagBuilder(nil)
 	tableID := int64(15)
 	actual, err := (&RequestBuilder{}).SetTableHandles(tableID, handles).
 		SetDAGRequest(&tipb.DAGRequest{}).

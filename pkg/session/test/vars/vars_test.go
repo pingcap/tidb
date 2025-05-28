@@ -403,3 +403,22 @@ func TestPrepareExecuteWithSQLHints(t *testing.T) {
 		}
 	}
 }
+
+func TestTiDBValidateTS(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("insert into t values (1)")
+
+	// default is on
+	tk.MustExecToErr("select * from t as of timestamp NOW() + interval 1 day")
+
+	// set off
+	tk.MustExec("set global tidb_enable_ts_validation = off")
+	tk.MustQuery("select * from t as of timestamp NOW() + interval 1 day")
+
+	// set on
+	tk.MustExec("set global tidb_enable_ts_validation = on")
+	tk.MustExecToErr("select * from t as of timestamp NOW() + interval 1 day")
+}

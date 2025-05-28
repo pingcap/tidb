@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -1306,12 +1307,9 @@ func (la *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (la *PhysicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := la.PhysicalHashJoin.ExtractCorrelatedCols()
-	for i := len(corCols) - 1; i >= 0; i-- {
-		if la.Children()[0].Schema().Contains(&corCols[i].Column) {
-			corCols = append(corCols[:i], corCols[i+1:]...)
-		}
-	}
-	return corCols
+	return slices.DeleteFunc(corCols, func(col *expression.CorrelatedColumn) bool {
+		return la.Children()[0].Schema().Contains(&col.Column)
+	})
 }
 
 // MemoryUsage return the memory usage of PhysicalApply
@@ -1969,6 +1967,31 @@ func (p *PhysicalExchangeSender) MemoryUsage() (sum int64) {
 		sum += hCol.MemoryUsage()
 	}
 	return
+}
+
+// GetCompressionMode returns the compression mode of this exchange sender.
+func (p *PhysicalExchangeSender) GetCompressionMode() vardef.ExchangeCompressionMode {
+	return p.CompressionMode
+}
+
+// GetSelfTasks returns mpp tasks for current PhysicalExchangeSender.
+func (p *PhysicalExchangeSender) GetSelfTasks() []*kv.MPPTask {
+	return p.Tasks
+}
+
+// SetSelfTasks sets mpp tasks for current PhysicalExchangeSender.
+func (p *PhysicalExchangeSender) SetSelfTasks(tasks []*kv.MPPTask) {
+	p.Tasks = tasks
+}
+
+// SetTargetTasks sets mpp tasks for current PhysicalExchangeSender.
+func (p *PhysicalExchangeSender) SetTargetTasks(tasks []*kv.MPPTask) {
+	p.TargetTasks = tasks
+}
+
+// AppendTargetTasks appends mpp tasks for current PhysicalExchangeSender.
+func (p *PhysicalExchangeSender) AppendTargetTasks(tasks []*kv.MPPTask) {
+	p.TargetTasks = append(p.TargetTasks, tasks...)
 }
 
 // Clone implements op.PhysicalPlan interface.

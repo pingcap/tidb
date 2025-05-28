@@ -595,7 +595,7 @@ func UpdateTiDBConfig() {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Path = "127.0.0.1:2379"
 		if kerneltype.IsNextGen() {
-			conf.TiKVWorkerURL = "http://localhost:19000"
+			conf.TiKVWorkerURL = "localhost:19000"
 		}
 	})
 }
