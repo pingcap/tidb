@@ -280,6 +280,7 @@ go_test(
         "schema_test.go",
         "sequence_test.go",
         "stat_test.go",
+        "storage_class_test.go",
         "table_mode_test.go",
         "table_modify_test.go",
         "table_split_test.go",

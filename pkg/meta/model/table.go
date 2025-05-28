@@ -210,7 +210,7 @@ type TableInfo struct {
 	EngineAttribute string `json:"engine_attribute,omitempty"`
 
 	// StorageClassTier is the storage class tier of the table level.
-	StorageClassTier string `json:"storage_class_tier,omitempty"`
+	StorageClassTier StorageClassTier `json:"storage_class_tier,omitempty"`
 }
 
 // Hash64 implement HashEquals interface.
@@ -1139,13 +1139,13 @@ type PartitionState struct {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID                 int64          `json:"id"`
-	Name               ast.CIStr      `json:"name"`
-	LessThan           []string       `json:"less_than"`
-	InValues           [][]string     `json:"in_values"`
-	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
-	Comment            string         `json:"comment,omitempty"`
-	StorageClassTier   string         `json:"storage_class_tier,omitempty"`
+	ID                 int64            `json:"id"`
+	Name               ast.CIStr        `json:"name"`
+	LessThan           []string         `json:"less_than"`
+	InValues           [][]string       `json:"in_values"`
+	PlacementPolicyRef *PolicyRefInfo   `json:"policy_ref_info"`
+	Comment            string           `json:"comment,omitempty"`
+	StorageClassTier   StorageClassTier `json:"storage_class_tier,omitempty"`
 }
 
 // Clone clones PartitionDefinition.
@@ -1447,23 +1447,40 @@ func ParseEngineAttributeFromString(input string) (*EngineAttribute, error) {
 	return attr, nil
 }
 
-// Name of storage class tiers
+// StorageClassTier is the name of storage class tiers.
+type StorageClassTier string
+
 const (
 	// StorageClassTierStandard is the standard storage class tier.
 	// This is the default storage class tier, used for frequently accessed
 	// data that is stored on TiKV's local disk.
-	StorageClassTierStandard string = "STANDARD"
+	StorageClassTierStandard StorageClassTier = "STANDARD"
 	// StorageClassTierIA is the infrequent access storage class tier.
 	// Data is stored on cloud storage like S3.
-	StorageClassTierIA string = "IA"
+	StorageClassTierIA StorageClassTier = "IA"
 	// StorageClassTierDefault is an alias for StorageClassTierStandard.
-	StorageClassTierDefault string = StorageClassTierStandard
+	StorageClassTierDefault StorageClassTier = StorageClassTierStandard
 )
+
+// Valid checks if the storage class tier is valid.
+func (s StorageClassTier) Valid() bool {
+	switch s {
+	case StorageClassTierStandard, StorageClassTierIA:
+		return true
+	default:
+		return false
+	}
+}
+
+// String implements fmt.Stringer interface for StorageClassTier.
+func (s StorageClassTier) String() string {
+	return string(s)
+}
 
 // StorageClassDef is the tier & scope definition for storage class.
 type StorageClassDef struct {
 	// Tier is the storage class tier, e.g. "STANDARD" or "IA".
-	Tier string `json:"tier"`
+	Tier StorageClassTier `json:"tier"`
 	// NamesIn is a list of partition names that the storage class tier applies to.
 	NamesIn []string `json:"names_in"`
 	// LessThan is a list of values to match partitions which are defined as

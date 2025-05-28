@@ -55,7 +55,7 @@ func BuildStorageClassSettingsFromJSON(input json.RawMessage) (*model.StorageCla
 
 	var def model.StorageClassDef
 	if err1 := decoder.Decode(&def); err1 == nil {
-		def.Tier = strings.ToUpper(def.Tier)
+		def.Tier = model.StorageClassTier(strings.ToUpper(string(def.Tier)))
 		if err2 := checkStorageClassDef(&def); err2 != nil {
 			return nil, err2
 		}
@@ -88,22 +88,16 @@ func BuildStorageClassSettingsFromJSON(input json.RawMessage) (*model.StorageCla
 	return nil, dbterror.ErrStorageClassInvalidSpec.GenWithStackByArgs(msg)
 }
 
-func getStorageClassTierAsString(msg json.RawMessage) (string, error) {
+func getStorageClassTierAsString(msg json.RawMessage) (model.StorageClassTier, error) {
 	var tier string
 	if err := json.Unmarshal(msg, &tier); err != nil {
 		return "", err
 	}
-	return strings.ToUpper(tier), nil
+	return model.StorageClassTier(strings.ToUpper(tier)), nil
 }
 
-var tiers = map[string]struct{}{
-	model.StorageClassTierStandard: {},
-	model.StorageClassTierIA:       {},
-}
-
-func checkTier(tier string) error {
-	_, ok := tiers[tier]
-	if !ok {
+func checkTier(tier model.StorageClassTier) error {
+	if !tier.Valid() {
 		msg := fmt.Sprintf("invalid storage class tier: %s", tier)
 		return dbterror.ErrStorageClassInvalidSpec.GenWithStackByArgs(msg)
 	}
@@ -133,9 +127,9 @@ func checkStorageClassDef(def *model.StorageClassDef) error {
 	return nil
 }
 
-func setStorageClassTierForTable(tbInfo *model.TableInfo, tier string) {
+func setStorageClassTierForTable(tbInfo *model.TableInfo, tier model.StorageClassTier) {
 	tbInfo.StorageClassTier = tier
-	logutil.DDLLogger().Info("storage class: set table tier", zap.Int64("tableID", tbInfo.ID), zap.String("tier", tier))
+	logutil.DDLLogger().Info("storage class: set table tier", zap.Int64("tableID", tbInfo.ID), zap.Stringer("tier", tier))
 }
 
 // BuildStorageClassForTable builds storage class tier for a table.
@@ -155,10 +149,10 @@ func BuildStorageClassForTable(tbInfo *model.TableInfo, settings *model.StorageC
 	return nil
 }
 
-func setStorageClassTierForPartition(tbInfo *model.TableInfo, part *model.PartitionDefinition, tier string) {
+func setStorageClassTierForPartition(tbInfo *model.TableInfo, part *model.PartitionDefinition, tier model.StorageClassTier) {
 	part.StorageClassTier = tier
 	logutil.DDLLogger().Info("storage class: set partition tier",
-		zap.Int64("tableID", tbInfo.ID), zap.String("partitionName", part.Name.L), zap.String("tier", tier))
+		zap.Int64("tableID", tbInfo.ID), zap.String("partitionName", part.Name.L), zap.Stringer("tier", tier))
 }
 
 // BuildStorageClassForPartitions builds storage class tier for partitions.
