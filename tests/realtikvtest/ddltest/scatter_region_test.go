@@ -65,12 +65,15 @@ func TestTiDBScatterRegion(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("set @@session.tidb_scatter_region='%s';", scatterScope))
 			tk.MustQuery("select @@session.tidb_scatter_region;").Check(testkit.Rows(scatterScope))
 			tk.MustExec(fmt.Sprintf("drop table if exists %s;", tt.tableName))
+			checkScatterScope := false
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/preSplitAndScatter", func(v string) {
 				require.Equal(t, scatterScope, v)
+				checkScatterScope = true
 			})
 			for _, sql := range tt.sqls {
 				tk.MustExec(sql)
 			}
+			require.Equal(t, true, checkScatterScope)
 			counts := getTableLeaderDistribute(t, tk, tt.tableName)
 			// Validate scatter region by:
 			// 1. Get the number of leaders for this table on each store.
@@ -88,12 +91,15 @@ func TestTiDBScatterRegion(t *testing.T) {
 			tk.MustExec("use test")
 			tk.MustQuery("select @@session.tidb_scatter_region;").Check(testkit.Rows(scatterScope))
 			tk.MustExec(fmt.Sprintf("drop table if exists %s;", tt.tableName))
+			checkScatterScope = false
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/preSplitAndScatter", func(v string) {
 				require.Equal(t, scatterScope, v)
+				checkScatterScope = true
 			})
 			for _, sql := range tt.sqls {
 				tk.MustExec(sql)
 			}
+			require.Equal(t, true, checkScatterScope)
 			counts = getTableLeaderDistribute(t, tk, tt.tableName)
 			for _, count := range counts {
 				require.True(t, count < tt.totalRegionCount)
