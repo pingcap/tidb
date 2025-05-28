@@ -261,5 +261,11 @@
     "cases": [
       "EXPLAIN format = 'verbose' SELECT * FROM  `tbl_cardcore_transaction` `transactio0_` WHERE `transactio0_`.`period` = '202502' AND `transactio0_`.`account_number` = '1901040107462200' ORDER BY `transactio0_`.`transaction_status`, `transactio0_`.`account_number`, `transactio0_`.`entry_date` ASC, `transactio0_`.`id` ASC;"
     ]
+  },
+  {
+    "name": "TestIndexMergeIssue61093",
+    "cases": [
+      "explain format = 'brief' \nSELECT\n  *\nFROM\n  `user_authorization_simple`\nWHERE\n  `user_authorization_simple`.`deleted_at` IS NULL\n  AND (\n    `user_authorization_simple`.`auth_type` = 2\n    AND `user_authorization_simple`.`auth_value` = \"310419663029329176\"\n    OR (\n      `user_authorization_simple`.`auth_type` = 1\n      AND `user_authorization_simple`.`auth_value` = \"madly2222@gmail.com\"\n    )\n    OR `user_authorization_simple`.`user_id` = \"310419663029329176\"\n  )\n  AND `user_authorization_simple`.`deleted_at` IS NULL\nORDER BY\n  `user_authorization_simple`.`id`\nLIMIT\n  1;"
+    ]
   }
 ]

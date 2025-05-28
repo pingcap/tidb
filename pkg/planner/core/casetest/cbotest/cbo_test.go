@@ -157,6 +157,43 @@ func TestEstimation(t *testing.T) {
 	}
 }
 
+func TestIndexMergeIssue61093(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("CREATE TABLE `user_authorization_simple` (" +
+		"  `id` bigint NOT NULL AUTO_INCREMENT," +
+		"  `deleted_at` datetime(3) DEFAULT NULL," +
+		"  `auth_type` int NOT NULL DEFAULT '1'," +
+		"  `auth_value` varchar(255) COLLATE utf8mb4_0900_ai_ci NOT NULL," +
+		"  `user_id` varchar(64) COLLATE utf8mb4_0900_ai_ci DEFAULT NULL," +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */," +
+		"  KEY `idx_user_authorization_user_id` (`user_id`)," +
+		"  KEY `idx_user_authorization_deleted_at` (`deleted_at`)," +
+		"  KEY `idx_user_authorization_auth_type` (`auth_type`)," +
+		"  KEY `idx_user_authorization_auth_value` (`auth_value`)" +
+		") ")
+	testKit.MustExec("set @@tidb_opt_fix_control='52869:ON';")
+	require.NoError(t, testkit.LoadTableStats("test.user_authorization_simple.json", dom))
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	analyzeSuiteData := GetAnalyzeSuiteData()
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertRowsToStrings(testKit.MustQuery("show warnings").Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+		testKit.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
+	}
+}
+
 func TestIssue59563(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
