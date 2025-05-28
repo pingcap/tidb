@@ -38,7 +38,7 @@ import (
 )
 
 // DefaultExprPushDownBlacklist indicates the expressions which can not be pushed down to TiKV.
-var DefaultExprPushDownBlacklist *atomic.Pointer[map[string]uint32]
+var DefaultExprPushDownBlacklist atomic.Pointer[map[string]uint32]
 
 // ExprPushDownBlackListReloadTimeStamp is used to record the last time when the push-down black list is reloaded.
 // This is for plan cache, when the push-down black list is updated, we invalid all cached plans to avoid error.

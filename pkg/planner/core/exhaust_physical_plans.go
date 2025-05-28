@@ -561,6 +561,9 @@ func constructIndexJoinStatic(
 	outerIdx int,
 	indexJoinProp *property.IndexJoinRuntimeProp,
 ) []base.PhysicalPlan {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	joinType := p.JoinType
 	var (
 		innerJoinKeys []*expression.Column
@@ -620,6 +623,9 @@ func constructIndexJoinStatic(
 		EqualConditions: p.EqualConditions,
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
 	join.SetSchema(p.Schema())
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	return []base.PhysicalPlan{join}
 }
 
@@ -730,6 +736,9 @@ func completePhysicalIndexJoin(physic *PhysicalIndexJoin, rt *RootTask, innerS, 
 	physic.IdxColLens = info.IdxColLens
 	physic.CompareFilters = info.CompareFilters
 	// fill executing hashKeys, which containing inner/outer keys, and extracted EQ keys from otherConds if any.
+	if !physic.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	physic.OuterHashKeys = outerHashKeys
 	physic.InnerHashKeys = innerHashKeys
 	// the logical EqualConditions is not used anymore in later phase.
@@ -1032,6 +1041,9 @@ func enumerateIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.Physi
 	indexJoins = append(indexJoins, constructIndexJoinStatic(p, prop, outerIdx, indexJoinPropIS)...)
 	indexJoins = append(indexJoins, constructIndexHashJoinStatic(p, prop, outerIdx, indexJoinPropTS)...)
 	indexJoins = append(indexJoins, constructIndexHashJoinStatic(p, prop, outerIdx, indexJoinPropIS)...)
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	return indexJoins
 }
 
