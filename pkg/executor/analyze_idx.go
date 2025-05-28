@@ -78,8 +78,8 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) *statistics.AnalyzeResults 
 	if hist.Len() > 0 {
 		cnt += hist.Buckets[hist.Len()-1].Count
 	}
-	if total := topN.TotalCount(); total > 0 {
-		cnt += int64(total)
+	if topN.TotalCount() > 0 {
+		cnt += int64(topN.TotalCount())
 	}
 	result := &statistics.AnalyzeResults{
 		TableID:  idxExec.tableID,
