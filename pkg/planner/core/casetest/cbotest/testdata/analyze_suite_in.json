@@ -265,7 +265,7 @@
   {
     "name": "TestIndexMergeIssue61093",
     "cases": [
-      "explain format = 'brief' \nSELECT\n  *\nFROM\n  `user_authorization_simple`\nWHERE\n  `user_authorization_simple`.`deleted_at` IS NULL\n  AND (\n    `user_authorization_simple`.`auth_type` = 2\n    AND `user_authorization_simple`.`auth_value` = \"310419663029329176\"\n    OR (\n      `user_authorization_simple`.`auth_type` = 1\n      AND `user_authorization_simple`.`auth_value` = \"madly2222@gmail.com\"\n    )\n    OR `user_authorization_simple`.`user_id` = \"310419663029329176\"\n  )\n  AND `user_authorization_simple`.`deleted_at` IS NULL\nORDER BY\n  `user_authorization_simple`.`id`\nLIMIT\n  1;"
+      "explain format = 'brief' \nSELECT\n  *\nFROM\n  `user_authorization_simple`\nWHERE\n  `user_authorization_simple`.`deleted_at` IS NULL\n  AND (\n    `user_authorization_simple`.`auth_type` = 2\n    AND `user_authorization_simple`.`auth_value` = \"310419663029329176\"\n    OR (\n      `user_authorization_simple`.`auth_type` = 1\n      AND `user_authorization_simple`.`auth_value` = \"just4test@gmail.com\"\n    )\n    OR `user_authorization_simple`.`user_id` = \"310419663029329176\"\n  )\n  AND `user_authorization_simple`.`deleted_at` IS NULL\nORDER BY\n  `user_authorization_simple`.`id`\nLIMIT\n  1;"
     ]
   }
 ]
