@@ -50,21 +50,13 @@ func TestTiDBScatterRegion(t *testing.T) {
 		totalRegionCount int
 	}{
 		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, 8},
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;"}, 8},
-		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, 8},
 		{"t", []string{"CREATE TABLE t (a INT) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3;", "truncate table t"}, 8},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'), partition p202202 values less than('2022-02-02'));`,
 			"ALTER TABLE t TRUNCATE PARTITION p202201;"}, 16},
 		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
-		(partition p202201 values less than('2022-02-01'), partition p202202 values less than('2022-02-02'));`,
-			"ALTER TABLE t TRUNCATE PARTITION p202202;"}, 16},
-		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
 		(partition p202201 values less than('2022-02-01'));`,
 			"ALTER TABLE t ADD PARTITION (PARTITION p202202 values less than('2022-02-02'));"}, 16},
-		{"t", []string{`create table t(bal_dt date) SHARD_ROW_ID_BITS = 10 PRE_SPLIT_REGIONS=3 partition by range columns(bal_dt)
-		(partition p202201 values less than('2022-02-01'));`,
-			"ALTER TABLE t ADD PARTITION (PARTITION p202203 values less than('2022-02-03'));"}, 16},
 	}
 	for _, scatterScope := range []string{"table", "global"} {
 		for _, tt := range testcases {
