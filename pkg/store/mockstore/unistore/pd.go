@@ -427,10 +427,10 @@ func (c *pdClient) WithCallerComponent(component caller.Component) pd.Client {
 	return c
 }
 
-func (m *pdClient) GetGCInternalController(keyspaceID uint32) gc.InternalController {
+func (c *pdClient) GetGCInternalController(keyspaceID uint32) gc.InternalController {
 	return nil
 }
 
-func (m *pdClient) GetGCStatesClient(keyspaceID uint32) gc.GCStatesClient {
+func (c *pdClient) GetGCStatesClient(keyspaceID uint32) gc.GCStatesClient {
 	return nil
 }
