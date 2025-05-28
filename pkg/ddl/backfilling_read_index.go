@@ -428,7 +428,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 func newDistTaskRowCollector(summary *execute.RunningSubtaskSummary, dbName, tblName, idxName string) execute.Collector {
 	return execute.NewCollector(
 		func(bytes, rows int64) {
-			summary.InputRowCnt.Add(rows)
+			summary.RowCnt.Add(rows)
 			metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, dbName, tblName, idxName).Add(float64(bytes))
 		},
 		nil,

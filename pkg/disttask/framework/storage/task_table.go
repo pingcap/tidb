@@ -589,7 +589,7 @@ func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, st
 		return 0, err
 	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select
-    	cast(sum(json_extract(summary, '$.row_count')) as signed) as row_count
+    	cast(sum(json_extract(summary, '$.rows')) as signed) as row_count
 		from (
 			select summary from mysql.tidb_background_subtask where task_key = %? and step = %?
 			union all

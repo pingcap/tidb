@@ -64,39 +64,29 @@ type StepExecutor interface {
 }
 
 // SubtaskSummary contains the summary of a subtask
-// "Input*" fields represent the number of data/rows inputed to the subtask.
-// "Output*" fields represent the number of data/rows outputed by the subtask.
-// Input and output may not be equal, for example, if there are duplicated data.
+// These fields represent the number of data/rows inputed to the subtask.
 type SubtaskSummary struct {
-	InputRowCnt  int64 `json:"input_rows,omitempty"`
-	InputBytes   int64 `json:"input_bytes,omitempty"`
-	OutputRowCnt int64 `json:"output_rows,omitempty"`
-	OutputBytes  int64 `json:"output_bytes,omitempty"`
+	RowCnt int64 `json:"rows,omitempty"`
+	Bytes  int64 `json:"bytes,omitempty"`
 }
 
 // RunningSubtaskSummary is used to store the summary of a running subtask.
 type RunningSubtaskSummary struct {
-	InputRowCnt  atomic.Int64
-	InputBytes   atomic.Int64
-	OutputRowCnt atomic.Int64
-	OutputBytes  atomic.Int64
+	RowCnt atomic.Int64
+	Bytes  atomic.Int64
 }
 
 // ResetMetrics resets the summary to the given row count and bytes.
 func (s *RunningSubtaskSummary) ResetMetrics() {
-	s.InputRowCnt.Store(0)
-	s.InputBytes.Store(0)
-	s.OutputRowCnt.Store(0)
-	s.OutputBytes.Store(0)
+	s.RowCnt.Store(0)
+	s.Bytes.Store(0)
 }
 
 // ToSummary converts the running subtask summary to a subtask summary.
 func (s *RunningSubtaskSummary) ToSummary() *SubtaskSummary {
 	return &SubtaskSummary{
-		InputRowCnt:  s.InputRowCnt.Load(),
-		InputBytes:   s.InputBytes.Load(),
-		OutputRowCnt: s.OutputRowCnt.Load(),
-		OutputBytes:  s.OutputBytes.Load(),
+		RowCnt: s.RowCnt.Load(),
+		Bytes:  s.Bytes.Load(),
 	}
 }
 
