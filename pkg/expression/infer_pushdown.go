@@ -16,6 +16,8 @@ package expression
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -41,6 +43,17 @@ var DefaultExprPushDownBlacklist *atomic.Value
 // ExprPushDownBlackListReloadTimeStamp is used to record the last time when the push-down black list is reloaded.
 // This is for plan cache, when the push-down black list is updated, we invalid all cached plans to avoid error.
 var ExprPushDownBlackListReloadTimeStamp *atomic.Int64
+
+var ScalarFuncSigLowerNameMap map[string]string
+
+func init() {
+	nameSlices := slices.Collect(maps.Values(tipb.ScalarFuncSig_name))
+	ScalarFuncSigLowerNameMap = make(map[string]string, len(nameSlices))
+	for _, name := range nameSlices {
+		// The name in tipb.ScalarFuncSig_name is upper case, we need to convert it to lower case.
+		ScalarFuncSigLowerNameMap[name] = strings.ToLower(name)
+	}
+}
 
 func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType) bool {
 	// Use the failpoint to control whether to push down an expression in the integration test.
@@ -75,9 +88,22 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 	}
 
 	if ret {
-		funcFullName := fmt.Sprintf("%s.%s", sf.FuncName.L, strings.ToLower(sf.Function.PbCode().String()))
+		if !IsPushDownEnabled(sf.FuncName.L, storeType) {
+			return true
+		}
+		// if DefaultExprPushDownBlacklist is nil, it means that the push down blacklist is not initialized yet.
+		// so we return true to allow the push down.
+		// but `storeType != kv.TiFlash && name == ast.AggFuncApproxCountDistinct`
+		// is a special case, we should not allow the push down.
+		DefaultExprPushDownBlacklistMap := DefaultExprPushDownBlacklist.Load()
+		if DefaultExprPushDownBlacklistMap == nil {
+			return true
+		}
+		// ScalarFuncSigLowerNameMap is to string.TOLower the function name in tipb.ScalarFuncSig_name.
+		// ref https://github.com/pingcap/tidb/issues/61375
+		funcFullName := fmt.Sprintf("%s.%s", sf.FuncName.L, ScalarFuncSigLowerNameMap[sf.Function.PbCode().String()])
 		// Aside from checking function name, also check the pb name in case only the specific push down is disabled.
-		ret = IsPushDownEnabled(sf.FuncName.L, storeType) && IsPushDownEnabled(funcFullName, storeType)
+		ret = IsPushDownEnabled(funcFullName, storeType)
 	}
 	return ret
 }
