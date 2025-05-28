@@ -1,10 +1,13 @@
 # Cluster Integration Test
 
-Before running the tests, please install tiup:
+Before running the tests, please install tiup and build tidb binary:
 ```shell
 curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh
 source .bash_profile
 tiup --version
+
+# cd tidb
+make
 ```
 
 ## Guide: Run tests
@@ -86,3 +89,12 @@ After changing `t` or changing optimizer plans, `r` need to be updated.
    # cd clusterintegrationtest
    uv run python_testers/vector_recall.py
    ```
+
+## Note:
+If your contribution involves tidb and tiflash and will affect the test cases of this test, please submit your contribution to tiflash first and wait 2 hours after the merge before executing this test.
+
+
+1. In tidb, we will download the binary of the tiflash master branch as a component for cluster testing. Please make sure that your tiflash code is submitted to the master branch.
+2. In tiflash, we will also download the binary of the tidb master branch as a component for cluster testing. Please make sure that your tidb code is submitted to the master branch.
+
+If you have other questions about this test, please contact @EricZequan.
