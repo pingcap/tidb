@@ -89,8 +89,8 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 	}
 
 	if ret {
-		if !IsPushDownEnabled(sf.FuncName.L, storeType) {
-			return true
+		if result := IsPushDownEnabled(sf.FuncName.L, storeType); !result {
+			return result
 		}
 		// if DefaultExprPushDownBlacklist is nil, it means that the push down blacklist is not initialized yet.
 		// so we return true to allow the push down.
