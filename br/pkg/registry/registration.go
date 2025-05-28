@@ -103,7 +103,8 @@ const (
 	// createNewTaskSQLTemplate is the SQL template for creating a new task
 	createNewTaskSQLTemplate = `
 		INSERT INTO %s.%s
-		(filter_strings, filter_hash, start_ts, restored_ts, upstream_cluster_id, with_sys_table, status, cmd, start_timestamp, last_heartbeat)
+		(filter_strings, filter_hash, start_ts, restored_ts, upstream_cluster_id,
+		 with_sys_table, status, cmd, start_timestamp, last_heartbeat)
 		VALUES (%%?, MD5(%%?), %%?, %%?, %%?, %%?, 'running', %%?, %%?, %%?)`
 )
 
@@ -211,11 +212,10 @@ func (r *Registry) executeInTransaction(ctx context.Context, fn func(context.Con
 			log.Error("failed to rollback transaction", zap.Error(rollbackErr))
 		}
 		return fnErr
-	} else {
-		if _, _, commitErr := execCtx.ExecRestrictedSQL(ctx, sessionOpts, "COMMIT"); commitErr != nil {
-			log.Error("failed to commit transaction", zap.Error(commitErr))
-			return commitErr
-		}
+	}
+	if _, _, commitErr := execCtx.ExecRestrictedSQL(ctx, sessionOpts, "COMMIT"); commitErr != nil {
+		log.Error("failed to commit transaction", zap.Error(commitErr))
+		return commitErr
 	}
 
 	return nil
@@ -362,6 +362,9 @@ func (r *Registry) updateTaskStatusConditional(ctx context.Context, restoreID ui
 
 // Unregister removes a restore registration and cleans up empty table/database atomically
 func (r *Registry) Unregister(ctx context.Context, restoreID uint64) error {
+	// first stop heartbeat manager
+	r.StopHeartbeatManager()
+
 	return r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor,
 		sessionOpts []sqlexec.OptionFuncAlias) error {
 		// first, delete the specific registration
@@ -443,6 +446,8 @@ func (r *Registry) Unregister(ctx context.Context, restoreID uint64) error {
 
 // PauseTask marks a task as paused only if it's currently running
 func (r *Registry) PauseTask(ctx context.Context, restoreID uint64) error {
+	// first stop heartbeat manager
+	r.StopHeartbeatManager()
 	return r.updateTaskStatusConditional(ctx, restoreID, TaskStatusRunning, TaskStatusPaused)
 }
 

@@ -904,7 +904,13 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return errors.Trace(restoreErr)
 		}
 		// if checkpoint is not persisted, let's just unregister the task since we don't need it
-		if hasCheckpointPersisted(c, cfg) {
+		checkpointPersisted, err := hasCheckpointPersisted(c, cfg)
+		if err != nil {
+			log.Error("failed to check if checkpoint is persisted", zap.Error(err))
+			// on error, assume checkpoint is not persisted and unregister the task
+			checkpointPersisted = false
+		}
+		if checkpointPersisted {
 			log.Info("pausing restore task from registry",
 				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(restoreErr))
 			if err := restoreRegistry.PauseTask(c, cfg.RestoreID); err != nil {
@@ -965,26 +971,35 @@ func cleanUpCheckpoints(ctx context.Context, cfg *RestoreConfig, cmdName string)
 }
 
 // hasCheckpointPersisted checks if there are any checkpoint data persisted in storage or tables
-func hasCheckpointPersisted(ctx context.Context, cfg *RestoreConfig) bool {
+func hasCheckpointPersisted(ctx context.Context, cfg *RestoreConfig) (bool, error) {
 	if cfg.snapshotCheckpointMetaManager != nil {
 		exists, err := cfg.snapshotCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
-		if err == nil && exists {
-			return true
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if exists {
+			return true, nil
 		}
 	}
 	if cfg.logCheckpointMetaManager != nil {
 		exists, err := cfg.logCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
-		if err == nil && exists {
-			return true
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if exists {
+			return true, nil
 		}
 	}
 	if cfg.sstCheckpointMetaManager != nil {
 		exists, err := cfg.sstCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
-		if err == nil && exists {
-			return true
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if exists {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 type SnapshotRestoreConfig struct {
