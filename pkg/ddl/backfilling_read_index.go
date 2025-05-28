@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/table"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -55,7 +54,7 @@ type readIndexStepExecutor struct {
 	avgRowSize      int
 	cloudStorageURI string
 
-	curRowCount *atomic.Int64
+	*execute.RunningSubtaskSummary
 
 	subtaskSummary sync.Map // subtaskID => readIndexSummary
 	backendCfg     *local.BackendConfig
@@ -81,14 +80,14 @@ func newReadIndexExecutor(
 	avgRowSize int,
 ) (*readIndexStepExecutor, error) {
 	return &readIndexStepExecutor{
-		d:               d,
-		job:             job,
-		indexes:         indexes,
-		ptbl:            ptbl,
-		jc:              jc,
-		cloudStorageURI: cloudStorageURI,
-		avgRowSize:      avgRowSize,
-		curRowCount:     &atomic.Int64{},
+		d:                     d,
+		job:                   job,
+		indexes:               indexes,
+		ptbl:                  ptbl,
+		jc:                    jc,
+		cloudStorageURI:       cloudStorageURI,
+		avgRowSize:            avgRowSize,
+		RunningSubtaskSummary: &execute.RunningSubtaskSummary{},
 	}, nil
 }
 
@@ -188,7 +187,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	opCtx, cancel := NewDistTaskOperatorCtx(ctx, subtask.TaskID, subtask.ID)
 	defer cancel()
-	r.curRowCount.Store(0)
+	r.ResetMetrics()
 
 	concurrency := int(r.GetResource().CPU.Capacity())
 	if r.isGlobalSort() {
@@ -198,9 +197,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 }
 
 func (r *readIndexStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	return &execute.SubtaskSummary{
-		RowCount: r.curRowCount.Load(),
-	}
+	return r.ToSummary()
 }
 
 func (r *readIndexStepExecutor) Cleanup(ctx context.Context) error {
@@ -356,7 +353,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 			zap.Int64s("index IDs", indexIDs))
 		return nil, err
 	}
-	rowCntListener := newDistTaskRowCntListener(r.curRowCount, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
+	rowCntCollector := newDistTaskRowCollector(r.RunningSubtaskSummary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
 	return NewAddIndexIngestPipeline(
 		opCtx,
 		d.store,
@@ -371,7 +368,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 		r.job.ReorgMeta,
 		r.avgRowSize,
 		concurrency,
-		rowCntListener,
+		rowCntCollector,
 	)
 }
 
@@ -406,7 +403,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		}
 		idxNames.WriteString(idx.Name.O)
 	}
-	rowCntListener := newDistTaskRowCntListener(r.curRowCount, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
+	rowCntCollector := newDistTaskRowCollector(r.RunningSubtaskSummary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx,
 		d.store,
@@ -423,26 +420,17 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		r.avgRowSize,
 		concurrency,
 		r.GetResource(),
-		rowCntListener,
+		rowCntCollector,
 		r.backend.GetTiKVCodec(),
 	)
 }
 
-type distTaskRowCntListener struct {
-	EmptyRowCntListener
-	totalRowCount *atomic.Int64
-	counter       prometheus.Counter
-}
-
-func newDistTaskRowCntListener(totalRowCnt *atomic.Int64, dbName, tblName, idxName string) *distTaskRowCntListener {
-	counter := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, dbName, tblName, idxName)
-	return &distTaskRowCntListener{
-		totalRowCount: totalRowCnt,
-		counter:       counter,
-	}
-}
-
-func (d *distTaskRowCntListener) Written(rowCnt int) {
-	d.totalRowCount.Add(int64(rowCnt))
-	d.counter.Add(float64(rowCnt))
+func newDistTaskRowCollector(summary *execute.RunningSubtaskSummary, dbName, tblName, idxName string) execute.Collector {
+	return execute.NewCollector(
+		func(bytes, rows int64) {
+			summary.InputRowCnt.Add(rows)
+			metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, dbName, tblName, idxName).Add(float64(bytes))
+		},
+		nil,
+	)
 }

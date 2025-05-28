@@ -803,7 +803,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	defer bcCtx.Close()
 
 	reorgCtx := dc.getReorgCtx(job.ID)
-	rowCntListener := &localRowCntListener{
+	rowCntListener := &localRowCntCollector{
 		prevPhysicalRowCnt: reorgCtx.getRowCount(),
 		reorgCtx:           reorgCtx,
 		counter:            metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, job.SchemaName, job.TableName, indexNames.String()),
@@ -920,8 +920,7 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 	return err
 }
 
-type localRowCntListener struct {
-	EmptyRowCntListener
+type localRowCntCollector struct {
 	reorgCtx *reorgCtx
 	counter  prometheus.Counter
 
@@ -934,15 +933,17 @@ type localRowCntListener struct {
 	}
 }
 
-func (s *localRowCntListener) Written(rowCnt int) {
+func (*localRowCntCollector) OnWrite(_, _ int64) {}
+
+func (s *localRowCntCollector) OnRead(_, rowCnt int64) {
 	s.curPhysicalRowCnt.mu.Lock()
-	s.curPhysicalRowCnt.cnt += int64(rowCnt)
+	s.curPhysicalRowCnt.cnt += rowCnt
 	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + s.curPhysicalRowCnt.cnt)
 	s.curPhysicalRowCnt.mu.Unlock()
 	s.counter.Add(float64(rowCnt))
 }
 
-func (s *localRowCntListener) SetTotal(total int) {
+func (s *localRowCntCollector) SetTotal(total int) {
 	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + int64(total))
 }
 
