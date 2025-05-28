@@ -627,3 +627,59 @@ func TestLockKeysInDML(t *testing.T) {
 	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
 }
+
+func TestDistSQLSharedKVRequestRace(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	originCfg := config.GetGlobalConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels = map[string]string{
+			"zone": "us-east-1a",
+		}
+	})
+	require.Equal(t, "us-east-1a", config.GetGlobalConfig().GetTiKVConfig().TxnScope)
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		*conf = *originCfg
+	})
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set session tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (a int, b int, c int, d int, primary key (a, d), index idx(c))
+		partition by range(d) (
+			partition p1 values less than(1),
+			partition p2 values less than(2),
+			partition p3 values less than(3),
+			partition p4 values less than (4)
+		);`)
+	tk.MustExec("begin")
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d, %d);", i*1000, i*1000, i*1000, i%4))
+	}
+	tk.MustExec("commit")
+
+	expects := make([]string, 0, 500)
+	for i := 0; i < 1000; i++ {
+		if i%4 == 3 {
+			continue
+		}
+		expect := fmt.Sprintf("%d %d %d %d", i*1000, i*1000, i*1000, i%4)
+		expects = append(expects, expect)
+		if len(expects) == 500 {
+			break
+		}
+	}
+
+	replicaReadModes := []string{
+		"follower",
+		"leader-and-follower",
+		"closest-adaptive",
+		"closest-replicas",
+	}
+	for _, mode := range replicaReadModes {
+		tk.MustExec(fmt.Sprintf("set session tidb_replica_read = '%s'", mode))
+		for i := 0; i < 20; i++ {
+			tk.MustQuery("select * from t force index(idx) where d in (0, 1, 2) order by c asc limit 500;").Check(testkit.Rows(expects...))
+		}
+	}
+}
