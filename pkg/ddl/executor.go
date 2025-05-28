@@ -1128,8 +1128,9 @@ func (e *executor) createTableWithInfoJob(
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involvingSchemas,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
-		ScatterScope:        getScatterScopeFromSessionctx(ctx),
+		SessionVars:         make(map[string]string),
 	}
+	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.CreateTableArgs{
 		TableInfo:      tbInfo,
 		OnExistReplace: cfg.OnExist == OnExistReplace,
@@ -1223,13 +1224,17 @@ func (e *executor) CreateTableWithInfo(
 			err = nil
 		}
 	} else {
-		err = e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID, jobW.ScatterScope)
+		var scatterScope string
+		if val, ok := jobW.GetSessionVars(vardef.TiDBScatterRegion); ok {
+			scatterScope = val
+		}
+		err = e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID, scatterScope)
 	}
 
 	return errors.Trace(err)
 }
 
-func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
+func (e *executor) zBatchCreateTableWithInfo(ctx sessionctx.Context,
 	dbName ast.CIStr,
 	infos []*model.TableInfo,
 	cs ...CreateTableOption,
@@ -1247,7 +1252,9 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SessionVars:    make(map[string]string),
 	}
+	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 
 	var err error
 
@@ -1315,7 +1322,11 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	}
 
 	for _, tblArgs := range args.Tables {
-		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID, jobW.ScatterScope); err != nil {
+		var scatterScope string
+		if val, ok := jobW.GetSessionVars(vardef.TiDBScatterRegion); ok {
+			scatterScope = val
+		}
+		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID, scatterScope); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -2279,9 +2290,9 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 		Type:           model.ActionAddTablePartition,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
-		ScatterScope:   getScatterScopeFromSessionctx(ctx),
+		SessionVars:    make(map[string]string),
 	}
+	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TablePartitionArgs{
 		PartInfo: partInfo,
 	}
@@ -2792,8 +2803,9 @@ func (e *executor) TruncateTablePartition(ctx sessionctx.Context, ident ast.Iden
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
-		ScatterScope:   getScatterScopeFromSessionctx(ctx),
+		SessionVars:    make(map[string]string),
 	}
+	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TruncateTableArgs{
 		OldPartitionIDs: pids,
 		// job submitter will fill new partition IDs.
@@ -4295,8 +4307,9 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
-		ScatterScope:   getScatterScopeFromSessionctx(ctx),
+		SessionVars:    make(map[string]string),
 	}
+	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TruncateTableArgs{
 		FKCheck:         fkCheck,
 		OldPartitionIDs: oldPartitionIDs,
