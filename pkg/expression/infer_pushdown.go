@@ -44,15 +44,15 @@ var DefaultExprPushDownBlacklist *atomic.Value
 // This is for plan cache, when the push-down black list is updated, we invalid all cached plans to avoid error.
 var ExprPushDownBlackListReloadTimeStamp *atomic.Int64
 
-// ScalarFuncSigLowerNameMap is a map from the upper case function name in tipb.ScalarFuncSig_name to the lower case function name.
-var ScalarFuncSigLowerNameMap map[string]string
+// scalarFuncSigLowerNameMap is a map from the upper case function name in tipb.ScalarFuncSig_name to the lower case function name.
+var scalarFuncSigLowerNameMap map[string]string
 
 func init() {
 	nameSlices := slices.Collect(maps.Values(tipb.ScalarFuncSig_name))
-	ScalarFuncSigLowerNameMap = make(map[string]string, len(nameSlices))
+	scalarFuncSigLowerNameMap = make(map[string]string, len(nameSlices))
 	for _, name := range nameSlices {
 		// The name in tipb.ScalarFuncSig_name is upper case, we need to convert it to lower case.
-		ScalarFuncSigLowerNameMap[name] = strings.ToLower(name)
+		scalarFuncSigLowerNameMap[name] = strings.ToLower(name)
 	}
 }
 
@@ -89,9 +89,7 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 	}
 
 	if ret {
-		if result := IsPushDownEnabled(sf.FuncName.L, storeType); !result {
-			return result
-		}
+		result := IsPushDownEnabled(sf.FuncName.L, storeType)
 		// if DefaultExprPushDownBlacklist is nil, it means that the push down blacklist is not initialized yet.
 		// so we return true to allow the push down.
 		// but `storeType != kv.TiFlash && name == ast.AggFuncApproxCountDistinct`
@@ -100,11 +98,11 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 		// If the DefaultExprPushDownBlacklist is nil, we can return true directly.
 		DefaultExprPushDownBlacklistMap := DefaultExprPushDownBlacklist.Load()
 		if DefaultExprPushDownBlacklistMap == nil {
-			return true
+			return result
 		}
-		// ScalarFuncSigLowerNameMap is to string.ToLower the function name in tipb.ScalarFuncSig_name.
+		// scalarFuncSigLowerNameMap is to string.ToLower the function name in tipb.ScalarFuncSig_name.
 		// ref https://github.com/pingcap/tidb/issues/61375
-		funcFullName := fmt.Sprintf("%s.%s", sf.FuncName.L, ScalarFuncSigLowerNameMap[sf.Function.PbCode().String()])
+		funcFullName := fmt.Sprintf("%s.%s", sf.FuncName.L, scalarFuncSigLowerNameMap[sf.Function.PbCode().String()])
 		// Aside from checking function name, also check the pb name in case only the specific push down is disabled.
 		ret = IsPushDownEnabled(funcFullName, storeType)
 	}
