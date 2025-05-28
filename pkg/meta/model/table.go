@@ -204,43 +204,6 @@ type TableInfo struct {
 	DBID int64 `json:"-"`
 
 	Mode TableMode `json:"mode,omitempty"`
-
-	ScatterScope ScatterScope `json:"scatter_scope,omitempty"`
-}
-
-// ScatterScope is the type of the table scatter scope
-type ScatterScope int8
-
-// ScatterScope values.
-const (
-	ScatterScopeNA ScatterScope = iota
-	ScatterScopeEmpty
-	ScatterScopeTable
-	ScatterScopeGlobal
-)
-
-// ScatterScopeFromString get ScatterScope from string
-func ScatterScopeFromString(s string) ScatterScope {
-	switch s {
-	case "table":
-		return ScatterScopeTable
-	case "global":
-		return ScatterScopeGlobal
-	default:
-		return ScatterScopeEmpty
-	}
-}
-
-// String get string from ScatterScope
-func (s ScatterScope) String() string {
-	switch s {
-	case ScatterScopeTable:
-		return "table"
-	case ScatterScopeGlobal:
-		return "global"
-	default:
-		return ""
-	}
 }
 
 // Hash64 implement HashEquals interface.

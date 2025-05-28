@@ -1033,8 +1033,6 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 		return err
 	}
 
-	tbInfo.ScatterScope = model.ScatterScopeFromString(getScatterScopeFromSessionctx(ctx))
-
 	onExist := OnExistError
 	if s.IfNotExists {
 		onExist = OnExistIgnore
@@ -1168,13 +1166,7 @@ func (e *executor) createTableWithInfoPost(
 	if pi := tbInfo.GetPartitionInfo(); pi != nil {
 		partitions = pi.Definitions
 	}
-	var scatterScope string
-	if tbInfo.ScatterScope != model.ScatterScopeNA {
-		scatterScope = tbInfo.ScatterScope.String()
-	} else {
-		scatterScope = getScatterScopeFromSessionctx(ctx)
-	}
-	preSplitAndScatter(ctx, e.store, tbInfo, partitions, scatterScope)
+	preSplitAndScatter(ctx, e.store, tbInfo, partitions, getScatterScopeFromSessionctx(ctx))
 	if tbInfo.AutoIncID > 1 {
 		// Default tableAutoIncID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
@@ -2288,12 +2280,8 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	args := &model.TablePartitionArgs{
-		PartInfo: partInfo,
-	}
-	if meta.ScatterScope == model.ScatterScopeNA {
-		args.ScatterScope = getScatterScopeFromSessionctx(ctx)
-	} else {
-		args.ScatterScope = meta.ScatterScope.String()
+		PartInfo:     partInfo,
+		ScatterScope: getScatterScopeFromSessionctx(ctx),
 	}
 
 	if spec.Tp == ast.AlterTableAddLastPartition && spec.Partition != nil {
@@ -2806,11 +2794,7 @@ func (e *executor) TruncateTablePartition(ctx sessionctx.Context, ident ast.Iden
 	args := &model.TruncateTableArgs{
 		OldPartitionIDs: pids,
 		// job submitter will fill new partition IDs.
-	}
-	if meta.ScatterScope == model.ScatterScopeNA {
-		args.ScatterScope = getScatterScopeFromSessionctx(ctx)
-	} else {
-		args.ScatterScope = meta.ScatterScope.String()
+		ScatterScope: getScatterScopeFromSessionctx(ctx),
 	}
 
 	err = e.doDDLJob2(ctx, job, args)
@@ -4313,11 +4297,7 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	args := &model.TruncateTableArgs{
 		FKCheck:         fkCheck,
 		OldPartitionIDs: oldPartitionIDs,
-	}
-	if tblInfo.ScatterScope == model.ScatterScopeNA {
-		args.ScatterScope = getScatterScopeFromSessionctx(ctx)
-	} else {
-		args.ScatterScope = tblInfo.ScatterScope.String()
+		ScatterScope:    getScatterScopeFromSessionctx(ctx),
 	}
 	err = e.doDDLJob2(ctx, job, args)
 	if err != nil {
