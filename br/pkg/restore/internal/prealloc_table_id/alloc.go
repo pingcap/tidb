@@ -111,7 +111,7 @@ func New(tables []*metautil.Table) (*PreallocIDs, error) {
 	}, nil
 }
 
-func ReuseIDs(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocIDs, error) {
+func ReuseCheckpoint(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (*PreallocIDs, error) {
 	if legacy == nil {
 		return nil, errors.Errorf("no prealloc IDs to be reused")
 	}

@@ -340,7 +340,7 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 			return false, err
 		}
 	} else {
-		preallocedTableIDs, err = tidalloc.ReuseIDs(reusePreallocIDs, tables)
+		preallocedTableIDs, err = tidalloc.ReuseCheckpoint(reusePreallocIDs, tables)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
