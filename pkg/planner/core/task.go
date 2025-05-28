@@ -593,20 +593,12 @@ func (p *PhysicalHashJoin) attach2TaskForTiFlash(tasks ...base.Task) base.Task {
 	if !lok || !rok {
 		return p.attach2TaskForMpp(tasks...)
 	}
-	p.SetChildren(lTask.Plan(), rTask.Plan())
+	rRoot := rTask.ConvertToRootTask(p.SCtx())
+	lRoot := lTask.ConvertToRootTask(p.SCtx())
+	p.SetChildren(lRoot.Plan(), rRoot.Plan())
 	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
-	if !lTask.indexPlanFinished {
-		lTask.finishIndexPlan()
-	}
-	if !rTask.indexPlanFinished {
-		rTask.finishIndexPlan()
-	}
-
-	task := &CopTask{
-		tblColHists:       rTask.tblColHists,
-		indexPlanFinished: true,
-		tablePlan:         p,
-	}
+	task := &RootTask{}
+	task.SetPlan(p)
 	task.warnings.CopyFrom(&rTask.warnings, &lTask.warnings)
 	return task
 }

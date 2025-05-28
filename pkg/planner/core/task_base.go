@@ -473,12 +473,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	if t.tablePlan != nil {
 		tp := t.tablePlan
 		for len(tp.Children()) > 0 {
-			if len(tp.Children()) == 1 {
-				tp = tp.Children()[0]
-			} else {
-				join := tp.(*PhysicalHashJoin)
-				tp = join.Children()[1-join.InnerChildIdx]
-			}
+			tp = tp.Children()[0]
 		}
 		ts := tp.(*PhysicalTableScan)
 		prevColumnLen := len(ts.Columns)
@@ -522,12 +517,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	} else {
 		tp := t.tablePlan
 		for len(tp.Children()) > 0 {
-			if len(tp.Children()) == 1 {
-				tp = tp.Children()[0]
-			} else {
-				join := tp.(*PhysicalHashJoin)
-				tp = join.Children()[1-join.InnerChildIdx]
-			}
+			tp = tp.Children()[0]
 		}
 		ts := tp.(*PhysicalTableScan)
 		p := PhysicalTableReader{
