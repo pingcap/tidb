@@ -141,17 +141,17 @@ func (handle *Handle) analyzeBasedOnStatementStats(infoSchema infoschema.InfoSch
 			zap.Error(err))
 		return nil, startTime, startTime
 	}
-	sql := `select summary_latest.DIGEST, summary_latest.DIGEST_TEXT, summary_latest.BINARY_PLAN,
-            ifNULL(summary_start.EXEC_COUNT, summary_latest.EXEC_COUNT, summary_latest.EXEC_COUNT - summary_start.EXEC_COUNT) as EXEC_COUNT
+	sql := `select summary_end.DIGEST, summary_end.DIGEST_TEXT, summary_end.BINARY_PLAN,
+            ifNULL(summary_start.EXEC_COUNT, summary_end.EXEC_COUNT, summary_end.EXEC_COUNT - summary_start.EXEC_COUNT) as EXEC_COUNT
             (SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT
 	        FROM ` + mysql.WorkloadSchema + `.HIST_TIDB_STATEMENTS_STATS
             WHERE LOWER(STMT_TYPE) = 'Select'
-	        AND SNAP_ID = '%?') summary_latest
+	        AND SNAP_ID = '%?') summary_end
             left join
             (SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT
 	        FROM ` + mysql.WorkloadSchema + `.HIST_TIDB_STATEMENTS_STATS
 	        WHERE LOWER(STMT_TYPE) = 'Select'
-	        AND SNAP_ID = '%?') summary_start on summary_latest.DIGEST = summary_start.DIGEST`
+	        AND SNAP_ID = '%?') summary_start on summary_end.DIGEST = summary_start.DIGEST`
 	// Step2.1: get statements stats record from ClusterTableTiDBStatementsStats
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, endSnapshotId, startSnapshotId)
 	if err != nil {
