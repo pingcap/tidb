@@ -94,16 +94,16 @@ type forceMVIndexOption struct{}
 
 var forceMVIndexOptionKey forceMVIndexOption
 
-// WithForceMVIndexScan controls how the optimizer process MV Index.
+// WithEnableMVIndexScan controls how the optimizer process MV Index.
 // If it's true, it indicated we want to use MV Index for scan.
-// NOTE: It should only be used in fast admin check table,
+// NOTE: It should only be used in fast admin check table for now,
 // see check_table_index.go for more details.
-func WithForceMVIndexScan(ctx context.Context) context.Context {
+func WithEnableMVIndexScan(ctx context.Context) context.Context {
 	return context.WithValue(ctx, forceMVIndexOptionKey, true)
 }
 
-// GetForceMVIndexScan check whether the force MV index scan option is set.
-func GetForceMVIndexScan(ctx context.Context) bool {
+// GetEnableMVIndexScan check whether the force MV index scan option is set.
+func GetEnableMVIndexScan(ctx context.Context) bool {
 	force := false
 	if opt := ctx.Value(forceMVIndexOptionKey); opt != nil {
 		force = opt.(bool)
@@ -4524,12 +4524,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
 	}
 
-	// If forceMVIndexScan is true, it means:
+	// If enableMVIndexScan is set, it means:
 	// 1. We should build MV Index scan.
-	// 2. We should NEVER add table scan to possible access path, otherwise
-	//    we can't guarentee index scan is choosen after cost estimation.
-	forceMVIndexScan := GetForceMVIndexScan(ctx)
-	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0, forceMVIndexScan)
+	// 2. DON'T add table scan to possible access path, otherwise
+	//    we can't guarantee index scan is chosen after cost estimation.
+	enableMVIndexScan := GetEnableMVIndexScan(ctx)
+	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0, enableMVIndexScan)
 	if err != nil {
 		return nil, err
 	}
@@ -4679,7 +4679,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		PreferPartitions:       make(map[int][]ast.CIStr),
 		IS:                     b.is,
 		IsForUpdateRead:        b.isForUpdateRead,
-		EnableMVIndexScan:      forceMVIndexScan,
+		EnableMVIndexScan:      enableMVIndexScan,
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols util.HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, countCnt)...)
@@ -4687,7 +4687,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	for i, col := range columns {
 		retType := col.FieldType.Clone()
 		// TODO(joechenrh): we must discard array type when building DataSource, which is a bit ugly...
-		if forceMVIndexScan {
+		if enableMVIndexScan {
 			retType.SetArray(false)
 		}
 

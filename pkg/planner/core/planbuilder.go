@@ -1160,7 +1160,7 @@ func getPossibleAccessPaths(
 	tableHints *hint.PlanHints,
 	indexHints []*ast.IndexHint,
 	tbl table.Table, dbName, tblName ast.CIStr,
-	check, hasFlagPartitionProcessor, forceMVIndex bool) ([]*util.AccessPath, error) {
+	check, hasFlagPartitionProcessor, enableMVIndexScan bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1360,7 +1360,7 @@ func getPossibleAccessPaths(
 			allMVIIndexPath = false
 		}
 	}
-	if allMVIIndexPath && !forceMVIndex {
+	if allMVIIndexPath && !enableMVIndexScan {
 		available = append(available, tablePath)
 	}
 

@@ -1404,6 +1404,51 @@ func (er *expressionRewriter) adjustUTF8MB4Collation(tp *types.FieldType) {
 	}
 }
 
+// replaceCastFunction replaces the cast function with a virtual column if it matches a virtual column in an MV index.
+// The following logic is copied from `generateMVIndexMergePartialPaths4And`.
+func (er *expressionRewriter) replaceCastFunction(castFunction expression.Expression,
+) expression.Expression {
+	sf, ok := castFunction.(*expression.ScalarFunction)
+	if !ok {
+		return castFunction
+	}
+
+	ds, ok := er.planCtx.plan.(*logicalop.DataSource)
+	if !ok {
+		return castFunction
+	}
+
+	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
+	for _, index := range ds.TableInfo.Indices {
+		if !index.MVIndex {
+			continue
+		}
+		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
+			ds.Table.Meta(),
+			index,
+			ds.TblCols,
+			false,
+		)
+		if !ok {
+			continue
+		}
+
+		for _, idxCol := range idxCols {
+			if idxCol.VirtualExpr == nil {
+				continue
+			}
+			targetJSONPath, ok := unwrapJSONCast(idxCol.VirtualExpr)
+			if ok && targetJSONPath.Equal(evalCtx, sf.GetArgs()[0]) {
+				virtualColumn := idxCol.Clone()
+				virtualColumn.GetType(evalCtx).SetArray(false)
+				return virtualColumn
+			}
+		}
+	}
+
+	return castFunction
+}
+
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
 	if er.err != nil {
@@ -1490,9 +1535,10 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			er.disableFoldCounter--
 		}
 	case *ast.FuncCastExpr:
-		forceMVIndexScan := GetForceMVIndexScan(er.ctx)
-		if v.Tp.IsArray() && !er.allowBuildCastArray && !forceMVIndexScan {
-			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
+		enableMVIndexScan := GetEnableMVIndexScan(er.ctx)
+		if v.Tp.IsArray() && !er.allowBuildCastArray && !enableMVIndexScan {
+			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs(
+				"Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
 			return retNode, false
 		}
 		arg := er.ctxStack[len(er.ctxStack)-1]
@@ -1524,40 +1570,11 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			castFunction.SetRepertoire(expression.ASCII)
 		}
 
-		// If we want to use MV Index scan, we have to do the following rewrite:
-		// 	cast(col as UNSIGNED ARRAY) --> virtual_col
-		// , where virtual_col is the column built by MV Index.
-		// The logic is copied from generateMVIndexMergePartialPaths4And.
-		if forceMVIndexScan && v.Tp.IsArray() {
-			sf, _ := castFunction.(*expression.ScalarFunction)
-			if ds, ok := er.planCtx.plan.(*logicalop.DataSource); ok {
-				evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
-				for _, index := range ds.TableInfo.Indices {
-					if !index.MVIndex {
-						continue
-					}
-					if idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
-						ds.Table.Meta(),
-						index,
-						ds.TblCols,
-						false,
-					); ok {
-						for _, idxCol := range idxCols {
-							if idxCol.VirtualExpr == nil {
-								continue
-							}
-							targetJSONPath, _ := unwrapJSONCast(idxCol.VirtualExpr)
-							if ok && targetJSONPath.Equal(evalCtx, sf.GetArgs()[0]) {
-								castFunction = idxCol.Clone()
-								castFunction.GetType(evalCtx).SetArray(false)
-								goto OUTER
-							}
-						}
-					}
-				}
-			}
+		// If we want to enable MV-Index for index scan, we have to replace the cast expression with the virtual column.
+		if enableMVIndexScan && v.Tp.IsArray() {
+			castFunction = er.replaceCastFunction(castFunction)
 		}
-	OUTER:
+
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 	case *ast.JSONSumCrc32Expr:

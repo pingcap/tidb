@@ -204,7 +204,7 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	for _, src := range e.srcs {
 		taskCh <- src
 	}
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		wg.RunWithRecover(func() {
 			for {
 				if fail := failure.Load(); fail {
@@ -471,14 +471,14 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		// For mv index, we will use subquery to gather all values with the same handle.
 		// The query will be like:
 		//     table side: select handle, JSON_SUM_CRC32(xxx as array) from t use index()
-		//      index side: select /*+ force_index(`idx`) */ handle, SUM(CRC32(CAST(xxx as array))) from t group by handle
+		//     index side: select /*+ force_index(`idx`) */ handle, SUM(CRC32(CAST(xxx as array))) from t group by handle
 		fromTable = fmt.Sprintf("(select %s, %s as %s from %s use index()) tmp",
 			handleCols, jsonSumExpr, indexCols, tblName)
 		fromIndex = fmt.Sprintf("(select /*+ force_index(%s, %s) */ %s, SUM(CRC32(%s)) as %s from %s group by %s) tmp",
 			tblName, idxName, handleCols, generatedExpr, indexCols, tblName, handleCols)
 	}
 
-	indexCtx := plannercore.WithForceMVIndexScan(w.e.contextCtx)
+	indexCtx := plannercore.WithEnableMVIndexScan(w.e.contextCtx)
 	tableCtx := w.e.contextCtx
 
 	times := 0
