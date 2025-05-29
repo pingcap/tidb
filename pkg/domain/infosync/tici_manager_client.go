@@ -18,27 +18,19 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pingcap/tidb/pkg/indexer"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-var (
-	_ TiCIManager = &TiCIManagerCtx{}
-)
-
-// TiCIManager manages fulltext index for TiCI.
-type TiCIManager interface {
-	// CreateFulltextIndex create fulltext index on TiCI
-	CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error
-}
-
 // TiCIManagerCtx manages fulltext index for TiCI.
 type TiCIManagerCtx struct {
-	indexServiceClient indexer.IndexerServiceClient
+	conn              *grpc.ClientConn
+	metaServiceClient tici.MetaServiceClient
 }
 
 // NewTiCIManager creates a new TiCI manager.
@@ -47,55 +39,55 @@ func NewTiCIManager(ticiHost string, ticiPort string) (*TiCIManagerCtx, error) {
 	if err != nil {
 		return nil, err
 	}
-	indexServiceClient := indexer.NewIndexerServiceClient(conn)
+	metaServiceClient := tici.NewMetaServiceClient(conn)
 	return &TiCIManagerCtx{
-		indexServiceClient: indexServiceClient,
+		conn:              conn,
+		metaServiceClient: metaServiceClient,
 	}, nil
 }
 
 // CreateFulltextIndex creates fulltext index on TiCI.
 func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
-	pkName := tblInfo.GetPkName()
-	indexColumns := make([]*indexer.ColumnInfo, 0)
+	indexColumns := make([]*tici.ColumnInfo, 0)
 	for i := range indexInfo.Columns {
 		offset := indexInfo.Columns[i].Offset
-		indexColumns = append(indexColumns, &indexer.ColumnInfo{
+		indexColumns = append(indexColumns, &tici.ColumnInfo{
 			ColumnId:     tblInfo.Columns[offset].ID,
 			ColumnName:   tblInfo.Columns[offset].Name.String(),
 			Type:         int32(tblInfo.Columns[offset].GetType()),
 			ColumnLength: int32(tblInfo.Columns[offset].FieldType.StorageLength()),
 			Decimal:      int32(tblInfo.Columns[offset].GetDecimal()),
 			DefaultVal:   tblInfo.Columns[offset].DefaultValueBit,
-			IsPrimaryKey: pkName == tblInfo.Columns[offset].Name,
+			IsPrimaryKey: mysql.HasPriKeyFlag(tblInfo.Columns[offset].GetFlag()),
 			IsArray:      len(indexInfo.Columns) > 1,
 		})
 	}
-	tableColumns := make([]*indexer.ColumnInfo, 0)
+	tableColumns := make([]*tici.ColumnInfo, 0)
 	for i := range tblInfo.Columns {
-		tableColumns = append(tableColumns, &indexer.ColumnInfo{
+		tableColumns = append(tableColumns, &tici.ColumnInfo{
 			ColumnId:     tblInfo.Columns[i].ID,
 			ColumnName:   tblInfo.Columns[i].Name.String(),
 			Type:         int32(tblInfo.Columns[i].GetType()),
 			ColumnLength: int32(tblInfo.Columns[i].FieldType.StorageLength()),
 			Decimal:      int32(tblInfo.Columns[i].GetDecimal()),
 			DefaultVal:   tblInfo.Columns[i].DefaultValueBit,
-			IsPrimaryKey: pkName == tblInfo.Columns[i].Name,
+			IsPrimaryKey: mysql.HasPriKeyFlag(tblInfo.Columns[i].GetFlag()),
 			IsArray:      len(tblInfo.Columns) > 1,
 		})
 	}
-	req := &indexer.CreateIndexRequest{
-		IndexInfo: &indexer.IndexInfo{
+	req := &tici.CreateIndexRequest{
+		IndexInfo: &tici.IndexInfo{
 			TableId:   tblInfo.ID,
 			IndexId:   indexInfo.ID,
 			IndexName: indexInfo.Name.String(),
-			IndexType: indexer.IndexType_FULL_TEXT,
+			IndexType: tici.IndexType_FULL_TEXT,
 			Columns:   indexColumns,
 			IsUnique:  indexInfo.Unique,
-			ParserInfo: &indexer.ParserInfo{
-				ParserType: indexer.ParserType_DEFAULT_PARSER,
+			ParserInfo: &tici.ParserInfo{
+				ParserType: tici.ParserType_DEFAULT_PARSER,
 			},
 		},
-		TableInfo: &indexer.TableInfo{
+		TableInfo: &tici.TableInfo{
 			TableId:      tblInfo.ID,
 			TableName:    tblInfo.Name.L,
 			DatabaseName: schemaName,
@@ -103,7 +95,7 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 			Columns:      tableColumns,
 		},
 	}
-	resp, err := t.indexServiceClient.CreateIndex(ctx, req)
+	resp, err := t.metaServiceClient.CreateIndex(ctx, req)
 	if err != nil {
 		return err
 	}
