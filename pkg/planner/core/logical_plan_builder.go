@@ -90,22 +90,22 @@ const (
 	ErrExprInOrderBy = "ORDER BY"
 )
 
-type forceMVIndexOption struct{}
+type enableMVIndexOption struct{}
 
-var forceMVIndexOptionKey forceMVIndexOption
+var enableMVIndexOptionKey enableMVIndexOption
 
 // WithEnableMVIndexScan controls how the optimizer process MV Index.
 // If it's true, it indicated we want to use MV Index for scan.
 // NOTE: It should only be used in fast admin check table for now,
 // see check_table_index.go for more details.
 func WithEnableMVIndexScan(ctx context.Context) context.Context {
-	return context.WithValue(ctx, forceMVIndexOptionKey, true)
+	return context.WithValue(ctx, enableMVIndexOptionKey, true)
 }
 
 // GetEnableMVIndexScan check whether the force MV index scan option is set.
 func GetEnableMVIndexScan(ctx context.Context) bool {
 	force := false
-	if opt := ctx.Value(forceMVIndexOptionKey); opt != nil {
+	if opt := ctx.Value(enableMVIndexOptionKey); opt != nil {
 		force = opt.(bool)
 	}
 	return force

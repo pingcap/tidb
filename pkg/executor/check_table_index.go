@@ -399,18 +399,18 @@ func buildChecksumSQLForMVIndex(
 		tblCol := tblMeta.Columns[col.Offset]
 		generatedExpr := strings.ToLower(tblCol.GeneratedExprString)
 
-		asName := ColumnName(col.Name.O)
-		checksumCols = append(checksumCols, asName)
+		alias := ColumnName(col.Name.O)
+		checksumCols = append(checksumCols, alias)
 		if !tblCol.IsVirtualGenerated() || !tblCol.Hidden {
 			// We have to wrap all the columns with a dummy aggregation function for index scan.
-			innerColsForTable = append(innerColsForTable, asName)
-			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("min(%s) as %s", asName, asName))
+			innerColsForTable = append(innerColsForTable, alias)
+			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("min(%s) as %s", alias, alias))
 		} else if !isCastArrayExpr(generatedExpr) {
-			innerColsForTable = append(innerColsForTable, fmt.Sprintf("(%s) as %s", generatedExpr, asName))
-			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("min(%s) as %s", generatedExpr, asName))
+			innerColsForTable = append(innerColsForTable, fmt.Sprintf("(%s) as %s", generatedExpr, alias))
+			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("min(%s) as %s", generatedExpr, alias))
 		} else {
-			innerColsForTable = append(innerColsForTable, fmt.Sprintf("%s as %s", strings.Replace(generatedExpr, "cast", "JSON_SUM_CRC32", 1), asName))
-			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("SUM(CRC32(%s)) as %s", generatedExpr, asName))
+			innerColsForTable = append(innerColsForTable, fmt.Sprintf("%s as %s", strings.Replace(generatedExpr, "cast", "JSON_SUM_CRC32", 1), alias))
+			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("SUM(CRC32(%s)) as %s", alias, alias))
 		}
 	}
 
@@ -463,7 +463,7 @@ func buildCheckRowSQLForMVIndex(
 			selectCols = append(selectCols, alias)
 		} else {
 			innerColsForTable = append(innerColsForTable, fmt.Sprintf("%s as %s", strings.Replace(generatedExpr, "cast", "JSON_SUM_CRC32", 1), alias))
-			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("SUM(CRC32(%s)) as %s", generatedExpr, alias))
+			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("SUM(CRC32(%s)) as %s", alias, alias))
 
 			// For check SQL, output original json in the subquery as well.
 			alias = ColumnName(col.Name.O + "_array")
@@ -471,7 +471,7 @@ func buildCheckRowSQLForMVIndex(
 			end := strings.LastIndex(generatedExpr, "as")
 			rawExpr := generatedExpr[start+5 : end]
 			innerColsForTable = append(innerColsForTable, fmt.Sprintf("%s as %s", rawExpr, alias))
-			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("JSON_ARRAYAGG(%s) as %s", generatedExpr, alias))
+			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("JSON_ARRAYAGG(%s) as %s", alias, alias))
 			selectCols = append(selectCols, alias)
 		}
 	}
@@ -718,6 +718,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	}
 
 	queryToRow := func(qCtx context.Context, se sessionctx.Context, sql string) ([]chunk.Row, error) {
+		qCtx = kv.WithInternalSourceType(qCtx, kv.InternalTxnAdmin)
 		rs, err := se.GetSQLExecutor().ExecuteInternal(qCtx, sql)
 		if err != nil {
 			return nil, err
@@ -733,11 +734,13 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		return row, nil
 	}
 
-	failpoint.Inject("meetErrorInCheckTable", func() {
-		meetError = true
+	failpoint.Inject("mockMeetErrorInCheckTable", func(val failpoint.Value) {
+		// Only set meetError when no error detected.
+		if v, ok := val.(bool); ok && !meetError {
+			meetError = v
+		}
 	})
 
-	meetError = true
 	if meetError {
 		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, offset, mod)
 		tableSQL := fmt.Sprintf(tableCheckSQL, groupByKey)

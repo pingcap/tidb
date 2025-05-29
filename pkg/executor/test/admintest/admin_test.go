@@ -2123,6 +2123,11 @@ func TestAdminCheckGeneratedColumns(t *testing.T) {
 	tk.Session().GetSessionVars().IndexLookupSize = 3
 	tk.Session().GetSessionVars().MaxChunkSize = 3
 
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockMeetErrorInCheckTable", "return(true)")
+	tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = true"))
+	err = tk.ExecToErr("admin check table t")
+	require.ErrorContains(t, err, "no error detected during row comparison")
+
 	// Simulate inconsistent index column
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 	txn, err := store.Begin()
@@ -2134,6 +2139,7 @@ func TestAdminCheckGeneratedColumns(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockMeetErrorInCheckTable", "return(false)")
 	for _, enabled := range []bool{false, true} {
 		tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", enabled))
 		err = tk.ExecToErr("admin check table t")

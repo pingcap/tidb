@@ -1404,51 +1404,6 @@ func (er *expressionRewriter) adjustUTF8MB4Collation(tp *types.FieldType) {
 	}
 }
 
-// replaceCastFunction replaces the cast function with a virtual column if it matches a virtual column in an MV index.
-// The following logic is copied from `generateMVIndexMergePartialPaths4And`.
-func (er *expressionRewriter) replaceCastFunction(castFunction expression.Expression,
-) expression.Expression {
-	sf, ok := castFunction.(*expression.ScalarFunction)
-	if !ok {
-		return castFunction
-	}
-
-	ds, ok := er.planCtx.plan.(*logicalop.DataSource)
-	if !ok {
-		return castFunction
-	}
-
-	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
-	for _, index := range ds.TableInfo.Indices {
-		if !index.MVIndex {
-			continue
-		}
-		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
-			ds.Table.Meta(),
-			index,
-			ds.TblCols,
-			false,
-		)
-		if !ok {
-			continue
-		}
-
-		for _, idxCol := range idxCols {
-			if idxCol.VirtualExpr == nil {
-				continue
-			}
-			targetJSONPath, ok := unwrapJSONCast(idxCol.VirtualExpr)
-			if ok && targetJSONPath.Equal(evalCtx, sf.GetArgs()[0]) {
-				virtualColumn := idxCol.Clone()
-				virtualColumn.GetType(evalCtx).SetArray(false)
-				return virtualColumn
-			}
-		}
-	}
-
-	return castFunction
-}
-
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
 	if er.err != nil {
@@ -1535,8 +1490,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			er.disableFoldCounter--
 		}
 	case *ast.FuncCastExpr:
-		enableMVIndexScan := GetEnableMVIndexScan(er.ctx)
-		if v.Tp.IsArray() && !er.allowBuildCastArray && !enableMVIndexScan {
+		if v.Tp.IsArray() && !er.allowBuildCastArray {
 			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs(
 				"Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
 			return retNode, false
@@ -1568,11 +1522,6 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		} else {
 			castFunction.SetCoercibility(expression.CoercibilityNumeric)
 			castFunction.SetRepertoire(expression.ASCII)
-		}
-
-		// If we want to enable MV-Index for index scan, we have to replace the cast expression with the virtual column.
-		if enableMVIndexScan && v.Tp.IsArray() {
-			castFunction = er.replaceCastFunction(castFunction)
 		}
 
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
@@ -2509,7 +2458,8 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	}
 	if idx >= 0 {
 		column := er.schema.Columns[idx]
-		if column.IsHidden {
+		// When MVIndexScan is enabled, we may use virtual columns directly in selection.
+		if column.IsHidden && !GetEnableMVIndexScan(er.ctx) {
 			er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
 			return
 		}

@@ -516,3 +516,19 @@ drop table t;
 create table t (j json not null, str varchar(5) collate gbk_chinese_ci,  KEY `idx` ((cast(`j` as unsigned array)),`str`));
 insert into t values ('1', 'abcde');
 drop table t;
+drop table if exists int_table;
+CREATE TABLE int_table(i INT PRIMARY KEY, j JSON, KEY mvi((CAST(j AS UNSIGNED ARRAY))));
+insert into int_table values(1, "[5, 7]"), (4, "[0, 8]");
+admin check table int_table;
+drop table if exists combined_table;
+CREATE TABLE combined_table(i INT, c1 INT as (i * 2), j JSON, KEY mvi(c1, (i * 3), (CAST(j->'$.arr' AS double ARRAY))));
+insert into combined_table(i, j) values (1, null), (2, '{"arr": [2.1, 3.2]}');
+admin check table combined_table;
+drop table if exists multi_index_table;
+CREATE TABLE multi_index_table(id int primary key, c1 int, c2 int, j1 JSON,
+INDEX i1(c1, (CAST(j1->'$.arr' AS double ARRAY))),
+INDEX i2((CAST(j1->'$.arr' AS double ARRAY)), c2)
+);
+insert into multi_index_table values(1, 8, 3, '{"arr": [3.3, 1.1]}');
+insert into multi_index_table values(2, 4, 6, '{"arr": [11.1, 33.3]}');
+admin check table multi_index_table;
