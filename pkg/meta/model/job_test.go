@@ -327,12 +327,7 @@ func TestJobSize(t *testing.T) {
 - SubJob.FromProxyJob()
 - SubJob.ToProxyJob()
 `
-<<<<<<< HEAD
-	job := Job{}
-	require.Equal(t, 400, int(unsafe.Sizeof(job)), msg)
-=======
 	require.Equal(t, 408, int(unsafe.Sizeof(Job{})), msg)
->>>>>>> eeccd2e94c2 (ddl: get scatter variable from executor session context (#61331))
 }
 
 func TestBackfillMetaCodec(t *testing.T) {

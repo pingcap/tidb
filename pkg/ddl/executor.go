@@ -1386,20 +1386,7 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
 		return
 	}
-<<<<<<< HEAD
-	var (
-		preSplit     func()
-		scatterScope string
-	)
-	val, ok := ctx.GetSessionVars().GetSystemVar(variable.TiDBScatterRegion)
-	if !ok {
-		logutil.DDLLogger().Warn("get system variable met problem, won't scatter region")
-	} else {
-		scatterScope = val
-	}
-=======
 	var preSplit func()
->>>>>>> eeccd2e94c2 (ddl: get scatter variable from executor session context (#61331))
 	if len(parts) > 0 {
 		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scatterScope) }
 	} else {
@@ -6897,37 +6884,3 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 		Version:           model.CurrentReorgMetaVersion,
 	}
 }
-<<<<<<< HEAD
-=======
-
-// RefreshMeta is a internal DDL job. In some cases, BR log restore will EXCHANGE
-// PARTITION\DROP TABLE by write meta kv directly, and table info in meta kv
-// is inconsistent with info schema. So when BR call AlterTableMode for new table
-// will failure. RefreshMeta will reload schema diff to update info schema by
-// schema ID and table ID to make sure data in meta kv and info schema is consistent.
-func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaArgs) error {
-	job := &model.Job{
-		Version:        model.JobVersion2,
-		SchemaID:       args.SchemaID,
-		TableID:        args.TableID,
-		Type:           model.ActionRefreshMeta,
-		BinlogInfo:     &model.HistoryInfo{},
-		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        sctx.GetSessionVars().SQLMode,
-	}
-	sctx.SetValue(sessionctx.QueryString, "skip")
-	err := e.doDDLJob2(sctx, job, args)
-	return errors.Trace(err)
-}
-
-func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
-	var scatterScope string
-	val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBScatterRegion)
-	if !ok {
-		logutil.DDLLogger().Info("won't scatter region since system variable didn't set")
-	} else {
-		scatterScope = val
-	}
-	return scatterScope
-}
->>>>>>> eeccd2e94c2 (ddl: get scatter variable from executor session context (#61331))
