@@ -22,10 +22,8 @@ import (
 )
 
 const (
-	kb   int64 = 1 << 10
-	mb         = kb << 10
-	gb         = mb << 10
-	kilo       = 1000
+	byteSize = 1
+	kilo     = 1000
 )
 
 type wrapList[V any] struct {
@@ -114,19 +112,14 @@ func NewNotifer() Notifer {
 }
 
 // return previous awake status
-func (n *Notifer) setNotAwake() bool {
+func (n *Notifer) clear() bool {
 	return atomic.SwapInt32(&n.awake, 0) != 0
 }
 
 // Wait for signal synchronously (consumer)
 func (n *Notifer) Wait() {
 	<-n.C
-	n.setNotAwake()
-}
-
-// return previous awake status
-func (n *Notifer) setAwake() bool {
-	return atomic.SwapInt32(&n.awake, 1) != 0
+	n.clear()
 }
 
 // Wake the consumer
@@ -137,7 +130,7 @@ func (n *Notifer) Wake() {
 func (n *Notifer) wake() {
 	// 1 -> 1: do nothing
 	// 0 -> 1: send signal
-	if !n.setAwake() {
+	if atomic.SwapInt32(&n.awake, 1) == 0 {
 		n.C <- struct{}{}
 	}
 }

@@ -43,12 +43,12 @@ type ResourcePool struct {
 		sync.Mutex
 		stopped bool
 	}
-	uid            uint64
-	reserved       int64 // quota from other sources
-	limit          int64
-	allocAlignSize int64
+	uid      uint64
+	reserved int64 // quota from other sources
+	limit    int64
 
-	maxUnusedBlocks int64
+	allocAlignSize  int64
+	maxUnusedBlocks int64 // max unused-blocks*alloc-align size before shrinking budget
 }
 
 // NoteActionState wraps the arguments of a note action
