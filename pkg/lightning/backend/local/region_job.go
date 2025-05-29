@@ -450,7 +450,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 
 	if local.ticiWriteGroup != nil {
 		// Call FetchCloudStoragePath for all tici writers in the group.
-		if err = local.ticiWriteGroup.FetchCloudStoragePath(ctx, firstKey, lastKey); err != nil {
+		if err = local.ticiWriteGroup.FetchCloudStoragePath(ctx, local.ticiMgr, firstKey, lastKey); err != nil {
 			return nil, errors.Annotate(err, "ticiWriteGroup.FetchCloudStoragePath failed")
 		}
 		// Initialize TICI file writers for each full-text index in the group.
@@ -651,7 +651,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		if err := local.ticiWriteGroup.CloseFileWriters(ctx); err != nil {
 			return nil, errors.Annotate(err, "ticiWriteGroup.CloseFileWriters failed")
 		}
-		if err := local.ticiWriteGroup.MarkPartitionUploadFinished(ctx); err != nil {
+		if err := local.ticiWriteGroup.MarkPartitionUploadFinished(ctx, local.ticiMgr); err != nil {
 			return nil, errors.Annotate(err, "ticiWriteGroup.MarkPartitionUploadFinished failed")
 		}
 	}

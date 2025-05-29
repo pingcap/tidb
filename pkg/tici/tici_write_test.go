@@ -16,7 +16,6 @@ package tici
 
 import (
 	"context"
-	"net"
 	"testing"
 	"time"
 
@@ -26,42 +25,10 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
-	grpc "google.golang.org/grpc"
-	"google.golang.org/grpc/test/bufconn"
 )
-
-// satisfy only the RPCs we call; embed the generated
-// UnimplementedMetaServiceServer to ignore the rest.
-type stubMetaService struct {
-	UnimplementedMetaServiceServer
-}
-
-func (s *stubMetaService) MarkTableUploadFinished(
-	ctx context.Context,
-	req *MarkTableUploadFinishedRequest,
-) (*MarkTableUploadFinishedResponse, error) {
-	// Always succeed
-	return &MarkTableUploadFinishedResponse{Status: 0}, nil
-}
-
-func startStubMetaService(t *testing.T) (cleanup func(), dialOpt grpc.DialOption, target string) {
-	const bufSize = 1024 * 1024
-	lis := bufconn.Listen(bufSize)
-
-	srv := grpc.NewServer()
-	RegisterMetaServiceServer(srv, &stubMetaService{}) // your stub
-	go func() { _ = srv.Serve(lis) }()
-
-	// bufconn dialer
-	dialOpt = grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-		return lis.Dial()
-	})
-	cleanup = func() { srv.Stop() }
-
-	return cleanup, dialOpt, "bufnet" // “target” can be any string
-}
 
 func newTestTiCIDataWriter(t *testing.T) *DataWriter {
 	tbl := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Indices: []*model.IndexInfo{}}
@@ -262,7 +229,13 @@ func TestTiCIDataWriterGroup_FetchCloudStoragePath_NotWritable(t *testing.T) {
 	ctx := context.Background()
 	group := &DataWriterGroup{}
 	group.writable.Store(false)
-	err := group.FetchCloudStoragePath(ctx, nil, nil)
+	mockClient := new(MockMetaServiceClient)
+	ticiMgr := newTestTiCIManagerCtx(mockClient)
+	mockClient.
+		On("GetCloudStoragePath", mock.Anything, mock.Anything).
+		Return(&GetCloudStoragePathResponse{Status: 0}, nil).
+		Once()
+	err := group.FetchCloudStoragePath(ctx, ticiMgr, nil, nil)
 	assert.NoError(t, err)
 }
 
@@ -270,14 +243,17 @@ func TestTiCIDataWriterGroup_MarkPartitionUploadFinished_NotWritable(t *testing.
 	ctx := context.Background()
 	group := &DataWriterGroup{}
 	group.writable.Store(false)
-	err := group.MarkPartitionUploadFinished(ctx)
+	mockClient := new(MockMetaServiceClient)
+	ticiMgr := newTestTiCIManagerCtx(mockClient)
+	mockClient.
+		On("MarkPartitionUploadFinished", mock.Anything, mock.Anything).
+		Return(&MarkPartitionUploadFinishedResponse{Status: 0}, nil).
+		Once()
+	err := group.MarkPartitionUploadFinished(ctx, ticiMgr)
 	assert.NoError(t, err)
 }
 
 func TestTiCIDataWriterGroup_MarkTableUploadFinished(t *testing.T) {
-	cleanup, dialOpt, target := startStubMetaService(t)
-	defer cleanup()
-
 	ctx := context.Background()
 	tbl := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Indices: []*model.IndexInfo{
 		{ID: 2, Name: ast.NewCIStr("idx"), FullTextInfo: &model.FullTextIndexInfo{}},
@@ -291,13 +267,13 @@ func TestTiCIDataWriterGroup_MarkTableUploadFinished(t *testing.T) {
 		}
 	}
 
-	old := newTiCIManager
-	newTiCIManager = func(_, _ string) (*ManagerCtx, error) {
-		return NewTiCIManagerWithOpts(target, dialOpt)
-	}
-	defer func() { newTiCIManager = old }()
-
-	err := group.MarkTableUploadFinished(ctx)
+	mockClient := new(MockMetaServiceClient)
+	ticiMgr := newTestTiCIManagerCtx(mockClient)
+	mockClient.
+		On("MarkTableUploadFinished", mock.Anything, mock.Anything).
+		Return(&MarkTableUploadFinishedResponse{Status: 0}, nil).
+		Once()
+	err := group.MarkTableUploadFinished(ctx, ticiMgr)
 	assert.NoError(t, err)
 }
 
