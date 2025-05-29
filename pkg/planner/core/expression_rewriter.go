@@ -1491,8 +1491,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 	case *ast.FuncCastExpr:
 		if v.Tp.IsArray() && !er.allowBuildCastArray {
-			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs(
-				"Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
+			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
 			return retNode, false
 		}
 		arg := er.ctxStack[len(er.ctxStack)-1]

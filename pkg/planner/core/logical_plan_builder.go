@@ -4524,10 +4524,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
 	}
 
-	// If enableMVIndexScan is set, it means:
-	// 1. We should build MV Index scan.
-	// 2. DON'T add table scan to possible access path, otherwise
-	//    we can't guarantee index scan is chosen after cost estimation.
 	enableMVIndexScan := GetEnableMVIndexScan(ctx)
 	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0, enableMVIndexScan)
 	if err != nil {

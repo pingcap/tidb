@@ -1360,6 +1360,9 @@ func getPossibleAccessPaths(
 			allMVIIndexPath = false
 		}
 	}
+
+	// If we want to build MV Index scan, don't add table scan to possible access path,
+	// otherwise we can't guarantee index scan is chosen after cost estimation.
 	if allMVIIndexPath && !enableMVIndexScan {
 		available = append(available, tablePath)
 	}
