@@ -214,7 +214,14 @@ func enumeratePhysicalPlans4Task(
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()
-
+		switch joinPlan := pp.(type) {
+		case *PhysicalIndexJoin:
+			fuck(joinPlan.EqualConditions)
+		case *PhysicalHashJoin:
+			fuck(joinPlan.EqualConditions)
+		case *PhysicalIndexHashJoin:
+			fuck(joinPlan.EqualConditions)
+		}
 		childTasks, curCntPlan, childCnts, err = iteration(p, pp, childTasks, childCnts, prop, opt)
 		if err != nil {
 			return nil, 0, false, err
@@ -224,7 +231,14 @@ func enumeratePhysicalPlans4Task(
 		if len(childTasks) != p.ChildLen() {
 			continue
 		}
-
+		switch joinPlan := pp.(type) {
+		case *PhysicalIndexJoin:
+			fuck(joinPlan.EqualConditions)
+		case *PhysicalHashJoin:
+			fuck(joinPlan.EqualConditions)
+		case *PhysicalIndexHashJoin:
+			fuck(joinPlan.EqualConditions)
+		}
 		// If the target plan can be found in this physicalPlan(pp), rebuild childTasks to build the corresponding combination.
 		if planCounter.IsForce() && int64(*planCounter) <= curCntPlan {
 			p.SCtx().GetSessionVars().PlanID.Store(savedPlanID)
@@ -234,7 +248,14 @@ func enumeratePhysicalPlans4Task(
 				return nil, 0, false, err
 			}
 		}
-
+		switch joinPlan := pp.(type) {
+		case *PhysicalIndexJoin:
+			fuck(joinPlan.EqualConditions)
+		case *PhysicalHashJoin:
+			fuck(joinPlan.EqualConditions)
+		case *PhysicalIndexHashJoin:
+			fuck(joinPlan.EqualConditions)
+		}
 		// Combine the best child tasks with parent physical plan.
 		curTask := pp.Attach2Task(childTasks...)
 		if curTask.Invalid() {
@@ -320,7 +341,23 @@ func iteratePhysicalPlan4BaseLogical(
 	curCntPlan := int64(1)
 	for j, child := range p.Children() {
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
+		switch joinPlan := selfPhysicalPlan.(type) {
+		case *PhysicalIndexJoin:
+			notfuck(joinPlan.EqualConditions)
+		case *PhysicalHashJoin:
+			notfuck(joinPlan.EqualConditions)
+		case *PhysicalIndexHashJoin:
+			notfuck(joinPlan.EqualConditions)
+		}
 		childTask, cnt, err := child.FindBestTask(childProp, &PlanCounterDisabled, opt)
+		switch joinPlan := selfPhysicalPlan.(type) {
+		case *PhysicalIndexJoin:
+			fuck(joinPlan.EqualConditions)
+		case *PhysicalHashJoin:
+			fuck(joinPlan.EqualConditions)
+		case *PhysicalIndexHashJoin:
+			fuck(joinPlan.EqualConditions)
+		}
 		childCnts[j] = cnt
 		if err != nil {
 			return nil, 0, childCnts, err
@@ -541,6 +578,36 @@ func appendCandidate4PhysicalOptimizeOp(pop *optimizetrace.PhysicalOptimizeOp, l
 	pp.AppendChildCandidate(pop)
 }
 
+func fuck(eq []*expression.ScalarFunction) {
+	if len(eq) == 1 {
+		cond := eq[0]
+		if arg := cond.GetArgs(); len(arg) == 2 {
+			_, ok := arg[0].(*expression.Column)
+			_, ok1 := arg[1].(*expression.Column)
+			if ok && ok1 {
+				if arg[0].(*expression.Column).RetType.GetFlag() != arg[1].(*expression.Column).RetType.GetFlag() {
+					fmt.Println("wtf")
+				}
+			}
+		}
+	}
+}
+
+func notfuck(eq []*expression.ScalarFunction) {
+	if len(eq) == 1 {
+		cond := eq[0]
+		if arg := cond.GetArgs(); len(arg) == 2 {
+			_, ok := arg[0].(*expression.Column)
+			_, ok1 := arg[1].(*expression.Column)
+			if ok && ok1 {
+				if arg[0].(*expression.Column).RetType.GetFlag() == arg[1].(*expression.Column).RetType.GetFlag() {
+					fmt.Println("not wtf")
+				}
+			}
+		}
+	}
+}
+
 func appendPlanCostDetail4PhysicalOptimizeOp(pop *optimizetrace.PhysicalOptimizeOp, detail *tracing.PhysicalPlanCostDetail) {
 	if pop == nil || pop.GetTracer() == nil {
 		return
@@ -553,7 +620,18 @@ func appendPlanCostDetail4PhysicalOptimizeOp(pop *optimizetrace.PhysicalOptimize
 // be defined in core pkg, and be called by logic plan in their logic interface implementation.
 func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
 	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error) {
+
 	p := lp.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan)
+	if _, ok := p.Self().(*logicalop.LogicalAggregation); ok {
+		if !lp.SCtx().GetSessionVars().InRestrictedSQL {
+			fmt.Println("wwz")
+		}
+	}
+	if _, ok := p.Self().(*logicalop.LogicalApply); ok {
+		if !lp.SCtx().GetSessionVars().InRestrictedSQL {
+			fmt.Println("wwz")
+		}
+	}
 	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
@@ -599,6 +677,7 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 	if err != nil {
 		return nil, 0, err
 	}
+
 	if !hintWorksWithProp && !newProp.IsSortItemEmpty() && newProp.IndexJoinProp == nil {
 		// If there is a hint in the plan and the hint cannot satisfy the property,
 		// we enforce this property and try to generate the PhysicalPlan again to
@@ -649,6 +728,11 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 	var cnt int64
 	var prefer bool
 	var curTask base.Task
+	if _, ok := p.Self().(*logicalop.LogicalApply); ok {
+		if !p.SCtx().GetSessionVars().InRestrictedSQL {
+			fmt.Println("wwz")
+		}
+	}
 	if bestTask, cnt, prefer, err = enumeratePhysicalPlans4Task(p, plansFitsProp, newProp, false, planCounter, opt); err != nil {
 		return nil, 0, err
 	}

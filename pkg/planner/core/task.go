@@ -15,6 +15,7 @@
 package core
 
 import (
+	"fmt"
 	"math"
 	"slices"
 
@@ -194,6 +195,9 @@ func indexHashJoinAttach2TaskV1(p *PhysicalIndexHashJoin, tasks ...base.Task) ba
 }
 
 func indexHashJoinAttach2TaskV2(p *PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	// only fill the wrapped physical index join is ok.
@@ -230,6 +234,9 @@ func indexJoinAttach2TaskV1(p *PhysicalIndexJoin, tasks ...base.Task) base.Task 
 }
 
 func indexJoinAttach2TaskV2(p *PhysicalIndexJoin, tasks ...base.Task) base.Task {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	completePhysicalIndexJoin(p, innerTask.(*RootTask), innerTask.Plan().Schema(), outerTask.Plan().Schema(), true)

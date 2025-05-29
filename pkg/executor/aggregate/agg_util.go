@@ -129,6 +129,9 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 		// Ref to issue #26885.
 		// This check is used to handle invalid enum name same with user defined enum name.
 		// Use enum value as groupKey instead of enum name.
+		if !ctx.GetSessionVars().InRestrictedSQL {
+			fmt.Println("wwz")
+		}
 		if item.GetType(ctx.GetExprCtx().GetEvalCtx()).GetType() == mysql.TypeEnum {
 			newTp := *tp
 			newTp.AddFlag(mysql.EnumSetAsIntFlag)
