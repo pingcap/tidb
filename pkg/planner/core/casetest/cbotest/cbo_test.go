@@ -157,6 +157,35 @@ func TestEstimation(t *testing.T) {
 	}
 }
 
+func TestIssue61389(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("set tidb_cost_model_version=2")
+	testKit.MustExec("use test;")
+	testKit.MustExec("CREATE TABLE `t19f3e4f1` (\n  `col3c14` year(4) DEFAULT '2039',\n  `colb388` decimal(51,17) DEFAULT '9958507938396396959524543944875944.76662769765947763',\n  `col6446` tinytext DEFAULT NULL,\n  `colc864` enum('d9','dt5w4','wsg','i','3','5ur3','s0m4','mmhw6','rh','ge9d','nm') DEFAULT 'dt5w4',\n  `colaadb` smallint DEFAULT '7697',\n  `colfee4` enum('i','lnc','29n','vsm6','me','4','ajkgo','cd','2wz','yhv6','k0l') DEFAULT '29n',\n  KEY `ddd371a7` (`colb388`),\n  UNIQUE KEY `c0534725` (`colb388`),\n  UNIQUE KEY `ee56e6aa` (`colc864`),\n  KEY `5756be09` (`colfee4`),\n  KEY `c9a93757` (`colfee4`),\n  KEY `9f8dd46c` (`col3c14`),\n  KEY `c951668d` (`colfee4`,`col3c14`,`colc864`,`colb388`),\n  UNIQUE KEY `69091c4b` (`col3c14`)\n)")
+	testKit.MustExec("CREATE TABLE `t0da79f8d` (\n  `col7de8` float DEFAULT '1.3466417',\n  `col648a` smallint DEFAULT '-9828',\n  `col7a22` enum('jmh0','2','zenk','ct','47wiw','4u4','omqm','efomv','hnx','kgq1i','h5bl') DEFAULT 'h5bl',\n  `col321f` datetime DEFAULT '3590-08-12 04:04:02',\n  `col39cb` double DEFAULT '1.5620021842250698',\n  `colda50` timestamp DEFAULT '2012-08-16 23:00:06',\n  `cola612` tinytext DEFAULT NULL,\n  `col4191` float DEFAULT '1.5678482',\n  `col5a63` set('1czti','nleu','2','p0','d42','qep7','5','iyw','tl8p','3h','tz') DEFAULT '1czti,nleu,2,p0,d42,iyw',\n  `colf2af` enum('xrsg','go9yf','mj4','u1l','8c','at','o','e9','bh','r','yah') DEFAULT 'r',\n  UNIQUE KEY `93e8f530` (`col7a22`),\n  KEY `87fb3485` (`colda50`),\n  KEY `91451059` (`col648a`),\n  UNIQUE KEY `6ecefbaf` (`col5a63`),\n  UNIQUE KEY `afb40fea` (`col321f`),\n  KEY `4cfcc236` (`col648a`,`col5a63`,`col4191`,`col7a22`,`col39cb`),\n  KEY `0eee9ef2` (`colf2af`,`col7a22`,`col648a`,`col39cb`,`col321f`,`col4191`),\n  KEY `a0fda2c5` (`colf2af`),\n  KEY `9548713e` (`col321f`,`col39cb`,`col648a`,`col7a22`)\n) ")
+	require.NoError(t, testkit.LoadTableStats("test.t0da79f8d.json", dom))
+	require.NoError(t, testkit.LoadTableStats("test.t19f3e4f1.json", dom))
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	analyzeSuiteData := GetAnalyzeSuiteData()
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertRowsToStrings(testKit.MustQuery("show warnings").Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+		testKit.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
+	}
+}
+
 func TestIssue59563(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
