@@ -466,13 +466,7 @@ func BuildHistAndTopN(
 	}
 
 	topn := &TopN{TopN: topNList}
-	var topNTotalCount uint64
-	for i := range topn.TopN {
-		topn.TopN[i].Count = uint64(float64(topn.TopN[i].Count) * sampleFactor)
-		topNTotalCount += topn.TopN[i].Count
-	}
-
-	if uint64(count) <= topNTotalCount || int(hg.NDV) <= len(topn.TopN) {
+	if int(hg.NDV) <= len(topn.TopN) {
 		// If we've collected everything  - don't create any buckets
 		return hg, topn, nil
 	}
@@ -485,6 +479,11 @@ func BuildHistAndTopN(
 			// set the number of buckets to be the number of remaining distinct values divided by 2
 			// but no less than 1 and no more than the original number of buckets
 			numBuckets = int(min(max(1, remainingNDV/2), int64(numBuckets)))
+		}
+		var topNTotalCount uint64
+		for i := range topn.TopN {
+			topn.TopN[i].Count = uint64(float64(topn.TopN[i].Count) * sampleFactor)
+			topNTotalCount += topn.TopN[i].Count
 		}
 		_, err = buildHist(sc, hg, samples, count-int64(topNTotalCount), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
 		if err != nil {
