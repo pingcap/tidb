@@ -15,6 +15,7 @@ go_test(
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/scheduler",
         "//pkg/disttask/framework/taskexecutor",
+        "//pkg/disttask/framework/testutil",
         "//pkg/kv",
         "//pkg/lightning/backend/external",
         "//pkg/meta/model",

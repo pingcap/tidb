@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -253,6 +254,7 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 }
 
 func TestGlobalSortDuplicateErrMsg(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
 	opt := fakestorage.Options{
 		Scheme:     "http",
@@ -292,14 +294,6 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 		addUniqueKeySQL string
 		errMsg          string
 	}{
-		{
-			"int index",
-			"create table t (a int, b int, c int);",
-			"",
-			"insert into t values (1, 1, 1), (2, 1, 2);",
-			"alter table t add unique index idx(b);",
-			"Duplicate entry '1' for key 't.idx",
-		},
 		{
 			"int index on multi regions",
 			"create table t (a int primary key, b int);",
@@ -342,6 +336,19 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 		},
 	}
 
+	checkSubtaskStepAndReset := func(t *testing.T, expectedStep proto.Step) {
+		errorSubtask := taskexecutor.GetErrorSubtask4Test.Swap(nil)
+		require.NotEmpty(t, errorSubtask)
+		require.Equal(t, expectedStep, errorSubtask.Step)
+	}
+
+	checkRedactMsgAndReset := func(addUniqueKeySQL string) {
+		tk.MustExec("set session tidb_redact_log = on;")
+		tk.MustContainErrMsg(addUniqueKeySQL, "[kv:1062]Duplicate entry '?' for key 't.idx'")
+		tk.MustExec("set session tidb_redact_log = off;")
+		taskexecutor.GetErrorSubtask4Test.Store(nil)
+	}
+
 	for _, tc := range testcases {
 		t.Run(tc.caseName, func(tt *testing.T) {
 			// init
@@ -353,6 +360,7 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			})
 
 			// pre-check
+			multipleRegions := len(tc.splitTableSQL) > 0 || strings.Contains(tc.createTableSQL, "partition")
 			if len(tc.splitTableSQL) > 0 {
 				tk.MustQuery(tc.splitTableSQL).Check(testkit.Rows("3 1"))
 			}
@@ -361,14 +369,25 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 				require.Len(tt, rs.Rows(), 2)
 			}
 
+			// 1. read index
 			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
-			errorSubtask := taskexecutor.GetErrorSubtask4Test.Swap(nil)
-			require.NotEmpty(tt, errorSubtask)
-			require.Equal(tt, proto.BackfillStepWriteAndIngest, errorSubtask.Step)
+			if multipleRegions {
+				checkSubtaskStepAndReset(tt, proto.BackfillStepWriteAndIngest)
+			} else {
+				checkSubtaskStepAndReset(tt, proto.BackfillStepReadIndex)
+			}
+			checkRedactMsgAndReset(tc.addUniqueKeySQL)
 
-			tk.MustExec("set session tidb_redact_log = on;")
-			tk.MustContainErrMsg(tc.addUniqueKeySQL, "[kv:1062]Duplicate entry '?' for key 't.idx'")
-			tk.MustExec("set session tidb_redact_log = off;")
+			// 2. merge sort
+			testfailpoint.Enable(tt, "github.com/pingcap/tidb/pkg/ddl/ignoreReadIndexDupKey", `return(true)`)
+			require.NoError(tt, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()"))
+			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
+			checkSubtaskStepAndReset(tt, proto.BackfillStepMergeSort)
+
+			// 3. cloud import
+			require.NoError(tt, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
+			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
+			checkSubtaskStepAndReset(tt, proto.BackfillStepWriteAndIngest)
 		})
 	}
 }
