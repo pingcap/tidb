@@ -786,6 +786,10 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 
+	if err = checkModifyColumnWithNoNullIndex(t.Meta(), col.ColumnInfo, specNewColumn.Options); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	// Copy index related options to the new spec.
 	indexFlags := col.FieldType.GetFlag() & (mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag)
 	newCol.FieldType.AddFlag(indexFlags)
@@ -1284,6 +1288,8 @@ func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, optio
 			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify with check"))
 		// Ignore ColumnOptionAutoRandom. It will be handled later.
 		case ast.ColumnOptionAutoRandom:
+		case ast.ColumnOptionNoNullIndex:
+			col.NoNullIndex = true
 		default:
 			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(fmt.Sprintf("unknown column option type: %d", opt.Tp)))
 		}
@@ -1378,4 +1384,31 @@ func rangeBitsIsChanged(oldBits, newBits uint64) bool {
 		newBits = autoid.AutoRandomRangeBitsDefault
 	}
 	return oldBits != newBits
+}
+
+func checkModifyColumnWithNoNullIndex(tbInfo *model.TableInfo, col *model.ColumnInfo, options []*ast.ColumnOption) error {
+	if col.NoNullIndex {
+		return nil
+	}
+
+	addNoNullIndex := false
+	for _, opt := range options {
+		if opt.Tp == ast.ColumnOptionNoNullIndex {
+			addNoNullIndex = true
+			break
+		}
+	}
+	if !addNoNullIndex {
+		return nil
+	}
+
+	// cannot add no_null_index if the column is part of an existing index
+	for _, indexInfo := range tbInfo.Indices {
+		for _, idxCol := range indexInfo.Columns {
+			if col.Name.L == idxCol.Name.L && addNoNullIndex {
+				return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify column to no_null_index with existing index")
+			}
+		}
+	}
+	return nil
 }
