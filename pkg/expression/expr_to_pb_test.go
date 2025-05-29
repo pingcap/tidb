@@ -22,6 +22,8 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/executor/aggregate"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"

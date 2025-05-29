@@ -16,7 +16,6 @@ package aggregation
 
 import (
 	"bytes"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
