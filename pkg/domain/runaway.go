@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 )
@@ -43,7 +44,10 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 		return nil
 	}
 
-	keyspaceID := uint32(do.Store().GetCodec().GetKeyspaceID())
+	keyspaceID := constants.NullKeyspaceID
+	if codec := do.Store().GetCodec(); codec != nil {
+		keyspaceID = uint32(codec.GetKeyspaceID())
+	}
 	control, err := rmclient.NewResourceGroupController(ctx, uniqueID, pdClient, nil, keyspaceID, rmclient.WithMaxWaitDuration(runaway.MaxWaitDuration))
 	if err != nil {
 		return err
