@@ -28,8 +28,8 @@ import (
 
 // TiCIManagerCtx manages fulltext index for TiCI.
 type TiCIManagerCtx struct {
-	conn               *grpc.ClientConn
-	indexServiceClient indexer.IndexerServiceClient
+	conn              *grpc.ClientConn
+	metaServiceClient indexer.MetaServiceClient
 }
 
 // NewTiCIManager creates a new TiCI manager.
@@ -38,10 +38,10 @@ func NewTiCIManager(ticiHost string, ticiPort string) (*TiCIManagerCtx, error) {
 	if err != nil {
 		return nil, err
 	}
-	indexServiceClient := indexer.NewIndexerServiceClient(conn)
+	metaServiceClient := indexer.NewMetaServiceClient(conn)
 	return &TiCIManagerCtx{
-		conn:               conn,
-		indexServiceClient: indexServiceClient,
+		conn:              conn,
+		metaServiceClient: metaServiceClient,
 	}, nil
 }
 
@@ -95,7 +95,7 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 			Columns:      tableColumns,
 		},
 	}
-	resp, err := t.indexServiceClient.CreateIndex(ctx, req)
+	resp, err := t.metaServiceClient.CreateIndex(ctx, req)
 	if err != nil {
 		return err
 	}
