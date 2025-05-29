@@ -1,0 +1,167 @@
+// Copyright 2025 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package indexer;
+
+option go_package = ".";
+
+import "indexer.proto";
+
+message WorkerNodeStatus {
+  // TODO Need more metrics, such as disk usage, quotas, cache miss rates
+  double cpu_usage = 1;
+  uint64 memory_usage = 2;
+}
+
+// Reader node status information
+message ReaderNodeStatus {
+  // CPU usage percentage (0.0 to 100.0)
+  double cpu_usage = 1;
+  // Memory usage in bytes
+  uint64 memory_usage = 2;
+  // Number of requests processed in current heartbeat cycle
+  uint32 requests_in_cycle = 3;
+  // Cache hit rate percentage (0.0 to 100.0)
+  double cache_hit_rate = 4;
+}
+
+// Some fields may be duplicated with ShardManifestHeader,
+// however, just leave them here.
+message WorkerNodeShardStatus {
+  string start_key = 1;
+  string end_key = 2;
+  // TODO shard_id is unique across tables and indexes.
+  // We still need them because in meta service we are not currently maintain this correspondence.
+  int64 table_id = 3;
+  int64 index_id = 4;
+  uint64 shard_id = 5;
+  uint64 epoch = 6;
+  uint64 seq = 7;
+}
+
+message WorkerNodeCompactionStatus {
+
+}
+
+message WorkerNodeHeartbeatRequest {
+  string addr = 1;
+  WorkerNodeStatus status = 2;
+  repeated WorkerNodeShardStatus shards = 3;
+  repeated WorkerNodeCompactionStatus compactions = 4;
+}
+
+message WorkerNodeHeartbeatResponse {
+  // Operation result status code, 0 means success
+  int32 status = 1;
+  repeated indexer.AddShardRequest to_add_shards = 2;
+  // We assume the `shard_id`s are unique across tables,
+  // So using `shard_id` is enough here.
+  repeated uint64 to_remove_shards = 3;
+}
+
+// Reader node heartbeat request
+message ReaderNodeHeartbeatRequest {
+  // Reader node address
+  string addr = 1;
+  // Reader node status
+  ReaderNodeStatus status = 2;
+}
+
+// Reader node heartbeat response
+message ReaderNodeHeartbeatResponse {
+  // Operation result status code, 0 means success
+  int32 status = 1;
+  // Error message, only valid when status is non-zero
+  string error_message = 2;
+}
+
+// Fragment metadata primarily stores all data files under a ​​fragment​​
+message FragMeta {
+  // Data format version​​, used for future iterative upgrades
+  uint64 format_version = 1;
+  // Root path of the fragment​​
+  string frag_path = 2;
+  // Data files under the fragment​​, relative path under frag_path
+  repeated string data_files = 3;
+}
+
+message AppendFragMetaRequest {
+  int64 table_id = 1;
+  int64 index_id = 2;
+  uint64 shard_id = 3;
+  string last_cdc_file = 4;
+  string worker_node_addr = 5;
+  repeated FragMeta frag_metas = 6;
+}
+
+message AppendFragMetaResponse {
+  // 0 - success
+  // ... other error codes
+  int32 status = 1;
+}
+
+// Key range definition for shard cache queries
+message KeyRange {
+  string start_key = 1;
+  string end_key = 2;
+}
+
+// Shard local cache information
+message ShardLocalCacheInfo {
+  indexer.ShardManifestHeader shard = 1;
+  repeated string local_cache_addrs = 2;
+}
+
+// Request to get shard local cache information
+message GetShardLocalCacheRequest {
+  // Table ID to filter shards
+  int64 table_id = 1;
+  // Index ID to filter shards  
+  int64 index_id = 2;
+  repeated KeyRange key_ranges = 3;
+  // at most `limit` shards can be returned
+  int32 limit = 4;
+}
+
+// Response containing shard local cache information
+message GetShardLocalCacheResponse {
+  // Operation result status code, 0 means success
+  int32 status = 1;
+  repeated ShardLocalCacheInfo shard_local_cache_infos = 2;
+}
+
+service MetaService {
+  // Maintains heartbeat from worker nodes(such as writers, compactors) to meta service.
+  rpc WorkerNodeHeartbeat(WorkerNodeHeartbeatRequest) returns (WorkerNodeHeartbeatResponse);
+
+  // Maintains heartbeat from reader nodes to meta service.
+  rpc ReaderNodeHeartbeat(ReaderNodeHeartbeatRequest) returns (ReaderNodeHeartbeatResponse);
+
+  // TODO It will eventually replace the same RPCs in indexer.rs
+  // CreateIndex creates a new index
+  rpc CreateIndex(indexer.CreateIndexRequest) returns (indexer.CreateIndexResponse);
+  
+  // DropIndex removes an existing index
+  rpc DropIndex(indexer.DropIndexRequest) returns (indexer.DropIndexResponse);
+  
+  // GetIndexProgress retrieves the current progress of an index build
+  rpc GetIndexProgress(indexer.GetIndexProgressRequest) returns (indexer.GetIndexProgressResponse);
+
+  rpc AppendFragMeta(AppendFragMetaRequest) returns (AppendFragMetaResponse);
+
+  // Get shard local cache information
+  rpc GetShardLocalCacheInfo(GetShardLocalCacheRequest) returns (GetShardLocalCacheResponse);
+}
