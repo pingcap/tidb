@@ -1821,7 +1821,12 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					err = e.CreateCheckConstraint(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint)
 				}
 			case ast.ConstraintColumnar:
-				err = e.createColumnarIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+				switch constr.Option.Tp {
+				case ast.IndexTypeFulltext:
+					err = e.createFulltextIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+				default:
+					err = e.createColumnarIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+				}
 			default:
 				// Nothing to do now.
 			}
@@ -4678,6 +4683,80 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	return errors.Trace(err)
 }
 
+func checkTableTypeForFulltextIndex(tblInfo *model.TableInfo) error {
+	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Fulltext Index")
+	}
+	if tblInfo.TempTableType != model.TempTableNone {
+		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("fulltext index")
+	}
+	if tblInfo.GetPartitionInfo() != nil {
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported partition table")
+	}
+	return nil
+}
+
+func (e *executor) createFulltextIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+	schema, t, err := e.getSchemaAndTableByIdent(ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tblInfo := t.Meta()
+	if err := checkTableTypeForFulltextIndex(tblInfo); err != nil {
+		return errors.Trace(err)
+	}
+
+	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
+	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, model.ColumnarIndexTypeFulltext, ifNotExists)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = buildFullTextInfoWithCheck(indexPartSpecifications, indexOption, tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Check before the job is put to the queue.
+	// This check is redundant, but useful. If DDL check fail before the job is put
+	// to job queue, the fail path logic is particularly fast.
+	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
+	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
+	// For same reason, decide whether index is global here.
+	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeFulltext)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// May be truncate comment here, when index comment too long and sql_mode is't strict.
+	sessionVars := ctx.GetSessionVars()
+	if _, err = validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, indexName.String(), &indexOption.Comment, dbterror.ErrTooLongTableComment); err != nil {
+		return errors.Trace(err)
+	}
+
+	job := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
+	job.Version = model.GetJobVerInUse()
+	job.Type = model.ActionAddFullTextIndex
+	indexPartSpecifications[0].Expr = nil
+
+	args := &model.ModifyIndexArgs{
+		IndexArgs: []*model.IndexArg{{
+			IndexName:               indexName,
+			IndexPartSpecifications: indexPartSpecifications,
+			IndexOption:             indexOption,
+		}},
+		OpType: model.OpAddIndex,
+	}
+
+	err = e.doDDLJob2(ctx, job, args)
+	// key exists, but if_not_exists flags is true, so we ignore this error.
+	if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+	return errors.Trace(err)
+}
+
 func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType, ifNotExists bool) (ast.CIStr, []*model.ColumnInfo, error) {
 	// Deal with anonymous index.
@@ -4760,8 +4839,6 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		columnarIndexType = model.ColumnarIndexTypeInverted
 	case ast.IndexTypeVector:
 		columnarIndexType = model.ColumnarIndexTypeVector
-	case ast.IndexTypeFulltext:
-		columnarIndexType = model.ColumnarIndexTypeFulltext
 	default:
 		return dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(indexOption.Tp)
 	}
@@ -4781,10 +4858,6 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		}
 	case model.ColumnarIndexTypeVector:
 		if _, funcExpr, err = buildVectorInfoWithCheck(indexPartSpecifications, tblInfo); err != nil {
-			return errors.Trace(err)
-		}
-	case model.ColumnarIndexTypeFulltext:
-		if _, err = buildFullTextInfoWithCheck(indexPartSpecifications, indexOption, tblInfo); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -4886,7 +4959,12 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	case ast.IndexKeyTypeSpatial:
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is not supported")
 	case ast.IndexKeyTypeColumnar:
-		return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
+		switch indexOption.Tp {
+		case ast.IndexTypeFulltext:
+			return e.createFulltextIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
+		default:
+			return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
+		}
 	}
 	unique := keyType == ast.IndexKeyTypeUnique
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
