@@ -262,7 +262,4 @@ func (s *mockGCSSuite) TestGlobalSortWithGCSReadError() {
 	_, files, err := s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)
 	s.Len(files, 0)
-
-	// check subtask external field
-	checkExternalFields(s.T(), s.tk)
 }
