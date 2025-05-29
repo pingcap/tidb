@@ -4,7 +4,6 @@ package streamhelper
 
 import (
 	"context"
-	"io"
 	"strconv"
 	"sync"
 	"time"
@@ -126,14 +125,17 @@ func (f *FlushSubscriber) Drop() {
 // HandleErrors execute the handlers over all pending errors.
 // Note that the handler may cannot handle the pending errors, at that time,
 // you can fetch the errors via `PendingErrors` call.
-func (f *FlushSubscriber) HandleErrors(ctx context.Context) {
+func (f *FlushSubscriber) HandleErrors() {
 	for id, sub := range f.subscriptions {
 		err := sub.loadError()
 		if err != nil {
 			retry := f.canBeRetried(err)
 			log.Warn("Meet error.", zap.String("category", "log backup flush subscriber"),
-				logutil.ShortError(err), zap.Bool("can-retry?", retry), zap.Uint64("store", id))
+				logutil.ShortError(err), zap.Uint64("store", id))
 			if retry {
+				log.Info("retry connecting to store to add subscription",
+					zap.String("category", "log backup flush subscriber"),
+					zap.Uint64("store", id))
 				sub.connect(f.masterCtx, f.dialer)
 			}
 		}
@@ -278,12 +280,10 @@ func (s *subscription) listenOver(ctx context.Context, cli eventStream) {
 		// Shall we use RecvMsg for better performance?
 		// Note that the spans.Full requires the input slice be immutable.
 		msg, err := cli.Recv()
+		failpoint.InjectCall("listen_flush_stream", s.storeID, &err)
 		if err != nil {
 			logutil.CL(ctx).Info("Listen stopped.",
 				zap.Uint64("store", storeID), logutil.ShortError(err))
-			if err == io.EOF || err == context.Canceled || status.Code(err) == codes.Canceled {
-				return
-			}
 			s.emitError(errors.Annotatef(err, "while receiving from store id %d", storeID))
 			return
 		}

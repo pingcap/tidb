@@ -154,20 +154,6 @@ func (mr *MockBackendMockRecorder) OpenEngine(arg0, arg1, arg2 any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OpenEngine", reflect.TypeOf((*MockBackend)(nil).OpenEngine), arg0, arg1, arg2)
 }
 
-// ResetEngine mocks base method.
-func (m *MockBackend) ResetEngine(arg0 context.Context, arg1 uuid.UUID) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ResetEngine", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// ResetEngine indicates an expected call of ResetEngine.
-func (mr *MockBackendMockRecorder) ResetEngine(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetEngine", reflect.TypeOf((*MockBackend)(nil).ResetEngine), arg0, arg1)
-}
-
 // RetryImportDelay mocks base method.
 func (m *MockBackend) RetryImportDelay() time.Duration {
 	m.ctrl.T.Helper()

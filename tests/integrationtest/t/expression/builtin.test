@@ -33,6 +33,8 @@ select sin(1), sin(100);
 select sin('abcd');
 select cos(0), cos(3.1415926535898);
 select cos('abcd');
+# On Mac arm64 floating point calculations slightly different than x86
+--replace_regex /0.9999999999999998/1/
 select tan(0.00), tan(PI()/4);
 select tan('abcd');
 select log2(0.0);
@@ -719,7 +721,11 @@ DROP TABLE IF EXISTS t;
 CREATE TABLE t(a BINARY(10), b CHAR(10));
 INSERT INTO t SELECT "中文", "abc";
 SELECT LPAD(a, 11, "a"), LPAD(b, 2, "xx") FROM t;
+SELECT LPAD("abc", 5, "");
+SELECT LPAD(a, 11, ""), LPAD(b, 5, "") FROM t;
 SELECT RPAD(a, 11, "a"), RPAD(b, 2, "xx") FROM t;
+SELECT RPAD("abc", 5, "");
+SELECT RPAD(a, 11, ""), RPAD(b, 5, "") FROM t;
 
 # TestStringBuiltin
 drop table if exists t;

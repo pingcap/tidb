@@ -73,6 +73,7 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 		if err == nil || !retryAble {
 			return errors.Trace(err)
 		}
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		sleepTime := time.Duration(backoff*uint64(i)) * time.Millisecond
 		time.Sleep(sleepTime)
 	}
@@ -208,7 +209,7 @@ func IsMemDB(dbLowerName string) bool {
 
 // IsSysDB checks whether dbLowerName is system database.
 func IsSysDB(dbLowerName string) bool {
-	return dbLowerName == mysql.SystemDB || dbLowerName == mysql.SysDB
+	return dbLowerName == mysql.SystemDB || dbLowerName == mysql.SysDB || dbLowerName == mysql.WorkloadSchema
 }
 
 // IsSystemView is similar to IsMemOrSyDB, but does not include the mysql schema
@@ -583,11 +584,14 @@ func initInternalClient() {
 	}
 	if tlsCfg == nil {
 		internalHTTPSchema = "http"
-		internalHTTPClient = http.DefaultClient
+		internalHTTPClient = &http.Client{
+			Timeout: 5 * time.Minute,
+		}
 		return
 	}
 	internalHTTPSchema = "https"
 	internalHTTPClient = &http.Client{
+		Timeout:   5 * time.Minute,
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
 }

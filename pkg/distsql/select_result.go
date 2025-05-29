@@ -580,7 +580,7 @@ func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
 	decoder := codec.NewDecoder(chk, r.ctx.Location)
 	for !chk.IsFull() && len(rowsData) > 0 {
-		for i := 0; i < r.rowLen; i++ {
+		for i := range r.rowLen {
 			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
 			if err != nil {
 				return err
@@ -622,6 +622,7 @@ func (r *selectResult) Close() error {
 					r.stats.storeBatchedNum, r.stats.storeBatchedFallbackNum = batched, fallback
 				}
 			}
+			r.stats.fetchRspDuration = r.fetchDuration
 			r.ctx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
 		}()
 	}
@@ -647,6 +648,7 @@ type selectResultRuntimeStats struct {
 	storeBatchedNum         uint64
 	storeBatchedFallbackNum uint64
 	buildTaskDuration       time.Duration
+	fetchRspDuration        time.Duration
 }
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
@@ -686,6 +688,7 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 		storeBatchedNum:         s.storeBatchedNum,
 		storeBatchedFallbackNum: s.storeBatchedFallbackNum,
 		buildTaskDuration:       s.buildTaskDuration,
+		fetchRspDuration:        s.fetchRspDuration,
 	}
 	newRs.copRespTime.MergePercentile(&s.copRespTime)
 	newRs.procKeys.MergePercentile(&s.procKeys)
@@ -727,6 +730,7 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	s.storeBatchedNum += other.storeBatchedNum
 	s.storeBatchedFallbackNum += other.storeBatchedFallbackNum
 	s.buildTaskDuration += other.buildTaskDuration
+	s.fetchRspDuration += other.fetchRspDuration
 }
 
 func (s *selectResultRuntimeStats) String() string {
@@ -789,6 +793,10 @@ func (s *selectResultRuntimeStats) String() string {
 			buf.WriteString(strconv.FormatInt(int64(s.storeBatchedFallbackNum), 10))
 		}
 		buf.WriteString("}")
+		if s.fetchRspDuration > 0 {
+			buf.WriteString(", fetch_resp_duration: ")
+			buf.WriteString(execdetails.FormatDuration(s.fetchRspDuration))
+		}
 	}
 
 	rpcStatsStr := reqStat.String()

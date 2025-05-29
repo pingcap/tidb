@@ -38,6 +38,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 )
 
 func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *router.Region {
@@ -109,6 +110,10 @@ func (c *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Stor
 
 func (c *mockPDClient) GetClusterID(_ context.Context) uint64 {
 	return 1
+}
+
+func (c *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return c
 }
 
 type mockTiKVStore struct {
@@ -193,7 +198,7 @@ func (s *mockTiKVStore) refreshCache() {
 
 func (s *mockTiKVStore) batchAddIntHandleRegions(tblID int64, regionCnt, regionSize int,
 	offset int64) (end kv.IntHandle) {
-	for i := 0; i < regionCnt; i++ {
+	for i := range regionCnt {
 		start := kv.IntHandle(offset + int64(i*regionSize))
 		end = kv.IntHandle(start.IntValue() + int64(regionSize))
 		s.addRegionWithTablePrefix(tblID, start, end)

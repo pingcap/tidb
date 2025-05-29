@@ -14,10 +14,16 @@
 
 package stream
 
+import (
+	"github.com/pingcap/tidb/pkg/meta/model"
+)
+
 // TableLocationInfo stores the table name, db id, and parent table id if is a partition
 type TableLocationInfo struct {
-	DbID      int64
-	TableName string
+	DbID          int64
+	TableName     string
+	IsPartition   bool
+	ParentTableID int64 // only meaningful when IsPartition is true
 }
 
 type LogBackupTableHistoryManager struct {
@@ -36,10 +42,24 @@ func NewTableHistoryManager() *LogBackupTableHistoryManager {
 // AddTableHistory adds or updates history for a regular table
 func (info *LogBackupTableHistoryManager) AddTableHistory(tableId int64, tableName string, dbID int64) {
 	locationInfo := TableLocationInfo{
-		DbID:      dbID,
-		TableName: tableName,
+		DbID:          dbID,
+		TableName:     tableName,
+		IsPartition:   false,
+		ParentTableID: 0,
 	}
 	info.addHistory(tableId, locationInfo)
+}
+
+// AddPartitionHistory adds or updates history for a partition
+func (info *LogBackupTableHistoryManager) AddPartitionHistory(partitionID int64, tableName string,
+	dbID int64, parentTableID int64) {
+	locationInfo := TableLocationInfo{
+		DbID:          dbID,
+		TableName:     tableName,
+		IsPartition:   true,
+		ParentTableID: parentTableID,
+	}
+	info.addHistory(partitionID, locationInfo)
 }
 
 // addHistory is a helper method to maintain the history
@@ -49,7 +69,6 @@ func (info *LogBackupTableHistoryManager) addHistory(id int64, locationInfo Tabl
 		// first occurrence - store as both original and current
 		info.tableNameHistory[id] = [2]TableLocationInfo{locationInfo, locationInfo}
 	} else {
-		// update current while preserving original
 		info.tableNameHistory[id] = [2]TableLocationInfo{existing[0], locationInfo}
 	}
 }
@@ -71,4 +90,21 @@ func (info *LogBackupTableHistoryManager) GetDBNameByID(dbId int64) (string, boo
 
 func (info *LogBackupTableHistoryManager) GetNewlyCreatedDBHistory() map[int64]string {
 	return info.dbIdToName
+}
+
+// OnDatabaseInfo implements MetaInfoCollector.OnDatabaseInfo
+func (info *LogBackupTableHistoryManager) OnDatabaseInfo(dbInfo *model.DBInfo) {
+	info.RecordDBIdToName(dbInfo.ID, dbInfo.Name.O)
+}
+
+// OnTableInfo implements MetaInfoCollector.OnTableInfo
+func (info *LogBackupTableHistoryManager) OnTableInfo(dbID int64, tableInfo *model.TableInfo) {
+	info.AddTableHistory(tableInfo.ID, tableInfo.Name.O, dbID)
+
+	// add history for all partitions if this is a partitioned table
+	if tableInfo.Partition != nil && tableInfo.Partition.Definitions != nil {
+		for _, partition := range tableInfo.Partition.Definitions {
+			info.AddPartitionHistory(partition.ID, tableInfo.Name.O, dbID, tableInfo.ID)
+		}
+	}
 }

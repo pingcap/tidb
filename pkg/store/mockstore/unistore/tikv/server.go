@@ -907,7 +907,7 @@ func (svr *Server) EstablishMPPConnectionWithStoreID(req *mpp.EstablishMPPConnec
 		err        error
 	)
 	maxRetryTime := 5
-	for i := 0; i < maxRetryTime; i++ {
+	for range maxRetryTime {
 		mppHandler, err = svr.GetMPPTaskHandler(req.SenderMeta.TaskId, storeID)
 		if err != nil {
 			return errors.Trace(err)

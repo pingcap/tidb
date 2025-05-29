@@ -38,20 +38,20 @@ Will introduce this two dimensions control mechanism in the following.
 The `Request Unit` can be assigned to a different level, like user or tenant. The syntax is like MySQL resource group, but it is used differently:
 
 ```sql
-CREATE RESOURCE GROUP resouce_group_name RU_PER_SEC=20000 [PRIORITY=HIGH|MEDIUM|LOW] [BURSTABLE]
+CREATE RESOURCE GROUP resource_group_name RU_PER_SEC=20000 [PRIORITY=HIGH|MEDIUM|LOW] [BURSTABLE]
 /*eg:*/
 CREATE RESOURCE GROUP oltp_applicaton RU_PER_SEC=20000, PRIORITY=HIGH, burstable;
 CREATE RESOURCE GROUP small_applicatoin RU_PER_SEC=5000;
 CREATE RESOURCE GROUP olap_application RU_PER_SEC = 50000 PRIORITY=LOW, BURSTABLE;
 /* bind resource group via DCL */
-ALTER USER user_name RESOURCE GROUP resouce_group_name;
+ALTER USER user_name RESOURCE GROUP resource_group_name;
 CREATE USER user_name IDENTIFIED BY 'password' RESOURCE GROUP resource_group_name;
 
 /* bind resource group to the current session */
-SET RESOURCE GROUP resouce_group_name
+SET RESOURCE GROUP resource_group_name
 
 /* bind resource group to sql via optimizer hint */
-SELECT /*+ RESOURCE_GROUP(resouce_group_name) */ * from table_name;
+SELECT /*+ RESOURCE_GROUP(resource_group_name) */ * from table_name;
 ```
 
 ### Global Quota Control(- Global admission control)

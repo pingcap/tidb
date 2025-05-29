@@ -91,9 +91,9 @@ func (b *Binding) size() float64 {
 }
 
 var (
-	// GetGlobalBindingHandle is a function to get the global binding handle.
+	// GetBindingHandle is a function to get the global binding handle.
 	// It is mainly used to resolve cycle import issue.
-	GetGlobalBindingHandle func(sctx sessionctx.Context) GlobalBindingHandle
+	GetBindingHandle func(sctx sessionctx.Context) BindingHandle
 )
 
 // BindingMatchInfo records necessary information for cross-db binding matching.
@@ -147,11 +147,11 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	if binding, matched := sessionHandle.MatchSessionBinding(sctx, noDBDigest, tableNames); matched {
 		return binding, matched, metrics.ScopeSession
 	}
-	globalHandle := GetGlobalBindingHandle(sctx)
+	globalHandle := GetBindingHandle(sctx)
 	if globalHandle == nil {
 		return
 	}
-	binding, matched = globalHandle.MatchGlobalBinding(sctx, noDBDigest, tableNames)
+	binding, matched = globalHandle.MatchingBinding(sctx, noDBDigest, tableNames)
 	if matched {
 		return binding, matched, metrics.ScopeGlobal
 	}

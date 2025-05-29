@@ -114,6 +114,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	parserutil "github.com/pingcap/tidb/pkg/util/parser"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
@@ -127,6 +128,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -231,8 +233,6 @@ type session struct {
 	// Used to wait for all async commit background jobs to finish.
 	commitWaitGroup sync.WaitGroup
 }
-
-var parserPool = &sync.Pool{New: func() any { return parser.New() }}
 
 // AddTableLock adds table lock to the session lock map.
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
@@ -590,7 +590,7 @@ func (c *cachedTableRenewLease) stop(_ context.Context) {
 }
 
 func (c *cachedTableRenewLease) commitTSCheck(commitTS uint64) bool {
-	for i := 0; i < len(c.lease); i++ {
+	for i := range c.lease {
 		lease := atomic.LoadUint64(&c.lease[i])
 		if commitTS >= lease {
 			// Txn fails to commit because the write lease is expired.
@@ -920,6 +920,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	r, ctx := tracing.StartRegionEx(ctx, "session.CommitTxn")
 	defer r.End()
 
+	s.setLastTxnInfoBeforeTxnEnd()
 	var commitDetail *tikvutil.CommitDetails
 	ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
 	err := s.doCommitWithRetry(ctx)
@@ -958,6 +959,7 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	r, ctx := tracing.StartRegionEx(ctx, "session.RollbackTxn")
 	defer r.End()
 
+	s.setLastTxnInfoBeforeTxnEnd()
 	if s.txn.Valid() {
 		terror.Log(s.txn.Rollback())
 	}
@@ -969,6 +971,26 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	s.sessionVars.CleanupTxnReadTSIfUsed()
 	s.sessionVars.SetInTxn(false)
 	sessiontxn.GetTxnManager(s).OnTxnEnd()
+}
+
+// setLastTxnInfoBeforeTxnEnd sets the @@last_txn_info variable before commit/rollback the transaction.
+// The `LastTxnInfo` updated with a JSON string that contains start_ts, for_update_ts, etc.
+// The `LastTxnInfo` is updated without the `commit_ts` fields because it is unknown
+// until the commit is done (or do not need to commit for readonly or a rollback transaction).
+// The non-readonly transaction will overwrite the `LastTxnInfo` again after commit to update the `commit_ts` field.
+func (s *session) setLastTxnInfoBeforeTxnEnd() {
+	txnCtx := s.GetSessionVars().TxnCtx
+	if txnCtx.StartTS == 0 {
+		// If the txn is not active, for example, executing "SELECT 1", skip setting the last txn info.
+		return
+	}
+
+	lastTxnInfo, err := json.Marshal(transaction.TxnInfo{
+		TxnScope: txnCtx.TxnScope,
+		StartTS:  txnCtx.StartTS,
+	})
+	terror.Log(err)
+	s.GetSessionVars().LastTxnInfo = string(lastTxnInfo)
 }
 
 func (s *session) GetClient() kv.Client {
@@ -1390,9 +1412,10 @@ var _ sqlexec.SQLParser = &session{}
 
 func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
 	defer tracing.StartRegion(ctx, "ParseSQL").End()
-
-	p := parserPool.Get().(*parser.Parser)
-	defer parserPool.Put(p)
+	p := parserutil.GetParser()
+	defer func() {
+		parserutil.DestroyParser(p)
+	}()
 
 	sqlMode := s.sessionVars.SQLMode
 	if s.isInternal() {
@@ -1419,6 +1442,11 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if command != mysql.ComSleep || s.GetSessionVars().InTxn() {
 		curTxnStartTS = s.sessionVars.TxnCtx.StartTS
 		curTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
+
+		// For stale read and autocommit path, the `TxnCtx.StartTS` is 0.
+		if curTxnStartTS == 0 {
+			curTxnStartTS = s.sessionVars.TxnCtx.StaleReadTs
+		}
 	}
 	// Set curTxnStartTS to SnapshotTS directly when the session is trying to historic read.
 	// It will avoid the session meet GC lifetime too short error.
@@ -1507,6 +1535,10 @@ func (s *session) UpdateProcessInfo() {
 	shallowCP := pi.Clone()
 	// Update the current transaction start timestamp.
 	shallowCP.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
+	if shallowCP.CurTxnStartTS == 0 {
+		// For stale read and autocommit path, the `TxnCtx.StartTS` is 0.
+		shallowCP.CurTxnStartTS = s.sessionVars.TxnCtx.StaleReadTs
+	}
 	shallowCP.CurTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
 	s.processInfo.Store(shallowCP)
 }
@@ -2162,6 +2194,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	var recordSet sqlexec.RecordSet
 	if stmt.PsStmt != nil { // point plan short path
 		recordSet, err = stmt.PointGet(ctx)
+		s.setLastTxnInfoBeforeTxnEnd()
 		s.txn.changeToInvalid()
 	} else {
 		recordSet, err = runStmt(ctx, s, stmt)
@@ -2641,6 +2674,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			TiFlashMaxBytesBeforeExternalSort:    vars.TiFlashMaxBytesBeforeExternalSort,
 			TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
 			TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
+			TiFlashHashJoinVersion:               vars.TiFlashHashJoinVersion,
 
 			DistSQLConcurrency:            vars.DistSQLScanConcurrency(),
 			ReplicaReadType:               vars.GetReplicaRead(),
@@ -3589,7 +3623,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	for i := 0; i < int(planReplayerWorkerCnt); i++ {
+	for i := range int(planReplayerWorkerCnt) {
 		planReplayerWorkersSctx[i] = pworkerSes[i]
 	}
 	// setup plan replayer handle
@@ -3611,16 +3645,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			failToLoadOrParseSQLFile = true
 		}
 	}
-	// A sub context for update table stats, and other contexts for concurrent stats loading.
-	cnt := 1 + concurrency
-	syncStatsCtxs, err := createSessions(store, cnt)
-	if err != nil {
-		return nil, err
-	}
-	subCtxs := make([]sessionctx.Context, cnt)
-	for i := 0; i < cnt; i++ {
-		subCtxs[i] = sessionctx.Context(syncStatsCtxs[i])
-	}
 
 	// setup extract Handle
 	extractWorkers := 1
@@ -3639,7 +3663,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	if err = dom.LoadAndUpdateStatsLoop(subCtxs, initStatsCtx); err != nil {
+	if err = dom.LoadAndUpdateStatsLoop(concurrency, initStatsCtx); err != nil {
 		return nil, err
 	}
 
@@ -3776,7 +3800,7 @@ func createSessions4DistExecution(store kv.Storage, cnt int) ([]*session, error)
 func createSessionsImpl(store kv.Storage, cnt int, createSessionImpl func(kv.Storage) (*session, error)) ([]*session, error) {
 	// Then we can create new dom
 	ses := make([]*session, cnt)
-	for i := 0; i < cnt; i++ {
+	for i := range cnt {
 		se, err := createSessionImpl(store)
 		if err != nil {
 			return nil, err
@@ -4030,10 +4054,13 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	})
 
 	s.txn.changeToPending(&txnFuture{
-		future:    future,
-		store:     s.store,
-		txnScope:  scope,
-		pipelined: s.usePipelinedDmlOrWarn(ctx),
+		future:                          future,
+		store:                           s.store,
+		txnScope:                        scope,
+		pipelined:                       s.usePipelinedDmlOrWarn(ctx),
+		pipelinedFlushConcurrency:       s.GetSessionVars().PipelinedFlushConcurrency,
+		pipelinedResolveLockConcurrency: s.GetSessionVars().PipelinedResolveLockConcurrency,
+		pipelinedWriteThrottleRatio:     s.GetSessionVars().PipelinedWriteThrottleRatio,
 	})
 	return nil
 }

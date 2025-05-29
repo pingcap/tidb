@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -446,6 +447,14 @@ OUTER:
 		totalExpr := expression.ComposeCNFCondition(ctx.GetExprCtx(), remainedExprs...)
 		ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.RealtimeCount))
 	}
+	if !fixcontrol.GetBoolWithDefault(
+		ctx.GetSessionVars().GetOptimizerFixControlMap(),
+		fixcontrol.Fix47400,
+		false,
+	) {
+		// Don't allow the result to be less than 1 row
+		ret = max(ret, 1.0/float64(coll.RealtimeCount))
+	}
 	return ret, nodes, nil
 }
 
@@ -852,10 +861,8 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	//   (1) are safe to be evaluated here,
 	//   (2) involve only one column,
 	//   (3) and this column is not a "new collation" string column so that we're able to restore values from the stats.
-	for _, filter := range filters {
-		if expression.IsMutableEffectsExpr(filter) {
-			return false, 0, nil
-		}
+	if slices.ContainsFunc(filters, expression.IsMutableEffectsExpr) {
+		return false, 0, nil
 	}
 	if expression.ContainCorrelatedColumn(filters) {
 		return false, 0, nil

@@ -16,6 +16,7 @@ package scalarsubquery
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -52,7 +53,7 @@ func TestExplainNonEvaledSubquery(t *testing.T) {
 		// We need to cut the unstable output of execution info, memory and disk.
 		for i := range rows {
 			rows[i] = rows[i][:6] // cut the final memory and disk.
-			rows[i] = append(rows[i][:5], rows[i][6:]...)
+			rows[i] = slices.Delete(rows[i], 5, 6)
 		}
 		return rows
 	}

@@ -378,13 +378,17 @@ func (sch *importScheduler) OnDone(ctx context.Context, handle storage.TaskHandl
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if task.Error == nil {
-		return sch.finishJob(ctx, logger, handle, task, taskMeta)
+	if task.State == proto.TaskStateReverting {
+		errMsg := ""
+		if task.Error != nil {
+			if scheduler.IsCancelledErr(task.Error) {
+				return sch.cancelJob(ctx, handle, task, taskMeta, logger)
+			}
+			errMsg = task.Error.Error()
+		}
+		return sch.failJob(ctx, handle, task, taskMeta, logger, errMsg)
 	}
-	if scheduler.IsCancelledErr(task.Error) {
-		return sch.cancelJob(ctx, handle, task, taskMeta, logger)
-	}
-	return sch.failJob(ctx, handle, task, taskMeta, logger, task.Error.Error())
+	return sch.finishJob(ctx, logger, handle, task, taskMeta)
 }
 
 // GetEligibleInstances implements scheduler.Extension interface.
@@ -402,9 +406,8 @@ func (*importScheduler) GetEligibleInstances(_ context.Context, task *proto.Task
 }
 
 // IsRetryableErr implements scheduler.Extension interface.
-func (*importScheduler) IsRetryableErr(error) bool {
-	// TODO: check whether the error is retryable.
-	return false
+func (*importScheduler) IsRetryableErr(err error) bool {
+	return common.IsRetryableError(err)
 }
 
 // GetNextStep implements scheduler.Extension interface.

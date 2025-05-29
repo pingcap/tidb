@@ -110,8 +110,9 @@ func TestLoadBackupMeta(t *testing.T) {
 	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
 	require.NoError(t, err)
-	require.Len(t, tbl.Files, 1)
-	require.Equal(t, "1.sst", tbl.Files[0].Name)
+	require.Len(t, tbl.FilesOfPhysicals, 1)
+	require.Len(t, tbl.FilesOfPhysicals[tblID], 1)
+	require.Equal(t, "1.sst", tbl.FilesOfPhysicals[tblID][0].Name)
 }
 
 func TestLoadBackupMetaPartionTable(t *testing.T) {
@@ -207,11 +208,18 @@ func TestLoadBackupMetaPartionTable(t *testing.T) {
 	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
 	require.NoError(t, err)
-	require.Len(t, tbl.Files, 3)
+	require.Len(t, tbl.FilesOfPhysicals, 2)
+	count := 0
+	for _, files := range tbl.FilesOfPhysicals {
+		count += len(files)
+	}
+	require.Equal(t, 3, count)
 	contains := func(name string) bool {
-		for i := range tbl.Files {
-			if tbl.Files[i].Name == name {
-				return true
+		for i := range tbl.FilesOfPhysicals {
+			for _, file := range tbl.FilesOfPhysicals[i] {
+				if file.Name == name {
+					return true
+				}
 			}
 		}
 		return false
@@ -230,11 +238,11 @@ func buildTableAndFiles(name string, tableID, fileCount int) (*model.TableInfo, 
 	}
 
 	mockFiles := make([]*backuppb.File, 0, fileCount)
-	for i := 0; i < fileCount; i++ {
+	for i := range fileCount {
 		mockFiles = append(mockFiles, &backuppb.File{
 			Name:     fmt.Sprintf("%d-%d.sst", tableID, i),
-			StartKey: tablecodec.EncodeRowKey(tblID, []byte(fmt.Sprintf("%09d", i))),
-			EndKey:   tablecodec.EncodeRowKey(tblID, []byte(fmt.Sprintf("%09d", i+1))),
+			StartKey: tablecodec.EncodeRowKey(tblID, fmt.Appendf(nil, "%09d", i)),
+			EndKey:   tablecodec.EncodeRowKey(tblID, fmt.Appendf(nil, "%09d", i+1)),
 		})
 	}
 	return mockTbl, mockFiles

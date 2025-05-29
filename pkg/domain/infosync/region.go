@@ -17,6 +17,7 @@ package infosync
 import (
 	"context"
 
+	"github.com/tikv/pd/client/errs"
 	pd "github.com/tikv/pd/client/http"
 )
 
@@ -68,4 +69,52 @@ func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (P
 		st = PlacementScheduleStatePending
 	}
 	return st, nil
+}
+
+// GetRegionDistributionByKeyRange is used to get the region distributions by given key range from PD.
+func GetRegionDistributionByKeyRange(ctx context.Context, startKey []byte, endKey []byte, engine string) (*pd.RegionDistributions, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	if is.pdHTTPCli == nil {
+		return nil, errs.ErrClientGetLeader.FastGenByArgs("pd http cli is nil")
+	}
+	return is.pdHTTPCli.GetRegionDistributionByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), engine)
+}
+
+// GetSchedulerConfig is used to get the configuration of the specified scheduler from PD.
+func GetSchedulerConfig(ctx context.Context, schedulerName string) (any, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	if is.pdHTTPCli == nil {
+		return nil, errs.ErrClientGetLeader.FastGenByArgs("pd http cli is nil")
+	}
+	return is.pdHTTPCli.GetSchedulerConfig(ctx, schedulerName)
+}
+
+// CreateSchedulerConfigWithInput is used to create a scheduler with the specified input.
+func CreateSchedulerConfigWithInput(ctx context.Context, schedulerName string, input map[string]any) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	if is.pdHTTPCli == nil {
+		return errs.ErrClientGetLeader.FastGenByArgs(schedulerName)
+	}
+	return is.pdHTTPCli.CreateSchedulerWithInput(ctx, schedulerName, input)
+}
+
+// CancelSchedulerJob is used to cancel a given scheduler job.
+func CancelSchedulerJob(ctx context.Context, schedulerName string, jobID uint64) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	if is.pdHTTPCli == nil {
+		return errs.ErrClientGetLeader.FastGenByArgs(schedulerName)
+	}
+	return is.pdHTTPCli.CancelSchedulerJob(ctx, schedulerName, jobID)
 }

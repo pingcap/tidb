@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -462,7 +463,6 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	defer subtaskCancel()
 	failpoint.InjectCall("afterRunSubtask", e, &subtaskErr, subtaskCtx)
 	logTask.End2(zap.InfoLevel, subtaskErr)
-
 	failpoint.InjectCall("mockTiDBShutdown", e, e.execID, e.GetTaskBase())
 
 	if subtaskErr != nil {
@@ -632,6 +632,9 @@ func (e *BaseTaskExecutor) cancelRunStepWith(cause error) {
 }
 
 func (e *BaseTaskExecutor) updateSubtaskStateAndErrorImpl(ctx context.Context, execID string, subtaskID int64, state proto.SubtaskState, subTaskErr error) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	start := time.Now()
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)

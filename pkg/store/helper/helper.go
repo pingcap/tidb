@@ -684,7 +684,7 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *pdhttp.RegionsInfo, is infosch
 	tables := h.GetTablesInfoWithKeyRange(is, filter)
 
 	regions := make([]*pdhttp.RegionInfo, 0, len(regionsInfo.Regions))
-	for i := 0; i < len(regionsInfo.Regions); i++ {
+	for i := range regionsInfo.Regions {
 		regions = append(regions, &regionsInfo.Regions[i])
 	}
 

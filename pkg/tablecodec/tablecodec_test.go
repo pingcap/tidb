@@ -363,7 +363,7 @@ func TestCutKeyNew(t *testing.T) {
 	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
 	valuesBytes, handleBytes, err := CutIndexKeyNew(indexKey, 3)
 	require.NoError(t, err)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		valueBytes := valuesBytes[i]
 		var val types.Datum
 		_, val, _ = codec.DecodeOne(valueBytes)
@@ -711,7 +711,7 @@ func TestTempIndexValueCodec(t *testing.T) {
 	result, err = DecodeTempIndexValue(val)
 	require.NoError(t, err)
 	require.Equal(t, 3, len(result))
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if result[i].Handle == nil {
 			uv := binary.BigEndian.Uint64(result[i].Value)
 			result[i].Handle = kv.IntHandle(int64(uv))

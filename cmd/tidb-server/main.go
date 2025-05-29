@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -66,14 +67,15 @@ import (
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/metricsutil"
+	"github.com/pingcap/tidb/pkg/util/naming"
 	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
-	"github.com/pingcap/tidb/pkg/util/servicescope"
 	"github.com/pingcap/tidb/pkg/util/signal"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/sys/linux"
@@ -276,6 +278,12 @@ func main() {
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
+	// we cannot add this check inside config.Valid(), as previous '-V' also relies
+	// on initialized global config.
+	if kerneltype.IsNextGen() && len(config.GetGlobalConfig().KeyspaceName) == 0 {
+		fmt.Fprintln(os.Stderr, "invalid config: keyspace name is required for nextgen TiDB")
+		os.Exit(0)
+	}
 	registerStores()
 	err := metricsutil.RegisterMetrics()
 	terror.MustNil(err)
@@ -310,6 +318,9 @@ func main() {
 		logutil.BgLogger().Warn(warnMsg)
 		tikv.EnableFailpoints()
 	}
+	if intest.EnableInternalCheck {
+		logutil.BgLogger().Warn("internal check is enabled, this should NOT happen in the production environment")
+	}
 	setGlobalVars()
 	setCPUAffinity()
 	cgmon.StartCgroupMonitor()
@@ -333,7 +344,7 @@ func main() {
 		executor.Stop()
 		close(exited)
 	})
-	topsql.SetupTopSQL(svr)
+	topsql.SetupTopSQL(keyspace.GetKeyspaceIDBySettings(), svr)
 	terror.MustNil(svr.Run(dom))
 	<-exited
 	syncLog()
@@ -638,7 +649,7 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	}
 
 	if actualFlags[nmTiDBServiceScope] {
-		err = servicescope.CheckServiceScope(*serviceScope)
+		err = naming.Check(*serviceScope)
 		terror.MustNil(err)
 		cfg.Instance.TiDBServiceScope = *serviceScope
 	}
