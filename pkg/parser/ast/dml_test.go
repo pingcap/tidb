@@ -650,3 +650,37 @@ func TestImportIntoFromSelectInvalidStmt(t *testing.T) {
 	_, err = p.ParseOneStmt("IMPORT INTO t1(a) set a=1 FROM select a from t2;", "", "")
 	require.ErrorContains(t, err, "Cannot use SET clause in IMPORT INTO FROM SELECT statement.")
 }
+
+func TestAlterUserCreateUserSecureText(t *testing.T) {
+	testCases := []struct {
+		input   string
+		secured string
+	}{
+		{
+			input:   "alter user test failed_login_attempts 10",
+			secured: "ALTER USER `test`@`%` FAILED_LOGIN_ATTEMPTS 10",
+		},
+		{
+			input:   "alter user test IDENTIFIED BY 'auth_string', test1 identified by '1234' failed_login_attempts 10",
+			secured: "ALTER USER `test`@`%` IDENTIFIED BY 'xxxxxx', `test1`@`%` IDENTIFIED BY 'xxxxxx' FAILED_LOGIN_ATTEMPTS 10",
+		},
+		{
+			input:   "create user test IDENTIFIED BY 'auth_string'",
+			secured: "CREATE USER `test`@`%` IDENTIFIED BY 'xxxxxx'",
+		},
+		{
+			input:   "GRANT ALL PRIVILEGES ON *.* TO 'user'@'%' IDENTIFIED BY PASSWORD '123'",
+			secured: "GRANT ALL ON *.* TO `user`@`%` IDENTIFIED WITH 'mysql_native_password' AS 'xxxxxx",
+		},
+	}
+
+	p := parser.New()
+	for _, tc := range testCases {
+		comment := fmt.Sprintf("input = %s", tc.input)
+		node, err := p.ParseOneStmt(tc.input, "", "")
+		require.NoError(t, err, comment)
+		n, ok := node.(SensitiveStmtNode)
+		require.True(t, ok, comment)
+		require.Regexp(t, tc.secured, n.SecureText(), comment)
+	}
+}

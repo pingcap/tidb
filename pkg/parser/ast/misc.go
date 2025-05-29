@@ -14,7 +14,6 @@
 package ast
 
 import (
-	"bytes"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -112,10 +111,18 @@ func (n *AuthOption) Restore(ctx *format.RestoreCtx) error {
 	}
 	if n.ByAuthString {
 		ctx.WriteKeyWord(" BY ")
-		ctx.WriteString(n.AuthString)
+		if ctx.Flags.HasRestorePasswordSecureText() {
+			ctx.WriteString("xxxxxx")
+		} else {
+			ctx.WriteString(n.AuthString)
+		}
 	} else if n.ByHashString {
 		ctx.WriteKeyWord(" AS ")
-		ctx.WriteString(n.HashString)
+		if ctx.Flags.HasRestorePasswordSecureText() {
+			ctx.WriteString("xxxxxx")
+		} else {
+			ctx.WriteString(n.HashString)
+		}
 	}
 	return nil
 }
@@ -1850,13 +1857,9 @@ func (n *CreateUserStmt) Accept(v Visitor) (Node, bool) {
 
 // SecureText implements SensitiveStatement interface.
 func (n *CreateUserStmt) SecureText() string {
-	var buf bytes.Buffer
-	buf.WriteString("create user")
-	for _, user := range n.Specs {
-		buf.WriteString(" ")
-		buf.WriteString(user.SecurityString())
-	}
-	return buf.String()
+	var sb strings.Builder
+	n.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestorePasswordSecureText, &sb))
+	return sb.String()
 }
 
 // AlterUserStmt modifies user account.
@@ -1944,13 +1947,9 @@ func (n *AlterUserStmt) Restore(ctx *format.RestoreCtx) error {
 
 // SecureText implements SensitiveStatement interface.
 func (n *AlterUserStmt) SecureText() string {
-	var buf bytes.Buffer
-	buf.WriteString("alter user")
-	for _, user := range n.Specs {
-		buf.WriteString(" ")
-		buf.WriteString(user.SecurityString())
-	}
-	return buf.String()
+	var sb strings.Builder
+	n.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestorePasswordSecureText, &sb))
+	return sb.String()
 }
 
 // Accept implements Node Accept interface.
@@ -3224,13 +3223,9 @@ func (n *GrantStmt) Restore(ctx *format.RestoreCtx) error {
 
 // SecureText implements SensitiveStatement interface.
 func (n *GrantStmt) SecureText() string {
-	text := n.text
-	// Filter "identified by xxx" because it would expose password information.
-	idx := strings.Index(strings.ToLower(text), "identified")
-	if idx > 0 {
-		text = text[:idx]
-	}
-	return text
+	var sb strings.Builder
+	n.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestorePasswordSecureText, &sb))
+	return sb.String()
 }
 
 // Accept implements Node Accept interface.
@@ -3335,13 +3330,9 @@ func (n *GrantRoleStmt) Restore(ctx *format.RestoreCtx) error {
 
 // SecureText implements SensitiveStatement interface.
 func (n *GrantRoleStmt) SecureText() string {
-	text := n.text
-	// Filter "identified by xxx" because it would expose password information.
-	idx := strings.Index(strings.ToLower(text), "identified")
-	if idx > 0 {
-		text = text[:idx]
-	}
-	return text
+	var sb strings.Builder
+	n.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestorePasswordSecureText, &sb))
+	return sb.String()
 }
 
 // ShutdownStmt is a statement to stop the TiDB server.

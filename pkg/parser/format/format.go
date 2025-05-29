@@ -242,6 +242,8 @@ const (
 	RestoreForNonPrepPlanCache
 
 	RestoreBracketAroundBetweenExpr
+
+	RestorePasswordSecureText
 )
 
 const (
@@ -356,6 +358,12 @@ func (rf RestoreFlags) HasRestoreWithTTLEnableOff() bool {
 // HasRestoreForNonPrepPlanCache returns a boolean indicating whether `rf` has `RestoreForNonPrepPlanCache` flag.
 func (rf RestoreFlags) HasRestoreForNonPrepPlanCache() bool {
 	return rf.has(RestoreForNonPrepPlanCache)
+}
+
+// RestorePasswordSecureText returns a boolean indicating
+// whether `rf` has `RestorePasswordSecureText` flag.
+func (rf RestoreFlags) HasRestorePasswordSecureText() bool {
+	return rf.has(RestorePasswordSecureText)
 }
 
 // RestoreWriter is the interface for `Restore` to write.
