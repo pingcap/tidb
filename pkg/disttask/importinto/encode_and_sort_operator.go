@@ -249,25 +249,30 @@ func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan)
 }
 
 func getNumOfIndexGenKV(tblInfo *model.TableInfo) int {
-	var count int
-	var nonClusteredPK bool
+	return len(getIndicesGenKV(tblInfo))
+}
+
+type genKVIndex struct {
+	name   string
+	unique bool
+}
+
+func getIndicesGenKV(tblInfo *model.TableInfo) map[int64]genKVIndex {
+	res := make(map[int64]genKVIndex, len(tblInfo.Indices))
 	for _, idxInfo := range tblInfo.Indices {
 		// all public non-primary index generates index KVs
 		if idxInfo.State != model.StatePublic {
 			continue
 		}
-		if idxInfo.Primary {
-			if !tblInfo.HasClusteredIndex() {
-				nonClusteredPK = true
-			}
+		if idxInfo.Primary && tblInfo.HasClusteredIndex() {
 			continue
 		}
-		count++
+		res[idxInfo.ID] = genKVIndex{
+			name:   idxInfo.Name.L,
+			unique: idxInfo.Unique,
+		}
 	}
-	if nonClusteredPK {
-		count++
-	}
-	return count
+	return res
 }
 
 func getKVGroupBlockSize(group string) int {
