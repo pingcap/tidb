@@ -858,6 +858,16 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	allIndexPublic := true
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			allIndexPublic = false
+			break
+		}
+	}
+	if allIndexPublic {
+		// metrics.DDLResetTotalIngestIncrementalOpCount(tblInfo.ID)
+	}
 
 	b.is.addReferredForeignKeys(dbInfo.Name, tblInfo)
 

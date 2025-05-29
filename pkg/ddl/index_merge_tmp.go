@@ -186,14 +186,28 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 					return errors.Trace(err)
 				}
 
+				originIdxKey := w.originIdxKeys[i]
+				tempIdxKey := originIdxKey.Clone()
+				tablecodec.IndexKey2TempIndexKey(tempIdxKey)
 				if idxRecord.delete {
 					if idxRecord.unique {
-						err = txn.GetMemBuffer().DeleteWithFlags(w.originIdxKeys[i], kv.SetNeedLocked)
+						err = txn.GetMemBuffer().DeleteWithFlags(originIdxKey, kv.SetNeedLocked)
+						if err != nil {
+							return err
+						}
 					} else {
-						err = txn.GetMemBuffer().Delete(w.originIdxKeys[i])
+						err = txn.GetMemBuffer().Delete(originIdxKey)
+						if err != nil {
+							return err
+						}
 					}
+					err = txn.GetMemBuffer().Delete(tempIdxKey)
 				} else {
-					err = txn.GetMemBuffer().Set(w.originIdxKeys[i], idxRecord.vals)
+					err = txn.GetMemBuffer().Set(originIdxKey, idxRecord.vals)
+					if err != nil {
+						return err
+					}
+					err = txn.GetMemBuffer().Delete(tempIdxKey)
 				}
 				if err != nil {
 					return err
