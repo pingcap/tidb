@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -240,6 +241,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			if keyIsTempIdxKey {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
 				val = tempVal.Encode(nil)
+				metrics.DDLRecordIngestIncrementalOpCount(sctx.GetSessionVars().ConnectionID, c.tblInfo.ID, 1)
 			}
 			err = txn.GetMemBuffer().Set(key, val)
 			if err != nil {
@@ -252,6 +254,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 				if err != nil {
 					return nil, err
 				}
+				metrics.DDLRecordIngestIncrementalOpCount(sctx.GetSessionVars().ConnectionID, c.tblInfo.ID, 1)
 			}
 			if !opt.IgnoreAssertion && (!opt.Untouched) {
 				if sctx.GetSessionVars().LazyCheckKeyNotExists() && !txn.IsPessimistic() {
@@ -310,6 +313,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 					flags = append(flags, kv.SetNeedConstraintCheckInPrewrite)
 				}
 				err = txn.GetMemBuffer().SetWithFlags(key, val, flags...)
+				if keyIsTempIdxKey || len(tempKey) > 0 {
+					metrics.DDLRecordIngestIncrementalOpCount(sctx.GetSessionVars().ConnectionID, c.tblInfo.ID, 1)
+				}
 			} else {
 				err = txn.GetMemBuffer().Set(key, val)
 			}
@@ -392,6 +398,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 		}
 
 		key, tempKey, tempKeyVer := GenTempIdxKeyByState(c.idxInfo, key)
+		// hasTempKey := tempKeyVer != tablecodec.TempIndexKeyTypeNone
 		var originTempVal []byte
 		if len(tempKey) > 0 && c.idxInfo.Unique {
 			// Get the origin value of the unique temporary index key.
@@ -445,6 +452,9 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 						return err
 					}
 				}
+				// if hasTempKey {
+				// 	metrics.DDLRecordIngestIncrementalOpCount(sc.GetSessionVars().ConnectionID, c.tblInfo.ID, 1)
+				// }
 			}
 			if len(tempKey) > 0 {
 				// Append to the end of the origin value for distinct value.
@@ -453,6 +463,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 				if err != nil {
 					return err
 				}
+				// metrics.DDLRecordIngestIncrementalOpCount(sctx.GetSessionVars().ConnectionID, c.tblInfo.ID, 1)
 			}
 		} else {
 			if len(key) > 0 {
@@ -460,6 +471,9 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 				if err != nil {
 					return err
 				}
+				// if hasTempKey {
+				// 	metrics.DDLRecordIngestIncrementalOpCount(ctx.ConnectionID(), c.tblInfo.ID, 1)
+				// }
 			}
 			if len(tempKey) > 0 {
 				tempVal := tempValElem.Encode(nil)
@@ -467,6 +481,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 				if err != nil {
 					return err
 				}
+				// metrics.DDLRecordIngestIncrementalOpCount(ctx.ConnectionID(), c.tblInfo.ID, 1)
 			}
 		}
 		if c.idxInfo.State == model.StatePublic {

@@ -176,6 +176,14 @@ func InitDDLMetrics() {
 	}, []string{LblType})
 }
 
+// DDLCommitIngestIncrementalOpCount is used to record the number of incremental operations during ingest.
+var (
+	DDLRecordIngestIncrementalOpCount     = func(connID uint64, tableID int64, opCount uint64) {}
+	DDLCommitIngestIncrementalOpCount     = func(connID uint64) {}
+	DDLRollbackIngestIncrementalOpCount   = func(connID uint64) {}
+	DDLResetTotalIngestIncrementalOpCount = func(tblID int64) {}
+)
+
 // Label constants.
 const (
 	LblAction = "action"
