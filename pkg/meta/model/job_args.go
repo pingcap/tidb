@@ -1480,8 +1480,6 @@ func (a *ModifyIndexArgs) decodeV1(job *Job) error {
 		err = a.decodeAddColumnarIndexV1(job)
 	case ActionAddPrimaryKey:
 		err = a.decodeAddPrimaryKeyV1(job)
-	case ActionAddFullTextIndex:
-		err = a.decodeAddFullTextIndexV1(job)
 	default:
 		err = errors.Errorf("Invalid job type for decoding %d", job.Type)
 	}
@@ -1584,16 +1582,6 @@ func (a *ModifyIndexArgs) decodeAddColumnarIndexV1(job *Job) error {
 		IsColumnar:              true,
 		ColumnarIndexType:       columnarIndexType,
 	}}
-	return nil
-}
-
-func (a *ModifyIndexArgs) decodeAddFullTextIndexV1(job *Job) error {
-	a.IndexArgs = []*IndexArg{{}}
-	if err := job.decodeArgs(
-		&a.IndexArgs[0].IndexName, &a.IndexArgs[0].IndexPartSpecifications,
-		&a.IndexArgs[0].IndexOption); err != nil {
-		return errors.Trace(err)
-	}
 	return nil
 }
 
