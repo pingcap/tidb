@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
@@ -880,7 +881,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		}
 	}
 	if allIndexPublic {
-		// metrics.DDLResetTotalIngestIncrementalOpCount(tblInfo.ID)
+		metrics.DDLResetTotalIngestIncrementalOpCount(tblInfo.ID)
 	}
 
 	b.is.addReferredForeignKeys(dbInfo.Name, tblInfo)
