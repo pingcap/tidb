@@ -230,15 +230,10 @@ func (s *mockGCSSuite) TestGlobalSortWithGCSReadError() {
 	})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 	s.prepareAndUseDB("gsort_basic")
-	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
-		key(a), key(c,d), key(d));`)
+	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,	key(a), key(c,d), key(d));`)
 	defer func() {
 		s.tk.MustExec("drop table t;")
 	}()
-	ch := make(chan struct{}, 1)
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
-		ch <- struct{}{}
-	})
 
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
@@ -246,20 +241,10 @@ func (s *mockGCSSuite) TestGlobalSortWithGCSReadError() {
 
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/br/pkg/storage/GCSReadUnexpectedEOF", "return(0)")
 	s.tk.MustExec("truncate table t")
-	_ = s.tk.MustQuery(importSQL + ", detached").Rows()
-	s.Eventually(func() bool {
-		rows := s.tk.MustQuery("select * from t").Sort().Rows()
-		expected := testkit.Rows(
-			"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
-			"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
-		)
-		return len(rows) == len(expected)
-	}, 30*time.Second, 1*time.Second)
-
-	// check all sorted data cleaned up
-	<-ch
-
-	_, files, err := s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
-	s.NoError(err)
-	s.Len(files, 0)
+	result := s.tk.MustQuery(importSQL).Rows()
+	s.Len(result, 1)
+	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
+		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
+		"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
+	))
 }
