@@ -423,7 +423,7 @@ func BuildHistAndTopN(
 	}
 
 	// Step2: exclude topn from samples
-	if len(topNList) > 0 {
+	if len(topn.TopN) > 0 {
 		for i := int64(0); i < int64(len(samples)); i++ {
 			sampleBytes, err := getComparedBytes(samples[i].Value)
 			if err != nil {
