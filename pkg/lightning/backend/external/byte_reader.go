@@ -23,6 +23,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/util"
+>>>>>>> 684010c999d (external: fix the dead loop in `readNBytes` (#61309))
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -298,27 +303,45 @@ func (r *byteReader) reload() error {
 		r.curBufOffset = 0
 		return nil
 	}
+
+	return util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, r.readFromStorageReader)
+}
+
+func (r *byteReader) readFromStorageReader() (retryable bool, err error) {
 	// when not using concurrentReader, len(curBuf) == 1
-	n, err := io.ReadFull(r.storageReader, r.curBuf[0][0:])
+	n, err := io.ReadFull(r.storageReader, r.curBuf[0])
 	if err != nil {
 		switch err {
 		case io.EOF:
 			// move curBufIdx so following read will also find EOF
 			r.curBufIdx = len(r.curBuf)
+<<<<<<< HEAD
 			return err
 		case io.ErrUnexpectedEOF:
 			// The last batch.
 			r.curBuf[0] = r.curBuf[0][:n]
 		case context.Canceled:
 			return err
+=======
+			return false, err
+		case goerrors.Is(err, io.ErrUnexpectedEOF):
+			if n == 0 {
+				r.logger.Warn("encounter (0, ErrUnexpectedEOF) during during read, retry it")
+				return true, err
+			}
+			// The last batch.
+			r.curBuf[0] = r.curBuf[0][:n]
+		case goerrors.Is(err, context.Canceled):
+			return false, err
+>>>>>>> 684010c999d (external: fix the dead loop in `readNBytes` (#61309))
 		default:
 			r.logger.Warn("other error during read", zap.Error(err))
-			return err
+			return false, err
 		}
 	}
 	r.curBufIdx = 0
 	r.curBufOffset = 0
-	return nil
+	return false, nil
 }
 
 func (r *byteReader) closeConcurrentReader() (reloadCnt, offsetInOldBuffer int) {
