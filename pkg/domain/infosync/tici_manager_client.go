@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -47,7 +48,6 @@ func NewTiCIManager(ticiHost string, ticiPort string) (*TiCIManagerCtx, error) {
 
 // CreateFulltextIndex creates fulltext index on TiCI.
 func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
-	pkName := tblInfo.GetPkName()
 	indexColumns := make([]*tici.ColumnInfo, 0)
 	for i := range indexInfo.Columns {
 		offset := indexInfo.Columns[i].Offset
@@ -58,7 +58,7 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 			ColumnLength: int32(tblInfo.Columns[offset].FieldType.StorageLength()),
 			Decimal:      int32(tblInfo.Columns[offset].GetDecimal()),
 			DefaultVal:   tblInfo.Columns[offset].DefaultValueBit,
-			IsPrimaryKey: pkName == tblInfo.Columns[offset].Name,
+			IsPrimaryKey: mysql.HasPriKeyFlag(tblInfo.Columns[offset].GetFlag()),
 			IsArray:      len(indexInfo.Columns) > 1,
 		})
 	}
@@ -71,7 +71,7 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 			ColumnLength: int32(tblInfo.Columns[i].FieldType.StorageLength()),
 			Decimal:      int32(tblInfo.Columns[i].GetDecimal()),
 			DefaultVal:   tblInfo.Columns[i].DefaultValueBit,
-			IsPrimaryKey: pkName == tblInfo.Columns[i].Name,
+			IsPrimaryKey: mysql.HasPriKeyFlag(tblInfo.Columns[i].GetFlag()),
 			IsArray:      len(tblInfo.Columns) > 1,
 		})
 	}
