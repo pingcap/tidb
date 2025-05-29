@@ -2124,7 +2124,7 @@ func TestAdminCheckGeneratedColumns(t *testing.T) {
 	tk.Session().GetSessionVars().MaxChunkSize = 3
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockMeetErrorInCheckTable", "return(true)")
-	tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = true"))
+	tk.MustExec("set tidb_enable_fast_table_check = true")
 	err = tk.ExecToErr("admin check table t")
 	require.ErrorContains(t, err, "no error detected during row comparison")
 

@@ -69,6 +69,15 @@ func IsTypeTime(tp byte) bool {
 	return tp == mysql.TypeDatetime || tp == mysql.TypeDate || tp == mysql.TypeTimestamp
 }
 
+// IsSupportedTypeForMVIndexCheck indicates whether the type is supported for fast MV index check.
+func IsSupportedTypeForMVIndexCheck(tp byte) bool {
+	switch tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString:
+		return true
+	}
+	return false
+}
+
 // IsTypeFloat indicates whether the type is TypeFloat
 func IsTypeFloat(tp byte) bool {
 	return tp == mysql.TypeFloat

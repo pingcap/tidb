@@ -252,7 +252,8 @@ func (b *builtinJSONSumCRC32Sig) evalInt(ctx EvalContext, row chunk.Row) (res in
 		return 0, false, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("calculating sum of %s", ft.String()))
 	}
 
-	var sum int64
+	// Because duplicated items only generate one index entry, we have to deduplicate the items.
+	s := make(map[int64]struct{}, val.GetElemCount())
 	for i := range val.GetElemCount() {
 		item, err := f(fakeSctx, val.ArrayGetElem(i), ft)
 		if err != nil {
@@ -261,9 +262,13 @@ func (b *builtinJSONSumCRC32Sig) evalInt(ctx EvalContext, row chunk.Row) (res in
 			}
 			return 0, false, err
 		}
-		sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))
+		s[int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))] = struct{}{}
 	}
 
+	var sum int64
+	for k := range s {
+		sum += k
+	}
 	return sum, false, err
 }
 

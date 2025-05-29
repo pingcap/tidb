@@ -395,6 +395,8 @@ func buildChecksumSQLForMVIndex(
 	checksumCols := handleCols
 	innerColsForTable := handleCols
 	innerColsForIndex := handleCols
+	tableFilterCol := ""
+
 	for _, col := range idxInfo.Columns {
 		tblCol := tblMeta.Columns[col.Offset]
 		generatedExpr := strings.ToLower(tblCol.GeneratedExprString)
@@ -410,6 +412,13 @@ func buildChecksumSQLForMVIndex(
 			innerColsForTable = append(innerColsForTable, fmt.Sprintf("(%s) as %s", generatedExpr, alias))
 			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("min(%s) as %s", generatedExpr, alias))
 		} else {
+			start := strings.Index(generatedExpr, "cast(")
+			end := strings.LastIndex(generatedExpr, "as")
+			rawExpr := generatedExpr[start+5 : end]
+
+			// JSON with zero length array will not create any index entry,
+			// but JSON with null will create a null index entry.
+			tableFilterCol = fmt.Sprintf("JSON_LENGTH(%s) > 0 or JSON_LENGTH(%s) is null", rawExpr, rawExpr)
 			innerColsForTable = append(innerColsForTable, fmt.Sprintf("%s as %s", strings.Replace(generatedExpr, "cast", "JSON_SUM_CRC32", 1), alias))
 			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("SUM(CRC32(%s)) as %s", colName, alias))
 		}
@@ -423,10 +432,10 @@ func buildChecksumSQLForMVIndex(
 	//     table side: select /*+ read_from_storage(tikv[t]) */ handle, JSON_SUM_CRC32(xxx as array)   from t use index()
 	//     index side: select /*+     force_index(`idx`)     */ handle, SUM(CRC32(CAST(xxx as array))) from t group by handle
 	tableChecksumSQL = fmt.Sprintf(
-		"select bit_xor(%s), %s, count(*) from (select /*+ read_from_storage(tikv[%s]) */ %s from %s use index()) tmp where %s = 0 group by %s",
+		"select bit_xor(%s), %s, count(*) from (select /*+ read_from_storage(tikv[%s]) */ %s from %s use index() where %s) tmp where %s = 0 group by %s",
 		md5HandleAndIndexCol, "%s",
 		tblName, strings.Join(innerColsForTable, ","), tblName,
-		"%s", "%s",
+		tableFilterCol, "%s", "%s",
 	)
 	indexChecksumSQL = fmt.Sprintf(
 		"select bit_xor(%s), %s, count(*) from (select /*+ force_index(%s, %s) */ %s from %s group by %s) tmp where %s = 0 group by %s",
@@ -447,6 +456,7 @@ func buildCheckRowSQLForMVIndex(
 	checksumCols := handleCols
 	innerColsForTable := handleCols
 	innerColsForIndex := handleCols
+	tableFilterCol := ""
 
 	for _, col := range idxInfo.Columns {
 		tblCol := tblMeta.Columns[col.Offset]
@@ -472,6 +482,10 @@ func buildCheckRowSQLForMVIndex(
 			start := strings.Index(generatedExpr, "cast(")
 			end := strings.LastIndex(generatedExpr, "as")
 			rawExpr := generatedExpr[start+5 : end]
+
+			// JSON with zero length array will not create any index entry,
+			// but JSON with null will create a null index entry.
+			tableFilterCol = fmt.Sprintf("JSON_LENGTH(%s) > 0 or JSON_LENGTH(%s) is null", rawExpr, rawExpr)
 			innerColsForTable = append(innerColsForTable, fmt.Sprintf("%s as %s", rawExpr, alias))
 			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("JSON_ARRAYAGG(%s) as %s", colName, alias))
 			selectCols = append(selectCols, alias)
@@ -484,10 +498,10 @@ func buildCheckRowSQLForMVIndex(
 	selectColsStr := strings.Join(selectCols, ", ")
 
 	tableCheckSQL = fmt.Sprintf(
-		"select %s, %s from (select /*+ read_from_storage(tikv[%s]) */ %s from %s use index()) tmp where %s = 0 order by %s",
+		"select %s, %s from (select /*+ read_from_storage(tikv[%s]) */ %s from %s use index() where %s) tmp where %s = 0 order by %s",
 		selectColsStr, md5HandleAndIndexCol,
 		tblName, strings.Join(innerColsForTable, ", "), tblName,
-		"%s", handleColsStr,
+		tableFilterCol, "%s", handleColsStr,
 	)
 	indexCheckSQL = fmt.Sprintf(
 		"select %s, %s from (select /*+ force_index(%s, %s) */ %s from %s group by %s) tmp where %s = 0 order by %s",
