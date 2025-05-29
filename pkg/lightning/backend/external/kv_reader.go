@@ -95,6 +95,7 @@ func noEOF(err error) error {
 	return err
 }
 
+// Close the reader.
 func (r *KVReader) Close() error {
 	if p := r.byteReader.concurrentReader.largeBufferPool; p != nil {
 		p.Destroy()
