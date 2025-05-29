@@ -360,7 +360,7 @@ func (rf RestoreFlags) HasRestoreForNonPrepPlanCache() bool {
 	return rf.has(RestoreForNonPrepPlanCache)
 }
 
-// RestorePasswordSecureText returns a boolean indicating
+// HasRestorePasswordSecureText returns a boolean indicating
 // whether `rf` has `RestorePasswordSecureText` flag.
 func (rf RestoreFlags) HasRestorePasswordSecureText() bool {
 	return rf.has(RestorePasswordSecureText)
