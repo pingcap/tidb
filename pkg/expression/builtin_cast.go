@@ -1777,7 +1777,9 @@ func (b *builtinCastStringAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (r
 	}
 	res, err = types.ParseTime(typeCtx(ctx), val, b.tp.GetType(), b.tp.GetDecimal())
 	if err != nil {
-		return types.ZeroTime, false, handleInvalidTimeError(ctx, err)
+		// TODO: If actual CAST it should return isNull = true,
+		// if only implicit cast in UPDATE, it should return isNull = false...
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
 	if res.IsZero() && sqlMode(ctx).HasNoZeroDateMode() {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, res.String()))
