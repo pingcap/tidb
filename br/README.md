@@ -75,7 +75,7 @@ mysql -uroot -htidb -P4000 -E -e "SELECT COUNT(*) FROM test.usertable"
 
 # Test S3 compatible storage (MinIO).
 # Create a bucket to save backup by mc (a MinIO Client).
-mc alias set minio $S3_ENDPOINT $MINIO_ACCESS_KEY $MINIO_SECRET_KEY && \
+mc config host add minio $S3_ENDPOINT $MINIO_ACCESS_KEY $MINIO_SECRET_KEY && \
 mc mb minio/mybucket
 
 # Backup to S3 compatible storage.

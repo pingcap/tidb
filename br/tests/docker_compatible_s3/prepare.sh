@@ -25,7 +25,7 @@ S3_ENDPOINT=minio:24927
 S3_KEY="&access-key=$MINIO_ACCESS_KEY&secret-access-key=$MINIO_SECRET_KEY"
 
 # create bucket
-/usr/bin/mc alias set minio http://$S3_ENDPOINT $MINIO_ACCESS_KEY $MINIO_SECRET_KEY
+/usr/bin/mc config host add minio http://$S3_ENDPOINT $MINIO_ACCESS_KEY $MINIO_SECRET_KEY
 /usr/bin/mc mb minio/test --ignore-existing
 
 # backup cluster data

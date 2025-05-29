@@ -57,7 +57,8 @@ wait_sig() {
 
 start_s3
 echo "started s3 with pid = $s3_pid"
-bin/mc alias set --config-dir "$TEST_DIR/$TEST_NAME" minio http://$S3_ENDPOINT $MINIO_ACCESS_KEY $MINIO_SECRET_KEY
+bin/mc config --config-dir "$TEST_DIR/$TEST_NAME" \
+    host add minio http://$S3_ENDPOINT $MINIO_ACCESS_KEY $MINIO_SECRET_KEY
 
 # Fill in the database
 for i in $(seq $DB_COUNT); do
