@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
@@ -69,13 +70,8 @@ type CheckTableExec struct {
 var _ exec.Executor = &CheckTableExec{}
 
 const (
-	// mvIndexCRC32Sum is the aggregated column from subquery for MVIndex check.
-	mvIndexCRC32Sum = "_crc32_sum_column"
-
-	// mvJSONColumn is the json array to output in error message.
-	// For table scan, it's read directly from the table,
-	// for index scan, it's concated from all the values of the same handle.
-	mvJSONColumn = "_generated_json_column"
+	// aliasPrefix is the prefix for the alias in check SQL.
+	aliasPrefix = "_c$_"
 
 	maxPartitionTimes = 10
 )
@@ -90,6 +86,10 @@ var (
 
 func init() {
 	CheckTableFastBucketSize.Store(1024)
+}
+
+func buildAlias(colName ast.CIStr, suffix string) string {
+	return ColumnName(fmt.Sprintf("%s%s%s", aliasPrefix, colName.O, suffix))
 }
 
 // Open implements the Executor Open interface.
@@ -389,7 +389,7 @@ func isCastArrayExpr(generatedExpr string) bool {
 func buildChecksumSQLForMVIndex(
 	tblName string, handleCols []string,
 	idxInfo *model.IndexInfo, tblMeta *model.TableInfo,
-) (string, string) {
+) (tableChecksumSQL, indexChecksumSQL string) {
 	idxName := ColumnName(idxInfo.Name.String())
 
 	checksumCols := handleCols
@@ -399,18 +399,19 @@ func buildChecksumSQLForMVIndex(
 		tblCol := tblMeta.Columns[col.Offset]
 		generatedExpr := strings.ToLower(tblCol.GeneratedExprString)
 
-		alias := ColumnName(col.Name.O)
+		alias := buildAlias(col.Name, "")
+		colName := ColumnName(col.Name.O)
 		checksumCols = append(checksumCols, alias)
 		if !tblCol.IsVirtualGenerated() || !tblCol.Hidden {
 			// We have to wrap all the columns with a dummy aggregation function for index scan.
-			innerColsForTable = append(innerColsForTable, alias)
-			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("min(%s) as %s", alias, alias))
+			innerColsForTable = append(innerColsForTable, fmt.Sprintf("%s as %s", colName, alias))
+			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("min(%s) as %s", colName, alias))
 		} else if !isCastArrayExpr(generatedExpr) {
 			innerColsForTable = append(innerColsForTable, fmt.Sprintf("(%s) as %s", generatedExpr, alias))
 			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("min(%s) as %s", generatedExpr, alias))
 		} else {
 			innerColsForTable = append(innerColsForTable, fmt.Sprintf("%s as %s", strings.Replace(generatedExpr, "cast", "JSON_SUM_CRC32", 1), alias))
-			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("SUM(CRC32(%s)) as %s", alias, alias))
+			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("SUM(CRC32(%s)) as %s", colName, alias))
 		}
 	}
 
@@ -421,25 +422,25 @@ func buildChecksumSQLForMVIndex(
 	// The query will be like:
 	//     table side: select /*+ read_from_storage(tikv[t]) */ handle, JSON_SUM_CRC32(xxx as array)   from t use index()
 	//     index side: select /*+     force_index(`idx`)     */ handle, SUM(CRC32(CAST(xxx as array))) from t group by handle
-	tableChecksumSQL := fmt.Sprintf(
+	tableChecksumSQL = fmt.Sprintf(
 		"select bit_xor(%s), %s, count(*) from (select /*+ read_from_storage(tikv[%s]) */ %s from %s use index()) tmp where %s = 0 group by %s",
 		md5HandleAndIndexCol, "%s",
 		tblName, strings.Join(innerColsForTable, ","), tblName,
 		"%s", "%s",
 	)
-	indexChecksumSQL := fmt.Sprintf(
+	indexChecksumSQL = fmt.Sprintf(
 		"select bit_xor(%s), %s, count(*) from (select /*+ force_index(%s, %s) */ %s from %s group by %s) tmp where %s = 0 group by %s",
 		md5HandleAndIndexCol, "%s",
 		tblName, idxName, strings.Join(innerColsForIndex, ","), tblName, strings.Join(handleCols, ", "),
 		"%s", "%s",
 	)
-	return tableChecksumSQL, indexChecksumSQL
+	return
 }
 
 func buildCheckRowSQLForMVIndex(
 	tblName string, handleCols []string,
 	idxInfo *model.IndexInfo, tblMeta *model.TableInfo,
-) (string, string) {
+) (tableCheckSQL, indexCheckSQL string) {
 	idxName := ColumnName(idxInfo.Name.String())
 
 	selectCols := handleCols
@@ -451,11 +452,12 @@ func buildCheckRowSQLForMVIndex(
 		tblCol := tblMeta.Columns[col.Offset]
 		generatedExpr := strings.ToLower(tblCol.GeneratedExprString)
 
-		alias := ColumnName(col.Name.O)
+		alias := buildAlias(col.Name, "")
+		colName := ColumnName(col.Name.O)
 		checksumCols = append(checksumCols, alias)
 		if !tblCol.IsVirtualGenerated() || !tblCol.Hidden {
-			innerColsForTable = append(innerColsForTable, alias)
-			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("min(%s) as %s", alias, alias))
+			innerColsForTable = append(innerColsForTable, fmt.Sprintf("min(%s) as %s", colName, alias))
+			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("min(%s) as %s", colName, alias))
 			selectCols = append(selectCols, alias)
 		} else if !isCastArrayExpr(generatedExpr) {
 			innerColsForTable = append(innerColsForTable, fmt.Sprintf("%s as %s", generatedExpr, alias))
@@ -463,15 +465,15 @@ func buildCheckRowSQLForMVIndex(
 			selectCols = append(selectCols, alias)
 		} else {
 			innerColsForTable = append(innerColsForTable, fmt.Sprintf("%s as %s", strings.Replace(generatedExpr, "cast", "JSON_SUM_CRC32", 1), alias))
-			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("SUM(CRC32(%s)) as %s", alias, alias))
+			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("SUM(CRC32(%s)) as %s", colName, alias))
 
 			// For check SQL, output original json in the subquery as well.
-			alias = ColumnName(col.Name.O + "_array")
+			alias = buildAlias(col.Name, "_array")
 			start := strings.Index(generatedExpr, "cast(")
 			end := strings.LastIndex(generatedExpr, "as")
 			rawExpr := generatedExpr[start+5 : end]
 			innerColsForTable = append(innerColsForTable, fmt.Sprintf("%s as %s", rawExpr, alias))
-			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("JSON_ARRAYAGG(%s) as %s", alias, alias))
+			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("JSON_ARRAYAGG(%s) as %s", colName, alias))
 			selectCols = append(selectCols, alias)
 		}
 	}
@@ -481,25 +483,25 @@ func buildCheckRowSQLForMVIndex(
 	handleColsStr := strings.Join(handleCols, ", ")
 	selectColsStr := strings.Join(selectCols, ", ")
 
-	tableCheckSQL := fmt.Sprintf(
+	tableCheckSQL = fmt.Sprintf(
 		"select %s, %s from (select /*+ read_from_storage(tikv[%s]) */ %s from %s use index()) tmp where %s = 0 order by %s",
 		selectColsStr, md5HandleAndIndexCol,
 		tblName, strings.Join(innerColsForTable, ", "), tblName,
 		"%s", handleColsStr,
 	)
-	indexCheckSQL := fmt.Sprintf(
+	indexCheckSQL = fmt.Sprintf(
 		"select %s, %s from (select /*+ force_index(%s, %s) */ %s from %s group by %s) tmp where %s = 0 order by %s",
 		selectColsStr, md5HandleAndIndexCol,
 		tblName, idxName, strings.Join(innerColsForIndex, ", "), tblName, handleColsStr,
 		"%s", handleColsStr,
 	)
-	return tableCheckSQL, indexCheckSQL
+	return
 }
 
 func buildChecksumSQLForNormalIndex(
 	tblName string, handleCols []string,
 	idxInfo *model.IndexInfo, tblMeta *model.TableInfo,
-) (string, string) {
+) (tableChecksumSQL, indexChecksumSQL string) {
 	checksumCols := handleCols
 	for _, col := range idxInfo.Columns {
 		tblCol := tblMeta.Columns[col.Offset]
@@ -512,21 +514,21 @@ func buildChecksumSQLForNormalIndex(
 
 	md5HandleAndIndexCol := fmt.Sprintf("crc32(md5(concat_ws(0x2, %s)))", strings.Join(checksumCols, ","))
 
-	tableChecksumSQL := fmt.Sprintf(
+	tableChecksumSQL = fmt.Sprintf(
 		"select bit_xor(%s), %s, count(*) from %s use index() where %s = 0 group by %s",
 		md5HandleAndIndexCol, "%s", tblName, "%s", "%s",
 	)
-	indexChecksumSQL := fmt.Sprintf(
+	indexChecksumSQL = fmt.Sprintf(
 		"select bit_xor(%s), %s, count(*) from %s use index(%s) where %s = 0 group by %s",
 		md5HandleAndIndexCol, "%s", tblName, ColumnName(idxInfo.Name.String()), "%s", "%s",
 	)
-	return tableChecksumSQL, indexChecksumSQL
+	return
 }
 
 func buildCheckRowSQLForNormalIndex(
 	tblName string, handleCols []string,
 	idxInfo *model.IndexInfo, tblMeta *model.TableInfo,
-) (string, string) {
+) (tableCheckSQL, indexCheckSQL string) {
 	idxName := ColumnName(idxInfo.Name.String())
 
 	checksumCols := handleCols
@@ -543,13 +545,13 @@ func buildCheckRowSQLForNormalIndex(
 	checksumColsStr := strings.Join(checksumCols, ", ")
 	md5HandleAndIndexCol := fmt.Sprintf("crc32(md5(concat_ws(0x2, %s)))", checksumColsStr)
 
-	tableCheckSQL := fmt.Sprintf(
+	tableCheckSQL = fmt.Sprintf(
 		"select /*+ read_from_storage(tikv[%s]) */ %s, %s from %s use index() where %s = 0 order by %s",
 		tblName, checksumColsStr, md5HandleAndIndexCol, tblName, "%s", md5Handle)
-	indexCheckSQL := fmt.Sprintf(
+	indexCheckSQL = fmt.Sprintf(
 		"select %s, %s from %s use index(%s) where %s = 0 order by %s",
 		checksumColsStr, md5HandleAndIndexCol, tblName, idxName, "%s", md5Handle)
-	return tableCheckSQL, indexCheckSQL
+	return
 }
 
 // HandleTask implements the Worker interface.
