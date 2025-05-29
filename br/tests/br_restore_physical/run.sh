@@ -19,13 +19,19 @@ set -eu
 CUR=$(cd `dirname $0`; pwd)
 
 # const value
-PREFIX="pitr_backup" # NOTICE: don't start with 'br' because `restart services` would remove file/directory br*.
+PREFIX="pitr_restore_physical" # NOTICE: don't start with 'br' because `restart services` would remove file/directory br*.
 res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
-TASK_NAME="br_pitr_log_restore_backup_compatibility"
+TASK_NAME="br_pitr_restore_physical"
+
+echo "=== Starting restore_physical test ==="
 
 restart_services
 
 # prepare the data
+echo "=== Preparing test data ==="
+# dummy table to offset global id
+run_sql "create database __TiDB_BR_Temporary_Restore_Registration_DB"
+run_sql "create table __TiDB_BR_Temporary_Restore_Registration_DB.restore_registry (id int)"
 ## statistic tables
 run_sql "create database test_stats"
 run_sql "create table test_stats.t1 (id int, a int, b int, primary key (id), key ia (a))"
@@ -53,17 +59,20 @@ run_sql "insert into test_bind_info.t1 values (1, 10, 100), (2, 20, 200), (3, 30
 run_sql "create global binding for select * from test_bind_info.t1 where a = 123 using select * from test_bind_info.t1 ignore index (ia) where a = 123"
 
 # run snapshot backup
+echo "=== Running snapshot backup ==="
 echo "run snapshot backup"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full"
 
 restart_services
 
 # run snapshot restore
+echo "=== Running snapshot restore ==="
 echo "run snapshot restore"
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/full" --fast-load-sys-tables > $res_file 2>&1
 check_not_contains "Fallback to logically load "
 
 # check
+echo "=== Verifying restore results ==="
 ## check statistic data
 run_sql "SELECT * FROM mysql.stats_buckets buckets JOIN INFORMATION_SCHEMA.TABLES tables ON buckets.table_id = tables.TIDB_TABLE_ID WHERE tables.TABLE_SCHEMA = 'test_stats' and tables.TABLE_NAME = 't1' limit 5;"
 check_contains "1. row"
@@ -82,3 +91,5 @@ check_contains "1. row"
 run_sql "admin reload bindings"
 run_sql "explain select * from test_bind_info.t1 where a = 123"
 check_contains "TableFullScan"
+
+echo "=== Test completed successfully ==="

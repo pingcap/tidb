@@ -220,17 +220,17 @@ func (rc *LogClient) loadSchemasMapFromTable(
 	hasRestoreIDColumn := rc.pitrIDMapHasRestoreIDColumn(ctx)
 
 	var getPitrIDMapSQL string
-	var args []interface{}
+	var args []any
 
 	if hasRestoreIDColumn {
 		// new version with restore_id column
 		getPitrIDMapSQL = "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restore_id = %? and restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
-		args = []interface{}{rc.restoreID, restoredTS, rc.upstreamClusterID}
+		args = []any{rc.restoreID, restoredTS, rc.upstreamClusterID}
 	} else {
 		// old version without restore_id column
 		log.Info("mysql.tidb_pitr_id_map table does not have restore_id column, using backward compatible mode")
 		getPitrIDMapSQL = "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
-		args = []interface{}{restoredTS, rc.upstreamClusterID}
+		args = []any{restoredTS, rc.upstreamClusterID}
 	}
 
 	execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
