@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -45,14 +46,9 @@ import (
 // Notice a builder can only be used once unless it returns an error in test.
 type RequestBuilder struct {
 	kv.Request
-<<<<<<< HEAD
-	is  infoschema.InfoSchema
-	err error
-=======
-	is   infoschema.MetaOnlyInfoSchema
+	is   infoschema.InfoSchema
 	err  error
 	used bool
->>>>>>> 1ff40045051 (executor: fix data race because of using shared KV requests (#61376))
 
 	// When SetDAGRequest is called, builder will also this field.
 	dag *tipb.DAGRequest

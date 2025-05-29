@@ -375,27 +375,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						return
 					}
 				}
-<<<<<<< HEAD
 
-				var builder distsql.RequestBuilder
-				builder.SetDAGRequest(e.dagPBs[workID]).
-					SetStartTS(e.startTS).
-					SetDesc(e.descs[workID]).
-					SetKeepOrder(e.keepOrder).
-					SetTxnScope(e.txnScope).
-					SetReadReplicaScope(e.readReplicaScope).
-					SetIsStaleness(e.isStaleness).
-					SetFromSessionVars(e.Ctx().GetSessionVars()).
-					SetMemTracker(e.memTracker).
-					SetPaging(e.paging).
-					SetFromInfoSchema(e.Ctx().GetInfoSchema()).
-					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &builder.Request, e.partialNetDataSizes[workID])).
-					SetConnID(e.Ctx().GetSessionVars().ConnectionID).
-					SetKilled(&e.Ctx().GetSessionVars().Killed)
-
-=======
-				worker.batchSize = CalculateBatchSize(int(is.StatsCount()), e.MaxChunkSize(), worker.maxBatchSize)
->>>>>>> 1ff40045051 (executor: fix data race because of using shared KV requests (#61376))
 				tps := worker.getRetTpsForIndexScan(e.handleCols)
 				results := make([]distsql.SelectResult, 0, len(keyRanges))
 				defer func() {
@@ -424,20 +404,14 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						SetTxnScope(e.txnScope).
 						SetReadReplicaScope(e.readReplicaScope).
 						SetIsStaleness(e.isStaleness).
-						SetFromSessionVars(e.Ctx().GetDistSQLCtx()).
+						SetFromSessionVars(e.Ctx().GetSessionVars()).
 						SetMemTracker(e.memTracker).
+						SetPaging(e.paging).
 						SetFromInfoSchema(e.Ctx().GetInfoSchema()).
-						SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx().GetDistSQLCtx(), &builder.Request, e.partialNetDataSizes[workID])).
-						SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
+						SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &builder.Request, e.partialNetDataSizes[workID])).
+						SetConnID(e.Ctx().GetSessionVars().ConnectionID).
+						SetKilled(&e.Ctx().GetSessionVars().Killed)
 
-					if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
-						// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
-						// initial batchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/54066
-						builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
-						if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
-							builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
-						}
-					}
 					// init kvReq and worker for this partition
 					// The key ranges should be ordered.
 					slices.SortFunc(keyRange, func(i, j kv.KeyRange) int {
