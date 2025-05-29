@@ -26,8 +26,7 @@ func TestQ1(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	createLineItem(tk)
-	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
+	createLineItem(t, tk, dom)
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 	integrationSuiteData := GetTPCHSuiteData()
@@ -50,16 +49,49 @@ func TestQ1(t *testing.T) {
 	}
 }
 
+func TestQ2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	createPart(t, tk, dom)
+	createSupplier(t, tk, dom)
+	createPartsupp(t, tk, dom)
+	createNation(t, tk, dom)
+	createRegion(t, tk, dom)
+	testkit.LoadTableStats("test.part.json", dom)
+	testkit.LoadTableStats("test.supplier.json", dom)
+	testkit.LoadTableStats("test.partsupp.json", dom)
+	testkit.LoadTableStats("test.region.json", dom)
+	testkit.LoadTableStats("test.nation.json", dom)
+	integrationSuiteData := GetTPCHSuiteData()
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	costTraceFormat := `explain format='cost_trace' `
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+		})
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
+		})
+		tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
+		checkCost(t, tk, input[i])
+	}
+}
+
 func TestQ3(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	createCustomer(tk)
-	createOrders(tk)
-	createLineItem(tk)
-	testkit.SetTiFlashReplica(t, dom, "test", "customer")
-	testkit.SetTiFlashReplica(t, dom, "test", "orders")
-	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
+	createCustomer(t, tk, dom)
+	createOrders(t, tk, dom)
+	createLineItem(t, tk, dom)
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 	integrationSuiteData := GetTPCHSuiteData()
@@ -85,14 +117,49 @@ func TestQ3(t *testing.T) {
 func TestQ4(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database olap")
 	tk.MustExec("use test")
-	createOrders(tk)
-	createLineItem(tk)
-	testkit.LoadTableStats("lineitem_stats.json", dom)
-	testkit.LoadTableStats("orders_stats.json", dom)
-	testkit.SetTiFlashReplica(t, dom, "test", "orders")
-	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
+	createOrders(t, tk, dom)
+	createLineItem(t, tk, dom)
+	testkit.LoadTableStats("test.lineitem.json", dom)
+	testkit.LoadTableStats("test.orders.json", dom)
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+	integrationSuiteData := GetTPCHSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	costTraceFormat := `explain format='cost_trace' `
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+		})
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
+		})
+		tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
+		checkCost(t, tk, input[i])
+	}
+}
+
+func TestQ5(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	createCustomer(t, tk, dom)
+	createOrders(t, tk, dom)
+	createLineItem(t, tk, dom)
+	createSupplier(t, tk, dom)
+	createNation(t, tk, dom)
+	createRegion(t, tk, dom)
+	testkit.LoadTableStats("test.customer.json", dom)
+	testkit.LoadTableStats("test.orders.json", dom)
+	testkit.LoadTableStats("test.lineitem.json", dom)
+	testkit.LoadTableStats("test.supplier.json", dom)
+	testkit.LoadTableStats("test.nation.json", dom)
+	testkit.LoadTableStats("test.region.json", dom)
 	var (
 		input  []string
 		output []struct {
@@ -133,20 +200,15 @@ func TestQ9(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	createLineItem(tk)
-	createNation(tk)
-	createOrders(tk)
-	createPart(tk)
-	createPartsupp(tk)
-	createSupplier(tk)
+	createLineItem(t, tk, dom)
+	createNation(t, tk, dom)
+	createOrders(t, tk, dom)
+	createPart(t, tk, dom)
+	createPartsupp(t, tk, dom)
+	createSupplier(t, tk, dom)
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
-	testkit.SetTiFlashReplica(t, dom, "test", "orders")
-	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
-	testkit.SetTiFlashReplica(t, dom, "test", "nation")
-	testkit.SetTiFlashReplica(t, dom, "test", "part")
-	testkit.SetTiFlashReplica(t, dom, "test", "partsupp")
-	testkit.SetTiFlashReplica(t, dom, "test", "supplier")
+
 	integrationSuiteData := GetTPCHSuiteData()
 	var (
 		input  []string
@@ -171,10 +233,8 @@ func TestQ13(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	createCustomer(tk)
-	createOrders(tk)
-	testkit.SetTiFlashReplica(t, dom, "test", "orders")
-	testkit.SetTiFlashReplica(t, dom, "test", "customer")
+	createCustomer(t, tk, dom)
+	createOrders(t, tk, dom)
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 	integrationSuiteData := GetTPCHSuiteData()
@@ -201,12 +261,9 @@ func TestQ18(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	createCustomer(tk)
-	createOrders(tk)
-	createLineItem(tk)
-	testkit.SetTiFlashReplica(t, dom, "test", "customer")
-	testkit.SetTiFlashReplica(t, dom, "test", "orders")
-	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
+	createCustomer(t, tk, dom)
+	createOrders(t, tk, dom)
+	createLineItem(t, tk, dom)
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 	integrationSuiteData := GetTPCHSuiteData()
@@ -233,14 +290,10 @@ func TestQ21(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
-	createSupplier(tk)
-	createLineItem(tk)
-	createOrders(tk)
-	createNation(tk)
-	testkit.SetTiFlashReplica(t, dom, "test", "supplier")
-	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
-	testkit.SetTiFlashReplica(t, dom, "test", "orders")
-	testkit.SetTiFlashReplica(t, dom, "test", "nation")
+	createSupplier(t, tk, dom)
+	createLineItem(t, tk, dom)
+	createOrders(t, tk, dom)
+	createNation(t, tk, dom)
 	var (
 		input  []string
 		output []struct {
@@ -267,10 +320,8 @@ func TestQ22(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
-	createCustomer(tk)
-	createOrders(tk)
-	testkit.SetTiFlashReplica(t, dom, "test", "customer")
-	testkit.SetTiFlashReplica(t, dom, "test", "orders")
+	createCustomer(t, tk, dom)
+	createOrders(t, tk, dom)
 	tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery=true")
 	var (
 		input  []string
