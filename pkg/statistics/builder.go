@@ -416,6 +416,12 @@ func BuildHistAndTopN(
 		topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
 	}
 
+	topn := &TopN{TopN: topNList}
+	if int(hg.NDV) <= len(topn.TopN) {
+		// If we've collected everything  - don't create any buckets
+		return hg, topn, nil
+	}
+
 	// Step2: exclude topn from samples
 	if numTopN != 0 {
 		for i := int64(0); i < int64(len(samples)); i++ {
@@ -463,12 +469,6 @@ func BuildHistAndTopN(
 				}
 			}
 		}
-	}
-
-	topn := &TopN{TopN: topNList}
-	if int(hg.NDV) <= len(topn.TopN) {
-		// If we've collected everything  - don't create any buckets
-		return hg, topn, nil
 	}
 
 	// Step3: build histogram with the rest samples
