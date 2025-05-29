@@ -66,6 +66,7 @@ func RegisterMetrics() error {
 	}
 
 	timeoutSec := time.Duration(cfg.PDClient.PDServerTimeout) * time.Second
+	// Note: for NextGen, pdCli is created to init the metrics' const labels
 	pdCli, err := pd.NewClient(componentName, pdAddrs, pd.SecurityOption{
 		CAPath:   cfg.Security.ClusterSSLCA,
 		CertPath: cfg.Security.ClusterSSLCert,
@@ -104,6 +105,7 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 	if tls.IsEnabled() {
 		securityOpt = tls.ToPDSecurityOption()
 	}
+	// Note: for NextGen, pdCli is created to init the metrics' const labels
 	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt,
 		opt.WithCustomTimeoutOption(timeoutSec), opt.WithMetricsLabels(metrics.GetConstLabels()))
 	if err != nil {
