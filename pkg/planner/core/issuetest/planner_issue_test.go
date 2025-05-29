@@ -297,8 +297,8 @@ func TestABC(t *testing.T) {
 	tk.MustExec(`insert into t values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9) ;`)
 	tk.MustExec(`analyze table t;`)
 	tk.MustQuery(`explain format = 'cost_trace' select * from t where t.a <4 ;`).Check(testkit.Rows(
-		"TableReader_9 3.00 80.79 ((((cpu(3*filters(1)*tikv_cpu_factor(49.9))) + ((scan(3*logrowsize(48)*tikv_scan_factor(40.7)))*1.00)) + (net(3*rowsize(32)*tidb_kv_net_factor(3.96))))/15.00)*1.00 root partition:p0 data:Selection_8",
-		"└─Selection_8 3.00 831.62 (cpu(3*filters(1)*tikv_cpu_factor(49.9))) + ((scan(3*logrowsize(48)*tikv_scan_factor(40.7)))*1.00) cop[tikv]  lt(test.t.a, 4)",
-		"  └─TableFullScan_7 3.00 681.92 (scan(3*logrowsize(48)*tikv_scan_factor(40.7)))*1.00 cop[tikv] table:t, partition:p0 keep order:false",
+		"TableReader_10 3.00 80.79 ((((cpu(3*filters(1)*tikv_cpu_factor(49.9))) + ((scan(3*logrowsize(48)*tikv_scan_factor(40.7)))*1.00)) + (net(3*rowsize(32)*tidb_kv_net_factor(3.96))))/15.00)*1.00 root partition:p0 data:Selection_9",
+		"└─Selection_9 3.00 831.62 (cpu(3*filters(1)*tikv_cpu_factor(49.9))) + ((scan(3*logrowsize(48)*tikv_scan_factor(40.7)))*1.00) cop[tikv]  lt(test.t.a, 4)",
+		"  └─TableFullScan_8 3.00 681.92 (scan(3*logrowsize(48)*tikv_scan_factor(40.7)))*1.00 cop[tikv] table:t, partition:p0 keep order:false",
 	))
 }

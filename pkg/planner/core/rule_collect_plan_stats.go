@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"time"
 
@@ -51,6 +52,10 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 	plan.SCtx().GetSessionVars().StmtCtx.OperatorNum = opNum
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(maps.Keys(predicateColumns))
+	}
+
+	if !plan.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
 	}
 
 	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below, and trigger extra sync/async
