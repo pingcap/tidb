@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	rg "github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
@@ -1120,7 +1119,7 @@ func (e *executor) createTableWithInfoJob(
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 		SessionVars:         make(map[string]string),
 	}
-	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.CreateTableArgs{
 		TableInfo:      tbInfo,
 		OnExistReplace: cfg.OnExist == OnExistReplace,
@@ -1215,7 +1214,7 @@ func (e *executor) CreateTableWithInfo(
 		}
 	} else {
 		var scatterScope string
-		if val, ok := jobW.GetSessionVars(vardef.TiDBScatterRegion); ok {
+		if val, ok := jobW.GetSessionVars(variable.TiDBScatterRegion); ok {
 			scatterScope = val
 		}
 		err = e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID, scatterScope)
@@ -1244,7 +1243,7 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),
 	}
-	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 
 	var err error
 
@@ -1311,7 +1310,7 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		return errors.Trace(err)
 	}
 	var scatterScope string
-	if val, ok := jobW.GetSessionVars(vardef.TiDBScatterRegion); ok {
+	if val, ok := jobW.GetSessionVars(variable.TiDBScatterRegion); ok {
 		scatterScope = val
 	}
 	for _, tblArgs := range args.Tables {
@@ -2282,7 +2281,7 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),
 	}
-	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TablePartitionArgs{
 		PartInfo: partInfo,
 	}
@@ -2795,7 +2794,7 @@ func (e *executor) TruncateTablePartition(ctx sessionctx.Context, ident ast.Iden
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),
 	}
-	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TruncateTableArgs{
 		OldPartitionIDs: pids,
 		// job submitter will fill new partition IDs.
@@ -4293,7 +4292,7 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),
 	}
-	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TruncateTableArgs{
 		FKCheck:         fkCheck,
 		OldPartitionIDs: oldPartitionIDs,
@@ -6888,7 +6887,7 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 
 func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
 	var scatterScope string
-	val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBScatterRegion)
+	val, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBScatterRegion)
 	if !ok {
 		logutil.DDLLogger().Info("won't scatter region since system variable didn't set")
 	} else {
