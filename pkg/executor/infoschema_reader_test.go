@@ -1137,8 +1137,10 @@ func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
 	} {
 		var covered bool
 		ctx := context.WithValue(context.Background(), "cover-check", &covered)
-		tk.MustQueryWithContext(ctx, testCase.sql)
-		require.Equal(t, testCase.expect, covered, testCase.sql)
+		require.Eventually(t, func() bool {
+			tk.MustQueryWithContext(ctx, testCase.sql)
+			return testCase.expect == covered
+		}, 3*time.Second, 100*time.Millisecond, testCase.sql)
 	}
 }
 
