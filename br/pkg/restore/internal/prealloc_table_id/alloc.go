@@ -181,12 +181,10 @@ func (p *PreallocIDs) PreallocIDs(m Allocator) error {
 		p.reusableBorder = p.start
 	}
 
-	for i := p.start; i < p.reusableBorder; i++ {
-		p.allocRule[i] = i
-	}
 	rewriteCnt := int64(0)
 	for _, id := range p.unallocedIDs {
-		if _, ok := p.allocRule[id]; ok {
+		if id > p.start {
+			p.allocRule[i] = i
 			continue
 		}
 		p.allocRule[id] = p.reusableBorder + rewriteCnt
