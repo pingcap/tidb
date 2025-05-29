@@ -182,6 +182,8 @@ var (
 	DDLCommitIngestIncrementalOpCount     = func(connID uint64) {}
 	DDLRollbackIngestIncrementalOpCount   = func(connID uint64) {}
 	DDLResetTotalIngestIncrementalOpCount = func(tblID int64) {}
+	DDLRecordScannedIncrementalOpCount    = func(tableID int64, opCount uint64) {}
+	DDLRecordMergedIncrementalOpCount     = func(tableID int64, opCount uint64) {}
 )
 
 // Label constants.
