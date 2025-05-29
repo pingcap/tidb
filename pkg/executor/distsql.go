@@ -738,15 +738,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
 				SetSQLKiller(&e.Ctx().GetSessionVars().SQLKiller)
 
-			if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
-				// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
-				// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
-				builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
-				if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
-					builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
-				}
-			}
-
 			// init kvReq, result and worker for this partition
 			// The key ranges should be ordered.
 			slices.SortFunc(kvRange, func(i, j kv.KeyRange) int {

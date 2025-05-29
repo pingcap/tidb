@@ -412,14 +412,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
 						SetSQLKiller(&e.Ctx().GetSessionVars().SQLKiller)
 
-					if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
-						// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
-						// initial batchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/54066
-						builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
-						if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
-							builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
-						}
-					}
 					// init kvReq and worker for this partition
 					// The key ranges should be ordered.
 					slices.SortFunc(keyRange, func(i, j kv.KeyRange) int {
