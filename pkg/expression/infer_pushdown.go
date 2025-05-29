@@ -94,7 +94,7 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 	if ret {
 		defaultExprPushDownBlacklistMap := DefaultExprPushDownBlacklist.Load()
 		if len(*defaultExprPushDownBlacklistMap) == 0 {
-			return false
+			return true
 		}
 		if result := IsPushDownEnabled(sf.FuncName.L, storeType); !result {
 			return result
