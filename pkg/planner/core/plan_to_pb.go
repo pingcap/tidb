@@ -763,8 +763,8 @@ func (p *PhysicalCTESink) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType)
 		CteId:        uint32(p.IDForStorage),
 		Child:        childPb,
 		FieldTypes:   fieldTypes,
-		CteSinkNum:   &p.DuplicatedSinkNum,
-		CteSourceNum: &p.DuplicatedSourceNum,
+		CteSinkNum:   p.DuplicatedSinkNum,
+		CteSourceNum: p.DuplicatedSourceNum,
 	}
 	executorID := p.ExplainID().String()
 	return &tipb.Executor{
@@ -777,8 +777,8 @@ func (p *PhysicalCTESink) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType)
 func (p *PhysicalCTESource) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	cteSource := &tipb.CTESource{
 		CteId:        uint32(p.IDForStorage),
-		CteSinkNum:   &p.DuplicatedSinkNum,
-		CteSourceNum: &p.DuplicatedSourceNum,
+		CteSinkNum:   p.DuplicatedSinkNum,
+		CteSourceNum: p.DuplicatedSourceNum,
 	}
 	fieldTypes := make([]*tipb.FieldType, 0, len(p.Schema().Columns))
 	for _, column := range p.Schema().Columns {
