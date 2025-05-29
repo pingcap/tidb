@@ -36,16 +36,16 @@ type HandleCols interface {
 	expression.StringerWithCtx
 
 	// BuildHandle builds a Handle from a row.
-	BuildHandle(row chunk.Row) (kv.Handle, error)
+	BuildHandle(sc *stmtctx.StatementContext, row chunk.Row) (kv.Handle, error)
 	// BuildHandleByDatums builds a Handle from a datum slice.
-	BuildHandleByDatums(row []types.Datum) (kv.Handle, error)
+	BuildHandleByDatums(sc *stmtctx.StatementContext, row []types.Datum) (kv.Handle, error)
 	// BuildHandleFromIndexRow builds a Handle from index row data.
 	// The last column(s) of `row` must be the handle column(s).
-	BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error)
+	BuildHandleFromIndexRow(sc *stmtctx.StatementContext, row chunk.Row) (kv.Handle, error)
 	// BuildHandleFromIndexRow builds a Handle from index row data.
 	// The last column of `row` must be the pids,
 	// and the second to last column(s) of `row` must be the handle column(s).
-	BuildPartitionHandleFromIndexRow(row chunk.Row) (kv.PartitionHandle, error)
+	BuildPartitionHandleFromIndexRow(sc *stmtctx.StatementContext, row chunk.Row) (kv.PartitionHandle, error)
 	// ResolveIndices resolves handle column indices.
 	ResolveIndices(schema *expression.Schema) (HandleCols, error)
 	// IsInt returns if the HandleCols is a single int column.
@@ -55,25 +55,26 @@ type HandleCols interface {
 	// NumCols returns the number of columns.
 	NumCols() int
 	// Compare compares two datum rows by handle order.
-	Compare(a, b []types.Datum, ctors []collate.Collator) (int, error)
+	Compare(a, b []types.Datum, ctors []collate.Collator, tpCtx types.Context) (int, error)
 	// GetFieldsTypes return field types of columns.
 	GetFieldsTypes() []*types.FieldType
 	// MemoryUsage return the memory usage
 	MemoryUsage() int64
 	// Clone clones the HandleCols.
-	Clone(newCtx *stmtctx.StatementContext) HandleCols
+	Clone() HandleCols
 }
 
 // CommonHandleCols implements the kv.HandleCols interface.
+// Currently, HandleCols are data fields in some operators and executors, and will be used during execution.
+// So please avoid adding fields like sctx and stmtctx to avoid potential bugs when it's reused/shared by plan cache.
 type CommonHandleCols struct {
 	tblInfo *model.TableInfo
 	idxInfo *model.IndexInfo
 	columns []*expression.Column
-	sc      *stmtctx.StatementContext
 }
 
 // Clone implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) Clone(newCtx *stmtctx.StatementContext) HandleCols {
+func (cb *CommonHandleCols) Clone() HandleCols {
 	newCols := make([]*expression.Column, len(cb.columns))
 	for i, col := range cb.columns {
 		newCols[i] = col.Clone().(*expression.Column)
@@ -82,7 +83,6 @@ func (cb *CommonHandleCols) Clone(newCtx *stmtctx.StatementContext) HandleCols {
 		tblInfo: cb.tblInfo.Clone(),
 		idxInfo: cb.idxInfo.Clone(),
 		columns: newCols,
-		sc:      newCtx,
 	}
 }
 
@@ -91,10 +91,11 @@ func (cb *CommonHandleCols) GetColumns() []*expression.Column {
 	return cb.columns
 }
 
-func (cb *CommonHandleCols) buildHandleByDatumsBuffer(datumBuf []types.Datum) (kv.Handle, error) {
+func (cb *CommonHandleCols) buildHandleByDatumsBuffer(sc *stmtctx.StatementContext, datumBuf []types.Datum,
+) (kv.Handle, error) {
 	tablecodec.TruncateIndexValues(cb.tblInfo, cb.idxInfo, datumBuf)
-	handleBytes, err := codec.EncodeKey(cb.sc.TimeZone(), nil, datumBuf...)
-	err = cb.sc.HandleError(err)
+	handleBytes, err := codec.EncodeKey(sc.TimeZone(), nil, datumBuf...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
@@ -102,30 +103,31 @@ func (cb *CommonHandleCols) buildHandleByDatumsBuffer(datumBuf []types.Datum) (k
 }
 
 // BuildHandle implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) BuildHandle(row chunk.Row) (kv.Handle, error) {
+func (cb *CommonHandleCols) BuildHandle(sc *stmtctx.StatementContext, row chunk.Row) (kv.Handle, error) {
 	datumBuf := make([]types.Datum, 0, 4)
 	for _, col := range cb.columns {
 		datumBuf = append(datumBuf, row.GetDatum(col.Index, col.RetType))
 	}
-	return cb.buildHandleByDatumsBuffer(datumBuf)
+	return cb.buildHandleByDatumsBuffer(sc, datumBuf)
 }
 
 // BuildHandleFromIndexRow implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error) {
+func (cb *CommonHandleCols) BuildHandleFromIndexRow(sc *stmtctx.StatementContext, row chunk.Row) (kv.Handle, error) {
 	datumBuf := make([]types.Datum, 0, 4)
 	for i := 0; i < cb.NumCols(); i++ {
 		datumBuf = append(datumBuf, row.GetDatum(row.Len()-cb.NumCols()+i, cb.columns[i].RetType))
 	}
-	return cb.buildHandleByDatumsBuffer(datumBuf)
+	return cb.buildHandleByDatumsBuffer(sc, datumBuf)
 }
 
 // BuildPartitionHandleFromIndexRow implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) BuildPartitionHandleFromIndexRow(row chunk.Row) (kv.PartitionHandle, error) {
+func (cb *CommonHandleCols) BuildPartitionHandleFromIndexRow(sc *stmtctx.StatementContext, row chunk.Row,
+) (kv.PartitionHandle, error) {
 	datumBuf := make([]types.Datum, 0, 4)
 	for i := 0; i < cb.NumCols(); i++ {
 		datumBuf = append(datumBuf, row.GetDatum(row.Len()-1-cb.NumCols()+i, cb.columns[i].RetType))
 	}
-	handle, err := cb.buildHandleByDatumsBuffer(datumBuf)
+	handle, err := cb.buildHandleByDatumsBuffer(sc, datumBuf)
 	if err != nil {
 		return kv.PartitionHandle{}, err
 	}
@@ -136,12 +138,12 @@ func (cb *CommonHandleCols) BuildPartitionHandleFromIndexRow(row chunk.Row) (kv.
 }
 
 // BuildHandleByDatums implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) BuildHandleByDatums(row []types.Datum) (kv.Handle, error) {
+func (cb *CommonHandleCols) BuildHandleByDatums(sc *stmtctx.StatementContext, row []types.Datum) (kv.Handle, error) {
 	datumBuf := make([]types.Datum, 0, 4)
 	for _, col := range cb.columns {
 		datumBuf = append(datumBuf, row[col.Index])
 	}
-	return cb.buildHandleByDatumsBuffer(datumBuf)
+	return cb.buildHandleByDatumsBuffer(sc, datumBuf)
 }
 
 // ResolveIndices implements the kv.HandleCols interface.
@@ -149,7 +151,6 @@ func (cb *CommonHandleCols) ResolveIndices(schema *expression.Schema) (HandleCol
 	ncb := &CommonHandleCols{
 		tblInfo: cb.tblInfo,
 		idxInfo: cb.idxInfo,
-		sc:      cb.sc,
 		columns: make([]*expression.Column, len(cb.columns)),
 	}
 	for i, col := range cb.columns {
@@ -192,11 +193,11 @@ func (cb *CommonHandleCols) StringWithCtx(ctx expression.ParamValues, _ string) 
 }
 
 // Compare implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) Compare(a, b []types.Datum, ctors []collate.Collator) (int, error) {
+func (cb *CommonHandleCols) Compare(a, b []types.Datum, ctors []collate.Collator, tpCtx types.Context) (int, error) {
 	for i, col := range cb.columns {
 		aDatum := &a[col.Index]
 		bDatum := &b[col.Index]
-		cmp, err := aDatum.Compare(cb.sc.TypeCtx(), bDatum, ctors[i])
+		cmp, err := aDatum.Compare(tpCtx, bDatum, ctors[i])
 		if err != nil {
 			return 0, err
 		}
@@ -232,12 +233,11 @@ func (cb *CommonHandleCols) MemoryUsage() (sum int64) {
 }
 
 // NewCommonHandleCols creates a new CommonHandleCols.
-func NewCommonHandleCols(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
-	tableColumns []*expression.Column) *CommonHandleCols {
+func NewCommonHandleCols(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, tableColumns []*expression.Column,
+) *CommonHandleCols {
 	cols := &CommonHandleCols{
 		tblInfo: tblInfo,
 		idxInfo: idxInfo,
-		sc:      sc,
 		columns: make([]*expression.Column, len(idxInfo.Columns)),
 	}
 	for i, idxCol := range idxInfo.Columns {
@@ -247,12 +247,11 @@ func NewCommonHandleCols(sc *stmtctx.StatementContext, tblInfo *model.TableInfo,
 }
 
 // NewCommonHandlesColsWithoutColsAlign creates a new CommonHandleCols without internal col align.
-func NewCommonHandlesColsWithoutColsAlign(sc *stmtctx.StatementContext, tblInfo *model.TableInfo,
-	idxInfo *model.IndexInfo, cols []*expression.Column) *CommonHandleCols {
+func NewCommonHandlesColsWithoutColsAlign(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, cols []*expression.Column,
+) *CommonHandleCols {
 	return &CommonHandleCols{
 		tblInfo: tblInfo,
 		idxInfo: idxInfo,
-		sc:      sc,
 		columns: cols,
 	}
 }
@@ -263,22 +262,23 @@ type IntHandleCols struct {
 }
 
 // Clone implements the kv.HandleCols interface.
-func (ib *IntHandleCols) Clone(*stmtctx.StatementContext) HandleCols {
+func (ib *IntHandleCols) Clone() HandleCols {
 	return &IntHandleCols{col: ib.col.Clone().(*expression.Column)}
 }
 
 // BuildHandle implements the kv.HandleCols interface.
-func (ib *IntHandleCols) BuildHandle(row chunk.Row) (kv.Handle, error) {
+func (ib *IntHandleCols) BuildHandle(_ *stmtctx.StatementContext, row chunk.Row) (kv.Handle, error) {
 	return kv.IntHandle(row.GetInt64(ib.col.Index)), nil
 }
 
 // BuildHandleFromIndexRow implements the kv.HandleCols interface.
-func (*IntHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error) {
+func (*IntHandleCols) BuildHandleFromIndexRow(_ *stmtctx.StatementContext, row chunk.Row) (kv.Handle, error) {
 	return kv.IntHandle(row.GetInt64(row.Len() - 1)), nil
 }
 
 // BuildPartitionHandleFromIndexRow implements the kv.HandleCols interface.
-func (*IntHandleCols) BuildPartitionHandleFromIndexRow(row chunk.Row) (kv.PartitionHandle, error) {
+func (*IntHandleCols) BuildPartitionHandleFromIndexRow(_ *stmtctx.StatementContext,
+	row chunk.Row) (kv.PartitionHandle, error) {
 	return kv.NewPartitionHandle(
 		row.GetInt64(row.Len()-1),
 		kv.IntHandle(row.GetInt64(row.Len()-2)),
@@ -286,7 +286,7 @@ func (*IntHandleCols) BuildPartitionHandleFromIndexRow(row chunk.Row) (kv.Partit
 }
 
 // BuildHandleByDatums implements the kv.HandleCols interface.
-func (ib *IntHandleCols) BuildHandleByDatums(row []types.Datum) (kv.Handle, error) {
+func (ib *IntHandleCols) BuildHandleByDatums(_ *stmtctx.StatementContext, row []types.Datum) (kv.Handle, error) {
 	return kv.IntHandle(row[ib.col.Index].GetInt64()), nil
 }
 
@@ -323,7 +323,7 @@ func (*IntHandleCols) NumCols() int {
 }
 
 // Compare implements the kv.HandleCols interface.
-func (ib *IntHandleCols) Compare(a, b []types.Datum, ctors []collate.Collator) (int, error) {
+func (ib *IntHandleCols) Compare(a, b []types.Datum, ctors []collate.Collator, _ types.Context) (int, error) {
 	aVal := &a[ib.col.Index]
 	bVal := &b[ib.col.Index]
 	return aVal.Compare(types.DefaultStmtNoWarningContext, bVal, ctors[ib.col.Index])
