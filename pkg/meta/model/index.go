@@ -161,6 +161,7 @@ func GetFullTextParserTypeBySQLName(name string) FullTextParserType {
 // FullTextIndexInfo is the information of FULLTEXT index of a column.
 type FullTextIndexInfo struct {
 	ParserType FullTextParserType `json:"parser_type"`
+	Advanced   bool               `json:"advanced"` // Whether the index is advanced. If true, it means the index supports advanced features like stop words, synonyms, etc.
 	// TODO: Add other options
 }
 
@@ -281,14 +282,14 @@ func (index *IndexInfo) IsPublic() bool {
 
 // IsColumnarIndex checks whether the index is a columnar index.
 // Columnar index only exists in TiFlash, no actual index data need to be written to KV layer.
+// For fulltext index, it will be built inside TiDB if it is not advanced.
 func (index *IndexInfo) IsColumnarIndex() bool {
-	return index.VectorInfo != nil || index.InvertedInfo != nil || index.FullTextInfo != nil
+	return index.VectorInfo != nil || index.InvertedInfo != nil || (index.FullTextInfo != nil && !index.FullTextInfo.Advanced)
 }
 
-// IsFulltextIndex checks whether the index is a fulltext index.
-// Fulltext index only exists in TiCI, no actual index data need to be written to KV layer.
-func (index *IndexInfo) IsFulltextIndex() bool {
-	return index.FullTextInfo != nil
+// IsFulltextIndexOnTiCI checks whether the index is a fulltext index and it built on TiCI engine.
+func (index *IndexInfo) IsFulltextIndexOnTiCI() bool {
+	return index.FullTextInfo != nil && index.FullTextInfo.Advanced
 }
 
 // GetColumnarIndexType returns the type of columnar index.

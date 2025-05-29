@@ -789,7 +789,8 @@ type PhysicalIndexScan struct {
 	// It's for printing stats related information when display execution plan.
 	usedStatsInfo *stmtctx.UsedStatsInfoForTable `plan-cache-clone:"shallow"`
 
-	StoreType kv.StoreType
+	StoreType    kv.StoreType
+	FtsQueryInfo *tipb.FTSQueryInfo
 }
 
 // Clone implements op.PhysicalPlan interface.

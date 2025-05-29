@@ -3097,7 +3097,7 @@ func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 
 func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool, isSingleScan bool) *PhysicalIndexScan {
 	idx := path.Index
-	if path.Index.IsFulltextIndex() {
+	if path.Index.IsFulltextIndexOnTiCI() {
 		prop.FullTextProp.QueryColumns = path.QueryColumns
 		prop.FullTextProp.QueryJSONStr = path.QueryJSONStr
 	}
@@ -3109,7 +3109,7 @@ func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		Index:            idx,
 		IdxCols:          path.IdxCols,
 		IdxColLens:       path.IdxColLens,
-		FullText:         idx.IsFulltextIndex(),
+		FullText:         idx.IsFulltextIndexOnTiCI(),
 		AccessCondition:  path.AccessConds,
 		Ranges:           path.Ranges,
 		dataSourceSchema: ds.Schema(),
@@ -3120,6 +3120,7 @@ func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		constColsByCond:  path.ConstCols,
 		prop:             prop,
 		StoreType:        path.StoreType,
+		FtsQueryInfo:     path.FtsQueryInfo,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	rowCount := path.CountAfterAccess
 	is.initSchema(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)

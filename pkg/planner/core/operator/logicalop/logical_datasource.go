@@ -637,18 +637,29 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 // analyzeFTSFunc checks whether FTS function is used and is a valid one.
 // Then convert the function to index call because it can not be executed without the index.
 func (ds *DataSource) analyzeFTSFunc() error {
-	idx2FastCheck := make(map[*model.IndexInfo]intset.FastIntSet)
+	tidbIdx2FastCheck := make(map[*model.IndexInfo]intset.FastIntSet)
+	ticiIdx2FastCheck := make(map[*model.IndexInfo]intset.FastIntSet)
 	idSetForCheck := intset.NewFastIntSet()
 	for _, index := range ds.FtsIndexes {
 		s := intset.NewFastIntSet()
 		for _, col := range index.Columns {
 			s.Insert(int(ds.TableInfo.Columns[col.Offset].ID))
 		}
-		idx2FastCheck[index] = s
+		tidbIdx2FastCheck[index] = s
+	}
+	for _, path := range ds.AllPossibleAccessPaths {
+		if path.Index != nil && path.Index.FullTextInfo != nil {
+			s := intset.NewFastIntSet()
+			for _, col := range path.Index.Columns {
+				s.Insert(int(ds.TableInfo.Columns[col.Offset].ID))
+			}
+			ticiIdx2FastCheck[path.Index] = s
+		}
 	}
 	var matchedIdx *model.IndexInfo
 	var matchedFunc *expression.ScalarFunction
 	var matchedCondPos int
+	var isTiCIIdx bool
 	matchedColumns := make([]*expression.Column, 0, 2)
 	for i, cond := range ds.PushedDownConds {
 		sf, ok := cond.(*expression.ScalarFunction)
@@ -663,14 +674,24 @@ func (ds *DataSource) analyzeFTSFunc() error {
 			col := sf.GetArgs()[i].(*expression.Column)
 			idSetForCheck.Insert(int(col.ID))
 		}
+		// Check TiCI version first.
 		var currentIndex *model.IndexInfo
-		for idx, set := range idx2FastCheck {
+		for idx, set := range ticiIdx2FastCheck {
+			// The used columns in the FTS function should be a subset of the index columns.
+			if idSetForCheck.SubsetOf(set) {
+				currentIndex = idx
+				isTiCIIdx = true
+				goto finalCheck
+			}
+		}
+		for idx, set := range tidbIdx2FastCheck {
 			// The used columns in the FTS function should be a subset of the index columns.
 			if idSetForCheck.SubsetOf(set) {
 				currentIndex = idx
 				break
 			}
 		}
+	finalCheck:
 		// If the index is not found, it means that the FTS function is not valid.
 		if currentIndex == nil {
 			return errors.New("Full text search can only be used with a matching fulltext index and a columnar storage")
@@ -688,13 +709,8 @@ func (ds *DataSource) analyzeFTSFunc() error {
 			matchedColumns = append(matchedColumns, col)
 		}
 	}
-	// Fulltext index must be used. So we prune all other possible access paths.
-	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
-		return path.StoreType == kv.TiKV
-	})
-	if len(ds.PossibleAccessPaths) == 0 {
-		return plannererrors.ErrWrongUsage.FastGen("Full text search can only be executed in a columnar storage")
-	}
+	// Remove the matched condition from PushedDownConds.
+	ds.PushedDownConds = slices.Delete(ds.PushedDownConds, matchedCondPos, matchedCondPos+1)
 	// Build protobuf info for the matched index.
 	pbColumns := make([]*tipb.ColumnInfo, 0, len(matchedColumns))
 	for _, col := range matchedColumns {
@@ -704,16 +720,67 @@ func (ds *DataSource) analyzeFTSFunc() error {
 	for _, col := range matchedColumns {
 		colNames = append(colNames, col.OrigName)
 	}
-	ds.FtsIndexes[0] = matchedIdx
+	if isTiCIIdx {
+		ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedFunc, pbColumns, colNames)
+		return nil
+	}
+	return ds.buildTiDBFTSPathAndCleanUp(matchedIdx, matchedFunc, pbColumns, colNames)
+}
+
+func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
+	index *model.IndexInfo,
+	ftsFunc *expression.ScalarFunction,
+	pbColumns []*tipb.ColumnInfo,
+	columnNames []string,
+) {
+	// Fulltext index must be used. So we prune all other possible access paths.
+	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+		return path.Index != nil && path.Index.ID != index.ID
+	})
+	// Cleanup tidb fts.
+	ds.FtsIndexes = nil
+	// Build tipb protobuf info for the matched index.
+	ds.PossibleAccessPaths[0].FtsQueryInfo = &tipb.FTSQueryInfo{
+		QueryType:      tipb.FTSQueryType_FTSQueryTypeFilter,
+		IndexId:        index.ID,
+		Columns:        pbColumns,
+		ColumnNames:    columnNames,
+		QueryText:      ftsFunc.GetArgs()[0].(*expression.Constant).Value.GetString(),
+		QueryTokenizer: string(index.FullTextInfo.ParserType),
+	}
+}
+
+func (ds *DataSource) buildTiDBFTSPathAndCleanUp(
+	index *model.IndexInfo,
+	ftsFunc *expression.ScalarFunction,
+	pbColumns []*tipb.ColumnInfo,
+	columnNames []string,
+) error {
+	// Fulltext index must be used. So we prune all other possible access paths.
+	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+		return path.StoreType == kv.TiKV
+	})
+	if len(ds.PossibleAccessPaths) == 0 {
+		return plannererrors.ErrWrongUsage.FastGen("Full text search can only be executed in a columnar storage")
+	}
+	// Build tidb protobuf info for the matched index.
+	ds.PossibleAccessPaths[0].FtsQueryInfo = &tipb.FTSQueryInfo{
+		QueryType:      tipb.FTSQueryType_FTSQueryTypeFilter,
+		IndexId:        index.ID,
+		Columns:        pbColumns,
+		ColumnNames:    columnNames,
+		QueryText:      ftsFunc.GetArgs()[0].(*expression.Constant).Value.GetString(),
+		QueryTokenizer: string(index.FullTextInfo.ParserType),
+	}
+	ds.FtsIndexes[0] = index
 	ds.FtsIndexes = ds.FtsIndexes[:1]
-	ds.PushedDownConds = slices.Delete(ds.PushedDownConds, matchedCondPos, matchedCondPos+1)
 	ds.MatchedFTS = &tipb.FTSQueryInfo{
 		QueryType:      tipb.FTSQueryType_FTSQueryTypeFilter,
-		IndexId:        matchedIdx.ID,
+		IndexId:        index.ID,
 		Columns:        pbColumns,
-		ColumnNames:    colNames,
-		QueryText:      matchedFunc.GetArgs()[0].(*expression.Constant).Value.GetString(),
-		QueryTokenizer: string(matchedIdx.FullTextInfo.ParserType),
+		ColumnNames:    columnNames,
+		QueryText:      ftsFunc.GetArgs()[0].(*expression.Constant).Value.GetString(),
+		QueryTokenizer: string(index.FullTextInfo.ParserType),
 	}
 	return nil
 }
