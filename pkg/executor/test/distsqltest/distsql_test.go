@@ -127,6 +127,7 @@ func TestDistSQLSharedKVRequestRace(t *testing.T) {
 	}
 
 	replicaReadModes := []string{
+		"leader",
 		"follower",
 		"leader-and-follower",
 		"closest-adaptive",
