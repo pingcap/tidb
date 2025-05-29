@@ -57,8 +57,7 @@ func RegisterMetrics() error {
 	}
 
 	if kerneltype.IsNextGen() {
-		registerMetricsForNextGen(cfg.KeyspaceName)
-		return nil
+		metrics.SetConstLabels("keyspace_name", cfg.KeyspaceName)
 	}
 
 	pdAddrs, _, _, err := tikvconfig.ParsePath("tikv://" + cfg.Path)
@@ -77,12 +76,15 @@ func RegisterMetrics() error {
 	}
 	defer pdCli.Close()
 
-	keyspaceMeta, err := getKeyspaceMeta(pdCli, cfg.KeyspaceName)
-	if err != nil {
-		return err
+	if kerneltype.IsNextGen() {
+		registerMetrics(nil) // metrics' const label already set
+	} else {
+		keyspaceMeta, err := getKeyspaceMeta(pdCli, cfg.KeyspaceName)
+		if err != nil {
+			return err
+		}
+		registerMetrics(keyspaceMeta)
 	}
-
-	registerMetrics(keyspaceMeta)
 	return nil
 }
 
@@ -94,8 +96,7 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 	}
 
 	if kerneltype.IsNextGen() {
-		registerMetricsForNextGen(keyspaceName)
-		return nil
+		metrics.SetConstLabels("keyspace_name", keyspaceName)
 	}
 
 	timeoutSec := 10 * time.Second
@@ -110,12 +111,15 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 	}
 	defer pdCli.Close()
 
-	keyspaceMeta, err := getKeyspaceMeta(pdCli, keyspaceName)
-	if err != nil {
-		return err
+	if kerneltype.IsNextGen() {
+		registerMetrics(nil) // metrics' const label already set
+	} else {
+		keyspaceMeta, err := getKeyspaceMeta(pdCli, keyspaceName)
+		if err != nil {
+			return err
+		}
+		registerMetrics(keyspaceMeta)
 	}
-
-	registerMetrics(keyspaceMeta)
 	return nil
 }
 
@@ -139,14 +143,6 @@ func initMetrics() {
 	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
 		unimetrics.RegisterMetrics()
 	}
-}
-
-// registerMetricsForNextGen registers metrics for next gen.
-func registerMetricsForNextGen(keyspaceName string) {
-	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
-		metrics.SetConstLabels("keyspace_name", keyspaceName)
-	}
-	initMetrics()
 }
 
 func registerMetrics(keyspaceMeta *keyspacepb.KeyspaceMeta) {
