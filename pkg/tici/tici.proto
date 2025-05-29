@@ -1,20 +1,6 @@
-// Copyright 2025 PingCAP, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 syntax = "proto3";
 
-package indexer;
+package tici;
 
 option go_package = ".";
 
@@ -143,6 +129,16 @@ message GetShardLocalCacheResponse {
   repeated ShardLocalCacheInfo shard_local_cache_infos = 2;
 }
 
+message DebugGetShardManifestRequest {
+  int64 table_id = 1;
+  int64 index_id = 2;
+  KeyRange keyrange = 3;
+}
+
+message DebugGetShardManifestResponse {
+  repeated FragMeta frag_metas = 1;
+}
+
 service MetaService {
   // Maintains heartbeat from worker nodes(such as writers, compactors) to meta service.
   rpc WorkerNodeHeartbeat(WorkerNodeHeartbeatRequest) returns (WorkerNodeHeartbeatResponse);
@@ -164,4 +160,7 @@ service MetaService {
 
   // Get shard local cache information
   rpc GetShardLocalCacheInfo(GetShardLocalCacheRequest) returns (GetShardLocalCacheResponse);
+
+  // Debug usage: get shard manifest from meta service writer
+  rpc DebugGetShardManifest(DebugGetShardManifestRequest) returns (DebugGetShardManifestResponse);
 }
