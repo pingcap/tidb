@@ -21,9 +21,9 @@ import (
 	"sync/atomic"
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-<<<<<<< HEAD:distsql/request_builder.go
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -35,25 +35,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-=======
-	"github.com/pingcap/tidb/pkg/ddl/placement"
-	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
-	"github.com/pingcap/tidb/pkg/errctx"
-	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/ranger"
->>>>>>> 1ff40045051 (executor: fix data race because of using shared KV requests (#61376)):pkg/distsql/request_builder.go
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -63,14 +47,9 @@ import (
 // Notice a builder can only be used once unless it returns an error in test.
 type RequestBuilder struct {
 	kv.Request
-<<<<<<< HEAD:distsql/request_builder.go
-	is  infoschema.InfoSchema
-	err error
-=======
-	is   infoschema.MetaOnlyInfoSchema
+	is   infoschema.InfoSchema
 	err  error
 	used bool
->>>>>>> 1ff40045051 (executor: fix data race because of using shared KV requests (#61376)):pkg/distsql/request_builder.go
 
 	// When SetDAGRequest is called, builder will also this field.
 	dag *tipb.DAGRequest

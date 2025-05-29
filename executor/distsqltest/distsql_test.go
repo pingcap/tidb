@@ -20,16 +20,10 @@ import (
 	"strings"
 	"testing"
 
-<<<<<<< HEAD:executor/distsqltest/distsql_test.go
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-=======
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/testkit"
->>>>>>> 1ff40045051 (executor: fix data race because of using shared KV requests (#61376)):pkg/executor/test/distsqltest/distsql_test.go
 	"github.com/stretchr/testify/require"
 )
 

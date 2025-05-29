@@ -371,29 +371,9 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						return
 					}
 				}
-<<<<<<< HEAD:executor/index_merge_reader.go
-
-				var builder distsql.RequestBuilder
-				builder.SetDAGRequest(e.dagPBs[workID]).
-					SetStartTS(e.startTS).
-					SetDesc(e.descs[workID]).
-					SetKeepOrder(e.keepOrder).
-					SetTxnScope(e.txnScope).
-					SetReadReplicaScope(e.readReplicaScope).
-					SetIsStaleness(e.isStaleness).
-					SetFromSessionVars(e.ctx.GetSessionVars()).
-					SetMemTracker(e.memTracker).
-					SetPaging(e.paging).
-					SetFromInfoSchema(e.ctx.GetInfoSchema()).
-					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.partialNetDataSizes[workID])).
-					SetConnID(e.ctx.GetSessionVars().ConnectionID)
 
 				tps := worker.getRetTpsForIndexScan(e.handleCols, false)
 				pids := make([]int64, 0, len(keyRanges))
-=======
-				worker.batchSize = CalculateBatchSize(int(is.StatsCount()), e.MaxChunkSize(), worker.maxBatchSize)
-				tps := worker.getRetTpsForIndexScan(e.handleCols)
->>>>>>> 1ff40045051 (executor: fix data race because of using shared KV requests (#61376)):pkg/executor/index_merge_reader.go
 				results := make([]distsql.SelectResult, 0, len(keyRanges))
 				defer func() {
 					// To make sure SelectResult.Close() is called even got panic in fetchHandles().
@@ -421,20 +401,13 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						SetTxnScope(e.txnScope).
 						SetReadReplicaScope(e.readReplicaScope).
 						SetIsStaleness(e.isStaleness).
-						SetFromSessionVars(e.Ctx().GetDistSQLCtx()).
+						SetFromSessionVars(e.ctx.GetSessionVars()).
 						SetMemTracker(e.memTracker).
-						SetFromInfoSchema(e.Ctx().GetInfoSchema()).
-						SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx().GetDistSQLCtx(), &builder.Request, e.partialNetDataSizes[workID])).
-						SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
+						SetPaging(e.paging).
+						SetFromInfoSchema(e.ctx.GetInfoSchema()).
+						SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.partialNetDataSizes[workID])).
+						SetConnID(e.ctx.GetSessionVars().ConnectionID)
 
-					if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
-						// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
-						// initial batchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/54066
-						builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
-						if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
-							builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
-						}
-					}
 					// init kvReq and worker for this partition
 					// The key ranges should be ordered.
 					slices.SortFunc(keyRange, func(i, j kv.KeyRange) int {
