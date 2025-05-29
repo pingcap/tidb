@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -61,8 +62,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -154,6 +157,14 @@ var (
 		linesTerminatedByOption:   {},
 		skipRowsOption:            {},
 		splitFileOption:           {},
+	}
+
+	// we only support global sort on nextgen cluster when SEM enabled, and doesn't
+	// allow set separate cloud storage URI.
+	disallowedOptionsOfNextGen = map[string]struct{}{
+		diskQuotaOption:       {},
+		maxWriteSpeedOption:   {},
+		cloudStorageURIOption: {},
 	}
 
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
@@ -607,6 +618,22 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		specifiedOptions[opt.Name] = opt
 	}
 	p.specifiedOptions = specifiedOptions
+
+	if kerneltype.IsNextGen() && sem.IsEnabled() {
+		if p.DataSourceType == DataSourceTypeQuery {
+			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from select")
+		}
+		// we put the check here, not in planner, to make sure the cloud_storage_uri
+		// won't change in between.
+		if p.IsLocalSort() {
+			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with local sort")
+		}
+		for k := range disallowedOptionsOfNextGen {
+			if _, ok := specifiedOptions[k]; ok {
+				return exeerrors.ErrLoadDataUnsupportedOption.GenWithStackByArgs(k, "nextgen kernel")
+			}
+		}
+	}
 
 	// DataFormatAuto means format is unspecified from stmt,
 	// will validate below CSV options when init data files.
