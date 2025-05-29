@@ -168,7 +168,7 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragm
 		frag.MPPSink.SetTargetTasks([]*kv.MPPTask{tidbTask})
 		frag.IsRoot = true
 	}
-	e.fixDuplicatedTimesForCTE(frags)
+	e.fixDuplicatedTimesForCTE(e.frags)
 	return e.frags, nil
 }
 
