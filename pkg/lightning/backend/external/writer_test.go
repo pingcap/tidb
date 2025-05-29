@@ -136,7 +136,7 @@ func TestWriter(t *testing.T) {
 	})
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test/0/0", memStore, 0, bufSize)
+	kvReader, err := NewKVReader(ctx, "/test/0/0", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
 		key, value, err := kvReader.nextKV()
@@ -549,7 +549,7 @@ func TestGetAdjustedIndexBlockSize(t *testing.T) {
 
 func readKVFile(t *testing.T, store storage.ExternalStorage, filename string) []kvPair {
 	t.Helper()
-	reader, err := newKVReader(context.Background(), filename, store, 0, units.KiB)
+	reader, err := NewKVReader(context.Background(), filename, store, 0, units.KiB)
 	require.NoError(t, err)
 	kvs := make([]kvPair, 0)
 	for {

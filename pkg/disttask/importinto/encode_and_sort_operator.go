@@ -159,7 +159,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 		// in case on network partition, 2 nodes might run the same subtask.
 		workerUUID := uuid.New().String()
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
-		indexWriterFn := func(indexID int64) *external.Writer {
+		indexWriterFn := func(indexID int64) (*external.Writer, error) {
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
@@ -171,7 +171,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 			// writer id for index: index/{indexID}/{workerID}
 			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
 			writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
-			return writer
+			return writer, nil
 		}
 
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
