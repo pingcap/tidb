@@ -70,6 +70,7 @@ import (
 	"github.com/tikv/pd/client/clients/router"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 )
 
@@ -145,7 +146,7 @@ type TableHandler struct {
 func NewTableHandler(tool *handler.TikvHandlerTool, op string) *TableHandler {
 	return &TableHandler{
 		TikvHandlerTool: tool,
-		pdClient:        tool.RegionCache.PDClient().WithCallerComponent("tikv-handler"),
+		pdClient:        tool.RegionCache.PDClient().WithCallerComponent(caller.TikvHandler),
 		op:              op,
 	}
 }
