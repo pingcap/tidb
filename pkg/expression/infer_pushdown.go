@@ -449,11 +449,6 @@ func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
 		return !(value&mask == mask)
 	}
 
-	if storeType != kv.TiFlash && name == ast.AggFuncApproxCountDistinct {
-		// Can not push down approx_count_distinct to other store except tiflash by now.
-		return false
-	}
-
 	return true
 }
 
