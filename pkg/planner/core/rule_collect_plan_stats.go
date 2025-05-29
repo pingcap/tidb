@@ -42,9 +42,6 @@ type CollectPredicateColumnsPoint struct{}
 func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL, "CollectPredicateColumnsPoint should not be called in restricted SQL mode")
-	if plan.SCtx().GetSessionVars().InRestrictedSQL {
-		return plan, planChanged, nil
-	}
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
 	syncLoadEnabled := syncWait > 0
 	predicateColumns, visitedPhysTblIDs, tid2pids, opNum := CollectColumnStatsUsage(plan)
