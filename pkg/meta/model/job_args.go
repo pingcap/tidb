@@ -1807,7 +1807,7 @@ func GetRefreshMetaArgs(job *Job) (*RefreshMetaArgs, error) {
 
 // AlterEngineAttributeArgs is the arguments for alter table placements ddl job.
 type AlterEngineAttributeArgs struct {
-	EngineAttribute *string `json:"engine_attribute,omitempty"`
+	EngineAttribute string `json:"engine_attribute,omitempty"`
 }
 
 func (a *AlterEngineAttributeArgs) getArgsV1(*Job) []any {

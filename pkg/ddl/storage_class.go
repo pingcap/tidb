@@ -19,12 +19,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -77,15 +77,26 @@ func BuildStorageClassSettingsFromJSON(input json.RawMessage) (*model.StorageCla
 
 	// Try parsing as a slice of objects
 	var defs []*model.StorageClassDef
-	if err1 := json.Unmarshal(input, &defs); err1 == nil {
-		return &model.StorageClassSettings{
-			Defs: defs,
-		}, nil
+	if err1 := json.Unmarshal(input, &defs); err1 != nil {
+		// If all parsing attempts fail, return an error
+		msg := fmt.Sprintf("invalid storage class def: '%-.192s'", input)
+		return nil, dbterror.ErrStorageClassInvalidSpec.GenWithStackByArgs(msg)
+	}
+	// Check duplicate NamesIn.
+	names := map[string]struct{}{}
+	for _, def := range defs {
+		for _, name := range def.NamesIn {
+			if _, ok := names[name]; ok {
+				msg := fmt.Sprintf("duplicate storage class name: '%-.192s'", input)
+				return nil, dbterror.ErrStorageClassInvalidSpec.GenWithStackByArgs(msg)
+			}
+			names[name] = struct{}{}
+		}
 	}
 
-	// If all parsing attempts fail, return an error
-	msg := fmt.Sprintf("invalid storage class def: '%-.192s'", input)
-	return nil, dbterror.ErrStorageClassInvalidSpec.GenWithStackByArgs(msg)
+	return &model.StorageClassSettings{
+		Defs: defs,
+	}, nil
 }
 
 func getStorageClassTierAsString(msg json.RawMessage) (model.StorageClassTier, error) {
@@ -174,11 +185,9 @@ PartitionLoop:
 				continue PartitionLoop
 			}
 
-			if len(def.NamesIn) > 0 {
-				if isPartitionMatchNamesIn(part, def.NamesIn) {
-					setStorageClassTierForPartition(tbInfo, part, def.Tier)
-					continue PartitionLoop
-				}
+			if slices.Contains(def.NamesIn, part.Name.L) {
+				setStorageClassTierForPartition(tbInfo, part, def.Tier)
+				continue PartitionLoop
 			}
 
 			// TODO: handle less than
@@ -189,15 +198,4 @@ PartitionLoop:
 	}
 
 	return nil
-}
-
-func isPartitionMatchNamesIn(part *model.PartitionDefinition, namesIn []string) bool {
-	intest.Assert(len(namesIn) > 0)
-
-	for _, name := range namesIn {
-		if part.Name.L == name {
-			return true
-		}
-	}
-	return false
 }

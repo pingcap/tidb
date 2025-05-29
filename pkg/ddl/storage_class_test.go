@@ -26,37 +26,44 @@ import (
 func TestBuildStorageClassSettingsFromJSON(t *testing.T) {
 	cases := []struct {
 		input    string
-		ok       bool
+		okParseEngineAttribute bool
+		okBuildStorageClass       bool
 		expected string
 	}{
 		{
 			input:    "",
-			ok:       true,
+			okParseEngineAttribute: true,
+			okBuildStorageClass:       true,
 			expected: `{"defs":[{"tier":"STANDARD", "names_in":null, "less_than":null, "values_in":null}]}`,
 		},
 		{
 			input:    `{"storage_class": "IA"}`,
-			ok:       true,
+			okParseEngineAttribute: true,
+			okBuildStorageClass:       true,
 			expected: `{"defs":[{"tier":"IA", "names_in":null, "less_than":null, "values_in":null}]}`,
 		},
 		{
 			input:    `{"storage_class": "ia"}`,
-			ok:       true,
+			okParseEngineAttribute: true,
+			okBuildStorageClass:       true,
 			expected: `{"defs":[{"tier":"IA", "names_in":null, "less_than":null, "values_in":null}]}`,
 		},
 		{
 			input:    `{"storage_class": "STANDARD"}`,
-			ok:       true,
+			okParseEngineAttribute: true,
+			okBuildStorageClass:       true,
 			expected: `{"defs":[{"tier":"STANDARD", "names_in":null, "less_than":null, "values_in":null}]}`,
 		},
 		{
 			input:    `{"storage_class": "standard"}`,
-			ok:       true,
+			okParseEngineAttribute: true,
+			okBuildStorageClass:       true,
 			expected: `{"defs":[{"tier":"STANDARD", "names_in":null, "less_than":null, "values_in":null}]}`,
 		},
 		{
 			input:    `{"storage_class": {"tier": "STANDARD", "names_in": ["p0", "p1"]}}`,
-			ok:       true,
+			okParseEngineAttribute: true,
+			okBuildStorageClass:       true,
 			expected: `{"defs":[{"tier":"STANDARD", "names_in":["p0", "p1"], "less_than":null, "values_in":null}]}`,
 		},
 		{
@@ -64,7 +71,8 @@ func TestBuildStorageClassSettingsFromJSON(t *testing.T) {
 						{"tier": "STANDARD", "names_in": ["p0", "p1"]},
 						{"tier": "IA", "names_in": ["p2", "p3"]}
 					]}`,
-			ok: true,
+			okParseEngineAttribute: true,
+			okBuildStorageClass: true,
 			expected: `{"defs":[
 							{"tier":"STANDARD", "names_in":["p0", "p1"], "less_than":null, "values_in":null},
 							{"tier":"IA", "names_in":["p2", "p3"], "less_than":null, "values_in":null}
@@ -72,28 +80,52 @@ func TestBuildStorageClassSettingsFromJSON(t *testing.T) {
 		},
 		{
 			input:    `{"storage_class": "INVALID"}`,
-			ok:       false,
+			okParseEngineAttribute: true,
+			okBuildStorageClass:       false,
 			expected: ``,
 		},
 		{
 			input:    `{"storage_class": "IA", "extra_field": "value"}`,
-			ok:       true,
+			okParseEngineAttribute: true,
+			okBuildStorageClass:       true,
 			expected: `{"defs":[{"tier":"IA", "names_in":null, "less_than":null, "values_in":null}]}`,
 		},
 		{
 			// Unknown fields in the storage class definition is not allowed.
 			input:    `{"storage_class": {"tier": "IA", "extra_field": "value"}}`,
-			ok:       false,
+			okParseEngineAttribute: true,
+			okBuildStorageClass:       false,
+			expected: ``,
+		},
+		{
+			// Error if names_in is duplicated.
+			input: `{"storage_class": [
+						{"tier": "STANDARD", "names_in": ["p0", "p1"]},
+						{"tier": "IA", "names_in": ["p0", "p3"]}
+					]}`,
+			okParseEngineAttribute: true,
+			okBuildStorageClass: false,
+			expected: ``,
+		},
+		{
+			// Error if JSON is invalid.
+			input: `IA`,
+			okParseEngineAttribute: false,
+			okBuildStorageClass: false,
 			expected: ``,
 		},
 	}
 
 	for _, cs := range cases {
 		attr, err := model.ParseEngineAttributeFromString(cs.input)
+		if !cs.okParseEngineAttribute {
+			require.Error(t, err, "input: %s", cs.input)
+			continue
+		}
 		require.NoError(t, err, "input: %s", cs.input)
 		require.NotNil(t, attr, "input: %s", cs.input)
 		settings, err := ddl.BuildStorageClassSettingsFromJSON(attr.StorageClass)
-		if !cs.ok {
+		if !cs.okBuildStorageClass {
 			require.Error(t, err, "input: %s", cs.input)
 			continue
 		}

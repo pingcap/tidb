@@ -34,20 +34,17 @@ func handleEngineAttributeForCreateTable(input string, tbInfo *model.TableInfo) 
 	// Keep the original string for SHOW CREATE TABLE.
 	tbInfo.EngineAttribute = input
 
-	if attr.StorageClass != nil {
-		settings, err := BuildStorageClassSettingsFromJSON(attr.StorageClass)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		logutil.DDLLogger().Info("create table with storage class settings",
-			zap.Int64("tableID", tbInfo.ID), zap.Any("settings", settings))
-
-		if err = BuildStorageClassForTable(tbInfo, settings); err != nil {
-			return errors.Trace(err)
-		}
+	settings, err := BuildStorageClassSettingsFromJSON(attr.StorageClass)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
+	logutil.DDLLogger().Info("create table with storage class settings",
+		zap.Int64("tableID", tbInfo.ID), zap.Any("settings", settings))
+
+	if err = BuildStorageClassForTable(tbInfo, settings); err != nil {
+		return errors.Trace(err)
+	}
 	// Handle other fields in the future.
 
 	return nil
@@ -80,7 +77,7 @@ func onModifyTableEngineAttribute(jobCtx *jobContext, job *model.Job) (ver int64
 		return ver, errors.Trace(err)
 	}
 
-	attr, err := model.ParseEngineAttributeFromString(*args.EngineAttribute)
+	attr, err := model.ParseEngineAttributeFromString(args.EngineAttribute)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -97,7 +94,7 @@ func onModifyTableEngineAttribute(jobCtx *jobContext, job *model.Job) (ver int64
 	}
 
 	// Keep the original string for SHOW CREATE TABLE.
-	tblInfo.EngineAttribute = *args.EngineAttribute
+	tblInfo.EngineAttribute = args.EngineAttribute
 
 	if err := onAlterTableStorageClassSettings(attr.StorageClass, tblInfo); err != nil {
 		job.State = model.JobStateCancelled

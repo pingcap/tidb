@@ -6767,7 +6767,7 @@ func (e *executor) AlterTableEngineAttribute(ctx sessionctx.Context, ident ast.I
 	}
 
 	args := &model.AlterEngineAttributeArgs{
-		EngineAttribute: &spec.EngineAttribute,
+		EngineAttribute: spec.EngineAttribute,
 	}
 
 	return e.doDDLJob2(ctx, job, args)
