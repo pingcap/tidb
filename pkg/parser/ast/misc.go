@@ -1559,20 +1559,6 @@ func (n *UserSpec) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// SecurityString formats the UserSpec without password information.
-func (n *UserSpec) SecurityString() string {
-	withPassword := false
-	if opt := n.AuthOpt; opt != nil {
-		if len(opt.AuthString) > 0 || len(opt.HashString) > 0 {
-			withPassword = true
-		}
-	}
-	if withPassword {
-		return fmt.Sprintf("{%s password = ***}", n.User)
-	}
-	return n.User.String()
-}
-
 type AuthTokenOrTLSOption struct {
 	Type  AuthTokenOrTLSOptionType
 	Value string
