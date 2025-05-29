@@ -35,6 +35,7 @@ import (
 	"github.com/tikv/pd/client/clients/gc"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/clients/tso"
+	"github.com/tikv/pd/client/constants"
 	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
 	sd "github.com/tikv/pd/client/servicediscovery"
@@ -60,9 +61,13 @@ type pdClient struct {
 }
 
 func newPDClient(pd *us.MockPD, addrs []string, keyspaceMeta *keyspacepb.KeyspaceMeta) *pdClient {
+	keyspaceID := constants.NullKeyspaceID
+	if keyspaceMeta != nil {
+		keyspaceID = keyspaceMeta.GetId()
+	}
 	return &pdClient{
 		MockPD:                pd,
-		ResourceManagerClient: infosync.NewMockResourceManagerClient(),
+		ResourceManagerClient: infosync.NewMockResourceManagerClient(keyspaceID),
 		serviceSafePoints:     make(map[string]uint64),
 		globalConfig:          make(map[string]string),
 		addrs:                 addrs,

@@ -21,7 +21,6 @@ go_library(
         "//pkg/ddl/placement",
         "//pkg/ddl/util",
         "//pkg/errno",
-        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/metrics",
