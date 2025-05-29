@@ -106,6 +106,12 @@ type FuncNode interface {
 type StmtNode interface {
 	Node
 	statement()
+	// SEMCommand generates a string that represents the command type of the statement.
+	// It's only used for Security Enforcement Mode (SEM) for now. If it's going to be
+	// re-used for other purposes, we may need to rename and give it a clearer definition.
+	//
+	// The function of this method is similar to `GetStmtLabel`, but it returns more detail.
+	SEMCommand() string
 }
 
 // DDLNode represents DDL statement node.
@@ -158,8 +164,6 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "AnalyzeTable"
 	case *BeginStmt:
 		return "Begin"
-	case *ChangeStmt:
-		return "Change"
 	case *CommitStmt:
 		return "Commit"
 	case *CompactTableStmt:
