@@ -732,3 +732,34 @@ Database
 INFORMATION_SCHEMA
 tmpdb
 create temporary table tmpdb.tmp(id int);
+use privilege__privileges;
+DROP TABLE IF EXISTS t, t1;
+CREATE TABLE t (x INT);
+INSERT INTO t VALUES (100);
+CREATE TABLE t1 (x INT);
+DROP USER IF EXISTS foo;
+CREATE USER foo;
+GRANT SELECT ON *.* TO foo;
+SELECT * FROM t FOR UPDATE;
+Error 1142 (42000): SELECT with locking clause command denied to user 'foo'@'%' for table 't'
+GRANT DELETE ON privilege__privileges.t TO foo;
+SELECT * FROM t FOR UPDATE;
+x
+100
+SELECT * FROM t, t1 where t.x = t1.x FOR UPDATE;
+Error 1142 (42000): SELECT with locking clause command denied to user 'foo'@'%' for table 't1'
+SELECT * FROM t, t1 where t.x = t1.x FOR UPDATE OF t;
+x	x
+use privilege__privileges;
+DROP USER IF EXISTS foo;
+CREATE USER foo;
+DROP VIEW IF EXISTS v, v1;
+GRANT SELECT ON privilege__privileges.* TO foo;
+CREATE OR REPLACE VIEW v AS SELECT 1;
+Error 1142 (42000): CREATE VIEW command denied to user 'foo'@'%' for table 'v'
+GRANT CREATE VIEW ON privilege__privileges.* TO foo;
+CREATE VIEW v AS SELECT 1;
+CREATE OR REPLACE VIEW v AS SELECT 1, 1;
+Error 1142 (42000): DROP command denied to user 'foo'@'%' for table 'v'
+CREATE OR REPLACE VIEW v1 AS SELECT 1, 1;
+Error 1142 (42000): DROP command denied to user 'foo'@'%' for table 'v1'

@@ -100,6 +100,7 @@ func (p *LogicalPlan) writeExternalPlanMeta(planCtx planner.PlanCtx, specs []pla
 	if err != nil {
 		return err
 	}
+	defer controller.Close()
 	if err := controller.InitDataFiles(planCtx.Ctx); err != nil {
 		return err
 	}
@@ -313,6 +314,7 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 		if err2 != nil {
 			return nil, err2
 		}
+		defer controller.Close()
 		if err2 = controller.InitDataFiles(pCtx.Ctx); err2 != nil {
 			return nil, err2
 		}
@@ -352,7 +354,6 @@ func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
 }
 
 func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
-	step := external.MergeSortFileCountStep
 	result := make([]planner.PipelineSpec, 0, 16)
 
 	ctx := planCtx.Ctx
@@ -360,6 +361,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 	if err != nil {
 		return nil, err
 	}
+	defer controller.Close()
 	if err := controller.InitDataStore(ctx); err != nil {
 		return nil, err
 	}
@@ -376,16 +378,16 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 			continue
 		}
 		dataFiles := kvMeta.GetDataFiles()
-		length := len(dataFiles)
-		for start := 0; start < length; start += step {
-			end := start + step
-			if end > length {
-				end = length
-			}
+		nodeCnt := max(1, planCtx.ExecuteNodesCnt)
+		dataFilesGroup, err := external.DivideMergeSortDataFiles(dataFiles, nodeCnt, planCtx.ThreadCnt)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, files := range dataFilesGroup {
 			result = append(result, &MergeSortSpec{
 				MergeSortStepMeta: &MergeSortStepMeta{
 					KVGroup:   kvGroup,
-					DataFiles: dataFiles[start:end],
+					DataFiles: files,
 				},
 			})
 		}
@@ -399,6 +401,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	if err2 != nil {
 		return nil, err2
 	}
+	defer controller.Close()
 	if err2 = controller.InitDataStore(ctx); err2 != nil {
 		return nil, err2
 	}

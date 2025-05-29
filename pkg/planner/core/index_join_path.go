@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -628,6 +629,33 @@ func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoi
 		}
 	}
 	return keyOff2IdxOff, newOuterJoinKeys, ranges, chosenPath, true
+}
+
+// getBestIndexJoinInnerTaskByProp tries to build the best inner child task from ds for index join by the given property.
+func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp) (base.Task, int64, error) {
+	// the below code is quite similar from the original logic
+	// reason1: we need to leverage original indexPathInfo down related logic to build constant range for index plan.
+	// reason2: the ranges from TS and IS couldn't be directly used to derive the stats' estimation, it's not real.
+	// reason3: skyline pruning should not prune the possible index path which could feel the runtime EQ access conditions.
+	//
+	// here we build TableScan(TS) and IndexScan(IS) separately according to different index join prop is for we couldn't decide
+	// which one as the copTask here is better, some more possible upper attached operator cost should be
+	// considered, besides the row count, double reader cost for index lookup should also be considered as
+	// a whole, so we leave the cost compare for index join itself just like what it was before.
+	var innerCopTask base.Task
+	if prop.IndexJoinProp.TableRangeScan {
+		innerCopTask = buildDataSource2TableScanByIndexJoinProp(ds, prop)
+	} else {
+		innerCopTask = buildDataSource2IndexScanByIndexJoinProp(ds, prop)
+	}
+	if innerCopTask.Invalid() {
+		return base.InvalidTask, 0, nil
+	}
+	planCounter.Dec(1)
+	if prop.TaskTp == property.RootTaskType {
+		return innerCopTask.ConvertToRootTask(ds.SCtx()), 1, nil
+	}
+	return innerCopTask, 1, nil
 }
 
 // getBestIndexJoinPathResultByProp tries to iterate all possible access paths of the inner child and builds

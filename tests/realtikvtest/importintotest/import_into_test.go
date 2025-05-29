@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
@@ -361,13 +362,13 @@ func (s *mockGCSSuite) TestGeneratedColumnsAndTSVFile() {
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
-	s.tk.MustExec("delete from t_gen1")
+	s.tk.MustExec("truncate table t_gen1")
 
 	// Specify the column, this should also work.
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
-	s.tk.MustExec("delete from t_gen1")
+	s.tk.MustExec("truncate table t_gen1")
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a,@1)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
@@ -377,13 +378,13 @@ func (s *mockGCSSuite) TestGeneratedColumnsAndTSVFile() {
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("3 2", "4 3"))
-	s.tk.MustExec(`delete from t_gen2`)
+	s.tk.MustExec(`truncate table t_gen2`)
 
 	// Specify the column b
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(b)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("2 1", "3 2"))
-	s.tk.MustExec(`delete from t_gen2`)
+	s.tk.MustExec(`truncate table t_gen2`)
 
 	// Specify the column a
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(a)
@@ -498,18 +499,26 @@ func (s *mockGCSSuite) TestLoadSQLDump() {
 
 	content := `insert into tbl values (1, 'a'), (2, 'b');`
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load-parquet", Name: "p"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load-parquet", Name: "p.sql"},
 		Content:     []byte(content),
 	})
 	tempDir := s.T().TempDir()
 	s.NoError(os.WriteFile(path.Join(tempDir, "test.sql"), []byte(content), 0o644))
 
-	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-parquet/p?endpoint=%s' FORMAT 'SQL';`, gcsEndpoint)
+	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-parquet/p.sql?endpoint=%s' FORMAT 'SQL';`, gcsEndpoint)
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
+	s.tk.MustExec("TRUNCATE TABLE load_csv.t")
+	sql = fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-parquet/p.sql?endpoint=%s';`, gcsEndpoint)
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
 
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 	sql = fmt.Sprintf(`IMPORT INTO load_csv.t FROM '%s' FORMAT 'SQL';`, path.Join(tempDir, "test.sql"))
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
+	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
+	sql = fmt.Sprintf(`IMPORT INTO load_csv.t FROM '%s';`, path.Join(tempDir, "test.sql"))
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
 }
@@ -682,14 +691,17 @@ func (s *mockGCSSuite) TestOtherCharset() {
 }
 
 func (s *mockGCSSuite) TestMaxWriteSpeed() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("we don't need to limit write speed with next-gen")
+	}
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_test_write_speed;")
 	s.tk.MustExec("CREATE DATABASE load_test_write_speed;")
 	s.tk.MustExec(`CREATE TABLE load_test_write_speed.t(a int, b int)`)
 
 	lineCount := 1000
 	data := make([]byte, 0, 1<<13)
-	for i := 0; i < lineCount; i++ {
-		data = append(data, []byte(fmt.Sprintf("%d,%d\n", i, i))...)
+	for i := range lineCount {
+		data = append(data, fmt.Appendf(nil, "%d,%d\n", i, i)...)
 	}
 
 	s.server.CreateObject(fakestorage.Object{
@@ -1154,14 +1166,17 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 }
 
 func (s *mockGCSSuite) TestDiskQuota() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("disk quota will cause range overlap, tikv-worker cannot handle it right now")
+	}
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_test_disk_quota;")
 	s.tk.MustExec("CREATE DATABASE load_test_disk_quota;")
 	s.tk.MustExec(`CREATE TABLE load_test_disk_quota.t(a int, b int)`)
 
 	lineCount := 10000
 	data := make([]byte, 0, 1<<13)
-	for i := 0; i < lineCount; i++ {
-		data = append(data, []byte(fmt.Sprintf("%d,%d\n", i, i))...)
+	for i := range lineCount {
+		data = append(data, fmt.Appendf(nil, "%d,%d\n", i, i)...)
 	}
 
 	s.server.CreateObject(fakestorage.Object{
@@ -1196,8 +1211,8 @@ func (s *mockGCSSuite) TestAnalyze() {
 	s.tk.MustExec("create table load_data.analyze_table(a int, b int, c int, index idx_ac(a,c), index idx_b(b))")
 	lineCount := 2000
 	data := make([]byte, 0, 1<<13)
-	for i := 0; i < lineCount; i++ {
-		data = append(data, []byte(fmt.Sprintf("1,%d,1\n", i))...)
+	for i := range lineCount {
+		data = append(data, fmt.Appendf(nil, "1,%d,1\n", i)...)
 	}
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "analyze-1.tsv"},

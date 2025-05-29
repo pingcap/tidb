@@ -316,6 +316,11 @@ error = '''
 stream task already exists
 '''
 
+["BR:Stream:ErrStreamLogTaskHasNoStorage"]
+error = '''
+stream task has no storage
+'''
+
 ["Lighting:Restore:ErrChecksumMismatch"]
 error = '''
 checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)
@@ -469,6 +474,11 @@ region not found
 ["Lightning:KV:ServerIsBusy"]
 error = '''
 server is busy
+'''
+
+["Lightning:KV:StoreDiskFull"]
+error = '''
+store disk full
 '''
 
 ["Lightning:Loader:ErrInvalidSchemaFile"]
@@ -1986,6 +1996,11 @@ error = '''
 Delete can not find column %s for table %s
 '''
 
+["executor:8179"]
+error = '''
+Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -2404,6 +2419,11 @@ Table '%s' from one of the %ss cannot be used in %s
 ["planner:1288"]
 error = '''
 The target table %-.100s of the %s is not updatable
+'''
+
+["planner:1305"]
+error = '''
+%s %s does not exist
 '''
 
 ["planner:1345"]

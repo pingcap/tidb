@@ -59,7 +59,7 @@ func TestCursorFetchErrorInFetch(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int, payload BLOB)")
 	payload := make([]byte, 512)
-	for i := 0; i < 2048; i++ {
+	for i := range 2048 {
 		rand.Read(payload)
 		tk.MustExec("insert into t values (?, ?)", i, payload)
 	}
@@ -185,7 +185,7 @@ func runTestConcurrentExecuteAndFetch(t *testing.T, lazy bool) {
 	_, err = conn.ExecContext(context.Background(), "create table t1(id int primary key, v int)", nil)
 	require.NoError(t, err)
 	rowCount := 1000
-	for i := 0; i < rowCount; i++ {
+	for i := range rowCount {
 		_, err = conn.ExecContext(context.Background(), fmt.Sprintf("insert into t1 values(%d, %d)", i, i), nil)
 		require.NoError(t, err)
 	}
@@ -260,7 +260,7 @@ func TestSerialLazyExecuteAndFetch(t *testing.T) {
 	_, err = conn.ExecContext(context.Background(), "create table t1(id int primary key, v int)", nil)
 	require.NoError(t, err)
 	rowCount := 1000
-	for i := 0; i < rowCount; i++ {
+	for i := range rowCount {
 		_, err = conn.ExecContext(context.Background(), fmt.Sprintf("insert into t1 values(%d, %d)", i, i), nil)
 		require.NoError(t, err)
 	}
@@ -323,7 +323,7 @@ func TestLazyExecuteProjection(t *testing.T) {
 	_, err = conn.ExecContext(context.Background(), "create table t1(id int primary key, v int)", nil)
 	require.NoError(t, err)
 	rowCount := 1000
-	for i := 0; i < rowCount; i++ {
+	for i := range rowCount {
 		_, err = conn.ExecContext(context.Background(), fmt.Sprintf("insert into t1 values(%d, %d)", i, i), nil)
 		require.NoError(t, err)
 	}
@@ -385,7 +385,7 @@ func TestLazyExecuteSelection(t *testing.T) {
 	_, err = conn.ExecContext(context.Background(), "create table t1(id int primary key, v int)", nil)
 	require.NoError(t, err)
 	rowCount := 1000
-	for i := 0; i < rowCount; i++ {
+	for i := range rowCount {
 		_, err = conn.ExecContext(context.Background(), fmt.Sprintf("insert into t1 values(%d, %d)", i, i), nil)
 		require.NoError(t, err)
 	}
@@ -447,7 +447,7 @@ func TestLazyExecuteWithParam(t *testing.T) {
 	_, err = conn.ExecContext(context.Background(), "create table t1(id int primary key, v int)", nil)
 	require.NoError(t, err)
 	rowCount := 1000
-	for i := 0; i < rowCount; i++ {
+	for i := range rowCount {
 		_, err = conn.ExecContext(context.Background(), fmt.Sprintf("insert into t1 values(%d, %d)", i, i), nil)
 		require.NoError(t, err)
 	}
@@ -531,7 +531,7 @@ func TestCursorExceedQuota(t *testing.T) {
 	_, err = conn.ExecContext(context.Background(), "CREATE TABLE `t1` (`c1` varchar(100));", nil)
 	require.NoError(t, err)
 	rowCount := 1000
-	for i := 0; i < rowCount; i++ {
+	for range rowCount {
 		_, err = conn.ExecContext(context.Background(), "insert into t1 (c1) values ('201801');", nil)
 		require.NoError(t, err)
 	}

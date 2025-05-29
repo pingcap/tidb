@@ -92,7 +92,7 @@ func TestStoreGlobalConfig(t *testing.T) {
 	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "set @@global.tidb_source_id=2;")
 	require.NoError(t, err)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		time.Sleep(100 * time.Millisecond)
 		client :=
 			store.(kv.StorageWithPD).GetPDClient()

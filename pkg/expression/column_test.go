@@ -109,7 +109,7 @@ func TestColumnHashCode(t *testing.T) {
 
 func TestColumn2Expr(t *testing.T) {
 	cols := make([]*Column, 0, 5)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		cols = append(cols, &Column{UniqueID: int64(i)})
 	}
 
@@ -168,7 +168,7 @@ func TestColHybird(t *testing.T) {
 	ft := types.NewFieldType(mysql.TypeBit)
 	col := &Column{RetType: ft, Index: 0}
 	input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		num, err := types.ParseBitStr(fmt.Sprintf("0b%b", i))
 		require.NoError(t, err)
 		input.AppendBytes(0, num)
@@ -196,7 +196,7 @@ func TestColHybird(t *testing.T) {
 	ft = types.NewFieldType(mysql.TypeEnum)
 	col.RetType = ft
 	input = chunk.New([]*types.FieldType{ft}, 1024, 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		input.AppendEnum(0, types.Enum{Name: fmt.Sprintf("%v", i), Value: uint64(i)})
 	}
 	result = chunk.NewColumn(types.NewFieldType(mysql.TypeString), 1024)
@@ -213,7 +213,7 @@ func TestColHybird(t *testing.T) {
 	ft = types.NewFieldType(mysql.TypeSet)
 	col.RetType = ft
 	input = chunk.New([]*types.FieldType{ft}, 1024, 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		input.AppendSet(0, types.Set{Name: fmt.Sprintf("%v", i), Value: uint64(i)})
 	}
 	result = chunk.NewColumn(types.NewFieldType(mysql.TypeString), 1024)

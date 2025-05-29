@@ -122,6 +122,19 @@ type MPPPartitionColumn struct {
 	CollateID int32
 }
 
+// ResolveIndices resolve index for MPPPartitionColumn
+func (partitionCol *MPPPartitionColumn) ResolveIndices(schema *expression.Schema) (*MPPPartitionColumn, error) {
+	newColExpr, err := partitionCol.Col.ResolveIndices(schema)
+	if err != nil {
+		return nil, err
+	}
+	newCol, _ := newColExpr.(*expression.Column)
+	return &MPPPartitionColumn{
+		Col:       newCol,
+		CollateID: partitionCol.CollateID,
+	}, nil
+}
+
 // Clone makes a copy of MPPPartitionColumn.
 func (partitionCol *MPPPartitionColumn) Clone() *MPPPartitionColumn {
 	return &MPPPartitionColumn{
@@ -273,6 +286,11 @@ type IndexJoinRuntimeProp struct {
 	// deeper side like through join, the deeper DS's countAfterAccess should be
 	// thought twice.
 	AvgInnerRowCnt float64
+	// since tableRangeScan and indexRangeScan can't be told which one is better at
+	// copTask phase because of the latter attached operators into cop and the single
+	// and double reader cost consideration. Therefore, we introduce another bool to
+	// indicate prefer tableRangeScan or indexRangeScan each at a time.
+	TableRangeScan bool
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -474,6 +492,11 @@ func (p *PhysicalProperty) HashCode() []byte {
 			p.hashcode = append(p.hashcode, col.HashCode()...)
 		}
 		p.hashcode = codec.EncodeFloat(p.hashcode, p.IndexJoinProp.AvgInnerRowCnt)
+		if p.IndexJoinProp.TableRangeScan {
+			p.hashcode = codec.EncodeInt(p.hashcode, 1)
+		} else {
+			p.hashcode = codec.EncodeInt(p.hashcode, 0)
+		}
 	}
 	return p.hashcode
 }
@@ -495,6 +518,8 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionCols:      p.MPPPartitionCols,
 		RejectSort:            p.RejectSort,
 		CTEProducerStatus:     p.CTEProducerStatus,
+		// we default not to clone basic indexJoinProp by default.
+		// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
 	}
 	return prop
 }

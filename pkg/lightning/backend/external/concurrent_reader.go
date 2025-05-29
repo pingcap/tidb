@@ -65,7 +65,7 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 
 	ret := make([][]byte, 0, r.concurrency)
 	eg := errgroup.Group{}
-	for i := 0; i < r.concurrency; i++ {
+	for i := range r.concurrency {
 		if r.offset >= r.fileSize {
 			break
 		}

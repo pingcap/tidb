@@ -36,6 +36,10 @@ import (
 )
 
 func TestIsRetryableError(t *testing.T) {
+	require.True(t, IsRetryableError(&url.Error{}))
+	require.True(t, IsRetryableError(&url.Error{Err: io.EOF}))
+	require.False(t, IsRetryableError(&url.Error{Err: context.Canceled}))
+
 	require.False(t, IsRetryableError(context.Canceled))
 	require.False(t, IsRetryableError(context.DeadlineExceeded))
 	require.True(t, IsRetryableError(ErrWriteTooSlow))
@@ -43,6 +47,7 @@ func TestIsRetryableError(t *testing.T) {
 	require.False(t, IsRetryableError(&net.AddrError{}))
 	require.False(t, IsRetryableError(&net.DNSError{}))
 	require.True(t, IsRetryableError(&net.DNSError{IsTimeout: true}))
+	require.True(t, IsRetryableError(&net.DNSError{IsTemporary: true}))
 
 	// kv errors
 	require.True(t, IsRetryableError(ErrKVNotLeader))
@@ -59,6 +64,7 @@ func TestIsRetryableError(t *testing.T) {
 	require.True(t, IsRetryableError(ErrKVReadIndexNotReady.GenWithStack("test")))
 	require.True(t, IsRetryableError(ErrKVIngestFailed.GenWithStack("test")))
 	require.True(t, IsRetryableError(ErrKVRaftProposalDropped.GenWithStack("test")))
+	require.False(t, IsRetryableError(ErrKVDiskFull.GenWithStack("test")))
 
 	// tidb error
 	require.True(t, IsRetryableError(drivererr.ErrRegionUnavailable))

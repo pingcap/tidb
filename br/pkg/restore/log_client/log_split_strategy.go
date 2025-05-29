@@ -36,7 +36,7 @@ func NewLogSplitStrategy(
 	skipMap := NewLogFilesSkipMap()
 	if useCheckpoint {
 		t, err := logCheckpointMetaManager.LoadCheckpointData(
-			ctx, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
+			ctx, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) error {
 				for tableID, foffs := range off.Foffs {
 					// filter out the checkpoint data of dropped table
 					if _, exists := downstreamIdset[tableID]; exists {
@@ -45,6 +45,7 @@ func NewLogSplitStrategy(
 						}
 					}
 				}
+				return nil
 			})
 
 		if err != nil {

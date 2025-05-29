@@ -2563,6 +2563,8 @@ disconnect conn1;
 disconnect conn2;
 set global tidb_txn_mode=pessimistic;
 
+select 1 for update;
+
 # TestSelectForUpdateOf
 drop table if exists t, t1;
 create table t (i int);

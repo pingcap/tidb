@@ -115,7 +115,7 @@ func (a *recordSet) Fields() []*resolve.ResultField {
 func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, defaultDB string) []*resolve.ResultField {
 	rfs := make([]*resolve.ResultField, 0, schema.Len())
 	defaultDBCIStr := ast.NewCIStr(defaultDB)
-	for i := 0; i < schema.Len(); i++ {
+	for i := range schema.Len() {
 		dbName := names[i].DBName
 		if dbName.L == "" && names[i].TblName.L != "" {
 			dbName = defaultDBCIStr
@@ -329,6 +329,11 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 			exec.Recreated(pointGetPlan, a.Ctx)
 			a.PsStmt.PointGet.Executor = exec
 			executor = exec
+			// If reuses the executor, the executor build phase is skipped, and the txn will not be activated that
+			// caused `TxnCtx.StartTS` to be 0.
+			// So we should set the `TxnCtx.StartTS` manually here to make sure it is not 0
+			// to provide the right value for `@@tidb_last_txn_info` or other variables.
+			a.Ctx.GetSessionVars().TxnCtx.StartTS = startTs
 		}
 	}
 
@@ -562,12 +567,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			return nil, err
 		}
 		if len(switchGroupName) > 0 {
-			group, err := rm.ResourceGroupCtl.GetResourceGroup(switchGroupName)
-			if err != nil || group == nil {
-				logutil.BgLogger().Debug("invalid switch resource group", zap.String("switch-group-name", switchGroupName), zap.Error(err))
-			} else {
-				stmtCtx.ResourceGroupName = switchGroupName
-			}
+			stmtCtx.ResourceGroupName = switchGroupName
 		}
 	}
 	ctx = a.observeStmtBeginForTopSQL(ctx)
@@ -2164,6 +2164,12 @@ func (a *ExecStmt) updatePrevStmt() {
 }
 
 func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Context {
+	if !topsqlstate.TopSQLEnabled() && IsFastPlan(a.Plan) {
+		// To reduce the performance impact on fast plan.
+		// Drop them does not cause notable accuracy issue in TopSQL.
+		return ctx
+	}
+
 	vars := a.Ctx.GetSessionVars()
 	sc := vars.StmtCtx
 	normalizedSQL, sqlDigest := sc.SQLDigest()
@@ -2177,11 +2183,6 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 	}
 	stats := a.Ctx.GetStmtStats()
 	if !topsqlstate.TopSQLEnabled() {
-		// To reduce the performance impact on fast plan.
-		// Drop them does not cause notable accuracy issue in TopSQL.
-		if IsFastPlan(a.Plan) {
-			return ctx
-		}
 		// Always attach the SQL and plan info uses to catch the running SQL when Top SQL is enabled in execution.
 		if stats != nil {
 			stats.OnExecutionBegin(sqlDigestByte, planDigestByte)
