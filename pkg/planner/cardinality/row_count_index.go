@@ -70,7 +70,7 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 		if err == nil && sc.EnableOptimizerCETrace && idx != nil {
 			ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats-Pseudo", uint64(result))
 		}
-		return result, 0, err
+		return result, 0, 0, err
 	}
 	realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
@@ -119,7 +119,7 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
 			realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
-			count, _, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, realtimeCnt, modifyCount)
+			count, _, _, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, realtimeCnt, modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -183,7 +183,7 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 			// prefer index stats over column stats
 			if idxIDs, ok := coll.ColUniqueID2IdxIDs[colUniqueID]; ok && len(idxIDs) > 0 {
 				idxID := idxIDs[0]
-				count, _, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang})
+				count, _, _, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang})
 			} else {
 				count, _, err = GetRowCountByColumnRanges(sctx, coll, colUniqueID, []*ranger.Range{&rang})
 			}
@@ -231,12 +231,12 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		lb, err = codec.EncodeKey(sc.TimeZone(), nil, indexRange.LowVal...)
 		err = sc.HandleError(err)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
 		rb, err = codec.EncodeKey(sc.TimeZone(), nil, indexRange.HighVal...)
 		err = sc.HandleError(err)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
 		if debugTrace {
 			debugTraceStartEstimateRange(sctx, indexRange, lb, rb, totalCount)
@@ -298,7 +298,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 			var expBackoffSel, corrSel float64
 			expBackoffSel, corrSel, expBackoffSuccess, err = expBackoffEstimation(sctx, idx, coll, indexRange)
 			if err != nil {
-				return 0, 0, err
+				return 0, 0, 0, err
 			}
 			if expBackoffSuccess {
 				expBackoffCnt := expBackoffSel * idx.TotalRowCount()
@@ -515,7 +515,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 					continue
 				}
 				foundStats = true
-				count, _, err = GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan)
+				count, _, _, err = GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan)
 				if err == nil {
 					break
 				}
