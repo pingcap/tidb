@@ -71,7 +71,7 @@ func RegisterMetrics() error {
 		CAPath:   cfg.Security.ClusterSSLCA,
 		CertPath: cfg.Security.ClusterSSLCert,
 		KeyPath:  cfg.Security.ClusterSSLKey,
-	}, opt.WithCustomTimeoutOption(timeoutSec))
+	}, opt.WithCustomTimeoutOption(timeoutSec), opt.WithMetricsLabels(metrics.GetConstLabels()))
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 		securityOpt = tls.ToPDSecurityOption()
 	}
 	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt,
-		opt.WithCustomTimeoutOption(timeoutSec))
+		opt.WithCustomTimeoutOption(timeoutSec), opt.WithMetricsLabels(metrics.GetConstLabels()))
 	if err != nil {
 		return err
 	}
