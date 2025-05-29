@@ -48,17 +48,9 @@ import (
 // Notice a builder can only be used once unless it returns an error in test.
 type RequestBuilder struct {
 	kv.Request
-<<<<<<< HEAD
-	is  infoschema.InfoSchema
-	err error
-=======
-	is   infoschema.MetaOnlyInfoSchema
+	is   infoschema.InfoSchema
 	err  error
 	used bool
-
-	// When SetDAGRequest is called, builder will also this field.
-	dag *tipb.DAGRequest
->>>>>>> 1ff40045051 (executor: fix data race because of using shared KV requests (#61376))
 }
 
 // Build builds a "kv.Request".

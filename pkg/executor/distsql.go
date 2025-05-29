@@ -709,25 +709,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			maxChunkSize:    e.MaxChunkSize(),
 			PushedLimit:     e.PushedLimit,
 		}
-<<<<<<< HEAD
-		var builder distsql.RequestBuilder
-		builder.SetDAGRequest(e.dagPB).
-			SetStartTS(e.startTS).
-			SetDesc(e.desc).
-			SetKeepOrder(e.keepOrder).
-			SetPaging(e.indexPaging).
-			SetTxnScope(e.txnScope).
-			SetReadReplicaScope(e.readReplicaScope).
-			SetIsStaleness(e.isStaleness).
-			SetFromSessionVars(e.Ctx().GetDistSQLCtx()).
-			SetFromInfoSchema(e.Ctx().GetInfoSchema()).
-			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx().GetDistSQLCtx(), &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
-			SetMemTracker(tracker).
-			SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
-			SetSQLKiller(&e.Ctx().GetSessionVars().SQLKiller)
-=======
-		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
->>>>>>> 1ff40045051 (executor: fix data race because of using shared KV requests (#61376))
 
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
 		for _, kvRange := range kvRanges {
@@ -746,14 +727,16 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				SetStartTS(e.startTS).
 				SetDesc(e.desc).
 				SetKeepOrder(e.keepOrder).
+				SetPaging(e.indexPaging).
 				SetTxnScope(e.txnScope).
 				SetReadReplicaScope(e.readReplicaScope).
 				SetIsStaleness(e.isStaleness).
-				SetFromSessionVars(e.dctx).
-				SetFromInfoSchema(e.infoSchema).
-				SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
+				SetFromSessionVars(e.Ctx().GetDistSQLCtx()).
+				SetFromInfoSchema(e.Ctx().GetInfoSchema()).
+				SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx().GetDistSQLCtx(), &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
 				SetMemTracker(tracker).
-				SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
+				SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
+				SetSQLKiller(&e.Ctx().GetSessionVars().SQLKiller)
 
 			if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
 				// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
