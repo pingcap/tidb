@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "importinto",
     srcs = [
-        "clean_s3.go",
+        "clean_up.go",
         "encode_and_sort_operator.go",
         "job.go",
         "metrics.go",
@@ -21,6 +21,7 @@ go_library(
         "//br/pkg/storage",
         "//br/pkg/utils",
         "//pkg/config",
+        "//pkg/ddl",
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/planner",
         "//pkg/disttask/framework/proto",
@@ -29,6 +30,7 @@ go_library(
         "//pkg/disttask/framework/taskexecutor",
         "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/disttask/operator",
+        "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/errno",
         "//pkg/executor/importer",
@@ -54,6 +56,7 @@ go_library(
         "//pkg/table/tables",
         "//pkg/util",
         "//pkg/util/backoff",
+        "//pkg/util/dbterror/exeerrors",
         "//pkg/util/disttask",
         "//pkg/util/etcd",
         "//pkg/util/logutil",
