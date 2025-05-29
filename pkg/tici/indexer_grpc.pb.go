@@ -18,7 +18,7 @@
 // - protoc             v5.29.3
 // source: indexer.proto
 
-package indexer
+package tici
 
 import (
 	context "context"
@@ -36,6 +36,7 @@ const (
 	IndexerService_CreateIndex_FullMethodName      = "/indexer.IndexerService/CreateIndex"
 	IndexerService_DropIndex_FullMethodName        = "/indexer.IndexerService/DropIndex"
 	IndexerService_GetIndexProgress_FullMethodName = "/indexer.IndexerService/GetIndexProgress"
+	IndexerService_AddShard_FullMethodName         = "/indexer.IndexerService/AddShard"
 )
 
 // IndexerServiceClient is the client API for IndexerService service.
@@ -46,8 +47,11 @@ type IndexerServiceClient interface {
 	CreateIndex(ctx context.Context, in *CreateIndexRequest, opts ...grpc.CallOption) (*CreateIndexResponse, error)
 	// DropIndex removes an existing index
 	DropIndex(ctx context.Context, in *DropIndexRequest, opts ...grpc.CallOption) (*DropIndexResponse, error)
+	// TODO Passively acquire from heartbeat
 	// GetIndexProgress retrieves the current progress of an index build
 	GetIndexProgress(ctx context.Context, in *GetIndexProgressRequest, opts ...grpc.CallOption) (*GetIndexProgressResponse, error)
+	// Add shard for an index
+	AddShard(ctx context.Context, in *AddShardRequest, opts ...grpc.CallOption) (*AddShardResponse, error)
 }
 
 type indexerServiceClient struct {
@@ -85,6 +89,15 @@ func (c *indexerServiceClient) GetIndexProgress(ctx context.Context, in *GetInde
 	return out, nil
 }
 
+func (c *indexerServiceClient) AddShard(ctx context.Context, in *AddShardRequest, opts ...grpc.CallOption) (*AddShardResponse, error) {
+	out := new(AddShardResponse)
+	err := c.cc.Invoke(ctx, IndexerService_AddShard_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // IndexerServiceServer is the server API for IndexerService service.
 // All implementations must embed UnimplementedIndexerServiceServer
 // for forward compatibility
@@ -93,8 +106,11 @@ type IndexerServiceServer interface {
 	CreateIndex(context.Context, *CreateIndexRequest) (*CreateIndexResponse, error)
 	// DropIndex removes an existing index
 	DropIndex(context.Context, *DropIndexRequest) (*DropIndexResponse, error)
+	// TODO Passively acquire from heartbeat
 	// GetIndexProgress retrieves the current progress of an index build
 	GetIndexProgress(context.Context, *GetIndexProgressRequest) (*GetIndexProgressResponse, error)
+	// Add shard for an index
+	AddShard(context.Context, *AddShardRequest) (*AddShardResponse, error)
 	mustEmbedUnimplementedIndexerServiceServer()
 }
 
@@ -110,6 +126,9 @@ func (UnimplementedIndexerServiceServer) DropIndex(context.Context, *DropIndexRe
 }
 func (UnimplementedIndexerServiceServer) GetIndexProgress(context.Context, *GetIndexProgressRequest) (*GetIndexProgressResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetIndexProgress not implemented")
+}
+func (UnimplementedIndexerServiceServer) AddShard(context.Context, *AddShardRequest) (*AddShardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AddShard not implemented")
 }
 func (UnimplementedIndexerServiceServer) mustEmbedUnimplementedIndexerServiceServer() {}
 
@@ -178,6 +197,24 @@ func _IndexerService_GetIndexProgress_Handler(srv any, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _IndexerService_AddShard_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+	in := new(AddShardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IndexerServiceServer).AddShard(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IndexerService_AddShard_FullMethodName,
+	}
+	handler := func(ctx context.Context, req any) (any, error) {
+		return srv.(IndexerServiceServer).AddShard(ctx, req.(*AddShardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // IndexerService_ServiceDesc is the grpc.ServiceDesc for IndexerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -196,6 +233,10 @@ var IndexerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetIndexProgress",
 			Handler:    _IndexerService_GetIndexProgress_Handler,
+		},
+		{
+			MethodName: "AddShard",
+			Handler:    _IndexerService_AddShard_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

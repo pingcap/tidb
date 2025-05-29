@@ -16,7 +16,7 @@ syntax = "proto3";
 
 package indexer;
 
-option go_package = "./indexer";
+option go_package = ".";
 
 // IndexerService provides index creation and deletion functionality
 service IndexerService {
@@ -26,8 +26,12 @@ service IndexerService {
   // DropIndex removes an existing index
   rpc DropIndex(DropIndexRequest) returns (DropIndexResponse);
   
+  // TODO Passively acquire from heartbeat
   // GetIndexProgress retrieves the current progress of an index build
   rpc GetIndexProgress(GetIndexProgressRequest) returns (GetIndexProgressResponse);
+
+  // Add shard for an index
+  rpc AddShard(AddShardRequest) returns (AddShardResponse);
 }
 
 // IndexType represents the type of index
@@ -48,6 +52,34 @@ enum ParserType {
   DEFAULT_PARSER = 1;
   // Other parser types
   OTHER_PARSER = 2;
+}
+
+message ShardManifestHeader {
+  uint64 shard_id = 1;
+  string start_key = 2;
+  string end_key = 3;
+  uint64 epoch = 4;
+}
+
+// AddShardRequest is sent from meta service to worker node
+message AddShardRequest {
+  ShardManifestHeader shard = 1;
+  // Index information
+  IndexInfo index_info = 2;
+  // Table information
+  TableInfo table_info = 3;
+  // If the shard is created from scratch, this field is empty
+  string cdc_s3_last_file = 4;
+  string cdc_s3_bucket = 5;
+  string cdc_s3_prefix = 6;
+  string s3_upload_bucket = 7;
+  string s3_upload_prefix = 8;
+}
+
+// AddShardResponse
+message AddShardResponse {
+  // Operation result status code, 0 means success
+  int32 status = 1;
 }
 
 // CreateIndexRequest is a request to create an index
@@ -160,6 +192,14 @@ message GetIndexProgressRequest {
 
 // GetIndexProgressResponse is a response containing index build progress
 message GetIndexProgressResponse {
+  enum State {
+    PENDING = 0;
+    RUNNING = 1;
+    COMPLETED = 2;
+    FAILED = 3;
+    NOTFOUND = 4;
+    ERROR = 5;
+  }
   // Operation result status code, 0 means success
   int32 status = 1;
   // Error message, only valid when status is non-zero
@@ -167,7 +207,7 @@ message GetIndexProgressResponse {
   // Number of documents indexed so far
   uint64 document_count = 3;
   // Build task state (PENDING, RUNNING, COMPLETED, FAILED)
-  string state = 4;
+  State state = 4;
   // Whether index has been uploaded to S3
   bool is_uploaded = 5;
   // Last S3 upload time in RFC3339 format

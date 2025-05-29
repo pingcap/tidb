@@ -1216,10 +1216,6 @@ func checkIndexSpecs(indexOptions *ast.IndexOption, partSpecs []*ast.IndexPartSp
 		if len(partSpecs) != 1 || partSpecs[0].Column == nil {
 			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("COLUMNAR INDEX of INVERTED type must specify one column name")
 		}
-	case ast.IndexTypeFulltext:
-		if len(partSpecs) != 1 || partSpecs[0].Column == nil {
-			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index must specify one column name")
-		}
 	}
 	return nil
 }
