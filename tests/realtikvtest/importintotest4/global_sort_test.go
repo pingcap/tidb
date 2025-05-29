@@ -153,3 +153,69 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 	s.tk.MustQuery(importSQL)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
 }
+<<<<<<< HEAD
+=======
+
+func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
+	var allData []string
+	for i := range 10 {
+		var content []byte
+		keyCnt := 1000
+		for j := range keyCnt {
+			idx := i*keyCnt + j
+			content = append(content, fmt.Appendf(nil, "%d,test-%d\n", idx, idx)...)
+		}
+		if i == 9 {
+			// add a duplicate key "test-123"
+			content = append(content, []byte("99999999,test-123\n")...)
+		}
+		s.server.CreateObject(fakestorage.Object{
+			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-multi-files-uk", Name: fmt.Sprintf("t.%d.csv", i)},
+			Content:     content,
+		})
+	}
+	slices.Sort(allData)
+	s.prepareAndUseDB("gs_multi_files")
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	s.tk.MustExec("create table t (a bigint primary key , b varchar(100) unique key);")
+	// 1 subtask, encoding 10 files using 4 threads.
+	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files-uk/t.*.csv?endpoint=%s'
+		with cloud_storage_uri='%s', __max_engine_size='1', thread=8`, gcsEndpoint, sortStorageURI)
+	err := s.tk.QueryToErr(importSQL)
+	require.ErrorContains(s.T(), err, "duplicate key found")
+	// this is the encoded value of "test-123". Because the table ID/ index ID may vary, we can't check the exact key
+	// TODO: decode the key to use readable value in the error message.
+	require.ErrorContains(s.T(), err, "746573742d313233")
+}
+
+func (s *mockGCSSuite) TestGlobalSortWithGCSReadError() {
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.1.csv"},
+		Content:     []byte("1,foo1,bar1,123\n2,foo2,bar2,456\n3,foo3,bar3,789\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.2.csv"},
+		Content:     []byte("4,foo4,bar4,123\n5,foo5,bar5,223\n6,foo6,bar6,323\n"),
+	})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	s.prepareAndUseDB("gsort_basic")
+	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,	key(a), key(c,d), key(d));`)
+	defer func() {
+		s.tk.MustExec("drop table t;")
+	}()
+
+	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
+		with __max_engine_size = '1', cloud_storage_uri='%s', thread=1`, gcsEndpoint, sortStorageURI)
+
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/br/pkg/storage/GCSReadUnexpectedEOF", "return(0)")
+	s.tk.MustExec("truncate table t")
+	result := s.tk.MustQuery(importSQL).Rows()
+	s.Len(result, 1)
+	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
+		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
+		"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
+	))
+}
+>>>>>>> 684010c999d (external: fix the dead loop in `readNBytes` (#61309))
