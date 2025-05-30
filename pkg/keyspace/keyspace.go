@@ -71,7 +71,6 @@ func GetKeyspaceNameBytesBySettings() []byte {
 			return
 		}
 		keyspaceNameBytes = []byte(keyspaceName)
-		return
 	})
 	return keyspaceNameBytes
 }
