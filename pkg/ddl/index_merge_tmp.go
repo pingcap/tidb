@@ -226,7 +226,7 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 
 			splitSizes = []int{len(tmpIdxRecords)}
 			if len(tmpIdxRecords) > 1 {
-				splitKey = w.originIdxKeys[len(tmpIdxRecords)/2]
+				splitKey = w.tmpIdxKeys[len(tmpIdxRecords)/2]
 				splitable = splitKey.Cmp(curRange.startKey) > 0
 				if splitable {
 					splitSizes = []int{len(tmpIdxRecords) / 2, len(tmpIdxRecords) - len(tmpIdxRecords)/2}
