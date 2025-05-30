@@ -206,7 +206,7 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 		}
 		txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
 
-		tmpIdxRecords, nextKey, taskDone, err := w.fetchTempIndexVals(txn, taskRange)
+		tmpIdxRecords, nextKey, taskDone, err := w.fetchTempIndexVals(txn, &taskCtx, taskRange)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -219,7 +219,6 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 		}
 
 		for i, idxRecord := range tmpIdxRecords {
-			taskCtx.scanCount++
 			// The index is already exists, we skip it, no needs to backfill it.
 			// The following update, delete, insert on these rows, TiDB can handle it correctly.
 			// If all batch are skipped, update first index key to make txn commit to release lock.
@@ -332,6 +331,7 @@ func (w *mergeIndexWorker) updateCurrentIndexInfo(newIndexKey kv.Key) (skip bool
 
 func (w *mergeIndexWorker) fetchTempIndexVals(
 	txn kv.Transaction,
+	taskCtx *backfillTaskContext,
 	taskRange reorgBackfillTask,
 ) ([]*temporaryIndexRecord, kv.Key, bool, error) {
 	startTime := time.Now()
@@ -361,6 +361,7 @@ func (w *mergeIndexWorker) fetchTempIndexVals(
 					return skip, err
 				}
 			}
+			taskCtx.scanCount++
 
 			tempIdxVal, err := tablecodec.DecodeTempIndexValue(rawValue)
 			if err != nil {
