@@ -17,7 +17,6 @@ package ddl
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -30,73 +29,66 @@ import (
 
 // BuildStorageClassSettingsFromJSON builds storage class settings from a JSON object.
 func BuildStorageClassSettingsFromJSON(input json.RawMessage) (*model.StorageClassSettings, error) {
-	if input == nil {
-		def := model.StorageClassDef{Tier: model.StorageClassTierDefault}
-		return &model.StorageClassSettings{
-			Defs: []*model.StorageClassDef{&def},
-		}, nil
-	}
-
-	// Try parsing as a string
-	tier, err := getStorageClassTierAsString(input)
-	if err == nil {
-		if err := checkTier(tier); err != nil {
-			return nil, err
-		}
-		def := model.StorageClassDef{Tier: tier}
-		return &model.StorageClassSettings{
-			Defs: []*model.StorageClassDef{&def},
-		}, nil
-	}
-
-	// Try parsing as a single object
-	decoder := json.NewDecoder(bytes.NewReader(input))
-	decoder.DisallowUnknownFields()
-
-	var def model.StorageClassDef
-	if err1 := decoder.Decode(&def); err1 == nil {
-		def.Tier = model.StorageClassTier(strings.ToUpper(string(def.Tier)))
-		if err2 := checkStorageClassDef(&def); err2 != nil {
-			return nil, err2
+	settings, err := func() (*model.StorageClassSettings, error) {
+		if input == nil {
+			def := model.StorageClassDef{Tier: model.StorageClassTierDefault}
+			return &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{&def},
+			}, nil
 		}
 
-		for i, name := range def.NamesIn {
-			def.NamesIn[i] = strings.ToLower(name)
+		// Try parsing as a string
+		tier, err := getStorageClassTierAsString(input)
+		if err == nil {
+			def := model.StorageClassDef{Tier: tier}
+			return &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{&def},
+			}, nil
 		}
 
-		return &model.StorageClassSettings{
-			Defs: []*model.StorageClassDef{&def},
-		}, nil
-	}
+		// Try parsing as a single object
+		decoder := json.NewDecoder(bytes.NewReader(input))
+		decoder.DisallowUnknownFields()
+		var def model.StorageClassDef
+		err = decoder.Decode(&def)
+		if err == nil {
+			return &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{&def},
+			}, nil
+		}
 
-	var typeError *json.UnmarshalTypeError
-	if !errors.As(err, &typeError) {
-		msg := fmt.Sprintf("invalid storage class def: '%-.192s'", input)
-		return nil, dbterror.ErrStorageClassInvalidSpec.GenWithStackByArgs(msg)
-	}
+		// Try parsing as a slice of objects
+		var defs []*model.StorageClassDef
+		err = json.Unmarshal(input, &defs)
+		if err == nil {
+			return &model.StorageClassSettings{
+				Defs: defs,
+			}, nil
+		}
 
-	// Try parsing as a slice of objects
-	var defs []*model.StorageClassDef
-	if err1 := json.Unmarshal(input, &defs); err1 != nil {
 		// If all parsing attempts fail, return an error
 		msg := fmt.Sprintf("invalid storage class def: '%-.192s'", input)
 		return nil, dbterror.ErrStorageClassInvalidSpec.GenWithStackByArgs(msg)
-	}
-	// Check duplicate NamesIn.
-	names := map[string]struct{}{}
-	for _, def := range defs {
-		for _, name := range def.NamesIn {
-			if _, ok := names[name]; ok {
-				msg := fmt.Sprintf("duplicate storage class name: '%-.192s'", input)
-				return nil, dbterror.ErrStorageClassInvalidSpec.GenWithStackByArgs(msg)
-			}
-			names[name] = struct{}{}
-		}
+	}()
+	if err != nil {
+		return nil, err
 	}
 
-	return &model.StorageClassSettings{
-		Defs: defs,
-	}, nil
+	// Validate the settings
+	for _, def := range settings.Defs {
+		if err := checkStorageClassDef(def); err != nil {
+			return nil, err
+		}
+		def.Tier = model.StorageClassTier(strings.ToUpper(string(def.Tier)))
+		for i, name := range def.NamesIn {
+			def.NamesIn[i] = strings.ToLower(name)
+		}
+	}
+	if err := checkDuplicatedNamesIn(settings.Defs); err != nil {
+		return nil, err
+	}
+
+	return settings, nil
 }
 
 func getStorageClassTierAsString(msg json.RawMessage) (model.StorageClassTier, error) {
@@ -107,17 +99,10 @@ func getStorageClassTierAsString(msg json.RawMessage) (model.StorageClassTier, e
 	return model.StorageClassTier(strings.ToUpper(tier)), nil
 }
 
-func checkTier(tier model.StorageClassTier) error {
-	if !tier.Valid() {
-		msg := fmt.Sprintf("invalid storage class tier: %s", tier)
-		return dbterror.ErrStorageClassInvalidSpec.GenWithStackByArgs(msg)
-	}
-	return nil
-}
-
 func checkStorageClassDef(def *model.StorageClassDef) error {
-	if err := checkTier(def.Tier); err != nil {
-		return err
+	if !def.Tier.Valid() {
+		msg := fmt.Sprintf("invalid storage class tier: %s", def.Tier)
+		return dbterror.ErrStorageClassInvalidSpec.GenWithStackByArgs(msg)
 	}
 
 	scopeFields := 0
@@ -138,8 +123,22 @@ func checkStorageClassDef(def *model.StorageClassDef) error {
 	return nil
 }
 
+func checkDuplicatedNamesIn(defs []*model.StorageClassDef) error {
+	seen := make(map[string]struct{})
+	for _, def := range defs {
+		for _, name := range def.NamesIn {
+			if _, ok := seen[name]; ok {
+				msg := fmt.Sprintf("duplicated names_in: %s", name)
+				return dbterror.ErrStorageClassInvalidSpec.GenWithStackByArgs(msg)
+			}
+			seen[name] = struct{}{}
+		}
+	}
+	return nil
+}
+
 func setStorageClassTierForTable(tbInfo *model.TableInfo, tier model.StorageClassTier) {
-	tbInfo.StorageClassTier = tier
+	tbInfo.StorageClassTier = string(tier)
 	logutil.DDLLogger().Info("storage class: set table tier", zap.Int64("tableID", tbInfo.ID), zap.Stringer("tier", tier))
 }
 
@@ -161,7 +160,7 @@ func BuildStorageClassForTable(tbInfo *model.TableInfo, settings *model.StorageC
 }
 
 func setStorageClassTierForPartition(tbInfo *model.TableInfo, part *model.PartitionDefinition, tier model.StorageClassTier) {
-	part.StorageClassTier = tier
+	part.StorageClassTier = string(tier)
 	logutil.DDLLogger().Info("storage class: set partition tier",
 		zap.Int64("tableID", tbInfo.ID), zap.String("partitionName", part.Name.L), zap.Stringer("tier", tier))
 }

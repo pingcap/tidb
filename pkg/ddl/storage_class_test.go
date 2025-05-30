@@ -26,46 +26,46 @@ import (
 
 func TestBuildStorageClassSettingsFromJSON(t *testing.T) {
 	cases := []struct {
-		input    string
+		input                  string
 		okParseEngineAttribute bool
-		okBuildStorageClass       bool
-		expected string
+		okBuildStorageClass    bool
+		expected               string
 	}{
 		{
-			input:    "",
+			input:                  "",
 			okParseEngineAttribute: true,
-			okBuildStorageClass:       true,
-			expected: `{"defs":[{"tier":"STANDARD", "names_in":null, "less_than":null, "values_in":null}]}`,
+			okBuildStorageClass:    true,
+			expected:               `{"defs":[{"tier":"STANDARD", "names_in":null, "less_than":null, "values_in":null}]}`,
 		},
 		{
-			input:    `{"storage_class": "IA"}`,
+			input:                  `{"storage_class": "IA"}`,
 			okParseEngineAttribute: true,
-			okBuildStorageClass:       true,
-			expected: `{"defs":[{"tier":"IA", "names_in":null, "less_than":null, "values_in":null}]}`,
+			okBuildStorageClass:    true,
+			expected:               `{"defs":[{"tier":"IA", "names_in":null, "less_than":null, "values_in":null}]}`,
 		},
 		{
-			input:    `{"storage_class": "ia"}`,
+			input:                  `{"storage_class": "ia"}`,
 			okParseEngineAttribute: true,
-			okBuildStorageClass:       true,
-			expected: `{"defs":[{"tier":"IA", "names_in":null, "less_than":null, "values_in":null}]}`,
+			okBuildStorageClass:    true,
+			expected:               `{"defs":[{"tier":"IA", "names_in":null, "less_than":null, "values_in":null}]}`,
 		},
 		{
-			input:    `{"storage_class": "STANDARD"}`,
+			input:                  `{"storage_class": "STANDARD"}`,
 			okParseEngineAttribute: true,
-			okBuildStorageClass:       true,
-			expected: `{"defs":[{"tier":"STANDARD", "names_in":null, "less_than":null, "values_in":null}]}`,
+			okBuildStorageClass:    true,
+			expected:               `{"defs":[{"tier":"STANDARD", "names_in":null, "less_than":null, "values_in":null}]}`,
 		},
 		{
-			input:    `{"storage_class": "standard"}`,
+			input:                  `{"storage_class": "standard"}`,
 			okParseEngineAttribute: true,
-			okBuildStorageClass:       true,
-			expected: `{"defs":[{"tier":"STANDARD", "names_in":null, "less_than":null, "values_in":null}]}`,
+			okBuildStorageClass:    true,
+			expected:               `{"defs":[{"tier":"STANDARD", "names_in":null, "less_than":null, "values_in":null}]}`,
 		},
 		{
-			input:    `{"storage_class": {"tier": "STANDARD", "names_in": ["p0", "p1"]}}`,
+			input:                  `{"storage_class": {"tier": "STANDARD", "names_in": ["p0", "p1"]}}`,
 			okParseEngineAttribute: true,
-			okBuildStorageClass:       true,
-			expected: `{"defs":[{"tier":"STANDARD", "names_in":["p0", "p1"], "less_than":null, "values_in":null}]}`,
+			okBuildStorageClass:    true,
+			expected:               `{"defs":[{"tier":"STANDARD", "names_in":["p0", "p1"], "less_than":null, "values_in":null}]}`,
 		},
 		{
 			input: `{"storage_class": [
@@ -73,30 +73,30 @@ func TestBuildStorageClassSettingsFromJSON(t *testing.T) {
 						{"tier": "IA", "names_in": ["p2", "p3"]}
 					]}`,
 			okParseEngineAttribute: true,
-			okBuildStorageClass: true,
+			okBuildStorageClass:    true,
 			expected: `{"defs":[
 							{"tier":"STANDARD", "names_in":["p0", "p1"], "less_than":null, "values_in":null},
 							{"tier":"IA", "names_in":["p2", "p3"], "less_than":null, "values_in":null}
 						]}`,
 		},
 		{
-			input:    `{"storage_class": "INVALID"}`,
+			input:                  `{"storage_class": "INVALID"}`,
 			okParseEngineAttribute: true,
-			okBuildStorageClass:       false,
-			expected: ``,
+			okBuildStorageClass:    false,
+			expected:               ``,
 		},
 		{
-			input:    `{"storage_class": "IA", "extra_field": "value"}`,
+			input:                  `{"storage_class": "IA", "extra_field": "value"}`,
 			okParseEngineAttribute: true,
-			okBuildStorageClass:       true,
-			expected: `{"defs":[{"tier":"IA", "names_in":null, "less_than":null, "values_in":null}]}`,
+			okBuildStorageClass:    true,
+			expected:               `{"defs":[{"tier":"IA", "names_in":null, "less_than":null, "values_in":null}]}`,
 		},
 		{
 			// Unknown fields in the storage class definition is not allowed.
-			input:    `{"storage_class": {"tier": "IA", "extra_field": "value"}}`,
+			input:                  `{"storage_class": {"tier": "IA", "extra_field": "value"}}`,
 			okParseEngineAttribute: true,
-			okBuildStorageClass:       false,
-			expected: ``,
+			okBuildStorageClass:    false,
+			expected:               ``,
 		},
 		{
 			// Error if names_in is duplicated.
@@ -105,15 +105,22 @@ func TestBuildStorageClassSettingsFromJSON(t *testing.T) {
 						{"tier": "IA", "names_in": ["p0", "p3"]}
 					]}`,
 			okParseEngineAttribute: true,
-			okBuildStorageClass: false,
-			expected: ``,
+			okBuildStorageClass:    false,
+			expected:               ``,
 		},
 		{
 			// Error if JSON is invalid.
-			input: `IA`,
+			input:                  `IA`,
 			okParseEngineAttribute: false,
-			okBuildStorageClass: false,
-			expected: ``,
+			okBuildStorageClass:    false,
+			expected:               ``,
+		},
+		{
+			// Error if multiple fields are specified in a single storage class definition.
+			input:                  `{"storage_class": {"tier": "IA", "names_in": ["p0"], "less_than": "100"}}`,
+			okParseEngineAttribute: true,
+			okBuildStorageClass:    false,
+			expected:               ``,
 		},
 	}
 
@@ -137,14 +144,13 @@ func TestBuildStorageClassSettingsFromJSON(t *testing.T) {
 	}
 }
 
-
 func TestBuildStorageClassForPartitions(t *testing.T) {
 	cases := []struct {
 		input    string
 		expected map[string]model.StorageClassTier
 	}{
 		{
-			input:    "",
+			input: "",
 			expected: map[string]model.StorageClassTier{
 				"p0": model.StorageClassTierStandard,
 				"p1": model.StorageClassTierStandard,
@@ -152,7 +158,7 @@ func TestBuildStorageClassForPartitions(t *testing.T) {
 			},
 		},
 		{
-			input:    `{"storage_class": "IA"}`,
+			input: `{"storage_class": "IA"}`,
 			expected: map[string]model.StorageClassTier{
 				"p0": model.StorageClassTierIA,
 				"p1": model.StorageClassTierIA,
@@ -160,7 +166,7 @@ func TestBuildStorageClassForPartitions(t *testing.T) {
 			},
 		},
 		{
-			input:    `{"storage_class": "STANDARD"}`,
+			input: `{"storage_class": "STANDARD"}`,
 			expected: map[string]model.StorageClassTier{
 				"p0": model.StorageClassTierStandard,
 				"p1": model.StorageClassTierStandard,
@@ -168,7 +174,7 @@ func TestBuildStorageClassForPartitions(t *testing.T) {
 			},
 		},
 		{
-			input:    `{"storage_class": {"tier": "STANDARD", "names_in": ["p0", "p1"]}}`,
+			input: `{"storage_class": {"tier": "STANDARD", "names_in": ["p0", "p1"]}}`,
 			expected: map[string]model.StorageClassTier{
 				"p0": model.StorageClassTierStandard,
 				"p1": model.StorageClassTierStandard,
@@ -212,14 +218,14 @@ func TestBuildStorageClassForPartitions(t *testing.T) {
 	}
 
 	for _, cs := range cases {
-		partitions:= []model.PartitionDefinition {
-			model.PartitionDefinition{
+		partitions := []model.PartitionDefinition{
+			{
 				Name: ast.CIStr{L: "p0"},
 			},
-			model.PartitionDefinition{
+			{
 				Name: ast.CIStr{L: "p1"},
 			},
-			model.PartitionDefinition{
+			{
 				Name: ast.CIStr{L: "p2"},
 			},
 		}

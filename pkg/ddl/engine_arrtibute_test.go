@@ -73,6 +73,14 @@ func TestEngineAttribute(t *testing.T) {
 		Check(testkit.Rows("p0 STANDARD", "p1 STANDARD", "p2 IA"))
 	tk.MustQuery("SHOW CREATE TABLE test.t5;").
 		CheckContain("ENGINE_ATTRIBUTE='{\"storage_class\": {\"tier\":\"IA\",\"names_in\":[\"p2\"]}}'")
+
+	// Multi-schema change.
+	tk.MustExec("CREATE TABLE test.t6 (id INT PRIMARY KEY, value VARCHAR(16383));")
+	tk.MustExec("ALTER TABLE test.t6 ADD COLUMN `a` int(11) DEFAULT NULL, ENGINE_ATTRIBUTE = '{\"storage_class\": \"IA\"}';")
+	tk.MustQuery("SHOW CREATE TABLE test.t6;").
+		CheckContain("`a` int(11) DEFAULT NULL")
+	tk.MustQuery("SHOW CREATE TABLE test.t6;").
+		CheckContain("ENGINE_ATTRIBUTE='{\"storage_class\": \"IA\"}'")
 }
 
 func TestEngineAttributeNotIsNextGen(t *testing.T) {
