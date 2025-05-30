@@ -418,7 +418,7 @@ func BuildHistAndTopN(
 
 	topn := &TopN{TopN: topNList}
 	lenTopN := int64(len(topn.TopN))
-	if int64(hg.NDV) <= lenTopN {
+	if hg.NDV <= lenTopN {
 		// If we've collected everything  - don't create any buckets
 		return hg, topn, nil
 	}
