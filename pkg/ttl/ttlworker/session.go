@@ -97,7 +97,7 @@ func prepareSession(se session.Session) (func(), error) {
 	restore := func() {
 		_, err := se.ExecuteSQL(context.Background(), fmt.Sprintf("set tidb_retry_limit=%d", originalRetryLimit))
 		if err != nil {
-			logutil.BgLogger().Error("fail to reset tidb_retry_limit", zap.Int64("originalRetryLimit", originalRetryLimit), zap.Error(err))
+			logutil.BgLogger().Warn("fail to reset tidb_retry_limit", zap.Int64("originalRetryLimit", originalRetryLimit), zap.Error(err))
 			se.AvoidReuse()
 			return
 		}
