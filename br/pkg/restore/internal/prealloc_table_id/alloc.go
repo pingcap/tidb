@@ -131,12 +131,12 @@ func ReuseCheckpoint(legacy *checkpoint.PreallocIDs, tables []*metautil.Table) (
 	allocRule := make(map[int64]int64, len(ids))
 	rewriteCnt := int64(0)
 	for _, id := range ids {
-		if id < legacy.Start {
+		if id < legacy.Start || id > InsaneTableIDThreshold {
 			allocRule[id] = legacy.ReusableBorder + rewriteCnt
 			rewriteCnt++
 		} else if id < legacy.ReusableBorder {
 			allocRule[id] = id
-		} else if id >= legacy.ReusableBorder {
+		} else {
 			return nil, errors.Annotatef(berrors.ErrInvalidRange, "table ID %d is out of range [%d, %d)", id, legacy.Start, legacy.ReusableBorder)
 		}
 	}
