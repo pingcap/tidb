@@ -16,7 +16,6 @@ package aggregation
 
 import (
 	"bytes"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -239,6 +238,11 @@ func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeTyp
 	if aggFunc.Name == ast.AggFuncApproxPercentile {
 		return false
 	}
+	if storeType != kv.TiFlash && aggFunc.Name == ast.AggFuncApproxCountDistinct {
+		// Can not push down approx_count_distinct to other store except tiflash by now.
+		return false
+	}
+
 	if !checkVectorAggPushDown(ctx, aggFunc) {
 		return false
 	}
@@ -251,7 +255,8 @@ func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeTyp
 		ret = aggFunc.Name != ast.AggFuncGroupConcat
 	}
 	if ret {
-		ret = expression.IsPushDownEnabled(strings.ToLower(aggFunc.Name), storeType)
+		// don't need to call strings.ToLower because it is ensured by newBaseFuncDesc that aggFunc.Name is already in lower case.
+		ret = expression.IsPushDownEnabled(aggFunc.Name, storeType)
 	}
 	return ret
 }
