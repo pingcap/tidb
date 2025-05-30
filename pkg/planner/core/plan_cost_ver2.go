@@ -126,7 +126,7 @@ func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType, option *
 	}
 
 	rows := getCardinality(p, option.CostFlag)
-	rowSize := getAvgRowSize(p.StatsInfo(), p.schema.Columns) // consider all index columns
+	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns) // consider all index columns
 	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
 
 	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
@@ -149,7 +149,7 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	if p.StoreType == kv.TiKV { // Assume all columns for TiKV
 		columns = p.tblCols
 	} else { // TiFlash
-		columns = p.schema.Columns
+		columns = p.Schema().Columns
 	}
 	rows := getCardinality(p, option.CostFlag)
 	rowSize := getAvgRowSize(p.StatsInfo(), columns)
@@ -230,7 +230,7 @@ func (p *PhysicalIndexReader) GetPlanCostVer2(taskType property.TaskType, option
 	}
 
 	rows := getCardinality(p.indexPlan, option.CostFlag)
-	rowSize := getAvgRowSize(p.StatsInfo(), p.schema.Columns)
+	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
 
@@ -258,7 +258,7 @@ func (p *PhysicalTableReader) GetPlanCostVer2(taskType property.TaskType, option
 	}
 
 	rows := getCardinality(p.tablePlan, option.CostFlag)
-	rowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.schema.Columns))
+	rowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
 	childType := property.CopSingleReadTaskType
@@ -883,7 +883,7 @@ func (p *PhysicalCTE) GetPlanCostVer2(taskType property.TaskType, option *optimi
 	inputRows := getCardinality(p, option.CostFlag)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
-	projCost := filterCostVer2(option, inputRows, expression.Column2Exprs(p.schema.Columns), cpuFactor)
+	projCost := filterCostVer2(option, inputRows, expression.Column2Exprs(p.Schema().Columns), cpuFactor)
 
 	p.PlanCostVer2 = projCost
 	p.PlanCostInit = true
