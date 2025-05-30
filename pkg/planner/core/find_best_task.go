@@ -1898,7 +1898,9 @@ func convertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysP
 	indexConds := path.IndexFilters
 	if matchProp {
 		if is.Table.GetPartitionInfo() != nil && !is.Index.Global && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			is.Columns, is.schema, _ = AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.schema)
+			tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
+			is.Columns = tmpColumns
+			is.SetSchema(tmpSchema)
 		}
 		// Add sort items for index scan for merge-sort operation between partitions.
 		is.ByItems = byItems
@@ -1946,14 +1948,16 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 	newFilterConds := make([]expression.Expression, 0, len(path.TableFilters))
 	for _, cond := range ts.filterCondition {
 		cols := expression.ExtractColumns(cond)
-		if checkColinSchema(cols, ts.schema) {
+		if checkColinSchema(cols, ts.Schema()) {
 			newFilterConds = append(newFilterConds, cond)
 		}
 	}
 	ts.filterCondition = newFilterConds
 	if matchProp {
 		if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			ts.Columns, ts.schema, _ = AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.schema)
+			tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
+			ts.Columns = tmpColumns
+			ts.SetSchema(tmpSchema)
 		}
 		ts.ByItems = byItems
 	}
@@ -1989,7 +1993,7 @@ func overwritePartialTableScanSchema(ds *logicalop.DataSource, ts *PhysicalTable
 			infoCols = append(infoCols, col.ToInfo())
 		}
 	}
-	ts.schema = expression.NewSchema(exprCols...)
+	ts.SetSchema(expression.NewSchema(exprCols...))
 	ts.Columns = infoCols
 }
 
@@ -2067,8 +2071,8 @@ func buildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 	if ts.Table.PKIsHandle {
 		pk := ts.Table.GetPkColInfo()
 		pkCol := expression.ColInfo2Col(ts.tblCols, pk)
-		if !ts.schema.Contains(pkCol) {
-			ts.schema.Append(pkCol)
+		if !ts.Schema().Contains(pkCol) {
+			ts.Schema().Append(pkCol)
 			ts.Columns = append(ts.Columns, pk)
 			columnAdded = true
 		}
@@ -2076,22 +2080,23 @@ func buildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 		idxInfo := ts.Table.GetPrimaryKey()
 		for _, idxCol := range idxInfo.Columns {
 			col := ts.tblCols[idxCol.Offset]
-			if !ts.schema.Contains(col) {
+			if !ts.Schema().Contains(col) {
 				columnAdded = true
-				ts.schema.Append(col)
+				ts.Schema().Append(col)
 				ts.Columns = append(ts.Columns, col.ToInfo())
 			}
 		}
-	} else if !ts.schema.Contains(ts.HandleCols.GetCol(0)) {
-		ts.schema.Append(ts.HandleCols.GetCol(0))
+	} else if !ts.Schema().Contains(ts.HandleCols.GetCol(0)) {
+		ts.Schema().Append(ts.HandleCols.GetCol(0))
 		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
 		columnAdded = true
 	}
 
 	// For the global index of the partitioned table, we also need the PhysicalTblID to identify the rows from each partition.
 	if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		var newColAdded bool
-		ts.Columns, ts.schema, newColAdded = AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.schema)
+		tmpColumns, tmpSchema, newColAdded := AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
+		ts.Columns = tmpColumns
+		ts.SetSchema(tmpSchema)
 		columnAdded = columnAdded || newColAdded
 	}
 	return currentTopPlan, nil, columnAdded, nil
@@ -2207,7 +2212,7 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *logicalop.DataSource) (*ex
 		return handleCols.GetCol(0), false
 	}
 	handleCol := ds.NewExtraHandleSchemaCol()
-	ts.schema.Append(handleCol)
+	ts.Schema().Append(handleCol)
 	ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
 	return handleCol, true
 }
@@ -2313,12 +2318,15 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			}
 			if cop.tablePlan != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				if !is.Index.Global {
-					is.Columns, is.schema, _ = AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
+					tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
+					is.Columns = tmpColumns
+					is.SetSchema(tmpSchema)
 				}
-				var succ bool
 				// global index for tableScan with keepOrder also need PhysicalTblID
 				ts := cop.tablePlan.(*PhysicalTableScan)
-				ts.Columns, ts.schema, succ = AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
+				tmpColumns, tmpSchema, succ := AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
+				ts.Columns = tmpColumns
+				ts.SetSchema(tmpSchema)
 				cop.needExtraProj = cop.needExtraProj || succ
 			}
 		}
@@ -2344,14 +2352,14 @@ func (is *PhysicalIndexScan) getScanRowSize() float64 {
 	idx := is.Index
 	scanCols := make([]*expression.Column, 0, len(idx.Columns)+1)
 	// If `initSchema` has already appended the handle column in schema, just use schema columns, otherwise, add extra handle column.
-	if len(idx.Columns) == len(is.schema.Columns) {
-		scanCols = append(scanCols, is.schema.Columns...)
+	if len(idx.Columns) == len(is.Schema().Columns) {
+		scanCols = append(scanCols, is.Schema().Columns...)
 		handleCol := is.pkIsHandleCol
 		if handleCol != nil {
 			scanCols = append(scanCols, handleCol)
 		}
 	} else {
-		scanCols = is.schema.Columns
+		scanCols = is.Schema().Columns
 	}
 	return cardinality.GetIndexAvgRowSize(is.SCtx(), is.tblColHists, scanCols, is.Index.Unique)
 }
@@ -2443,7 +2451,7 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 		return conditions, nil
 	}
 	args := make([]expression.Expression, 0, len(p.PartitionNames)+1)
-	for _, col := range is.schema.Columns {
+	for _, col := range is.Schema().Columns {
 		if col.ID == model.ExtraPhysTblID {
 			args = append(args, col.Clone())
 			break
@@ -2451,7 +2459,7 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 	}
 
 	if len(args) != 1 {
-		return nil, errors.Errorf("Can't find column %s in schema %s", model.ExtraPhysTblIDName.O, is.schema)
+		return nil, errors.Errorf("Can't find column %s in schema %s", model.ExtraPhysTblIDName.O, is.Schema())
 	}
 
 	// For SQL like 'select x from t partition(p0, p1) use index(idx)',
@@ -2752,7 +2760,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		}
 		// ********************************** future deprecated start **************************/
 		var hasVirtualColumn bool
-		for _, col := range ts.schema.Columns {
+		for _, col := range ts.Schema().Columns {
 			if col.VirtualExpr != nil {
 				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
 				hasVirtualColumn = true
@@ -2867,7 +2875,7 @@ func convertToSampleTable(ds *logicalop.DataSource, prop *property.PhysicalPrope
 		PhysicalTableID: ds.PhysicalTableID,
 		Desc:            candidate.isMatchProp && prop.SortItems[0].Desc,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
-	p.schema = ds.Schema()
+	p.SetSchema(ds.Schema())
 	rt := &RootTask{}
 	rt.SetPlan(p)
 	return rt, nil

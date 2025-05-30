@@ -87,7 +87,7 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 	for i, ch := range un.Children() {
 		exprs := make([]expression.Expression, len(ch.Schema().Columns))
 		needChange := false
-		for i, dstCol := range un.schema.Columns {
+		for i, dstCol := range un.Schema().Columns {
 			dstType := dstCol.RetType
 			srcCol := ch.Schema().Columns[i]
 			srcCol.Index = i
@@ -103,7 +103,7 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 			proj := PhysicalProjection{
 				Exprs: exprs,
 			}.Init(un.SCtx(), ch.StatsInfo(), 0)
-			proj.SetSchema(un.schema.Clone())
+			proj.SetSchema(un.Schema().Clone())
 			proj.SetChildren(ch)
 			un.Children()[i] = proj
 		}

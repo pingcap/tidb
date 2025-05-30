@@ -1662,15 +1662,15 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 		tblColHists:     &(statistics.PseudoTable(tblInfo, false, false)).HistColl,
 	}.Init(b.ctx, b.getSelectOffset())
 	ts.SetSchema(idxColSchema)
-	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
 	switch {
 	case hasExtraCol:
 		ts.Columns = append(ts.Columns, extraInfo)
-		ts.schema.Append(extraCol)
+		ts.Schema().Append(extraCol)
 		ts.HandleIdx = []int{len(ts.Columns) - 1}
 	case hasPkIsHandle:
 		ts.Columns = append(ts.Columns, pkHandleInfo)
-		ts.schema.Append(pkHandleCol)
+		ts.Schema().Append(pkHandleCol)
 		ts.HandleIdx = []int{len(ts.Columns) - 1}
 	case hasCommonCols:
 		ts.HandleIdx = make([]int, 0, len(commonCols))
@@ -1685,13 +1685,15 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 			}
 			if !found {
 				ts.Columns = append(ts.Columns, cInfo.ColumnInfo)
-				ts.schema.Append(commonCols[pkOffset])
+				ts.Schema().Append(commonCols[pkOffset])
 				ts.HandleIdx = append(ts.HandleIdx, len(ts.Columns)-1)
 			}
 		}
 	}
 	if is.Index.Global {
-		ts.Columns, ts.schema, _ = AddExtraPhysTblIDColumn(b.ctx, ts.Columns, ts.schema)
+		tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(b.ctx, ts.Columns, ts.Schema())
+		ts.Columns = tmpColumns
+		ts.SetSchema(tmpSchema)
 	}
 
 	cop := &CopTask{
