@@ -15,7 +15,6 @@
 # limitations under the License.
 
 set -eu
-source $UTILS_DIR/run_services
 DB="$TEST_NAME"
 TABLE="usertable"
 DDL_COUNT=5
