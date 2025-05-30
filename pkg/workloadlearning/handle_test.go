@@ -38,11 +38,11 @@ func TestSaveReadTableCostMetrics(t *testing.T) {
 		ReadFrequency: 10,
 		TableReadCost: 1.0,
 	}
-	tableCostMetrics := map[ast.CIStr]*workloadlearning.TableReadCostMetrics{
-		{O: "test", L: "test"}: readTableCostMetrics,
+	tableCostMetrics := map[int64]*workloadlearning.TableReadCostMetrics{
+		1: readTableCostMetrics,
 	}
 	handle := workloadlearning.NewWorkloadLearningHandle(dom.SysSessionPool())
-	handle.SaveTableReadCostMetrics(tableCostMetrics, time.Now(), time.Now(), dom.InfoSchema())
+	handle.SaveTableReadCostMetrics(tableCostMetrics, time.Now(), time.Now())
 
 	// check the result
 	result := tk.MustQuery("select * from mysql.tidb_workload_values").Rows()

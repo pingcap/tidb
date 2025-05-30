@@ -69,7 +69,7 @@ var workloadTables = []repositoryTable{
 		"",
 		"",
 		metadataTable,
-		histSnapshotsTable,
+		HistSnapshotsTable,
 		"",
 		sqlescape.MustEscapeSQL(`CREATE TABLE IF NOT EXISTS %n.%n (
 			SNAP_ID int unsigned NOT NULL COMMENT 'Global unique identifier of the snapshot',
@@ -78,7 +78,7 @@ var workloadTables = []repositoryTable{
 			DB_VER JSON NULL COMMENT 'Versions of TiDB, TiKV, PD at the moment',
 			WR_VER int unsigned NULL COMMENT 'Version to identify the compatibility of workload schema between releases.',
 			SOURCE VARCHAR(20) NULL COMMENT 'The program that initializes the snaphost. ',
-			ERROR TEXT DEFAULT NULL COMMENT 'extra messages are written if anything happens to block that snapshots.')`, mysql.WorkloadSchema, histSnapshotsTable),
+			ERROR TEXT DEFAULT NULL COMMENT 'extra messages are written if anything happens to block that snapshots.')`, mysql.WorkloadSchema, HistSnapshotsTable),
 		"",
 	},
 	{"INFORMATION_SCHEMA", "TIDB_INDEX_USAGE", snapshotTable, "", "", "", ""},

@@ -390,7 +390,7 @@ func findMatchingRowForSnapshot(t *testing.T, rowidx int, snapRows [][]any, row 
 }
 
 func SnapshotTimingWorker(t *testing.T, tk *testkit.TestKit, lastRowTs time.Time, lastSnapID int, cnt int, maxSecs int) (time.Time, int) {
-	rows := getRows(t, tk, cnt, maxSecs, "select snap_id, begin_time from "+mysql.WorkloadSchema+"."+histSnapshotsTable+" where begin_time > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by begin_time asc")
+	rows := getRows(t, tk, cnt, maxSecs, "select snap_id, begin_time from "+mysql.WorkloadSchema+"."+HistSnapshotsTable+" where begin_time > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by begin_time asc")
 
 	// We want to get all rows if we are starting from 0.
 	snapWhere := ""
@@ -467,19 +467,19 @@ func TestStoppingAndRestartingWorker(t *testing.T) {
 		return len(tk.MustQuery("select instance_id from workload_schema.hist_memory_usage").Rows()) > 0
 	}, time.Minute, time.Second)
 	require.Eventually(t, func() bool {
-		return len(tk.MustQuery("select snap_id from workload_schema."+histSnapshotsTable).Rows()) > 0
+		return len(tk.MustQuery("select snap_id from workload_schema."+HistSnapshotsTable).Rows()) > 0
 	}, time.Minute, time.Second)
 
 	// Stop worker and verify no new samples are taken
 	wrk.setRepositoryDest(ctx, "")
 	eventuallyWithLock(t, wrk, func() bool { return wrk.cancel == nil })
 	samplingCnt := len(tk.MustQuery("select instance_id from workload_schema.hist_memory_usage").Rows())
-	snapshotCnt := len(tk.MustQuery("select snap_id from workload_schema." + histSnapshotsTable).Rows())
+	snapshotCnt := len(tk.MustQuery("select snap_id from workload_schema." + HistSnapshotsTable).Rows())
 
 	// Wait for 5 seconds to make sure no new samples are taken
 	time.Sleep(time.Second * 5)
 	require.True(t, len(tk.MustQuery("select instance_id from workload_schema.hist_memory_usage").Rows()) == samplingCnt)
-	require.True(t, len(tk.MustQuery("select snap_id from workload_schema."+histSnapshotsTable).Rows()) == snapshotCnt)
+	require.True(t, len(tk.MustQuery("select snap_id from workload_schema."+HistSnapshotsTable).Rows()) == snapshotCnt)
 
 	// Restart worker and verify new samples are taken
 	wrk.setRepositoryDest(ctx, "table")
@@ -488,7 +488,7 @@ func TestStoppingAndRestartingWorker(t *testing.T) {
 		return len(tk.MustQuery("select instance_id from workload_schema.hist_memory_usage").Rows()) >= samplingCnt
 	}, time.Minute, time.Second)
 	require.Eventually(t, func() bool {
-		return len(tk.MustQuery("select snap_id from workload_schema."+histSnapshotsTable).Rows()) >= snapshotCnt
+		return len(tk.MustQuery("select snap_id from workload_schema."+HistSnapshotsTable).Rows()) >= snapshotCnt
 	}, time.Minute, time.Second)
 }
 

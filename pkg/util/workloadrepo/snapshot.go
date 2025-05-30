@@ -79,7 +79,7 @@ func (w *worker) etcdCAS(ctx context.Context, key, oval, nval string) error {
 }
 
 func queryMaxSnapID(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
-	query := sqlescape.MustEscapeSQL("SELECT MAX(`SNAP_ID`) FROM %n.%n", mysql.WorkloadSchema, histSnapshotsTable)
+	query := sqlescape.MustEscapeSQL("SELECT MAX(`SNAP_ID`) FROM %n.%n", mysql.WorkloadSchema, HistSnapshotsTable)
 	rs, err := runQuery(ctx, sctx, query)
 	if err != nil {
 		return 0, err
@@ -107,7 +107,7 @@ func (w *worker) getSnapID(ctx context.Context) (uint64, error) {
 func upsertHistSnapshot(ctx context.Context, sctx sessionctx.Context, snapID uint64) error {
 	// TODO: fill DB_VER, WR_VER
 	snapshotsInsert := sqlescape.MustEscapeSQL("INSERT INTO %n.%n (`BEGIN_TIME`, `SNAP_ID`) VALUES (now(), %%?) ON DUPLICATE KEY UPDATE `BEGIN_TIME` = now()",
-		mysql.WorkloadSchema, histSnapshotsTable)
+		mysql.WorkloadSchema, HistSnapshotsTable)
 	_, err := runQuery(ctx, sctx, snapshotsInsert, snapID)
 	return err
 }
@@ -122,7 +122,7 @@ func (w *worker) updateHistSnapshot(ctx context.Context, snapID uint64, errs []e
 		nerr = err.Error()
 	}
 
-	snapshotsUpdate := sqlescape.MustEscapeSQL("UPDATE %n.%n SET `END_TIME` = now(), `ERROR` = COALESCE(CONCAT(ERROR, %%?), ERROR, %%?) WHERE `SNAP_ID` = %%?", mysql.WorkloadSchema, histSnapshotsTable)
+	snapshotsUpdate := sqlescape.MustEscapeSQL("UPDATE %n.%n SET `END_TIME` = now(), `ERROR` = COALESCE(CONCAT(ERROR, %%?), ERROR, %%?) WHERE `SNAP_ID` = %%?", mysql.WorkloadSchema, HistSnapshotsTable)
 	_, err := runQuery(ctx, sctx, snapshotsUpdate, nerr, nerr, snapID)
 	return err
 }
