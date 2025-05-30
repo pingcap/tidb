@@ -270,8 +270,11 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 		}
 		return nil
 	})
-	metrics.DDLRecordScannedIncrementalOpCount(w.table.Meta().ID, uint64(taskCtx.scanCount))
-	metrics.DDLRecordMergedIncrementalOpCount(w.table.Meta().ID, uint64(taskCtx.addedCount))
+
+	if errInTxn == nil {
+		metrics.DDLRecordScannedIncrementalOpCount(w.table.Meta().ID, uint64(taskCtx.scanCount))
+		metrics.DDLRecordMergedIncrementalOpCount(w.table.Meta().ID, uint64(taskCtx.addedCount))
+	}
 
 	failpoint.Inject("mockDMLExecutionMerging", func(val failpoint.Value) {
 		//nolint:forcetypeassert
