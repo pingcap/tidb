@@ -472,7 +472,7 @@ func BuildHistAndTopN(
 					foundOnce = true
 					continue
 				} else if foundOnce {
-					// If we have found the same value in topN, we can exit the loop early,
+					// If we have found the value in topN, we can exit the loop early.
 					break
 				}
 			}
