@@ -21,9 +21,11 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
@@ -37,6 +39,9 @@ var (
 	// in the same node as the scheduler manager.
 	// put it here to avoid cyclic import.
 	TaskChangedCh = make(chan struct{}, 1)
+	// on nextgen, DXF works as a service and runs only on node with scope 'dxf_service',
+	// so all tasks must be submitted to that scope.
+	nextgenSEMTargetScope = "dxf_service"
 )
 
 // NotifyTaskChange is used to notify the scheduler manager that the task is changed,
@@ -249,6 +254,17 @@ func GetNodeResource() *proto.NodeResource {
 // SetNodeResource gets the node resource.
 func SetNodeResource(rc *proto.NodeResource) {
 	nodeResource.Store(rc)
+}
+
+// GetTargetScope get target scope for new tasks.
+// in classical kernel, the target scope the new task is the service scope of the
+// TiDB instance that user is currently connecting to.
+// in nextgen kernel, it's always nextgenSEMTargetScope.
+func GetTargetScope() string {
+	if kerneltype.IsNextGen() {
+		return nextgenSEMTargetScope
+	}
+	return vardef.ServiceScope.Load()
 }
 
 func init() {
