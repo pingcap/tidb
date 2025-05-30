@@ -281,12 +281,11 @@ func (r *byteReader) reload() error {
 }
 
 func (r *byteReader) readFromStorageReader() (retryable bool, err error) {
-	// when not using concurrentReader, len(curBuf) == 1
 	n, err := io.ReadFull(r.storageReader, r.curBuf)
 	if err != nil {
 		switch err {
 		case io.EOF:
-			// move curBufIdx so following read will also find EOF
+			// move curBufOffset so following read will also find EOF
 			r.curBufOffset = len(r.curBuf)
 			return false, err
 		case io.ErrUnexpectedEOF:
