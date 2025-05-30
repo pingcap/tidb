@@ -52,8 +52,8 @@ func (s *PhysicalSchemaProducer) SetSchema(schema *expression.Schema) {
 // *************************** start implementation of PhysicalPlan interface ***************************
 
 // ResolveIndices implements the base.PhysicalPlan.<10th> interface.
-func (p *PhysicalSchemaProducer) ResolveIndices() (err error) {
-	err = p.BasePhysicalPlan.ResolveIndices()
+func (s *PhysicalSchemaProducer) ResolveIndices() (err error) {
+	err = s.BasePhysicalPlan.ResolveIndices()
 	return err
 }
 
