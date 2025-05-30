@@ -314,14 +314,14 @@ func MustNil(err error, closeFuns ...func()) {
 func Call(fn func() error) {
 	err := fn()
 	if err != nil {
-		log.Error("function call errored", zap.Error(err), zap.Stack("stack"))
+		log.Warn("function call errored", zap.Error(err), zap.Stack("stack"))
 	}
 }
 
 // Log logs the error if it is not nil.
 func Log(err error) {
 	if err != nil {
-		log.Error("encountered error", zap.Error(err), zap.Stack("stack"))
+		log.Warn("encountered error", zap.Error(err), zap.Stack("stack"))
 	}
 }
 

@@ -395,7 +395,7 @@ func (w *hookWorker) triggerEvent(hook api.Hook, req *triggerEventRequest, logge
 
 		if err != nil {
 			w.onSchedEventErrCounter.Inc()
-			logger.Error(
+			logger.Warn(
 				"error occurs when invoking hook OnTimerEvent",
 				zap.Error(err),
 				zap.Duration("retryAfter", workerEventDefaultRetryInterval),
