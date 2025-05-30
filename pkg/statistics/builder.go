@@ -467,6 +467,7 @@ func BuildHistAndTopN(
 					// Found the same value in topn: need to skip over this value in samples.
 					copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
 					samples = samples[:uint64(len(samples))-topNList[j].Count]
+					lenSamples = int64(len(samples))
 					i--
 					foundOnce = true
 					continue
@@ -476,7 +477,6 @@ func BuildHistAndTopN(
 				}
 			}
 		}
-		lenSamples = int64(len(samples))
 	}
 
 	// Step3: build histogram with the rest samples
