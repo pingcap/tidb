@@ -194,6 +194,35 @@ func TestIndexMergeIssue61093(t *testing.T) {
 	}
 }
 
+func TestIssue61389(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("set tidb_cost_model_version=2")
+	testKit.MustExec("use test;")
+	testKit.MustExec("CREATE TABLE `t19f3e4f1` (\n  `colc864` enum('d9','dt5w4','wsg','i','3','5ur3','s0m4','mmhw6','rh','ge9d','nm') DEFAULT 'dt5w4',\n  `colaadb` smallint DEFAULT '7697',\n  UNIQUE KEY `ee56e6aa` (`colc864`)\n);")
+	testKit.MustExec("CREATE TABLE `t0da79f8d` (\n  `colf2af` enum('xrsg','go9yf','mj4','u1l','8c','at','o','e9','bh','r','yah') DEFAULT 'r'\n);")
+	require.NoError(t, testkit.LoadTableStats("test.t0da79f8d.json", dom))
+	require.NoError(t, testkit.LoadTableStats("test.t19f3e4f1.json", dom))
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	analyzeSuiteData := GetAnalyzeSuiteData()
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertRowsToStrings(testKit.MustQuery("show warnings").Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+		testKit.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
+	}
+}
+
 func TestIssue59563(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
