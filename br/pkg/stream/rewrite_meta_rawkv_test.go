@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -407,6 +408,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 
 	tm := NewTableMappingManager()
 	tm.MergeBaseDBReplace(dbMap)
+	collector := NewMockMetaInfoCollector()
 
 	//exchange partition, t1 partition0 with the t2
 	t1Copy := t1.Clone()
@@ -416,14 +418,31 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	value, err := json.Marshal(&t1Copy)
 	require.Nil(t, err)
 
-	// Create an entry for parsing
+	// Create an entry for parsing with DefaultCF first
 	txnKey := utils.EncodeTxnMetaKey(meta.DBkey(dbID1), meta.TableKey(tableID1), ts)
-	entry := &kv.Entry{
+	defaultCFEntry := &kv.Entry{
 		Key:   txnKey,
 		Value: value,
 	}
-	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF, NewMockMetaInfoCollector())
+	err = tm.ParseMetaKvAndUpdateIdMapping(defaultCFEntry, consts.DefaultCF, ts, collector)
 	require.Nil(t, err)
+
+	// Verify that collector is not called for DefaultCF
+	require.NotContains(t, collector.tableInfos, dbID1)
+
+	// Now process with WriteCF to make table info visible
+	writeCFData := []byte{WriteTypePut}
+	writeCFData = codec.EncodeUvarint(writeCFData, ts)
+	writeCFEntry := &kv.Entry{
+		Key:   txnKey,
+		Value: writeCFData,
+	}
+	err = tm.ParseMetaKvAndUpdateIdMapping(writeCFEntry, consts.WriteCF, ts+1, collector)
+	require.Nil(t, err)
+
+	// Verify that collector is now called for WriteCF
+	require.Contains(t, collector.tableInfos, dbID1)
+	require.Contains(t, collector.tableInfos[dbID1], tableID1)
 
 	sr := NewSchemasReplace(
 		tm.DBReplaceMap,
@@ -446,14 +465,31 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	value, err = json.Marshal(&t2Copy)
 	require.Nil(t, err)
 
-	// Create an entry for parsing the second table
+	// Create an entry for parsing the second table with DefaultCF first
 	txnKey = utils.EncodeTxnMetaKey(meta.DBkey(dbID2), meta.TableKey(pt1ID), ts)
-	entry = &kv.Entry{
+	defaultCFEntry2 := &kv.Entry{
 		Key:   txnKey,
 		Value: value,
 	}
-	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF, NewMockMetaInfoCollector())
+	err = tm.ParseMetaKvAndUpdateIdMapping(defaultCFEntry2, consts.DefaultCF, ts, collector)
 	require.Nil(t, err)
+
+	// Verify that collector is not called for DefaultCF for the second table
+	require.NotContains(t, collector.tableInfos[dbID2], pt1ID)
+
+	// Now process with WriteCF for the second table
+	writeCFData2 := []byte{WriteTypePut}
+	writeCFData2 = codec.EncodeUvarint(writeCFData2, ts)
+	writeCFEntry2 := &kv.Entry{
+		Key:   txnKey,
+		Value: writeCFData2,
+	}
+	err = tm.ParseMetaKvAndUpdateIdMapping(writeCFEntry2, consts.WriteCF, ts+1, collector)
+	require.Nil(t, err)
+
+	// Verify that collector is now called for WriteCF for the second table
+	require.Contains(t, collector.tableInfos, dbID2)
+	require.Contains(t, collector.tableInfos[dbID2], pt1ID)
 
 	value, err = sr.rewriteTableInfo(value, dbID2)
 	require.Nil(t, err)
