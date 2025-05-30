@@ -79,27 +79,9 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		return errors.Errorf("local backend not found")
 	}
 
-	var (
-		currentIdx *model.IndexInfo
-		idxID      int64
-	)
-	switch len(sm.EleIDs) {
-	case 1:
-		for _, idx := range m.indexes {
-			if idx.ID == sm.EleIDs[0] {
-				currentIdx = idx
-				idxID = idx.ID
-				break
-			}
-		}
-	case 0:
-		// maybe this subtask is generated from an old version TiDB
-		if len(m.indexes) == 1 {
-			currentIdx = m.indexes[0]
-		}
-		idxID = m.indexes[0].ID
-	default:
-		return errors.Errorf("unexpected EleIDs count %v", sm.EleIDs)
+	currentIdx, idxID, err := getIndexInfoAndID(sm.EleIDs, m.indexes)
+	if err != nil {
+		return err
 	}
 
 	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, idxID)
@@ -127,6 +109,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			TotalKVCount:  0,
 			CheckHotspot:  true,
 			MemCapacity:   m.GetResource().Mem.Capacity(),
+			OnDup:         common.OnDuplicateKeyError,
 		},
 		TS: sm.TS,
 	}, engineUUID)
@@ -163,4 +146,26 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 func (*cloudImportExecutor) OnFinished(ctx context.Context, _ *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor finish subtask")
 	return nil
+}
+
+func getIndexInfoAndID(eleIDs []int64, indexes []*model.IndexInfo) (currentIdx *model.IndexInfo, idxID int64, err error) {
+	switch len(eleIDs) {
+	case 1:
+		for _, idx := range indexes {
+			if idx.ID == eleIDs[0] {
+				currentIdx = idx
+				idxID = idx.ID
+				break
+			}
+		}
+	case 0:
+		// maybe this subtask is generated from an old version TiDB
+		if len(indexes) == 1 {
+			currentIdx = indexes[0]
+		}
+		idxID = indexes[0].ID
+	default:
+		return nil, 0, errors.Errorf("unexpected EleIDs count %v", eleIDs)
+	}
+	return
 }
