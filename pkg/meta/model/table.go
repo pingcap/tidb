@@ -1430,7 +1430,10 @@ type EngineAttribute struct {
 	//   defined as LESS THAN (<VALUE>, ...) where (<VALUE>, ...) <= (<less-than-value>, ...)
 	// - `values_in`: A JSON array to match partitions defined by VALUES_IN
 	//   where the values are FULLY covered by <in-values>.
+	//
 	// Note: Currently, the scope only supports `names_in`.
+	// Note: Order matters. E.g. `[{"tier": "STANDARD"}, {"tier": "IA", "names_in": ["p2"]}]`
+	//       will apply `STANDARD` to all partitions, including "p2".
 	StorageClass json.RawMessage `json:"storage_class"`
 }
 
