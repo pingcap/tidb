@@ -714,6 +714,7 @@ type DistributeTable struct {
 	PartitionNames []ast.CIStr
 	Engine         ast.CIStr
 	Rule           ast.CIStr
+	Timeout        ast.CIStr
 }
 
 // SplitRegion represents a split regions plan.
