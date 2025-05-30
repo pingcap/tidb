@@ -610,7 +610,7 @@ func TestIssue55808(t *testing.T) {
 }
 
 func TestMergeTempIndexSplitConflictTxn(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("drop database if exists addindexlit;")
@@ -624,7 +624,37 @@ func TestMergeTempIndexSplitConflictTxn(t *testing.T) {
 		tk.MustExec("insert into t values (?, ?);", i, i)
 	}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/kv/mockCommitErrorInNewTxn", `5*return("retry_once")`))
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use addindexlit;")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	hook := &callback.TestDDLCallback{}
+	var runDML bool
+	hook.OnJobRunAfterExported = func(job *model.Job) {
+		if t.Failed() || runDML {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			for i := 0; i < 4; i++ {
+				_, err := tk1.Exec("insert into t values (?, ?);", i, i)
+				assert.NoError(t, err)
+			}
+			runDML = true
+		}
+	}
+	ddl.MockDMLExecutionMerging = func() {
+		for i := 0; i < 4; i++ {
+			_, err := tk1.Exec("update t set b = b+1 where a = ?;", i)
+			assert.NoError(t, err)
+		}
+	}
+	d.SetHook(hook)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMergingInTxn", "1*return"))
 	tk.MustExec("alter table t add index idx(b);")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/kv/mockCommitErrorInNewTxn"))
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 1"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMergingInTxn"))
 }
