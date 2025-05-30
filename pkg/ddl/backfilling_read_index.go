@@ -431,6 +431,5 @@ func newDistTaskRowCollector(summary *execute.RunningSubtaskSummary, dbName, tbl
 			summary.RowCnt.Add(rows)
 			metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, dbName, tblName, idxName).Add(float64(bytes))
 		},
-		nil,
 	)
 }

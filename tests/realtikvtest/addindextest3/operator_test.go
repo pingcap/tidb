@@ -232,7 +232,7 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 		ddl.NewDDLReorgMeta(tk.Session()),
 		0,
 		2,
-		execute.NewCollector(nil, nil),
+		execute.NewDummyCollector(),
 	)
 	require.NoError(t, err)
 	err = pipeline.Execute()
@@ -332,7 +332,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 				ddl.NewDDLReorgMeta(tk.Session()),
 				0,
 				2,
-				execute.NewCollector(nil, nil),
+				execute.NewDummyCollector(),
 			)
 			require.NoError(t, err)
 			err = pipeline.Execute()
