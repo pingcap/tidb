@@ -387,10 +387,10 @@ func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 		switch p.indexPlan.(type) {
 		case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalProjection:
-			p.SetSchema(p.indexPlan.Schema())
+			p.PhysicalSchemaProducer.SetSchema(p.indexPlan.Schema())
 		default:
 			is := p.IndexPlans[0].(*PhysicalIndexScan)
-			p.SetSchema(is.dataSourceSchema)
+			p.PhysicalSchemaProducer.SetSchema(is.dataSourceSchema)
 		}
 		p.OutputColumns = p.Schema().Clone().Columns
 	}
