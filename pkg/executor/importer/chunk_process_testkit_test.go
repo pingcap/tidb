@@ -267,5 +267,5 @@ func TestNewIndexRouteWriterFactoryErr(t *testing.T) {
 	writer := importer.NewIndexRouteWriter(zap.NewNop(), func(indexID int64) (*external.Writer, error) {
 		return nil, errors.New("some err")
 	})
-	require.ErrorContains(t, writer.AppendRows(context.Background(), nil, kv.GroupedPairs{1: nil}), "some err")
+	require.ErrorContains(t, writer.AppendRows(context.Background(), nil, kv.GroupedPairs{1: []common.KvPair{{}}}), "some err")
 }
