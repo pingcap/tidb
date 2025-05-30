@@ -15,9 +15,11 @@
 package keyspace
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,8 +40,15 @@ func TestSetKeyspaceNameInConf(t *testing.T) {
 	require.Equal(t, keyspaceNameInCfg, getKeyspaceName)
 	require.Equal(t, false, IsKeyspaceNameEmpty(getKeyspaceName))
 
+	// Make sure genKeyspaceNameOnce is called only once in this test.
+	keyspaceNameBytes = nil
+	genKeyspaceNameOnce = sync.Once{}
 	getKeyspaceNameByte := GetKeyspaceNameBytesBySettings()
-	require.Equal(t, []byte(keyspaceNameInCfg), getKeyspaceNameByte)
+	if kerneltype.IsNextGen() {
+		require.Equal(t, []byte(keyspaceNameInCfg), getKeyspaceNameByte)
+	} else {
+		require.Nil(t, getKeyspaceNameByte)
+	}
 }
 
 func TestNoKeyspaceNameSet(t *testing.T) {
@@ -51,6 +60,30 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 	require.Equal(t, "", getKeyspaceName)
 	require.Equal(t, true, IsKeyspaceNameEmpty(getKeyspaceName))
 
+	// Make sure genKeyspaceNameOnce is called only once in this test.
+	keyspaceNameBytes = nil
+	genKeyspaceNameOnce = sync.Once{}
 	getKeyspaceNameByte := GetKeyspaceNameBytesBySettings()
 	require.Nil(t, getKeyspaceNameByte)
+}
+
+func BenchmarkGetKeyspaceNameBytesBySettings(b *testing.B) {
+	if !kerneltype.IsNextGen() {
+		b.Skip("NextGen is not enabled, skipping benchmark")
+		return
+	}
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "benchmark_keyspace"
+	})
+
+	var result []byte
+	keyspaceNameBytes = nil
+	genKeyspaceNameOnce = sync.Once{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		result = GetKeyspaceNameBytesBySettings()
+	}
+	_ = result
 }
