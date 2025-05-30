@@ -276,7 +276,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			if idx == nil {
 				continue
 			}
-			if idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector && idx.QueryInfo != nil {
+			if idx.QueryInfo != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector {
 				annIndexBuffer := bytes.NewBuffer(make([]byte, 0, 256))
 				annIndexBuffer.WriteString(idx.QueryInfo.GetAnnQueryInfo().GetDistanceMetric().String())
 				annIndexBuffer.WriteString("(")
