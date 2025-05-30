@@ -110,7 +110,7 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 		}
 	}
 
-	for i := 0; i < len(en.fieldMappings); i++ {
+	for i := range en.fieldMappings {
 		if i >= len(parserData) {
 			if en.fieldMappings[i].Column == nil {
 				setVar(en.fieldMappings[i].UserVar.Name, nil)
@@ -134,7 +134,7 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 
 		row = append(row, parserData[i])
 	}
-	for i := 0; i < len(en.columnAssignments); i++ {
+	for i := range en.columnAssignments {
 		// eval expression of `SET` clause
 		d, err := en.columnAssignments[i].Eval(en.SessionCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
@@ -171,9 +171,8 @@ func (en *tableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum
 	}
 	row := en.rowCache
 	hasValue := en.hasValueCache
-	for i := 0; i < len(en.insertColumns); i++ {
-		insertCol := en.insertColumns[i].ToInfo()
-		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], insertCol, false, false)
+	for i := range en.insertColumns {
+		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], en.insertColumns[i].ToInfo(), false, false)
 		if err != nil {
 			return nil, err
 		}

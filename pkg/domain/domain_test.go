@@ -127,7 +127,7 @@ func TestInfo(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/schemaver/ErrorMockSessionDone"))
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		if dom.SchemaValidator.IsStarted() {
 			syncerStarted = true
 			break

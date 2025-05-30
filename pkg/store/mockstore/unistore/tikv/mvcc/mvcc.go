@@ -39,7 +39,7 @@ func DecodeLock(data []byte) (l Lock) {
 	cursor = int(l.PrimaryLen)
 	if l.LockHdr.SecondaryNum > 0 {
 		l.Secondaries = make([][]byte, l.LockHdr.SecondaryNum)
-		for i := uint32(0); i < l.LockHdr.SecondaryNum; i++ {
+		for i := range l.LockHdr.SecondaryNum {
 			keyLen := binary.LittleEndian.Uint16(lockBuf[cursor:])
 			cursor += 2
 			l.Secondaries[i] = lockBuf[cursor : cursor+int(keyLen)]

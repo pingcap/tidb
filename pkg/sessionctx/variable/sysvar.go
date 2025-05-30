@@ -29,6 +29,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -50,7 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/servicescope"
+	"github.com/pingcap/tidb/pkg/util/naming"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
@@ -61,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle/oracles"
 	tikvcliutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -1590,6 +1592,16 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{
+		Scope: vardef.ScopeGlobal,
+		Name:  vardef.TiDBEnableTSValidation,
+		Value: BoolToOnOff(vardef.DefTiDBEnableTSValidation),
+		Type:  vardef.TypeBool,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			oracles.EnableTSValidation.Store(TiDBOptOn(val))
+			return nil
+		},
+	},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnablePlanReplayerContinuousCapture, Value: BoolToOnOff(false), Type: vardef.TypeBool,
@@ -2542,6 +2554,10 @@ var defaultSysVars = []*SysVar{
 		s.AnalyzeVersion = tidbOptPositiveInt32(val, vardef.DefTiDBAnalyzeVersion)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexJoinBuild, Value: BoolToOnOff(vardef.DefTiDBOptIndexJoinBuild), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnhanceIndexJoinBuildV2 = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBHashJoinVersion, Value: vardef.DefTiDBHashJoinVersion, Type: vardef.TypeStr,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
 			lowerValue := strings.ToLower(normalizedValue)
@@ -3052,10 +3068,18 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableResourceControlStrictMode.Load()), nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPessimisticTransactionFairLocking, Value: BoolToOnOff(vardef.DefTiDBPessimisticTransactionFairLocking), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.PessimisticTransactionFairLocking = TiDBOptOn(val)
-		return nil
-	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPessimisticTransactionFairLocking, Value: BoolToOnOff(vardef.DefTiDBPessimisticTransactionFairLocking), Type: vardef.TypeBool,
+		Validation: func(_ *SessionVars, val string, _ string, _ vardef.ScopeFlag) (string, error) {
+			if kerneltype.IsNextGen() && TiDBOptOn(val) {
+				return vardef.Off, errNotSupportedInNextGen.FastGenByArgs(vardef.TiDBPessimisticTransactionFairLocking)
+			}
+			return val, nil
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.PessimisticTransactionFairLocking = TiDBOptOn(val)
+			return nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnablePlanCacheForParamLimit, Value: BoolToOnOff(vardef.DefTiDBEnablePlanCacheForParamLimit), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnablePlanCacheForParamLimit = TiDBOptOn(val)
 		return nil
@@ -3455,7 +3479,7 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: vardef.ScopeInstance, Name: vardef.TiDBServiceScope, Value: "", Type: vardef.TypeStr,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
-			return normalizedValue, servicescope.CheckServiceScope(originalValue)
+			return normalizedValue, naming.Check(originalValue)
 		},
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			newValue := strings.ToLower(s)
@@ -3590,7 +3614,11 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 	case vardef.TiDBEnableMutationChecker:
 		varVal = vardef.On
 	case vardef.TiDBPessimisticTransactionFairLocking:
-		varVal = vardef.On
+		if kerneltype.IsNextGen() {
+			varVal = vardef.Off
+		} else {
+			varVal = vardef.On
+		}
 	}
 	return varVal
 }

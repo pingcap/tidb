@@ -489,7 +489,6 @@ func (c *CheckpointAdvancer) setCheckpoint(s spans.Valued) bool {
 		return false
 	}
 	c.UpdateLastCheckpoint(cp)
-	metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint.TS))
 	return true
 }
 

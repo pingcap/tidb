@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -368,7 +369,7 @@ func marshalWithOverride(src any, hideCond func(f reflect.StructField) bool) ([]
 	}
 	t := v.Type()
 	var fields []reflect.StructField
-	for i := 0; i < t.NumField(); i++ {
+	for i := range t.NumField() {
 		f := t.Field(i)
 		if !f.IsExported() {
 			continue
@@ -388,7 +389,7 @@ func marshalWithOverride(src any, hideCond func(f reflect.StructField) bool) ([]
 	newType := reflect.StructOf(fields)
 	newVal := reflect.New(newType).Elem()
 	j := 0
-	for i := 0; i < t.NumField(); i++ {
+	for i := range t.NumField() {
 		f := t.Field(i)
 		if !f.IsExported() {
 			continue
@@ -527,4 +528,45 @@ func doRemoveDuplicates[E any](
 		pivot = key
 	}
 	return in[:fillIdx], removed, totalDup
+}
+
+// DivideMergeSortDataFiles divides the data files into multiple groups for
+// merge sort. Each group will be assigned to a node for sorting.
+// The number of files in each group is limited to MergeSortFileCountStep.
+func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([][]string, error) {
+	if nodeCnt == 0 {
+		return nil, errors.Errorf("unsupported zero node count")
+	}
+	if len(dataFiles) == 0 {
+		return [][]string{}, nil
+	}
+	dataFilesCnt := len(dataFiles)
+	result := make([][]string, 0, nodeCnt)
+	batches := len(dataFiles) / MergeSortFileCountStep
+	rounds := batches / nodeCnt
+	for range rounds * nodeCnt {
+		result = append(result, dataFiles[:MergeSortFileCountStep])
+		dataFiles = dataFiles[MergeSortFileCountStep:]
+	}
+	remainder := dataFilesCnt - (nodeCnt * rounds * MergeSortFileCountStep)
+	if remainder == 0 {
+		return result, nil
+	}
+	// adjust node cnt for remainder files to avoid having too much target files.
+	adjustNodeCnt := nodeCnt
+	maxTargetFilesPerSubtask := max(MergeSortMaxSubtaskTargetFiles, mergeConc)
+	for (rounds*nodeCnt*maxTargetFilesPerSubtask)+(adjustNodeCnt*maxTargetFilesPerSubtask) > int(MergeSortOverlapThreshold) {
+		adjustNodeCnt--
+		if adjustNodeCnt == 0 {
+			return nil, errors.Errorf("unexpected zero node count, dataFiles=%d, nodeCnt=%d", dataFilesCnt, nodeCnt)
+		}
+	}
+	minimalFileCount := 32 // Each subtask should merge at least 32 files.
+	adjustNodeCnt = max(min(remainder/minimalFileCount, adjustNodeCnt), 1)
+	sizes := mathutil.Divide2Batches(remainder, adjustNodeCnt)
+	for _, s := range sizes {
+		result = append(result, dataFiles[:s])
+		dataFiles = dataFiles[s:]
+	}
+	return result, nil
 }

@@ -35,6 +35,7 @@ import (
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/naming"
 	"github.com/pingcap/tidb/pkg/util/tikvutil"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
@@ -189,6 +190,7 @@ type Config struct {
 	TiDBEdition                string                  `toml:"tidb-edition" json:"tidb-edition"`
 	TiDBReleaseVersion         string                  `toml:"tidb-release-version" json:"tidb-release-version"`
 	KeyspaceName               string                  `toml:"keyspace-name" json:"keyspace-name"`
+	TiKVWorkerURL              string                  `toml:"tikv-worker-url" json:"tikv-worker-url"`
 	Log                        Log                     `toml:"log" json:"log"`
 	Instance                   Instance                `toml:"instance" json:"instance"`
 	Security                   Security                `toml:"security" json:"security"`
@@ -342,7 +344,7 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 }
 
 func encodeDefTempStorageDir(tempDir string, host, statusHost string, port, statusPort uint) string {
-	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v:%v/%v:%v", host, port, statusHost, statusPort)))
+	dirName := base64.URLEncoding.EncodeToString(fmt.Appendf(nil, "%v:%v/%v:%v", host, port, statusHost, statusPort))
 	osUID := ""
 	currentUser, err := user.Current()
 	if err == nil {
@@ -1297,6 +1299,9 @@ func (c *Config) Load(confFile string) error {
 
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
+	if err := naming.Check(c.KeyspaceName); err != nil {
+		return errors.Annotate(err, "invalid keyspace name")
+	}
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
 		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead. disable-error-stack is ignored.", c.Log.EnableErrorStack, c.Log.DisableErrorStack))
 		// if two options conflict, we will use the value of EnableErrorStack

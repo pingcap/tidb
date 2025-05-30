@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"slices"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -176,13 +177,7 @@ func isPhysicalPlanNeedLowerPriority(p base.PhysicalPlan) bool {
 		return true
 	}
 
-	for _, child := range p.Children() {
-		if isPhysicalPlanNeedLowerPriority(child) {
-			return true
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(p.Children(), isPhysicalPlanNeedLowerPriority)
 }
 
 // CountStmtNode records the number of statements with the same type.

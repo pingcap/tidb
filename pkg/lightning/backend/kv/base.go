@@ -199,7 +199,7 @@ func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64
 		return nil, errors.Trace(err)
 	}
 	kvPairs := e.SessionCtx.TakeKvPairs()
-	for i := 0; i < len(kvPairs.Pairs); i++ {
+	for i := range kvPairs.Pairs {
 		var encoded [9]byte // The max length of encoded int64 is 9.
 		kvPairs.Pairs[i].RowID = codec.EncodeComparableVarint(encoded[:0], rowID)
 	}

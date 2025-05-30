@@ -382,8 +382,10 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^rule.FlagJoinReOrder
 	}
-	flag |= rule.FlagCollectPredicateColumnsPoint
-	flag |= rule.FlagSyncWaitStatsLoadPoint
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+		flag |= rule.FlagCollectPredicateColumnsPoint
+		flag |= rule.FlagSyncWaitStatsLoadPoint
+	}
 	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
 		flag |= rule.FlagPartitionProcessor // apply partition pruning under static mode
 	}
@@ -1192,6 +1194,9 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 		return nil, 0, plannererrors.ErrInternal.GenWithStackByArgs(errMsg)
 	}
 
+	// collect the warnings from task.
+	logic.SCtx().GetSessionVars().StmtCtx.AppendWarnings(t.(*RootTask).warnings.GetWarnings())
+
 	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
@@ -1287,12 +1292,7 @@ func existsCartesianProduct(p base.LogicalPlan) bool {
 	if join, ok := p.(*logicalop.LogicalJoin); ok && len(join.EqualConditions) == 0 {
 		return join.JoinType == logicalop.InnerJoin || join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin
 	}
-	for _, child := range p.Children() {
-		if existsCartesianProduct(child) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(p.Children(), existsCartesianProduct)
 }
 
 // DefaultDisabledLogicalRulesList indicates the logical rules which should be banned.
