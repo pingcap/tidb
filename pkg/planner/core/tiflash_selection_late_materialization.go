@@ -16,13 +16,17 @@ package core
 
 import (
 	"cmp"
+	"maps"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -53,7 +57,7 @@ func predicatePushDownToTableScan(sctx base.PlanContext, plan base.PhysicalPlan)
 	case *PhysicalSelection:
 		if physicalTableScan, ok := plan.Children()[0].(*PhysicalTableScan); ok && physicalTableScan.StoreType == kv.TiFlash {
 			// Only when the the store type is TiFlash, we will try to push down predicates.
-			predicatePushDownToTableScanImpl(sctx, p, physicalTableScan)
+			predicatePushDownToTableScanCheck(sctx, p, physicalTableScan)
 			if len(p.Conditions) == 0 {
 				return p.Children()[0]
 			}
@@ -78,6 +82,14 @@ func predicatePushDownToTableScan(sctx base.PlanContext, plan base.PhysicalPlan)
 	return plan
 }
 
+func sliceToString(s []int64) string {
+	strSlice := make([]string, len(s))
+	for i, v := range s {
+		strSlice[i] = strconv.FormatInt(v, 10)
+	}
+	return strings.Join(strSlice, ",")
+}
+
 // transformColumnsToCode is used to transform the columns to a string of "0" and "1".
 // @param: cols: the columns of a Expression
 // @param: totalColumnCount: the total number of columns in the tablescan
@@ -90,11 +102,12 @@ func predicatePushDownToTableScan(sctx base.PlanContext, plan base.PhysicalPlan)
 //
 // @return: the string of "0" and "1"
 func transformColumnsToCode(cols []*expression.Column, totalColumnCount int) string {
-	code := make([]byte, totalColumnCount)
+	code := make(map[int64]struct{}, totalColumnCount)
 	for _, col := range cols {
-		code[col.Index] = '1'
+		code[col.UniqueID] = struct{}{}
 	}
-	return string(code)
+	keys := slices.Collect(maps.Keys(code))
+	return sliceToString(keys)
 }
 
 // groupByColumnsSortBySelectivity is used to group the conditions by the column they use
@@ -226,24 +239,23 @@ func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, expr
 // @param: sctx: the session context
 // @param: physicalSelection: the PhysicalSelection containing the conditions to be pushed down
 // @param: physicalTableScan: the PhysicalTableScan to be pushed down to
-func predicatePushDownToTableScanImpl(sctx base.PlanContext, physicalSelection *PhysicalSelection, physicalTableScan *PhysicalTableScan) {
-	// When the table is small, there is no need to push down the conditions.
-	if physicalTableScan.tblColHists.RealtimeCount <= tiflashDataPackSize || physicalTableScan.KeepOrder {
-		return
-	}
-	conds := physicalSelection.Conditions
-	if len(conds) == 0 {
-		return
+func predicatePushDownToTableScanImpl(sctx base.PlanContext, physicalTableScan *PhysicalTableScan, conds []expression.Expression) (selectedConds []expression.Expression, selectedSelectivity float64) {
+	if physicalTableScan.StoreType != kv.TiFlash || !sctx.GetSessionVars().EnableLateMaterialization || sctx.GetSessionVars().TiFlashFastScan ||
+		physicalTableScan.tblColHists.RealtimeCount <= tiflashDataPackSize || physicalTableScan.KeepOrder {
+		return nil, 0
 	}
 
 	// group the conditions by columns and sort them by selectivity
 	sortedConds := groupByColumnsSortBySelectivity(sctx, conds, physicalTableScan)
 
-	selectedConds := make([]expression.Expression, 0, len(conds))
+	selectedConds = make([]expression.Expression, 0, len(conds))
 	selectedIncome := 0.0
 	selectedColumnCount := 0
-	selectedSelectivity := 1.0
+	selectedSelectivity = 1.0
 	totalColumnCount := len(physicalTableScan.Columns)
+	intest.AssertFunc(func() bool {
+		return len(physicalTableScan.LateMaterializationFilterCondition) == 0
+	}, "it is impossible that LateMaterializationFilterCondition is not empty")
 	tableRowCount := physicalTableScan.StatsInfo().RowCount
 
 	for _, exprGroup := range sortedConds {
@@ -268,21 +280,18 @@ func predicatePushDownToTableScanImpl(sctx base.PlanContext, physicalSelection *
 			break
 		}
 	}
+	return selectedConds, selectedSelectivity
+}
 
+// predicatePushDownToTableScanCheck is to check whether it has uncomplete push down.
+func predicatePushDownToTableScanCheck(sctx base.PlanContext, physicalSelection *PhysicalSelection, physicalTableScan *PhysicalTableScan) {
+	conds := physicalSelection.Conditions
+	if len(conds) == 0 || len(physicalTableScan.LateMaterializationFilterCondition) > 0 {
+		return
+	}
+	selectedConds, _ := predicatePushDownToTableScanImpl(sctx, physicalTableScan, conds)
 	if len(selectedConds) == 0 {
 		return
 	}
-	logutil.BgLogger().Debug("planner: push down conditions to table scan", zap.String("table", physicalTableScan.Table.Name.L), zap.String("conditions", string(expression.SortedExplainExpressionList(sctx.GetExprCtx().GetEvalCtx(), selectedConds))))
-	PushedDown(physicalSelection, physicalTableScan, selectedConds, selectedSelectivity)
-}
-
-// PushedDown is used to push down the selected conditions from PhysicalSelection to PhysicalTableScan.
-// Used in unit test, so it is exported.
-func PushedDown(sel *PhysicalSelection, ts *PhysicalTableScan, selectedConds []expression.Expression, selectedSelectivity float64) {
-	// remove the pushed down conditions from selection
-	removeSpecificExprsFromSelection(sel, selectedConds)
-	// add the pushed down conditions to table scan
-	ts.LateMaterializationFilterCondition = selectedConds
-	// Update the row count of table scan after pushing down the conditions.
-	ts.StatsInfo().RowCount *= selectedSelectivity
+	panic("it is impossible that selectedConds is not empty")
 }
