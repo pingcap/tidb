@@ -8,11 +8,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
-<<<<<<< HEAD
-=======
 	"math/rand"
-	"net/url"
->>>>>>> 684010c999d (external: fix the dead loop in `readNBytes` (#61309))
 	"os"
 	"path"
 	"strings"
