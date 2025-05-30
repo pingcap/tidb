@@ -48,6 +48,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/disttask/framework/testutil",
         "//pkg/kv",
         "//pkg/sessionctx",

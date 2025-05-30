@@ -114,7 +114,7 @@ func NewDummyCollector() *dummyCollector {
 }
 
 // OnRead does nothing.
-func (d *dummyCollector) OnRead(_, _ int64) {
+func (*dummyCollector) OnRead(_, _ int64) {
 }
 
 // NewCollector returns a new collector with the provided read and write functions.
