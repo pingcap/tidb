@@ -63,9 +63,65 @@ type StepExecutor interface {
 	ResourceModified(ctx context.Context, newResource *proto.StepResource) error
 }
 
-// SubtaskSummary contains the summary of a subtask.
+// SubtaskSummary contains the summary of a subtask
+// These fields represent the number of data/rows inputed to the subtask.
 type SubtaskSummary struct {
-	RowCount int64
+	RowCnt int64 `json:"row_count"`
+	Bytes  int64 `json:"bytes"`
+}
+
+// RunningSubtaskSummary is used to store the summary of a running subtask.
+type RunningSubtaskSummary struct {
+	RowCnt atomic.Int64
+	Bytes  atomic.Int64
+}
+
+// ResetMetrics resets the summary to the given row count and bytes.
+func (s *RunningSubtaskSummary) ResetMetrics() {
+	s.RowCnt.Store(0)
+	s.Bytes.Store(0)
+}
+
+// ToSummary converts the running subtask summary to a subtask summary.
+func (s *RunningSubtaskSummary) ToSummary() *SubtaskSummary {
+	return &SubtaskSummary{
+		RowCnt: s.RowCnt.Load(),
+		Bytes:  s.Bytes.Load(),
+	}
+}
+
+// Collector is the interface for collecting subtask metrics.
+type Collector interface {
+	OnRead(bytes, rows int64)
+}
+
+// collector is the implement of Collector interface
+type collector struct {
+	readFunc func(bytes, rows int64)
+}
+
+func (c *collector) OnRead(bytes, rows int64) {
+	c.readFunc(bytes, rows)
+}
+
+// dummyCollector is a dummy implementation of Collector that does nothing.
+type dummyCollector struct {
+}
+
+// NewDummyCollector returns a new DummyCollector.
+func NewDummyCollector() *dummyCollector {
+	return &dummyCollector{}
+}
+
+// OnRead does nothing.
+func (*dummyCollector) OnRead(_, _ int64) {
+}
+
+// NewCollector returns a new collector with the provided read and write functions.
+func NewCollector(readFunc func(bytes, rows int64)) Collector {
+	return &collector{
+		readFunc: readFunc,
+	}
 }
 
 // StepExecFrameworkInfo is an interface that should be embedded into the
