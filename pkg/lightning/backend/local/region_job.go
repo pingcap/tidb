@@ -321,7 +321,7 @@ func newWriteRequest(meta *sst.SSTMeta, resourceGroupName, taskType string) *sst
 	}
 }
 
-func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResult, error) {
+func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResult, err error) {
 	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
@@ -337,6 +337,21 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 	timeout := 15 * time.Minute
 	ctx, cancel = context.WithTimeoutCause(ctx, timeout, common.ErrWriteTooSlow)
 	defer cancel()
+
+	// A defer function to handle all DeadlineExceeded errors that may occur during the write operation using this context with 15 minutes timeout. When the error is "context deadline exceeded", we will check if the cause is common.ErrWriteTooSlow and return thecommon.ErrWriteTooSlow instead so our caller would be able to retry this doWrite operation. By doing this defer we are hoping to handle all DeadlineExceeded error during this write, either from gRPC stream or write limiter WaitN operation.
+	defer func() {
+		if err == nil {
+			return
+		}
+		if goerrors.Is(err, context.DeadlineExceeded) {
+			if cause := context.Cause(ctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
+				log.FromContext(ctx).Info("Experiencing a wait timeout while writing to tikv",
+					zap.Int("store-write-bwlimit", local.BackendConfig.StoreWriteBWLimit),
+					zap.Int("limit-size", local.writeLimiter.Limit()))
+				err = errors.Trace(cause) // return the common.ErrWriteTooSlow instead to let caller retry it
+			}
+		}
+	}()
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
@@ -493,14 +508,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 				//
 				// Unfortunately, we cannot precisely control when the context will expire, so both scenarios are valid and expected.
 				// Fortunately, the "rate: Wait" error is already treated as retryable, so we only need to explicitly handle context.DeadlineExceeded here.
-				if goerrors.Is(err, context.DeadlineExceeded) {
-					if cause := context.Cause(wctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
-						log.FromContext(ctx).Info("Experiencing a wait timeout while writing to tikv",
-							zap.Int("store-write-bwlimit", local.BackendConfig.StoreWriteBWLimit),
-							zap.Int("limit-size", writeLimiter.Limit()))
-						return errors.Trace(cause) // return the common.ErrWriteTooSlow to let caller retry it
-					}
-				}
+				// We reply on the defer function at the top of doWrite to handle it for us in general.
 				return errors.Trace(err)
 			}
 			if err := clients[i].SendMsg(preparedMsg); err != nil {
