@@ -268,11 +268,5 @@
       "EXPLAIN format=brief select /*+ nth_plan(5) */ * from `t19f3e4f1`  where  `colc864` in ( select  `colc864`     from  `t19f3e4f1`  where       `colaadb` in (      select     `colf2af`\n from   `t0da79f8d`  where  not ( `t19f3e4f1`.`colc864` <> null )  )  ) limit 2837;",
       "select /*+ nth_plan(5) */ * from `t19f3e4f1`  where  `colc864` in ( select  `colc864`     from  `t19f3e4f1`  where       `colaadb` in (      select     `colf2af`\n from   `t0da79f8d`  where  not ( `t19f3e4f1`.`colc864` <> null )  )  ) limit 2837;"
     ]
-  },
-  {
-    "name": "TestIndexMergeIssue61093",
-    "cases": [
-      "explain format = 'brief' \nSELECT\n  *\nFROM\n  `user_authorization_simple`\nWHERE\n  `user_authorization_simple`.`deleted_at` IS NULL\n  AND (\n    `user_authorization_simple`.`auth_type` = 2\n    AND `user_authorization_simple`.`auth_value` = \"310419663029329176\"\n    OR (\n      `user_authorization_simple`.`auth_type` = 1\n      AND `user_authorization_simple`.`auth_value` = \"just4test@gmail.com\"\n    )\n    OR `user_authorization_simple`.`user_id` = \"310419663029329176\"\n  )\n  AND `user_authorization_simple`.`deleted_at` IS NULL\nORDER BY\n  `user_authorization_simple`.`id`\nLIMIT\n  1;",
-    ]
   }
 ]

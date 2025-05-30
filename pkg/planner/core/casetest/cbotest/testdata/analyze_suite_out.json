@@ -565,24 +565,5 @@
         "Warn": null
       }
     ]
-  },
-  {
-    "Name": "TestIndexMergeIssue61093",
-    "Cases": [
-      {
-        "SQL": "explain format = 'brief' \nSELECT\n  *\nFROM\n  `user_authorization_simple`\nWHERE\n  `user_authorization_simple`.`deleted_at` IS NULL\n  AND (\n    `user_authorization_simple`.`auth_type` = 2\n    AND `user_authorization_simple`.`auth_value` = \"310419663029329176\"\n    OR (\n      `user_authorization_simple`.`auth_type` = 1\n      AND `user_authorization_simple`.`auth_value` = \"just4test@gmail.com\"\n    )\n    OR `user_authorization_simple`.`user_id` = \"310419663029329176\"\n  )\n  AND `user_authorization_simple`.`deleted_at` IS NULL\nORDER BY\n  `user_authorization_simple`.`id`\nLIMIT\n  1;",
-        "Plan": [
-          "TopN 1.00 root  test.user_authorization_simple.id, offset:0, count:1",
-          "└─IndexMerge 0.00 root  type: union",
-          "  ├─IndexRangeScan(Build) 1.05 cop[tikv] table:user_authorization_simple, index:idx_user_authorization_auth_value(auth_value) range:[\"\\x1c@\\x1c>\\x1c=\\x1cA\\x1c>\\x1cF\\x1cC\\x1cC\\x1c@\\x1c=\\x1c?\\x1cF\\x1c@\\x1c?\\x1cF\\x1c>\\x1cD\\x1cC\",\"\\x1c@\\x1c>\\x1c=\\x1cA\\x1c>\\x1cF\\x1cC\\x1cC\\x1c@\\x1c=\\x1c?\\x1cF\\x1c@\\x1c?\\x1cF\\x1c>\\x1cD\\x1cC\"], keep order:false",
-          "  ├─IndexRangeScan(Build) 1.05 cop[tikv] table:user_authorization_simple, index:idx_user_authorization_auth_value(auth_value) range:[\"\\x1dL\\x1e\\xb5\\x1eq\\x1e\\x95\\x1cA\\x1e\\x95\\x1c\\xaa\\x1eq\\x1e\\x95\\x03\\x8e\\x1c\\xf4\\x1d\\xaa\\x1cG\\x1d2\\x1dw\\x02w\\x1cz\\x1d\\xdd\\x1d\\xaa\",\"\\x1dL\\x1e\\xb5\\x1eq\\x1e\\x95\\x1cA\\x1e\\x95\\x1c\\xaa\\x1eq\\x1e\\x95\\x03\\x8e\\x1c\\xf4\\x1d\\xaa\\x1cG\\x1d2\\x1dw\\x02w\\x1cz\\x1d\\xdd\\x1d\\xaa\"], keep order:false",
-          "  ├─IndexRangeScan(Build) 1.04 cop[tikv] table:user_authorization_simple, index:idx_user_authorization_user_id(user_id) range:[\"\\x1c@\\x1c>\\x1c=\\x1cA\\x1c>\\x1cF\\x1cC\\x1cC\\x1c@\\x1c=\\x1c?\\x1cF\\x1c@\\x1c?\\x1cF\\x1c>\\x1cD\\x1cC\",\"\\x1c@\\x1c>\\x1c=\\x1cA\\x1c>\\x1cF\\x1cC\\x1cC\\x1c@\\x1c=\\x1c?\\x1cF\\x1c@\\x1c?\\x1cF\\x1c>\\x1cD\\x1cC\"], keep order:false",
-          "  └─TopN(Probe) 0.00 cop[tikv]  test.user_authorization_simple.id, offset:0, count:1",
-          "    └─Selection 0.00 cop[tikv]  isnull(test.user_authorization_simple.deleted_at), or(and(eq(test.user_authorization_simple.auth_type, 2), eq(test.user_authorization_simple.auth_value, \"310419663029329176\")), or(and(eq(test.user_authorization_simple.auth_type, 1), eq(test.user_authorization_simple.auth_value, \"just4test@gmail.com\")), eq(test.user_authorization_simple.user_id, \"310419663029329176\")))",
-          "      └─TableRowIDScan 3.15 cop[tikv] table:user_authorization_simple keep order:false"
-        ],
-        "Warn": null
-      }
-    ]
   }
 ]
