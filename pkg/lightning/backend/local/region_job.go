@@ -321,7 +321,7 @@ func newWriteRequest(meta *sst.SSTMeta, resourceGroupName, taskType string) *sst
 	}
 }
 
-func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResult, err error) {
+func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWriteResult, err error) {
 	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
