@@ -183,7 +183,7 @@ func (p *PreallocIDs) PreallocIDs(m Allocator) error {
 
 	rewriteCnt := int64(0)
 	for _, id := range p.unallocedIDs {
-		if id > p.start && id < InsaneTableIDThreshold {
+		if id >= p.start && id < InsaneTableIDThreshold {
 			p.allocRule[id] = id
 			continue
 		}
