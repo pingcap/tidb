@@ -708,6 +708,7 @@ const (
 		table_name VARCHAR(64) NOT NULL,
 		table_id bigint(64) NOT NULL,
 		created_by VARCHAR(300) NOT NULL,
+		group_key VARCHAR(300) DEFAULT NULL,
 		parameters text NOT NULL,
 		source_file_size bigint(64) NOT NULL,
 		status VARCHAR(64) NOT NULL,
@@ -1312,12 +1313,17 @@ const (
 	// version 248
 	// Update mysql.tidb_pitr_id_map to add restore_id as a primary key field
 	version248 = 248
+
 	version249 = 249
+
+	// version 250
+	// Add group_key to mysql.tidb_import_jobs.
+	version250 = 250
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version249
+var currentBootstrapVersion int64 = version250
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1502,6 +1508,7 @@ var (
 		upgradeToVer247,
 		upgradeToVer248,
 		upgradeToVer249,
+		upgradeToVer250,
 	}
 )
 
@@ -3497,6 +3504,14 @@ func upgradeToVer249(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateRestoreRegistryTable)
+}
+
+func upgradeToVer250(s sessiontypes.Session, ver int64) {
+	if ver >= version250 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD COLUMN `group_key` VARCHAR(300) NOT NULL DEFAULT '' AFTER `created_by`", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

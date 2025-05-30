@@ -121,6 +121,7 @@ type ShowExec struct {
 	ImportJobID       *int64
 	DistributionJobID *int64
 	SQLOrDigest       string // Used for SHOW PLAN FOR <SQL or Digest>
+	ShowGroupKey      string // Used for SHOW IMPORT GROUP <GROUP_KEY>
 }
 
 type showTableRegionRowItem struct {
@@ -292,6 +293,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowSessionStates(ctx)
 	case ast.ShowImportJobs:
 		return e.fetchShowImportJobs(ctx)
+	case ast.ShowImportGroups:
+		return e.fetchShowImportGroups(ctx)
 	case ast.ShowDistributionJobs:
 		return e.fetchShowDistributionJobs(ctx)
 	}
@@ -2437,32 +2440,38 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, importedRowCount int64) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
 	result.AppendInt64(0, info.ID)
-	result.AppendString(1, info.Parameters.FileLocation)
-	result.AppendString(2, fullTableName)
-	result.AppendInt64(3, info.TableID)
-	result.AppendString(4, info.Step)
-	result.AppendString(5, info.Status)
-	result.AppendString(6, units.BytesSize(float64(info.SourceFileSize)))
+	if info.GroupKey == "" {
+		result.AppendNull(1)
+	} else {
+		result.AppendString(1, info.GroupKey)
+	}
+
+	result.AppendString(2, info.Parameters.FileLocation)
+	result.AppendString(3, fullTableName)
+	result.AppendInt64(4, info.TableID)
+	result.AppendString(5, info.Step)
+	result.AppendString(6, info.Status)
+	result.AppendString(7, units.BytesSize(float64(info.SourceFileSize)))
 	if info.Summary != nil {
-		result.AppendUint64(7, uint64(info.Summary.IngestSummary.RowCnt))
+		result.AppendUint64(8, uint64(info.Summary.IngestSummary.RowCnt))
 	} else if importedRowCount >= 0 {
-		result.AppendUint64(7, uint64(importedRowCount))
+		result.AppendUint64(8, uint64(importedRowCount))
 	} else {
-		result.AppendNull(7)
+		result.AppendNull(8)
 	}
-	result.AppendString(8, info.ErrorMessage)
-	result.AppendTime(9, info.CreateTime)
+	result.AppendString(9, info.ErrorMessage)
+	result.AppendTime(10, info.CreateTime)
 	if info.StartTime.IsZero() {
-		result.AppendNull(10)
-	} else {
-		result.AppendTime(10, info.StartTime)
-	}
-	if info.EndTime.IsZero() {
 		result.AppendNull(11)
 	} else {
-		result.AppendTime(11, info.EndTime)
+		result.AppendTime(11, info.StartTime)
 	}
-	result.AppendString(12, info.CreatedBy)
+	if info.EndTime.IsZero() {
+		result.AppendNull(12)
+	} else {
+		result.AppendTime(12, info.EndTime)
+	}
+	result.AppendString(13, info.CreatedBy)
 }
 
 func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *chunk.Chunk) error {
@@ -2578,8 +2587,96 @@ func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result 
 	return nil
 }
 
+type groupInfo struct {
+	groupKey   string
+	jobCount   int64
+	pending    int64
+	running    int64
+	completed  int64
+	failed     int64
+	canceled   int64
+	startTime  types.Time
+	updateTime types.Time
+}
+
+func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
+	var hasSuperPriv bool
+	if pm := privilege.GetPrivilegeManager(e.Ctx()); pm != nil {
+		hasSuperPriv = pm.RequestVerification(e.Ctx().GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
+	}
+	// we use sessionCtx from GetTaskManager, user ctx might not have system table privileges.
+	taskManager, err := fstorage.GetTaskManager()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
+	if err != nil {
+		return err
+	}
+
+	var infos []*importer.JobInfo
+	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+		exec := se.GetSQLExecutor()
+		var err2 error
+		infos, err2 = importer.GetJobsByGroupKey(ctx, exec, e.Ctx().GetSessionVars().User.String(), e.ShowGroupKey, hasSuperPriv)
+		return err2
+	}); err != nil {
+		return err
+	}
+
+	groupMap := make(map[string]*groupInfo)
+	for _, info := range infos {
+		if _, ok := groupMap[info.GroupKey]; !ok {
+			subtaskUpdateTime, err := importinto.GetLastUpdateTimeForRunningJob(ctx, info.ID)
+			if err != nil {
+				return err
+			}
+
+			updateTime := info.UpdateTime
+			if !subtaskUpdateTime.IsZero() {
+				updateTime = subtaskUpdateTime
+			}
+
+			groupMap[info.GroupKey] = &groupInfo{
+				groupKey:   info.GroupKey,
+				startTime:  types.ZeroTime,
+				updateTime: updateTime,
+			}
+		}
+
+		gInfo := groupMap[info.GroupKey]
+		if gInfo.startTime.IsZero() || info.CreateTime.Compare(gInfo.startTime) < 0 {
+			gInfo.startTime = info.CreateTime
+		}
+
+		gInfo.jobCount++
+		switch info.Status {
+		case "pending":
+			gInfo.pending++
+		case "running":
+			gInfo.running++
+		case "finished":
+			gInfo.completed++
+		case "failed":
+			gInfo.failed++
+		case "cancelled":
+			gInfo.canceled++
+		}
+	}
+
+	for _, gInfo := range groupMap {
+		e.result.AppendString(0, gInfo.groupKey)
+		e.result.AppendInt64(1, gInfo.jobCount)
+		e.result.AppendInt64(2, gInfo.pending)
+		e.result.AppendInt64(3, gInfo.running)
+		e.result.AppendInt64(4, gInfo.completed)
+		e.result.AppendInt64(5, gInfo.failed)
+		e.result.AppendInt64(6, gInfo.canceled)
+		e.result.AppendTime(7, gInfo.startTime)
+		e.result.AppendTime(8, gInfo.updateTime)
+	}
+	return nil
+}
+
 // fetchShowImportJobs fills the result with the schema:
-// {"Job_ID", "Data_Source", "Target_Table", "Table_ID",
+// {"Job_ID", "Group_Key", "Data_Source", "Target_Table", "Table_ID",
 // "Phase", "Status", "Source_File_Size", "Imported_Rows",
 // "Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
 func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {

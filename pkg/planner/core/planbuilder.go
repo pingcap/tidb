@@ -3481,6 +3481,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			ImportJobID:           show.ImportJobID,
 			DistributionJobID:     show.DistributionJobID,
 			SQLOrDigest:           show.SQLOrDigest,
+			ShowGroupKey:          show.ShowGroupKey,
 		},
 	}.Init(b.ctx)
 	isView := false
@@ -4506,12 +4507,19 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 }
 
 var (
-	importIntoSchemaNames = []string{"Job_ID", "Data_Source", "Target_Table", "Table_ID",
+	importIntoSchemaNames = []string{"Job_ID", "Group_Key", "Data_Source", "Target_Table", "Table_ID",
 		"Phase", "Status", "Source_File_Size", "Imported_Rows",
 		"Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
-	importIntoSchemaFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
+	importIntoSchemaFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
 		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
 		mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString}
+
+	showImportGroupsNames = []string{"Group_Key", "Total_Jobs",
+		"Pending", "Running", "Completed", "Failed", "Cancelled",
+		"First_Job_Create_Time", "Last_Job_Update_Time"}
+	showImportGroupsFTypes = []byte{mysql.TypeString, mysql.TypeLonglong,
+		mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong,
+		mysql.TypeTimestamp, mysql.TypeTimestamp}
 
 	// ImportIntoDataSource used inplannererrors.ErrLoadDataInvalidURI.
 	ImportIntoDataSource = "data source"
@@ -5878,6 +5886,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowImportJobs:
 		names = importIntoSchemaNames
 		ftypes = importIntoSchemaFTypes
+	case ast.ShowImportGroups:
+		names = showImportGroupsNames
+		ftypes = showImportGroupsFTypes
 	case ast.ShowDistributionJobs:
 		names = distributionJobsSchemaNames
 		ftypes = distributionJobsSchedulerFTypes

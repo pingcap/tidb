@@ -900,6 +900,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
 		ImportJobID:           v.ImportJobID,
 		DistributionJobID:     v.DistributionJobID,
 		SQLOrDigest:           v.SQLOrDigest,
+		ShowGroupKey:          v.ShowGroupKey,
 	}
 	if e.Tp == ast.ShowMasterStatus || e.Tp == ast.ShowBinlogStatus {
 		// show master status need start ts.

@@ -903,7 +903,6 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 			se.GetSessionVars().SetDistSQLScanConcurrency(newConcurrency)
 
 			// TODO: add resource group name
-
 			rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sql)
 			if err != nil {
 				return err

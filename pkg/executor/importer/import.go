@@ -96,6 +96,7 @@ const (
 	fieldsDefinedNullByOption = "fields_defined_null_by"
 	linesTerminatedByOption   = "lines_terminated_by"
 	skipRowsOption            = "skip_rows"
+	groupKeyOption            = "group_key"
 	splitFileOption           = "split_file"
 	diskQuotaOption           = "disk_quota"
 	threadOption              = "thread"
@@ -133,6 +134,7 @@ var (
 		fieldsDefinedNullByOption:   true,
 		linesTerminatedByOption:     true,
 		skipRowsOption:              true,
+		groupKeyOption:              true,
 		splitFileOption:             false,
 		diskQuotaOption:             true,
 		threadOption:                true,
@@ -271,6 +273,7 @@ type Plan struct {
 	MaxEngineSize         config.ByteSize
 	CloudStorageURI       string
 	DisablePrecheck       bool
+	GroupKey              string
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
@@ -368,6 +371,23 @@ type LoadDataController struct {
 	GlobalSortStore storage.ExternalStorage
 	// ExecuteNodesCnt is the count of execute nodes.
 	ExecuteNodesCnt int
+}
+
+// validateGroupKey validates the group key.
+// group key should be a string with length <= 256 composed of only alphanumeric characters, '-', and '_'.
+func validateGroupKey(groupKey string) bool {
+	if len(groupKey) > 256 {
+		return false
+	}
+	for _, r := range groupKey {
+		if !((r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') ||
+			r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
@@ -796,6 +816,13 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if err = p.Checksum.FromStringValue(v); err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
+	}
+	if opt, ok := specifiedOptions[groupKeyOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil || !validateGroupKey(v) {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		p.GroupKey = v
 	}
 	if opt, ok := specifiedOptions[recordErrorsOption]; ok {
 		vInt, err := optAsInt64(opt)
