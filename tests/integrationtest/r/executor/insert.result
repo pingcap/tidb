@@ -2437,11 +2437,6 @@ ts
 insert ignore into t values ('2025-03-30 02:00:00');
 Level	Code	Message
 Warning	1292	Incorrect timestamp value: '2025-03-30 02:00:00' for column 'ts' at row 1
-show warnings;
-Level	Code	Message
-Warning	1292	Incorrect timestamp value: '2025-03-30 02:00:00' for column 'ts' at row 1
-Level	Code	Message
-Warning	1292	Incorrect timestamp value: '2025-03-30 02:00:00' for column 'ts' at row 1
 select * from t;
 ts
 2025-03-30 03:00:00

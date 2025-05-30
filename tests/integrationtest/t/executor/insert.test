@@ -1777,7 +1777,6 @@ set sql_mode = 'strict_trans_tables,no_zero_date,no_zero_in_date,error_for_divis
 insert into t values ('2025-03-30 02:00:00');
 select * from t;
 insert ignore into t values ('2025-03-30 02:00:00');
-show warnings;
 select * from t;
 DROP TABLE t;
 SET @@time_zone = @old_time_zone;
