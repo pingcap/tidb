@@ -512,7 +512,8 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Execut
 		for _, col := range idx.Columns {
 			ft := v.Table.Meta().Columns[col.Offset].FieldType.Clone()
 			ft.SetArray(false)
-			if !types.IsSupportedTypeForMVIndexCheck(ft.GetType()) {
+			evalType := ft.EvalType()
+			if evalType != types.ETInt && evalType != types.ETString && evalType != types.ETDuration && evalType != types.ETDatetime {
 				supportFastAdminCheck = false
 				break
 			}

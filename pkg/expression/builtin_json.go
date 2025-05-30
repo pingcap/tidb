@@ -247,7 +247,7 @@ func (b *builtinJSONSumCRC32Sig) evalInt(ctx EvalContext, row chunk.Row) (res in
 	}
 
 	ft := b.tp.ArrayType()
-	f := convertJSON2Tp(ft.EvalType())
+	f := convertJSON2String(ft.EvalType())
 	if f == nil {
 		return 0, false, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("calculating sum of %s", ft.String()))
 	}

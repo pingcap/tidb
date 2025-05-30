@@ -923,7 +923,7 @@ func (b *builtinJSONSumCRC32Sig) vectorized() bool {
 
 func (b *builtinJSONSumCRC32Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	ft := b.tp.ArrayType()
-	f := convertJSON2Tp(ft.EvalType())
+	f := convertJSON2String(ft.EvalType())
 	if f == nil {
 		return ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("calculating sum of %s", ft.String()))
 	}
