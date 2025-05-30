@@ -292,12 +292,12 @@ func (index *IndexInfo) IsPublic() bool {
 // Columnar index only exists in TiFlash, no actual index data need to be written to KV layer.
 // For fulltext index, it will be built inside TiDB if it is not advanced.
 func (index *IndexInfo) IsColumnarIndex() bool {
-	return index.VectorInfo != nil || index.InvertedInfo != nil || (index.FullTextInfo != nil && !index.FullTextInfo.Advanced)
+	return index.VectorInfo != nil || index.InvertedInfo != nil
 }
 
 // IsFulltextIndexOnTiCI checks whether the index is a fulltext index and it built on TiCI engine.
 func (index *IndexInfo) IsFulltextIndexOnTiCI() bool {
-	return index.FullTextInfo != nil && index.FullTextInfo.Advanced
+	return index.FullTextInfo != nil
 }
 
 // GetColumnarIndexType returns the type of columnar index.

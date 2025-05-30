@@ -748,6 +748,7 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 		QueryText:      ftsFunc.GetArgs()[0].(*expression.Constant).Value.GetString(),
 		QueryTokenizer: string(index.FullTextInfo.ParserType),
 	}
+	ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, ftsFunc)
 }
 
 func (ds *DataSource) buildTiDBFTSPathAndCleanUp(
