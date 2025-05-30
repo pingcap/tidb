@@ -478,6 +478,7 @@ func (do *Domain) CheckAutoAnalyzeWindows() {
 	defer do.sysSessionPool.Put(se)
 	if !autoanalyze.CheckAutoAnalyzeWindow(sctx) {
 		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
+			statslogutil.StatsLogger().Warn("Kill auto analyze process because it exceeded the window", zap.Uint64("processID", id))
 			do.SysProcTracker().KillSysProcess(id)
 		}
 	}
