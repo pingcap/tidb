@@ -27,69 +27,79 @@ var coll = newCollector()
 
 func init() {
 	prometheus.MustRegister(coll)
-	metrics.DDLCommitIngestIncrementalOpCount = func(connID uint64) {
-		c, ok := coll.inc.Load(connID)
+	metrics.DDLCommitTempIndexWrite = func(connID uint64) {
+		c, ok := coll.write.Load(connID)
 		if !ok {
 			return
 		}
 		connIDCollector := c.(*connIDCollector)
 		connIDCollector.tblID2Count.Range(func(key, value interface{}) bool {
 			tableCollector := value.(*tableCollector)
-			tableCollector.totalIncOpCnt.Add(tableCollector.incOpCnt.Load())
-			tableCollector.incOpCnt.Store(0)
+			tableCollector.totalSingleWriteCnt.Add(tableCollector.singleWriteCnt.Load())
+			tableCollector.singleWriteCnt.Store(0)
+			tableCollector.totalDoubleWriteCnt.Add(tableCollector.doubleWriteCnt.Load())
+			tableCollector.doubleWriteCnt.Store(0)
 			return true
 		})
 	}
-	metrics.DDLRecordIngestIncrementalOpCount = func(connID uint64, tableID int64, opCount uint64) {
-		c, _ := coll.inc.LoadOrStore(connID, &connIDCollector{
+	metrics.DDLSetTempIndexWrite = func(connID uint64, tableID int64, opCount uint64, doubleWrite bool) {
+		c, _ := coll.write.LoadOrStore(connID, &connIDCollector{
 			tblID2Count: sync.Map{},
 		})
 		tc, _ := c.(*connIDCollector).tblID2Count.LoadOrStore(tableID, &tableCollector{
-			incOpCnt:      &atomic.Uint64{},
-			totalIncOpCnt: &atomic.Uint64{},
+			singleWriteCnt:      &atomic.Uint64{},
+			doubleWriteCnt:      &atomic.Uint64{},
+			totalSingleWriteCnt: &atomic.Uint64{},
+			totalDoubleWriteCnt: &atomic.Uint64{},
 		})
-		tc.(*tableCollector).incOpCnt.Add(opCount)
+		if doubleWrite {
+			tc.(*tableCollector).doubleWriteCnt.Add(opCount)
+		} else {
+			tc.(*tableCollector).singleWriteCnt.Add(opCount)
+		}
 	}
-	metrics.DDLRollbackIngestIncrementalOpCount = func(connID uint64) {
-		c, ok := coll.inc.Load(connID)
+	metrics.DDLRollbackTempIndexWrite = func(connID uint64) {
+		c, ok := coll.write.Load(connID)
 		if !ok {
 			return
 		}
 		connIDCollector := c.(*connIDCollector)
 		connIDCollector.tblID2Count.Range(func(key, value interface{}) bool {
 			tableCollector := value.(*tableCollector)
-			tableCollector.incOpCnt.Store(0)
+			tableCollector.singleWriteCnt.Store(0)
+			tableCollector.doubleWriteCnt.Store(0)
 			return true
 		})
 	}
-	metrics.DDLResetTotalIngestIncrementalOpCount = func(tblID int64) {
-		coll.inc.Range(func(key, value interface{}) bool {
+	metrics.DDLResetTempIndexWrite = func(tblID int64) {
+		coll.write.Range(func(key, value interface{}) bool {
 			connIDCollector := value.(*connIDCollector)
 			connIDCollector.tblID2Count.Delete(tblID)
 			return true
 		})
-		coll.merged.Delete(tblID)
-		coll.scanned.Delete(tblID)
+		coll.merge.Delete(tblID)
+		coll.scan.Delete(tblID)
 
 	}
-	metrics.DDLRecordScannedIncrementalOpCount = func(tableID int64, opCount uint64) {
-		c, _ := coll.scanned.LoadOrStore(tableID, &atomic.Uint64{})
+	metrics.DDLSetTempIndexScan = func(tableID int64, opCount uint64) {
+		c, _ := coll.scan.LoadOrStore(tableID, &atomic.Uint64{})
 		c.(*atomic.Uint64).Add(opCount)
 	}
-	metrics.DDLRecordMergedIncrementalOpCount = func(tableID int64, opCount uint64) {
-		c, _ := coll.merged.LoadOrStore(tableID, &atomic.Uint64{})
+	metrics.DDLSetTempIndexMerge = func(tableID int64, opCount uint64) {
+		c, _ := coll.merge.LoadOrStore(tableID, &atomic.Uint64{})
 		c.(*atomic.Uint64).Add(opCount)
 	}
 }
 
 type collector struct {
-	inc     sync.Map // connectionID => connIDCollector
-	merged  sync.Map // tableID => atomic.Uint64
-	scanned sync.Map // tableID => atomic.Uint64
+	write sync.Map // connectionID => connIDCollector
+	merge sync.Map // tableID => atomic.Uint64
+	scan  sync.Map // tableID => atomic.Uint64
 
-	incDesc     *prometheus.Desc
-	mergedDesc  *prometheus.Desc
-	scannedDesc *prometheus.Desc
+	singleWriteDesc *prometheus.Desc
+	doubleWriteDesc *prometheus.Desc
+	mergeDesc       *prometheus.Desc
+	scanDesc        *prometheus.Desc
 }
 
 type connIDCollector struct {
@@ -97,42 +107,52 @@ type connIDCollector struct {
 }
 
 type tableCollector struct {
-	incOpCnt      *atomic.Uint64
-	totalIncOpCnt *atomic.Uint64
+	singleWriteCnt *atomic.Uint64
+	doubleWriteCnt *atomic.Uint64
+
+	totalSingleWriteCnt *atomic.Uint64
+	totalDoubleWriteCnt *atomic.Uint64
 }
 
 func newCollector() *collector {
 	return &collector{
-		inc:     sync.Map{},
-		merged:  sync.Map{},
-		scanned: sync.Map{},
-		incDesc: prometheus.NewDesc(
-			"tidb_ingest_incremental_op_count",
-			"Gauge of incremental operations.",
+		write: sync.Map{},
+		merge: sync.Map{},
+		scan:  sync.Map{},
+		singleWriteDesc: prometheus.NewDesc(
+			"tidb_ddl_temp_index_write",
+			"Gauge of temp index write times",
 			[]string{"table_id"}, nil,
 		),
-		mergedDesc: prometheus.NewDesc(
-			"tidb_ingest_merged_op_count",
-			"Gauge of merged incremental operations.",
+		doubleWriteDesc: prometheus.NewDesc(
+			"tidb_ddl_temp_index_double_write",
+			"Gauge of temp index double write times",
 			[]string{"table_id"}, nil,
 		),
-		scannedDesc: prometheus.NewDesc(
-			"tidb_ingest_scanned_op_count",
-			"Gauge of scanned incremental operations.",
+		mergeDesc: prometheus.NewDesc(
+			"tidb_ddl_temp_index_merge",
+			"Gauge of temp index merge times.",
+			[]string{"table_id"}, nil,
+		),
+		scanDesc: prometheus.NewDesc(
+			"tidb_ddl_temp_index_scan",
+			"Gauge of temp index scan times.",
 			[]string{"table_id"}, nil,
 		),
 	}
 }
 
 func (c *collector) Describe(ch chan<- *prometheus.Desc) {
-	ch <- c.incDesc
-	ch <- c.mergedDesc
-	ch <- c.scannedDesc
+	ch <- c.singleWriteDesc
+	ch <- c.doubleWriteDesc
+	ch <- c.mergeDesc
+	ch <- c.scanDesc
 }
 
 func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	tableIDCnt := make(map[int64]uint64)
-	c.inc.Range(func(key, value interface{}) bool {
+	tableIDCnt2 := make(map[int64]uint64)
+	c.write.Range(func(key, value any) bool {
 		connIDCollector := value.(*connIDCollector)
 		connIDCollector.tblID2Count.Range(func(tableKey, tableValue interface{}) bool {
 			tableID := tableKey.(int64)
@@ -140,21 +160,25 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 			if _, exists := tableIDCnt[tableID]; !exists {
 				tableIDCnt[tableID] = 0
 			}
-			tableIDCnt[tableID] += tableCollector.totalIncOpCnt.Load()
+			tableIDCnt[tableID] += tableCollector.totalSingleWriteCnt.Load()
+			if _, exists := tableIDCnt2[tableID]; !exists {
+				tableIDCnt2[tableID] = 0
+			}
+			tableIDCnt2[tableID] += tableCollector.totalDoubleWriteCnt.Load()
 			return true
 		})
 		return true
 	})
 	for tableID, opCount := range tableIDCnt {
 		ch <- prometheus.MustNewConstMetric(
-			c.incDesc,
+			c.singleWriteDesc,
 			prometheus.GaugeValue,
 			float64(opCount),
 			strconv.FormatInt(tableID, 10),
 		)
 	}
 	tableIDCnt = make(map[int64]uint64)
-	c.merged.Range(func(key, value interface{}) bool {
+	c.merge.Range(func(key, value any) bool {
 		tableID := key.(int64)
 		opCount := value.(*atomic.Uint64).Load()
 		if _, exists := tableIDCnt[tableID]; !exists {
@@ -165,14 +189,14 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	})
 	for tableID, opCount := range tableIDCnt {
 		ch <- prometheus.MustNewConstMetric(
-			c.mergedDesc,
+			c.mergeDesc,
 			prometheus.GaugeValue,
 			float64(opCount),
 			strconv.FormatInt(tableID, 10),
 		)
 	}
 	tableIDCnt = make(map[int64]uint64)
-	c.scanned.Range(func(key, value interface{}) bool {
+	c.scan.Range(func(key, value any) bool {
 		tableID := key.(int64)
 		opCount := value.(*atomic.Uint64).Load()
 		if _, exists := tableIDCnt[tableID]; !exists {
@@ -183,7 +207,7 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	})
 	for tableID, opCount := range tableIDCnt {
 		ch <- prometheus.MustNewConstMetric(
-			c.scannedDesc,
+			c.scanDesc,
 			prometheus.GaugeValue,
 			float64(opCount),
 			strconv.FormatInt(tableID, 10),
