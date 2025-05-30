@@ -389,7 +389,9 @@ func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, t
 }
 
 // Delete removes the entry for handle h and indexedValues from KV index.
-func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) error {
+func (c *index) Delete(ctx sessionctx.Context, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) error {
+	sc := ctx.GetSessionVars().StmtCtx
+	connID := ctx.GetSessionVars().ConnectionID
 	indexedValues := c.getIndexedValue(indexedValue)
 	for _, value := range indexedValues {
 		key, distinct, err := c.GenIndexKey(sc, value, h, nil)
@@ -398,7 +400,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 		}
 
 		key, tempKey, tempKeyVer := GenTempIdxKeyByState(c.idxInfo, key)
-		// hasTempKey := tempKeyVer != tablecodec.TempIndexKeyTypeNone
+		hasTempKey := tempKeyVer != TempIndexKeyTypeNone
 		var originTempVal []byte
 		if len(tempKey) > 0 && c.idxInfo.Unique {
 			// Get the origin value of the unique temporary index key.
@@ -451,10 +453,10 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 					if err != nil {
 						return err
 					}
+					if hasTempKey {
+						metrics.DDLRecordIngestIncrementalOpCount(connID, c.tblInfo.ID, 1)
+					}
 				}
-				// if hasTempKey {
-				// 	metrics.DDLRecordIngestIncrementalOpCount(sc.GetSessionVars().ConnectionID, c.tblInfo.ID, 1)
-				// }
 			}
 			if len(tempKey) > 0 {
 				// Append to the end of the origin value for distinct value.
@@ -463,7 +465,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 				if err != nil {
 					return err
 				}
-				// metrics.DDLRecordIngestIncrementalOpCount(sctx.GetSessionVars().ConnectionID, c.tblInfo.ID, 1)
+				metrics.DDLRecordIngestIncrementalOpCount(connID, c.tblInfo.ID, 1)
 			}
 		} else {
 			if len(key) > 0 {
@@ -471,9 +473,9 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 				if err != nil {
 					return err
 				}
-				// if hasTempKey {
-				// 	metrics.DDLRecordIngestIncrementalOpCount(ctx.ConnectionID(), c.tblInfo.ID, 1)
-				// }
+				if hasTempKey {
+					metrics.DDLRecordIngestIncrementalOpCount(connID, c.tblInfo.ID, 1)
+				}
 			}
 			if len(tempKey) > 0 {
 				tempVal := tempValElem.Encode(nil)
@@ -481,7 +483,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 				if err != nil {
 					return err
 				}
-				// metrics.DDLRecordIngestIncrementalOpCount(ctx.ConnectionID(), c.tblInfo.ID, 1)
+				metrics.DDLRecordIngestIncrementalOpCount(connID, c.tblInfo.ID, 1)
 			}
 		}
 		if c.idxInfo.State == model.StatePublic {
