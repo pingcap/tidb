@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -196,41 +197,47 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
+	var attempts uint
+	var lastRange kv.KeyRange
 
-	taskRanges := []reorgBackfillTask{taskRange}
-	for len(taskRanges) > 0 {
-		curRange := taskRanges[0]
-		taskRanges = taskRanges[1:]
+	pendings := []kv.KeyRange{{StartKey: taskRange.startKey, EndKey: taskRange.endKey}}
+	for len(pendings) > 0 {
+		current := pendings[0]
+		pendings = pendings[1:]
+
+		if current.StartKey.Cmp(lastRange.StartKey) == 0 &&
+			current.EndKey.Cmp(lastRange.EndKey) == 0 {
+			attempts++
+		} else {
+			lastRange = current
+			attempts = 0
+		}
 
 		var (
 			addCnt, scanCnt = 0, 0
-			splitable       bool
+			splittable      bool
 			splitKey        kv.Key
-			splitSizes      []int
 			tempRecordCnt   int
 		)
 
 		err := kv.RunInNewTxn(ctx, w.ddlCtx.store, false, func(_ context.Context, txn kv.Transaction) error {
-			txn.SetOption(kv.Priority, curRange.priority)
-			if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(curRange.getJobID()); tagger != nil {
+			txn.SetOption(kv.Priority, taskRange.priority)
+			if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(taskRange.getJobID()); tagger != nil {
 				txn.SetOption(kv.ResourceGroupTagger, tagger)
 			}
 			txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
 
-			tmpIdxRecords, nextKey, taskDone, err := w.fetchTempIndexVals(txn, &scanCnt, curRange)
+			tmpIdxRecords, nextKey, taskDone, err := w.fetchTempIndexVals(
+				txn, current.StartKey, current.EndKey, taskRange.priority, &scanCnt, &taskRange)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			taskCtx.nextKey = nextKey
 			taskCtx.done = taskDone
 
-			splitSizes = []int{len(tmpIdxRecords)}
 			if len(tmpIdxRecords) > 1 {
 				splitKey = w.tmpIdxKeys[len(tmpIdxRecords)/2]
-				splitable = splitKey.Cmp(curRange.startKey) > 0
-				if splitable {
-					splitSizes = []int{len(tmpIdxRecords) / 2, len(tmpIdxRecords) - len(tmpIdxRecords)/2}
-				}
+				splittable = splitKey.Cmp(current.StartKey) > 0
 			}
 			tempRecordCnt = len(tmpIdxRecords)
 
@@ -286,6 +293,13 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 					}
 				}
 
+				failpoint.Inject("mockDMLExecutionMergingInTxn", func(val failpoint.Value) {
+					//nolint:forcetypeassert
+					if val.(bool) && MockDMLExecutionMerging != nil {
+						MockDMLExecutionMerging()
+					}
+				})
+
 				addCnt++
 			}
 			return nil
@@ -296,25 +310,27 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 				failpoint.Inject("mergeTempIndexMarkSplitable", func(val failpoint.Value) {
 					//nolint:forcetypeassert
 					if v, ok := val.(bool); ok {
-						splitable = v
+						splittable = v
 					}
 				})
 
-				if !splitable {
-					taskRanges = append(taskRanges, curRange)
+				if !splittable {
+					pendings = append(pendings, current)
 				} else {
-					firstRange := curRange
-					firstRange.endKey = splitKey.Clone()
-					secondRange := curRange
-					secondRange.startKey = splitKey.Clone()
-					taskRanges = append(taskRanges, firstRange, secondRange)
+					firstRange := kv.KeyRange{StartKey: current.StartKey, EndKey: splitKey.Clone()}
+					secondRange := kv.KeyRange{StartKey: splitKey.Clone(), EndKey: current.EndKey}
+					pendings = append(pendings, firstRange, secondRange)
 				}
 				logutil.BgLogger().Warn("temp index merge worker retry",
 					zap.Int64("jobID", taskRange.jobID),
-					zap.Bool("splitable", splitable),
-					zap.Ints("splitSizes", splitSizes),
+					zap.Bool("splitable", splittable),
 					zap.Int("tempRecordCnt", tempRecordCnt),
+					zap.Uint("attempts", attempts),
 					zap.Error(err))
+				if err := w.ddlCtx.isReorgRunnable(taskRange.jobID, false); err != nil {
+					return taskCtx, errors.Trace(err)
+				}
+				kv.BackOff(attempts)
 				continue
 			}
 			return taskCtx, errors.Trace(err)
@@ -337,7 +353,8 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 	return
 }
 
-func (*mergeIndexWorker) AddMetricInfo(float64) {
+func (w *mergeIndexWorker) AddMetricInfo(cnt float64) {
+	w.metricCounter.Add(cnt)
 }
 
 func (*mergeIndexWorker) String() string {
@@ -383,8 +400,11 @@ func (w *mergeIndexWorker) updateCurrentIndexInfo(newIndexKey kv.Key) (skip bool
 
 func (w *mergeIndexWorker) fetchTempIndexVals(
 	txn kv.Transaction,
+	startKey kv.Key,
+	endKey kv.Key,
+	priority int,
 	scannedCnt *int,
-	taskRange reorgBackfillTask,
+	rangeInfo fmt.Stringer,
 ) ([]*temporaryIndexRecord, kv.Key, bool, error) {
 	startTime := time.Now()
 	w.tmpIdxRecords = w.tmpIdxRecords[:0]
@@ -395,13 +415,13 @@ func (w *mergeIndexWorker) fetchTempIndexVals(
 	oprStartTime := startTime
 	idxPrefix := w.table.IndexPrefix()
 	var lastKey kv.Key
-	err := iterateSnapshotKeys(w.jobContext, w.sessCtx.GetStore(), taskRange.priority, idxPrefix, txn.StartTS(),
-		taskRange.startKey, taskRange.endKey, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
+	err := iterateSnapshotKeys(w.jobContext, w.sessCtx.GetStore(), priority, idxPrefix, txn.StartTS(),
+		startKey, endKey, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterate temporary index in merge process", 0)
 			oprStartTime = oprEndTime
 
-			taskDone = indexKey.Cmp(taskRange.endKey) >= 0
+			taskDone = indexKey.Cmp(endKey) >= 0
 
 			if taskDone || len(w.tmpIdxRecords) >= w.batchCnt {
 				return false, nil
@@ -462,13 +482,13 @@ func (w *mergeIndexWorker) fetchTempIndexVals(
 	}
 	var nextKey kv.Key
 	if taskDone {
-		nextKey = taskRange.endKey
+		nextKey = endKey
 	} else {
 		nextKey = lastKey
 	}
 
 	logutil.BgLogger().Debug("merge temp index txn fetches handle info", zap.String("category", "ddl"), zap.Uint64("txnStartTS", txn.StartTS()),
-		zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
+		zap.Stringer("taskRange", rangeInfo), zap.Duration("takeTime", time.Since(startTime)))
 	return w.tmpIdxRecords, nextKey.Next(), taskDone, errors.Trace(err)
 }
 
