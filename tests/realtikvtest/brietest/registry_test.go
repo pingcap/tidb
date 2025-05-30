@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -121,9 +122,8 @@ func TestRegistryBasicOperations(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify it's gone
-	rows = tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE id = %d",
-		registry.RegistrationTableName, restoreID))
-	require.Equal(t, "0", rows.Rows()[0][0])
+	_, exists := dom.InfoSchema().SchemaByName(ast.NewCIStr(registry.RegistrationDBName))
+	require.False(t, exists)
 }
 
 func TestRegistryTableConflicts(t *testing.T) {
