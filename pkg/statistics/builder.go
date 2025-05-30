@@ -417,14 +417,16 @@ func BuildHistAndTopN(
 	}
 
 	topn := &TopN{TopN: topNList}
-	if int(hg.NDV) <= len(topn.TopN) {
+	lenTopN := int64(len(topn.TopN))
+	if int64(hg.NDV) <= lenTopN {
 		// If we've collected everything  - don't create any buckets
 		return hg, topn, nil
 	}
 
 	// Step2: exclude topn from samples
-	if len(topn.TopN) > 0 {
-		for i := int64(0); i < int64(len(samples)); i++ {
+	lenSamples := int64(len(samples))
+	if lenTopN > 0 && lenSamples > 0 {
+		for i := int64(0); i < lenSamples; i++ {
 			sampleBytes, err := getComparedBytes(samples[i].Value)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
@@ -474,13 +476,14 @@ func BuildHistAndTopN(
 				}
 			}
 		}
+		lenSamples = int64(len(samples))
 	}
 
 	// Step3: build histogram with the rest samples
-	if len(samples) > 0 {
-		remainingNDV := ndv - int64(len(topn.TopN))
+	if lenSamples > 0 {
+		remainingNDV := ndv - lenTopN
 		// if we pruned the topN, it means that there are no remaining skewed values in the samples
-		if len(topn.TopN) < numTopN && numBuckets == 256 {
+		if lenTopN < int64(numTopN) && numBuckets == 256 {
 			// set the number of buckets to be the number of remaining distinct values divided by 2
 			// but no less than 1 and no more than the original number of buckets
 			numBuckets = int(min(max(1, remainingNDV/2), int64(numBuckets)))
