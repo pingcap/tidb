@@ -69,6 +69,7 @@ func (s *PhysicalSchemaProducer) MemoryUsage() (sum int64) {
 
 // *************************** end implementation of PhysicalPlan interface *****************************
 
+// CloneForPlanCacheWithSelf clone physical plan for plan cache with new self as param.
 func (s *PhysicalSchemaProducer) CloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*PhysicalSchemaProducer, bool) {
 	cloned := new(PhysicalSchemaProducer)
 	cloned.schema = s.schema
@@ -80,6 +81,7 @@ func (s *PhysicalSchemaProducer) CloneForPlanCacheWithSelf(newCtx base.PlanConte
 	return cloned, true
 }
 
+// CloneWithSelf clone physical plan for basic usage with new self as param.
 func (s *PhysicalSchemaProducer) CloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*PhysicalSchemaProducer, error) {
 	base, err := s.BasePhysicalPlan.CloneWithSelf(newCtx, newSelf)
 	if err != nil {
