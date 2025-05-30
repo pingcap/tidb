@@ -902,6 +902,9 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			zap.String("index", allIndexInfos[0].Name.O))
 		switch reorgTp {
 		case model.ReorgTypeLitMerge:
+			// if job.SnapshotVer != 0 {
+			// 	time.Sleep(10 * time.Second)
+			// }
 			if job.ReorgMeta.IsDistReorg {
 				done, ver, err = runIngestReorgJobDist(w, d, t, job, tbl, allIndexInfos)
 			} else {
