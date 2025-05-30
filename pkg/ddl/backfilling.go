@@ -199,6 +199,18 @@ type reorgBackfillTask struct {
 	priority int
 }
 
+func (r reorgBackfillTask) Clone() reorgBackfillTask {
+	return reorgBackfillTask{
+		physicalTable: r.physicalTable,
+		id:            r.id,
+		startKey:      r.startKey,
+		endKey:        r.endKey,
+		jobID:         r.jobID,
+		sqlQuery:      r.sqlQuery,
+		priority:      r.priority,
+	}
+}
+
 func (r *reorgBackfillTask) getJobID() int64 {
 	return r.jobID
 }

@@ -1349,7 +1349,7 @@ const (
 	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                  int32  = 10240
-	MinDDLReorgBatchSize                  int32  = 32
+	MinDDLReorgBatchSize                  int32  = 1
 	MinExpensiveQueryTimeThreshold        uint64 = 10 // 10s
 	MinExpensiveTxnTimeThreshold          uint64 = 60 // 60s
 	DefTiDBAutoBuildStatsConcurrency             = 1
