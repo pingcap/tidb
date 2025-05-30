@@ -35,6 +35,8 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -99,7 +101,7 @@ func TestCreateTables(t *testing.T) {
 		newTableIDExist[newTableID] = true
 	}
 
-	for i := 0; i < len(tables); i++ {
+	for i := range tables {
 		require.True(t, oldTableIDExist[int64(i)], "table rule does not exist")
 	}
 }
@@ -124,23 +126,23 @@ func TestNeedCheckTargetClusterFresh(t *testing.T) {
 	require.NoError(t, err)
 
 	// not set filter and first run with checkpoint
-	require.True(t, client.NeedCheckFreshCluster(false, true))
+	require.True(t, client.NeedCheckFreshCluster(false, false))
 
 	// skip check when has checkpoint
-	require.False(t, client.NeedCheckFreshCluster(false, false))
+	require.False(t, client.NeedCheckFreshCluster(false, true))
 
 	// skip check when set --filter
-	require.False(t, client.NeedCheckFreshCluster(true, false))
+	require.False(t, client.NeedCheckFreshCluster(true, true))
 
 	// skip check when has set --filter and has checkpoint
-	require.False(t, client.NeedCheckFreshCluster(true, true))
+	require.False(t, client.NeedCheckFreshCluster(true, false))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/snap_client/mock-incr-backup-data", "return(false)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/snap_client/mock-incr-backup-data"))
 	}()
 	// skip check when increment backup
-	require.False(t, client.NeedCheckFreshCluster(false, true))
+	require.False(t, client.NeedCheckFreshCluster(false, false))
 }
 
 func TestCheckTargetClusterFresh(t *testing.T) {
@@ -154,10 +156,10 @@ func TestCheckTargetClusterFresh(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	require.NoError(t, client.CheckTargetClusterFresh(ctx))
+	require.NoError(t, client.EnsureNoUserTables())
 
 	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: ast.NewCIStr("user_db")}}}))
-	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
+	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.EnsureNoUserTables()))
 }
 
 func TestCheckTargetClusterFreshWithTable(t *testing.T) {
@@ -170,7 +172,6 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 	err := client.InitConnections(g, cluster.Storage)
 	require.NoError(t, err)
 
-	ctx := context.Background()
 	info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
 	dbSchema, isExist := info.SchemaByName(ast.NewCIStr("test"))
@@ -195,7 +196,7 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 	_, _, err = client.CreateTablesTest(cluster.Domain, []*metautil.Table{table}, 0)
 	require.NoError(t, err)
 
-	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
+	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.EnsureNoUserTables()))
 }
 
 func TestInitFullClusterRestore(t *testing.T) {
@@ -206,20 +207,20 @@ func TestInitFullClusterRestore(t *testing.T) {
 	require.NoError(t, err)
 
 	// explicit filter
-	client.InitFullClusterRestore(true)
+	client.InitFullClusterRestore(true, true, true)
 	require.False(t, client.IsFullClusterRestore())
 
-	client.InitFullClusterRestore(false)
+	client.InitFullClusterRestore(false, true, true)
 	require.True(t, client.IsFullClusterRestore())
 	// set it to false again
-	client.InitFullClusterRestore(true)
+	client.InitFullClusterRestore(false, true, false)
 	require.False(t, client.IsFullClusterRestore())
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/snap_client/mock-incr-backup-data", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/snap_client/mock-incr-backup-data"))
 	}()
-	client.InitFullClusterRestore(false)
+	client.InitFullClusterRestore(false, true, true)
 	require.False(t, client.IsFullClusterRestore())
 }
 
@@ -325,7 +326,7 @@ func TestSetSpeedLimit(t *testing.T) {
 	serialCost := len(mockStores) * WORKING_TIME
 	require.Less(t, cost, time.Duration(serialCost)*time.Millisecond)
 	require.Equal(t, len(mockStores), recordStores.len())
-	for i := 0; i < recordStores.len(); i++ {
+	for i := range recordStores.len() {
 		require.Equal(t, mockStores[i].Id, recordStores.get(i))
 	}
 
@@ -345,7 +346,149 @@ func TestSetSpeedLimit(t *testing.T) {
 	sort.Slice(mockStores, func(i, j int) bool { return mockStores[i].Id < mockStores[j].Id })
 	t.Logf("Has Communicated: %v\n", recordStores.toString())
 	require.Less(t, recordStores.len(), len(mockStores))
-	for i := 0; i < recordStores.len(); i++ {
+	for i := range recordStores.len() {
 		require.Equal(t, mockStores[i].Id, recordStores.get(i))
 	}
+}
+
+func TestSortTablesBySchemaID(t *testing.T) {
+	// Create test tables with different schema IDs in mixed order
+	tables := []*metautil.Table{
+		createTestTable(2, 3),
+		createTestTable(1, 2),
+		createTestTable(3, 5),
+		createTestTable(1, 1),
+		createTestTable(2, 4),
+		createTestTable(3, 6),
+		createTestTable(6, 7),
+	}
+
+	sorted := snapclient.SortTablesBySchemaID(tables)
+
+	require.Len(t, sorted, 7, "Should have 7 tables after sorting")
+
+	expectedSchemaIDs := []int64{1, 1, 2, 2, 3, 3, 6}
+	expectedTableIDs := []int64{1, 2, 3, 4, 5, 6, 7}
+	actualSchemaIDs := make([]int64, 7)
+	actualTableIDs := make([]int64, 7)
+	for i, table := range sorted {
+		actualSchemaIDs[i] = table.DB.ID
+		actualTableIDs[i] = table.Info.ID
+	}
+
+	require.Equal(t, expectedSchemaIDs, actualSchemaIDs, "Tables should be sorted by schema ID")
+	require.Equal(t, expectedTableIDs, actualTableIDs, "Tables should be sorted by table ID")
+}
+
+// Helper function to create a test table with given IDs
+func createTestTable(schemaID, tableID int64) *metautil.Table {
+	dbInfo := &model.DBInfo{
+		ID: schemaID,
+	}
+
+	tableInfo := &model.TableInfo{
+		ID: tableID,
+	}
+
+	return &metautil.Table{
+		DB:   dbInfo,
+		Info: tableInfo,
+	}
+}
+
+func generateMetautilTable(dbName string, tableID int64, partitionIDs ...int64) *metautil.Table {
+	var partition *model.PartitionInfo
+	if len(partitionIDs) > 0 {
+		partition = &model.PartitionInfo{
+			Definitions: make([]model.PartitionDefinition, 0, len(partitionIDs)),
+		}
+		for _, partitionID := range partitionIDs {
+			partition.Definitions = append(partition.Definitions, model.PartitionDefinition{
+				ID: partitionID,
+			})
+		}
+	}
+	return &metautil.Table{
+		DB: &model.DBInfo{
+			Name: ast.NewCIStr(dbName),
+		},
+		Info: &model.TableInfo{
+			ID:        tableID,
+			Partition: partition,
+		},
+	}
+}
+
+func TestAllocTableIDs(t *testing.T) {
+	// cannot use shared `mc`, other parallel case may change it.
+	cluster := getStartedMockedCluster(t)
+	defer cluster.Stop()
+
+	g := gluetidb.New()
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	err := client.InitConnections(g, cluster.Storage)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	globalID := int64(0)
+	err = kv.RunInNewTxn(ctx, cluster.Storage, true, func(_ context.Context, txn kv.Transaction) error {
+		id, err := meta.NewMutator(txn).AdvanceGlobalIDs(1000)
+		globalID = id + 1000
+		return err
+	})
+	require.NoError(t, err)
+	userTableIDNotReusedWhenNeedCheck, err := client.AllocTableIDs(ctx, []*metautil.Table{
+		generateMetautilTable("mysql", globalID-1),
+		generateMetautilTable("__TiDB_BR_Temporary_mysql", globalID-2),
+		generateMetautilTable("mysql", globalID-3),
+		generateMetautilTable("__TiDB_BR_Temporary_mysql", globalID-4),
+	}, true)
+	require.NoError(t, err)
+	require.False(t, userTableIDNotReusedWhenNeedCheck)
+	err = kv.RunInNewTxn(ctx, cluster.Storage, true, func(_ context.Context, txn kv.Transaction) error {
+		id, err := meta.NewMutator(txn).AdvanceGlobalIDs(1000)
+		globalID = id + 1000
+		return err
+	})
+	require.NoError(t, err)
+	userTableIDNotReusedWhenNeedCheck, err = client.AllocTableIDs(ctx, []*metautil.Table{
+		generateMetautilTable("mysql", globalID-1, globalID+1),
+		generateMetautilTable("test", globalID+2, globalID+3),
+	}, true)
+	require.NoError(t, err)
+	require.False(t, userTableIDNotReusedWhenNeedCheck)
+	err = kv.RunInNewTxn(ctx, cluster.Storage, true, func(_ context.Context, txn kv.Transaction) error {
+		id, err := meta.NewMutator(txn).AdvanceGlobalIDs(1000)
+		globalID = id + 1000
+		return err
+	})
+	require.NoError(t, err)
+	userTableIDNotReusedWhenNeedCheck, err = client.AllocTableIDs(ctx, []*metautil.Table{
+		generateMetautilTable("mysql", globalID-1, globalID+1),
+		generateMetautilTable("test", globalID+2, globalID),
+		generateMetautilTable("test2", globalID+3, globalID+4),
+	}, true)
+	require.NoError(t, err)
+	require.True(t, userTableIDNotReusedWhenNeedCheck)
+}
+
+func TestGetMinUserTableID(t *testing.T) {
+	minUserTableID := snapclient.GetMinUserTableID([]*metautil.Table{
+		generateMetautilTable("mysql", 1),
+		generateMetautilTable("__TiDB_BR_Temporary_mysql", 2),
+		generateMetautilTable("mysql", 4),
+		generateMetautilTable("__TiDB_BR_Temporary_mysql", 3),
+	})
+	require.Equal(t, int64(math.MaxInt64), minUserTableID)
+	minUserTableID = snapclient.GetMinUserTableID([]*metautil.Table{
+		generateMetautilTable("mysql", 3, 1),
+		generateMetautilTable("test", 4, 6),
+	})
+	require.Equal(t, int64(4), minUserTableID)
+	minUserTableID = snapclient.GetMinUserTableID([]*metautil.Table{
+		generateMetautilTable("mysql", 4, 1),
+		generateMetautilTable("test", 3, 2),
+		generateMetautilTable("test2", 5, 6),
+	})
+	require.Equal(t, int64(2), minUserTableID)
 }

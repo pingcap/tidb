@@ -18,8 +18,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"math/rand"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	disthandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -69,6 +72,7 @@ import (
 	metrics2 "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
@@ -163,8 +167,13 @@ type Domain struct {
 	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
 	schemaLease     time.Duration
+	// advancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
+	// some misuse of the session to avoid potential bugs.
+	// It is recommended to use this pool instead of `sysSessionPool`.
+	advancedSysSessionPool *syssession.AdvancedSessionPool
 	// Note: If you no longer need the session, you must call Destroy to release it.
 	// Otherwise, the session will be leaked. Because there is a strong reference from the domain to the session.
+	// Deprecated: Use `advancedSysSessionPool` instead.
 	sysSessionPool util.DestroyableSessionPool
 	exit           chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
@@ -256,7 +265,7 @@ func (df *deferFn) check() {
 
 	// iterate the slice, call the defer function and remove it.
 	rm := 0
-	for i := 0; i < len(df.data); i++ {
+	for i := range df.data {
 		record := &df.data[i]
 		if now.After(record.fire) {
 			record.fn()
@@ -659,7 +668,7 @@ func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, new
 		}
 		diffTypes = append(diffTypes, diff.Type.String())
 		phyTblIDs = append(phyTblIDs, ids...)
-		for i := 0; i < len(ids); i++ {
+		for range ids {
 			actions = append(actions, uint64(diff.Type))
 		}
 	}
@@ -1043,7 +1052,7 @@ func (do *Domain) refreshMDLCheckTableInfo(ctx context.Context) {
 	do.mdlCheckTableInfo.newestVer = domainSchemaVer
 	do.mdlCheckTableInfo.jobsVerMap = make(map[int64]int64, len(rows))
 	do.mdlCheckTableInfo.jobsIDsMap = make(map[int64]string, len(rows))
-	for i := 0; i < len(rows); i++ {
+	for i := range rows {
 		do.mdlCheckTableInfo.jobsVerMap[rows[i].GetInt64(0)] = rows[i].GetInt64(1)
 		do.mdlCheckTableInfo.jobsIDsMap[rows[i].GetInt64(0)] = rows[i].GetString(2)
 	}
@@ -1087,12 +1096,8 @@ func (do *Domain) mdlCheckLoop() {
 
 		jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
 		jobsIDsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIDsMap))
-		for k, v := range do.mdlCheckTableInfo.jobsVerMap {
-			jobsVerMap[k] = v
-		}
-		for k, v := range do.mdlCheckTableInfo.jobsIDsMap {
-			jobsIDsMap[k] = v
-		}
+		maps.Copy(jobsVerMap, do.mdlCheckTableInfo.jobsVerMap)
+		maps.Copy(jobsIDsMap, do.mdlCheckTableInfo.jobsIDsMap)
 		do.mdlCheckTableInfo.mu.Unlock()
 
 		jobNeedToSync = true
@@ -1304,6 +1309,7 @@ func (do *Domain) Close() {
 	}
 
 	do.sysSessionPool.Close()
+	do.advancedSysSessionPool.Close()
 	variable.UnregisterStatistics(do.BindingHandle())
 	if do.onClose != nil {
 		do.onClose()
@@ -1369,6 +1375,18 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 		mdlCheckCh: make(chan struct{}),
 	}
 
+	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(capacity, func() (syssession.SessionContext, error) {
+		r, err := factory()
+		if err != nil {
+			return nil, err
+		}
+		sctx, ok := r.(syssession.SessionContext)
+		intest.Assert(ok, "type: %T should be cast to syssession.SessionContext", r)
+		if !ok {
+			return nil, errors.Errorf("type: %T cannot be cast to syssession.SessionContext", r)
+		}
+		return sctx, nil
+	})
 	do.infoCache = infoschema.NewCache(do, int(vardef.SchemaVersionCacheLimit.Load()))
 	do.stopAutoAnalyze.Store(false)
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
@@ -1721,11 +1739,8 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		})
 	}
 	enabled := true
-	for _, s := range svrIDsInThisZone[enabledCount:] {
-		if s == serverInfo.ID {
-			enabled = false
-			break
-		}
+	if slices.Contains(svrIDsInThisZone[enabledCount:], serverInfo.ID) {
+		enabled = false
 	}
 
 	if variable.SetEnableAdaptiveReplicaRead(enabled) {
@@ -1764,6 +1779,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	if err != nil {
 		return err
 	}
+	disthandle.SetNodeResource(nodeRes)
 	executorManager, err := taskexecutor.NewManager(managerCtx, serverID, taskManager, nodeRes)
 	if err != nil {
 		return err
@@ -1874,8 +1890,16 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 }
 
 // SysSessionPool returns the system session pool.
+// Deprecated: Use AdvancedSysSessionPool instead.
 func (do *Domain) SysSessionPool() util.DestroyableSessionPool {
 	return do.sysSessionPool
+}
+
+// AdvancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
+// some misuse of the session to avoid potential bugs.
+// It is recommended to use this pool instead of `sysSessionPool`.
+func (do *Domain) AdvancedSysSessionPool() syssession.Pool {
+	return do.advancedSysSessionPool
 }
 
 // SysProcTracker returns the system processes tracker.
@@ -1914,8 +1938,9 @@ func (do *Domain) GetPDHTTPClient() pdhttp.Client {
 	return nil
 }
 
-func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
+func (do *Domain) decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
 	var msg PrivilegeEvent
+	isNewVersionEvents := false
 	for _, event := range resp.Events {
 		if event.Kv != nil {
 			val := event.Kv.Value
@@ -1925,6 +1950,11 @@ func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
 				if err != nil {
 					logutil.BgLogger().Warn("decodePrivilegeEvent unmarshal fail", zap.Error(err))
 					break
+				}
+				isNewVersionEvents = true
+				if do.ServerID() != 0 && tmp.ServerID == do.ServerID() {
+					// Skip the events from this TiDB-Server
+					continue
 				}
 				if tmp.All {
 					msg.All = true
@@ -1938,23 +1968,23 @@ func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
 
 	// In case old version triggers the event, the event value is empty,
 	// Then we fall back to the old way: reload all the users.
-	if len(msg.UserList) == 0 {
+	if len(msg.UserList) == 0 && !isNewVersionEvents {
 		msg.All = true
 	}
 	return msg
 }
 
-func batchReadMoreData(ch clientv3.WatchChan, event PrivilegeEvent) PrivilegeEvent {
+func (do *Domain) batchReadMoreData(ch clientv3.WatchChan, event PrivilegeEvent) PrivilegeEvent {
 	timer := time.NewTimer(5 * time.Millisecond)
 	defer timer.Stop()
 	const maxBatchSize = 128
-	for i := 0; i < maxBatchSize; i++ {
+	for range maxBatchSize {
 		select {
 		case resp, ok := <-ch:
 			if !ok {
 				return event
 			}
-			tmp := decodePrivilegeEvent(resp)
+			tmp := do.decodePrivilegeEvent(resp)
 			if tmp.All {
 				event.All = true
 			} else {
@@ -1964,7 +1994,7 @@ func batchReadMoreData(ch clientv3.WatchChan, event PrivilegeEvent) PrivilegeEve
 			}
 			succ := timer.Reset(5 * time.Millisecond)
 			if !succ {
-				break
+				return event
 			}
 		case <-timer.C:
 			return event
@@ -2006,8 +2036,8 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			case resp, ok := <-watchCh:
 				if ok {
 					count = 0
-					event = decodePrivilegeEvent(resp)
-					event = batchReadMoreData(watchCh, event)
+					event = do.decodePrivilegeEvent(resp)
+					event = do.batchReadMoreData(watchCh, event)
 				} else {
 					if do.ctx.Err() == nil {
 						logutil.BgLogger().Error("load privilege loop watch channel closed")
@@ -2021,7 +2051,12 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 				}
 			case <-time.After(duration):
 				event.All = true
-				event = batchReadMoreData(watchCh, event)
+				event = do.batchReadMoreData(watchCh, event)
+			}
+
+			// All events are from this TiDB-Server, skip them
+			if !event.All && len(event.UserList) == 0 {
+				continue
 			}
 
 			err := privReloadEvent(do.privHandle, &event)
@@ -2254,7 +2289,7 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 		status: taskStatus,
 	}
 	do.planReplayerHandle.planReplayerTaskDumpHandle.workers = make([]*planReplayerTaskDumpWorker, 0)
-	for i := 0; i < len(workersSctxs); i++ {
+	for i := range workersSctxs {
 		worker := &planReplayerTaskDumpWorker{
 			ctx:    ctx,
 			sctx:   workersSctxs[i],
@@ -2599,7 +2634,7 @@ func quitStatsOwner(do *Domain, mgr owner.Manager) {
 // StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
 func (do *Domain) StartLoadStatsSubWorkers(concurrency int) {
 	statsHandle := do.StatsHandle()
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		do.wg.Add(1)
 		go statsHandle.SubLoadWorker(do.exit, do.wg)
 	}
@@ -2638,9 +2673,9 @@ func (do *Domain) initStats(ctx context.Context) {
 	}
 	initstats.InitStatsPercentage.Store(100)
 	if err != nil {
-		logutil.ErrVerboseLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
+		statslogutil.StatsLogger().Error("Init stats failed", zap.Bool("isLiteInitStats", liteInitStats), zap.Duration("duration", time.Since(t)), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("init stats info time", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)))
+		statslogutil.StatsLogger().Info("Init stats succeed", zap.Bool("isLiteInitStats", liteInitStats), zap.Duration("duration", time.Since(t)))
 	}
 }
 
@@ -2700,7 +2735,7 @@ func (do *Domain) asyncLoadHistogram() {
 		case <-cleanupTicker.C:
 			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
 			if err != nil {
-				logutil.ErrVerboseLogger().Warn("load histograms failed", zap.Error(err))
+				statslogutil.StatsErrVerboseSampleLogger().Warn("Load histograms failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return
@@ -2857,7 +2892,7 @@ func (do *Domain) autoAnalyzeWorker() {
 	analyzeTicker := time.NewTicker(do.statsLease)
 	defer func() {
 		analyzeTicker.Stop()
-		logutil.BgLogger().Info("autoAnalyzeWorker exited.")
+		statslogutil.StatsLogger().Info("autoAnalyzeWorker exited.")
 	}()
 	for {
 		select {
@@ -2989,6 +3024,7 @@ const (
 // TiDB old version do not use no such message.
 type PrivilegeEvent struct {
 	All      bool
+	ServerID uint64
 	UserList []string
 }
 
@@ -3009,6 +3045,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 	// Because we need to tell other TiDB instances to update privilege data, say, we're changing the
 	// password using a special TiDB instance and want the new password to take effect.
 	if do.etcdClient != nil {
+		event.ServerID = do.serverID
 		data, err := json.Marshal(event)
 		if err != nil {
 			return errors.Trace(err)
@@ -3016,8 +3053,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 		if uint64(len(data)) > size.MB {
 			logutil.BgLogger().Warn("notify update privilege message too large", zap.ByteString("value", data))
 		}
-		row := do.etcdClient.KV
-		_, err = row.Put(do.ctx, privilegeKey, string(data))
+		err = ddlutil.PutKVToEtcd(do.ctx, do.etcdClient, ddlutil.KeyOpDefaultRetryCnt, privilegeKey, string(data))
 		if err != nil {
 			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
 		}
@@ -3038,8 +3074,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 // synchronously so that the effect is immediate.
 func (do *Domain) NotifyUpdateSysVarCache(updateLocal bool) {
 	if do.etcdClient != nil {
-		row := do.etcdClient.KV
-		_, err := row.Put(context.Background(), sysVarCacheKey, "")
+		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, ddlutil.KeyOpDefaultRetryCnt, sysVarCacheKey, "")
 		if err != nil {
 			logutil.BgLogger().Warn("notify update sysvar cache failed", zap.Error(err))
 		}
@@ -3275,7 +3310,7 @@ func (*Domain) proposeServerID(ctx context.Context, conflictCnt int) (uint64, er
 				}
 			}
 
-			for retry := 0; retry < 15; retry++ {
+			for range 15 {
 				randServerID := randomServerID(1, globalconn.MaxServerID32)
 				if _, ok := serverIDs[randServerID]; !ok {
 					return randServerID, nil
@@ -3390,7 +3425,7 @@ func (do *Domain) serverIDKeeper() {
 
 // StartTTLJobManager creates and starts the ttl job manager
 func (do *Domain) StartTTLJobManager() {
-	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
+	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.advancedSysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
 	do.ttlJobManager.Store(ttlJobManager)
 	ttlJobManager.Start()
 }

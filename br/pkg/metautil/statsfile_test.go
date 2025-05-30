@@ -38,8 +38,8 @@ func newJsonColumn(magic int64) *util.JSONColumn {
 			Buckets: []*tipb.Bucket{
 				{
 					Count:      magic,
-					LowerBound: []byte(fmt.Sprintf("%d", magic)),
-					UpperBound: []byte(fmt.Sprintf("%d", magic)),
+					LowerBound: fmt.Appendf(nil, "%d", magic),
+					UpperBound: fmt.Appendf(nil, "%d", magic),
 					Repeats:    magic,
 				},
 			},

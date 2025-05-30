@@ -317,11 +317,10 @@ count(a)
 explain format = 'brief' select count(a) from t where b>0 group by a, b order by a limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
-└─StreamAgg	1.00	root		group by:select.t.a, select.t.b, funcs:count(Column#16)->Column#5, funcs:firstrow(select.t.a)->select.t.a
-  └─IndexReader	1.00	root		index:StreamAgg
-    └─StreamAgg	1.00	cop[tikv]		group by:select.t.a, select.t.b, funcs:count(select.t.a)->Column#16
-      └─Selection	1.25	cop[tikv]		gt(select.t.b, 0)
-        └─IndexFullScan	3.75	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
+└─StreamAgg	1.00	root		group by:select.t.a, select.t.b, funcs:count(select.t.a)->Column#5, funcs:firstrow(select.t.a)->select.t.a
+  └─IndexReader	0.64	root		index:Selection
+    └─Selection	0.64	cop[tikv]		gt(select.t.b, 0)
+      └─IndexFullScan	1.92	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
 select count(a) from t where b>0 group by a, b order by a limit 1;
 count(a)
 3
@@ -679,23 +678,23 @@ INSERT INTO t4 VALUES (1,"first"),(2,"second"),(3,"third");
 SELECT * FROM t1 STRAIGHT_JOIN t2 USING(id);
 id
 2
-EXPLAIN SELECT * FROM t1 STRAIGHT_JOIN t2 USING(id);
+EXPLAIN format='brief' SELECT * FROM t1 STRAIGHT_JOIN t2 USING(id);
 id	estRows	task	access object	operator info
-MergeJoin_6	12500.00	root		inner join, left key:select.t1.id, right key:select.t2.id
-├─TableReader_30(Build)	10000.00	root		data:TableFullScan_29
-│ └─TableFullScan_29	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
-└─TableReader_28(Probe)	10000.00	root		data:TableFullScan_27
-  └─TableFullScan_27	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+MergeJoin	12500.00	root		inner join, left key:select.t1.id, right key:select.t2.id
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
 SELECT * FROM t2 STRAIGHT_JOIN t1 USING(id);
 id
 2
-EXPLAIN SELECT * FROM t2 STRAIGHT_JOIN t1 USING(id);
+EXPLAIN format='brief'  SELECT * FROM t2 STRAIGHT_JOIN t1 USING(id);
 id	estRows	task	access object	operator info
-MergeJoin_6	12500.00	root		inner join, left key:select.t2.id, right key:select.t1.id
-├─TableReader_30(Build)	10000.00	root		data:TableFullScan_29
-│ └─TableFullScan_29	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
-└─TableReader_28(Probe)	10000.00	root		data:TableFullScan_27
-  └─TableFullScan_27	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+MergeJoin	12500.00	root		inner join, left key:select.t2.id, right key:select.t1.id
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
 SELECT * FROM t1 STRAIGHT_JOIN t2 USING(id) STRAIGHT_JOIN t4 USING(id);
 id	v
 2	second

@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -76,6 +77,7 @@ func (ss *Schemas) BackupSchemas(
 	store kv.Storage,
 	statsHandle *handle.Handle,
 	backupTS uint64,
+	checksumMap map[int64]*metautil.ChecksumStats,
 	concurrency uint,
 	copConcurrency uint,
 	skipChecksum bool,
@@ -147,6 +149,11 @@ func (ss *Schemas) BackupSchemas(
 							zap.Uint64("TotalBytes", schema.totalBytes),
 							zap.Duration("TimeTaken", calculateCost))
 					}
+					if checksumMap != nil {
+						if err := schema.matchChecksum(checksumMap); err != nil {
+							return errors.Trace(err)
+						}
+					}
 				}
 				if statsHandle != nil {
 					statsWriter := metaWriter.NewStatsWriter()
@@ -210,6 +217,42 @@ func (s *schemaInfo) calculateChecksum(
 	s.crc64xor = checksumResp.Checksum
 	s.totalKvs = checksumResp.TotalKvs
 	s.totalBytes = checksumResp.TotalBytes
+	return nil
+}
+
+// Check if checksum from files matches checksum from coprocessor.
+func (s *schemaInfo) matchChecksum(checksumMap map[int64]*metautil.ChecksumStats) error {
+	var crc, kvs, bytes uint64
+	ckm := checksumMap[s.tableInfo.ID]
+	if ckm != nil {
+		crc = ckm.Crc64Xor
+		kvs = ckm.TotalKvs
+		bytes = ckm.TotalBytes
+	}
+	if s.tableInfo.Partition != nil {
+		for _, def := range s.tableInfo.Partition.Definitions {
+			ckm := checksumMap[def.ID]
+			if ckm != nil {
+				crc ^= ckm.Crc64Xor
+				kvs += ckm.TotalKvs
+				bytes += ckm.TotalBytes
+			}
+		}
+	}
+	if s.crc64xor != crc || s.totalKvs != kvs || s.totalBytes != bytes {
+		log.Error("checksum mismatch",
+			zap.Stringer("db", s.dbInfo.Name),
+			zap.Stringer("table", s.tableInfo.Name),
+			zap.Uint64("origin tidb crc64", s.crc64xor),
+			zap.Uint64("calculated crc64", crc),
+			zap.Uint64("origin tidb total kvs", s.totalKvs),
+			zap.Uint64("calculated total kvs", kvs),
+			zap.Uint64("origin tidb total bytes", s.totalBytes),
+			zap.Uint64("calculated total bytes", bytes))
+		return errors.Trace(berrors.ErrBackupChecksumMismatch)
+	}
+	log.Info("checksum success",
+		zap.Stringer("db", s.dbInfo.Name), zap.Stringer("table", s.tableInfo.Name))
 	return nil
 }
 

@@ -619,10 +619,10 @@ func TestSkipAutoAnalyzeOutsideTheAvailableTime(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	ttStart := time.Now().Add(-2 * time.Hour)
 	ttEnd := time.Now().Add(-1 * time.Hour)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		dbName := fmt.Sprintf("db%d", i)
 		tk.MustExec(fmt.Sprintf("create database %s", dbName))
-		for j := 0; j < 2; j++ {
+		for j := range 2 {
 			tableName := fmt.Sprintf("table%d", j)
 			tk.MustExec(fmt.Sprintf("create table %s.%s (a int)", dbName, tableName))
 		}
@@ -659,7 +659,7 @@ func TestAutoAnalyzeWithVectorIndex(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	h := dom.StatsHandle()
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000

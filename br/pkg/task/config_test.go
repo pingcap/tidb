@@ -36,6 +36,7 @@ import (
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -59,6 +60,10 @@ func (m mockPDClient) GetClusterID(_ context.Context) uint64 {
 
 func (m mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return []*metapb.Store{}, nil
+}
+
+func (m mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return m
 }
 
 func TestConfigureRestoreClient(t *testing.T) {
@@ -241,7 +246,7 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 		dbBytes, err := json.Marshal(mockDB)
 		require.NoError(t, err)
 
-		for i := 0; i < len(tblBytesList); i++ {
+		for i := range tblBytesList {
 			mockSchemas = append(mockSchemas, &backuppb.Schema{
 				Db:    dbBytes,
 				Table: tblBytesList[i],

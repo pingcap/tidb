@@ -104,19 +104,19 @@ func (e *UnionExec) initialize(ctx context.Context) {
 	if e.Concurrency > e.ChildrenLen() {
 		e.Concurrency = e.ChildrenLen()
 	}
-	for i := 0; i < e.Concurrency; i++ {
+	for range e.Concurrency {
 		e.results = append(e.results, exec.NewFirstChunk(e.Children(0)))
 	}
 	e.resultPool = make(chan *unionWorkerResult, e.Concurrency)
 	e.resourcePools = make([]chan *chunk.Chunk, e.Concurrency)
 	e.childIDChan = make(chan int, e.ChildrenLen())
-	for i := 0; i < e.Concurrency; i++ {
+	for i := range e.Concurrency {
 		e.resourcePools[i] = make(chan *chunk.Chunk, 1)
 		e.resourcePools[i] <- e.results[i]
 		e.wg.Add(1)
 		go e.resultPuller(ctx, i)
 	}
-	for i := 0; i < e.ChildrenLen(); i++ {
+	for i := range e.ChildrenLen() {
 		e.childIDChan <- i
 	}
 	close(e.childIDChan)

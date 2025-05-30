@@ -17,8 +17,10 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"math"
 	"math/bits"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -203,6 +205,7 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
+	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
@@ -534,9 +537,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			RowCount: leftProfile.RowCount,
 			ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 		})
-		for id, c := range leftProfile.ColNDVs {
-			p.StatsInfo().ColNDVs[id] = c
-		}
+		maps.Copy(p.StatsInfo().ColNDVs, leftProfile.ColNDVs)
 		p.StatsInfo().ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
 		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
 		return p.StatsInfo(), true, nil
@@ -1008,7 +1009,7 @@ func (p *LogicalJoin) ColumnSubstituteAll(schema *expression.Schema, exprs []exp
 		// we can push this filter to it.
 		if expression.ExprFromSchema(newCond, p.Children()[0].Schema()) {
 			p.LeftConditions = append(p.LeftConditions, newCond)
-			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			p.EqualConditions = slices.Delete(p.EqualConditions, i, i+1)
 			continue
 		}
 
@@ -1016,7 +1017,7 @@ func (p *LogicalJoin) ColumnSubstituteAll(schema *expression.Schema, exprs []exp
 		// child, we can push this filter to it.
 		if expression.ExprFromSchema(newCond, p.Children()[1].Schema()) {
 			p.RightConditions = append(p.RightConditions, newCond)
-			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			p.EqualConditions = slices.Delete(p.EqualConditions, i, i+1)
 			continue
 		}
 
@@ -1027,7 +1028,7 @@ func (p *LogicalJoin) ColumnSubstituteAll(schema *expression.Schema, exprs []exp
 		// we can not use it as join's equal condition.
 		if !(lhsIsCol && rhsIsCol) {
 			p.OtherConditions = append(p.OtherConditions, newCond)
-			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			p.EqualConditions = slices.Delete(p.EqualConditions, i, i+1)
 			continue
 		}
 
@@ -1081,23 +1082,22 @@ func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (left
 	rChild := p.Children()[1]
 	lSchema := lChild.Schema()
 	rSchema := rChild.Schema()
+	var lFullSchema, rFullSchema *expression.Schema
 	// parentused col = t2.a
 	// leftChild schema = t1.a(t2.a) + and others
 	// rightChild schema = t3 related + and others
 	if join, ok := lChild.(*LogicalJoin); ok {
-		if join.FullSchema != nil {
-			lSchema = join.FullSchema
-		}
+		lFullSchema = join.FullSchema
 	}
 	if join, ok := rChild.(*LogicalJoin); ok {
-		if join.FullSchema != nil {
-			rSchema = join.FullSchema
-		}
+		rFullSchema = join.FullSchema
 	}
 	for _, col := range parentUsedCols {
-		if lSchema != nil && lSchema.Contains(col) {
+		if (lSchema != nil && lSchema.Contains(col)) ||
+			(lFullSchema != nil && lFullSchema.Contains(col)) {
 			leftCols = append(leftCols, col)
-		} else if rSchema != nil && rSchema.Contains(col) {
+		} else if (rSchema != nil && rSchema.Contains(col)) ||
+			(rFullSchema != nil && rFullSchema.Contains(col)) {
 			rightCols = append(rightCols, col)
 		}
 	}
@@ -1336,7 +1336,7 @@ func (p *LogicalJoin) ExtractOnCondition(
 // children of join, whatever the join type is; if false, push it down to inner child of outer join,
 // and both children of non-outer-join.
 func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []expression.Expression,
-	rightCond []expression.Expression, filterCond bool) ([]expression.Expression, []expression.Expression) {
+	rightCond []expression.Expression, filterCond bool) (_, _ []expression.Expression) {
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		if filterCond {
@@ -1561,7 +1561,7 @@ func (p *LogicalJoin) updateEQCond() {
 			}
 		}
 		if need2Remove {
-			p.OtherConditions = append(p.OtherConditions[:i], p.OtherConditions[i+1:]...)
+			p.OtherConditions = slices.Delete(p.OtherConditions, i, i+1)
 		}
 	}
 	// eg: explain select * from t1, t3 where t1.a+1 = t3.a;
@@ -1612,7 +1612,7 @@ func (p *LogicalJoin) updateEQCond() {
 	canBeNAAJ := (p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin) && len(p.EqualConditions) == 0
 	if canBeNAAJ && p.SCtx().GetSessionVars().OptimizerEnableNAAJ {
 		var otherCond expression.CNFExprs
-		for i := 0; i < len(p.OtherConditions); i++ {
+		for i := range p.OtherConditions {
 			eqCond, ok := p.OtherConditions[i].(*expression.ScalarFunction)
 			if ok && eqCond.FuncName.L == ast.EQ && expression.IsEQCondFromIn(eqCond) {
 				// here must be a EQCondFromIn.

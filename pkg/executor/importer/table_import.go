@@ -243,7 +243,7 @@ type TableImporter struct {
 	diskQuota       int64
 	diskQuotaLock   *syncutil.RWMutex
 
-	rowCh chan QueryRow
+	chunkCh chan QueryChunk
 }
 
 // NewTableImporterForTest creates a new table importer for test.
@@ -320,7 +320,7 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 	return parser, nil
 }
 
-func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEncoder, error) {
+func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (*TableKVEncoder, error) {
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        ti.SQLMode,
@@ -333,6 +333,20 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEnc
 		Logger: log.Logger{Logger: ti.logger.With(zap.String("path", chunk.FileMeta.Path))},
 	}
 	return NewTableKVEncoder(cfg, ti)
+}
+
+// GetKVEncoderForDupResolve get the KV encoder for duplicate resolution.
+func (ti *TableImporter) GetKVEncoderForDupResolve() (*TableKVEncoder, error) {
+	cfg := &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{
+			SQLMode: ti.SQLMode,
+			SysVars: ti.ImportantSysVars,
+		},
+		Table:                ti.encTable,
+		Logger:               log.Logger{Logger: ti.logger},
+		UseIdentityAutoRowID: true,
+	}
+	return NewTableKVEncoderForDupResolve(cfg, ti)
 }
 
 func (e *LoadDataController) calculateSubtaskCnt() int {
@@ -525,6 +539,9 @@ func (ti *TableImporter) Backend() *local.Backend {
 
 // Close implements the io.Closer interface.
 func (ti *TableImporter) Close() error {
+	if ti.LoadDataController != nil {
+		ti.LoadDataController.Close()
+	}
 	ti.backend.Close()
 	return nil
 }
@@ -611,9 +628,9 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 	}
 }
 
-// SetSelectedRowCh sets the channel to receive selected rows.
-func (ti *TableImporter) SetSelectedRowCh(ch chan QueryRow) {
-	ti.rowCh = ch
+// SetSelectedChunkCh sets the channel to receive selected rows.
+func (ti *TableImporter) SetSelectedChunkCh(ch chan QueryChunk) {
+	ti.chunkCh = ch
 }
 
 func (ti *TableImporter) closeAndCleanupEngine(engine *backend.OpenedEngine) {
@@ -665,7 +682,7 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		checksum = verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
 	)
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
-	for i := 0; i < ti.ThreadCnt; i++ {
+	for range ti.ThreadCnt {
 		eg.Go(func() error {
 			chunkCheckpoint := checkpoints.ChunkCheckpoint{}
 			chunkChecksum := verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
@@ -785,7 +802,7 @@ func (r *autoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
 
 // RebaseAllocatorBases rebase the allocator bases.
 func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs map[autoid.AllocatorType]int64, plan *Plan, logger *zap.Logger) (err error) {
-	callLog := log.BeginTask(logger, "rebase allocators")
+	callLog := log.BeginTask(logger.With(zap.Any("maxIDs", maxIDs)), "rebase allocators")
 	defer func() {
 		callLog.End(zap.ErrorLevel, err)
 	}()
@@ -890,7 +907,7 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 		se.GetSessionVars().SetDistSQLScanConcurrency(distSQLScanConcurrencyBak)
 	}()
 	ctx = util.WithInternalSourceType(checkCtx, tidbkv.InternalImportInto)
-	for i := 0; i < maxErrorRetryCount; i++ {
+	for i := range maxErrorRetryCount {
 		txnErr = func() error {
 			// increase backoff weight
 			if err := setBackoffWeight(se, plan, logger); err != nil {
