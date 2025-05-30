@@ -161,15 +161,43 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 
 	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
 
-	var unsignedIntHandle bool
-	if p.Table.PKIsHandle {
-		if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
-			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+	// For not TiFlash
+	if p.StoreType != kv.TiFlash {
+		var unsignedIntHandle bool
+		if p.Table.PKIsHandle {
+			if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
+				unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+			}
 		}
+		hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
+		p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
+		if !p.isChildOfIndexLookUp && hasFullRangeScan {
+			if newRowCount := getTableScanPenalty(p, rows); newRowCount > 0 {
+				p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
+			}
+		}
+		p.PlanCostInit = true
+		// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+		if p.isChildOfIndexLookUp {
+			// This is a RowID table scan (child of IndexLookUp)
+			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableRowIDScanCostFactor)
+			p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptTableRowIDScanCostFactor)
+		} else if !hasFullRangeScan {
+			// This is a table range scan (predicate exists on the PK)
+			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableRangeScanCostFactor)
+			p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptTableRangeScanCostFactor)
+		} else {
+			// This is a table full scan
+			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableFullScanCostFactor)
+			p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptTableFullScanCostFactor)
+		}
+		return p.PlanCostVer2, nil
 	}
-	hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
 
-	if p.StoreType == kv.TiFlash && len(p.LateMaterializationFilterCondition) > 0 {
+	// For TiFlash
+
+	// for late materialization
+	if len(p.LateMaterializationFilterCondition) > 0 {
 		// For late materialization, we will scan all rows of filter columns in the table or given range first.
 		// And the rows of rest columns after filtering may be discrete, so we need to add some penalty for it.
 		// so late materialization cost = lmRowSize * scanFactor * totalRowCount + restRowSize * scanFactor * rows * lateMaterializationFactor
@@ -188,66 +216,43 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 			func() string {
 				return fmt.Sprintf("lm_rest_col_scan(%v*logrowsize(%v)*%v*lm_scan_factor(%v))", rows, rowSize-lmRowSize, scanFactor, defaultVer2Factors.LateMaterializationScan.Value)
 			}))
-	} else if p.StoreType == kv.TiFlash {
+	} else {
 		p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 		// Apply TiFlash startup cost to prefer TiKV for small table scans
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, TiFlashStartupRowPenalty, rowSize, scanFactor))
-	} else {
-		p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 	}
 
-	if p.StoreType == kv.TiFlash {
-		// Add penalty for search index
-		for _, idx := range p.UsedColumnarIndexes {
-			if idx == nil {
-				continue
-			}
-			if idx.IndexInfo.VectorInfo != nil {
-				if idx.QueryInfo == nil {
-					p.PlanCostVer2 = costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexNoTopK, defaultVer2Factors.ANNIndexNoTopK.Value, func() string {
-						return fmt.Sprintf("ann-index-no-topk(%v)", defaultVer2Factors.ANNIndexNoTopK)
-					})
-				} else {
-					p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexStart, rows*defaultVer2Factors.ANNIndexStart.Value, func() string {
-						return fmt.Sprintf("ann-index-start(%v*%v)", rows, defaultVer2Factors.ANNIndexStart)
-					}))
-					p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexScanRow, float64(idx.QueryInfo.GetAnnQueryInfo().TopK)*defaultVer2Factors.ANNIndexScanRow.Value, func() string {
-						return fmt.Sprintf("ann-index-topk(%v*%v)", idx.QueryInfo.GetAnnQueryInfo().TopK, defaultVer2Factors.ANNIndexScanRow)
-					}))
-				}
-			} else if idx.IndexInfo.InvertedInfo != nil {
-				p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, defaultVer2Factors.InvertedIndexScan.Value)
-				p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, defaultVer2Factors.InvertedIndexSearch, rows*defaultVer2Factors.InvertedIndexSearch.Value, func() string {
-					return fmt.Sprintf("inverted-index-search(%v*%v)", rows, defaultVer2Factors.InvertedIndexSearch)
+	// Add penalty for search index
+	for _, idx := range p.UsedColumnarIndexes {
+		if idx == nil {
+			continue
+		}
+		if idx.IndexInfo.VectorInfo != nil {
+			if idx.QueryInfo == nil {
+				p.PlanCostVer2 = costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexNoTopK, defaultVer2Factors.ANNIndexNoTopK.Value, func() string {
+					return fmt.Sprintf("ann-index-no-topk(%v)", defaultVer2Factors.ANNIndexNoTopK)
+				})
+			} else {
+				p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexStart, rows*defaultVer2Factors.ANNIndexStart.Value, func() string {
+					return fmt.Sprintf("ann-index-start(%v*%v)", rows, defaultVer2Factors.ANNIndexStart)
+				}))
+				p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexScanRow, float64(idx.QueryInfo.GetAnnQueryInfo().TopK)*defaultVer2Factors.ANNIndexScanRow.Value, func() string {
+					return fmt.Sprintf("ann-index-topk(%v*%v)", idx.QueryInfo.GetAnnQueryInfo().TopK, defaultVer2Factors.ANNIndexScanRow)
 				}))
 			}
-		}
-	} else if !p.isChildOfIndexLookUp && hasFullRangeScan {
-		if newRowCount := getTableScanPenalty(p, rows); newRowCount > 0 {
-			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
+		} else if idx.IndexInfo.InvertedInfo != nil {
+			// penelty = rows * inverted-index-scan-factor + inverted-index-search-factor * rows
+			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, defaultVer2Factors.InvertedIndexScan.Value)
+			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, defaultVer2Factors.InvertedIndexSearch, rows*defaultVer2Factors.InvertedIndexSearch.Value, func() string {
+				return fmt.Sprintf("inverted-index-search(%v*%v)", rows, defaultVer2Factors.InvertedIndexSearch)
+			}))
 		}
 	}
-
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
-	if p.isChildOfIndexLookUp {
-		// This is a RowID table scan (child of IndexLookUp)
-		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableRowIDScanCostFactor)
-		p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptTableRowIDScanCostFactor)
-	} else if !hasFullRangeScan {
-		// This is a table range scan (predicate exists on the PK)
-		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableRangeScanCostFactor)
-		p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptTableRangeScanCostFactor)
-	} else {
-		// This is a table full scan
-		if p.StoreType == kv.TiFlash {
-			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableTiFlashScanCostFactor)
-			p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptTableTiFlashScanCostFactor)
-		} else {
-			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableFullScanCostFactor)
-			p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptTableFullScanCostFactor)
-		}
-	}
+	// This is a table full scan
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableTiFlashScanCostFactor)
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptTableTiFlashScanCostFactor)
 	return p.PlanCostVer2, nil
 }
 

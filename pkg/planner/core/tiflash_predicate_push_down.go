@@ -361,7 +361,7 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 	}
 
 	// if EnableLateMaterialization is set, try to push down some predicates to table scan
-	if pctx.GetSessionVars().EnableLateMaterialization {
+	if len(ts.filterCondition) > len(selectedConditions) && pctx.GetSessionVars().EnableLateMaterialization {
 		remaining := make([]expression.Expression, 0, len(ts.filterCondition)-len(selectedConditions))
 		for _, cond := range ts.filterCondition {
 			if !expression.Contains(pctx.GetExprCtx().GetEvalCtx(), selectedConditions, cond) {
@@ -372,15 +372,17 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 	}
 
 	// Update the row count of table scan.
-	selectedConditions = append(selectedConditions, ts.LateMaterializationFilterCondition...)
-	selectivity, _, err := cardinality.Selectivity(ts.SCtx(), ts.tblColHists, selectedConditions, nil)
-	if err != nil {
-		logutil.BgLogger().Warn("calculate selectivity failed", zap.Error(err))
-		selectivity = selectivityThreshold
+	if len(selectedConditions)+len(ts.LateMaterializationFilterCondition) != 0 {
+		selectedConditions = append(selectedConditions, ts.LateMaterializationFilterCondition...)
+		selectivity, _, err := cardinality.Selectivity(ts.SCtx(), ts.tblColHists, selectedConditions, nil)
+		if err != nil {
+			logutil.BgLogger().Warn("calculate selectivity failed", zap.Error(err))
+			selectivity = selectivityThreshold
+		}
+		ts.SetStats(ts.StatsInfo().Scale(selectivity))
+		// just to make explain result stable
+		slices.SortFunc(ts.UsedColumnarIndexes, func(lhs, rhs *ColumnarIndexExtra) int {
+			return cmp.Compare(lhs.IndexInfo.ID, rhs.IndexInfo.ID)
+		})
 	}
-	ts.SetStats(ts.StatsInfo().Scale(selectivity))
-	// just to make explain result stable
-	slices.SortFunc(ts.UsedColumnarIndexes, func(lhs, rhs *ColumnarIndexExtra) int {
-		return cmp.Compare(lhs.IndexInfo.ID, rhs.IndexInfo.ID)
-	})
 }

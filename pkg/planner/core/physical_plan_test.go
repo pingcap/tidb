@@ -518,7 +518,6 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	}
 	if selected != nil {
 		ts.LateMaterializationFilterCondition = []expression.Expression{selected}
-		ts.StatsInfo().RowCount *= 0.1
 		sel.Conditions = slices.Delete(sel.Conditions, selectedIndex, selectedIndex+1)
 	}
 
