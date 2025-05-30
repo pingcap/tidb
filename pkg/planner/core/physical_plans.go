@@ -789,7 +789,8 @@ type PhysicalIndexScan struct {
 	// It's for printing stats related information when display execution plan.
 	usedStatsInfo *stmtctx.UsedStatsInfoForTable `plan-cache-clone:"shallow"`
 
-	StoreType kv.StoreType
+	StoreType    kv.StoreType
+	FtsQueryInfo *tipb.FTSQueryInfo
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -976,6 +977,7 @@ type PhysicalTableScan struct {
 
 	// UsedColumnarIndexes is used to store the used columnar index for the table scan.
 	UsedColumnarIndexes []*ColumnarIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+	MatchedFTS          *tipb.FTSQueryInfo    `plan-cache-clone:"must-nil"` // plan with FTS is not cached.
 }
 
 // ColumnarIndexExtra is the extra information for columnar index.

@@ -2678,6 +2678,10 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 				ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildInvertedIndexExtra(candidate.path.Index, index.InvertedInfo.ColumnID, index.ID))
 			}
 		}
+		if ds.MatchedFTS != nil {
+			ts.MatchedFTS = ds.MatchedFTS
+			ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildTextInvertedIndexExtra(ds.FtsIndexes[0], ds.MatchedFTS))
+		}
 	}
 
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
@@ -3093,10 +3097,6 @@ func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 
 func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool, isSingleScan bool) *PhysicalIndexScan {
 	idx := path.Index
-	if path.Index.IsFulltextIndex() {
-		prop.FullTextProp.QueryColumns = path.QueryColumns
-		prop.FullTextProp.QueryJSONStr = path.QueryJSONStr
-	}
 	is := PhysicalIndexScan{
 		Table:            ds.TableInfo,
 		TableAsName:      ds.TableAsName,
@@ -3105,7 +3105,7 @@ func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		Index:            idx,
 		IdxCols:          path.IdxCols,
 		IdxColLens:       path.IdxColLens,
-		FullText:         idx.IsFulltextIndex(),
+		FullText:         idx.IsFulltextIndexOnTiCI(),
 		AccessCondition:  path.AccessConds,
 		Ranges:           path.Ranges,
 		dataSourceSchema: ds.Schema(),
@@ -3116,7 +3116,11 @@ func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		constColsByCond:  path.ConstCols,
 		prop:             prop,
 		StoreType:        path.StoreType,
+		FtsQueryInfo:     path.FtsQueryInfo,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	if is.FtsQueryInfo != nil {
+		is.StoreType = kv.TiFlash
+	}
 	rowCount := path.CountAfterAccess
 	is.initSchema(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)
 

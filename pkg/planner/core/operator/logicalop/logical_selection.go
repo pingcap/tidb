@@ -95,7 +95,7 @@ func (p *LogicalSelection) HashCode() []byte {
 }
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	predicates = constraint.DeleteTrueExprs(p, predicates)
 	p.Conditions = constraint.DeleteTrueExprs(p, p.Conditions)
 	var child base.LogicalPlan
@@ -103,7 +103,10 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	var originConditions []expression.Expression
 	canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
 	originConditions = canBePushDown
-	retConditions, child = p.Children()[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
+	retConditions, child, err := p.Children()[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
+	if err != nil {
+		return nil, nil, err
+	}
 	retConditions = append(retConditions, canNotBePushDown...)
 	exprCtx := p.SCtx().GetExprCtx()
 	if len(retConditions) > 0 {
@@ -112,12 +115,12 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 		dual := Conds2TableDual(p, p.Conditions)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, p.Conditions, opt)
-			return nil, dual
+			return nil, dual, nil
 		}
-		return nil, p
+		return nil, p, nil
 	}
 	appendSelectionPredicatePushDownTraceStep(p, originConditions, opt)
-	return nil, child
+	return nil, child, nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
