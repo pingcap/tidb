@@ -1096,6 +1096,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if backupMeta.IsRawKv || backupMeta.IsTxnKv {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
 	}
+	if cfg.UpstreamClusterID == 0 {
+		cfg.UpstreamClusterID = backupMeta.ClusterId
+	}
 	schemaVersionPair := snapclient.SchemaVersionPairT{}
 	if loadStatsPhysical || loadSysTablePhysical {
 		upstreamClusterVersion, err := semver.NewVersion(backupMeta.ClusterVersion)
@@ -1885,7 +1888,7 @@ func filterRestoreFiles(
 
 	for _, db := range client.GetDatabases() {
 		dbName := db.Info.Name.O
-		if checkpoint.IsCheckpointDB(db.Info.Name) || registry.IsRestoreRegistryDB(db.Info.Name.O) {
+		if checkpoint.IsCheckpointDB(dbName) || registry.IsRestoreRegistryDB(dbName) {
 			continue
 		}
 		if !utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) {

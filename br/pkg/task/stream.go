@@ -2197,7 +2197,7 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 		StartTS:           cfg.StartTS,
 		RestoredTS:        cfg.RestoreTS,
 		FilterStrings:     cfg.FilterStr,
-		UpstreamClusterID: cfg.upstreamClusterID,
+		UpstreamClusterID: cfg.UpstreamClusterID,
 		WithSysTable:      cfg.WithSysTable,
 		Cmd:               cmdName,
 	}

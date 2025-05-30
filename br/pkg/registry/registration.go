@@ -145,6 +145,7 @@ type RegistrationInfoWithID struct {
 // Registry manages registrations of restore tasks
 type Registry struct {
 	se               glue.Session
+	heartbeatSession glue.Session
 	heartbeatManager *HeartbeatManager
 }
 
@@ -154,9 +155,14 @@ func NewRestoreRegistry(g glue.Glue, dom *domain.Domain) (*Registry, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	heartbeatSession, err := g.CreateSession(dom.Store())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	return &Registry{
-		se: se,
+		se:               se,
+		heartbeatSession: heartbeatSession,
 	}, nil
 }
 
@@ -164,6 +170,10 @@ func (r *Registry) Close() {
 	if r.se != nil {
 		r.se.Close()
 		r.se = nil
+	}
+	if r.heartbeatSession != nil {
+		r.heartbeatSession.Close()
+		r.heartbeatSession = nil
 	}
 
 	r.StopHeartbeatManager()

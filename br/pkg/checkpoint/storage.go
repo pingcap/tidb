@@ -90,11 +90,11 @@ const (
 )
 
 // IsCheckpointDB checks whether the dbname is checkpoint database.
-func IsCheckpointDB(dbname ast.CIStr) bool {
+func IsCheckpointDB(dbname string) bool {
 	// Check if the database name starts with any of the checkpoint database name prefixes
-	return strings.HasPrefix(dbname.O, LogRestoreCheckpointDatabaseName) ||
-		strings.HasPrefix(dbname.O, SnapshotRestoreCheckpointDatabaseName) ||
-		strings.HasPrefix(dbname.O, CustomSSTRestoreCheckpointDatabaseName)
+	return strings.HasPrefix(dbname, LogRestoreCheckpointDatabaseName) ||
+		strings.HasPrefix(dbname, SnapshotRestoreCheckpointDatabaseName) ||
+		strings.HasPrefix(dbname, CustomSSTRestoreCheckpointDatabaseName)
 }
 
 const CheckpointIdMapBlockSize int = 524288
