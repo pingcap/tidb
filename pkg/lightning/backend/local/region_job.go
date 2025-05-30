@@ -343,7 +343,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		if err == nil {
 			return
 		}
-		if goerrors.Is(err, context.DeadlineExceeded) {
+		if errors.Cause(err) == context.DeadlineExceeded {
 			if cause := context.Cause(ctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
 				log.FromContext(ctx).Info("Experiencing a wait timeout while writing to tikv",
 					zap.Int("store-write-bwlimit", local.BackendConfig.StoreWriteBWLimit),
