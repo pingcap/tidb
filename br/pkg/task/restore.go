@@ -1140,12 +1140,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	client := snapclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	defer client.Close()
 
-	// register restore task if needed
-	err = RegisterRestoreIfNeeded(ctx, cfg.RestoreConfig, cmdName, client.GetDomain())
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	// set to cfg so that restoreStream can use it.
 	cfg.ConcurrencyPerStore = kvConfigs.ImportGoroutines
 	// using tikv config to set the concurrency-per-store for client.
@@ -1156,6 +1150,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 	// InitConnections DB connection sessions
 	err = client.InitConnections(g, mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// register restore task if needed
+	err = RegisterRestoreIfNeeded(ctx, cfg.RestoreConfig, cmdName, client.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
 	}
