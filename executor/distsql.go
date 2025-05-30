@@ -691,6 +691,30 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				break
 			}
 
+			var builder distsql.RequestBuilder
+			builder.SetDAGRequest(e.dagPB).
+				SetStartTS(e.startTS).
+				SetDesc(e.desc).
+				SetKeepOrder(e.keepOrder).
+				SetPaging(e.indexPaging).
+				SetTxnScope(e.txnScope).
+				SetReadReplicaScope(e.readReplicaScope).
+				SetIsStaleness(e.isStaleness).
+				SetFromSessionVars(e.ctx.GetSessionVars()).
+				SetFromInfoSchema(e.ctx.GetInfoSchema()).
+				SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
+				SetMemTracker(tracker).
+				SetConnID(e.ctx.GetSessionVars().ConnectionID)
+
+			if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
+				// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
+				// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
+				builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
+				if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
+					builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
+				}
+			}
+
 			// init kvReq, result and worker for this partition
 			// The key ranges should be ordered.
 			slices.SortFunc(kvRange, func(i, j kv.KeyRange) int {

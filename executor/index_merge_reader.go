@@ -372,21 +372,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					}
 				}
 
-				var builder distsql.RequestBuilder
-				builder.SetDAGRequest(e.dagPBs[workID]).
-					SetStartTS(e.startTS).
-					SetDesc(e.descs[workID]).
-					SetKeepOrder(e.keepOrder).
-					SetTxnScope(e.txnScope).
-					SetReadReplicaScope(e.readReplicaScope).
-					SetIsStaleness(e.isStaleness).
-					SetFromSessionVars(e.ctx.GetSessionVars()).
-					SetMemTracker(e.memTracker).
-					SetPaging(e.paging).
-					SetFromInfoSchema(e.ctx.GetInfoSchema()).
-					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.partialNetDataSizes[workID])).
-					SetConnID(e.ctx.GetSessionVars().ConnectionID)
-
 				tps := worker.getRetTpsForIndexScan(e.handleCols, false)
 				pids := make([]int64, 0, len(keyRanges))
 				results := make([]distsql.SelectResult, 0, len(keyRanges))
@@ -407,6 +392,21 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						return
 					default:
 					}
+
+					var builder distsql.RequestBuilder
+					builder.SetDAGRequest(e.dagPBs[workID]).
+						SetStartTS(e.startTS).
+						SetDesc(e.descs[workID]).
+						SetKeepOrder(e.keepOrder).
+						SetTxnScope(e.txnScope).
+						SetReadReplicaScope(e.readReplicaScope).
+						SetIsStaleness(e.isStaleness).
+						SetFromSessionVars(e.ctx.GetSessionVars()).
+						SetMemTracker(e.memTracker).
+						SetPaging(e.paging).
+						SetFromInfoSchema(e.ctx.GetInfoSchema()).
+						SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.partialNetDataSizes[workID])).
+						SetConnID(e.ctx.GetSessionVars().ConnectionID)
 
 					// init kvReq and worker for this partition
 					// The key ranges should be ordered.
