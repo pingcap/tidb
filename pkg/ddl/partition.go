@@ -3795,8 +3795,66 @@ func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int6
 }
 
 func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+	failpoint.InjectCall("PartitionBeforeBackfillData", handleRange.startKey)
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
+	// First try optimistically to write, but set PresumeKeyNotExists to trigger error
+	// if the new row already exists in the new reorganized partitions
+	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, false, func(_ context.Context, txn kv.Transaction) error {
+		taskCtx.addedCount = 0
+		taskCtx.scanCount = 0
+		updateTxnEntrySizeLimitIfNeeded(txn)
+		txn.SetOption(kv.Priority, handleRange.priority)
+		if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(handleRange.getJobID()); tagger != nil {
+			txn.SetOption(kv.ResourceGroupTagger, tagger)
+		}
+		txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
+
+		nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		taskCtx.nextKey = nextKey
+		taskCtx.done = taskDone
+
+		failpoint.InjectCall("PartitionBackfillDataNoCheck", len(w.rowRecords) > 0)
+		lockKey := make([]byte, 0, tablecodec.RecordRowKeyLen)
+		lockKey = append(lockKey, handleRange.startKey[:tablecodec.TableSplitKeyLen]...)
+		if !w.table.Meta().HasClusteredIndex() && len(w.rowRecords) > 0 {
+			failpoint.InjectCall("PartitionBackfillNonClusteredNoCheck", w.rowRecords[0].vals)
+		}
+
+		for _, prr := range w.rowRecords {
+			taskCtx.scanCount++
+			key := prr.key
+			lockKey = lockKey[:tablecodec.TableSplitKeyLen]
+			lockKey = append(lockKey, key[tablecodec.TableSplitKeyLen:]...)
+			// Lock the *old* key, since there can still be concurrent update happening on
+			// the rows from fetchRowColVals(). If we cannot lock the keys in this
+			// transaction and succeed when committing, then another transaction did update
+			// the same key, and we will fail and retry. When retrying, this key would be found
+			// through BatchGet and skipped.
+			err = txn.LockKeys(context.Background(), new(kv.LockCtx), lockKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			err = txn.GetMemBuffer().SetWithFlags(key, prr.vals, kv.SetPresumeKeyNotExists)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			taskCtx.addedCount++
+		}
+		return nil
+	})
+	if errInTxn == nil {
+		logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
+		failpoint.InjectCall("PartitionAfterBackfillDataNoCheck", handleRange.startKey)
+		return
+	}
+
+	// Failure might be that the row already been inserted or updated by concurrent DML
+	// so keep retrying by reading and checking the new keys.
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
@@ -3814,7 +3872,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
-		failpoint.InjectCall("PartitionBackfillData", len(w.rowRecords) > 0)
+		failpoint.InjectCall("PartitionBackfillDataCheck", len(w.rowRecords) > 0)
 		// For non-clustered tables, we need to replace the _tidb_rowid handles since
 		// there may be duplicates across different partitions, due to EXCHANGE PARTITION.
 		// Meaning we need to check here if a record was double written to the new partition,
@@ -3824,13 +3882,10 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		lockKey := make([]byte, 0, tablecodec.RecordRowKeyLen)
 		lockKey = append(lockKey, handleRange.startKey[:tablecodec.TableSplitKeyLen]...)
 		if !w.table.Meta().HasClusteredIndex() && len(w.rowRecords) > 0 {
-			failpoint.InjectCall("PartitionBackfillNonClustered", w.rowRecords[0].vals)
+			failpoint.InjectCall("PartitionBackfillNonClusteredCheck", w.rowRecords[0].vals)
 			// we must check if old IDs already been written,
 			// i.e. double written by StateWriteOnly or StateWriteReorganization.
 
-			// TODO: test how to use PresumeKeyNotExists/NeedConstraintCheckInPrewrite/DO_CONSTRAINT_CHECK
-			// to delay the check until commit.
-			// And handle commit errors and fall back to this method of checking all keys to see if we need to skip any.
 			newKeys := make([]kv.Key, 0, len(w.rowRecords))
 			for i := range w.rowRecords {
 				newKeys = append(newKeys, w.rowRecords[i].key)
@@ -3846,6 +3901,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		}
 		tmpRow := make([]types.Datum, len(w.reorgedTbl.Cols()))
 
+		lockCtx := new(kv.LockCtx)
 		for _, prr := range w.rowRecords {
 			taskCtx.scanCount++
 			key := prr.key
@@ -3857,7 +3913,8 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			// the same key, and we will fail and retry. When retrying, this key would be found
 			// through BatchGet and skipped.
 			// TODO: would it help to accumulate the keys in a slice and then only call this once?
-			err = txn.LockKeys(context.Background(), new(kv.LockCtx), lockKey)
+
+			err = txn.LockKeys(context.Background(), lockCtx, lockKey)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -3868,8 +3925,8 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 					continue
 				}
 				// Not same row, due to earlier EXCHANGE PARTITION.
-				// Update the current read row by Remove it and Add it back (which will give it a new _tidb_rowid)
-				// which then also will be used as unique id in the new partition.
+				// Update the current read row by Remove it and Add it back,
+				// which will give it a new _tidb_rowid which is unique in the table.
 				var h kv.Handle
 				var currPartID int64
 				currPartID, h, err = tablecodec.DecodeRecordKey(lockKey)
@@ -3913,6 +3970,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
+	failpoint.InjectCall("PartitionAfterBackfillDataCheck", handleRange.startKey)
 
 	return
 }
