@@ -763,7 +763,8 @@ func pauseSchedulerByKeyRangeWithTTL(
 	ttl time.Duration,
 ) (<-chan struct{}, string, error) {
 	var encodedKeyRangeRule = []KeyRangeRule{}
-	if len(keyRange) == 0 {
+	// no table to restore, return empty rule
+	if len(keyRange) == 0 || keyRange[0][0] == nil {
 		return nil, "", nil
 	}
 	for _, keyPair := range keyRange {

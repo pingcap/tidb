@@ -236,6 +236,11 @@ error = '''
 databases already existed in restored cluster
 '''
 
+["BR:Restore:ErrRestoreCheckpointMismatch"]
+error = '''
+restore checkpoint mismatch
+'''
+
 ["BR:Restore:ErrRestoreChecksumMismatch"]
 error = '''
 restore checksum mismatch

@@ -1308,7 +1308,7 @@ func RunStreamRestore(
 	if cfg.RestoreTS == 0 {
 		cfg.RestoreTS = logInfo.logMaxTS
 	}
-	cfg.upstreamClusterID = logInfo.clusterID
+	cfg.UpstreamClusterID = logInfo.clusterID
 
 	if len(cfg.FullBackupStorage) > 0 {
 		startTS, fullClusterID, err := getFullBackupTS(ctx, cfg)
@@ -1750,7 +1750,7 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 		return nil, errors.Trace(err)
 	}
 	client.SetCrypter(&cfg.CipherInfo)
-	client.SetUpstreamClusterID(cfg.upstreamClusterID)
+	client.SetUpstreamClusterID(cfg.UpstreamClusterID)
 
 	err = client.InitClients(ctx, u, cfg.logCheckpointMetaManager, cfg.sstCheckpointMetaManager, uint(cfg.PitrConcurrency), cfg.ConcurrencyPerStore.Value)
 	if err != nil {
@@ -2028,12 +2028,12 @@ func generatePiTRTaskInfo(
 			// TODO: check whether user has manually modified the cluster(ddl). If so, regard the behavior
 			//       as restore from scratch. (update `curTaskInfo.RewriteTs` to 0 as an uninitial value)
 
-			if curTaskInfo.Metadata.UpstreamClusterID != cfg.upstreamClusterID {
+			if curTaskInfo.Metadata.UpstreamClusterID != cfg.UpstreamClusterID {
 				return checkInfo, errors.Errorf(
 					"The upstream cluster id[%d] of the current log restore does not match that[%d] recorded in checkpoint. "+
 						"Perhaps you should specify the last log backup storage instead, "+
 						"or just clean the checkpoint %s if the cluster has been cleaned up.",
-					cfg.upstreamClusterID, curTaskInfo.Metadata.UpstreamClusterID, cfg.logCheckpointMetaManager)
+					cfg.UpstreamClusterID, curTaskInfo.Metadata.UpstreamClusterID, cfg.logCheckpointMetaManager)
 			}
 
 			if curTaskInfo.Metadata.StartTS != cfg.StartTS || curTaskInfo.Metadata.RestoredTS != cfg.RestoreTS {

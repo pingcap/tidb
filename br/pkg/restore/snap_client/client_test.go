@@ -442,7 +442,7 @@ func TestAllocTableIDs(t *testing.T) {
 		generateMetautilTable("__TiDB_BR_Temporary_mysql", globalID-2),
 		generateMetautilTable("mysql", globalID-3),
 		generateMetautilTable("__TiDB_BR_Temporary_mysql", globalID-4),
-	}, true)
+	}, true, nil)
 	require.NoError(t, err)
 	require.False(t, userTableIDNotReusedWhenNeedCheck)
 	err = kv.RunInNewTxn(ctx, cluster.Storage, true, func(_ context.Context, txn kv.Transaction) error {
@@ -454,7 +454,7 @@ func TestAllocTableIDs(t *testing.T) {
 	userTableIDNotReusedWhenNeedCheck, err = client.AllocTableIDs(ctx, []*metautil.Table{
 		generateMetautilTable("mysql", globalID-1, globalID+1),
 		generateMetautilTable("test", globalID+2, globalID+3),
-	}, true)
+	}, true, nil)
 	require.NoError(t, err)
 	require.False(t, userTableIDNotReusedWhenNeedCheck)
 	err = kv.RunInNewTxn(ctx, cluster.Storage, true, func(_ context.Context, txn kv.Transaction) error {
@@ -467,7 +467,7 @@ func TestAllocTableIDs(t *testing.T) {
 		generateMetautilTable("mysql", globalID-1, globalID+1),
 		generateMetautilTable("test", globalID+2, globalID),
 		generateMetautilTable("test2", globalID+3, globalID+4),
-	}, true)
+	}, true, nil)
 	require.NoError(t, err)
 	require.True(t, userTableIDNotReusedWhenNeedCheck)
 }
