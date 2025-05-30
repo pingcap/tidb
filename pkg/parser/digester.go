@@ -17,10 +17,12 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	hash2 "hash"
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -123,6 +125,13 @@ func NormalizeKeepHint(sql string) (result string) {
 
 // NormalizeDigest combines Normalize and DigestNormalized into one method.
 func NormalizeDigest(sql string) (normalized string, digest *Digest) {
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		if dur > 100*time.Millisecond {
+			fmt.Println("NormalizeDigest slow: ", time.Since(start))
+		}
+	}()
 	d := digesterPool.Get().(*sqlDigester)
 	normalized, digest = d.doNormalizeDigest(sql)
 	digesterPool.Put(d)
