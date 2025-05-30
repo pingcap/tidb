@@ -639,15 +639,15 @@ func convertJSON2String(evalType types.EvalType) func(*stmtctx.StatementContext,
 			if item.TypeCode != types.JSONTypeCodeFloat64 && item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
 				return "", ErrInvalidJSONForFuncIndex
 			}
+			digit := 64
+			if tp.GetType() == mysql.TypeFloat {
+				digit = 32
+			}
 			val, err := types.ConvertJSONToFloat(sc.TypeCtx(), item)
 			if err != nil {
 				return "", err
 			}
-			res, err := types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, 64), tp, sc.TypeCtx(), false)
-			if err != nil {
-				return "", err
-			}
-			return res, err
+			return strconv.FormatFloat(val, 'f', -1, digit), nil
 		}
 	case types.ETDatetime:
 		return func(_ *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (string, error) {

@@ -502,6 +502,23 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 	}
 }
 
+func colSupportFastCheck(col *model.ColumnInfo) bool {
+	// Not array exprssion, return true
+	if len(ExtractCastArrayExpr(col)) == 0 {
+		return true
+	}
+	ft := col.FieldType.Clone()
+	ft.SetArray(false)
+	evalType := ft.EvalType()
+
+	switch evalType {
+	case types.ETDatetime, types.ETDuration, types.ETString, types.ETInt, types.ETReal:
+		return true
+	}
+
+	return false
+}
+
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
 	supportFastAdminCheck := true
 	for _, idx := range v.IndexInfos {
@@ -510,15 +527,8 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Execut
 			break
 		}
 		for _, col := range idx.Columns {
-			ft := v.Table.Meta().Columns[col.Offset].FieldType.Clone()
-			ft.SetArray(false)
-			evalType := ft.EvalType()
-			if evalType != types.ETInt && evalType != types.ETString && evalType != types.ETDuration && evalType != types.ETDatetime {
-				supportFastAdminCheck = false
-				break
-			}
-
-			if col.Length != types.UnspecifiedLength {
+			tblCol := v.Table.Meta().Columns[col.Offset]
+			if !colSupportFastCheck(tblCol) || col.Length != types.UnspecifiedLength {
 				supportFastAdminCheck = false
 				break
 			}
