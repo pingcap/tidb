@@ -240,7 +240,7 @@ func TestBuildStorageClassForPartitions(t *testing.T) {
 			tier := part.StorageClassTier
 			expectedTier, ok := cs.expected[part.Name.L]
 			require.True(t, ok, "input: %s, partition: %s", cs.input, part.Name.L)
-			require.Equal(t, expectedTier, tier, "input: %s, partition: %s", cs.input, part.Name.L)
+			require.Equal(t, string(expectedTier), tier, "input: %s, partition: %s", cs.input, part.Name.L)
 		}
 	}
 }
