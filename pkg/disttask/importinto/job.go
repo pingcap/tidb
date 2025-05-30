@@ -32,7 +32,10 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -84,7 +87,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		var err2 error
 		exec := se.GetSQLExecutor()
 		jobID, err2 = importer.CreateJob(ctx, exec, plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
-			plan.User, plan.Parameters, plan.TotalFileSize)
+			plan.User, plan.GroupKey, plan.Parameters, plan.TotalFileSize)
 		if err2 != nil {
 			return err2
 		}
@@ -198,6 +201,39 @@ func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error
 		ImportRows: importedRows,
 		ErrorMsg:   errMsg,
 	}, nil
+}
+
+// GetLastUpdateTimeForRunningJob get the last update time for given job.
+func GetLastUpdateTimeForRunningJob(ctx context.Context, jobID int64) (types.Time, error) {
+	taskManager, err := storage.GetTaskManager()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	if err != nil {
+		return types.ZeroTime, err
+	}
+	taskKey := TaskKey(jobID)
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
+	if err != nil {
+		return types.ZeroTime, err
+	}
+
+	var rs []chunk.Row
+	err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`select max(state_update_time) from
+				(select state_update_time from mysql.tidb_background_subtask where task_key = %?
+					union
+				select state_update_time from mysql.tidb_background_subtask_history where task_key = %?
+			) t`,
+			task.ID, task.ID,
+		)
+		return err
+	})
+
+	if rs[0].IsNull(10) {
+		return types.ZeroTime, err
+	}
+
+	return rs[0].GetTime(0), nil
 }
 
 // TaskKey returns the task key for a job.

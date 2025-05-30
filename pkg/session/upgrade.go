@@ -460,6 +460,10 @@ const (
 
 	// version250 add keyspace to tidb_global_task and tidb_global_task_history.
 	version250 = 250
+
+	// version 251
+	// Add group_key to mysql.tidb_import_jobs.
+	version251 = 251
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -648,6 +652,7 @@ var (
 		{version: version248, fn: upgradeToVer248},
 		{version: version249, fn: upgradeToVer249},
 		{version: version250, fn: upgradeToVer250},
+		{version: version251, fn: upgradeToVer251},
 	}
 )
 
@@ -2012,4 +2017,8 @@ func upgradeToVer250(s sessiontypes.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD INDEX idx_keyspace(keyspace)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `keyspace` varchar(64) DEFAULT '' AFTER `extra_params`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD INDEX idx_keyspace(keyspace)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer251(s sessiontypes.Session, ver int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD COLUMN `group_key` VARCHAR(300) NOT NULL DEFAULT '' AFTER `created_by`", infoschema.ErrColumnExists)
 }
