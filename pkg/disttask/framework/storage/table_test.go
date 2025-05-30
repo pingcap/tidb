@@ -1204,7 +1204,7 @@ func TestTaskManagerEntrySize(t *testing.T) {
 			select {
 			case <-bgCtx.Done():
 				return
-			case <-time.After(15 * time.Second):
+			case <-time.After(5 * time.Second):
 			}
 			buf := make([]byte, 8<<20)
 			stackLen := runtime.Stack(buf, true)
