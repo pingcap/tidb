@@ -899,7 +899,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	})
 
 	if restoreErr != nil {
-		// if err happens at register phase no restoreID will be generated and default is 0.
+		// if err happens at register phase no restoreID will be generated and default is 0, or this is an old TiDB
+		// that we didn't register the task. Either way we don't need to do any extra work.
 		if cfg.RestoreID == 0 {
 			return errors.Trace(restoreErr)
 		}
@@ -929,10 +930,13 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(restoreErr)
 	}
 
-	// unregister restore task
-	if err := restoreRegistry.Unregister(c, cfg.RestoreID); err != nil {
-		log.Warn("failed to unregister restore task from registry",
-			zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
+	// unregister if restore id is not 0
+	if cfg.RestoreID != 0 {
+		// unregister restore task
+		if err := restoreRegistry.Unregister(c, cfg.RestoreID); err != nil {
+			log.Warn("failed to unregister restore task from registry",
+				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
+		}
 	}
 
 	// Clear the checkpoint data if needed
@@ -1050,11 +1054,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
-	err = RegisterRestore(ctx, cfg.RestoreConfig, cmdName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	// reads out information from backup meta file and do requirement checking if needed
 	u, s, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
 	if err != nil {
@@ -1140,6 +1139,13 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	keepaliveCfg.PermitWithoutStream = true
 	client := snapclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	defer client.Close()
+
+	// register restore task if needed
+	err = RegisterRestoreIfNeeded(ctx, cfg.RestoreConfig, cmdName, client.GetDomain())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// set to cfg so that restoreStream can use it.
 	cfg.ConcurrencyPerStore = kvConfigs.ImportGoroutines
 	// using tikv config to set the concurrency-per-store for client.
@@ -1258,7 +1264,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	dbs := utils.Values(dbMap)
 
 	// check if tables and dbs are valid to continue
-	if cfg.RestoreRegistry != nil {
+	if cfg.RestoreRegistry != nil && cfg.RestoreID != 0 {
 		err := cfg.RestoreRegistry.CheckTablesWithRegisteredTasks(ctx, cfg.RestoreID, cfg.PiTRTableTracker, tables)
 		if err != nil {
 			return errors.Trace(err)

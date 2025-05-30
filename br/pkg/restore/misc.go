@@ -360,3 +360,18 @@ func GetTSWithRetry(ctx context.Context, pdClient pd.Client) (uint64, error) {
 func IsBRInternalDB(dbName string) bool {
 	return registry.IsRestoreRegistryDB(dbName)
 }
+
+// HasRestoreIDColumn checks if the tidb_pitr_id_map table has restore_id column
+func HasRestoreIDColumn(dom *domain.Domain) bool {
+	table, err := GetTableSchema(dom, ast.NewCIStr("mysql"), ast.NewCIStr("tidb_pitr_id_map"))
+	if err != nil {
+		return false
+	}
+
+	for _, col := range table.Columns {
+		if col.Name.L == "restore_id" {
+			return true
+		}
+	}
+	return false
+}

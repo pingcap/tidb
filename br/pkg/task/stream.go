@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1362,12 +1363,6 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	// register task
-	err = RegisterRestore(ctx, cfg, PointRestoreCmd)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, g, cfg, cfg.RestoreID)
 	if err != nil {
 		return errors.Trace(err)
@@ -1385,6 +1380,12 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 	defer logClient.Close(ctx)
+
+	// register task if needed
+	err = RegisterRestoreIfNeeded(ctx, cfg, PointRestoreCmd, logClient.GetDomain())
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	ddlFiles, err := logClient.LoadDDLFiles(ctx)
 	if err != nil {
@@ -2180,9 +2181,15 @@ func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *Log
 	return currentTS, nil
 }
 
-func RegisterRestore(ctx context.Context, cfg *RestoreConfig, cmdName string) error {
+func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName string, domain *domain.Domain) error {
 	// already registered previously
 	if cfg.RestoreID != 0 {
+		return nil
+	}
+
+	// skip registration if target TiDB doesn't have restoreID column
+	if !restore.HasRestoreIDColumn(domain) {
+		log.Info("skipping restore registration since target TiDB doesn't have restoreID column in IDMap table")
 		return nil
 	}
 

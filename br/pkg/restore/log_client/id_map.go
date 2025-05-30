@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -42,23 +43,8 @@ func (rc *LogClient) pitrIDMapTableExists() bool {
 	return rc.dom.InfoSchema().TableExists(ast.NewCIStr("mysql"), ast.NewCIStr("tidb_pitr_id_map"))
 }
 
-func (rc *LogClient) pitrIDMapHasRestoreIDColumn(ctx context.Context) bool {
-	if !rc.pitrIDMapTableExists() {
-		return false
-	}
-
-	table, err := rc.dom.InfoSchema().TableByName(ctx, ast.NewCIStr("mysql"), ast.NewCIStr("tidb_pitr_id_map"))
-	if err != nil {
-		return false
-	}
-
-	// check if restore_id column exists
-	for _, col := range table.Meta().Columns {
-		if col.Name.L == "restore_id" {
-			return true
-		}
-	}
-	return false
+func (rc *LogClient) pitrIDMapHasRestoreIDColumn() bool {
+	return restore.HasRestoreIDColumn(rc.GetDomain())
 }
 
 func (rc *LogClient) tryGetCheckpointStorage(
@@ -126,7 +112,7 @@ func (rc *LogClient) saveIDMap2Table(ctx context.Context, dbMaps []*backuppb.Pit
 		return errors.Trace(err)
 	}
 
-	hasRestoreIDColumn := rc.pitrIDMapHasRestoreIDColumn(ctx)
+	hasRestoreIDColumn := rc.pitrIDMapHasRestoreIDColumn()
 
 	if hasRestoreIDColumn {
 		// new version with restore_id column
@@ -217,7 +203,7 @@ func (rc *LogClient) loadSchemasMapFromTable(
 	ctx context.Context,
 	restoredTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
-	hasRestoreIDColumn := rc.pitrIDMapHasRestoreIDColumn(ctx)
+	hasRestoreIDColumn := rc.pitrIDMapHasRestoreIDColumn()
 
 	var getPitrIDMapSQL string
 	var args []any

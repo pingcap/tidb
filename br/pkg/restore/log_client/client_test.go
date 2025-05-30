@@ -1546,7 +1546,7 @@ func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 	stg, err := storage.NewLocalStorage("local://" + filepath.ToSlash(t.TempDir()))
 	require.NoError(t, err)
 	logCheckpointMetaManager := checkpoint.NewLogStorageMetaManager(
-		stg, nil, 123, "test")
+		stg, nil, 123, "test", 1)
 	defer logCheckpointMetaManager.Close()
 	baseTableMappingManager := &stream.TableMappingManager{
 		DBReplaceMap: getDBMap(),
@@ -1560,7 +1560,7 @@ func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 	stg, err = storage.NewLocalStorage("local://" + filepath.ToSlash(t.TempDir()) + "/temp_another")
 	require.NoError(t, err)
 	logCheckpointMetaManager2 := checkpoint.NewLogStorageMetaManager(
-		stg, nil, 123, "test")
+		stg, nil, 123, "test", 1)
 	defer logCheckpointMetaManager.Close()
 	newSchemaReplaces, err = client2.TEST_initSchemasMap(ctx, 2, logCheckpointMetaManager2)
 	require.NoError(t, err)
