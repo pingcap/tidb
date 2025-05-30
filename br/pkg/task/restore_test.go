@@ -25,14 +25,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -869,103 +866,133 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 	}
 }
 
-func TestSortKeyRanges(t *testing.T) {
-	makeKeyRange := func(start, end int64) [2]kv.Key {
-		return [2]kv.Key{
-			codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(start)),
-			codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(end)),
-		}
+func TestHash(t *testing.T) {
+	baseConfig := task.RestoreConfig{
+		UpstreamClusterID: 1,
+		Config: task.Config{
+			Storage:        "default-storage",
+			ExplicitFilter: true,
+			FilterStr:      []string{"filter1", "filter2"},
+		},
+		RestoreCommonConfig: task.RestoreCommonConfig{
+			WithSysTable: true,
+		},
 	}
+
 	testCases := []struct {
-		name       string
-		ids        []int64
-		preAlloced [2]int64
-		expected   [][2]kv.Key
+		name        string
+		modifyFunc  func(*task.RestoreConfig)
+		changeTask  bool
+		expectEqual bool
 	}{
 		{
-			name:       "empty_ids",
-			ids:        []int64{},
-			preAlloced: [2]int64{100, 200},
-			expected:   nil,
+			name:        "identical_configuration",
+			modifyFunc:  func(*task.RestoreConfig) {},
+			expectEqual: true,
 		},
 		{
-			name:       "single_id",
-			ids:        []int64{5},
-			preAlloced: [2]int64{0, 0},
-			expected:   [][2]kv.Key{makeKeyRange(5, 6)},
-		},
-		{
-			name:       "prealloc_non_overlap",
-			ids:        []int64{50, 51, 52, 53},
-			preAlloced: [2]int64{100, 200},
-			expected:   [][2]kv.Key{makeKeyRange(50, 54)},
-		},
-		{
-			name:       "prealloc_partial_overlap",
-			ids:        []int64{95, 96, 97, 98, 99, 100, 101, 102, 170, 171, 172},
-			preAlloced: [2]int64{100, 200},
-			expected:   [][2]kv.Key{makeKeyRange(95, 200)},
-		},
-		{
-			name:       "prealloc_contains_all",
-			ids:        []int64{120, 121, 122, 123, 150, 180},
-			preAlloced: [2]int64{100, 200},
-			expected:   [][2]kv.Key{makeKeyRange(100, 200)},
-		},
-		{
-			name:       "prealloc_left_adjacent",
-			ids:        []int64{99, 100},
-			preAlloced: [2]int64{100, 200},
-			expected:   [][2]kv.Key{makeKeyRange(99, 200)},
-		},
-		{
-			name:       "prealloc_left_not_adjacent",
-			ids:        []int64{99},
-			preAlloced: [2]int64{100, 200},
-			expected:   [][2]kv.Key{makeKeyRange(99, 100)},
-		},
-		{
-			name:       "prealloc_right_adjacent",
-			ids:        []int64{200},
-			preAlloced: [2]int64{100, 200},
-			expected:   [][2]kv.Key{makeKeyRange(200, 201)},
-		},
-		{
-			name:       "prealloc_not_adjacent",
-			ids:        []int64{201},
-			preAlloced: [2]int64{100, 200},
-			expected:   [][2]kv.Key{makeKeyRange(201, 202)},
-		},
-		{
-			name:       "multiple_merge",
-			ids:        []int64{10, 11, 15, 16, 20},
-			preAlloced: [2]int64{12, 18},
-			expected: [][2]kv.Key{
-				makeKeyRange(10, 18),
-				makeKeyRange(20, 21),
+			name: "change_upstream_cluster_id",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.UpstreamClusterID = 999
 			},
+			expectEqual: false,
 		},
 		{
-			name:       "full_merge",
-			ids:        []int64{5, 6, 7},
-			preAlloced: [2]int64{4, 8},
-			expected:   [][2]kv.Key{makeKeyRange(4, 8)},
+			name: "change_storage",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.Config.Storage = "new-storage"
+			},
+			expectEqual: false,
 		},
 		{
-			name:       "min_boundary",
-			ids:        []int64{0},
-			preAlloced: [2]int64{0, 1},
-			expected:   [][2]kv.Key{makeKeyRange(0, 1)},
+			name: "toggle_explicit_filter",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.Config.ExplicitFilter = !cfg.Config.ExplicitFilter
+			},
+			expectEqual: true,
+		},
+		{
+			name: "modify_filter_strings",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.Config.FilterStr = append(cfg.Config.FilterStr, "new-filter")
+			},
+			expectEqual: false,
+		},
+		{
+			name: "reorder_filter_strings",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.Config.FilterStr = []string{cfg.Config.FilterStr[1], cfg.Config.FilterStr[0]}
+			},
+			expectEqual: false,
+		},
+		{
+			name: "toggle_system_tables",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.WithSysTable = !cfg.WithSysTable
+			},
+			expectEqual: false,
+		},
+		{
+			name: "empty_vs_base_config",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				*cfg = task.RestoreConfig{}
+			},
+			expectEqual: false,
+		},
+		{
+			name: "multiple_changes",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.UpstreamClusterID = 2
+				cfg.Config.Storage = "multi-change-storage"
+			},
+			expectEqual: false,
+		},
+		{
+			name:        "change_task_type",
+			changeTask:  true,
+			modifyFunc:  func(*task.RestoreConfig) {},
+			expectEqual: false,
 		},
 	}
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := task.SortKeyRanges(tc.ids, tc.preAlloced)
-			require.Equal(t, len(tc.expected), len(result))
+			originalCfg := baseConfig
+			modifiedCfg := baseConfig
 
-			for i := range result {
-				require.Equal(t, tc.expected[i][0], result[i][0], "StartKey mismatch at index %d", i)
-				require.Equal(t, tc.expected[i][1], result[i][1], "EndKey mismatch at index %d", i)
+			if tc.modifyFunc != nil {
+				tc.modifyFunc(&modifiedCfg)
+			}
+
+			var cfg1, cfg2 *task.RestoreConfig
+			if tc.name == "nil_configuration" {
+				cfg1 = &originalCfg
+				cfg2 = nil
+			} else {
+				cfg1 = &originalCfg
+				cfg2 = &modifiedCfg
+			}
+
+			taskType1 := "full"
+			taskType2 := "full"
+			if tc.changeTask {
+				taskType2 = "db"
+			}
+
+			hash1, err1 := cfg1.Hash(taskType1)
+			hash2, err2 := cfg2.Hash(taskType2)
+
+			if cfg2 == nil {
+				require.Error(t, err2, "Expected error for nil config")
+				return
+			}
+			require.NoError(t, err1)
+			require.NoError(t, err2)
+
+			if tc.expectEqual {
+				require.Equal(t, hash1, hash2, "Hashes should be equal for: %s", tc.name)
+			} else {
+				require.NotEqual(t, hash1, hash2, "Hashes should differ for: %s", tc.name)
 			}
 		})
 	}

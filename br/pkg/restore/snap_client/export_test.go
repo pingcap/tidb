@@ -40,11 +40,16 @@ var (
 	GetKeyRangeByMode       = getKeyRangeByMode
 	GetFileRangeKey         = getFileRangeKey
 	GetSortedPhysicalTables = getSortedPhysicalTables
+	GetMinUserTableID       = getMinUserTableID
 )
 
 // MockClient create a fake Client used to test.
 func MockClient(dbs map[string]*metautil.Database) *SnapClient {
 	return &SnapClient{databases: dbs}
+}
+
+func (rc *SnapClient) SetDomain(dom *domain.Domain) {
+	rc.dom = dom
 }
 
 // Mock the call of setSpeedLimit function
@@ -77,6 +82,7 @@ func (rc *SnapClient) CreateTablesTest(
 	newTS uint64,
 ) (*restoreutils.RewriteRules, []*model.TableInfo, error) {
 	rc.dom = dom
+	rc.AllocTableIDs(context.TODO(), tables, false, nil)
 	rewriteRules := &restoreutils.RewriteRules{
 		Data: make([]*import_sstpb.RewriteRule, 0),
 	}
@@ -85,6 +91,7 @@ func (rc *SnapClient) CreateTablesTest(
 	for i, t := range tables {
 		tbMapping[t.Info.Name.String()] = i
 	}
+	rc.AllocTableIDs(context.Background(), tables, false, nil)
 	createdTables, err := rc.CreateTables(context.TODO(), tables, newTS)
 	if err != nil {
 		return nil, nil, err

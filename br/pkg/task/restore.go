@@ -3,8 +3,12 @@
 package task
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"slices"
@@ -12,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
@@ -33,6 +38,7 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -45,6 +51,9 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -266,7 +275,7 @@ type RestoreConfig struct {
 
 	UseCheckpoint                 bool                            `json:"use-checkpoint" toml:"use-checkpoint"`
 	CheckpointStorage             string                          `json:"checkpoint-storage" toml:"checkpoint-storage"`
-	upstreamClusterID             uint64                          `json:"-" toml:"-"`
+	UpstreamClusterID             uint64                          `json:"-" toml:"-"`
 	snapshotCheckpointMetaManager checkpoint.SnapshotMetaManagerT `json:"-" toml:"-"`
 	logCheckpointMetaManager      checkpoint.LogMetaManagerT      `json:"-" toml:"-"`
 	sstCheckpointMetaManager      checkpoint.SnapshotMetaManagerT `json:"-" toml:"-"`
@@ -290,6 +299,36 @@ type RestoreConfig struct {
 
 func (cfg *RestoreConfig) LocalEncryptionEnabled() bool {
 	return cfg.CipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT
+}
+
+type immutableRestoreConfig struct {
+	CmdName           string
+	UpstreamClusterID uint64
+	Storage           string
+	ExplictFilter     bool
+	FilterStr         []string
+	WithSysTable      bool
+	FastLoadSysTables bool
+	LoadStats         bool
+}
+
+func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
+	config := immutableRestoreConfig{
+		CmdName:           cmdName,
+		UpstreamClusterID: cfg.UpstreamClusterID,
+		Storage:           ast.RedactURL(cfg.Storage),
+		FilterStr:         cfg.FilterStr,
+		WithSysTable:      cfg.WithSysTable,
+		FastLoadSysTables: cfg.FastLoadSysTables,
+		LoadStats:         cfg.LoadStats,
+	}
+	data, err := json.Marshal(config)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	hash := sha256.Sum256(data)
+	log.Info("hash of restore config", zap.String("hash", hex.EncodeToString(hash[:])), zap.String("config", string(data)))
+	return hash[:], nil
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -774,7 +813,7 @@ func printRestoreMetrics() {
 }
 
 // RunRestore starts a restore task inside the current goroutine.
-func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) (restoreErr error) {
 	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
 	if err != nil {
 		return err
@@ -784,7 +823,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			log.Error("failed to close the etcd client", zap.Error(err))
 		}
 	}()
-	if err := checkConflictingLogBackup(c, cfg, etcdCLI); err != nil {
+	logTaskBackend, err := checkConflictingLogBackup(c, cfg, IsStreamRestore(cmdName), etcdCLI)
+	if err != nil {
 		return errors.Annotate(err, "failed to check task exists")
 	}
 	closeF, err := registerTaskToPD(c, etcdCLI)
@@ -806,15 +846,56 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	defer mgr.Close()
 	defer cfg.CloseCheckpointMetaManager()
+	defer func() {
+		if logTaskBackend == nil || restoreErr != nil || cfg.PiTRTableTracker == nil {
+			return
+		}
+		restoreCommitTs, err := restore.GetTSWithRetry(c, mgr.GetPDClient())
+		if err != nil {
+			restoreErr = err
+			return
+		}
+		tableIds := make([]int64, 0, len(cfg.PiTRTableTracker.TableIdToDBIds))
+		for tableId := range cfg.PiTRTableTracker.TableIdToDBIds {
+			tableIds = append(tableIds, tableId)
+		}
+		for tableId := range cfg.PiTRTableTracker.PartitionIds {
+			tableIds = append(tableIds, tableId)
+		}
+		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, cfg.StartTS, tableIds)
+		if err != nil {
+			restoreErr = err
+			return
+		}
+		logTaskStorage, err := storage.Create(c, logTaskBackend, false)
+		if err != nil {
+			restoreErr = err
+			return
+		}
+		log.Info("save the log restore table IDs blocklist into log backup storage")
+		if err = logTaskStorage.WriteFile(c, filename, data); err != nil {
+			restoreErr = err
+			return
+		}
+	}()
+
+	if err = g.UseOneShotSession(mgr.GetStorage(), false, func(se glue.Session) error {
+		enableFollowerHandleRegion, err := se.GetGlobalSysVar(vardef.PDEnableFollowerHandleRegion)
+		if err != nil {
+			return err
+		}
+		return mgr.SetFollowerHandle(variable.TiDBOptOn(enableFollowerHandleRegion))
+	}); err != nil {
+		return errors.Trace(err)
+	}
 
 	defer printRestoreMetrics()
 
-	var restoreError error
 	if IsStreamRestore(cmdName) {
 		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBRPiTR); err != nil {
 			return errors.Trace(err)
 		}
-		restoreError = RunStreamRestore(c, mgr, g, cfg)
+		restoreErr = RunStreamRestore(c, mgr, g, cfg)
 	} else {
 		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBR); err != nil {
 			return errors.Trace(err)
@@ -822,10 +903,10 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		snapshotRestoreConfig := SnapshotRestoreConfig{
 			RestoreConfig: cfg,
 		}
-		restoreError = runSnapshotRestore(c, mgr, g, cmdName, &snapshotRestoreConfig)
+		restoreErr = runSnapshotRestore(c, mgr, g, cmdName, &snapshotRestoreConfig)
 	}
-	if restoreError != nil {
-		return errors.Trace(restoreError)
+	if restoreErr != nil {
+		return errors.Trace(restoreErr)
 	}
 	// Clear the checkpoint data
 	if cfg.UseCheckpoint {
@@ -862,6 +943,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 type SnapshotRestoreConfig struct {
 	*RestoreConfig
 	piTRTaskInfo           *PiTRTaskInfo
+	logRestoreStorage      storage.ExternalStorage
 	logTableHistoryManager *stream.LogBackupTableHistoryManager
 	tableMappingManager    *stream.TableMappingManager
 }
@@ -971,7 +1053,16 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("the incremental snapshot restore doesn't support checkpoint mode, disable checkpoint.")
 		cfg.UseCheckpoint = false
 	}
+
+	hash, err := cfg.RestoreConfig.Hash(cmdName)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	cpEnabledAndExists, err := checkpointEnabledAndExists(ctx, g, cfg, mgr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	reusePreallocIDs, err := checkPreallocIDReusable(ctx, mgr, g, cfg, hash, cpEnabledAndExists)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -981,7 +1072,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// filters out db/table/files using filter
-	tableMap, dbMap, err := filterRestoreFiles(client, cfg.RestoreConfig)
+	tableMap, dbMap, err := filterRestoreFiles(client, cfg.RestoreConfig, loadStatsPhysical)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -991,13 +1082,14 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 	// only run when this full restore is part of the PiTR
 	if isPiTR {
+		snapshotTableMap := client.GetTableMap()
 		// adjust tables to restore in the snapshot restore phase since it will later be renamed during
 		// log restore and will fall into or out of the filter range.
 		err = AdjustTablesToRestoreAndCreateTableTracker(
 			cfg.logTableHistoryManager,
 			cfg.RestoreConfig,
 			client.GetDatabaseMap(),
-			client.GetTableMap(),
+			snapshotTableMap,
 			client.GetPartitionMap(),
 			tableMap,
 			dbMap,
@@ -1009,6 +1101,46 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("adjusted items to restore",
 			zap.Int("tables", len(tableMap)),
 			zap.Int("db", len(dbMap)))
+
+		tableNameByTableID := func(tableID int64) string {
+			dbName, tableName, dbID := "", "", int64(0)
+			history := cfg.logTableHistoryManager.GetTableHistory()
+			if locations, exists := history[tableID]; exists {
+				if name, exists := cfg.logTableHistoryManager.GetDBNameByID(locations[1].DbID); exists {
+					dbName = name
+				}
+				dbID = locations[1].DbID
+				tableName = locations[1].TableName
+			} else if tableMeta, exists := tableMap[tableID]; exists && tableMeta != nil && tableMeta.Info != nil {
+				if tableMeta.DB != nil && len(dbName) == 0 {
+					dbName = tableMeta.DB.Name.O
+				}
+				tableName = tableMeta.Info.Name.O
+			}
+			if len(dbName) == 0 && dbID > 0 {
+				if dbInfo, exists := dbMap[dbID]; exists {
+					dbName = dbInfo.Info.Name.O
+				}
+			}
+			return fmt.Sprintf("%s.%s", dbName, tableName)
+		}
+		checkTableIDLost := func(tableId int64) bool {
+			// check whether exists in log backup
+			if _, exists := cfg.logTableHistoryManager.GetTableHistory()[tableId]; exists {
+				return false
+			}
+			// check whether exists in snapshot backup
+			if _, exists := snapshotTableMap[tableId]; exists {
+				return false
+			}
+			return true
+		}
+		if err := restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(
+			ctx, cfg.logRestoreStorage, cfg.PiTRTableTracker, backupMeta.GetEndVersion(), cfg.piTRTaskInfo.RestoreTS,
+			tableNameByTableID, checkTableIDLost,
+		); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	tables := utils.Values(tableMap)
 	dbs := utils.Values(dbMap)
@@ -1036,8 +1168,73 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
-	if err = client.AllocTableIDs(ctx, tables); err != nil {
+	if userTableIDNotReusedWhenNeedCheck, err := client.AllocTableIDs(ctx, tables, loadStatsPhysical && !cpEnabledAndExists, reusePreallocIDs); err != nil {
 		return errors.Trace(err)
+	} else if userTableIDNotReusedWhenNeedCheck {
+		log.Warn("Cannot load stats physically because not all table ids are reused. Fallback to logically load stats.")
+		// Notice that it will break the pitr id tracker since log restore support system restore
+		tables = fallbackStatsTables(tables)
+	}
+
+	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
+	var restoreSchedulersFunc pdutil.UndoFunc
+	var schedulersConfig *pdutil.ClusterConfig
+	if (isFullRestore(cmdName) && !cfg.ExplicitFilter) || client.IsIncremental() {
+		restoreSchedulersFunc, schedulersConfig, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
+	} else {
+		var preAllocRange [2]int64
+		preAllocRange, err = client.GetPreAllocedTableIDRange()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		keyRange := rewriteKeyRanges(preAllocRange)
+		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// need to know whether restore has been completed so can restore schedulers
+	canRestoreSchedulers := false
+	defer func() {
+		cancel()
+		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
+		if cfg.UseCheckpoint && !canRestoreSchedulers {
+			log.Info("skip removing pd scheduler for next retry")
+			return
+		}
+		log.Info("start to restore pd scheduler")
+		// run the post-work to avoid being stuck in the import
+		// mode or emptied schedulers.
+		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
+		log.Info("finish restoring pd scheduler")
+	}()
+
+	// reload or register the checkpoint
+	var checkpointSetWithTableID map[int64]map[string]struct{}
+	if cfg.UseCheckpoint {
+		logRestoredTS := uint64(0)
+		if cfg.piTRTaskInfo != nil {
+			logRestoredTS = cfg.piTRTaskInfo.RestoreTS
+		}
+		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(
+			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, hash, cpEnabledAndExists)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if restoreSchedulersConfigFromCheckpoint != nil {
+			// The last range rule will be dropped when the last restore quits.
+			restoreSchedulersConfigFromCheckpoint.RuleID = schedulersConfig.RuleID
+			restoreSchedulersFunc = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
+		}
+		checkpointSetWithTableID = sets
+
+		defer func() {
+			// need to flush the whole checkpoint data so that br can quickly jump to
+			// the log kv restore step when the next retry.
+			log.Info("wait for flush checkpoint...")
+			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !canRestoreSchedulers)
+		}()
 	}
 
 	err = client.InstallPiTRSupport(ctx, snapclient.PiTRCollDep{
@@ -1134,6 +1331,32 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
+	/* failpoint */
+	failpoint.Inject("sleep_for_check_scheduler_status", func(val failpoint.Value) {
+		fileName, ok := val.(string)
+		func() {
+			if !ok {
+				return
+			}
+			_, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+			if osErr != nil {
+				log.Warn("failed to create file", zap.Error(osErr))
+				return
+			}
+		}()
+		for {
+			_, statErr := os.Stat(fileName)
+			if os.IsNotExist(statErr) {
+				break
+			} else if statErr != nil {
+				log.Warn("error checking file", zap.Error(statErr))
+				break
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+	})
+	/* failpoint */
+
 	// update table mapping manager with new table ids if PiTR
 	if isPiTR {
 		if err = cfg.tableMappingManager.UpdateDownstreamIds(dbs, createdTables, client.GetDomain()); err != nil {
@@ -1173,100 +1396,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			}
 		}
 	}
-
-	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
-	var restoreSchedulersFunc pdutil.UndoFunc
-	var schedulersConfig *pdutil.ClusterConfig
-	if (isFullRestore(cmdName) && !cfg.ExplicitFilter) || client.IsIncremental() {
-		restoreSchedulersFunc, schedulersConfig, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
-	} else {
-		var preAllocRange [2]int64
-		preAllocRange, err = client.GetPreAllocedTableIDRange()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		var tableIDs []int64
-		for _, table := range createdTables {
-			tableIDs = append(tableIDs, table.Table.ID)
-			if table.Table.Partition != nil {
-				for _, p := range table.Table.Partition.Definitions {
-					tableIDs = append(tableIDs, p.ID)
-				}
-			}
-		}
-		keyRange := SortKeyRanges(tableIDs, preAllocRange)
-		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
-	}
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// need to know whether restore has been completed so can restore schedulers
-	canRestoreSchedulers := false
-	defer func() {
-		cancel()
-		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
-		if cfg.UseCheckpoint && !canRestoreSchedulers {
-			log.Info("skip removing pd scheduler for next retry")
-			return
-		}
-		log.Info("start to restore pd scheduler")
-		// run the post-work to avoid being stuck in the import
-		// mode or emptied schedulers.
-		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
-		log.Info("finish restoring pd scheduler")
-	}()
-
-	// reload or register the checkpoint
-	var checkpointSetWithTableID map[int64]map[string]struct{}
-	if cfg.UseCheckpoint {
-		logRestoredTS := uint64(0)
-		if cfg.piTRTaskInfo != nil {
-			logRestoredTS = cfg.piTRTaskInfo.RestoreTS
-		}
-		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(
-			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, cpEnabledAndExists)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if restoreSchedulersConfigFromCheckpoint != nil {
-			// The last range rule will be dropped when the last restore quits.
-			restoreSchedulersConfigFromCheckpoint.RuleID = schedulersConfig.RuleID
-			restoreSchedulersFunc = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
-		}
-		checkpointSetWithTableID = sets
-
-		defer func() {
-			// need to flush the whole checkpoint data so that br can quickly jump to
-			// the log kv restore step when the next retry.
-			log.Info("wait for flush checkpoint...")
-			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !canRestoreSchedulers)
-		}()
-	}
-
-	failpoint.Inject("sleep_for_check_scheduler_status", func(val failpoint.Value) {
-		fileName, ok := val.(string)
-		func() {
-			if !ok {
-				return
-			}
-			_, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
-			if osErr != nil {
-				log.Warn("failed to create file", zap.Error(osErr))
-				return
-			}
-		}()
-		for {
-			_, statErr := os.Stat(fileName)
-			if os.IsNotExist(statErr) {
-				break
-			} else if statErr != nil {
-				log.Warn("error checking file", zap.Error(statErr))
-				break
-			}
-			time.Sleep(1 * time.Second)
-		}
-	})
 
 	if cfg.tiflashRecorder != nil {
 		for _, createdTable := range createdTables {
@@ -1342,6 +1471,22 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
 	return nil
+}
+
+func checkPreallocIDReusable(ctx context.Context, mgr *conn.Mgr, g glue.Glue, cfg *SnapshotRestoreConfig, hash []byte, checkpointExist bool) (prealloc *checkpoint.PreallocIDs, err error) {
+	if !checkpointExist {
+		return nil, nil
+	}
+
+	checkpointMeta, err := cfg.snapshotCheckpointMetaManager.LoadCheckpointMetadata(ctx)
+	log.Info("checkpoint metadata exists", zap.String("hash", hex.EncodeToString(hash)), zap.String("checkpoint hash", hex.EncodeToString(checkpointMeta.Hash)))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !bytes.Equal(checkpointMeta.Hash, hash) {
+		return nil, errors.Trace(errors.Annotatef(berrors.ErrRestoreCheckpointMismatch, "checkpoint hash mismatch, please use the same setting as the previous restore"))
+	}
+	return checkpointMeta.PreallocIDs, nil
 }
 
 func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (cnt uint64, err error) {
@@ -1980,86 +2125,14 @@ func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (ds
 	return
 }
 
-func SortKeyRanges(ids []int64, preAlloced [2]int64) [][2]kv.Key {
-	if len(ids) == 0 {
+func rewriteKeyRanges(preAlloced [2]int64) [][2]kv.Key {
+	if preAlloced == [2]int64{} {
 		return nil
 	}
-	slices.Sort(ids)
-	idRanges := calSortedTableIds(ids)
+	startKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(preAlloced[0]))
+	endKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(preAlloced[1]))
 
-	if preAlloced[0] < preAlloced[1] {
-		overlap := false
-		for _, r := range idRanges {
-			if r[0] < preAlloced[1] && r[1] > preAlloced[0] {
-				overlap = true
-				break
-			}
-		}
-		if overlap {
-			idRanges = append(idRanges, []int64{preAlloced[0], preAlloced[1]})
-		}
-	}
-
-	mergedRanges := mergeIntervals(idRanges)
-
-	keyRanges := make([][2]kv.Key, 0, len(mergedRanges))
-	for _, r := range mergedRanges {
-		startKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(r[0]))
-		endKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(r[1]))
-		keyRanges = append(keyRanges, [2]kv.Key{startKey, endKey})
-	}
-	return keyRanges
-}
-
-func calSortedTableIds(ids []int64) [][]int64 {
-	if len(ids) == 0 {
-		return [][]int64{}
-	}
-
-	var idRanges [][]int64
-
-	start := ids[0]
-	end := start + 1
-
-	for i := 1; i < len(ids); i++ {
-		if ids[i] == ids[i-1]+1 {
-			end = ids[i] + 1
-		} else {
-			idRanges = append(idRanges, []int64{start, end})
-			start = ids[i]
-			end = start + 1
-		}
-	}
-	idRanges = append(idRanges, []int64{start, end})
-
-	return idRanges
-}
-
-func mergeIntervals(intervals [][]int64) [][]int64 {
-	if len(intervals) == 0 {
-		return nil
-	}
-	slices.SortFunc(intervals, func(a, b []int64) int {
-		if a[0] < b[0] {
-			return -1
-		} else if a[0] > b[0] {
-			return 1
-		}
-		return 0
-	})
-	merged := [][]int64{intervals[0]}
-	for i := 1; i < len(intervals); i++ {
-		last := merged[len(merged)-1]
-		current := intervals[i]
-		if current[0] <= last[1] {
-			if current[1] > last[1] {
-				last[1] = current[1]
-			}
-		} else {
-			merged = append(merged, current)
-		}
-	}
-	return merged
+	return [][2]kv.Key{{startKey, endKey}}
 }
 
 type DDLJobFilterRule func(ddlJob *model.Job) bool
