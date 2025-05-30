@@ -29,6 +29,7 @@ go_test(
         "//pkg/executor/importer",
         "//pkg/kv",
         "//pkg/lightning/backend/local",
+        "//pkg/lightning/mydump",
         "//pkg/parser/auth",
         "//pkg/parser/terror",
         "//pkg/session",

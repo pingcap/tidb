@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -299,48 +300,56 @@ func (s *mockGCSSuite) TestInputNull() {
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 def 11", "2 test2 22"}...))
 }
 
-func (s *mockGCSSuite) TestIgnoreNLines() {
+func (s *mockGCSSuite) TestCSVHeaderOption() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "csv-option"})
+
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-multi-load", Name: "skip-rows-1.csv"},
-		Content: []byte(`1,test1,11
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "csv-option", Name: "csv_with_header.csv"},
+		Content: []byte(`a,b,c
+1,test1,11
 2,test2,22
 3,test3,33
 4,test4,44`),
 	})
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-multi-load", Name: "skip-rows-2.csv"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "csv-option", Name: "csv_without_header.csv"},
 		Content: []byte(`5,test5,55
 6,test6,66
 7,test7,77
-8,test8,88
-9,test9,99`),
+8,test8,88`),
 	})
-	s.prepareAndUseDB("load_data")
+	s.prepareAndUseDB("csv_option")
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
-	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
-		with thread=1`, gcsEndpoint)
-	s.tk.MustQuery(loadDataSQL)
-	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
-		"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44",
-		"5 test5 55", "6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
-	}...))
-	s.tk.MustExec("truncate table t")
-	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
-		with thread=1, skip_rows=1`, gcsEndpoint)
-	s.tk.MustQuery(loadDataSQL)
-	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
-		"2 test2 22", "3 test3 33", "4 test4 44",
-		"6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
-	}...))
-	s.tk.MustExec("truncate table t")
-	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
-		with thread=1, skip_rows=3`, gcsEndpoint)
-	s.tk.MustQuery(loadDataSQL)
-	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
-		"4 test4 44",
-		"8 test8 88", "9 test9 99",
-	}...))
+
+	testCases := []struct {
+		csvOption mydump.CSVHeaderOption
+		file      string
+		result    bool
+		count     int
+	}{
+		{mydump.CSVHeaderAuto, "csv_with_header.csv", true, 4},
+		{mydump.CSVHeaderAuto, "csv_without_header.csv", true, 4},
+		{mydump.CSVHeaderTrue, "csv_with_header.csv", true, 4},
+		{mydump.CSVHeaderTrue, "csv_without_header.csv", true, 3}, // the first row is skipped
+		{mydump.CSVHeaderFalse, "csv_with_header.csv", false, -1},
+		{mydump.CSVHeaderFalse, "csv_without_header.csv", true, 4},
+		{mydump.CSVHeaderAuto, "*.csv", true, 8},
+		{mydump.CSVHeaderFalse, "*.csv", false, -1},
+		{mydump.CSVHeaderTrue, "*.csv", true, 7},
+	}
+
+	for _, tc := range testCases {
+		s.tk.MustExec("truncate table t")
+		loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://csv-option/%s?endpoint=%s'
+		with has_csv_header="%s", thread=1`, tc.file, gcsEndpoint, tc.csvOption)
+		if tc.result {
+			s.tk.MustQuery(loadDataSQL)
+			s.tk.MustQuery("SELECT count(*) FROM t;").Check(testkit.Rows(strconv.Itoa(tc.count)))
+		} else {
+			s.tk.MustQueryToErr(loadDataSQL)
+		}
+	}
 }
 
 func (s *mockGCSSuite) TestGeneratedColumnsAndTSVFile() {
@@ -484,7 +493,7 @@ func (s *mockGCSSuite) TestMultiValueIndex() {
 	})
 
 	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-csv/1.csv?endpoint=%s'
-		WITH skip_rows=1;`, gcsEndpoint)
+		WITH has_csv_header="true";`, gcsEndpoint)
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"1 [1, 2, 3]",

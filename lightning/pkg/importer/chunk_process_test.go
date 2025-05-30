@@ -26,7 +26,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -46,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	tmock "github.com/pingcap/tidb/pkg/util/mock"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -431,14 +431,12 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 	reader, err := store.Open(ctx, fileName, nil)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 1, "io")
-	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil)
+	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, mydump.CSVHeaderFalse, nil)
 	require.NoError(s.T(), err)
 	s.cr.parser = p
 
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
-	require.NoError(s.T(), failpoint.Enable(
-		"github.com/pingcap/tidb/lightning/pkg/importer/mock-kv-size", "return(110000000)"))
-	defer failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importer/mock-kv-size")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/lightning/pkg/importer/mock-kv-size", "return(110000000)")
 	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	require.NoError(s.T(), err)
 
@@ -510,7 +508,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 	reader, err := store.Open(ctx, fileName, nil)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 5, "io")
-	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil)
+	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, mydump.CSVHeaderFalse, nil)
 	require.NoError(s.T(), err)
 
 	err = s.cr.parser.Close()
@@ -609,7 +607,7 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 	reader, err := store.Open(ctx, fileName, nil)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 5, "io")
-	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, cfg.Mydumper.CSV.Header, nil)
+	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, mydump.GetCSVHeaderOptionFromCfg(cfg), nil)
 	require.NoError(s.T(), err)
 
 	err = s.cr.parser.Close()
