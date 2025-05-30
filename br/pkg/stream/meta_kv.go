@@ -221,6 +221,11 @@ func (v *RawWriteCFValue) IsDelete() bool {
 	return v.GetWriteType() == WriteTypeDelete
 }
 
+// IsPut checks whether the value in cf is a `put` record.
+func (v *RawWriteCFValue) IsPut() bool {
+	return v.GetWriteType() == WriteTypePut
+}
+
 // HasShortValue checks whether short value is stored in write cf.
 func (v *RawWriteCFValue) HasShortValue() bool {
 	return len(v.shortValue) > 0

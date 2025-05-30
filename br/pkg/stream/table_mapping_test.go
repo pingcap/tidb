@@ -26,31 +26,56 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
 // MockMetaInfoCollector implements the MetaInfoCollector interface for testing
 type MockMetaInfoCollector struct {
-	dbInfos    map[int64]*model.DBInfo
-	tableInfos map[int64]map[int64]*model.TableInfo
+	dbInfos         map[int64]*model.DBInfo
+	dbTimestamps    map[int64]uint64
+	tableInfos      map[int64]map[int64]*model.TableInfo
+	tableTimestamps map[int64]map[int64]uint64
 }
 
 func NewMockMetaInfoCollector() *MockMetaInfoCollector {
 	return &MockMetaInfoCollector{
-		dbInfos:    make(map[int64]*model.DBInfo),
-		tableInfos: make(map[int64]map[int64]*model.TableInfo),
+		dbInfos:         make(map[int64]*model.DBInfo),
+		dbTimestamps:    make(map[int64]uint64),
+		tableInfos:      make(map[int64]map[int64]*model.TableInfo),
+		tableTimestamps: make(map[int64]map[int64]uint64),
 	}
 }
 
-func (m *MockMetaInfoCollector) OnDatabaseInfo(dbInfo *model.DBInfo) {
-	m.dbInfos[dbInfo.ID] = dbInfo
+func (m *MockMetaInfoCollector) OnDatabaseInfo(dbId int64, dbName string, commitTs uint64) {
+	// only update if this is a newer timestamp
+	if existingTs, exists := m.dbTimestamps[dbId]; !exists || commitTs > existingTs {
+		dbInfo := &model.DBInfo{
+			ID:   dbId,
+			Name: pmodel.NewCIStr(dbName),
+		}
+		m.dbInfos[dbInfo.ID] = dbInfo
+		m.dbTimestamps[dbId] = commitTs
+	}
 }
 
-func (m *MockMetaInfoCollector) OnTableInfo(dbID int64, tableInfo *model.TableInfo) {
+func (m *MockMetaInfoCollector) OnTableInfo(dbID, tableId int64, tableSimpleInfo *tableSimpleInfo, commitTs uint64) {
 	if _, ok := m.tableInfos[dbID]; !ok {
 		m.tableInfos[dbID] = make(map[int64]*model.TableInfo)
 	}
-	m.tableInfos[dbID][tableInfo.ID] = tableInfo
+	if _, ok := m.tableTimestamps[dbID]; !ok {
+		m.tableTimestamps[dbID] = make(map[int64]uint64)
+	}
+
+	// only update if this is a newer timestamp
+	if existingTs, exists := m.tableTimestamps[dbID][tableId]; !exists || commitTs > existingTs {
+		tableInfo := &model.TableInfo{
+			ID:   tableId,
+			Name: pmodel.NewCIStr(tableSimpleInfo.Name),
+		}
+		m.tableInfos[dbID][tableInfo.ID] = tableInfo
+		m.tableTimestamps[dbID][tableId] = commitTs
+	}
 }
 
 func TestToProto(t *testing.T) {
@@ -1034,138 +1059,304 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 		ts        uint64 = 400036290571534337
 	)
 
-	tc := NewTableMappingManager()
-	collector := NewMockMetaInfoCollector()
+	t.Run("DefaultCF and WriteCF flow", func(t *testing.T) {
+		tc := NewTableMappingManager()
+		collector := NewMockMetaInfoCollector()
 
-	// Test DB key
-	dbKey := meta.DBkey(dbID)
-	dbInfo := &model.DBInfo{
-		ID:   dbID,
-		Name: pmodel.NewCIStr(dbName),
-	}
-	dbValue, err := json.Marshal(dbInfo)
-	require.NoError(t, err)
+		// Test DB key with DefaultCF
+		dbKey := meta.DBkey(dbID)
+		dbInfo := &model.DBInfo{
+			ID:   dbID,
+			Name: pmodel.NewCIStr(dbName),
+		}
+		dbValue, err := json.Marshal(dbInfo)
+		require.NoError(t, err)
 
-	// Encode DB key in a transaction
-	txnDBKey := utils.EncodeTxnMetaKey([]byte("DBs"), dbKey, ts)
-	entry := &kv.Entry{
-		Key:   txnDBKey,
-		Value: dbValue,
-	}
+		// Encode DB key in a transaction for DefaultCF
+		txnDBKey := utils.EncodeTxnMetaKey([]byte("DBs"), dbKey, ts)
+		defaultCFEntry := &kv.Entry{
+			Key:   txnDBKey,
+			Value: dbValue,
+		}
 
-	// Test parsing DB key and value
-	err = tc.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF, collector)
-	require.NoError(t, err)
-	require.Contains(t, tc.DBReplaceMap, dbID)
-	require.Equal(t, dbName, tc.DBReplaceMap[dbID].Name)
+		// Test parsing DB key and value with DefaultCF
+		err = tc.ParseMetaKvAndUpdateIdMapping(defaultCFEntry, consts.DefaultCF, ts, collector)
+		require.NoError(t, err)
+		require.Contains(t, tc.DBReplaceMap, dbID)
+		// With DefaultCF, the database name is stored in tempDefaultKVDbMap, not in DBReplace
+		require.Equal(t, "", tc.DBReplaceMap[dbID].Name)
+		// Collector is not called for DefaultCF
+		require.NotContains(t, collector.dbInfos, dbID)
 
-	// Verify collector received the database info
-	require.Contains(t, collector.dbInfos, dbID)
-	require.Equal(t, dbName, collector.dbInfos[dbID].Name.O)
+		// Now test with WriteCF - this should process the DefaultCF entry and call collector
+		// Create a WriteCF value that references the DefaultCF entry by timestamp (no short value)
+		writeCFData := []byte{WriteTypePut}                // Write type: Put
+		writeCFData = codec.EncodeUvarint(writeCFData, ts) // Start timestamp (same as DefaultCF)
+		writeCFEntry := &kv.Entry{
+			Key:   txnDBKey,
+			Value: writeCFData,
+		}
 
-	// Test table key
-	pi := model.PartitionInfo{
-		Enable:      true,
-		Definitions: make([]model.PartitionDefinition, 0),
-	}
-	pi.Definitions = append(pi.Definitions,
-		model.PartitionDefinition{
-			ID:   pt1ID,
-			Name: pmodel.NewCIStr(pt1Name),
-		},
-		model.PartitionDefinition{
-			ID:   pt2ID,
-			Name: pmodel.NewCIStr(pt2Name),
-		},
+		err = tc.ParseMetaKvAndUpdateIdMapping(writeCFEntry, consts.WriteCF, ts, collector)
+		require.NoError(t, err)
+		require.Contains(t, tc.DBReplaceMap, dbID)
+		// With WriteCF, the database name should now be set in DBReplace
+		require.Equal(t, dbName, tc.DBReplaceMap[dbID].Name)
+		// Collector should now be called
+		require.Contains(t, collector.dbInfos, dbID)
+		require.Equal(t, dbName, collector.dbInfos[dbID].Name.O)
+
+		// Test table key with DefaultCF
+		pi := model.PartitionInfo{
+			Enable:      true,
+			Definitions: make([]model.PartitionDefinition, 0),
+		}
+		pi.Definitions = append(pi.Definitions,
+			model.PartitionDefinition{
+				ID:   pt1ID,
+				Name: pmodel.NewCIStr(pt1Name),
+			},
+			model.PartitionDefinition{
+				ID:   pt2ID,
+				Name: pmodel.NewCIStr(pt2Name),
+			},
+		)
+
+		tableInfo := &model.TableInfo{
+			ID:        tableID,
+			Name:      pmodel.NewCIStr(tableName),
+			Partition: &pi,
+		}
+		tableValue, err := json.Marshal(tableInfo)
+		require.NoError(t, err)
+
+		// Encode table key in a transaction for DefaultCF
+		txnTableKey := utils.EncodeTxnMetaKey(meta.DBkey(dbID), meta.TableKey(tableID), ts)
+		tableDefaultCFEntry := &kv.Entry{
+			Key:   txnTableKey,
+			Value: tableValue,
+		}
+
+		// Test parsing table key and value with DefaultCF
+		err = tc.ParseMetaKvAndUpdateIdMapping(tableDefaultCFEntry, consts.DefaultCF, ts, collector)
+		require.NoError(t, err)
+		require.Contains(t, tc.DBReplaceMap[dbID].TableMap, tableID)
+		// With DefaultCF, the table name is stored in tempDefaultKVTableMap, not in TableReplace
+		require.Equal(t, "", tc.DBReplaceMap[dbID].TableMap[tableID].Name)
+		// Collector is not called for DefaultCF
+		require.NotContains(t, collector.tableInfos, dbID)
+
+		// Now test with WriteCF for table
+		// Create a WriteCF value that references the DefaultCF entry by timestamp (no short value)
+		tableWriteCFData := []byte{WriteTypePut}                     // Write type: Put
+		tableWriteCFData = codec.EncodeUvarint(tableWriteCFData, ts) // Start timestamp (same as DefaultCF)
+		tableWriteCFEntry := &kv.Entry{
+			Key:   txnTableKey,
+			Value: tableWriteCFData,
+		}
+
+		err = tc.ParseMetaKvAndUpdateIdMapping(tableWriteCFEntry, consts.WriteCF, ts, collector)
+		require.NoError(t, err)
+		require.Contains(t, tc.DBReplaceMap[dbID].TableMap, tableID)
+		// With WriteCF, the table name should now be set in TableReplace
+		require.Equal(t, tableName, tc.DBReplaceMap[dbID].TableMap[tableID].Name)
+		// Collector should now be called
+		require.Contains(t, collector.tableInfos, dbID)
+		require.Contains(t, collector.tableInfos[dbID], tableID)
+		require.Equal(t, tableName, collector.tableInfos[dbID][tableID].Name.O)
+
+		// Verify partition IDs are mapped
+		require.Contains(t, tc.DBReplaceMap[dbID].TableMap[tableID].PartitionMap, pt1ID)
+		require.Contains(t, tc.DBReplaceMap[dbID].TableMap[tableID].PartitionMap, pt2ID)
+	})
+
+	t.Run("Key-only entries", func(t *testing.T) {
+		tc := NewTableMappingManager()
+		collector := NewMockMetaInfoCollector()
+
+		// Test non-meta key
+		nonMetaEntry := &kv.Entry{
+			Key:   []byte("not_a_meta_key"),
+			Value: []byte("some_value"),
+		}
+		err := tc.ParseMetaKvAndUpdateIdMapping(nonMetaEntry, consts.DefaultCF, ts, collector)
+		require.NoError(t, err)
+
+		// Test auto increment key with different IDs
+		autoIncrDBID := int64(50)
+		autoIncrTableID := int64(200)
+		autoIncrKey := utils.EncodeTxnMetaKey(meta.DBkey(autoIncrDBID), meta.AutoIncrementIDKey(autoIncrTableID), ts)
+		autoIncrEntry := &kv.Entry{
+			Key:   autoIncrKey,
+			Value: []byte("1"),
+		}
+		err = tc.ParseMetaKvAndUpdateIdMapping(autoIncrEntry, consts.DefaultCF, ts, collector)
+		require.NoError(t, err)
+		require.Contains(t, tc.DBReplaceMap, autoIncrDBID)
+		require.Contains(t, tc.DBReplaceMap[autoIncrDBID].TableMap, autoIncrTableID)
+
+		// Test auto table ID key with different IDs
+		autoTableDBID := int64(60)
+		autoTableTableID := int64(300)
+		autoTableKey := utils.EncodeTxnMetaKey(meta.DBkey(autoTableDBID), meta.AutoTableIDKey(autoTableTableID), ts)
+		autoTableEntry := &kv.Entry{
+			Key:   autoTableKey,
+			Value: []byte("1"),
+		}
+		err = tc.ParseMetaKvAndUpdateIdMapping(autoTableEntry, consts.DefaultCF, ts, collector)
+		require.NoError(t, err)
+		require.Contains(t, tc.DBReplaceMap, autoTableDBID)
+		require.Contains(t, tc.DBReplaceMap[autoTableDBID].TableMap, autoTableTableID)
+
+		// Test sequence key with different IDs
+		seqDBID := int64(70)
+		seqTableID := int64(400)
+		seqKey := utils.EncodeTxnMetaKey(meta.DBkey(seqDBID), meta.SequenceKey(seqTableID), ts)
+		seqEntry := &kv.Entry{
+			Key:   seqKey,
+			Value: []byte("1"),
+		}
+		err = tc.ParseMetaKvAndUpdateIdMapping(seqEntry, consts.DefaultCF, ts, collector)
+		require.NoError(t, err)
+		require.Contains(t, tc.DBReplaceMap, seqDBID)
+		require.Contains(t, tc.DBReplaceMap[seqDBID].TableMap, seqTableID)
+
+		// Test auto random table ID key with different IDs
+		autoRandomDBID := int64(80)
+		autoRandomTableID := int64(500)
+		autoRandomKey := utils.EncodeTxnMetaKey(meta.DBkey(autoRandomDBID), meta.AutoRandomTableIDKey(autoRandomTableID), ts)
+		autoRandomEntry := &kv.Entry{
+			Key:   autoRandomKey,
+			Value: []byte("1"),
+		}
+		err = tc.ParseMetaKvAndUpdateIdMapping(autoRandomEntry, consts.DefaultCF, ts, collector)
+		require.NoError(t, err)
+		require.Contains(t, tc.DBReplaceMap, autoRandomDBID)
+		require.Contains(t, tc.DBReplaceMap[autoRandomDBID].TableMap, autoRandomTableID)
+	})
+}
+
+func TestTableHistoryManagerOutOfOrderTS(t *testing.T) {
+	const (
+		dbID     int64 = 40
+		tableID  int64 = 100
+		partID   int64 = 101
+		parentID int64 = 200
 	)
 
-	tableInfo := &model.TableInfo{
-		ID:        tableID,
-		Name:      pmodel.NewCIStr(tableName),
-		Partition: &pi,
+	tests := []struct {
+		name        string
+		description string
+		operations  []struct {
+			ts        uint64
+			operation string // "db", "table", "partition"
+			name      string
+			expected  bool // whether this should be the final state
+		}
+		expectedDBName    string
+		expectedTableName string
+	}{
+		{
+			name:        "database updates out of order",
+			description: "database name updates processed out of chronological order",
+			operations: []struct {
+				ts        uint64
+				operation string
+				name      string
+				expected  bool
+			}{
+				{ts: 100, operation: "db", name: "old_db", expected: false},
+				{ts: 200, operation: "db", name: "new_db", expected: true},
+				{ts: 50, operation: "db", name: "oldest_db", expected: false}, // should be ignored
+			},
+			expectedDBName: "new_db",
+		},
+		{
+			name:        "table updates out of order",
+			description: "table name updates processed out of chronological order",
+			operations: []struct {
+				ts        uint64
+				operation string
+				name      string
+				expected  bool
+			}{
+				{ts: 100, operation: "db", name: "test_db", expected: true},
+				{ts: 150, operation: "table", name: "old_table", expected: false},
+				{ts: 200, operation: "table", name: "new_table", expected: true},
+				{ts: 120, operation: "table", name: "intermediate_table", expected: false}, // should be ignored
+			},
+			expectedDBName:    "test_db",
+			expectedTableName: "new_table",
+		},
+		{
+			name:        "partition updates out of order",
+			description: "partition name updates processed out of chronological order",
+			operations: []struct {
+				ts        uint64
+				operation string
+				name      string
+				expected  bool
+			}{
+				{ts: 100, operation: "db", name: "test_db", expected: true},
+				{ts: 150, operation: "partition", name: "old_partition", expected: false},
+				{ts: 200, operation: "partition", name: "new_partition", expected: true},
+				{ts: 120, operation: "partition", name: "intermediate_partition", expected: false}, // should be ignored
+			},
+			expectedDBName: "test_db",
+		},
 	}
-	tableValue, err := json.Marshal(tableInfo)
-	require.NoError(t, err)
 
-	// Encode table key in a transaction
-	txnTableKey := utils.EncodeTxnMetaKey(meta.DBkey(dbID), meta.TableKey(tableID), ts)
-	tableEntry := &kv.Entry{
-		Key:   txnTableKey,
-		Value: tableValue,
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := NewTableHistoryManager()
+
+			// process operations in the specified order
+			for _, op := range tt.operations {
+				switch op.operation {
+				case "db":
+					manager.RecordDBIdToName(dbID, op.name, op.ts)
+				case "table":
+					manager.AddTableHistory(tableID, op.name, dbID, op.ts)
+				case "partition":
+					manager.AddPartitionHistory(partID, op.name, dbID, parentID, op.ts)
+				default:
+					t.Fatalf("unknown operation type: %s", op.operation)
+				}
+			}
+
+			// verify final state
+			if tt.expectedDBName != "" {
+				dbName, exists := manager.GetDBNameByID(dbID)
+				require.True(t, exists, "database should exist in history")
+				require.Equal(t, tt.expectedDBName, dbName,
+					"database name should match the entry with latest timestamp")
+			}
+
+			if tt.expectedTableName != "" {
+				history := manager.GetTableHistory()
+				require.Contains(t, history, tableID, "table should exist in history")
+				require.Equal(t, tt.expectedTableName, history[tableID][1].TableName,
+					"table name should match the entry with latest timestamp")
+			}
+
+			// verify partition history if applicable
+			if len(tt.operations) > 0 && tt.operations[len(tt.operations)-1].operation == "partition" {
+				history := manager.GetTableHistory()
+				require.Contains(t, history, partID, "partition should exist in history")
+
+				// find the expected partition name from the latest timestamp
+				var expectedPartitionName string
+				var latestTS uint64
+				for _, op := range tt.operations {
+					if op.operation == "partition" && op.ts >= latestTS {
+						latestTS = op.ts
+						expectedPartitionName = op.name
+					}
+				}
+
+				require.Equal(t, expectedPartitionName, history[partID][1].TableName,
+					"partition name should match the entry with latest timestamp")
+			}
+		})
 	}
-
-	// Test parsing table key and value
-	err = tc.ParseMetaKvAndUpdateIdMapping(tableEntry, consts.DefaultCF, collector)
-	require.NoError(t, err)
-	require.Contains(t, tc.DBReplaceMap[dbID].TableMap, tableID)
-	require.Equal(t, tableName, tc.DBReplaceMap[dbID].TableMap[tableID].Name)
-
-	// Verify collector received the table info
-	require.Contains(t, collector.tableInfos, dbID)
-	require.Contains(t, collector.tableInfos[dbID], tableID)
-	require.Equal(t, tableName, collector.tableInfos[dbID][tableID].Name.O)
-
-	// Verify partition IDs are mapped
-	require.Contains(t, tc.DBReplaceMap[dbID].TableMap[tableID].PartitionMap, pt1ID)
-	require.Contains(t, tc.DBReplaceMap[dbID].TableMap[tableID].PartitionMap, pt2ID)
-
-	// Test non-meta key
-	nonMetaEntry := &kv.Entry{
-		Key:   []byte("not_a_meta_key"),
-		Value: []byte("some_value"),
-	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(nonMetaEntry, consts.DefaultCF, collector)
-	require.NoError(t, err)
-
-	// Test auto increment key with different IDs
-	autoIncrDBID := int64(50)
-	autoIncrTableID := int64(200)
-	autoIncrKey := utils.EncodeTxnMetaKey(meta.DBkey(autoIncrDBID), meta.AutoIncrementIDKey(autoIncrTableID), ts)
-	autoIncrEntry := &kv.Entry{
-		Key:   autoIncrKey,
-		Value: []byte("1"),
-	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(autoIncrEntry, consts.DefaultCF, collector)
-	require.NoError(t, err)
-	require.Contains(t, tc.DBReplaceMap, autoIncrDBID)
-	require.Contains(t, tc.DBReplaceMap[autoIncrDBID].TableMap, autoIncrTableID)
-
-	// Test auto table ID key with different IDs
-	autoTableDBID := int64(60)
-	autoTableTableID := int64(300)
-	autoTableKey := utils.EncodeTxnMetaKey(meta.DBkey(autoTableDBID), meta.AutoTableIDKey(autoTableTableID), ts)
-	autoTableEntry := &kv.Entry{
-		Key:   autoTableKey,
-		Value: []byte("1"),
-	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(autoTableEntry, consts.DefaultCF, collector)
-	require.NoError(t, err)
-	require.Contains(t, tc.DBReplaceMap, autoTableDBID)
-	require.Contains(t, tc.DBReplaceMap[autoTableDBID].TableMap, autoTableTableID)
-
-	// Test sequence key with different IDs
-	seqDBID := int64(70)
-	seqTableID := int64(400)
-	seqKey := utils.EncodeTxnMetaKey(meta.DBkey(seqDBID), meta.SequenceKey(seqTableID), ts)
-	seqEntry := &kv.Entry{
-		Key:   seqKey,
-		Value: []byte("1"),
-	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(seqEntry, consts.DefaultCF, collector)
-	require.NoError(t, err)
-	require.Contains(t, tc.DBReplaceMap, seqDBID)
-	require.Contains(t, tc.DBReplaceMap[seqDBID].TableMap, seqTableID)
-
-	// Test auto random table ID key with different IDs
-	autoRandomDBID := int64(80)
-	autoRandomTableID := int64(500)
-	autoRandomKey := utils.EncodeTxnMetaKey(meta.DBkey(autoRandomDBID), meta.AutoRandomTableIDKey(autoRandomTableID), ts)
-	autoRandomEntry := &kv.Entry{
-		Key:   autoRandomKey,
-		Value: []byte("1"),
-	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(autoRandomEntry, consts.DefaultCF, collector)
-	require.NoError(t, err)
-	require.Contains(t, tc.DBReplaceMap, autoRandomDBID)
-	require.Contains(t, tc.DBReplaceMap[autoRandomDBID].TableMap, autoRandomTableID)
 }

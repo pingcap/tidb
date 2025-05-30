@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -2406,6 +2407,10 @@ func createDBsAndTables(
 func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestoreConfig, isPiTR bool) {
 	if cfg.ExplicitFilter && isPiTR {
 		for i, table := range tables {
+			// skip sequence as there is extra steps need to do after creation and restoreMode will block it
+			if table.Info.IsSequence() {
+				continue
+			}
 			tableCopy := *table
 			tableCopy.Info = table.Info.Clone()
 			tableCopy.Info.Mode = model.TableModeRestore
