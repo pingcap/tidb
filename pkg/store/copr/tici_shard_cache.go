@@ -1,0 +1,155 @@
+// Copyright 2025 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package copr
+
+import (
+	"context"
+	"fmt"
+	"sync"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/tici"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
+)
+
+type ShardInfo = coprocessor.ShardInfo
+type KeyRange = kv.KeyRange
+
+type Shard struct {
+	ShardId  uint64
+	StartKey string
+	EndKey   string
+	Epoch    uint64
+}
+
+type ShardWithAddr struct {
+	Shard
+	local_cache_addrs []string
+}
+
+type ShardInfoWithAddr struct {
+	ShardInfo
+	local_cache_addrs []string
+}
+
+type shardIndexMu struct {
+	// shardIndex is a map of region ID to shared index.
+	sync.RWMutex
+	shareds map[uint64]*ShardWithAddr
+}
+
+type Client interface {
+	ScanRanges(ctx context.Context, tableId int64, indexId int64, keyRanges []KeyRange, limit int) ([]ShardWithAddr, error)
+}
+
+type TiCIShardCacheClient struct {
+	c *grpc.ClientConn
+}
+
+func NewTiCIShardCacheClient() (*TiCIShardCacheClient, error) {
+	c, err := grpc.DialContext(context.Background(), "127.0.0.1:50061", grpc.WithInsecure())
+	return &TiCIShardCacheClient{c}, err
+}
+
+func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableId int64, indexId int64, keyRanges []KeyRange, limit int) (ret []ShardWithAddr, err error) {
+	request := &tici.GetShardLocalCacheRequest{
+		TableId:   tableId,
+		IndexId:   indexId,
+		KeyRanges: nil,
+		Limit:     int32(limit),
+	}
+
+	response := new(tici.GetShardLocalCacheResponse)
+	err = c.c.Invoke(ctx, tici.MetaService_GetShardLocalCacheInfo_FullMethodName, request, response)
+	if err != nil {
+		return nil, err
+	}
+	if response.Status != 0 {
+		return nil, errors.New(fmt.Sprintf("GetShardLocalCacheInfo failed: %d", response.Status))
+	}
+
+	var s = "ShardLocalCacheInfos:["
+	for _, info := range response.ShardLocalCacheInfos {
+		if info != nil {
+			s += fmt.Sprintf("[ShardId: %d, StartKey: %s, EndKey: %s, Epoch: %d, LocalCacheAddrs: %v; ]",
+				info.Shard.ShardId, info.Shard.StartKey, info.Shard.EndKey, info.Shard.Epoch, info.LocalCacheAddrs)
+		}
+	}
+	s += "]"
+	logutil.BgLogger().Info("GetShardLocalCacheInfo", zap.String("info", s))
+
+	for _, s := range response.ShardLocalCacheInfos {
+		if s != nil {
+			ret = append(ret, ShardWithAddr{
+				Shard{
+					ShardId:  s.Shard.ShardId,
+					StartKey: s.Shard.StartKey,
+					EndKey:   s.Shard.EndKey,
+					Epoch:    s.Shard.Epoch,
+				},
+				s.LocalCacheAddrs,
+			})
+		}
+	}
+
+	return ret, nil
+}
+
+type TiCIShardCache struct {
+	client Client
+	mu     shardIndexMu
+}
+
+func NewTiCIShardCache(client Client) *TiCIShardCache {
+	return &TiCIShardCache{
+		client: client,
+		mu: shardIndexMu{
+			shareds: make(map[uint64]*ShardWithAddr),
+		},
+	}
+}
+
+func (s *TiCIShardCache) ScanRanges(ctx context.Context, tableId int64, indexId int64, keyRanges []KeyRange, limit int) ([]ShardInfoWithAddr, error) {
+	shards, err := s.client.ScanRanges(ctx, tableId, indexId, keyRanges, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, shard := range shards {
+		s.mu.shareds[shard.ShardId] = &shard
+	}
+
+	// Mock the local cache addresses for testing purposes
+	ret := make([]ShardInfoWithAddr, 0, len(shards))
+	for _, shard := range shards {
+		ret = append(ret, ShardInfoWithAddr{
+			ShardInfo: ShardInfo{
+				ShardId:    shard.ShardId,
+				ShardEpoch: shard.Epoch,
+				// Ranges: []kv.KeyRange{},
+			},
+			local_cache_addrs: shard.local_cache_addrs,
+		})
+	}
+
+	return ret, nil
+}
