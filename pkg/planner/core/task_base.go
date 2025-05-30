@@ -477,8 +477,8 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		}
 		ts := tp.(*PhysicalTableScan)
 		prevColumnLen := len(ts.Columns)
-		prevSchema := ts.schema.Clone()
-		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+		prevSchema := ts.Schema().Clone()
+		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
 		if !t.needExtraProj && len(ts.Columns) > prevColumnLen {
 			// Add a projection to make sure not to output extract columns.
 			t.needExtraProj = true

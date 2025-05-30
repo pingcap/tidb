@@ -41,7 +41,7 @@ func (p *PhysicalProjection) ResolveIndicesItself() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalProjection) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
+	err = p.PhysicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -62,7 +62,7 @@ func refine4NeighbourProj(p, childProj *PhysicalProjection) {
 		}
 		inputIdx2OutputIdxes[col.Index] = append(inputIdx2OutputIdxes[col.Index], i)
 	}
-	childSchemaUnionSet := disjointset.NewIntSet(childProj.schema.Len())
+	childSchemaUnionSet := disjointset.NewIntSet(childProj.Schema().Len())
 	for _, outputIdxes := range inputIdx2OutputIdxes {
 		if len(outputIdxes) <= 1 {
 			continue
@@ -134,15 +134,15 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 		}
 	}
 
-	colsNeedResolving := p.schema.Len()
+	colsNeedResolving := p.Schema().Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
 	if p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
 		colsNeedResolving--
 	}
 	// To avoid that two plan shares the same column slice.
-	shallowColSlice := make([]*expression.Column, p.schema.Len())
-	copy(shallowColSlice, p.schema.Columns)
-	p.schema = expression.NewSchema(shallowColSlice...)
+	shallowColSlice := make([]*expression.Column, p.Schema().Len())
+	copy(shallowColSlice, p.Schema().Columns)
+	p.SetSchema(expression.NewSchema(shallowColSlice...))
 	foundCnt := 0
 
 	// Here we want to resolve all join schema columns directly as a merged schema, and you know same name
@@ -153,7 +153,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	for i := range colsNeedResolving {
 		findIdx := -1
 		for j := range mergedSchema.Columns {
-			if !p.schema.Columns[i].EqualColumn(mergedSchema.Columns[j]) || marked[j] {
+			if !p.Schema().Columns[i].EqualColumn(mergedSchema.Columns[j]) || marked[j] {
 				continue
 			}
 			// resolve to a same unique id one, and it not being marked.
@@ -162,8 +162,8 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 		}
 		if findIdx != -1 {
 			// valid one.
-			p.schema.Columns[i] = p.schema.Columns[i].Clone().(*expression.Column)
-			p.schema.Columns[i].Index = findIdx
+			p.Schema().Columns[i] = p.Schema().Columns[i].Clone().(*expression.Column)
+			p.Schema().Columns[i].Index = findIdx
 			marked[findIdx] = true
 			foundCnt++
 		}
@@ -176,7 +176,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalHashJoin) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
+	err = p.PhysicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -185,7 +185,7 @@ func (p *PhysicalHashJoin) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
+	err = p.PhysicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -227,15 +227,15 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 		}
 	}
 
-	colsNeedResolving := p.schema.Len()
+	colsNeedResolving := p.Schema().Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
 	if p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
 		colsNeedResolving--
 	}
 	// To avoid that two plan shares the same column slice.
-	shallowColSlice := make([]*expression.Column, p.schema.Len())
-	copy(shallowColSlice, p.schema.Columns)
-	p.schema = expression.NewSchema(shallowColSlice...)
+	shallowColSlice := make([]*expression.Column, p.Schema().Len())
+	copy(shallowColSlice, p.Schema().Columns)
+	p.SetSchema(expression.NewSchema(shallowColSlice...))
 	foundCnt := 0
 	// The two column sets are all ordered. And the colsNeedResolving is the subset of the mergedSchema.
 	// So we can just move forward j if there's no matching is found.
@@ -243,12 +243,12 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 	//   e.g. The schema of child_0 is [col0, col0, col1]
 	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
 	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
-		if !p.schema.Columns[i].EqualColumn(mergedSchema.Columns[j]) {
+		if !p.Schema().Columns[i].EqualColumn(mergedSchema.Columns[j]) {
 			j++
 			continue
 		}
-		p.schema.Columns[i] = p.schema.Columns[i].Clone().(*expression.Column)
-		p.schema.Columns[i].Index = j
+		p.Schema().Columns[i] = p.Schema().Columns[i].Clone().(*expression.Column)
+		p.Schema().Columns[i].Index = j
 		i++
 		j++
 		foundCnt++
@@ -261,7 +261,7 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
+	err = p.PhysicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -323,15 +323,15 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 		p.OuterHashKeys[i], p.InnerHashKeys[i] = outerKey.(*expression.Column), innerKey.(*expression.Column)
 	}
 
-	colsNeedResolving := p.schema.Len()
+	colsNeedResolving := p.Schema().Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
 	if p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
 		colsNeedResolving--
 	}
 	// To avoid that two plan shares the same column slice.
-	shallowColSlice := make([]*expression.Column, p.schema.Len())
-	copy(shallowColSlice, p.schema.Columns)
-	p.schema = expression.NewSchema(shallowColSlice...)
+	shallowColSlice := make([]*expression.Column, p.Schema().Len())
+	copy(shallowColSlice, p.Schema().Columns)
+	p.SetSchema(expression.NewSchema(shallowColSlice...))
 	foundCnt := 0
 	// The two column sets are all ordered. And the colsNeedResolving is the subset of the mergedSchema.
 	// So we can just move forward j if there's no matching is found.
@@ -339,12 +339,12 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 	//   e.g. The schema of child_0 is [col0, col0, col1]
 	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
 	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
-		if !p.schema.Columns[i].EqualColumn(mergedSchema.Columns[j]) {
+		if !p.Schema().Columns[i].EqualColumn(mergedSchema.Columns[j]) {
 			j++
 			continue
 		}
-		p.schema.Columns[i] = p.schema.Columns[i].Clone().(*expression.Column)
-		p.schema.Columns[i].Index = j
+		p.Schema().Columns[i] = p.Schema().Columns[i].Clone().(*expression.Column)
+		p.Schema().Columns[i].Index = j
 		i++
 		j++
 		foundCnt++
@@ -392,7 +392,7 @@ func resolveIndicesForVirtualColumn(result []*expression.Column, schema *express
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalTableReader) ResolveIndices() error {
-	err := resolveIndicesForVirtualColumn(p.schema.Columns, p.schema)
+	err := resolveIndicesForVirtualColumn(p.Schema().Columns, p.Schema())
 	if err != nil {
 		return err
 	}
@@ -401,7 +401,7 @@ func (p *PhysicalTableReader) ResolveIndices() error {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalIndexReader) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
+	err = p.PhysicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -428,7 +428,7 @@ func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
-	err = resolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.schema)
+	err = resolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.Schema())
 	if err != nil {
 		return err
 	}
@@ -459,7 +459,7 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
-	err = resolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.schema)
+	err = resolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.Schema())
 	if err != nil {
 		return err
 	}
@@ -476,7 +476,7 @@ func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
 		}
 	}
 	if p.HandleCols != nil && p.KeepOrder {
-		p.HandleCols, err = p.HandleCols.ResolveIndices(p.schema)
+		p.HandleCols, err = p.HandleCols.ResolveIndices(p.Schema())
 		if err != nil {
 			return err
 		}
@@ -560,7 +560,7 @@ func (p *PhysicalExpand) ResolveIndicesItself() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalExpand) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
+	err = p.PhysicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -569,7 +569,7 @@ func (p *PhysicalExpand) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *basePhysicalAgg) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
+	err = p.PhysicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -632,7 +632,7 @@ func (p *NominalSort) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalWindow) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
+	err = p.PhysicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -705,11 +705,11 @@ func (p *PhysicalShuffle) ResolveIndices() (err error) {
 
 // resolveIndexForInlineProjection ensures that during the execution of the physical plan, the column index can
 // be correctly mapped to the column in its subplan.
-func resolveIndexForInlineProjection(p *physicalSchemaProducer) error {
+func resolveIndexForInlineProjection(p *physicalop.PhysicalSchemaProducer) error {
 	// To avoid that two plan shares the same column slice.
 	shallowColSlice := make([]*expression.Column, p.Schema().Len())
 	copy(shallowColSlice, p.Schema().Columns)
-	p.schema = expression.NewSchema(shallowColSlice...)
+	p.SetSchema(expression.NewSchema(shallowColSlice...))
 	foundCnt := 0
 	// The two column sets are all ordered. And the colsNeedResolving is the subset of the mergedSchema.
 	// So we can just move forward j if there's no matching is found.
@@ -721,7 +721,7 @@ func resolveIndexForInlineProjection(p *physicalSchemaProducer) error {
 			j++
 			continue
 		}
-		p.Schema().Columns[i] = p.schema.Columns[i].Clone().(*expression.Column)
+		p.Schema().Columns[i] = p.Schema().Columns[i].Clone().(*expression.Column)
 		p.Schema().Columns[i].Index = j
 		i++
 		j++
@@ -735,7 +735,7 @@ func resolveIndexForInlineProjection(p *physicalSchemaProducer) error {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalTopN) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
+	err = p.PhysicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -752,7 +752,7 @@ func (p *PhysicalTopN) ResolveIndices() (err error) {
 		}
 		p.PartitionBy[i].Col = newCol.(*expression.Column)
 	}
-	if err := resolveIndexForInlineProjection(&p.physicalSchemaProducer); err != nil {
+	if err := resolveIndexForInlineProjection(&p.PhysicalSchemaProducer); err != nil {
 		return err
 	}
 	return
@@ -771,7 +771,7 @@ func (p *PhysicalLimit) ResolveIndices() (err error) {
 		}
 		p.PartitionBy[i].Col = newCol.(*expression.Column)
 	}
-	if err := resolveIndexForInlineProjection(&p.physicalSchemaProducer); err != nil {
+	if err := resolveIndexForInlineProjection(&p.PhysicalSchemaProducer); err != nil {
 		return err
 	}
 	return
@@ -822,7 +822,7 @@ func (p *PhysicalApply) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalTableScan) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
+	err = p.PhysicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -831,7 +831,7 @@ func (p *PhysicalTableScan) ResolveIndices() (err error) {
 
 // ResolveIndicesItself implements PhysicalTableScan interface.
 func (p *PhysicalTableScan) ResolveIndicesItself() (err error) {
-	for i, column := range p.schema.Columns {
+	for i, column := range p.Schema().Columns {
 		column.Index = i
 	}
 	return
@@ -914,11 +914,6 @@ func (p *Insert) ResolveIndices() (err error) {
 		}
 	}
 	return
-}
-
-func (p *physicalSchemaProducer) ResolveIndices() (err error) {
-	err = p.BasePhysicalPlan.ResolveIndices()
-	return err
 }
 
 func (*baseSchemaProducer) ResolveIndices() (err error) {
