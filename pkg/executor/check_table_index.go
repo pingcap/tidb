@@ -376,14 +376,36 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 	}
 }
 
-// isCastArrayExpr checks if the expression is a `cast( as array)“ expr
-func isCastArrayExpr(generatedExpr string) bool {
+// ExtractCastArrayExpr checks the expression from a `cast( as array)` expr
+// exported for test.
+func ExtractCastArrayExpr(col *model.ColumnInfo) string {
+	if col.FieldType.GetType() != mysql.TypeJSON {
+		return ""
+	}
+
+	generatedExpr := col.GeneratedExprString
 	if generatedExpr == "" {
-		return false
+		return ""
 	}
 	generatedExpr = strings.ToLower(generatedExpr)
-	generatedExpr = strings.TrimSpace(generatedExpr)
-	return strings.HasPrefix(generatedExpr, "cast(") && strings.HasSuffix(generatedExpr, "array)")
+	startIdx := strings.Index(generatedExpr, "cast")
+	if startIdx < 0 {
+		return ""
+	}
+
+	// Remove prefix and suffix brackets
+	generatedExpr = generatedExpr[startIdx : len(generatedExpr)-startIdx]
+	asIdx := strings.LastIndex(generatedExpr, "as")
+	if asIdx < 0 {
+		return ""
+	}
+
+	arrayIdx := strings.LastIndex(generatedExpr[asIdx:], "array")
+	if arrayIdx < 0 {
+		return ""
+	}
+
+	return generatedExpr[5:asIdx]
 }
 
 func buildChecksumSQLForMVIndex(
@@ -395,11 +417,12 @@ func buildChecksumSQLForMVIndex(
 	checksumCols := handleCols
 	innerColsForTable := handleCols
 	innerColsForIndex := handleCols
-	tableFilterCol := ""
+	tableFilterCol := "true"
 
 	for _, col := range idxInfo.Columns {
 		tblCol := tblMeta.Columns[col.Offset]
 		generatedExpr := strings.ToLower(tblCol.GeneratedExprString)
+		rawExpr := ExtractCastArrayExpr(tblCol)
 
 		alias := buildAlias(col.Name, "")
 		colName := ColumnName(col.Name.O)
@@ -408,14 +431,10 @@ func buildChecksumSQLForMVIndex(
 			// We have to wrap all the columns with a dummy aggregation function for index scan.
 			innerColsForTable = append(innerColsForTable, fmt.Sprintf("%s as %s", colName, alias))
 			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("min(%s) as %s", colName, alias))
-		} else if !isCastArrayExpr(generatedExpr) {
+		} else if len(rawExpr) == 0 {
 			innerColsForTable = append(innerColsForTable, fmt.Sprintf("(%s) as %s", generatedExpr, alias))
 			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("min(%s) as %s", generatedExpr, alias))
 		} else {
-			start := strings.Index(generatedExpr, "cast(")
-			end := strings.LastIndex(generatedExpr, "as")
-			rawExpr := generatedExpr[start+5 : end]
-
 			// JSON with zero length array will not create any index entry,
 			// but JSON with null will create a null index entry.
 			tableFilterCol = fmt.Sprintf("JSON_LENGTH(%s) > 0 or JSON_LENGTH(%s) is null", rawExpr, rawExpr)
@@ -456,11 +475,12 @@ func buildCheckRowSQLForMVIndex(
 	checksumCols := handleCols
 	innerColsForTable := handleCols
 	innerColsForIndex := handleCols
-	tableFilterCol := ""
+	tableFilterCol := "true"
 
 	for _, col := range idxInfo.Columns {
 		tblCol := tblMeta.Columns[col.Offset]
 		generatedExpr := strings.ToLower(tblCol.GeneratedExprString)
+		rawExpr := ExtractCastArrayExpr(tblCol)
 
 		alias := buildAlias(col.Name, "")
 		colName := ColumnName(col.Name.O)
@@ -469,7 +489,7 @@ func buildCheckRowSQLForMVIndex(
 			innerColsForTable = append(innerColsForTable, fmt.Sprintf("min(%s) as %s", colName, alias))
 			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("min(%s) as %s", colName, alias))
 			selectCols = append(selectCols, alias)
-		} else if !isCastArrayExpr(generatedExpr) {
+		} else if len(rawExpr) == 0 {
 			innerColsForTable = append(innerColsForTable, fmt.Sprintf("%s as %s", generatedExpr, alias))
 			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("min(%s) as %s", generatedExpr, alias))
 			selectCols = append(selectCols, alias)
@@ -477,15 +497,12 @@ func buildCheckRowSQLForMVIndex(
 			innerColsForTable = append(innerColsForTable, fmt.Sprintf("%s as %s", strings.Replace(generatedExpr, "cast", "JSON_SUM_CRC32", 1), alias))
 			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("SUM(CRC32(%s)) as %s", colName, alias))
 
-			// For check SQL, output original json in the subquery as well.
-			alias = buildAlias(col.Name, "_array")
-			start := strings.Index(generatedExpr, "cast(")
-			end := strings.LastIndex(generatedExpr, "as")
-			rawExpr := generatedExpr[start+5 : end]
-
 			// JSON with zero length array will not create any index entry,
 			// but JSON with null will create a null index entry.
 			tableFilterCol = fmt.Sprintf("JSON_LENGTH(%s) > 0 or JSON_LENGTH(%s) is null", rawExpr, rawExpr)
+
+			// For check SQL, output original json in the subquery as well.
+			alias = buildAlias(col.Name, "_array")
 			innerColsForTable = append(innerColsForTable, fmt.Sprintf("%s as %s", rawExpr, alias))
 			innerColsForIndex = append(innerColsForIndex, fmt.Sprintf("JSON_ARRAYAGG(%s) as %s", colName, alias))
 			selectCols = append(selectCols, alias)
@@ -599,7 +616,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	fieldTypes := make([]*types.FieldType, len(idxInfo.Columns))
 	for i, t := range idxInfo.Columns {
 		tblCol := tblMeta.Columns[t.Offset]
-		if isCastArrayExpr(tblCol.GeneratedExprString) {
+		if len(ExtractCastArrayExpr(tblCol)) > 0 {
 			fieldTypes[i] = types.NewFieldType(mysql.TypeJSON)
 		} else {
 			fieldTypes[i] = &tblCol.FieldType

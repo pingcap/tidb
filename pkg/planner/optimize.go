@@ -137,6 +137,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 
 // Optimize does optimization and creates a Plan.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
+	ctx = core.WithEnableMVIndexScan(ctx)
 	defer tracing.StartRegion(ctx, "planner.Optimize").End()
 	sessVars := sctx.GetSessionVars()
 	pctx := sctx.GetPlanCtx()
