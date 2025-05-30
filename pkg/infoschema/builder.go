@@ -881,7 +881,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		}
 	}
 	if allIndexPublic {
-		metrics.DDLResetTotalIngestIncrementalOpCount(tblInfo.ID)
+		metrics.DDLResetTempIndexWrite(tblInfo.ID)
 	}
 
 	b.is.addReferredForeignKeys(dbInfo.Name, tblInfo)

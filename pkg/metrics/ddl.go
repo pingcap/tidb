@@ -176,14 +176,19 @@ func InitDDLMetrics() {
 	}, []string{LblType})
 }
 
-// DDLCommitIngestIncrementalOpCount is used to record the number of incremental operations during ingest.
 var (
-	DDLRecordIngestIncrementalOpCount     = func(connID uint64, tableID int64, opCount uint64) {}
-	DDLCommitIngestIncrementalOpCount     = func(connID uint64) {}
-	DDLRollbackIngestIncrementalOpCount   = func(connID uint64) {}
-	DDLResetTotalIngestIncrementalOpCount = func(tblID int64) {}
-	DDLRecordScannedIncrementalOpCount    = func(tableID int64, opCount uint64) {}
-	DDLRecordMergedIncrementalOpCount     = func(tableID int64, opCount uint64) {}
+	// DDLSetTempIndexWrite records the number of writes to a temporary index.
+	DDLSetTempIndexWrite = func(connID uint64, tableID int64, opCount uint64, doubleWrite bool) {}
+	// DDLCommitTempIndexWrite commits the writes to a temporary index.
+	DDLCommitTempIndexWrite = func(connID uint64) {}
+	// DDLRollbackTempIndexWrite rolls back the writes to a temporary index.
+	DDLRollbackTempIndexWrite = func(connID uint64) {}
+	// DDLResetTempIndexWrite resets the write count for a temporary index.
+	DDLResetTempIndexWrite = func(tblID int64) {}
+	// DDLSetTempIndexWriteCount sets the write count for a temporary index.
+	DDLSetTempIndexScan = func(tableID int64, opCount uint64) {}
+	// DDLSetTempIndexMerge sets the merge count for a temporary index.
+	DDLSetTempIndexMerge = func(tableID int64, opCount uint64) {}
 )
 
 // Label constants.
