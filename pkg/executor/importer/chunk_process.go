@@ -122,7 +122,7 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum)
 		row = make([]types.Datum, rowLen)
 	} else {
 		row = row[:0]
-		for i := 0; i < rowLen; i++ {
+		for range rowLen {
 			row = append(row, types.Datum{}) // nozero
 		}
 	}

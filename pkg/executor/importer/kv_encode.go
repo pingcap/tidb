@@ -164,7 +164,7 @@ func (en *tableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum
 	} else {
 		en.rowCache = en.rowCache[:0]
 		en.hasValueCache = en.hasValueCache[:0]
-		for i := 0; i < rowLen; i++ {
+		for range rowLen {
 			en.rowCache = append(en.rowCache, types.Datum{})
 			en.hasValueCache = append(en.hasValueCache, false)
 		}
