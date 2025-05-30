@@ -316,6 +316,11 @@ error = '''
 stream task already exists
 '''
 
+["BR:Stream:ErrStreamLogTaskHasNoStorage"]
+error = '''
+stream task has no storage
+'''
+
 ["Lighting:Restore:ErrChecksumMismatch"]
 error = '''
 checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)
@@ -1989,6 +1994,11 @@ Your query has been cancelled due to exceeding the allowed memory limit for the 
 ["executor:8177"]
 error = '''
 Delete can not find column %s for table %s
+'''
+
+["executor:8179"]
+error = '''
+Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'
 '''
 
 ["executor:8212"]

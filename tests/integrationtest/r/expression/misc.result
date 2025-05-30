@@ -14,11 +14,11 @@ select timestamp '2017@01@0001 00~00~00.333';
 timestamp '2017@01@0001 00~00~00.333'
 2017-01-01 00:00:00.333
 select timestamp '00:00:00';
-Error 1292 (22007): Incorrect datetime value: '00:00:00'
+Error 1525 (HY000): Incorrect datetime value: '00:00:00'
 select timestamp '1992-01-03';
-Error 1292 (22007): Incorrect datetime value: '1992-01-03'
+Error 1525 (HY000): Incorrect datetime value: '1992-01-03'
 select timestamp '20171231235959.999999';
-Error 1292 (22007): Incorrect datetime value: '20171231235959.999999'
+Error 1525 (HY000): Incorrect datetime value: '20171231235959.999999'
 select time '117:01:12';
 time '117:01:12'
 117:01:12

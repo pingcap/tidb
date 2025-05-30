@@ -68,11 +68,11 @@ func LoadExprPushdownBlacklist(sctx sessionctx.Context) (err error) {
 		}
 		newBlocklist[name] = value
 	}
-	if isSameExprPushDownBlackList(newBlocklist, expression.DefaultExprPushDownBlacklist.Load().(map[string]uint32)) {
+	if isSameExprPushDownBlackList(newBlocklist, *expression.DefaultExprPushDownBlacklist.Load()) {
 		return nil
 	}
 	expression.ExprPushDownBlackListReloadTimeStamp.Store(time.Now().UnixNano())
-	expression.DefaultExprPushDownBlacklist.Store(newBlocklist)
+	expression.DefaultExprPushDownBlacklist.Store(&newBlocklist)
 	return nil
 }
 

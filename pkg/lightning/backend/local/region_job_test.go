@@ -131,7 +131,7 @@ func TestConvertPBError2Error(t *testing.T) {
 }
 
 func TestExtractRegionFromErrForNextGen(t *testing.T) {
-	if !kerneltype.IsNextGen() {
+	if kerneltype.IsClassic() {
 		t.Skip("only run in next gen")
 	}
 	region := &split.RegionInfo{
