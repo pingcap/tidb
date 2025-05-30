@@ -567,6 +567,7 @@ import (
 	recommend                  "RECOMMEND"
 	recover                    "RECOVER"
 	redundant                  "REDUNDANT"
+	refresh                    "REFRESH"
 	reload                     "RELOAD"
 	remove                     "REMOVE"
 	reorganize                 "REORGANIZE"
@@ -1057,6 +1058,7 @@ import (
 	RevokeRoleStmt             "Revoke role statement"
 	RollbackStmt               "ROLLBACK statement"
 	ReleaseSavepointStmt       "RELEASE SAVEPOINT statement"
+	RefreshStatsStmt           "REFRESH STATS statement"
 	SavepointStmt              "SAVEPOINT statement"
 	SplitRegionStmt            "Split index region statement"
 	SetStmt                    "Set variable statement"
@@ -1296,6 +1298,8 @@ import (
 	Priority                               "Statement priority"
 	PriorityOpt                            "Statement priority option"
 	PrivElem                               "Privilege element"
+	RefreshObject                          "Refresh object"
+	RefreshObjectList                      "Refresh object list"
 	PrivLevel                              "Privilege scope"
 	PrivType                               "Privilege type"
 	ReferDef                               "Reference definition"
@@ -6968,6 +6972,7 @@ UnReservedKeyword:
 |	"RECOMMEND"
 |	"REDUNDANT"
 |	"REORGANIZE"
+|	"REFRESH"
 |	"RESOURCE"
 |	"RESTART"
 |	"ROLE"
@@ -12483,6 +12488,7 @@ Statement:
 |	ReleaseSavepointStmt
 |	RevokeStmt
 |	RevokeRoleStmt
+|	RefreshStatsStmt
 |	SavepointStmt
 |	SetOprStmt
 |	SelectStmt
@@ -15529,6 +15535,54 @@ UnlockStatsStmt:
 		x.PartitionNames = $6.([]ast.CIStr)
 		$$ = &ast.UnlockStatsStmt{
 			Tables: []*ast.TableName{x},
+		}
+	}
+
+RefreshStatsStmt:
+	"REFRESH" "STATS" RefreshObjectList
+	{
+		$$ = &ast.RefreshStatsStmt{
+			RefreshObjects: $3.([]*ast.RefreshObject),
+		}
+	}
+
+RefreshObjectList:
+	RefreshObject
+	{
+		$$ = []*ast.RefreshObject{$1.(*ast.RefreshObject)}
+	}
+|	RefreshObjectList ',' RefreshObject
+	{
+		$$ = append($1.([]*ast.RefreshObject), $3.(*ast.RefreshObject))
+	}
+
+RefreshObject:
+	'*' '.' '*'
+	{
+		$$ = &ast.RefreshObject{
+			RefreshObjectScope: ast.RefreshObjectScopeGlobal,
+		}
+	}
+|	Identifier '.' '*'
+	{
+		$$ = &ast.RefreshObject{
+			RefreshObjectScope: ast.RefreshObjectScopeDatabase,
+			DBName:             ast.NewCIStr($1),
+		}
+	}
+|	Identifier '.' Identifier
+	{
+		$$ = &ast.RefreshObject{
+			RefreshObjectScope: ast.RefreshObjectScopeTable,
+			DBName:             ast.NewCIStr($1),
+			TableName:          ast.NewCIStr($3),
+		}
+	}
+|	Identifier
+	{
+		$$ = &ast.RefreshObject{
+			RefreshObjectScope: ast.RefreshObjectScopeTable,
+			TableName:          ast.NewCIStr($1),
 		}
 	}
 
