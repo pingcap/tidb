@@ -615,6 +615,7 @@ func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, typ
 	}
 }
 
+// part of the logic is copied from builtinCastXXXAsStringFunctionSig
 func convertJSON2String(evalType types.EvalType) func(*stmtctx.StatementContext, types.BinaryJSON, *types.FieldType) (string, error) {
 	switch evalType {
 	case types.ETString:
@@ -632,6 +633,21 @@ func convertJSON2String(evalType types.EvalType) func(*stmtctx.StatementContext,
 			jsonToInt, err := types.ConvertJSONToInt(sc.TypeCtx(), item, mysql.HasUnsignedFlag(tp.GetFlag()), tp.GetType())
 			err = sc.HandleError(err)
 			return strconv.Itoa(int(jsonToInt)), err
+		}
+	case types.ETReal:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (string, error) {
+			if item.TypeCode != types.JSONTypeCodeFloat64 && item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
+				return "", ErrInvalidJSONForFuncIndex
+			}
+			val, err := types.ConvertJSONToFloat(sc.TypeCtx(), item)
+			if err != nil {
+				return "", err
+			}
+			res, err := types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, 64), tp, sc.TypeCtx(), false)
+			if err != nil {
+				return "", err
+			}
+			return res, err
 		}
 	case types.ETDatetime:
 		return func(_ *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (string, error) {

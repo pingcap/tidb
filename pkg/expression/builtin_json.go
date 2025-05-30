@@ -255,14 +255,15 @@ func (b *builtinJSONSumCRC32Sig) evalInt(ctx EvalContext, row chunk.Row) (res in
 	// Because duplicated items only generate one index entry, we have to deduplicate the items.
 	s := make(map[int64]struct{}, val.GetElemCount())
 	for i := range val.GetElemCount() {
-		item, err := f(fakeSctx, val.ArrayGetElem(i), ft)
+		// Convert to string before calculation, to mimic the logic of builtinCRC32.
+		str, err := f(fakeSctx, val.ArrayGetElem(i), ft)
 		if err != nil {
 			if ErrInvalidJSONForFuncIndex.Equal(err) {
 				err = errors.Errorf("Invalid JSON value for CAST to type %s", ft.CompactStr())
 			}
 			return 0, false, err
 		}
-		s[int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))] = struct{}{}
+		s[int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", str)))] = struct{}{}
 	}
 
 	var sum int64
