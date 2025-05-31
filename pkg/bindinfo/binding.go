@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"unique"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -57,7 +58,7 @@ const (
 // Binding stores the basic bind hint info.
 type Binding struct {
 	OriginalSQL string
-	Db          string
+	Db          unique.Handle[string]
 	BindSQL     string
 	// Status represents the status of the binding. It can only be one of the following values:
 	// 1. deleted: Bindings is deleted, can not be used anymore.
@@ -86,7 +87,7 @@ func (b *Binding) IsBindingEnabled() bool {
 
 // size calculates the memory size of a bind info.
 func (b *Binding) size() float64 {
-	res := len(b.OriginalSQL) + len(b.Db) + len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
+	res := len(b.OriginalSQL) + len(b.Db.Value()) + len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
 	return float64(res)
 }
 
@@ -132,7 +133,7 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	var noDBDigest string
 	var tableNames []*ast.TableName
 	if info == nil || info.TableNames == nil || info.NoDBDigest == "" {
-		_, noDBDigest = NormalizeStmtForBinding(stmtNode, "", true)
+		_, noDBDigest = NormalizeStmtForBinding(stmtNode, unique.Make(""), true)
 		tableNames = CollectTableNames(stmtNode)
 		if info != nil {
 			info.NoDBDigest = noDBDigest
@@ -165,7 +166,7 @@ func noDBDigestFromBinding(binding *Binding) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_, bindingNoDBDigest := NormalizeStmtForBinding(stmt, "", true)
+	_, bindingNoDBDigest := NormalizeStmtForBinding(stmt, unique.Make(""), true)
 	return bindingNoDBDigest, nil
 }
 
@@ -173,7 +174,7 @@ func crossDBMatchBindings(sctx sessionctx.Context, tableNames []*ast.TableName, 
 	leastWildcards := len(tableNames) + 1
 	enableCrossDBBinding := sctx.GetSessionVars().EnableFuzzyBinding
 	for _, binding := range bindings {
-		numWildcards, matched := crossDBMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
+		numWildcards, matched := crossDBMatchBindingTableName(sctx.GetSessionVars().CurrentDB.Value(), tableNames, binding.TableNames)
 		if matched && numWildcards > 0 && sctx != nil && !enableCrossDBBinding {
 			continue // cross-db binding is disabled, skip this binding
 		}
@@ -194,12 +195,12 @@ func crossDBMatchBindingTableName(currentDB string, stmtTableNames, bindingTable
 		if stmtTableNames[i].Name.L != bindingTableNames[i].Name.L {
 			return 0, false
 		}
-		if bindingTableNames[i].Schema.L == "*" {
+		if bindingTableNames[i].Schema.L.Value() == "*" {
 			numWildcards++
 		}
 		if bindingTableNames[i].Schema.L == stmtTableNames[i].Schema.L || // exactly same, or
-			(stmtTableNames[i].Schema.L == "" && bindingTableNames[i].Schema.L == strings.ToLower(currentDB)) || // equal to the current DB, or
-			bindingTableNames[i].Schema.L == "*" { // cross-db match successfully
+			(stmtTableNames[i].Schema.L.Value() == "" && bindingTableNames[i].Schema.L.Value() == strings.ToLower(currentDB)) || // equal to the current DB, or
+			bindingTableNames[i].Schema.L.Value() == "*" { // cross-db match successfully
 			continue
 		}
 		return 0, false
@@ -210,7 +211,7 @@ func crossDBMatchBindingTableName(currentDB string, stmtTableNames, bindingTable
 // isCrossDBBinding checks whether the stmtNode is a cross-db binding.
 func isCrossDBBinding(stmt ast.Node) bool {
 	for _, t := range CollectTableNames(stmt) {
-		if t.Schema.L == "*" {
+		if t.Schema.L.Value() == "*" {
 			return true
 		}
 	}
@@ -287,7 +288,7 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 	tableNames := CollectTableNames(bindingStmt)
 	isCrossDB := isCrossDBBinding(bindingStmt)
 	if isCrossDB {
-		dbName = "*" // ues '*' for universal bindings
+		dbName = unique.Make("*") // ues '*' for universal bindings
 	}
 
 	hintsSet, stmt, warns, err := hint.ParseHintsSet(p, binding.BindSQL, binding.Charset, binding.Collation, dbName)
@@ -368,7 +369,7 @@ func pickCachedBinding(cachedBinding *Binding, bindingsFromStorage ...*Binding) 
 }
 
 // RestoreDBForBinding restores the DB name for the binding.
-func RestoreDBForBinding(node ast.StmtNode, defaultDB string) string {
+func RestoreDBForBinding(node ast.StmtNode, defaultDB unique.Handle[string]) string {
 	return utilparser.RestoreWithDefaultDB(node, defaultDB, node.Text())
 }
 
@@ -379,7 +380,7 @@ func RestoreDBForBinding(node ast.StmtNode, defaultDB string) string {
 // when noDB is true, schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
 //
 //	e.g. `select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (...)`
-func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string, noDB bool) (normalizedStmt, sqlDigest string) {
+func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB unique.Handle[string], noDB bool) (normalizedStmt, sqlDigest string) {
 	normalize := func(n ast.StmtNode) (normalizedStmt, sqlDigest string) {
 		eraseLastSemicolon(n)
 		var digest *parser.Digest

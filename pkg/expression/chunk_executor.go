@@ -47,7 +47,7 @@ func checkSequenceFunction(exprs []Expression) bool {
 		if !ok {
 			continue
 		}
-		switch scalaFunc.FuncName.L {
+		switch scalaFunc.FuncName.L.Value() {
 		case ast.NextVal:
 			nextval++
 		case ast.LastVal:
@@ -70,10 +70,10 @@ func HasGetSetVarFunc(expr Expression) bool {
 	if !ok {
 		return false
 	}
-	if scalaFunc.FuncName.L == ast.SetVar {
+	if scalaFunc.FuncName.L.Value() == ast.SetVar {
 		return true
 	}
-	if scalaFunc.FuncName.L == ast.GetVar {
+	if scalaFunc.FuncName.L.Value() == ast.GetVar {
 		return true
 	}
 	return slices.ContainsFunc(scalaFunc.GetArgs(), HasGetSetVarFunc)
@@ -85,7 +85,7 @@ func HasAssignSetVarFunc(expr Expression) bool {
 	if !ok {
 		return false
 	}
-	if scalaFunc.FuncName.L == ast.SetVar {
+	if scalaFunc.FuncName.L.Value() == ast.SetVar {
 		for _, arg := range scalaFunc.GetArgs() {
 			if _, ok := arg.(*ScalarFunction); ok {
 				return true

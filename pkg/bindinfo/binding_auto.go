@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unique"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -68,7 +69,7 @@ type BindingPlanEvolution interface {
 	// TODO: RecordHistPlansAsBindings records the history plans as bindings for qualified queries.
 
 	// ExplorePlansForSQL explores plans for this SQL.
-	ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error)
+	ExplorePlansForSQL(currentDB unique.Handle[string], sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error)
 }
 
 type bindingAuto struct {
@@ -91,7 +92,7 @@ func newBindingAuto(sPool util.DestroyableSessionPool) BindingPlanEvolution {
 // 1. get historical plan candidates.
 // 2. generate new plan candidates.
 // 3. score all historical and newly-generated plan candidates and recommend the best one.
-func (ba *bindingAuto) ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
+func (ba *bindingAuto) ExplorePlansForSQL(currentDB unique.Handle[string], sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
 	historicalPlans, err := ba.getHistoricalPlanInfo(currentDB, sqlOrDigest, charset, collation)
 	if err != nil {
 		return nil, err
@@ -111,7 +112,7 @@ func (ba *bindingAuto) ExplorePlansForSQL(currentDB, sqlOrDigest, charset, colla
 	return planCandidates, err
 }
 
-func (ba *bindingAuto) getHistoricalPlanInfo(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
+func (ba *bindingAuto) getHistoricalPlanInfo(currentDB unique.Handle[string], sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
 	// parse and normalize sqlOrDigest
 	// if the length is 64 and it has no " ", treat it as a digest.
 	var whereCond string

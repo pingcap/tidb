@@ -179,7 +179,7 @@ func decodeMvccRecordValue(bs []byte, colMap map[int64]*types.FieldType, tb *mod
 			if !c.IsNull() {
 				data, err = c.ToString()
 			}
-			record[col.Name.O] = data
+			record[col.Name.O.Value()] = data
 		}
 	}
 	return record, err
@@ -192,8 +192,8 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 	const maxFullHandleCnt = 50
 	displayFullHdCnt := min(len(fullHd), maxFullHandleCnt)
 	fs := []zap.Field{
-		zap.String("table_name", r.Tbl.Name.O),
-		zap.String("index_name", r.Idx.Name.O),
+		zap.String("table_name", r.Tbl.Name.O.Value()),
+		zap.String("index_name", r.Idx.Name.O.Value()),
 		zap.Int("index_cnt", idxCnt), zap.Int("table_cnt", tblCnt),
 		zap.String("missing_handles", redact.String(rmode, fmt.Sprint(missHd))),
 		zap.String("total_handles", redact.String(rmode, fmt.Sprint(fullHd[:displayFullHdCnt]))),
@@ -211,15 +211,15 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 	}
 	fs = append(fs, zap.Stack("stack"))
 	logutil.Logger(ctx).Error("indexLookup found data inconsistency", fs...)
-	return ErrLookupInconsistent.GenWithStackByArgs(r.Tbl.Name.O, r.Idx.Name.O, idxCnt, tblCnt)
+	return ErrLookupInconsistent.GenWithStackByArgs(r.Tbl.Name.O.Value(), r.Idx.Name.O, idxCnt, tblCnt)
 }
 
 // ReportAdminCheckInconsistentWithColInfo reports inconsistent when the value of index row is different from record row.
 func (r *Reporter) ReportAdminCheckInconsistentWithColInfo(ctx context.Context, handle kv.Handle, colName string, idxDat, tblDat fmt.Stringer, err error, idxRow *RecordData) error {
 	rmode := r.EnableRedactLog
 	fs := []zap.Field{
-		zap.String("table_name", r.Tbl.Name.O),
-		zap.String("index_name", r.Idx.Name.O),
+		zap.String("table_name", r.Tbl.Name.O.Value()),
+		zap.String("index_name", r.Idx.Name.O.Value()),
 		zap.String("col", colName),
 		zap.Stringer("row_id", redact.Stringer(rmode, handle)),
 		zap.Stringer("idxDatum", redact.Stringer(rmode, idxDat)),
@@ -255,8 +255,8 @@ func (r *RecordData) String() string {
 func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.Handle, idxRow, tblRow *RecordData) error {
 	rmode := r.EnableRedactLog
 	fs := []zap.Field{
-		zap.String("table_name", r.Tbl.Name.O),
-		zap.String("index_name", r.Idx.Name.O),
+		zap.String("table_name", r.Tbl.Name.O.Value()),
+		zap.String("index_name", r.Idx.Name.O.Value()),
 		zap.Stringer("row_id", redact.Stringer(rmode, handle)),
 		zap.Stringer("index", redact.Stringer(rmode, idxRow)),
 		zap.Stringer("row", redact.Stringer(rmode, tblRow)),
