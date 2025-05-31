@@ -100,7 +100,7 @@ func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 			r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
 			ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
 		}
-		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, false, 0)
+		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.pdCli, r.job, false, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -141,7 +141,7 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 	concurrency int,
 ) error {
 	// TODO(tangenta): support checkpoint manager that interact with subtask table.
-	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.d.store, r.job).
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.d.pdCli, r.job).
 		WithImportDistributedLock(r.d.etcdCli, sm.TS).
 		Build(r.backendCfg, r.backend)
 	if err != nil {
