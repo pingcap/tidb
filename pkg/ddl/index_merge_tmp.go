@@ -195,12 +195,14 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 		return taskCtx, err
 	}
 
+	var currentTxnStartTS uint64
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	attempts := 0
 	for {
 		attempts++
 		err := kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), false, func(_ context.Context, txn kv.Transaction) error {
+			currentTxnStartTS = txn.StartTS()
 			taskCtx.addedCount = 0
 			taskCtx.scanCount = 0
 			txn.SetOption(kv.Priority, taskRange.priority)
@@ -280,18 +282,21 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 		})
 		if err != nil {
 			if kv.IsTxnRetryableError(err) {
+				if err := w.ddlCtx.isReorgRunnable(taskRange.jobID, false); err != nil {
+					return taskCtx, errors.Trace(err)
+				}
 				if w.batchCnt > 1 {
 					w.batchCnt /= 2
 				}
+				w.conflictCounter.Add(1)
+				backoff := kv.BackOff(uint(attempts))
 				logutil.BgLogger().Warn("temp index merge worker retry",
 					zap.Int64("jobID", taskRange.jobID),
 					zap.Int("batchCnt", w.batchCnt),
 					zap.Int("attempts", attempts),
+					zap.Duration("backoff", time.Duration(backoff)),
+					zap.Uint64("startTS", currentTxnStartTS),
 					zap.Error(err))
-				if err := w.ddlCtx.isReorgRunnable(taskRange.jobID, false); err != nil {
-					return taskCtx, errors.Trace(err)
-				}
-				w.conflictCounter.Add(1)
 				continue
 			}
 			return taskCtx, errors.Trace(err)

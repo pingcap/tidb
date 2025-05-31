@@ -620,9 +620,6 @@ func TestMergeTempIndexSplitConflictTxn(t *testing.T) {
 	tk.MustExec("set global tidb_enable_dist_task = off;")
 
 	tk.MustExec("create table t (a int primary key, b int);")
-	for i := 0; i < 256; i++ {
-		tk.MustExec("insert into t values (?, ?);", i, i)
-	}
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use addindexlit;")
@@ -647,14 +644,14 @@ func TestMergeTempIndexSplitConflictTxn(t *testing.T) {
 	}
 	ddl.MockDMLExecutionMerging = func() {
 		for i := 0; i < 4; i++ {
-			_, err := tk1.Exec("update t set b = b+1 where a = ?;", i)
+			_, err := tk1.Exec("update t set b = b+10 where a = ?;", i)
 			assert.NoError(t, err)
 		}
 	}
 	d.SetHook(hook)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMergingInTxn", "1*return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMergingInTxn", "1*return(true)"))
 	tk.MustExec("alter table t add index idx(b);")
 	tk.MustExec("admin check table t;")
-	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 1"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("0 10", "1 11", "2 12", "3 13"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMergingInTxn"))
 }
