@@ -168,6 +168,11 @@ func (t CoreTime) YearDay() int {
 
 // GoTime converts Time to GoTime.
 func (t CoreTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
+	return t.goTimeDSTAfterTransition(loc)
+}
+
+// goTime converts Time to GoTime.
+func (t CoreTime) goTime(loc *gotime.Location) (gotime.Time, error) {
 	// gotime.Time can't represent month 0 or day 0, date contains 0 would be converted to a nearest date,
 	// For example, 2006-12-00 00:00:00 would become 2015-11-30 23:59:59.
 	year, month, day, hour, minute, second, microsecond := t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Microsecond()
@@ -180,6 +185,31 @@ func (t CoreTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
 		hour2 != hour || minute2 != minute || second2 != second ||
 		microsec2 != microsecond {
 		return tm, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, t))
+	}
+	return tm, nil
+}
+
+// goTimeDSTAfterTransition converts Time to GoTime, and if the timestamp is between a
+// daylight saving transition moving the clock backwards, interprets the time as the second occurrence.
+// I.e. if DST transition is 02:59:59+02:00 -> 02:00:00+01:00,
+// it will interpret 02:30:00 as 02:30:00+01:00, Never 02:30:00+02:00.
+func (t CoreTime) goTimeDSTAfterTransition(loc *gotime.Location) (gotime.Time, error) {
+	tm, err := t.goTime(loc)
+	if err != nil {
+		return tm, err
+	}
+	if !tm.IsDST() {
+		// Not DST, so has not moved "forward" from Daylight Saving Time to Normal Time.
+		return tm, nil
+	}
+	_, end := tm.ZoneBounds()
+	// Get the offset difference for DST vs Normal Time.
+	_, offsetDST := end.Zone()
+	_, offsetNormal := end.Add(gotime.Second).Zone()
+	diff := offsetDST - offsetNormal
+	tAdjusted := tm.Add(gotime.Duration(diff) * gotime.Second)
+	if tAdjusted.After(end) {
+		return tAdjusted, nil
 	}
 	return tm, nil
 }
