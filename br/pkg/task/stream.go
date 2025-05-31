@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
@@ -55,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1361,7 +1363,7 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, g, cfg)
+	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, g, cfg, cfg.RestoreID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1378,6 +1380,12 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 	defer logClient.Close(ctx)
+
+	// register task if needed
+	err = RegisterRestoreIfNeeded(ctx, cfg, PointRestoreCmd, logClient.GetDomain())
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	ddlFiles, err := logClient.LoadDDLFiles(ctx)
 	if err != nil {
@@ -2026,6 +2034,7 @@ func generatePiTRTaskInfo(
 	mgr *conn.Mgr,
 	g glue.Glue,
 	cfg *RestoreConfig,
+	restoreID uint64,
 ) (*PiTRTaskInfo, error) {
 	var (
 		doFullRestore = len(cfg.FullBackupStorage) > 0
@@ -2037,15 +2046,15 @@ func generatePiTRTaskInfo(
 	if cfg.UseCheckpoint {
 		if len(cfg.CheckpointStorage) > 0 {
 			clusterID := mgr.GetPDClient().GetClusterID(ctx)
-			if err = cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID); err != nil {
+			if err = cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID, restoreID); err != nil {
 				return nil, errors.Trace(err)
 			}
 		} else {
-			if err = cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain()); err != nil {
+			if err = cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain(), restoreID); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
-		curTaskInfo, err = checkpoint.TryToGetCheckpointTaskInfo(ctx, cfg.snapshotCheckpointMetaManager, cfg.logCheckpointMetaManager)
+		curTaskInfo, err = checkpoint.GetCheckpointTaskInfo(ctx, cfg.snapshotCheckpointMetaManager, cfg.logCheckpointMetaManager)
 		log.Info("current task checkpoint info", zap.Any("checkpoint", curTaskInfo))
 		if err != nil {
 			return checkInfo, errors.Trace(err)
@@ -2170,4 +2179,37 @@ func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *Log
 		return 0, errors.Trace(err)
 	}
 	return currentTS, nil
+}
+
+func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName string, domain *domain.Domain) error {
+	// already registered previously
+	if cfg.RestoreID != 0 {
+		return nil
+	}
+
+	// skip registration if target TiDB doesn't have restoreID column
+	if !restore.HasRestoreIDColumn(domain) {
+		log.Info("skipping restore registration since target TiDB doesn't have restoreID column in IDMap table")
+		return nil
+	}
+
+	registrationInfo := registry.RegistrationInfo{
+		StartTS:           cfg.StartTS,
+		RestoredTS:        cfg.RestoreTS,
+		FilterStrings:     cfg.FilterStr,
+		UpstreamClusterID: cfg.UpstreamClusterID,
+		WithSysTable:      cfg.WithSysTable,
+		Cmd:               cmdName,
+	}
+
+	// get current registered (due to failure retry) or create new restore task id
+	restoreID, err := cfg.RestoreRegistry.ResumeOrCreateRegistration(ctx, registrationInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.RestoreID = restoreID
+
+	cfg.RestoreRegistry.StartHeartbeatManager(ctx, restoreID)
+
+	return nil
 }

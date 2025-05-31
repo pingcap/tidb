@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -758,7 +759,8 @@ func BuildBackupRangeAndInitSchema(
 
 	for _, dbInfo := range dbs {
 		// skip system databases
-		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
+		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) ||
+			utils.IsTemplateSysDB(dbInfo.Name) || registry.IsRestoreRegistryDB(dbInfo.Name.O) {
 			continue
 		}
 
@@ -832,7 +834,8 @@ func BuildBackupSchemas(
 
 	for _, dbInfo := range dbs {
 		// skip system databases
-		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
+		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) ||
+			utils.IsTemplateSysDB(dbInfo.Name) || registry.IsRestoreRegistryDB(dbInfo.Name.O) {
 			continue
 		}
 
