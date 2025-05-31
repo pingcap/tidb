@@ -330,7 +330,7 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 				if err := w.ddlCtx.isReorgRunnable(taskRange.jobID, false); err != nil {
 					return taskCtx, errors.Trace(err)
 				}
-				kv.BackOff(attempts)
+				// kv.BackOff(attempts)
 				continue
 			}
 			return taskCtx, errors.Trace(err)

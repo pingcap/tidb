@@ -150,66 +150,74 @@ func (c *collector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (c *collector) Collect(ch chan<- prometheus.Metric) {
-	tableIDCnt := make(map[int64]uint64)
-	tableIDCnt2 := make(map[int64]uint64)
+	singleMap := make(map[int64]uint64)
+	doubleMap := make(map[int64]uint64)
 	c.write.Range(func(key, value any) bool {
 		connIDCollector := value.(*connIDCollector)
 		connIDCollector.tblID2Count.Range(func(tableKey, tableValue interface{}) bool {
 			tableID := tableKey.(int64)
 			tableCollector := tableValue.(*tableCollector)
-			if _, exists := tableIDCnt[tableID]; !exists {
-				tableIDCnt[tableID] = 0
+			if _, exists := singleMap[tableID]; !exists {
+				singleMap[tableID] = 0
 			}
-			tableIDCnt[tableID] += tableCollector.totalSingleWriteCnt.Load()
-			if _, exists := tableIDCnt2[tableID]; !exists {
-				tableIDCnt2[tableID] = 0
+			singleMap[tableID] += tableCollector.totalSingleWriteCnt.Load()
+			if _, exists := doubleMap[tableID]; !exists {
+				doubleMap[tableID] = 0
 			}
-			tableIDCnt2[tableID] += tableCollector.totalDoubleWriteCnt.Load()
+			doubleMap[tableID] += tableCollector.totalDoubleWriteCnt.Load()
 			return true
 		})
 		return true
 	})
-	for tableID, opCount := range tableIDCnt {
+	for tableID, cnt := range singleMap {
 		ch <- prometheus.MustNewConstMetric(
 			c.singleWriteDesc,
 			prometheus.GaugeValue,
-			float64(opCount),
+			float64(cnt),
 			strconv.FormatInt(tableID, 10),
 		)
 	}
-	tableIDCnt = make(map[int64]uint64)
+	for tableID, cnt := range doubleMap {
+		ch <- prometheus.MustNewConstMetric(
+			c.doubleWriteDesc,
+			prometheus.GaugeValue,
+			float64(cnt),
+			strconv.FormatInt(tableID, 10),
+		)
+	}
+	mergeMap := make(map[int64]uint64)
 	c.merge.Range(func(key, value any) bool {
 		tableID := key.(int64)
 		opCount := value.(*atomic.Uint64).Load()
-		if _, exists := tableIDCnt[tableID]; !exists {
-			tableIDCnt[tableID] = 0
+		if _, exists := mergeMap[tableID]; !exists {
+			mergeMap[tableID] = 0
 		}
-		tableIDCnt[tableID] += opCount
+		mergeMap[tableID] += opCount
 		return true
 	})
-	for tableID, opCount := range tableIDCnt {
+	for tableID, cnt := range mergeMap {
 		ch <- prometheus.MustNewConstMetric(
 			c.mergeDesc,
 			prometheus.GaugeValue,
-			float64(opCount),
+			float64(cnt),
 			strconv.FormatInt(tableID, 10),
 		)
 	}
-	tableIDCnt = make(map[int64]uint64)
+	scanMap := make(map[int64]uint64)
 	c.scan.Range(func(key, value any) bool {
 		tableID := key.(int64)
 		opCount := value.(*atomic.Uint64).Load()
-		if _, exists := tableIDCnt[tableID]; !exists {
-			tableIDCnt[tableID] = 0
+		if _, exists := scanMap[tableID]; !exists {
+			scanMap[tableID] = 0
 		}
-		tableIDCnt[tableID] += opCount
+		scanMap[tableID] += opCount
 		return true
 	})
-	for tableID, opCount := range tableIDCnt {
+	for tableID, cnt := range scanMap {
 		ch <- prometheus.MustNewConstMetric(
 			c.scanDesc,
 			prometheus.GaugeValue,
-			float64(opCount),
+			float64(cnt),
 			strconv.FormatInt(tableID, 10),
 		)
 	}

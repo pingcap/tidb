@@ -13879,33 +13879,7 @@
           "renderer": "flot",
           "seriesOverrides": [
             {
-              "$$hashKey": "object:356",
-              "alias": "tc-tidb-0-increment-table_id_102",
-              "yaxis": 2
-            },
-            {
-              "$$hashKey": "object:623",
-              "alias": "tc-tidb-0-merged-table_id_102",
-              "yaxis": 2
-            },
-            {
-              "$$hashKey": "object:624",
-              "alias": "tc-tidb-0-scanned-table_id_102",
-              "yaxis": 2
-            },
-            {
-              "$$hashKey": "object:1175",
-              "alias": "tc-tidb-0-increment-table_id_120",
-              "yaxis": 2
-            },
-            {
-              "$$hashKey": "object:1176",
-              "alias": "tc-tidb-0-merged-table_id_120",
-              "yaxis": 2
-            },
-            {
-              "$$hashKey": "object:1177",
-              "alias": "tc-tidb-0-scanned-table_id_120",
+              "alias": "/table_id.*/",
               "yaxis": 2
             }
           ],
@@ -13914,9 +13888,8 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "tidb_ddl_backfill_percentage_progress{k8s_cluster=\"$k8s_cluster\", tidb_cluster=~\"$tidb_cluster.*\", instance=~\"$instance\"}",
+              "expr": "tidb_ddl_backfill_percentage_progress{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "format": "time_series",
-              "hide": false,
               "intervalFactor": 1,
               "legendFormat": "{{instance}}-{{type}}",
               "refId": "A"
@@ -13929,10 +13902,8 @@
               "refId": "B"
             },
             {
-              "editorMode": "code",
               "exemplar": false,
-              "expr": "tidb_ddl_temp_index_write{k8s_cluster=\"$k8s_cluster\", tidb_cluster=~\"$tidb_cluster.*\", instance=~\"$instance\"}",
-              "hide": false,
+              "expr": "tidb_ddl_temp_index_write{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "instant": false,
               "interval": "",
               "legendFormat": "{{instance}}-write-table_id_{{table_id}}",
@@ -13940,25 +13911,19 @@
               "refId": "C"
             },
             {
-              "editorMode": "code",
-              "expr": "tidb_ddl_temp_index_merge{k8s_cluster=\"$k8s_cluster\", tidb_cluster=~\"$tidb_cluster.*\", instance=~\"$instance\"}",
-              "hide": false,
+              "expr": "tidb_ddl_temp_index_merge{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "legendFormat": "{{instance}}-merged-table_id_{{table_id}}",
               "range": true,
               "refId": "D"
             },
             {
-              "editorMode": "code",
-              "expr": "tidb_ddl_temp_index_scan{k8s_cluster=\"$k8s_cluster\", tidb_cluster=~\"$tidb_cluster.*\", instance=~\"$instance\"}",
-              "hide": false,
+              "expr": "tidb_ddl_temp_index_scan{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "legendFormat": "{{instance}}-scanned-table_id_{{table_id}}",
               "range": true,
               "refId": "E"
             },
             {
-              "editorMode": "code",
-              "expr": "tidb_ddl_temp_index_write{k8s_cluster=\"$k8s_cluster\", tidb_cluster=~\"$tidb_cluster.*\", instance=~\"$instance\"}",
-              "hide": false,
+              "expr": "tidb_ddl_temp_index_double_write{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "legendFormat": "{{instance}}-double-write-table_id_{{table_id}}",
               "range": true,
               "refId": "F"
@@ -13984,18 +13949,16 @@
           },
           "yaxes": [
             {
-              "$$hashKey": "object:220",
               "format": "percent",
-              "label": "",
+              "label": null,
               "logBase": 1,
               "max": "100",
               "min": "0",
               "show": true
             },
             {
-              "$$hashKey": "object:221",
               "format": "short",
-              "label": "",
+              "label": null,
               "logBase": 1,
               "min": "0",
               "show": true
