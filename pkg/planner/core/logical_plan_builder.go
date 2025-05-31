@@ -906,7 +906,9 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
 	p.SetOutputNames(names)
-
+	if !b.ctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	p.OtherConditions = append(conds, p.OtherConditions...)
 
 	return nil
