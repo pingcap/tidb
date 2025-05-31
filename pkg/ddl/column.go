@@ -1258,7 +1258,7 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 }
 
 func (w *updateColumnWorker) AddMetricInfo(cnt float64) {
-	w.metricCounter.Add(cnt)
+	w.mergeRowCounter.Add(cnt)
 }
 
 func (*updateColumnWorker) String() string {

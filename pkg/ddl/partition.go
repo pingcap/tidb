@@ -3350,7 +3350,7 @@ func (w *reorgPartitionWorker) cleanRowMap() {
 }
 
 func (w *reorgPartitionWorker) AddMetricInfo(cnt float64) {
-	w.metricCounter.Add(cnt)
+	w.mergeRowCounter.Add(cnt)
 }
 
 func (*reorgPartitionWorker) String() string {
