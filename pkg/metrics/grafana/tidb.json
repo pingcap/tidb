@@ -13903,10 +13903,10 @@
             },
             {
               "exemplar": false,
-              "expr": "tidb_ddl_temp_index_write{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "expr": "sum by (table_id) (tidb_ddl_temp_index_write{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"})",
               "instant": false,
               "interval": "",
-              "legendFormat": "{{instance}}-write-table_id_{{table_id}}",
+              "legendFormat": "write-table_id_{{table_id}}",
               "range": true,
               "refId": "C"
             },
@@ -13923,8 +13923,8 @@
               "refId": "E"
             },
             {
-              "expr": "tidb_ddl_temp_index_double_write{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
-              "legendFormat": "{{instance}}-double-write-table_id_{{table_id}}",
+              "expr": "sum by (table_id) (tidb_ddl_temp_index_double_write{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"})",
+              "legendFormat": "double-write-table_id_{{table_id}}",
               "range": true,
               "refId": "F"
             }
