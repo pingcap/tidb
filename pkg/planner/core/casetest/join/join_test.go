@@ -161,3 +161,23 @@ func TestJoinSimplifyCondition(t *testing.T) {
 			"  │ └─IndexRangeScan 12.50 cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
 			"  └─TableRowIDScan(Probe) 12.49 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }
+
+func TestLeftJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	// https://github.com/pingcap/tidb/issues/61327
+	tk.MustExec("CREATE TABLE t0(c0 INT);")
+	tk.MustExec("CREATE TABLE t2(c0 INT);")
+	tk.MustExec("CREATE TABLE t3(c0 INT);")
+	tk.MustExec("INSERT INTO t0 VALUES(0);")
+	tk.MustExec("INSERT INTO t3 VALUES(3);")
+	tk.MustQuery(`SELECT *
+FROM t0
+         LEFT JOIN (SELECT NULL AS col_2
+                    FROM t2) as subQuery1
+                   ON true
+         INNER JOIN t3 ON (((((CASE 1
+                                   WHEN subQuery1.col_2 THEN t3.c0
+                                   ELSE NULL END)) AND (((t0.c0))))) < 1);`).Check(testkit.Rows("0 <nil> 3"))
+}
