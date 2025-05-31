@@ -5,7 +5,7 @@ go_library(
     srcs = [
         "mock_gpool.go",
         "shard_pool_map.go",
-        "util.go",
+        "utility.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/resourcemanager/util",
     visibility = ["//visibility:public"],
