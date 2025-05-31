@@ -199,7 +199,7 @@ func (t CoreTime) goTimeDSTAfterTransition(loc *gotime.Location) (gotime.Time, e
 		return tm, err
 	}
 	if !tm.IsDST() {
-		// Not DST, so has not moved "forward" from Daylight Saving Time to Normal Time.
+		// no need to adjust.
 		return tm, nil
 	}
 	_, end := tm.ZoneBounds()
@@ -207,6 +207,7 @@ func (t CoreTime) goTimeDSTAfterTransition(loc *gotime.Location) (gotime.Time, e
 	_, offsetDST := end.Zone()
 	_, offsetNormal := end.Add(gotime.Second).Zone()
 	diff := offsetDST - offsetNormal
+	//nolint:durationcheck
 	tAdjusted := tm.Add(gotime.Duration(diff) * gotime.Second)
 	if tAdjusted.After(end) {
 		return tAdjusted, nil
