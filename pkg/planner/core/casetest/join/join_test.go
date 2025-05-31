@@ -172,12 +172,24 @@ func TestLeftJoin(t *testing.T) {
 	tk.MustExec("CREATE TABLE t3(c0 INT);")
 	tk.MustExec("INSERT INTO t0 VALUES(0);")
 	tk.MustExec("INSERT INTO t3 VALUES(3);")
-	tk.MustQuery(`SELECT *
+	sql := `SELECT *
 FROM t0
          LEFT JOIN (SELECT NULL AS col_2
                     FROM t2) as subQuery1
                    ON true
          INNER JOIN t3 ON (((((CASE 1
                                    WHEN subQuery1.col_2 THEN t3.c0
-                                   ELSE NULL END)) AND (((t0.c0))))) < 1);`).Check(testkit.Rows("0 <nil> 3"))
+                                   ELSE NULL END)) AND (((t0.c0))))) < 1);`
+	tk.MustQuery("explain format='brief' " + sql).Check(testkit.Rows(
+		"Projection 1000000000000.00 root  test.t0.c0, Column#5, test.t3.c0",
+		"└─HashJoin 1000000000000.00 root  CARTESIAN inner join, other cond:lt(and(case(eq(1, cast(Column#5, double BINARY)), test.t3.c0, NULL), test.t0.c0), 1)",
+		"  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+		"  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+		"  └─HashJoin(Probe) 100000000.00 root  CARTESIAN left outer join, left side:TableReader",
+		"    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+		"    │ └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo",
+		"    └─Projection(Probe) 10000.00 root  <nil>->Column#5",
+		"      └─TableReader 10000.00 root  data:TableFullScan",
+		"        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+	tk.MustQuery(sql).Check(testkit.Rows("0 <nil> 3"))
 }
