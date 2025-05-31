@@ -721,3 +721,15 @@ func TestInsertLargeRow(t *testing.T) {
 	// since a row cannot span multiple arena blocks.
 	tk.MustContainErrMsg("insert into t values (1, REPEAT('t',8388493))", "unistore lock entry too big")
 }
+
+func TestInsertDSTTransitionBackward(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a timestamp)")
+	tk.MustExec(`set time_zone = 'Europe/Amsterdam'`)
+	tk.MustExec("insert into t values ('2024-10-27 02:30:00')")
+	tk.MustExec("insert into t values ('2025-10-26 02:30:00')")
+	tk.MustExec(`set time_zone = 'UTC'`)
+	tk.MustQuery(`select * from t order by a`).Check(testkit.Rows("2024-10-27 01:30:00", "2025-10-26 01:30:00"))
+}
