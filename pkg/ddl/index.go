@@ -1434,7 +1434,7 @@ func newAddIndexTxnWorker(
 }
 
 func (w *baseIndexWorker) AddMetricInfo(cnt float64) {
-	w.metricCounter.Add(cnt)
+	w.mergeRowCounter.Add(cnt)
 }
 
 func (w *baseIndexWorker) String() string {
