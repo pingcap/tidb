@@ -431,6 +431,10 @@ func BuildHistAndTopN(
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
+			if i > 0 && bytes.Equal(sampleBytes, samples[i-1].Value.GetBytes()) {
+				// If the sample is the same as the previous one, we can skip it.
+				continue
+			}
 			// For debugging invalid sample data.
 			var (
 				foundOnce       bool
