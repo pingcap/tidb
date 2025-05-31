@@ -1290,10 +1290,6 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
 			continue
 		}
-		// Use Inverted Index can not be used as access path index.
-		if path.Index != nil && path.Index.InvertedInfo != nil {
-			continue
-		}
 		if len(path.PartialAlternativeIndexPaths) > 0 {
 			// OR normal index merge path, try to determine every index partial path for this property.
 			candidate := convergeIndexMergeCandidate(ds, path, prop)
@@ -2708,19 +2704,6 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		return base.InvalidTask, nil
 	}
 	ts, _ := getOriginalPhysicalTableScan(ds, prop, candidate.path, candidate.isMatchProp)
-	if ts.KeepOrder && ts.StoreType == kv.TiFlash && (ts.Desc || ds.SCtx().GetSessionVars().TiFlashFastScan) {
-		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not keep order in TableScan
-		return base.InvalidTask, nil
-	}
-	// When the the store type is TiFlash, we will try to set the UsedColumnarIndexes.
-	// FIXME: Now it is a naive implementation, we will refine it based on selectivity and cost in the future.
-	if ts.StoreType == kv.TiFlash {
-		for _, index := range ts.Table.Indices {
-			if index.State == model.StatePublic && index.InvertedInfo != nil {
-				ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildInvertedIndexExtra(candidate.path.Index, index.InvertedInfo.ColumnID, index.ID))
-			}
-		}
-	}
 
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
@@ -2728,6 +2711,12 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	canMppConvertToRoot := prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed() && isTiFlashPath
 	canMppConvertToRootForDisaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash && canMppConvertToRoot
 	canMppConvertToRootForWhenTiFlashCopIsBanned := ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && canMppConvertToRoot
+
+	// Fast checks
+	if isTiFlashPath && ts.KeepOrder && (ts.Desc || ds.SCtx().GetSessionVars().TiFlashFastScan) {
+		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not support keep order in TableScan
+		return base.InvalidTask, nil
+	}
 	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
 		if ts.KeepOrder {
 			return base.InvalidTask, nil
@@ -2739,6 +2728,19 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil && !candidate.isMatchProp {
 			return base.InvalidTask, nil
 		}
+	} else {
+		if isTiFlashPath && config.GetGlobalConfig().DisaggregatedTiFlash || isTiFlashPath && ds.SCtx().GetSessionVars().IsTiFlashCopBanned() {
+			// prop.TaskTp is cop related, just return base.InvalidTask.
+			return base.InvalidTask, nil
+		}
+		if isTiFlashPath && candidate.isMatchProp && ds.TableInfo.GetPartitionInfo() != nil {
+			// TableScan on partition table on TiFlash can't keep order.
+			return base.InvalidTask, nil
+		}
+	}
+
+	// MPP task
+	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
 		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil {
 			// Only the corresponding index can generate a valid task.
 			intest.Assert(ts.Table.Columns[candidate.path.Index.Columns[0].Offset].ID == prop.VectorProp.Column.ID, "The passed vector column is not matched with the index")
@@ -2752,7 +2754,6 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 				tipb.VectorDistanceMetric(distanceMetricPB),
 				prop.VectorProp.TopK,
 				ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
-				candidate.path.Index.ID,
 				prop.VectorProp.Vec.SerializeTo(nil),
 				tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, false),
 			))
@@ -2791,7 +2792,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			Columns:        ds.TblCols,
 			ColumnNames:    ds.OutputNames(),
 		}
-		mppTask = ts.addPushedDownSelectionToMppTask(mppTask, ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt))
+		mppTask = ts.addPushedDownSelectionToMppTask(mppTask, ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.AstIndexHints)
 		var task base.Task = mppTask
 		if !mppTask.Invalid() {
 			if prop.TaskTp == property.MppTaskType && len(mppTask.rootTaskConds) > 0 {
@@ -2810,10 +2811,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		}
 		return task, nil
 	}
-	if isTiFlashPath && config.GetGlobalConfig().DisaggregatedTiFlash || isTiFlashPath && ds.SCtx().GetSessionVars().IsTiFlashCopBanned() {
-		// prop.TaskTp is cop related, just return base.InvalidTask.
-		return base.InvalidTask, nil
-	}
+	// Cop task
 	copTask := &CopTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
@@ -2830,10 +2828,6 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
 		if ds.TableInfo.GetPartitionInfo() != nil {
-			// TableScan on partition table on TiFlash can't keep order.
-			if ts.StoreType == kv.TiFlash {
-				return base.InvalidTask, nil
-			}
 			// Add sort items for table scan for merge-sort operation between partitions.
 			byItems := make([]*util.ByItems, 0, len(prop.SortItems))
 			for _, si := range prop.SortItems {
@@ -2845,7 +2839,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			ts.ByItems = byItems
 		}
 	}
-	ts.addPushedDownSelection(copTask, ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt))
+	ts.addPushedDownSelection(copTask, ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.AstIndexHints)
 	if prop.IsFlashProp() && len(copTask.rootTaskConds) != 0 {
 		return base.InvalidTask, nil
 	}
@@ -3043,7 +3037,24 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 	return rTsk
 }
 
-func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *MppTask, stats *property.StatsInfo) *MppTask {
+func (ts *PhysicalTableScan) buildPushedDownSelection(stats *property.StatsInfo, indexHints []*ast.IndexHint) *PhysicalSelection {
+	if ts.StoreType == kv.TiFlash {
+		handleTiFlashPredicatePushDown(ts.SCtx(), ts, indexHints)
+		conditions := make([]expression.Expression, 0, len(ts.filterCondition)-len(ts.LateMaterializationFilterCondition))
+		for _, cond := range ts.filterCondition {
+			if !expression.Contains(ts.SCtx().GetExprCtx().GetEvalCtx(), ts.LateMaterializationFilterCondition, cond) {
+				conditions = append(conditions, cond)
+			}
+		}
+		if len(conditions) == 0 {
+			return nil
+		}
+		return PhysicalSelection{Conditions: conditions}.Init(ts.SCtx(), stats, ts.QueryBlockOffset())
+	}
+	return PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.SCtx(), stats, ts.QueryBlockOffset())
+}
+
+func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *MppTask, stats *property.StatsInfo, indexHints []*ast.IndexHint) *MppTask {
 	filterCondition, rootTaskConds := SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	var newRootConds []expression.Expression
 	filterCondition, newRootConds = expression.PushDownExprs(util.GetPushDownCtx(ts.SCtx()), filterCondition, ts.StoreType)
@@ -3052,14 +3063,17 @@ func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *MppTask, stats
 	ts.filterCondition = filterCondition
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
-		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.SCtx(), stats, ts.QueryBlockOffset())
-		sel.SetChildren(ts)
-		mpp.p = sel
+		if sel := ts.buildPushedDownSelection(stats, indexHints); sel != nil {
+			sel.SetChildren(ts)
+			mpp.p = sel
+		} else {
+			mpp.p = ts
+		}
 	}
 	return mpp
 }
 
-func (ts *PhysicalTableScan) addPushedDownSelection(copTask *CopTask, stats *property.StatsInfo) {
+func (ts *PhysicalTableScan) addPushedDownSelection(copTask *CopTask, stats *property.StatsInfo, indexHints []*ast.IndexHint) {
 	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	var newRootConds []expression.Expression
 	ts.filterCondition, newRootConds = expression.PushDownExprs(util.GetPushDownCtx(ts.SCtx()), ts.filterCondition, ts.StoreType)
@@ -3067,9 +3081,13 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *CopTask, stats *pro
 
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
-		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.SCtx(), stats, ts.QueryBlockOffset())
+		sel := ts.buildPushedDownSelection(stats, indexHints)
+		if sel == nil {
+			copTask.tablePlan = ts
+			return
+		}
 		if len(copTask.rootTaskConds) != 0 {
-			selectivity, _, err := cardinality.Selectivity(ts.SCtx(), copTask.tblColHists, ts.filterCondition, nil)
+			selectivity, _, err := cardinality.Selectivity(ts.SCtx(), copTask.tblColHists, sel.Conditions, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = cost.SelectionFactor

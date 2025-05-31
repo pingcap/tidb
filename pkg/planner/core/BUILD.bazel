@@ -84,7 +84,7 @@ go_library(
         "stringer.go",
         "task.go",
         "task_base.go",
-        "tiflash_selection_late_materialization.go",
+        "tiflash_predicate_push_down.go",
         "trace.go",
         "util.go",
     ],

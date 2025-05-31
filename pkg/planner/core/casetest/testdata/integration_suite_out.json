@@ -1384,5 +1384,284 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestTiFlashLateMaterialization",
+    "Cases": [
+      {
+        "SQL": "explain format='cost_trace' select * from t1;",
+        "Plan": [
+          "TableReader_9 32768.00 352276.61 (((((((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00) + ((cpu(32768*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(32768*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_8",
+          "└─ExchangeSender_8 32768.00 2977281.95 ((((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00) + ((cpu(32768*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan_7 32768.00 2976652.80 ((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00 mpp[tiflash] table:t1 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where a<1;",
+        "Plan": [
+          "TableReader_10 1.00 132306.85 (((((((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(1*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00) + ((cpu(1*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(1*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_9",
+          "└─ExchangeSender_9 1.00 1984532.40 ((((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(1*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00) + ((cpu(1*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan_8 1.00 1984532.38 ((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(1*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00 mpp[tiflash] table:t1 pushed down filter:lt(test.t1.a, 1), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where a>2",
+        "Plan": [
+          "TableReader_10 16384.00 315356.89 (((((((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(16384*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00) + ((cpu(16384*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(16384*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_9",
+          "└─ExchangeSender_9 16384.00 3576919.82 ((((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(16384*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00) + ((cpu(16384*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan_8 16384.00 3576605.25 ((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(16384*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00 mpp[tiflash] table:t1 pushed down filter:gt(test.t1.a, 2), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where a=1",
+        "Plan": [
+          "TableReader_10 8192.00 223826.29 (((((((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00) + ((cpu(8192*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(8192*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_9",
+          "└─ExchangeSender_9 8192.00 2780677.51 ((((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00) + ((cpu(8192*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan_8 8192.00 2780520.22 ((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00 mpp[tiflash] table:t1 pushed down filter:eq(test.t1.a, 1), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where a in (1,2,3)",
+        "Plan": [
+          "TableReader_12 24576.00 319061.22 ((((((cpu(32768*filters(1)*tiflash_cpu_factor(2.4))) + (((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00)) + ((cpu(24576*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(24576*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_11",
+          "└─ExchangeSender_11 24576.00 3055767.86 (((cpu(32768*filters(1)*tiflash_cpu_factor(2.4))) + (((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00)) + ((cpu(24576*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection_10 24576.00 3055296.00 (cpu(32768*filters(1)*tiflash_cpu_factor(2.4))) + (((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00) mpp[tiflash]  in(test.t1.a, 1, 2, 3)",
+          "    └─TableFullScan_9 32768.00 2976652.80 ((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00 mpp[tiflash] table:t1 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where b=1",
+        "Plan": [
+          "TableReader_10 8192.00 223826.29 (((((((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00) + ((cpu(8192*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(8192*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_9",
+          "└─ExchangeSender_9 8192.00 2780677.51 ((((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00) + ((cpu(8192*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan_8 8192.00 2780520.22 ((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00 mpp[tiflash] table:t1 pushed down filter:eq(test.t1.b, 1), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where a!=1 order by c limit 1",
+        "Plan": [
+          "TopN_11 1.00 203697.60 (((((((((cpu(32768*filters(1)*tiflash_cpu_factor(2.4))) + (((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00)) + ((exprCPU(24576*0*tiflash_cpu_factor(2.4))) + (orderCPU(24576*log(1)*tiflash_cpu_factor(2.4)))) + (topMem(1*32*tiflash_mem_factor(0.05))))*1.00)) + (net(1*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00) + ((exprCPU(1*0*tidb_cpu_factor(49.9))) + (orderCPU(1*log(1)*tidb_cpu_factor(49.9)))) + (topMem(1*32*tidb_mem_factor(0.2))))*1.00 root  test.t1.c, offset:0, count:1",
+          "└─TableReader_26 1.00 203691.20 (((((((cpu(32768*filters(1)*tiflash_cpu_factor(2.4))) + (((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00)) + ((exprCPU(24576*0*tiflash_cpu_factor(2.4))) + (orderCPU(24576*log(1)*tiflash_cpu_factor(2.4)))) + (topMem(1*32*tiflash_mem_factor(0.05))))*1.00)) + (net(1*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_25",
+          "  └─ExchangeSender_25 1.00 3055297.60 ((((cpu(32768*filters(1)*tiflash_cpu_factor(2.4))) + (((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00)) + ((exprCPU(24576*0*tiflash_cpu_factor(2.4))) + (orderCPU(24576*log(1)*tiflash_cpu_factor(2.4)))) + (topMem(1*32*tiflash_mem_factor(0.05))))*1.00) mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN_24 1.00 3055297.60 (((cpu(32768*filters(1)*tiflash_cpu_factor(2.4))) + (((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00)) + ((exprCPU(24576*0*tiflash_cpu_factor(2.4))) + (orderCPU(24576*log(1)*tiflash_cpu_factor(2.4)))) + (topMem(1*32*tiflash_mem_factor(0.05))))*1.00 mpp[tiflash]  test.t1.c, offset:0, count:1",
+          "      └─Selection_23 24576.00 3055296.00 (cpu(32768*filters(1)*tiflash_cpu_factor(2.4))) + (((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00) mpp[tiflash]  ne(test.t1.a, 1)",
+          "        └─TableFullScan_22 32768.00 2976652.80 ((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00 mpp[tiflash] table:t1 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select a from t1 where a>2",
+        "Plan": [
+          "TableReader_12 16384.00 156767.70 ((((((cpu(32768*filters(1)*tiflash_cpu_factor(2.4))) + (((scan(32768*logrowsize(16)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(16)*tiflash_scan_factor(11.6))))*1.00)) + ((cpu(16384*filters(0.01)*tiflash_cpu_factor(2.4)))/5.00))) + (net(16384*rowsize(8)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_11",
+          "└─ExchangeSender_11 16384.00 2063157.04 (((cpu(32768*filters(1)*tiflash_cpu_factor(2.4))) + (((scan(32768*logrowsize(16)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(16)*tiflash_scan_factor(11.6))))*1.00)) + ((cpu(16384*filters(0.01)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection_10 16384.00 2063078.40 (cpu(32768*filters(1)*tiflash_cpu_factor(2.4))) + (((scan(32768*logrowsize(16)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(16)*tiflash_scan_factor(11.6))))*1.00) mpp[tiflash]  gt(test.t1.a, 2)",
+          "    └─TableFullScan_9 32768.00 1984435.20 ((scan(32768*logrowsize(16)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(16)*tiflash_scan_factor(11.6))))*1.00 mpp[tiflash] table:t1 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select a from t1 where a>2 and b>1",
+        "Plan": [
+          "TableReader_12 12288.00 225360.73 ((((((cpu(16384*filters(1)*tiflash_cpu_factor(2.4))) + (((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(16384*logrowsize(16)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00)) + ((cpu(12288*filters(0.01)*tiflash_cpu_factor(2.4)))/5.00))) + (net(12288*rowsize(8)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_11",
+          "└─ExchangeSender_11 12288.00 3164142.18 (((cpu(16384*filters(1)*tiflash_cpu_factor(2.4))) + (((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(16384*logrowsize(16)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00)) + ((cpu(12288*filters(0.01)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_5 12288.00 3164142.18 ((cpu(16384*filters(1)*tiflash_cpu_factor(2.4))) + (((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(16384*logrowsize(16)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00)) + ((cpu(12288*filters(0.01)*tiflash_cpu_factor(2.4)))/5.00) mpp[tiflash]  test.t1.a",
+          "    └─Selection_10 12288.00 3164083.20 (cpu(16384*filters(1)*tiflash_cpu_factor(2.4))) + (((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(16384*logrowsize(16)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00) mpp[tiflash]  gt(test.t1.b, 1)",
+          "      └─TableFullScan_9 16384.00 3124761.60 ((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(16384*logrowsize(16)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00 mpp[tiflash] table:t1 pushed down filter:gt(test.t1.a, 2), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where a>2 and b>1 and c>1",
+        "Plan": [
+          "TableReader_12 9216.00 286948.79 ((((((cpu(16384*filters(2)*tiflash_cpu_factor(2.4))) + (((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(16384*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00)) + ((cpu(9216*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(9216*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_11",
+          "└─ExchangeSender_11 9216.00 3655425.39 (((cpu(16384*filters(2)*tiflash_cpu_factor(2.4))) + (((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(16384*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00)) + ((cpu(9216*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection_10 9216.00 3655248.45 (cpu(16384*filters(2)*tiflash_cpu_factor(2.4))) + (((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(16384*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00) mpp[tiflash]  gt(test.t1.b, 1), gt(test.t1.c, 1)",
+          "    └─TableFullScan_9 16384.00 3576605.25 ((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(16384*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00 mpp[tiflash] table:t1 pushed down filter:gt(test.t1.a, 2), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where a<1 or b<2",
+        "Plan": [
+          "TableReader_10 8192.75 251349.34 (((((((lm_col_scan(42768*logrowsize(32)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192.75*logrowsize(32)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00) + ((cpu(8192.75*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(8192.75*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_9",
+          "└─ExchangeSender_9 8192.75 3193470.55 ((((lm_col_scan(42768*logrowsize(32)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192.75*logrowsize(32)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00) + ((cpu(8192.75*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan_8 8192.75 3193313.25 ((lm_col_scan(42768*logrowsize(32)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192.75*logrowsize(32)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00 mpp[tiflash] table:t1 pushed down filter:or(lt(test.t1.a, 1), lt(test.t1.b, 2)), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where (a<1 or b<2) and (a>3 and b>2)",
+        "Plan": [
+          "TableReader_12 1024.09 192797.18 ((((((cpu(8192*filters(2)*tiflash_cpu_factor(2.4))) + (((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00)) + ((cpu(1024.09375*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(1024.09375*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_11",
+          "└─ExchangeSender_11 1024.09 2819861.49 (((cpu(8192*filters(2)*tiflash_cpu_factor(2.4))) + (((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00)) + ((cpu(1024.09375*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection_10 1024.09 2819841.82 (cpu(8192*filters(2)*tiflash_cpu_factor(2.4))) + (((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00) mpp[tiflash]  gt(test.t1.b, 2), or(lt(test.t1.a, 1), lt(test.t1.b, 2))",
+          "    └─TableFullScan_9 8192.00 2780520.22 ((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00 mpp[tiflash] table:t1 pushed down filter:gt(test.t1.a, 3), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where (a<1 or b<2) and (a>3 and b>2) and c>1",
+        "Plan": [
+          "TableReader_12 768.07 192905.97 ((((((cpu(8192*filters(3)*tiflash_cpu_factor(2.4))) + (((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00)) + ((cpu(768.0703125*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(768.0703125*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_11",
+          "└─ExchangeSender_11 768.07 2839517.37 (((cpu(8192*filters(3)*tiflash_cpu_factor(2.4))) + (((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00)) + ((cpu(768.0703125*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection_10 768.07 2839502.62 (cpu(8192*filters(3)*tiflash_cpu_factor(2.4))) + (((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00) mpp[tiflash]  gt(test.t1.b, 2), gt(test.t1.c, 1), or(lt(test.t1.a, 1), lt(test.t1.b, 2))",
+          "    └─TableFullScan_9 8192.00 2780520.22 ((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00 mpp[tiflash] table:t1 pushed down filter:gt(test.t1.a, 3), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where (a>2 or b<2) and (a>3 and b>2) and c>2",
+        "Plan": [
+          "TableReader_12 1280.00 195309.28 ((((((cpu(8192*filters(3)*tiflash_cpu_factor(2.4))) + (((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00)) + ((cpu(1280*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(1280*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_11",
+          "└─ExchangeSender_11 1280.00 2839527.20 (((cpu(8192*filters(3)*tiflash_cpu_factor(2.4))) + (((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00)) + ((cpu(1280*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection_10 1280.00 2839502.62 (cpu(8192*filters(3)*tiflash_cpu_factor(2.4))) + (((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00) mpp[tiflash]  gt(test.t1.b, 2), gt(test.t1.c, 2), or(gt(test.t1.a, 2), lt(test.t1.b, 2))",
+          "    └─TableFullScan_9 8192.00 2780520.22 ((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(8192*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00 mpp[tiflash] table:t1 pushed down filter:gt(test.t1.a, 3), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select count(a), max(t) from t1 where a>2",
+        "Plan": [
+          "HashAgg_7 1.00 838774.05 ((cpu(10*3*tidb_cpu_factor(49.9))) + ((((((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(16384*logrowsize(16)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00) + (net(16384*rowsize(32)*tidb_kv_net_factor(3.96))))/15.00)*1.00) + (((agg(16384*aggs(2)*tidb_cpu_factor(49.9))) + (group(16384*cols(0)*tidb_cpu_factor(49.9))) + ((hashkey(1*0*tidb_cpu_factor(49.9))) + (hashmem(1*16*tidb_mem_factor(0.2))) + (hashbuild(1*tidb_cpu_factor(49.9)))) + ((hashkey(16384*0*tidb_cpu_factor(49.9))) + (hashprobe(16384*tidb_cpu_factor(49.9)))))/5.00))*1.00 root  funcs:count(test.t1.a)->Column#6, funcs:max(test.t1.t)->Column#7",
+          "└─TableReader_13 16384.00 346729.47 (((((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(16384*logrowsize(16)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00) + (net(16384*rowsize(32)*tidb_kv_net_factor(3.96))))/15.00)*1.00 root  data:TableFullScan_12",
+          "  └─TableFullScan_12 16384.00 3124761.60 ((lm_col_scan(42768*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(16384*logrowsize(16)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.00 cop[tiflash] table:t1 pushed down filter:gt(test.t1.a, 2), keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestInvertedIndex",
+    "Cases": [
+      {
+        "SQL": "explain format='cost_trace' select * from t1;",
+        "Plan": [
+          "TableReader_10 32768.00 352276.61 (((((((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00) + ((cpu(32768*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(32768*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_9",
+          "└─ExchangeSender_9 32768.00 2977281.95 ((((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00) + ((cpu(32768*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan_8 32768.00 2976652.80 ((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where a<1;",
+        "Plan": [
+          "TableReader_13 10889.90 299318.20 ((((((cpu(10889.898666666666*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(10889.898666666666*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(10889.898666666666*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(10889.898666666666*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(10889.898666666666*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_12",
+          "└─ExchangeSender_12 10889.90 3723124.16 (((cpu(10889.898666666666*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(10889.898666666666*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(10889.898666666666*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(10889.898666666666*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection_11 10889.90 3722915.07 (cpu(10889.898666666666*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(10889.898666666666*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(10889.898666666666*inverted_index_search_factor(139.2))))*1.00) mpp[tiflash]  lt(test.t1.a, 1)",
+          "    └─TableFullScan_10 10889.90 3696779.32 ((((scan(10889.898666666666*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(10889.898666666666*inverted_index_search_factor(139.2))))*1.00 mpp[tiflash] table:t1, index:idx_a(a) keep order:false, stats:pseudo, invertedindex:idx_a"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where a>2",
+        "Plan": [
+          "TableReader_13 10922.67 300009.43 ((((((cpu(10922.666666666666*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(10922.666666666666*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(10922.666666666666*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(10922.666666666666*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(10922.666666666666*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_12",
+          "└─ExchangeSender_12 10922.67 3731185.72 (((cpu(10922.666666666666*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(10922.666666666666*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(10922.666666666666*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(10922.666666666666*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection_11 10922.67 3730976.00 (cpu(10922.666666666666*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(10922.666666666666*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(10922.666666666666*inverted_index_search_factor(139.2))))*1.00) mpp[tiflash]  gt(test.t1.a, 2)",
+          "    └─TableFullScan_10 10922.67 3704761.60 ((((scan(10922.666666666666*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(10922.666666666666*inverted_index_search_factor(139.2))))*1.00 mpp[tiflash] table:t1, index:idx_a(a) keep order:false, stats:pseudo, invertedindex:idx_a"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where a=1",
+        "Plan": [
+          "TableReader_13 32.77 70291.23 ((((((cpu(32.768*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(32.768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(32.768*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(32.768*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(32.768*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_12",
+          "└─ExchangeSender_12 32.77 1052061.56 (((cpu(32.768*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(32.768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(32.768*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(32.768*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection_11 32.77 1052060.93 (cpu(32.768*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(32.768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(32.768*inverted_index_search_factor(139.2))))*1.00) mpp[tiflash]  eq(test.t1.a, 1)",
+          "    └─TableFullScan_10 32.77 1051982.28 ((((scan(32.768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(32.768*inverted_index_search_factor(139.2))))*1.00 mpp[tiflash] table:t1, index:idx_a(a) keep order:false, stats:pseudo, invertedindex:idx_a"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where a in (1,2,3)",
+        "Plan": [
+          "TableReader_13 98.30 71673.68 ((((((cpu(98.304*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(98.304*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(98.304*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(98.304*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(98.304*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_12",
+          "└─ExchangeSender_12 98.30 1068184.67 (((cpu(98.304*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(98.304*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(98.304*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(98.304*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection_11 98.30 1068182.78 (cpu(98.304*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(98.304*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(98.304*inverted_index_search_factor(139.2))))*1.00) mpp[tiflash]  in(test.t1.a, 1, 2, 3)",
+          "    └─TableFullScan_10 98.30 1067946.85 ((((scan(98.304*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(98.304*inverted_index_search_factor(139.2))))*1.00 mpp[tiflash] table:t1, index:idx_a(a) keep order:false, stats:pseudo, invertedindex:idx_a"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where b=1",
+        "Plan": [
+          "TableReader_13 32.77 70291.23 ((((((cpu(32.768*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(32.768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(32.768*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(32.768*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(32.768*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_12",
+          "└─ExchangeSender_12 32.77 1052061.56 (((cpu(32.768*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(32.768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(32.768*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(32.768*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection_11 32.77 1052060.93 (cpu(32.768*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(32.768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(32.768*inverted_index_search_factor(139.2))))*1.00) mpp[tiflash]  eq(test.t1.b, 1)",
+          "    └─TableFullScan_10 32.77 1051982.28 ((((scan(32.768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(32.768*inverted_index_search_factor(139.2))))*1.00 mpp[tiflash] table:t1, index:idx_b(b) keep order:false, stats:pseudo, invertedindex:idx_b"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where a!=1 order by c limit 1",
+        "Plan": [
+          "TopN_11 1.00 203697.60 (((((((((cpu(32768*filters(1)*tiflash_cpu_factor(2.4))) + (((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00)) + ((exprCPU(21812.565333333332*0*tiflash_cpu_factor(2.4))) + (orderCPU(21812.565333333332*log(1)*tiflash_cpu_factor(2.4)))) + (topMem(1*32*tiflash_mem_factor(0.05))))*1.00)) + (net(1*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00) + ((exprCPU(1*0*tidb_cpu_factor(49.9))) + (orderCPU(1*log(1)*tidb_cpu_factor(49.9)))) + (topMem(1*32*tidb_mem_factor(0.2))))*1.00 root  test.t1.c, offset:0, count:1",
+          "└─TableReader_24 1.00 203691.20 (((((((cpu(32768*filters(1)*tiflash_cpu_factor(2.4))) + (((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00)) + ((exprCPU(21812.565333333332*0*tiflash_cpu_factor(2.4))) + (orderCPU(21812.565333333332*log(1)*tiflash_cpu_factor(2.4)))) + (topMem(1*32*tiflash_mem_factor(0.05))))*1.00)) + (net(1*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_23",
+          "  └─ExchangeSender_23 1.00 3055297.60 ((((cpu(32768*filters(1)*tiflash_cpu_factor(2.4))) + (((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00)) + ((exprCPU(21812.565333333332*0*tiflash_cpu_factor(2.4))) + (orderCPU(21812.565333333332*log(1)*tiflash_cpu_factor(2.4)))) + (topMem(1*32*tiflash_mem_factor(0.05))))*1.00) mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN_22 1.00 3055297.60 (((cpu(32768*filters(1)*tiflash_cpu_factor(2.4))) + (((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00)) + ((exprCPU(21812.565333333332*0*tiflash_cpu_factor(2.4))) + (orderCPU(21812.565333333332*log(1)*tiflash_cpu_factor(2.4)))) + (topMem(1*32*tiflash_mem_factor(0.05))))*1.00 mpp[tiflash]  test.t1.c, offset:0, count:1",
+          "      └─Selection_21 21812.57 3055296.00 (cpu(32768*filters(1)*tiflash_cpu_factor(2.4))) + (((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00) mpp[tiflash]  ne(test.t1.a, 1)",
+          "        └─TableFullScan_20 32768.00 2976652.80 ((scan(32768*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select a from t1 where a>2",
+        "Plan": [
+          "TableReader_13 10922.67 213010.57 ((((((cpu(10922.666666666666*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(10922.666666666666*logrowsize(16)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(16)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(10922.666666666666*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(10922.666666666666*filters(0.01)*tiflash_cpu_factor(2.4)))/5.00))) + (net(10922.666666666666*rowsize(8)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_12",
+          "└─ExchangeSender_12 10922.67 3002919.63 (((cpu(10922.666666666666*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(10922.666666666666*logrowsize(16)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(16)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(10922.666666666666*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(10922.666666666666*filters(0.01)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection_11 10922.67 3002867.20 (cpu(10922.666666666666*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(10922.666666666666*logrowsize(16)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(16)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(10922.666666666666*inverted_index_search_factor(139.2))))*1.00) mpp[tiflash]  gt(test.t1.a, 2)",
+          "    └─TableFullScan_10 10922.67 2976652.80 ((((scan(10922.666666666666*logrowsize(16)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(16)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(10922.666666666666*inverted_index_search_factor(139.2))))*1.00 mpp[tiflash] table:t1, index:idx_a(a) keep order:false, stats:pseudo, invertedindex:idx_a"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select a from t1 where a>2 and b>1",
+        "Plan": [
+          "TableReader_13 3640.89 208582.58 ((((((cpu(3640.8888888888887*filters(2)*tiflash_cpu_factor(2.4))) + (((((((scan(3640.8888888888887*logrowsize(32)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(32)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(3640.8888888888887*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(3640.8888888888887*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(3640.8888888888887*filters(0.01)*tiflash_cpu_factor(2.4)))/5.00))) + (net(3640.8888888888887*rowsize(8)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_12",
+          "└─ExchangeSender_12 3640.89 3064659.08 (((cpu(3640.8888888888887*filters(2)*tiflash_cpu_factor(2.4))) + (((((((scan(3640.8888888888887*logrowsize(32)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(32)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(3640.8888888888887*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(3640.8888888888887*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(3640.8888888888887*filters(0.01)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_5 3640.89 3064659.08 ((cpu(3640.8888888888887*filters(2)*tiflash_cpu_factor(2.4))) + (((((((scan(3640.8888888888887*logrowsize(32)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(32)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(3640.8888888888887*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(3640.8888888888887*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(3640.8888888888887*filters(0.01)*tiflash_cpu_factor(2.4)))/5.00) mpp[tiflash]  test.t1.a",
+          "    └─Selection_11 3640.89 3064641.60 (cpu(3640.8888888888887*filters(2)*tiflash_cpu_factor(2.4))) + (((((((scan(3640.8888888888887*logrowsize(32)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(32)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(3640.8888888888887*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(3640.8888888888887*inverted_index_search_factor(139.2))))*1.00) mpp[tiflash]  gt(test.t1.a, 2), gt(test.t1.b, 1)",
+          "      └─TableFullScan_10 3640.89 3047165.33 ((((((scan(3640.8888888888887*logrowsize(32)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(32)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(3640.8888888888887*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(3640.8888888888887*inverted_index_search_factor(139.2))))*1.00 mpp[tiflash] table:t1, index:idx_a(a), index:idx_b(b) keep order:false, stats:pseudo, invertedindex:idx_a, idx_b"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where a>2 and b>1 and c>1",
+        "Plan": [
+          "TableReader_13 1213.63 146873.46 ((((((cpu(1213.6296296296296*filters(2)*tiflash_cpu_factor(2.4))) + (((((((lm_col_scan(13640.888888888889*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(1213.6296296296296*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.50) + (inverted-index-search(1213.6296296296296*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(1213.6296296296296*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(1213.6296296296296*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(1213.6296296296296*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_12",
+          "└─ExchangeSender_12 1213.63 2117662.31 (((cpu(1213.6296296296296*filters(2)*tiflash_cpu_factor(2.4))) + (((((((lm_col_scan(13640.888888888889*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(1213.6296296296296*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.50) + (inverted-index-search(1213.6296296296296*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(1213.6296296296296*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(1213.6296296296296*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection_11 1213.63 2117639.01 (cpu(1213.6296296296296*filters(2)*tiflash_cpu_factor(2.4))) + (((((((lm_col_scan(13640.888888888889*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(1213.6296296296296*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.50) + (inverted-index-search(1213.6296296296296*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(1213.6296296296296*inverted_index_search_factor(139.2))))*1.00) mpp[tiflash]  gt(test.t1.a, 2), gt(test.t1.b, 1)",
+          "    └─TableFullScan_10 1213.63 2111813.59 ((((((lm_col_scan(13640.888888888889*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(1213.6296296296296*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.50) + (inverted-index-search(1213.6296296296296*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(1213.6296296296296*inverted_index_search_factor(139.2))))*1.00 mpp[tiflash] table:t1, index:idx_a(a), index:idx_b(b) pushed down filter:gt(test.t1.c, 1), keep order:false, stats:pseudo, invertedindex:idx_a, idx_b"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where a<1 or b<2",
+        "Plan": [
+          "TableReader_13 18160.72 803489.93 ((((((cpu(18160.72100977778*filters(1)*tiflash_cpu_factor(2.4))) + (((((((scan(18160.72100977778*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(18160.72100977778*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(18160.72100977778*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(18160.72100977778*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(18160.72100977778*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_12",
+          "└─ExchangeSender_12 18160.72 10773834.24 (((cpu(18160.72100977778*filters(1)*tiflash_cpu_factor(2.4))) + (((((((scan(18160.72100977778*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(18160.72100977778*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(18160.72100977778*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(18160.72100977778*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection_11 18160.72 10773485.55 (cpu(18160.72100977778*filters(1)*tiflash_cpu_factor(2.4))) + (((((((scan(18160.72100977778*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(18160.72100977778*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(18160.72100977778*inverted_index_search_factor(139.2))))*1.00) mpp[tiflash]  or(lt(test.t1.a, 1), lt(test.t1.b, 2))",
+          "    └─TableFullScan_10 18160.72 10729899.82 ((((((scan(18160.72100977778*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(18160.72100977778*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(18160.72100977778*inverted_index_search_factor(139.2))))*1.00 mpp[tiflash] table:t1, index:idx_a(a), index:idx_b(b) keep order:false, stats:pseudo, invertedindex:idx_a, idx_b"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where (a<1 or b<2) and (a>3 and b>2)",
+        "Plan": [
+          "TableReader_13 2017.86 182722.37 ((((((cpu(2017.8578899753086*filters(3)*tiflash_cpu_factor(2.4))) + (((((((scan(2017.8578899753086*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(2017.8578899753086*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(2017.8578899753086*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(2017.8578899753086*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(2017.8578899753086*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_12",
+          "└─ExchangeSender_12 2017.86 2598778.41 (((cpu(2017.8578899753086*filters(3)*tiflash_cpu_factor(2.4))) + (((((((scan(2017.8578899753086*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(2017.8578899753086*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(2017.8578899753086*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(2017.8578899753086*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection_11 2017.86 2598739.67 (cpu(2017.8578899753086*filters(3)*tiflash_cpu_factor(2.4))) + (((((((scan(2017.8578899753086*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(2017.8578899753086*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(2017.8578899753086*inverted_index_search_factor(139.2))))*1.00) mpp[tiflash]  gt(test.t1.a, 3), gt(test.t1.b, 2), or(lt(test.t1.a, 1), lt(test.t1.b, 2))",
+          "    └─TableFullScan_10 2017.86 2584211.09 ((((((scan(2017.8578899753086*logrowsize(64)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(64)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(2017.8578899753086*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(2017.8578899753086*inverted_index_search_factor(139.2))))*1.00 mpp[tiflash] table:t1, index:idx_a(a), index:idx_b(b) keep order:false, stats:pseudo, invertedindex:idx_a, idx_b"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where (a<1 or b<2) and (a>3 and b>2) and c>1",
+        "Plan": [
+          "TableReader_13 672.62 112534.21 ((((((cpu(672.6192966584363*filters(3)*tiflash_cpu_factor(2.4))) + (((((((lm_col_scan(12017.857889975308*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(672.6192966584363*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.50) + (inverted-index-search(672.6192966584363*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(672.6192966584363*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(672.6192966584363*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(672.6192966584363*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_12",
+          "└─ExchangeSender_12 672.62 1640660.72 (((cpu(672.6192966584363*filters(3)*tiflash_cpu_factor(2.4))) + (((((((lm_col_scan(12017.857889975308*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(672.6192966584363*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.50) + (inverted-index-search(672.6192966584363*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(672.6192966584363*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(672.6192966584363*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection_11 672.62 1640647.81 (cpu(672.6192966584363*filters(3)*tiflash_cpu_factor(2.4))) + (((((((lm_col_scan(12017.857889975308*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(672.6192966584363*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.50) + (inverted-index-search(672.6192966584363*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(672.6192966584363*inverted_index_search_factor(139.2))))*1.00) mpp[tiflash]  gt(test.t1.a, 3), gt(test.t1.b, 2), or(lt(test.t1.a, 1), lt(test.t1.b, 2))",
+          "    └─TableFullScan_10 672.62 1635804.95 ((((((lm_col_scan(12017.857889975308*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(672.6192966584363*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.50) + (inverted-index-search(672.6192966584363*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(672.6192966584363*inverted_index_search_factor(139.2))))*1.00 mpp[tiflash] table:t1, index:idx_a(a), index:idx_b(b) pushed down filter:gt(test.t1.c, 1), keep order:false, stats:pseudo, invertedindex:idx_a, idx_b"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select * from t1 where (a>2 or b<2) and (a>3 and b>2) and c>2",
+        "Plan": [
+          "TableReader_13 673.43 112585.93 ((((((cpu(673.4295967078189*filters(3)*tiflash_cpu_factor(2.4))) + (((((((lm_col_scan(12020.288790123457*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(673.4295967078189*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.50) + (inverted-index-search(673.4295967078189*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(673.4295967078189*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(673.4295967078189*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00))) + (net(673.4295967078189*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_12",
+          "└─ExchangeSender_12 673.43 1641379.52 (((cpu(673.4295967078189*filters(3)*tiflash_cpu_factor(2.4))) + (((((((lm_col_scan(12020.288790123457*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(673.4295967078189*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.50) + (inverted-index-search(673.4295967078189*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(673.4295967078189*inverted_index_search_factor(139.2))))*1.00)) + ((cpu(673.4295967078189*filters(0.04)*tiflash_cpu_factor(2.4)))/5.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection_11 673.43 1641366.59 (cpu(673.4295967078189*filters(3)*tiflash_cpu_factor(2.4))) + (((((((lm_col_scan(12020.288790123457*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(673.4295967078189*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.50) + (inverted-index-search(673.4295967078189*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(673.4295967078189*inverted_index_search_factor(139.2))))*1.00) mpp[tiflash]  gt(test.t1.a, 3), gt(test.t1.b, 2), or(gt(test.t1.a, 2), lt(test.t1.b, 2))",
+          "    └─TableFullScan_10 673.43 1636517.89 ((((((lm_col_scan(12020.288790123457*logrowsize(16)*tiflash_scan_factor(11.6))) + (lm_rest_col_scan(673.4295967078189*logrowsize(48)*tiflash_scan_factor(11.6)*lm_scan_factor(1.5))))*1.50) + (inverted-index-search(673.4295967078189*inverted_index_search_factor(139.2))))*1.50) + (inverted-index-search(673.4295967078189*inverted_index_search_factor(139.2))))*1.00 mpp[tiflash] table:t1, index:idx_a(a), index:idx_b(b) pushed down filter:gt(test.t1.c, 2), keep order:false, stats:pseudo, invertedindex:idx_a, idx_b"
+        ]
+      },
+      {
+        "SQL": "explain format='cost_trace' select count(a), max(t) from t1 where a>2",
+        "Plan": [
+          "HashAgg_9 1.00 604257.42 ((cpu(10*3*tidb_cpu_factor(49.9))) + ((((((cpu(10922.666666666666*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(10922.666666666666*logrowsize(32)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(32)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(10922.666666666666*inverted_index_search_factor(139.2))))*1.00))) + (net(10922.666666666666*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00) + (((agg(10922.666666666666*aggs(2)*tidb_cpu_factor(49.9))) + (group(10922.666666666666*cols(0)*tidb_cpu_factor(49.9))) + ((hashkey(1*0*tidb_cpu_factor(49.9))) + (hashmem(1*16*tidb_mem_factor(0.2))) + (hashbuild(1*tidb_cpu_factor(49.9)))) + ((hashkey(10922.666666666666*0*tidb_cpu_factor(49.9))) + (hashprobe(10922.666666666666*tidb_cpu_factor(49.9)))))/5.00))*1.00 root  funcs:count(test.t1.a)->Column#6, funcs:max(test.t1.t)->Column#7",
+          "└─TableReader_16 10922.67 275725.16 (((((cpu(10922.666666666666*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(10922.666666666666*logrowsize(32)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(32)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(10922.666666666666*inverted_index_search_factor(139.2))))*1.00))) + (net(10922.666666666666*rowsize(32)*tidb_flash_net_factor(2.2))))/15.00)*1.00 root  MppVersion: 3, data:ExchangeSender_15",
+          "  └─ExchangeSender_15 10922.67 3366921.60 ((cpu(10922.666666666666*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(10922.666666666666*logrowsize(32)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(32)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(10922.666666666666*inverted_index_search_factor(139.2))))*1.00)) mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─Selection_14 10922.67 3366921.60 (cpu(10922.666666666666*filters(1)*tiflash_cpu_factor(2.4))) + (((((scan(10922.666666666666*logrowsize(32)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(32)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(10922.666666666666*inverted_index_search_factor(139.2))))*1.00) mpp[tiflash]  gt(test.t1.a, 2)",
+          "      └─TableFullScan_13 10922.67 3340707.20 ((((scan(10922.666666666666*logrowsize(32)*tiflash_scan_factor(11.6))) + (scan(10000*logrowsize(32)*tiflash_scan_factor(11.6))))*1.50) + (inverted-index-search(10922.666666666666*inverted_index_search_factor(139.2))))*1.00 mpp[tiflash] table:t1, index:idx_a(a) keep order:false, stats:pseudo, invertedindex:idx_a"
+        ]
+      }
+    ]
   }
 ]
