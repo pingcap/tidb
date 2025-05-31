@@ -29,9 +29,6 @@ restart_services
 
 # prepare the data
 echo "=== Preparing test data ==="
-# dummy table to offset global id
-run_sql "create database __TiDB_BR_Temporary_Restore_Registration_DB"
-run_sql "create table __TiDB_BR_Temporary_Restore_Registration_DB.restore_registry (id int)"
 ## statistic tables
 run_sql "create database test_stats"
 run_sql "create table test_stats.t1 (id int, a int, b int, primary key (id), key ia (a))"

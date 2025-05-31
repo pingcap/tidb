@@ -1363,15 +1363,6 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, g, cfg, cfg.RestoreID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	failpoint.Inject("failed-before-full-restore", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("failpoint: failed before full restore"))
-	})
-
 	// restore log.
 	cfg.adjustRestoreConfigForStreamRestore()
 	cfg.tiflashRecorder = tiflashrec.New()
@@ -1383,6 +1374,11 @@ func RunStreamRestore(
 
 	// register task if needed
 	err = RegisterRestoreIfNeeded(ctx, cfg, PointRestoreCmd, logClient.GetDomain())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, g, cfg, cfg.RestoreID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2187,9 +2183,9 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 		return nil
 	}
 
-	// skip registration if target TiDB doesn't have restoreID column
+	// skip registration if target TiDB version doesn't support restore registry
 	if !restore.HasRestoreIDColumn(domain) {
-		log.Info("skipping restore registration since target TiDB doesn't have restoreID column in IDMap table")
+		log.Info("skipping restore registration since target TiDB version doesn't support restore registry")
 		return nil
 	}
 

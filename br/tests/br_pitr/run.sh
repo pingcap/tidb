@@ -117,7 +117,6 @@ latest_log_db=$(run_sql "select table_schema from information_schema.tables wher
 latest_sst_db=$(run_sql "select table_schema from information_schema.tables where table_schema like '__TiDB_BR_Temporary_Custom_SST_Restore_Checkpoint%' order by table_schema desc limit 1;" | tail -n 1 | awk '{print $2}')
 run_sql "DROP DATABASE IF EXISTS \`$latest_log_db\`;"
 run_sql "DROP DATABASE IF EXISTS \`$latest_sst_db\`;"
-run_sql "DROP DATABASE IF EXISTS __TiDB_BR_Temporary_Restore_Registration_DB;"
 
 run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1 || ( cat $res_file && exit 1 )
 

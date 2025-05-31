@@ -132,12 +132,6 @@ func TestCancel(t *testing.T) {
 	}
 }
 
-// cleanupRegistry drops the registry tables and database
-func cleanupRegistry(tk *testkit.TestKit) {
-	registryDB := "__TiDB_BR_Temporary_Restore_Registration_DB"
-	tk.MustExec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", registryDB))
-}
-
 func TestExistedTables(t *testing.T) {
 	tk := initTestKit(t)
 	t.Cleanup(func() {

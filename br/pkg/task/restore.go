@@ -1311,6 +1311,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 	// check if tables and dbs are valid to continue
 	if cfg.RestoreRegistry != nil && cfg.RestoreID != 0 {
+		log.Info("checking ongoing conflicting restore task using restore registry",
+			zap.Int("tables_count", len(tables)),
+			zap.Uint64("current_restore_id", cfg.RestoreID))
 		err := cfg.RestoreRegistry.CheckTablesWithRegisteredTasks(ctx, cfg.RestoreID, cfg.PiTRTableTracker, tables)
 		if err != nil {
 			return errors.Trace(err)
