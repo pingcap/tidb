@@ -24,6 +24,7 @@ go_library(
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/autoid",
+        "//pkg/metrics",
         "//pkg/parser/auth",
         "//pkg/parser/charset",
         "//pkg/parser/model",
