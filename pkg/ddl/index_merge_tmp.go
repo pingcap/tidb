@@ -301,7 +301,7 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 }
 
 func (w *mergeIndexWorker) AddMetricInfo(cnt float64) {
-	w.mergeRowCounter.Add(cnt)
+	w.metricCounter.Add(cnt)
 }
 
 func (*mergeIndexWorker) String() string {

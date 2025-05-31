@@ -151,7 +151,7 @@ type backfillCtx struct {
 	batchCnt   int
 	jobContext *JobContext
 
-	mergeRowCounter prometheus.Counter
+	metricCounter   prometheus.Counter
 	conflictCounter prometheus.Counter
 }
 
@@ -168,7 +168,7 @@ func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context,
 		table:      tbl,
 		batchCnt:   int(variable.GetDDLReorgBatchSize()),
 		jobContext: jobCtx,
-		mergeRowCounter: metrics.BackfillTotalCounter.WithLabelValues(
+		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
 			metrics.GenerateReorgLabel(label, schemaName, tbl.Meta().Name.String())),
 		conflictCounter: metrics.BackfillTotalCounter.WithLabelValues(
 			metrics.GenerateReorgLabel(fmt.Sprintf("%s-conflict", label), schemaName, tbl.Meta().Name.String())),
