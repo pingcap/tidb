@@ -403,7 +403,7 @@ func (c *index) Delete(ctx sessionctx.Context, txn kv.Transaction, indexedValue 
 		}
 
 		key, tempKey, tempKeyVer := GenTempIdxKeyByState(c.idxInfo, key)
-		keyIsTempKey := tempKeyVer == TempIndexKeyTypeBackfill || tempKeyVer == TempIndexKeyTypeDelete
+		doubleWrite := tempKeyVer == TempIndexKeyTypeMerge
 		var originTempVal []byte
 		if len(tempKey) > 0 && c.idxInfo.Unique {
 			// Get the origin value of the unique temporary index key.
@@ -456,9 +456,6 @@ func (c *index) Delete(ctx sessionctx.Context, txn kv.Transaction, indexedValue 
 					if err != nil {
 						return err
 					}
-					if keyIsTempKey {
-						metrics.DDLSetTempIndexWrite(connID, c.tblInfo.ID, 1, false)
-					}
 				}
 			}
 			if len(tempKey) > 0 {
@@ -468,16 +465,13 @@ func (c *index) Delete(ctx sessionctx.Context, txn kv.Transaction, indexedValue 
 				if err != nil {
 					return err
 				}
-				metrics.DDLSetTempIndexWrite(connID, c.tblInfo.ID, 1, true)
+				metrics.DDLSetTempIndexWrite(connID, c.tblInfo.ID, 1, doubleWrite)
 			}
 		} else {
 			if len(key) > 0 {
 				err = txn.GetMemBuffer().Delete(key)
 				if err != nil {
 					return err
-				}
-				if keyIsTempKey {
-					metrics.DDLSetTempIndexWrite(connID, c.tblInfo.ID, 1, false)
 				}
 			}
 			if len(tempKey) > 0 {
@@ -486,7 +480,7 @@ func (c *index) Delete(ctx sessionctx.Context, txn kv.Transaction, indexedValue 
 				if err != nil {
 					return err
 				}
-				metrics.DDLSetTempIndexWrite(connID, c.tblInfo.ID, 1, true)
+				metrics.DDLSetTempIndexWrite(connID, c.tblInfo.ID, 1, doubleWrite)
 			}
 		}
 		if c.idxInfo.State == model.StatePublic {
