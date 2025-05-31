@@ -783,15 +783,15 @@ const (
 
 // ResourceGroupTagBuilder is used to build the resource group tag for a kv request.
 type ResourceGroupTagBuilder struct {
-	sqlDigest  *parser.Digest
-	planDigest *parser.Digest
-	keyspaceID *uint32
-	accessKey  []byte
+	sqlDigest    *parser.Digest
+	planDigest   *parser.Digest
+	keyspaceName []byte
+	accessKey    []byte
 }
 
 // NewResourceGroupTagBuilder creates a new ResourceGroupTagBuilder.
-func NewResourceGroupTagBuilder(keyspaceID *uint32) *ResourceGroupTagBuilder {
-	return &ResourceGroupTagBuilder{keyspaceID: keyspaceID}
+func NewResourceGroupTagBuilder(keyspaceName []byte) *ResourceGroupTagBuilder {
+	return &ResourceGroupTagBuilder{keyspaceName: keyspaceName}
 }
 
 // SetSQLDigest sets the sql digest for the request.
@@ -815,7 +815,7 @@ func (b *ResourceGroupTagBuilder) BuildProtoTagger() tikvrpc.ResourceGroupTagger
 
 // EncodeTagWithKey encodes the resource group tag, returns the encoded bytes.
 func (b *ResourceGroupTagBuilder) EncodeTagWithKey(key []byte) []byte {
-	tag := &tipb.ResourceGroupTag{KeyspaceId: b.keyspaceID}
+	tag := &tipb.ResourceGroupTag{KeyspaceName: b.keyspaceName}
 	if b.sqlDigest != nil {
 		tag.SqlDigest = b.sqlDigest.Bytes()
 	}

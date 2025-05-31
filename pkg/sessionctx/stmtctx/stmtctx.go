@@ -762,7 +762,7 @@ func (sc *StatementContext) SetBinaryPlan(binaryPlan string) {
 
 // GetResourceGroupTagger returns the implementation of kv.ResourceGroupTagBuilder related to self.
 func (sc *StatementContext) GetResourceGroupTagger() *kv.ResourceGroupTagBuilder {
-	tagger := kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceIDBySettings()).SetPlanDigest(sc.planDigest)
+	tagger := kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).SetPlanDigest(sc.planDigest)
 	normalized, digest := sc.SQLDigest()
 	if len(normalized) > 0 {
 		tagger.SetSQLDigest(digest)

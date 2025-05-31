@@ -323,7 +323,7 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 			}
 			_, planDigest := seVars.StmtCtx.GetPlanDigest()
 
-			return kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceIDBySettings()).
+			return kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).
 				SetPlanDigest(planDigest).
 				SetSQLDigest(digest).
 				EncodeTagWithKey(mutation.Key)
