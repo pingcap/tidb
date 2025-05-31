@@ -3081,3 +3081,50 @@ func TestQueryWithKill(t *testing.T) {
 	}()
 	wg.Wait()
 }
+
+func TestGlobalSessionTemporaryTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+
+	tk.MustExec("create global temporary table t (id int key, name varchar(10), num int, index(name)) on commit preserve rows")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE GLOBAL TEMPORARY TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `name` varchar(10) DEFAULT NULL,\n" +
+		"  `num` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `name` (`name`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT PRESERVE ROWS"))
+	tk.MustExec("insert into t values (1, 'n1', 11), (2, 'n2', 12)")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 n1 11", "2 n2 12"))
+	tk.MustExec("delete from t")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows())
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, 'n1', 11), (2, 'n2', 12)")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 n1 11", "2 n2 12"))
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 n1 11", "2 n2 12"))
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	// other session can not see the data of global temporary table.
+	tk2.MustQuery("select * from t order by id").Check(testkit.Rows())
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 n1 11", "2 n2 12"))
+
+	tk2.MustGetErrMsg("create global temporary table t (id int key, name varchar(10), num int, index(name)) on commit preserve rows", "[schema:1050]Table 'test.t' already exists")
+	tk2.MustExec("create global temporary table t2 (id int key, name varchar(10), num int, index(name)) on commit preserve rows")
+	tk2.MustExec("insert into t2 values (21, 'n21', 21), (22, 'n22', 22)")
+	tk2.MustQuery("select * from t2 order by id").Check(testkit.Rows("21 n21 21", "22 n22 22"))
+	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows())
+
+	tk.MustExec("create global temporary table t1 (id int key, name varchar(10), num int, index(name)) on commit preserve rows")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values (11, 'n11', 11), (12, 'n12', 12)")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("11 n11 11", "12 n12 12"))
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows())
+	tk.MustExec("insert into t1 values (11, 'n11', 11), (12, 'n12', 12)")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("11 n11 11", "12 n12 12"))
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 n1 11", "2 n2 12"))
+}

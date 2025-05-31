@@ -47,7 +47,7 @@ type temporaryTableDDL struct {
 }
 
 func (d *temporaryTableDDL) CreateLocalTemporaryTable(db *model.DBInfo, info *model.TableInfo) error {
-	if _, err := ensureSessionData(d.sctx); err != nil {
+	if _, err := EnsureSessionData(d.sctx); err != nil {
 		return err
 	}
 	info.DBID = db.ID
@@ -56,7 +56,7 @@ func (d *temporaryTableDDL) CreateLocalTemporaryTable(db *model.DBInfo, info *mo
 		return err
 	}
 
-	return ensureLocalTemporaryTables(d.sctx).AddTable(db, tbl)
+	return EnsureLocalTemporaryTables(d.sctx).AddTable(db, tbl)
 }
 
 func (d *temporaryTableDDL) DropLocalTemporaryTable(schema pmodel.CIStr, tblName pmodel.CIStr) error {
@@ -143,7 +143,7 @@ func getSessionData(sctx sessionctx.Context) variable.TemporaryTableData {
 	return sctx.GetSessionVars().TemporaryTableData
 }
 
-func ensureSessionData(sctx sessionctx.Context) (variable.TemporaryTableData, error) {
+func EnsureSessionData(sctx sessionctx.Context) (variable.TemporaryTableData, error) {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.TemporaryTableData == nil {
 		// Create this txn just for getting a MemBuffer. It's a little tricky
@@ -177,6 +177,10 @@ func newTemporaryTableFromTableInfo(sctx sessionctx.Context, tbInfo *model.Table
 		return nil, err
 	}
 
+	return NewTemporaryTable(tbInfo)
+}
+
+func NewTemporaryTable(tbInfo *model.TableInfo) (table.Table, error) {
 	// AutoID is allocated in mocked..
 	alloc := autoid.NewAllocatorFromTempTblInfo(tbInfo)
 	allocs := make([]autoid.Allocator, 0, 1)

@@ -1656,6 +1656,27 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 	}
+	if tableInfo.TempTableType == model.TempTableGlobalSession {
+		_, err := temptable.EnsureSessionData(p.sctx)
+		if err != nil {
+			p.err = err
+			return
+		}
+		tempIs := temptable.EnsureLocalTemporaryTables(p.sctx)
+		if !tempIs.TableExists(dbInfo.Name, tableInfo.Name) {
+			localTableInfo := tableInfo.Clone()
+			localTable, err := temptable.NewTemporaryTable(localTableInfo)
+			if err != nil {
+				p.err = err
+				return
+			}
+			err = tempIs.AddTable(dbInfo, localTable)
+			if err != nil {
+				p.err = err
+				return
+			}
+		}
+	}
 	p.resolveCtx.AddTableName(&resolve.TableNameW{
 		TableName: tn,
 		DBInfo:    dbInfo,
@@ -1900,7 +1921,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 	if sctx.GetSessionVars().TxnCtx.IsStaleness {
 		return tbl, nil
 	}
-	if tbl.Meta().TempTableType == model.TempTableLocal {
+	if tbl.Meta().TempTableType.HasLocalData() {
 		// Don't attach, don't lock.
 		return tbl, nil
 	} else if tbl.Meta().TempTableType == model.TempTableGlobal {

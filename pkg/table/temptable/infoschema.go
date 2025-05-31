@@ -56,7 +56,7 @@ func getLocalTemporaryTables(sctx variable.SessionVarsProvider) *infoschema.Sess
 	return localTemporaryTables.(*infoschema.SessionTables)
 }
 
-func ensureLocalTemporaryTables(sctx variable.SessionVarsProvider) *infoschema.SessionTables {
+func EnsureLocalTemporaryTables(sctx variable.SessionVarsProvider) *infoschema.SessionTables {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.LocalTemporaryTables == nil {
 		localTempTables := infoschema.NewSessionTables()

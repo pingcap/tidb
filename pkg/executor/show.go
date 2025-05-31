@@ -1053,7 +1053,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 	sqlMode := ctx.GetSessionVars().SQLMode
 	tableName := stringutil.Escape(tableInfo.Name.O, sqlMode)
 	switch tableInfo.TempTableType {
-	case model.TempTableGlobal:
+	case model.TempTableGlobal, model.TempTableGlobalSession:
 		fmt.Fprintf(buf, "CREATE GLOBAL TEMPORARY TABLE %s (\n", tableName)
 	case model.TempTableLocal:
 		fmt.Fprintf(buf, "CREATE TEMPORARY TABLE %s (\n", tableName)
@@ -1363,7 +1363,6 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		}
 		buf.WriteString("*/")
 	}
-
 	if tableInfo.AutoRandomBits > 0 && tableInfo.PreSplitRegions > 0 {
 		fmt.Fprintf(buf, " /*T! PRE_SPLIT_REGIONS=%d */", tableInfo.PreSplitRegions)
 	}
@@ -1374,6 +1373,8 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 
 	if tableInfo.TempTableType == model.TempTableGlobal {
 		fmt.Fprintf(buf, " ON COMMIT DELETE ROWS")
+	} else if tableInfo.TempTableType == model.TempTableGlobalSession {
+		fmt.Fprintf(buf, " ON COMMIT PRESERVE ROWS")
 	}
 
 	if tableInfo.PlacementPolicyRef != nil {

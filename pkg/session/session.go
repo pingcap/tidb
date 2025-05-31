@@ -694,7 +694,7 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 			continue
 		}
 
-		if tbl.GetMeta().TempTableType != model.TempTableLocal {
+		if !tbl.GetMeta().TempTableType.HasLocalData() {
 			continue
 		}
 		if _, ok := localTempTables.TableByID(tblID); !ok {
