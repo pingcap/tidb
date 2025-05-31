@@ -34,37 +34,14 @@ import (
 )
 
 const (
-	RegistrationDBName    string = utils.TemporaryDBNamePrefix + "Restore_Registration_DB"
-	RegistrationTableName        = "restore_registry"
+	// RestoreRegistryDBName is the database name for the restore registry table
+	RestoreRegistryDBName = "mysql"
+	// RestoreRegistryTableName is the table name for tracking restore tasks
+	RestoreRegistryTableName = "tidb_restore_registry"
 
 	// FilterSeparator is used to join/split filter strings safely.
 	// Using ASCII Unit Separator (US) character which never appears in SQL identifiers or expressions.
 	FilterSeparator = "\x1F"
-
-	// createRegistrationTableSQL is the SQL to create the registration table
-	// we use unique index to prevent race condition that two threads inserting tasks with same parameters.
-	// we initialize auto increment id to be 1 to make sure default value 0 is not used when insertion failed.
-	createRegistrationTableSQL = `CREATE TABLE IF NOT EXISTS %s.%s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-		filter_strings TEXT NOT NULL,
-		filter_hash VARCHAR(64) NOT NULL,
-		start_ts BIGINT UNSIGNED NOT NULL,
-		restored_ts BIGINT UNSIGNED NOT NULL,
-		upstream_cluster_id BIGINT UNSIGNED,
-		with_sys_table BOOLEAN NOT NULL DEFAULT TRUE,
-		status VARCHAR(20) NOT NULL DEFAULT 'running',
-		cmd TEXT,
-		start_timestamp BIGINT UNSIGNED NOT NULL,
-		last_heartbeat BIGINT UNSIGNED NOT NULL,
-		UNIQUE KEY unique_registration_params (
-			filter_hash,
-			start_ts,
-			restored_ts,
-			upstream_cluster_id,
-			with_sys_table,
-			cmd(256)
-		)
-	) AUTO_INCREMENT = 1`
 
 	// lookupRegistrationSQLTemplate is the SQL template for looking up a registration by its parameters
 	lookupRegistrationSQLTemplate = `
@@ -86,7 +63,7 @@ const (
 	// resumeTaskByIDSQLTemplate is the SQL template for resuming a paused task by its ID
 	resumeTaskByIDSQLTemplate = `
 		UPDATE %s.%s
-		SET status = 'running'
+		SET status = 'running', last_heartbeat = %%?
 		WHERE id = %%?`
 
 	// deleteRegistrationSQLTemplate is the SQL template for deleting a registration
@@ -179,25 +156,6 @@ func (r *Registry) Close() {
 	r.StopHeartbeatManager()
 }
 
-// createTableIfNotExist ensures that the registration table exists
-func (r *Registry) createTableIfNotExist(ctx context.Context) error {
-	createStmt := fmt.Sprintf(createRegistrationTableSQL, RegistrationDBName, RegistrationTableName)
-
-	if err := r.se.ExecuteInternal(ctx, "CREATE DATABASE IF NOT EXISTS %n;", RegistrationDBName); err != nil {
-		return errors.Annotatef(err, "failed to create registration database")
-	}
-
-	if err := r.se.ExecuteInternal(ctx, createStmt); err != nil {
-		return errors.Annotatef(err, "failed to create registration table")
-	}
-
-	log.Info("ensured restore registration table exists",
-		zap.String("db", RegistrationDBName),
-		zap.String("table", RegistrationTableName))
-
-	return nil
-}
-
 // executeInTransaction executes a function within a pessimistic transaction
 func (r *Registry) executeInTransaction(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor,
 	[]sqlexec.OptionFuncAlias) error) error {
@@ -234,10 +192,6 @@ func (r *Registry) executeInTransaction(ctx context.Context, fn func(context.Con
 // ResumeOrCreateRegistration first looks for an existing registration with the given parameters.
 // If found and paused, it tries to resume it. Otherwise, it creates a new registration.
 func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info RegistrationInfo) (uint64, error) {
-	if err := r.createTableIfNotExist(ctx); err != nil {
-		return 0, errors.Trace(err)
-	}
-
 	filterStrings := strings.Join(info.FilterStrings, FilterSeparator)
 
 	log.Info("attempting to resume or create registration",
@@ -253,7 +207,7 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 	err := r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor,
 		sessionOpts []sqlexec.OptionFuncAlias) error {
 		// first look for an existing task with the same parameters
-		lookupSQL := fmt.Sprintf(lookupRegistrationSQLTemplate, RegistrationDBName, RegistrationTableName)
+		lookupSQL := fmt.Sprintf(lookupRegistrationSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 		rows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, lookupSQL,
 			filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
 		if err != nil {
@@ -279,21 +233,11 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 
 			// strictly check for paused status
 			if status == string(TaskStatusPaused) {
-				updateSQL := fmt.Sprintf(resumeTaskByIDSQLTemplate, RegistrationDBName, RegistrationTableName)
-				_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, updateSQL, existingTaskID)
+				currentTime := uint64(time.Now().Unix())
+				updateSQL := fmt.Sprintf(resumeTaskByIDSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+				_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, updateSQL, currentTime, existingTaskID)
 				if err != nil {
 					return errors.Annotate(err, "failed to resume paused task")
-				}
-
-				// update the heartbeat
-				currentTime := uint64(time.Now().Unix())
-				updateHeartbeatSQL := fmt.Sprintf(UpdateHeartbeatSQLTemplate, RegistrationDBName, RegistrationTableName)
-				_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, updateHeartbeatSQL, currentTime, existingTaskID)
-				if err != nil {
-					log.Warn("failed to update heartbeat for resumed task",
-						zap.Uint64("restore_id", existingTaskID),
-						zap.Error(err))
-					// continue despite heartbeat error
 				}
 
 				log.Info("successfully resumed existing registration",
@@ -314,7 +258,7 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 
 		// no existing task found, create a new one
 		currentTime := uint64(time.Now().Unix())
-		insertSQL := fmt.Sprintf(createNewTaskSQLTemplate, RegistrationDBName, RegistrationTableName)
+		insertSQL := fmt.Sprintf(createNewTaskSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 		_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, insertSQL,
 			filterStrings, filterStrings, info.StartTS, info.RestoredTS,
 			info.UpstreamClusterID, info.WithSysTable, info.Cmd, currentTime, currentTime)
@@ -360,7 +304,7 @@ func (r *Registry) updateTaskStatusConditional(ctx context.Context, restoreID ui
 		zap.String("new_status", string(newStatus)))
 
 	// use where to update only when status is what we want
-	updateSQL := fmt.Sprintf(updateStatusSQLTemplate, RegistrationDBName, RegistrationTableName)
+	updateSQL := fmt.Sprintf(updateStatusSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 
 	if err := r.se.ExecuteInternal(ctx, updateSQL, newStatus, restoreID, currentStatus); err != nil {
 		return errors.Annotatef(err, "failed to conditionally update task status from %s to %s",
@@ -370,88 +314,18 @@ func (r *Registry) updateTaskStatusConditional(ctx context.Context, restoreID ui
 	return nil
 }
 
-// Unregister removes a restore registration and cleans up empty table/database atomically
+// Unregister removes a restore registration
 func (r *Registry) Unregister(ctx context.Context, restoreID uint64) error {
 	// first stop heartbeat manager
 	r.StopHeartbeatManager()
 
-	return r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor,
-		sessionOpts []sqlexec.OptionFuncAlias) error {
-		// first, delete the specific registration
-		deleteSQL := fmt.Sprintf(deleteRegistrationSQLTemplate, RegistrationDBName, RegistrationTableName)
-		_, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, deleteSQL, restoreID)
-		if err != nil {
-			return errors.Annotatef(err, "failed to unregister restore %d", restoreID)
-		}
+	deleteSQL := fmt.Sprintf(deleteRegistrationSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+	if err := r.se.ExecuteInternal(ctx, deleteSQL, restoreID); err != nil {
+		return errors.Annotatef(err, "failed to unregister restore %d", restoreID)
+	}
 
-		log.Info("unregistered restore task", zap.Uint64("restore_id", restoreID))
-
-		// check if the table is now empty
-		countSQL := fmt.Sprintf("SELECT COUNT(*) FROM %s.%s", RegistrationDBName, RegistrationTableName)
-		countRows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, countSQL)
-		if err != nil {
-			log.Warn("failed to check if registration table is empty, skipping cleanup",
-				zap.Error(err))
-			// continue without cleanup - the unregister operation itself succeeded
-			return nil
-		}
-
-		if len(countRows) == 0 {
-			log.Warn("unexpected empty result when checking table count, skipping cleanup")
-			return nil
-		}
-
-		remainingCount := countRows[0].GetInt64(0)
-		if remainingCount == 0 {
-			// table is empty, drop it
-			dropTableSQL := fmt.Sprintf("DROP TABLE IF EXISTS %s.%s", RegistrationDBName, RegistrationTableName)
-			_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, dropTableSQL)
-			if err != nil {
-				log.Warn("failed to drop empty registration table, skipping table cleanup",
-					zap.Error(err))
-				// continue without table cleanup - the unregister operation itself succeeded
-				return nil
-			}
-
-			log.Info("dropped empty registration table",
-				zap.String("db", RegistrationDBName),
-				zap.String("table", RegistrationTableName))
-
-			// check if the database has any other tables
-			checkDBSQL := fmt.Sprintf(
-				"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = %q", RegistrationDBName)
-			dbCountRows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, checkDBSQL)
-			if err != nil {
-				log.Warn("failed to check if registration database is empty, skipping database cleanup",
-					zap.Error(err))
-				// continue without database cleanup
-				return nil
-			}
-
-			if len(dbCountRows) == 0 {
-				log.Warn("unexpected empty result when checking database table count, skipping database cleanup")
-				return nil
-			}
-
-			dbTableCount := dbCountRows[0].GetInt64(0)
-			if dbTableCount == 0 {
-				// database is empty, drop it
-				dropDBSQL := fmt.Sprintf("DROP DATABASE IF EXISTS %s", RegistrationDBName)
-				_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, dropDBSQL)
-				if err != nil {
-					log.Warn("failed to drop empty registration database, skipping database cleanup",
-						zap.Error(err))
-					// continue without database cleanup
-					return nil
-				}
-
-				log.Info("dropped empty registration database",
-					zap.String("db", RegistrationDBName))
-			}
-		}
-
-		return nil
-	})
+	log.Info("unregistered restore task", zap.Uint64("restore_id", restoreID))
+	return nil
 }
 
 // PauseTask marks a task as paused only if it's currently running
@@ -463,11 +337,7 @@ func (r *Registry) PauseTask(ctx context.Context, restoreID uint64) error {
 
 // GetRegistrationsByMaxID returns all registrations with IDs smaller than maxID
 func (r *Registry) GetRegistrationsByMaxID(ctx context.Context, maxID uint64) ([]RegistrationInfoWithID, error) {
-	if err := r.createTableIfNotExist(ctx); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	selectSQL := fmt.Sprintf(selectRegistrationsByMaxIDSQLTemplate, RegistrationDBName, RegistrationTableName)
+	selectSQL := fmt.Sprintf(selectRegistrationsByMaxIDSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 	registrations := make([]RegistrationInfoWithID, 0)
 
 	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
@@ -604,11 +474,6 @@ func (r *Registry) checkForTableConflicts(
 	}
 
 	return nil
-}
-
-// IsRestoreRegistryDB checks whether the dbname is a restore registry database.
-func IsRestoreRegistryDB(dbname string) bool {
-	return dbname == RegistrationDBName
 }
 
 // StartHeartbeatManager creates and starts a new heartbeat manager for the given restore ID

@@ -37,7 +37,7 @@ const (
 // UpdateHeartbeat updates the last_heartbeat timestamp for a task
 func (r *Registry) UpdateHeartbeat(ctx context.Context, restoreID uint64) error {
 	currentTime := uint64(time.Now().Unix())
-	updateSQL := fmt.Sprintf(UpdateHeartbeatSQLTemplate, RegistrationDBName, RegistrationTableName)
+	updateSQL := fmt.Sprintf(UpdateHeartbeatSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 
 	if err := r.heartbeatSession.ExecuteInternal(ctx, updateSQL, currentTime, restoreID); err != nil {
 		return errors.Annotatef(err, "failed to update heartbeat for task %d", restoreID)

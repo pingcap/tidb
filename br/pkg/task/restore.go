@@ -1888,7 +1888,7 @@ func filterRestoreFiles(
 
 	for _, db := range client.GetDatabases() {
 		dbName := db.Info.Name.O
-		if checkpoint.IsCheckpointDB(dbName) || registry.IsRestoreRegistryDB(dbName) {
+		if checkpoint.IsCheckpointDB(dbName) {
 			continue
 		}
 		if !utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) {
