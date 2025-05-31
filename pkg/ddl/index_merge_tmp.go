@@ -239,32 +239,15 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 						err = txn.GetMemBuffer().Delete(originIdxKey)
 					}
 				} else {
-					// // Lock the corresponding row keys so that it doesn't modify the index KVs
-					// // that are changing by a pessimistic transaction.
-					// rowKey := tablecodec.EncodeRecordKey(w.table.RecordPrefix(), idxRecord.handle)
-					// err = txn.LockKeys(context.Background(), new(kv.LockCtx), rowKey)
-					// if err != nil {
-					// 	return errors.Trace(err)
-					// }
 					err = txn.GetMemBuffer().Set(originIdxKey, idxRecord.vals)
 				}
 				if err != nil {
 					return err
 				}
 
-				var reservedTempIdx bool
-				failpoint.Inject("mergeTempIndexReservedTempIndexKey", func(val failpoint.Value) {
-					//nolint:forcetypeassert
-					if v, ok := val.(bool); ok {
-						reservedTempIdx = v
-					}
-				})
-
-				if !reservedTempIdx {
-					err = txn.GetMemBuffer().Delete(w.tmpIdxKeys[i])
-					if err != nil {
-						return err
-					}
+				err = txn.GetMemBuffer().Delete(w.tmpIdxKeys[i])
+				if err != nil {
+					return err
 				}
 
 				failpoint.Inject("mockDMLExecutionMergingInTxn", func(val failpoint.Value) {
@@ -305,8 +288,7 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 		break
 	}
 
-	metrics.DDLSetTempIndexScan(w.table.Meta().ID, uint64(taskCtx.scanCount))
-	metrics.DDLSetTempIndexMerge(w.table.Meta().ID, uint64(taskCtx.addedCount))
+	metrics.DDLSetTempIndexScanAndMerge(w.table.Meta().ID, uint64(taskCtx.scanCount), uint64(taskCtx.addedCount))
 
 	failpoint.Inject("mockDMLExecutionMerging", func(val failpoint.Value) {
 		//nolint:forcetypeassert
