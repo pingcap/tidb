@@ -1260,11 +1260,9 @@ func TestRecordHistoricalStatsToStorage(t *testing.T) {
 
 func TestEvictedColumnLoadedStatus(t *testing.T) {
 	t.Skip("skip this test because it is useless")
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = true
-	})
+	})()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	dom.StatsHandle().SetLease(0)
 	tk := testkit.NewTestKit(t, store)
