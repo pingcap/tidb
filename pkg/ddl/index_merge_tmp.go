@@ -202,8 +202,8 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 
 	pendings := []kv.KeyRange{{StartKey: taskRange.startKey, EndKey: taskRange.endKey}}
 	for len(pendings) > 0 {
-		current := pendings[0]
-		pendings = pendings[1:]
+		current := pendings[len(pendings)-1]
+		pendings = pendings[:len(pendings)-1]
 
 		if current.StartKey.Cmp(lastRange.StartKey) == 0 &&
 			current.EndKey.Cmp(lastRange.EndKey) == 0 {
@@ -330,7 +330,7 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 				if err := w.ddlCtx.isReorgRunnable(taskRange.jobID, false); err != nil {
 					return taskCtx, errors.Trace(err)
 				}
-				// kv.BackOff(attempts)
+				kv.BackOff(attempts)
 				continue
 			}
 			return taskCtx, errors.Trace(err)
