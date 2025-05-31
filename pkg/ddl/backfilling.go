@@ -158,15 +158,17 @@ type backfillTaskContext struct {
 type backfillCtx struct {
 	id int
 	*ddlCtx
-	warnings      contextutil.WarnHandlerExt
-	loc           *time.Location
-	exprCtx       exprctx.BuildContext
-	tblCtx        table.MutateContext
-	schemaName    string
-	table         table.Table
-	batchCnt      int
-	jobContext    *ReorgContext
-	metricCounter prometheus.Counter
+	warnings   contextutil.WarnHandlerExt
+	loc        *time.Location
+	exprCtx    exprctx.BuildContext
+	tblCtx     table.MutateContext
+	schemaName string
+	table      table.Table
+	batchCnt   int
+	jobContext *ReorgContext
+
+	metricCounter   prometheus.Counter
+	conflictCounter prometheus.Counter
 }
 
 func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table, jobCtx *ReorgContext, label string, isUpdateColumn bool) (*backfillCtx, error) {
@@ -211,17 +213,20 @@ func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table
 
 	batchCnt := rInfo.ReorgMeta.GetBatchSize()
 	return &backfillCtx{
-		id:            id,
-		ddlCtx:        rInfo.jobCtx.oldDDLCtx,
-		warnings:      warnHandler,
-		exprCtx:       exprCtx,
-		tblCtx:        tblCtx,
-		loc:           exprCtx.GetEvalCtx().Location(),
-		schemaName:    schemaName,
-		table:         tbl,
-		batchCnt:      batchCnt,
-		jobContext:    jobCtx,
-		metricCounter: metrics.GetBackfillTotalByLabel(label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
+		id:         id,
+		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
+		warnings:   warnHandler,
+		exprCtx:    exprCtx,
+		tblCtx:     tblCtx,
+		loc:        exprCtx.GetEvalCtx().Location(),
+		schemaName: schemaName,
+		table:      tbl,
+		batchCnt:   batchCnt,
+		jobContext: jobCtx,
+		metricCounter: metrics.GetBackfillTotalByLabel(
+			label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
+		conflictCounter: metrics.GetBackfillTotalByLabel(
+			fmt.Sprintf("%s-conflict", label), schemaName, tbl.Meta().Name.String(), colOrIdxName),
 	}, nil
 }
 
@@ -246,7 +251,7 @@ func updateTxnEntrySizeLimitIfNeeded(txn kv.Transaction) {
 }
 
 type backfiller interface {
-	BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error)
+	BackfillData(ctx context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error)
 	AddMetricInfo(float64)
 	GetCtx() *backfillCtx
 	String() string
@@ -357,7 +362,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			return result
 		}
 
-		taskCtx, err := bf.BackfillData(handleRange)
+		taskCtx, err := bf.BackfillData(w.ctx, handleRange)
 		if err != nil {
 			result.err = err
 			return result
