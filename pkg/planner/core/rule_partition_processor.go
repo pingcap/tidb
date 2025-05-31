@@ -1795,7 +1795,7 @@ func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune) (start in
 func (*PartitionProcessor) resolveAccessPaths(ds *logicalop.DataSource) error {
 	possiblePaths, err := getPossibleAccessPaths(
 		ds.SCtx(), &h.PlanHints{IndexMergeHintList: ds.IndexMergeHints, IndexHintList: ds.IndexHints},
-		ds.AstIndexHints, ds.Table, ds.DBName, ds.TableInfo.Name, ds.IsForUpdateRead, true)
+		ds.AstIndexHints, ds.Table, ds.DBName, ds.TableInfo.Name, ds.IsForUpdateRead, true, false)
 	if err != nil {
 		return err
 	}
