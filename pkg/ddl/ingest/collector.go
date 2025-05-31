@@ -32,8 +32,10 @@ func init() {
 		if !ok {
 			return
 		}
+		//nolint: forcetypeassert
 		connIDCollector := c.(*connIDCollector)
-		connIDCollector.tblID2Count.Range(func(key, value interface{}) bool {
+		connIDCollector.tblID2Count.Range(func(key, value any) bool {
+			//nolint: forcetypeassert
 			tableCollector := value.(*tableCollector)
 			tableCollector.totalSingleWriteCnt.Add(tableCollector.singleWriteCnt.Load())
 			tableCollector.singleWriteCnt.Store(0)
@@ -46,10 +48,13 @@ func init() {
 		c, _ := coll.write.LoadOrStore(connID, &connIDCollector{
 			tblID2Count: sync.Map{},
 		})
+		//nolint: forcetypeassert
 		tc, _ := c.(*connIDCollector).tblID2Count.LoadOrStore(tableID, &tableCollector{})
 		if doubleWrite {
+			//nolint: forcetypeassert
 			tc.(*tableCollector).doubleWriteCnt.Add(1)
 		} else {
+			//nolint: forcetypeassert
 			tc.(*tableCollector).singleWriteCnt.Add(1)
 		}
 	}
@@ -58,8 +63,10 @@ func init() {
 		if !ok {
 			return
 		}
+		//nolint: forcetypeassert
 		connIDCollector := c.(*connIDCollector)
-		connIDCollector.tblID2Count.Range(func(key, value interface{}) bool {
+		connIDCollector.tblID2Count.Range(func(key, value any) bool {
+			//nolint: forcetypeassert
 			tableCollector := value.(*tableCollector)
 			tableCollector.singleWriteCnt.Store(0)
 			tableCollector.doubleWriteCnt.Store(0)
@@ -67,7 +74,8 @@ func init() {
 		})
 	}
 	metrics.DDLResetTempIndexWrite = func(tblID int64) {
-		coll.write.Range(func(key, value interface{}) bool {
+		coll.write.Range(func(key, value any) bool {
+			//nolint: forcetypeassert
 			connIDCollector := value.(*connIDCollector)
 			connIDCollector.tblID2Count.Delete(tblID)
 			return true
@@ -80,7 +88,9 @@ func init() {
 
 	metrics.DDLSetTempIndexScanAndMerge = func(tableID int64, scanCnt, mergeCnt uint64) {
 		c, _ := coll.read.LoadOrStore(tableID, &mergeAndScan{})
+		//nolint: forcetypeassert
 		c.(*mergeAndScan).scan.Add(scanCnt)
+		//nolint: forcetypeassert
 		c.(*mergeAndScan).merge.Add(mergeCnt)
 	}
 }
@@ -136,9 +146,12 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	singleMap := make(map[int64]uint64)
 	doubleMap := make(map[int64]uint64)
 	c.write.Range(func(key, value any) bool {
+		//nolint: forcetypeassert
 		connIDCollector := value.(*connIDCollector)
-		connIDCollector.tblID2Count.Range(func(tableKey, tableValue interface{}) bool {
+		connIDCollector.tblID2Count.Range(func(tableKey, tableValue any) bool {
+			//nolint: forcetypeassert
 			tableID := tableKey.(int64)
+			//nolint: forcetypeassert
 			tableCollector := tableValue.(*tableCollector)
 			singleMap[tableID] += tableCollector.totalSingleWriteCnt.Load()
 			doubleMap[tableID] += tableCollector.totalDoubleWriteCnt.Load()
@@ -167,7 +180,9 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	mergeMap := make(map[int64]uint64)
 	scanMap := make(map[int64]uint64)
 	c.read.Range(func(key, value any) bool {
+		//nolint: forcetypeassert
 		tableID := key.(int64)
+		//nolint: forcetypeassert
 		ms := value.(*mergeAndScan)
 		mergeMap[tableID] += ms.merge.Load()
 		scanMap[tableID] += ms.scan.Load()
