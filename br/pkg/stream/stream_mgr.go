@@ -18,6 +18,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
@@ -42,6 +44,8 @@ const (
 
 	streamBackupGlobalCheckpointPrefix = "v1/global_checkpoint"
 )
+
+var metaPattern = regexp.MustCompile(`^(\d+)-(\d+)-(\d+)-[^/]+$`)
 
 func GetStreamBackupMetaPrefix() string {
 	return streamBackupMetaPrefix
@@ -365,11 +369,47 @@ func (m *MetadataHelper) Close() {
 	}
 }
 
+func FilterPathByTs(path string, shiftStartTS, restoreTS uint64) string {
+	filename := strings.TrimSuffix(path, ".meta")
+	filename = filename[strings.LastIndex(filename, "/")+1:]
+
+	if metaPattern.MatchString(filename) {
+		matches := metaPattern.FindStringSubmatch(filename)
+		if len(matches) < 4 {
+			log.Warn("invalid meta file name format", zap.String("file", path))
+			// consider compatible with future file path change
+			return path
+		}
+
+		minTs, _ := strconv.ParseUint(matches[1], 10, 64)
+		maxTs, _ := strconv.ParseUint(matches[2], 10, 64)
+		minDefaultTs, _ := strconv.ParseUint(matches[3], 10, 64)
+
+		if minDefaultTs == 0 || minDefaultTs > minTs {
+			log.Warn("minDefaultTs is not correct, fallback to minTs",
+				zap.String("file", path),
+				zap.Uint64("minTs", minTs),
+				zap.Uint64("minDefaultTs", minDefaultTs),
+			)
+			minDefaultTs = minTs
+		}
+
+		if restoreTS < minDefaultTs || maxTs < shiftStartTS {
+			return ""
+		}
+	}
+
+	// keep consistency with old behaviour
+	return path
+}
+
 // FastUnmarshalMetaData used a 128 worker pool to speed up
 // read metadata content from external_storage.
 func FastUnmarshalMetaData(
 	ctx context.Context,
 	s storage.ExternalStorage,
+	startTS uint64,
+	endTS uint64,
 	metaDataWorkerPoolSize uint,
 	fn func(path string, rawMetaData []byte) error,
 ) error {
@@ -381,7 +421,15 @@ func FastUnmarshalMetaData(
 		if !strings.HasSuffix(path, metaSuffix) {
 			return nil
 		}
-		readPath := path
+		readPath := FilterPathByTs(path, startTS, endTS)
+		if len(readPath) == 0 {
+			log.Info("skip download meta file out of range",
+				zap.String("file", path),
+				zap.Uint64("startTs", startTS),
+				zap.Uint64("endTs", endTS),
+			)
+			return nil
+		}
 		pool.ApplyOnErrorGroup(eg, func() error {
 			b, err := s.ReadFile(ectx, readPath)
 			if err != nil {
