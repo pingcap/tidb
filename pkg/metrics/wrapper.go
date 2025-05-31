@@ -23,6 +23,11 @@ import (
 
 var constLabels prometheus.Labels
 
+// GetConstLabels returns constant labels for metrics.
+func GetConstLabels() prometheus.Labels {
+	return constLabels
+}
+
 // SetConstLabels sets constant labels for metrics.
 func SetConstLabels(kv ...string) {
 	if len(kv)%2 == 1 {
