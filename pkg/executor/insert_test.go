@@ -731,5 +731,5 @@ func TestInsertDSTTransitionBackward(t *testing.T) {
 	tk.MustExec("insert into t values ('2024-10-27 02:30:00')")
 	tk.MustExec("insert into t values ('2025-10-26 02:30:00')")
 	tk.MustExec(`set time_zone = 'UTC'`)
-	tk.MustQuery(`select * from t order by a`).Check(testkit.Rows("2024-10-27 01:30:00", "2025-10-26 01:30:00"))
+	tk.MustQuery(`select * from t order by a`).Check(testkit.Rows("2024-10-27 00:30:00", "2025-10-26 00:30:00"))
 }

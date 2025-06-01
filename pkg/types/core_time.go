@@ -168,7 +168,7 @@ func (t CoreTime) YearDay() int {
 
 // GoTime converts Time to GoTime.
 func (t CoreTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
-	return t.goTimeDSTAfterTransition(loc)
+	return t.goTimeDSTBeforeTransition(loc)
 }
 
 // goTime converts Time to GoTime.
@@ -189,27 +189,36 @@ func (t CoreTime) goTime(loc *gotime.Location) (gotime.Time, error) {
 	return tm, nil
 }
 
-// goTimeDSTAfterTransition converts Time to GoTime, and if the timestamp is between a
-// daylight saving transition moving the clock backwards, interprets the time as the second occurrence.
+// goTimeDSTBeforeTransition converts Time to GoTime, and if the timestamp is between a
+// daylight saving transition moving the clock backwards, interprets the time as the first occurrence.
 // I.e. if DST transition is 02:59:59+02:00 -> 02:00:00+01:00,
-// it will interpret 02:30:00 as 02:30:00+01:00, Never 02:30:00+02:00.
-func (t CoreTime) goTimeDSTAfterTransition(loc *gotime.Location) (gotime.Time, error) {
+// it will interpret 02:30:00 as 02:30:00+02:00, Never 02:30:00+01:00.
+func (t CoreTime) goTimeDSTBeforeTransition(loc *gotime.Location) (gotime.Time, error) {
 	tm, err := t.goTime(loc)
 	if err != nil {
 		return tm, err
 	}
-	if !tm.IsDST() {
+	if tm.IsDST() {
 		// no need to adjust.
 		return tm, nil
 	}
-	_, end := tm.ZoneBounds()
+	start, _ := tm.ZoneBounds()
+	// time zone transitions are normally 1 hour, I have seen cases with 2 hours,
+	// allow up to 4 hours for checking.
+	if start.Add(4 * gotime.Hour).Before(tm) {
+		return tm, nil
+	}
 	// Get the offset difference for DST vs Normal Time.
-	_, offsetDST := end.Zone()
-	_, offsetNormal := end.Add(gotime.Second).Zone()
+	prevStart, _ := start.Add(-1 * gotime.Second).ZoneBounds()
+	if !prevStart.IsDST() {
+		return tm, nil
+	}
+	_, offsetDST := prevStart.Zone()
+	_, offsetNormal := start.Zone()
 	diff := offsetDST - offsetNormal
 	//nolint:durationcheck
-	tAdjusted := tm.Add(gotime.Duration(diff) * gotime.Second)
-	if tAdjusted.After(end) {
+	tAdjusted := tm.Add(-gotime.Duration(diff) * gotime.Second)
+	if tAdjusted.Before(start) {
 		return tAdjusted, nil
 	}
 	return tm, nil
