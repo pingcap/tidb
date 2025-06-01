@@ -874,8 +874,7 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 		return ds, nil
 	}
 	// pruning the partition will impact the plan cache. so we need to return the original plan
-	if ds.SCtx().GetSessionVars().StmtCtx.InPreparedPlanBuilding &&
-		ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if ds.SCtx().GetSessionVars().StmtCtx.StmtCacheable {
 		return ds, nil
 	}
 	// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from ds.AllConds, the condition
