@@ -437,16 +437,14 @@ func BuildHistAndTopN(
 			}
 			// For debugging invalid sample data.
 			var (
-				foundOnce       bool
+				foundTwice      bool
 				firstTimeSample types.Datum
 			)
 			for j := range topNList {
 				if bytes.Equal(sampleBytes, topNList[j].Encoded) {
 					// This should never happen, but we met this panic before, so we add this check here.
 					// See: https://github.com/pingcap/tidb/issues/35948
-					// If we have "foundOnce" and entered this branch again, it means that
-					// the same value appears multiple times in the topN, which is not expected.
-					if foundOnce {
+					if foundTwice {
 						datumString, err := firstTimeSample.ToString()
 						if err != nil {
 							statslogutil.StatsLogger().Error("try to convert datum to string failed", zap.Error(err))
@@ -473,11 +471,8 @@ func BuildHistAndTopN(
 					samples = samples[:uint64(len(samples))-topNList[j].Count]
 					lenSamples = int64(len(samples))
 					i--
-					foundOnce = true
+					foundTwice = true
 					continue
-				} else if foundOnce {
-					// If we have found the value in topN, we can exit the loop early.
-					break
 				}
 			}
 		}
