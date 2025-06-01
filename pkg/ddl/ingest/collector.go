@@ -19,7 +19,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -27,72 +26,72 @@ var coll = newCollector()
 
 func init() {
 	prometheus.MustRegister(coll)
-	metrics.DDLCommitTempIndexWrite = func(connID uint64) {
-		c, ok := coll.write.Load(connID)
-		if !ok {
-			return
-		}
-		//nolint: forcetypeassert
-		connIDCollector := c.(*connIDCollector)
-		connIDCollector.tblID2Count.Range(func(key, value any) bool {
-			//nolint: forcetypeassert
-			tableCollector := value.(*tableCollector)
-			tableCollector.totalSingleWriteCnt.Add(tableCollector.singleWriteCnt.Load())
-			tableCollector.singleWriteCnt.Store(0)
-			tableCollector.totalDoubleWriteCnt.Add(tableCollector.doubleWriteCnt.Load())
-			tableCollector.doubleWriteCnt.Store(0)
-			return true
-		})
-	}
-	metrics.DDLAddOneTempIndexWrite = func(connID uint64, tableID int64, doubleWrite bool) {
-		c, _ := coll.write.LoadOrStore(connID, &connIDCollector{
-			tblID2Count: sync.Map{},
-		})
-		//nolint: forcetypeassert
-		tc, _ := c.(*connIDCollector).tblID2Count.LoadOrStore(tableID, &tableCollector{})
-		if doubleWrite {
-			//nolint: forcetypeassert
-			tc.(*tableCollector).doubleWriteCnt.Add(1)
-		} else {
-			//nolint: forcetypeassert
-			tc.(*tableCollector).singleWriteCnt.Add(1)
-		}
-	}
-	metrics.DDLRollbackTempIndexWrite = func(connID uint64) {
-		c, ok := coll.write.Load(connID)
-		if !ok {
-			return
-		}
-		//nolint: forcetypeassert
-		connIDCollector := c.(*connIDCollector)
-		connIDCollector.tblID2Count.Range(func(key, value any) bool {
-			//nolint: forcetypeassert
-			tableCollector := value.(*tableCollector)
-			tableCollector.singleWriteCnt.Store(0)
-			tableCollector.doubleWriteCnt.Store(0)
-			return true
-		})
-	}
-	metrics.DDLResetTempIndexWrite = func(tblID int64) {
-		coll.write.Range(func(key, value any) bool {
-			//nolint: forcetypeassert
-			connIDCollector := value.(*connIDCollector)
-			connIDCollector.tblID2Count.Delete(tblID)
-			return true
-		})
-		coll.read.Delete(tblID)
-	}
-	metrics.DDLClearTempIndexWrite = func(connID uint64) {
-		coll.write.Delete(connID)
-	}
+	// metrics.DDLCommitTempIndexWrite = func(connID uint64) {
+	// 	c, ok := coll.write.Load(connID)
+	// 	if !ok {
+	// 		return
+	// 	}
+	// 	//nolint: forcetypeassert
+	// 	connIDCollector := c.(*connIDCollector)
+	// 	connIDCollector.tblID2Count.Range(func(key, value any) bool {
+	// 		//nolint: forcetypeassert
+	// 		tableCollector := value.(*tableCollector)
+	// 		tableCollector.totalSingleWriteCnt.Add(tableCollector.singleWriteCnt.Load())
+	// 		tableCollector.singleWriteCnt.Store(0)
+	// 		tableCollector.totalDoubleWriteCnt.Add(tableCollector.doubleWriteCnt.Load())
+	// 		tableCollector.doubleWriteCnt.Store(0)
+	// 		return true
+	// 	})
+	// }
+	// metrics.DDLAddOneTempIndexWrite = func(connID uint64, tableID int64, doubleWrite bool) {
+	// 	c, _ := coll.write.LoadOrStore(connID, &connIDCollector{
+	// 		tblID2Count: sync.Map{},
+	// 	})
+	// 	//nolint: forcetypeassert
+	// 	tc, _ := c.(*connIDCollector).tblID2Count.LoadOrStore(tableID, &tableCollector{})
+	// 	if doubleWrite {
+	// 		//nolint: forcetypeassert
+	// 		tc.(*tableCollector).doubleWriteCnt.Add(1)
+	// 	} else {
+	// 		//nolint: forcetypeassert
+	// 		tc.(*tableCollector).singleWriteCnt.Add(1)
+	// 	}
+	// }
+	// metrics.DDLRollbackTempIndexWrite = func(connID uint64) {
+	// 	c, ok := coll.write.Load(connID)
+	// 	if !ok {
+	// 		return
+	// 	}
+	// 	//nolint: forcetypeassert
+	// 	connIDCollector := c.(*connIDCollector)
+	// 	connIDCollector.tblID2Count.Range(func(key, value any) bool {
+	// 		//nolint: forcetypeassert
+	// 		tableCollector := value.(*tableCollector)
+	// 		tableCollector.singleWriteCnt.Store(0)
+	// 		tableCollector.doubleWriteCnt.Store(0)
+	// 		return true
+	// 	})
+	// }
+	// metrics.DDLResetTempIndexWrite = func(tblID int64) {
+	// 	coll.write.Range(func(key, value any) bool {
+	// 		//nolint: forcetypeassert
+	// 		connIDCollector := value.(*connIDCollector)
+	// 		connIDCollector.tblID2Count.Delete(tblID)
+	// 		return true
+	// 	})
+	// 	coll.read.Delete(tblID)
+	// }
+	// metrics.DDLClearTempIndexWrite = func(connID uint64) {
+	// 	coll.write.Delete(connID)
+	// }
 
-	metrics.DDLSetTempIndexScanAndMerge = func(tableID int64, scanCnt, mergeCnt uint64) {
-		c, _ := coll.read.LoadOrStore(tableID, &mergeAndScan{})
-		//nolint: forcetypeassert
-		c.(*mergeAndScan).scan.Add(scanCnt)
-		//nolint: forcetypeassert
-		c.(*mergeAndScan).merge.Add(mergeCnt)
-	}
+	// metrics.DDLSetTempIndexScanAndMerge = func(tableID int64, scanCnt, mergeCnt uint64) {
+	// 	c, _ := coll.read.LoadOrStore(tableID, &mergeAndScan{})
+	// 	//nolint: forcetypeassert
+	// 	c.(*mergeAndScan).scan.Add(scanCnt)
+	// 	//nolint: forcetypeassert
+	// 	c.(*mergeAndScan).merge.Add(mergeCnt)
+	// }
 }
 
 const (
