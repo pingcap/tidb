@@ -1363,17 +1363,6 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	// register task if needed
-	err = RegisterRestoreIfNeeded(ctx, cfg, PointRestoreCmd, mgr.GetDomain())
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, g, cfg, cfg.RestoreID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	// restore log.
 	cfg.adjustRestoreConfigForStreamRestore()
 	cfg.tiflashRecorder = tiflashrec.New()
@@ -1382,6 +1371,17 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 	defer logClient.Close(ctx)
+
+	// register task if needed
+	err = RegisterRestoreIfNeeded(ctx, cfg, PointRestoreCmd, logClient.GetDomain())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, g, cfg, cfg.RestoreID)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	ddlFiles, err := logClient.LoadDDLFiles(ctx)
 	if err != nil {
@@ -2047,16 +2047,23 @@ func generatePiTRTaskInfo(
 	if cfg.UseCheckpoint {
 		if len(cfg.CheckpointStorage) > 0 {
 			clusterID := mgr.GetPDClient().GetClusterID(ctx)
+			log.Info("initializing storage checkpoint meta manager for PiTR",
+				zap.Uint64("restoreID", restoreID),
+				zap.Uint64("clusterID", clusterID))
 			if err = cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID, restoreID); err != nil {
 				return nil, errors.Trace(err)
 			}
 		} else {
+			log.Info("initializing table checkpoint meta manager for PiTR",
+				zap.Uint64("restoreID", restoreID))
 			if err = cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain(), restoreID); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
 		curTaskInfo, err = checkpoint.GetCheckpointTaskInfo(ctx, cfg.snapshotCheckpointMetaManager, cfg.logCheckpointMetaManager)
-		log.Info("current task checkpoint info", zap.Any("checkpoint", curTaskInfo))
+		log.Info("current task checkpoint info",
+			zap.Any("checkpoint", curTaskInfo),
+			zap.Uint64("restoreID", restoreID))
 		if err != nil {
 			return checkInfo, errors.Trace(err)
 		}

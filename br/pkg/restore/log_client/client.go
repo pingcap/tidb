@@ -610,6 +610,7 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 	}
 	if exists {
 		// load the checkpoint since this is not the first time to restore
+		log.Info("loading existing log restore checkpoint")
 		meta, err := logCheckpointMetaManager.LoadCheckpointMetadata(ctx)
 		if err != nil {
 			return "", errors.Trace(err)

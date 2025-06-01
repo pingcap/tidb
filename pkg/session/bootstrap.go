@@ -751,7 +751,7 @@ const (
 			with_sys_table,
 			cmd(256)
 		)
-	) AUTO_INCREMENT = 1 AUTO_ID_CACHE = 1;`
+	) AUTO_INCREMENT = 1;`
 
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
 	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"

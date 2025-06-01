@@ -144,11 +144,14 @@ func NewRestoreRegistry(g glue.Glue, dom *domain.Domain) (*Registry, error) {
 }
 
 func (r *Registry) Close() {
+	log.Info("closing registry")
 	if r.se != nil {
+		log.Info("closing registry session")
 		r.se.Close()
 		r.se = nil
 	}
 	if r.heartbeatSession != nil {
+		log.Info("closing registry heartbeat session")
 		r.heartbeatSession.Close()
 		r.heartbeatSession = nil
 	}

@@ -111,4 +111,5 @@ func (m *HeartbeatManager) Start(ctx context.Context) {
 func (m *HeartbeatManager) Stop() {
 	close(m.stopCh)
 	<-m.doneCh // Wait for goroutine to exit
+	log.Info("stopped heartbeat manager")
 }

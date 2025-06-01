@@ -689,12 +689,12 @@ func (cfg *RestoreConfig) newTableCheckpointMetaManagerPITR(g glue.Glue, dom *do
 	return nil
 }
 
-func (cfg *RestoreConfig) newTableCheckpointMetaManagerSnapshot(g glue.Glue, dom *domain.Domain, restoreID uint64) (err error) {
+func (cfg *RestoreConfig) newTableCheckpointMetaManagerSnapshot(g glue.Glue, dom *domain.Domain, id uint64) (err error) {
 	if cfg.snapshotCheckpointMetaManager != nil {
 		return nil
 	}
 	if cfg.snapshotCheckpointMetaManager, err = checkpoint.NewSnapshotTableMetaManager(
-		g, dom, checkpoint.SnapshotRestoreCheckpointDatabaseName, restoreID,
+		g, dom, checkpoint.SnapshotRestoreCheckpointDatabaseName, id,
 	); err != nil {
 		return errors.Trace(err)
 	}
@@ -967,12 +967,6 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			// on error, assume checkpoint is not persisted and unregister the task
 			checkpointPersisted = false
 		}
-
-		log.Info("handling restore failure",
-			zap.Uint64("restoreId", cfg.RestoreID),
-			zap.Bool("checkpointPersisted", checkpointPersisted),
-			zap.Error(restoreErr))
-
 		if checkpointPersisted {
 			log.Info("pausing restore task from registry",
 				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(restoreErr))
@@ -1002,13 +996,13 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	// Clear the checkpoint data if needed
-	cleanUpCheckpoints(c, cfg, cmdName)
+	cleanUpCheckpoints(c, cfg)
 	return nil
 }
 
-func cleanUpCheckpoints(ctx context.Context, cfg *RestoreConfig, cmdName string) {
+func cleanUpCheckpoints(ctx context.Context, cfg *RestoreConfig) {
 	if cfg.UseCheckpoint {
-		log.Info("start to remove checkpoint data for PITR restore")
+		log.Info("start to remove checkpoint data restore")
 		if cfg.logCheckpointMetaManager != nil {
 			err := cfg.logCheckpointMetaManager.RemoveCheckpointData(ctx)
 			if err != nil {
@@ -1220,7 +1214,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// register restore task if needed
-	err = RegisterRestoreIfNeeded(ctx, cfg.RestoreConfig, cmdName, client.GetDomain())
+	err = RegisterRestoreIfNeeded(ctx, cfg.RestoreConfig, cmdName, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1401,7 +1395,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// need to know whether restore has been completed so can restore schedulers
 	canRestoreSchedulers := false
 	defer func() {
-		cancel()
+		childCtx, childCancel := context.WithCancel(ctx)
+		childCancel()
 		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
 		if cfg.UseCheckpoint && !canRestoreSchedulers {
 			log.Info("skip removing pd scheduler for next retry")
@@ -1410,7 +1405,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("start to restore pd scheduler")
 		// run the post-work to avoid being stuck in the import
 		// mode or emptied schedulers.
-		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
+		restore.RestorePostWork(childCtx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
 		log.Info("finish restoring pd scheduler")
 	}()
 
@@ -1682,7 +1677,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	canRestoreSchedulers = true
-
+	log.Info("snapshot restore success")
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
 	return nil
