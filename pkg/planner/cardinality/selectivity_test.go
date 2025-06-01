@@ -252,11 +252,11 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	require.Equal(t, 7.2, count)
 
 	idxID := table.Meta().Indices[0].ID
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(30, 30))
+	count, _, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(30, 30))
 	require.NoError(t, err)
 	require.Equal(t, 0.1, count)
 
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(9, 30))
+	count, _, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(9, 30))
 	require.NoError(t, err)
 	require.Equal(t, 7.0, count)
 
@@ -286,7 +286,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	require.Equal(t, 1.0, count)
 
 	idxID = table.Meta().Indices[0].ID
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(2, 2))
+	count, _, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(2, 2))
 	require.NoError(t, err)
 	require.Equal(t, 0.0, count)
 }
@@ -403,11 +403,11 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 
 	sctx := mock.NewContext()
 	idxID := table.Meta().Indices[0].ID
-	count, _, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(7, 7))
+	count, _, _, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(7, 7))
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(6, 6))
+	count, _, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
@@ -1037,12 +1037,12 @@ func TestIssue39593(t *testing.T) {
 	sctx := testKit.Session()
 	idxID := tblInfo.Indices[0].ID
 	vals := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
-	count, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
+	count, _, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count without any changes
 	require.Equal(t, float64(360), count)
 	statsTbl.RealtimeCount *= 10
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
+	count, _, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table
 	require.Equal(t, float64(3600), count)
@@ -1492,17 +1492,17 @@ func TestRiskEqSkewRatio(t *testing.T) {
 	// Search for the value "6" which will not be found in the histogram buckets, and since
 	// there are NO topN values - the value will be considered skewed based upon skew ratio.
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
-	count, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	count, _, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
 	require.Equal(t, float64(1.8), count)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0.5")
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	count, _, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
 	// Result should be approx 3.4, but due to floating point - result can be flaky
 	require.Less(t, float64(3.3), count)
 	require.Greater(t, float64(3.5), count)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 1")
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	count, _, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
 	require.Equal(t, float64(5), count)
 	// reset skew ratio to 0
@@ -1513,17 +1513,17 @@ func TestRiskEqSkewRatio(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	// Rerun tests with 1 value in the TopN
 	statsTbl = h.GetTableStats(tb.Meta())
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	count, _, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
 	require.Equal(t, float64(1.25), count)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0.5")
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	count, _, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
 	// Result should be approx 1.625, but due to floating point - result can be flaky
 	require.Less(t, float64(1.6), count)
 	require.Greater(t, float64(1.7), count)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 1")
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	count, _, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
 	require.Equal(t, float64(2), count)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
