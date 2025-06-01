@@ -196,7 +196,7 @@ func getColumnRangeCounts(sctx planctx.PlanContext, colID int64, ranges []*range
 				return nil, 0, false
 			}
 			count, corrCount, _, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran})
-    } else {
+		} else {
 			colHist := histColl.GetCol(colID)
 			if statistics.ColumnStatsIsInvalid(colHist, sctx, histColl, colID) {
 				return nil, 0, false
