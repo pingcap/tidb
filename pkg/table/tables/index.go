@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -245,6 +246,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			if err != nil {
 				return nil, err
 			}
+			if keyIsTempIdxKey {
+				metrics.DDLAddOneTempIndexWrite(sctx.GetSessionVars().ConnectionID, c.tblInfo.ID, false)
+			}
 			if len(tempKey) > 0 {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
 				val = tempVal.Encode(nil)
@@ -252,6 +256,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 				if err != nil {
 					return nil, err
 				}
+				metrics.DDLAddOneTempIndexWrite(sctx.GetSessionVars().ConnectionID, c.tblInfo.ID, true)
 			}
 			if !opt.IgnoreAssertion && (!opt.Untouched) {
 				if sctx.GetSessionVars().LazyCheckKeyNotExists() && !txn.IsPessimistic() {
@@ -316,6 +321,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			if err != nil {
 				return nil, err
 			}
+			if keyIsTempIdxKey {
+				metrics.DDLAddOneTempIndexWrite(sctx.GetSessionVars().ConnectionID, c.tblInfo.ID, false)
+			}
 			if len(tempKey) > 0 {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
 				val = tempVal.Encode(value)
@@ -327,6 +335,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 				if err != nil {
 					return nil, err
 				}
+				metrics.DDLAddOneTempIndexWrite(sctx.GetSessionVars().ConnectionID, c.tblInfo.ID, true)
 			}
 			if opt.IgnoreAssertion {
 				continue
@@ -383,7 +392,9 @@ func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, t
 }
 
 // Delete removes the entry for handle h and indexedValues from KV index.
-func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) error {
+func (c *index) Delete(ctx sessionctx.Context, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) error {
+	sc := ctx.GetSessionVars().StmtCtx
+	connID := ctx.GetSessionVars().ConnectionID
 	indexedValues := c.getIndexedValue(indexedValue)
 	for _, value := range indexedValues {
 		key, distinct, err := c.GenIndexKey(sc, value, h, nil)
@@ -392,6 +403,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 		}
 
 		key, tempKey, tempKeyVer := GenTempIdxKeyByState(c.idxInfo, key)
+		doubleWrite := tempKeyVer == TempIndexKeyTypeMerge
 		var originTempVal []byte
 		if len(tempKey) > 0 && c.idxInfo.Unique {
 			// Get the origin value of the unique temporary index key.
@@ -453,6 +465,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 				if err != nil {
 					return err
 				}
+				metrics.DDLAddOneTempIndexWrite(connID, c.tblInfo.ID, doubleWrite)
 			}
 		} else {
 			if len(key) > 0 {
@@ -467,6 +480,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 				if err != nil {
 					return err
 				}
+				metrics.DDLAddOneTempIndexWrite(connID, c.tblInfo.ID, doubleWrite)
 			}
 		}
 		if c.idxInfo.State == model.StatePublic {

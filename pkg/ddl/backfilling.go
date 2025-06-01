@@ -145,12 +145,14 @@ type backfillTaskContext struct {
 type backfillCtx struct {
 	id int
 	*ddlCtx
-	sessCtx       sessionctx.Context
-	schemaName    string
-	table         table.Table
-	batchCnt      int
-	jobContext    *JobContext
-	metricCounter prometheus.Counter
+	sessCtx    sessionctx.Context
+	schemaName string
+	table      table.Table
+	batchCnt   int
+	jobContext *JobContext
+
+	metricCounter   prometheus.Counter
+	conflictCounter prometheus.Counter
 }
 
 func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context,
@@ -168,6 +170,8 @@ func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context,
 		jobContext: jobCtx,
 		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
 			metrics.GenerateReorgLabel(label, schemaName, tbl.Meta().Name.String())),
+		conflictCounter: metrics.BackfillTotalCounter.WithLabelValues(
+			metrics.GenerateReorgLabel(fmt.Sprintf("%s-conflict", label), schemaName, tbl.Meta().Name.String())),
 	}
 }
 
