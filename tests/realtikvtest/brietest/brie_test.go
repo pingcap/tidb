@@ -134,9 +134,6 @@ func TestCancel(t *testing.T) {
 
 func TestExistedTables(t *testing.T) {
 	tk := initTestKit(t)
-	t.Cleanup(func() {
-		cleanupRegistry(tk)
-	})
 
 	tmp := makeTempDirForBackup(t)
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
@@ -215,9 +212,6 @@ func TestExistedTables(t *testing.T) {
 // full backup * -> incremental backup * -> restore full backup * -> restore incremental backup *
 func TestExistedTablesOfIncremental(t *testing.T) {
 	tk := initTestKit(t)
-	t.Cleanup(func() {
-		cleanupRegistry(tk)
-	})
 
 	tmp := makeTempDirForBackup(t)
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
@@ -267,9 +261,6 @@ func TestExistedTablesOfIncremental(t *testing.T) {
 // full backup * -> incremental backup * -> restore full backup `test` -> restore incremental backup `test`
 func TestExistedTablesOfIncremental_1(t *testing.T) {
 	tk := initTestKit(t)
-	t.Cleanup(func() {
-		cleanupRegistry(tk)
-	})
 
 	tmp := makeTempDirForBackup(t)
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
@@ -319,9 +310,6 @@ func TestExistedTablesOfIncremental_1(t *testing.T) {
 // full backup `test` -> incremental backup `test` -> restore full backup * -> restore incremental backup *
 func TestExistedTablesOfIncremental_2(t *testing.T) {
 	tk := initTestKit(t)
-	t.Cleanup(func() {
-		cleanupRegistry(tk)
-	})
 
 	tmp := makeTempDirForBackup(t)
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")

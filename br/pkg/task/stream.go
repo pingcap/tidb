@@ -1363,17 +1363,8 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	// restore log.
-	cfg.adjustRestoreConfigForStreamRestore()
-	cfg.tiflashRecorder = tiflashrec.New()
-	logClient, err := createLogClient(ctx, g, cfg, mgr)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer logClient.Close(ctx)
-
 	// register task if needed
-	err = RegisterRestoreIfNeeded(ctx, cfg, PointRestoreCmd, logClient.GetDomain())
+	err = RegisterRestoreIfNeeded(ctx, cfg, PointRestoreCmd, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1382,6 +1373,15 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// restore log.
+	cfg.adjustRestoreConfigForStreamRestore()
+	cfg.tiflashRecorder = tiflashrec.New()
+	logClient, err := createLogClient(ctx, g, cfg, mgr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer logClient.Close(ctx)
 
 	ddlFiles, err := logClient.LoadDDLFiles(ctx)
 	if err != nil {
@@ -2039,6 +2039,11 @@ func generatePiTRTaskInfo(
 	)
 	checkInfo := &PiTRTaskInfo{}
 
+	log.Info("generating PiTR task info",
+		zap.Uint64("restoreID", restoreID),
+		zap.Bool("useCheckpoint", cfg.UseCheckpoint),
+		zap.Bool("doFullRestore", doFullRestore))
+
 	if cfg.UseCheckpoint {
 		if len(cfg.CheckpointStorage) > 0 {
 			clusterID := mgr.GetPDClient().GetClusterID(ctx)
@@ -2180,6 +2185,9 @@ func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *Log
 func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName string, domain *domain.Domain) error {
 	// already registered previously
 	if cfg.RestoreID != 0 {
+		log.Info("restore task already registered, skipping re-registration",
+			zap.Uint64("restoreID", cfg.RestoreID),
+			zap.String("cmdName", cmdName))
 		return nil
 	}
 
@@ -2204,6 +2212,10 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 		return errors.Trace(err)
 	}
 	cfg.RestoreID = restoreID
+
+	log.Info("registered restore task",
+		zap.Uint64("restoreID", restoreID),
+		zap.String("cmdName", cmdName))
 
 	cfg.RestoreRegistry.StartHeartbeatManager(ctx, restoreID)
 

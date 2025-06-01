@@ -614,6 +614,12 @@ func (cfg *RestoreConfig) newStorageCheckpointMetaManagerPITR(
 	downstreamClusterID uint64,
 	restoreID uint64,
 ) error {
+	log.Info("creating storage checkpoint meta managers for PiTR",
+		zap.Uint64("restoreID", restoreID),
+		zap.Uint64("downstreamClusterID", downstreamClusterID),
+		zap.String("checkpointStorage", cfg.CheckpointStorage),
+		zap.Bool("hasFullBackupStorage", len(cfg.FullBackupStorage) > 0))
+
 	_, checkpointStorage, err := GetStorage(ctx, cfg.CheckpointStorage, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
@@ -621,11 +627,17 @@ func (cfg *RestoreConfig) newStorageCheckpointMetaManagerPITR(
 	if len(cfg.FullBackupStorage) > 0 {
 		cfg.snapshotCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
 			checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "snapshot", restoreID)
+		log.Info("created snapshot checkpoint meta manager",
+			zap.Uint64("restoreID", restoreID))
 	}
 	cfg.logCheckpointMetaManager = checkpoint.NewLogStorageMetaManager(
 		checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "log", restoreID)
+	log.Info("created log checkpoint meta manager",
+		zap.Uint64("restoreID", restoreID))
 	cfg.sstCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
 		checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "sst", restoreID)
+	log.Info("created sst checkpoint meta manager",
+		zap.Uint64("restoreID", restoreID))
 	return nil
 }
 
@@ -647,32 +659,42 @@ func (cfg *RestoreConfig) newStorageCheckpointMetaManagerSnapshot(
 }
 
 func (cfg *RestoreConfig) newTableCheckpointMetaManagerPITR(g glue.Glue, dom *domain.Domain, id uint64) (err error) {
+	log.Info("creating table checkpoint meta managers for PiTR",
+		zap.Uint64("restoreID", id),
+		zap.Bool("hasFullBackupStorage", len(cfg.FullBackupStorage) > 0))
+
 	if len(cfg.FullBackupStorage) > 0 {
 		if cfg.snapshotCheckpointMetaManager, err = checkpoint.NewSnapshotTableMetaManager(
 			g, dom, checkpoint.SnapshotRestoreCheckpointDatabaseName, id,
 		); err != nil {
 			return errors.Trace(err)
 		}
+		log.Info("created snapshot table checkpoint meta manager",
+			zap.Uint64("restoreID", id))
 	}
 	if cfg.logCheckpointMetaManager, err = checkpoint.NewLogTableMetaManager(
 		g, dom, checkpoint.LogRestoreCheckpointDatabaseName, id,
 	); err != nil {
 		return errors.Trace(err)
 	}
+	log.Info("created log table checkpoint meta manager",
+		zap.Uint64("restoreID", id))
 	if cfg.sstCheckpointMetaManager, err = checkpoint.NewSnapshotTableMetaManager(
 		g, dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName, id,
 	); err != nil {
 		return errors.Trace(err)
 	}
+	log.Info("created sst table checkpoint meta manager",
+		zap.Uint64("restoreID", id))
 	return nil
 }
 
-func (cfg *RestoreConfig) newTableCheckpointMetaManagerSnapshot(g glue.Glue, dom *domain.Domain, id uint64) (err error) {
+func (cfg *RestoreConfig) newTableCheckpointMetaManagerSnapshot(g glue.Glue, dom *domain.Domain, restoreID uint64) (err error) {
 	if cfg.snapshotCheckpointMetaManager != nil {
 		return nil
 	}
 	if cfg.snapshotCheckpointMetaManager, err = checkpoint.NewSnapshotTableMetaManager(
-		g, dom, checkpoint.SnapshotRestoreCheckpointDatabaseName, id,
+		g, dom, checkpoint.SnapshotRestoreCheckpointDatabaseName, restoreID,
 	); err != nil {
 		return errors.Trace(err)
 	}
@@ -945,6 +967,12 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			// on error, assume checkpoint is not persisted and unregister the task
 			checkpointPersisted = false
 		}
+
+		log.Info("handling restore failure",
+			zap.Uint64("restoreId", cfg.RestoreID),
+			zap.Bool("checkpointPersisted", checkpointPersisted),
+			zap.Error(restoreErr))
+
 		if checkpointPersisted {
 			log.Info("pausing restore task from registry",
 				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(restoreErr))
@@ -1226,7 +1254,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
-	reusePreallocIDs, err := checkPreallocIDReusable(ctx, mgr, g, cfg, hash, cpEnabledAndExists)
+	reusePreallocIDs, err := checkPreallocIDReusable(ctx, cfg, hash, cpEnabledAndExists)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1660,7 +1688,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	return nil
 }
 
-func checkPreallocIDReusable(ctx context.Context, mgr *conn.Mgr, g glue.Glue, cfg *SnapshotRestoreConfig, hash []byte, checkpointExist bool) (prealloc *checkpoint.PreallocIDs, err error) {
+func checkPreallocIDReusable(ctx context.Context, cfg *SnapshotRestoreConfig, hash []byte, checkpointExist bool) (prealloc *checkpoint.PreallocIDs, err error) {
 	if !checkpointExist {
 		return nil, nil
 	}

@@ -66,7 +66,7 @@ func TestRegistryBasicOperations(t *testing.T) {
 	ctx := context.Background()
 
 	// Test table should be created automatically
-	tk.MustExec(fmt.Sprintf("SHOW DATABASES LIKE '%s'", registry.RegistrationDBName))
+	tk.MustExec(fmt.Sprintf("SHOW DATABASES LIKE '%s'", registry.RestoreRegistryDBName))
 
 	// Test creating a new registration
 	info := registry.RegistrationInfo{
@@ -83,9 +83,9 @@ func TestRegistryBasicOperations(t *testing.T) {
 	require.Greater(t, restoreID, uint64(0))
 
 	// Verify registration exists in the database
-	tk.MustExec(fmt.Sprintf("USE %s", registry.RegistrationDBName))
+	tk.MustExec(fmt.Sprintf("USE %s", registry.RestoreRegistryDBName))
 	rows := tk.MustQuery(fmt.Sprintf("SELECT id, filter_strings, status FROM %s WHERE id = %d",
-		registry.RegistrationTableName, restoreID))
+		registry.RestoreRegistryDBName, restoreID))
 
 	// Check first row has the ID and status "running"
 	row := rows.Rows()[0]
@@ -99,7 +99,7 @@ func TestRegistryBasicOperations(t *testing.T) {
 
 	// Verify task is now paused
 	rows = tk.MustQuery(fmt.Sprintf("SELECT status FROM %s WHERE id = %d",
-		registry.RegistrationTableName, restoreID))
+		registry.RestoreRegistryDBName, restoreID))
 	require.Equal(t, "paused", rows.Rows()[0][0])
 
 	// Test resuming a paused task
@@ -109,7 +109,7 @@ func TestRegistryBasicOperations(t *testing.T) {
 
 	// Verify task is running again
 	rows = tk.MustQuery(fmt.Sprintf("SELECT status FROM %s WHERE id = %d",
-		registry.RegistrationTableName, restoreID))
+		registry.RestoreRegistryDBName, restoreID))
 	require.Equal(t, "running", rows.Rows()[0][0])
 
 	// Test conflict detection
@@ -122,7 +122,7 @@ func TestRegistryBasicOperations(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify it's gone
-	_, exists := dom.InfoSchema().SchemaByName(ast.NewCIStr(registry.RegistrationDBName))
+	_, exists := dom.InfoSchema().SchemaByName(ast.NewCIStr(registry.RestoreRegistryDBName))
 	require.False(t, exists)
 }
 
