@@ -1395,8 +1395,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// need to know whether restore has been completed so can restore schedulers
 	canRestoreSchedulers := false
 	defer func() {
-		childCtx, childCancel := context.WithCancel(ctx)
-		childCancel()
+		cancel()
 		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
 		if cfg.UseCheckpoint && !canRestoreSchedulers {
 			log.Info("skip removing pd scheduler for next retry")
@@ -1405,7 +1404,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("start to restore pd scheduler")
 		// run the post-work to avoid being stuck in the import
 		// mode or emptied schedulers.
-		restore.RestorePostWork(childCtx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
+		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
 		log.Info("finish restoring pd scheduler")
 	}()
 
