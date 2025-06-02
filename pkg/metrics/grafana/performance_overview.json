@@ -528,7 +528,7 @@
             },
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_tikvclient_backoff_seconds_sum{k8s_cluster=\"$k8s_cluster\",cluster_id=~\".*$tidb_cluster\"}[1m])) ",
+              "expr": "sum(rate(tidb_tikvclient_backoff_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m]))",
               "hide": false,
               "interval": "",
               "legendFormat": "Backoff",
