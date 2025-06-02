@@ -476,7 +476,8 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 	wcancel := func() {}
 	failpoint.Inject("shortWaitNTimeout", func(val failpoint.Value) {
 		var innerTimeout time.Duration
-		// GO_FAILPOINTS action supplies the duration in ms
+		// GO_FAILPOINTS action supplies the duration in
+		ms, _ := val.(int)
 		innerTimeout = time.Duration(ms) * time.Millisecond
 		log.FromContext(ctx).Info("Injecting a timeout to write context.")
 		wctx, wcancel = context.WithTimeoutCause(
