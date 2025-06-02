@@ -29,7 +29,6 @@ go_test(
         "//pkg/domain",
         "//pkg/executor",
         "//pkg/kv",
-        "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/session",
         "//pkg/testkit",

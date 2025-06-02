@@ -1363,17 +1363,8 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	// restore log.
-	cfg.adjustRestoreConfigForStreamRestore()
-	cfg.tiflashRecorder = tiflashrec.New()
-	logClient, err := createLogClient(ctx, g, cfg, mgr)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer logClient.Close(ctx)
-
 	// register task if needed
-	err = RegisterRestoreIfNeeded(ctx, cfg, PointRestoreCmd, logClient.GetDomain())
+	err = RegisterRestoreIfNeeded(ctx, cfg, PointRestoreCmd, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1382,6 +1373,14 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	cfg.adjustRestoreConfigForStreamRestore()
+	cfg.tiflashRecorder = tiflashrec.New()
+	logClient, err := createLogClient(ctx, g, cfg, mgr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer logClient.Close(ctx)
 
 	ddlFiles, err := logClient.LoadDDLFiles(ctx)
 	if err != nil {

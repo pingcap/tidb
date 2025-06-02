@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -55,8 +54,15 @@ func initRegistryTest(t *testing.T) (*testkit.TestKit, *domain.Domain, glue.Glue
 	return tk, dom, g
 }
 
+// cleanupRegistryTable truncates the registry table to ensure clean state between tests
+func cleanupRegistryTable(tk *testkit.TestKit) {
+	// Clean up the registry table to ensure clean state for next test
+	tk.MustExec(fmt.Sprintf("DELETE FROM %s.%s", registry.RestoreRegistryDBName, registry.RestoreRegistryTableName))
+}
+
 func TestRegistryBasicOperations(t *testing.T) {
 	tk, dom, g := initRegistryTest(t)
+	cleanupRegistryTable(tk)
 
 	// Create registry
 	r, err := registry.NewRestoreRegistry(g, dom)
@@ -121,13 +127,15 @@ func TestRegistryBasicOperations(t *testing.T) {
 	err = r.Unregister(ctx, restoreID)
 	require.NoError(t, err)
 
-	// Verify it's gone
-	_, exists := dom.InfoSchema().SchemaByName(ast.NewCIStr(registry.RestoreRegistryDBName))
-	require.False(t, exists)
+	// Verify the specific row is gone from the table
+	rows = tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM %s.%s WHERE id = %d",
+		registry.RestoreRegistryDBName, registry.RestoreRegistryTableName, restoreID))
+	require.Equal(t, "0", rows.Rows()[0][0])
 }
 
 func TestRegistryTableConflicts(t *testing.T) {
-	_, dom, g := initRegistryTest(t)
+	tk, dom, g := initRegistryTest(t)
+	cleanupRegistryTable(tk)
 
 	// Create registry
 	r, err := registry.NewRestoreRegistry(g, dom)
@@ -190,7 +198,8 @@ func TestRegistryTableConflicts(t *testing.T) {
 }
 
 func TestGetRegistrationsByMaxID(t *testing.T) {
-	_, dom, g := initRegistryTest(t)
+	tk, dom, g := initRegistryTest(t)
+	cleanupRegistryTable(tk)
 
 	// Create registry
 	r, err := registry.NewRestoreRegistry(g, dom)
