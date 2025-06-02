@@ -52,7 +52,7 @@ const (
 		AND upstream_cluster_id = %%?
 		AND with_sys_table = %%?
 		AND cmd = %%?
-		ORDER BY id DESC LIMIT 1`
+		ORDER BY id DESC`
 
 	// updateStatusSQLTemplate is the SQL template for updating a task's status
 	updateStatusSQLTemplate = `

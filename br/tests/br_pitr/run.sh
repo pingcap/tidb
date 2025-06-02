@@ -115,10 +115,6 @@ fi
 echo "clean up failed restore registry entry"
 run_sql "DELETE FROM mysql.tidb_restore_registry WHERE cmd LIKE '%Point Restore%' AND status = 'paused';"
 
-# debug: print what's still in the registry table after cleanup
-echo "debug: contents of restore registry table after cleanup:"
-run_sql "SELECT id, status, cmd, start_ts, restored_ts FROM mysql.tidb_restore_registry;"
-
 # PITR restore
 echo "run pitr"
 latest_log_db=$(run_sql "select table_schema from information_schema.tables where table_schema like '__TiDB_BR_Temporary_Log_Restore_Checkpoint%' order by table_schema desc limit 1;" | tail -n 1 | awk '{print $2}')
