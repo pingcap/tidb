@@ -11,8 +11,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
-// TemporaryDBNamePrefix is the prefix name of system db, e.g. mysql system db will be rename to __TiDB_BR_Temporary_mysql
-const TemporaryDBNamePrefix = "__TiDB_BR_Temporary_"
+// temporaryDBNamePrefix is the prefix name of system db, e.g. mysql system db will be rename to __TiDB_BR_Temporary_mysql
+const temporaryDBNamePrefix = "__TiDB_BR_Temporary_"
 
 // NeedAutoID checks whether the table needs backing up with an autoid.
 func NeedAutoID(tblInfo *model.TableInfo) bool {
@@ -33,7 +33,7 @@ func EncloseDBAndTable(database, table string) string {
 
 // IsTemplateSysDB checks wheterh the dbname is temporary system database(__TiDB_BR_Temporary_mysql or __TiDB_BR_Temporary_sys).
 func IsTemplateSysDB(dbname ast.CIStr) bool {
-	return dbname.O == TemporaryDBNamePrefix+mysql.SystemDB || dbname.O == TemporaryDBNamePrefix+mysql.SysDB
+	return dbname.O == temporaryDBNamePrefix+mysql.SystemDB || dbname.O == temporaryDBNamePrefix+mysql.SysDB
 }
 
 // IsSysDB tests whether the database is system DB.
@@ -44,23 +44,23 @@ func IsSysDB(dbLowerName string) bool {
 
 // TemporaryDBName makes a 'private' database name.
 func TemporaryDBName(db string) ast.CIStr {
-	return ast.NewCIStr(TemporaryDBNamePrefix + db)
+	return ast.NewCIStr(temporaryDBNamePrefix + db)
 }
 
 // StripTempDBPrefixIfNeeded get the original name of system DB
 func StripTempDBPrefixIfNeeded(tempDB string) string {
-	if ok := strings.HasPrefix(tempDB, TemporaryDBNamePrefix); !ok {
+	if ok := strings.HasPrefix(tempDB, temporaryDBNamePrefix); !ok {
 		return tempDB
 	}
-	return tempDB[len(TemporaryDBNamePrefix):]
+	return tempDB[len(temporaryDBNamePrefix):]
 }
 
 // StripTempDBPrefix get the original name of temporary system DB
 func StripTempDBPrefix(tempDB string) (string, bool) {
-	if ok := strings.HasPrefix(tempDB, TemporaryDBNamePrefix); !ok {
+	if ok := strings.HasPrefix(tempDB, temporaryDBNamePrefix); !ok {
 		return tempDB, false
 	}
-	return tempDB[len(TemporaryDBNamePrefix):], true
+	return tempDB[len(temporaryDBNamePrefix):], true
 }
 
 // IsSysOrTempSysDB tests whether the database is system DB or prefixed with temp.
@@ -71,10 +71,10 @@ func IsSysOrTempSysDB(db string) bool {
 
 // GetSysDBCIStrName get the CIStr name of system DB
 func GetSysDBCIStrName(tempDB ast.CIStr) (ast.CIStr, bool) {
-	if ok := strings.HasPrefix(tempDB.O, TemporaryDBNamePrefix); !ok {
+	if ok := strings.HasPrefix(tempDB.O, temporaryDBNamePrefix); !ok {
 		return tempDB, false
 	}
-	tempDB.O = tempDB.O[len(TemporaryDBNamePrefix):]
-	tempDB.L = tempDB.L[len(TemporaryDBNamePrefix):]
+	tempDB.O = tempDB.O[len(temporaryDBNamePrefix):]
+	tempDB.L = tempDB.L[len(temporaryDBNamePrefix):]
 	return tempDB, true
 }
