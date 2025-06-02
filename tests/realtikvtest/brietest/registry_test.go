@@ -91,7 +91,7 @@ func TestRegistryBasicOperations(t *testing.T) {
 	// Verify registration exists in the database
 	tk.MustExec(fmt.Sprintf("USE %s", registry.RestoreRegistryDBName))
 	rows := tk.MustQuery(fmt.Sprintf("SELECT id, filter_strings, status FROM %s WHERE id = %d",
-		registry.RestoreRegistryDBName, restoreID))
+		registry.RestoreRegistryTableName, restoreID))
 
 	// Check first row has the ID and status "running"
 	row := rows.Rows()[0]
@@ -105,7 +105,7 @@ func TestRegistryBasicOperations(t *testing.T) {
 
 	// Verify task is now paused
 	rows = tk.MustQuery(fmt.Sprintf("SELECT status FROM %s WHERE id = %d",
-		registry.RestoreRegistryDBName, restoreID))
+		registry.RestoreRegistryTableName, restoreID))
 	require.Equal(t, "paused", rows.Rows()[0][0])
 
 	// Test resuming a paused task
@@ -115,7 +115,7 @@ func TestRegistryBasicOperations(t *testing.T) {
 
 	// Verify task is running again
 	rows = tk.MustQuery(fmt.Sprintf("SELECT status FROM %s WHERE id = %d",
-		registry.RestoreRegistryDBName, restoreID))
+		registry.RestoreRegistryTableName, restoreID))
 	require.Equal(t, "running", rows.Rows()[0][0])
 
 	// Test conflict detection
