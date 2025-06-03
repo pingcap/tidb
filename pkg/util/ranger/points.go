@@ -694,7 +694,6 @@ func (r *builder) buildFromIn(
 		endPoint := &point{value: endValue}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
-	//sorter := pointSorter{points: rangePoints, tc: tc, collator: }
 	collator := collate.GetCollator(colCollate)
 	slices.SortFunc(rangePoints, func(a, b *point) (cmpare int) {
 		cmpare, r.err = rangePointLess(tc, a, b, collator)
