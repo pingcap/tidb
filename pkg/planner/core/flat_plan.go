@@ -90,6 +90,11 @@ func (e FlatPlanTree) GetSelectPlan() (FlatPlanTree, int) {
 	return nil, 0
 }
 
+// ExplainID of FlatOperator is a wrapper for call its original ExplainID with IsINLProbeChild inside.
+func (f *FlatOperator) ExplainID() fmt.Stringer {
+	return f.Origin.ExplainID(f.IsINLProbeChild)
+}
+
 // FlatOperator is a simplified operator.
 // It contains a reference to the original operator and some usually needed information.
 type FlatOperator struct {
@@ -264,6 +269,8 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		storeType: info.storeType,
 		reqType:   info.reqType,
 		indent:    texttree.Indent4Child(info.indent, info.isLastChild),
+		// inherit the isINLProbeChild from the upper.
+		isINLProbeChild: info.isINLProbeChild,
 	}
 	// For physical operators, we just enumerate their children and collect their information.
 	// Note that some physical operators are special, and they are handled below this part.

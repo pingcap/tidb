@@ -159,6 +159,9 @@ func (p *PhysicalIndexScan) isFullScan() bool {
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalTableScan) ExplainID(isChildOfIndexLookUp ...bool) fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
+		if strings.Contains(p.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "xx") {
+			fmt.Println(1)
+		}
 		if p.SCtx() != nil && p.SCtx().GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.TP(isChildOfIndexLookUp...)
 		}
