@@ -37,7 +37,7 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 	for range 13 {
 		tk.MustExec("insert into t1(a,b,c,t) select a,b,c,t from t1;")
 	}
-	tk.MustExec("analyze table t1;")
+	tk.MustExec("analyze table t1 all columns;")
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// Create virtual `tiflash` replica info.
@@ -90,7 +90,7 @@ func TestInvertedIndex(t *testing.T) {
 	}
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
-	tk.MustExec("analyze table t1;")
+	tk.MustExec("analyze table t1 all columns;")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 
 	var input []string
