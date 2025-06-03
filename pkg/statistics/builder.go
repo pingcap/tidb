@@ -431,6 +431,10 @@ func BuildHistAndTopN(
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
+			// Safety:
+			// When a sample value matches an entry in the topN list, it is removed from the samples array,
+			// so it can never match the previous sample. Therefore, this equality check will never be true
+			// in that case. For values not found in topN, we don't need keep checking the same value.
 			if i > 0 && bytes.Equal(sampleBytes, samples[i-1].Value.GetBytes()) {
 				// If the sample is the same as the previous one, we can skip it.
 				continue
