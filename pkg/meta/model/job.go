@@ -114,6 +114,7 @@ const (
 	ActionAddColumnarIndex       ActionType = 73
 	ActionModifyEngineAttribute  ActionType = 74
 	ActionAlterTableMode         ActionType = 75
+	ActionRefreshMeta            ActionType = 76
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -188,6 +189,7 @@ var ActionMap = map[ActionType]string{
 	ActionAddColumnarIndex:              "add columnar index",
 	ActionModifyEngineAttribute:         "modify engine attribute",
 	ActionAlterTableMode:                "alter table mode",
+	ActionRefreshMeta:                   "refresh meta",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -387,6 +389,9 @@ type Job struct {
 
 	// SQLMode for executing DDL query.
 	SQLMode mysql.SQLMode `json:"sql_mode"`
+
+	// SessionVars store session variables
+	SessionVars map[string]string `json:"session_vars,omitempty"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -689,6 +694,17 @@ func (job *Job) Started() bool {
 // history where the job is in final state.
 func (job *Job) InFinalState() bool {
 	return job.State == JobStateSynced || job.State == JobStateCancelled || job.State == JobStatePaused
+}
+
+// AddSessionVars add a session variable in DDL job.
+func (job *Job) AddSessionVars(name, value string) {
+	job.SessionVars[name] = value
+}
+
+// GetSessionVars get a session variable in DDL job.
+func (job *Job) GetSessionVars(name string) (string, bool) {
+	value, ok := job.SessionVars[name]
+	return value, ok
 }
 
 // MayNeedReorg indicates that this job may need to reorganize the data.

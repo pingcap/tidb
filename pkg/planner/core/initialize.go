@@ -254,7 +254,7 @@ func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int) *Physi
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-	p.schema = p.tablePlan.Schema()
+	p.SetSchema(p.tablePlan.Schema())
 	return &p
 }
 
@@ -278,15 +278,15 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 	}
 	if p.tablePlan != nil {
 		p.TablePlans = flattenPushDownPlan(p.tablePlan)
-		p.schema = p.tablePlan.Schema()
+		p.SetSchema(p.tablePlan.Schema())
 		p.HandleCols = p.TablePlans[0].(*PhysicalTableScan).HandleCols
 	} else {
 		switch p.PartialPlans[0][0].(type) {
 		case *PhysicalTableScan:
-			p.schema = p.PartialPlans[0][0].Schema()
+			p.SetSchema(p.PartialPlans[0][0].Schema())
 		default:
 			is := p.PartialPlans[0][0].(*PhysicalIndexScan)
-			p.schema = is.dataSourceSchema
+			p.SetSchema(is.dataSourceSchema)
 		}
 	}
 	if p.KeepOrder {
@@ -343,7 +343,7 @@ func (p PhysicalTableReader) Init(ctx base.PlanContext, offset int) *PhysicalTab
 		return &p
 	}
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
-	p.schema = p.tablePlan.Schema()
+	p.SetSchema(p.tablePlan.Schema())
 	p.adjustReadReqType(ctx)
 	if p.ReadReqType == BatchCop || p.ReadReqType == MPP {
 		setMppOrBatchCopForTableScan(p.tablePlan)
@@ -364,7 +364,7 @@ func (p *PhysicalTableSample) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool
+	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool
 	if p.TableSampleInfo != nil {
 		sum += p.TableSampleInfo.MemoryUsage()
 	}
@@ -449,7 +449,7 @@ func flattenTreePlan(plan base.PhysicalPlan, plans []base.PhysicalPlan) []base.P
 func flattenPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
 	plans := make([]base.PhysicalPlan, 0, 5)
 	plans = flattenTreePlan(p, plans)
-	for i := 0; i < len(plans)/2; i++ {
+	for i := range len(plans) / 2 {
 		j := len(plans) - i - 1
 		plans[i], plans[j] = plans[j], plans[i]
 	}

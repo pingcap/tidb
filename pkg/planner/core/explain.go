@@ -230,17 +230,15 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		}
 	}
 	if p.SCtx().GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 && p.StoreType == kv.TiFlash {
-		buffer.WriteString("pushed down filter:")
 		if len(p.LateMaterializationFilterCondition) > 0 {
+			buffer.WriteString("pushed down filter:")
 			if normalized {
 				buffer.Write(expression.SortedExplainNormalizedExpressionList(p.LateMaterializationFilterCondition))
 			} else {
 				buffer.Write(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.LateMaterializationFilterCondition))
 			}
-		} else {
-			buffer.WriteString("empty")
+			buffer.WriteString(", ")
 		}
-		buffer.WriteString(", ")
 	}
 	buffer.WriteString("keep order:")
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
@@ -423,7 +421,7 @@ func (p *PhysicalSelection) ExplainNormalizedInfo() string {
 func (p *PhysicalProjection) ExplainInfo() string {
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog
-	exprStr := expression.ExplainExpressionList(evalCtx, p.Exprs, p.schema, enableRedactLog)
+	exprStr := expression.ExplainExpressionList(evalCtx, p.Exprs, p.Schema(), enableRedactLog)
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
 		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
@@ -438,17 +436,17 @@ func (p *PhysicalExpand) explainInfoV2() string {
 		if i == 0 {
 			sb.WriteString("level-projection:")
 			sb.WriteString("[")
-			sb.WriteString(expression.ExplainExpressionList(evalCtx, oneL, p.schema, enableRedactLog))
+			sb.WriteString(expression.ExplainExpressionList(evalCtx, oneL, p.Schema(), enableRedactLog))
 			sb.WriteString("]")
 		} else {
 			sb.WriteString(",[")
-			sb.WriteString(expression.ExplainExpressionList(evalCtx, oneL, p.schema, enableRedactLog))
+			sb.WriteString(expression.ExplainExpressionList(evalCtx, oneL, p.Schema(), enableRedactLog))
 			sb.WriteString("]")
 		}
 	}
 	sb.WriteString("; schema: [")
-	colStrs := make([]string, 0, len(p.schema.Columns))
-	for _, col := range p.schema.Columns {
+	colStrs := make([]string, 0, len(p.Schema().Columns))
+	for _, col := range p.Schema().Columns {
 		colStrs = append(colStrs, col.StringWithCtx(evalCtx, perrors.RedactLogDisable))
 	}
 	sb.WriteString(strings.Join(colStrs, ","))
@@ -536,13 +534,13 @@ func (p *basePhysicalAgg) explainInfo(normalized bool) string {
 		builder.Write(sortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.GroupByItems))
 		builder.WriteString(", ")
 	}
-	for i := 0; i < len(p.AggFuncs); i++ {
+	for i := range p.AggFuncs {
 		builder.WriteString("funcs:")
 		var colName string
 		if normalized {
-			colName = p.schema.Columns[i].ExplainNormalizedInfo()
+			colName = p.Schema().Columns[i].ExplainNormalizedInfo()
 		} else {
-			colName = p.schema.Columns[i].ExplainInfo(p.SCtx().GetExprCtx().GetEvalCtx())
+			colName = p.Schema().Columns[i].ExplainInfo(p.SCtx().GetExprCtx().GetEvalCtx())
 		}
 		builder.WriteString(aggregation.ExplainAggFunc(p.SCtx().GetExprCtx().GetEvalCtx(), p.AggFuncs[i], normalized))
 		builder.WriteString("->")
@@ -879,7 +877,7 @@ func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *logicalop
 func (p *PhysicalWindow) ExplainInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString("")
-	formatWindowFuncDescs(ectx, buffer, p.WindowFuncDescs, p.schema)
+	formatWindowFuncDescs(ectx, buffer, p.WindowFuncDescs, p.Schema())
 	buffer.WriteString(" over(")
 	isFirst := true
 	buffer = util.ExplainPartitionBy(ectx, buffer, p.PartitionBy, false)

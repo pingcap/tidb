@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -330,6 +329,11 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 			exec.Recreated(pointGetPlan, a.Ctx)
 			a.PsStmt.PointGet.Executor = exec
 			executor = exec
+			// If reuses the executor, the executor build phase is skipped, and the txn will not be activated that
+			// caused `TxnCtx.StartTS` to be 0.
+			// So we should set the `TxnCtx.StartTS` manually here to make sure it is not 0
+			// to provide the right value for `@@tidb_last_txn_info` or other variables.
+			a.Ctx.GetSessionVars().TxnCtx.StartTS = startTs
 		}
 	}
 
@@ -1659,12 +1663,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	)
 	keyspaceName = keyspace.GetKeyspaceNameBySettings()
 	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
-		if kerneltype.IsNextGen() {
-			keyspaceIDU64, _ := strconv.ParseUint(keyspaceName, 10, 32) //nolint:errcheck
-			keyspaceID = uint32(keyspaceIDU64)
-		} else {
-			keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
-		}
+		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
 	}
 	if txnTS == 0 {
 		// TODO: txnTS maybe ambiguous, consider logging stale-read-ts with a new field in the slow log.

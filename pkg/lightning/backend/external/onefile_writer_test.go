@@ -20,14 +20,13 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
-	"path"
 	"slices"
 	"strconv"
 	"testing"
 	"time"
 
-	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
@@ -174,15 +173,14 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 
 func TestMergeOverlappingFilesInternal(t *testing.T) {
 	changePropDist(t, defaultPropSizeDist, 2)
-	// 1. Write to 5 files.
-	// 2. merge 5 files into one file.
+	// 1. Write to 3 files.
+	// 2. merge 3 files into one file.
 	// 3. read one file and check result.
 	// 4. check duplicate key.
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(1000).
-		SetKeyDuplicationEncoding(true).
 		Build(memStore, "/test", "0")
 
 	kvCount := 2000000
@@ -205,7 +203,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	defaultOneWriterMemSizeLimit = 1000
 	require.NoError(t, mergeOverlappingFilesInternal(
 		ctx,
-		[]string{"/test/0/0", "/test/0/1", "/test/0/2", "/test/0/3", "/test/0/4"},
+		[]string{"/test/0/0", "/test/0/1", "/test/0/2"},
 		memStore,
 		int64(5*size.MB),
 		"/test2",
@@ -213,6 +211,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		1000,
 		nil,
 		true,
+		engineapi.OnDuplicateKeyIgnore,
 	))
 
 	kvs := make([]kvPair, 0, kvCount)
@@ -232,17 +231,9 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
-	dir := t.TempDir()
-	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
-	require.NoError(t, err)
-	keyAdapter := common.DupDetectKeyAdapter{}
 	data := &MemoryIngestData{
-		keyAdapter:         keyAdapter,
-		duplicateDetection: true,
-		duplicateDB:        db,
-		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
-		kvs:                kvs,
-		ts:                 123,
+		kvs: kvs,
+		ts:  123,
 	}
 	pool := membuf.NewPool()
 	defer pool.Destroy()
@@ -251,8 +242,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	for iter.First(); iter.Valid(); iter.Next() {
 	}
 	err = iter.Error()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "found duplicate key")
+	require.NoError(t, err)
 }
 
 func TestOnefileWriterManyRows(t *testing.T) {
@@ -317,6 +307,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		1000,
 		onClose,
 		true,
+		engineapi.OnDuplicateKeyIgnore,
 	))
 
 	bufSize := rand.Intn(100) + 1
@@ -416,4 +407,32 @@ func TestOnefileWriterOnDup(t *testing.T) {
 	}
 	doTestWriterOnDupRecord(t, true, getWriterFn)
 	doTestWriterOnDupRemove(t, true, getWriterFn)
+}
+
+func TestOnefileWriterDupError(t *testing.T) {
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+
+	writer := NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		SetOnDup(engineapi.OnDuplicateKeyError).
+		BuildOneFile(memStore, "/test", "0")
+
+	writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
+
+	kvCnt := 10
+	kvs := make([]common.KvPair, kvCnt)
+	for i := range kvCnt {
+		kvs[i].Key = []byte(strconv.Itoa(i))
+		kvs[i].Val = []byte(strconv.Itoa(i * i))
+	}
+
+	for _, item := range kvs {
+		require.NoError(t, writer.WriteRow(ctx, item.Key, item.Val))
+	}
+	// write duplicate key
+	err := writer.WriteRow(ctx, kvs[kvCnt-1].Key, kvs[kvCnt-1].Val)
+	require.Error(t, err)
+	require.True(t, common.ErrFoundDuplicateKeys.Equal(err))
 }

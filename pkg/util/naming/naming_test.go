@@ -12,18 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package servicescope
+package naming
 
 import (
-	"fmt"
-	"regexp"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-// CheckServiceScope check if the tidb-service-scope set by users is valid.
-func CheckServiceScope(scope string) error {
-	re := regexp.MustCompile(`^[a-zA-Z0-9_-]{0,64}$`)
-	if !re.MatchString(scope) {
-		return fmt.Errorf("the tidb-service-scope value '%s' is invalid. It must be 64 characters or fewer and consist only of letters (a-z, A-Z), numbers (0-9), hyphens (-), and underscores (_)", scope)
-	}
-	return nil
+func TestScope(t *testing.T) {
+	require.NoError(t, Check("789z-_"))
+	require.Error(t, Check("789z-_)"))
+	require.Error(t, Check("78912345678982u7389217897238917389127893781278937128973812728397281378932179837"))
+	require.NoError(t, Check("scope1"))
+	require.NoError(t, Check(""))
+	require.NoError(t, Check("-----"))
 }

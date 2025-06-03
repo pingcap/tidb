@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -134,6 +135,8 @@ type ExternalEngineConfig struct {
 	CheckHotspot bool
 	// MemCapacity is the memory capacity for the whole subtask.
 	MemCapacity int64
+	// OnDup is the action when a duplicate key is found during global sort.
+	OnDup engineapi.OnDuplicateKey
 }
 
 // CheckCtx contains all parameters used in CheckRequirements

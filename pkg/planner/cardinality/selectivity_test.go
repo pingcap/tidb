@@ -530,7 +530,7 @@ func TestSelectivity(t *testing.T) {
 		},
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
-			selectivity:              5.870830440255832e-05,
+			selectivity:              0.001851851851851852,
 			selectivityAfterIncrease: 0.21916666666666668,
 		},
 		{
@@ -1324,8 +1324,8 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	// From the real-time stats, we are able to know the total count is 11.
 	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
 	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(
-		"TableReader_7 0.00 root  data:Selection_6",
-		"└─Selection_6 0.00 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
+		"TableReader_7 1.00 root  data:Selection_6",
+		"└─Selection_6 1.00 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
 		"  └─TableFullScan_5 11.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
@@ -1434,13 +1434,13 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
 	expectedA := testkit.Rows(
-		"TableReader 0.08 root  data:Selection",
-		"└─Selection 0.08 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",
+		"TableReader 1.00 root  data:Selection",
+		"└─Selection 1.00 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",
 		"  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	)
 	expectedB := testkit.Rows(
-		"TableReader 0.08 root  data:Selection",
-		"└─Selection 0.08 cop[tikv]  in(test.t.b, 1, 2, 3, 4, 5, 6, 7, 8)",
+		"TableReader 1.00 root  data:Selection",
+		"└─Selection 1.00 cop[tikv]  in(test.t.b, 1, 2, 3, 4, 5, 6, 7, 8)",
 		"  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	)
 	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(expectedA)

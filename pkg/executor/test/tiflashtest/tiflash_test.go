@@ -1510,15 +1510,15 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 		"├─TableReader_16 3323.33 root  MppVersion: 3, data:ExchangeSender_15",
 		"│ └─ExchangeSender_15 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"│   └─Selection_14 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"│     └─TableFullScan_13 10000.00 mpp[tiflash] table:t1, partition:p0 pushed down filter:empty, keep order:false, stats:pseudo",
+		"│     └─TableFullScan_13 10000.00 mpp[tiflash] table:t1, partition:p0 keep order:false, stats:pseudo",
 		"├─TableReader_20 3323.33 root  MppVersion: 3, data:ExchangeSender_19",
 		"│ └─ExchangeSender_19 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"│   └─Selection_18 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"│     └─TableFullScan_17 10000.00 mpp[tiflash] table:t1, partition:p1 pushed down filter:empty, keep order:false, stats:pseudo",
+		"│     └─TableFullScan_17 10000.00 mpp[tiflash] table:t1, partition:p1 keep order:false, stats:pseudo",
 		"└─TableReader_24 3323.33 root  MppVersion: 3, data:ExchangeSender_23",
 		"  └─ExchangeSender_23 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"    └─Selection_22 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"      └─TableFullScan_21 10000.00 mpp[tiflash] table:t1, partition:p2 pushed down filter:empty, keep order:false, stats:pseudo"))
+		"      └─TableFullScan_21 10000.00 mpp[tiflash] table:t1, partition:p2 keep order:false, stats:pseudo"))
 }
 
 func TestMPPMemoryTracker(t *testing.T) {
@@ -2217,10 +2217,10 @@ func TestIndexMergeCarePreferTiflash(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustQuery("explain format=\"brief\" SELECT" +
 		"      /*+ read_from_storage(tiflash[a]) */ a.i FROM t a WHERE a.s = 0 AND a.a NOT IN (-1, 0) AND m >= 1726910326 AND m <= 1726910391 AND ( a.w IN ('1123') OR a.l IN ('1123'))").Check(
-		testkit.Rows("TableReader 0.00 root  MppVersion: 3, data:ExchangeSender",
-			"└─ExchangeSender 0.00 mpp[tiflash]  ExchangeType: PassThrough",
-			"  └─Projection 0.00 mpp[tiflash]  test.t.i",
-			"    └─Selection 0.00 mpp[tiflash]  ge(test.t.m, 1726910326), le(test.t.m, 1726910391), not(in(test.t.a, -1, 0)), or(eq(test.t.w, \"1123\"), eq(test.t.l, \"1123\"))",
+		testkit.Rows("TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+			"└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+			"  └─Projection 1.00 mpp[tiflash]  test.t.i",
+			"    └─Selection 1.00 mpp[tiflash]  ge(test.t.m, 1726910326), le(test.t.m, 1726910391), not(in(test.t.a, -1, 0)), or(eq(test.t.w, \"1123\"), eq(test.t.l, \"1123\"))",
 			"      └─TableFullScan 10.00 mpp[tiflash] table:a pushed down filter:eq(test.t.s, 0), keep order:false, stats:pseudo"))
 }
 

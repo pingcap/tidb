@@ -1610,6 +1610,9 @@ type SessionVars struct {
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
 
+	// EnhanceIndexJoinBuildV2 indicates whether to enhance index join build.
+	EnhanceIndexJoinBuildV2 bool
+
 	// Enable late materialization: push down some selection condition to tablescan.
 	EnableLateMaterialization bool
 
@@ -1639,6 +1642,15 @@ type SessionVars struct {
 	// Value 0 will estimate row(s) found immediately.
 	// 0 > value <= 1 applies that percentage as the estimate when rows are found. For example 0.1 = 10%.
 	OptOrderingIdxSelRatio float64
+
+	// RecordRelevantOptVarsAndFixes indicates whether to record optimizer variables/fixes relevant to this query.
+	RecordRelevantOptVarsAndFixes bool
+
+	// RelevantOptVars is a map of relevant optimizer variables to be recorded.
+	RelevantOptVars map[string]struct{}
+
+	// RelevantOptFixes is a map of relevant optimizer fixes to be recorded.
+	RelevantOptFixes map[uint64]struct{}
 
 	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
 	EnableMPPSharedCTEExecution bool
@@ -1721,6 +1733,35 @@ type SessionVars struct {
 
 	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
 	BulkDMLEnabled bool
+}
+
+// ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
+func (s *SessionVars) ResetRelevantOptVarsAndFixes(record bool) {
+	s.RecordRelevantOptVarsAndFixes = record
+	s.RelevantOptVars = nil
+	s.RelevantOptFixes = nil
+}
+
+// RecordRelevantOptVar records the optimizer variable that is relevant to the current query.
+func (s *SessionVars) RecordRelevantOptVar(varName string) {
+	if !s.RecordRelevantOptVarsAndFixes {
+		return
+	}
+	if s.RelevantOptVars == nil {
+		s.RelevantOptVars = make(map[string]struct{})
+	}
+	s.RelevantOptVars[varName] = struct{}{}
+}
+
+// RecordRelevantOptFix records the optimizer fix that is relevant to the current query.
+func (s *SessionVars) RecordRelevantOptFix(fixID uint64) {
+	if !s.RecordRelevantOptVarsAndFixes {
+		return
+	}
+	if s.RelevantOptFixes == nil {
+		s.RelevantOptFixes = make(map[uint64]struct{})
+	}
+	s.RelevantOptFixes[fixID] = struct{}{}
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -2332,6 +2373,7 @@ func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
 
 // GetAllowPreferRangeScan get preferRangeScan from SessionVars.preferRangeScan.
 func (s *SessionVars) GetAllowPreferRangeScan() bool {
+	s.RecordRelevantOptVar(vardef.TiDBOptPreferRangeScan)
 	return s.preferRangeScan
 }
 
