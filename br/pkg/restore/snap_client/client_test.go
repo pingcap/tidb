@@ -496,6 +496,7 @@ func TestAllocTableIDs(t *testing.T) {
 		Hash:           computeIDsHash([]int64{userDownstreamTableID, 100, 200, 300}),
 	})
 	require.NoError(t, err)
+	require.False(t, userTableIDNotReusedWhenNeedCheck)
 	newTables := client.CleanTablesIfTemporarySystemTablesRenamed(false, true, tables)
 	require.True(t, mustNoTable(newTables, "mysql", "user"))
 	require.Len(t, newTables, 3)
@@ -516,6 +517,7 @@ func TestAllocTableIDs(t *testing.T) {
 		Hash:           computeIDsHash([]int64{statsMetaDownstreamTableID, 100, 200, 300}),
 	})
 	require.NoError(t, err)
+	require.False(t, userTableIDNotReusedWhenNeedCheck)
 	newTables = client.CleanTablesIfTemporarySystemTablesRenamed(true, false, tables)
 	require.True(t, mustNoTable(newTables, "mysql", "stats_meta"))
 	require.Len(t, newTables, 3)
@@ -534,6 +536,7 @@ func TestAllocTableIDs(t *testing.T) {
 		Hash:           computeIDsHash([]int64{statsMetaDownstreamTableID, userDownstreamTableID, 100, 200, 300}),
 	})
 	require.NoError(t, err)
+	require.False(t, userTableIDNotReusedWhenNeedCheck)
 	newTables = client.CleanTablesIfTemporarySystemTablesRenamed(true, true, tables)
 	require.True(t, mustNoTable(newTables, "mysql", "stats_meta"))
 	require.True(t, mustNoTable(newTables, "mysql", "user"))
