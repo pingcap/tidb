@@ -64,7 +64,11 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 	keyspaceNameBytes = nil
 	genKeyspaceNameOnce = sync.Once{}
 	getKeyspaceNameByte := GetKeyspaceNameBytesBySettings()
-	require.Nil(t, getKeyspaceNameByte)
+	if kerneltype.IsNextGen() {
+		require.Equal(t, []byte(""), getKeyspaceNameByte)
+	} else {
+		require.Nil(t, getKeyspaceNameByte)
+	}
 }
 
 func BenchmarkGetKeyspaceNameBytesBySettings(b *testing.B) {
