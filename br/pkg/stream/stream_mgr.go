@@ -356,6 +356,15 @@ func (*MetadataHelper) Marshal(meta *backuppb.Metadata) ([]byte, error) {
 	return meta.Marshal()
 }
 
+func (m *MetadataHelper) Close() {
+	if m.decoder != nil {
+		m.decoder.Close()
+	}
+	if m.encryptionManager != nil {
+		m.encryptionManager.Close()
+	}
+}
+
 // FastUnmarshalMetaData used a 128 worker pool to speed up
 // read metadata content from external_storage.
 func FastUnmarshalMetaData(
