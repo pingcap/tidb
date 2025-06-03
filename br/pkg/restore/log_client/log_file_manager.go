@@ -124,6 +124,7 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 		value  uint64
 		exists bool
 	}{}
+<<<<<<< HEAD
 	err := stream.FastUnmarshalMetaData(ctx, rc.storage, rc.metadataDownloadBatchSize, func(path string, raw []byte) error {
 		m, err := rc.helper.ParseToMetadata(raw)
 		if err != nil {
@@ -139,9 +140,32 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 			shiftTS.exists = true
 		}
 		shiftTS.Unlock()
+=======
 
-		return nil
-	})
+	err := stream.FastUnmarshalMetaData(ctx,
+		lm.storage,
+		// use start ts to calculate shift start ts
+		lm.startTS,
+		lm.restoreTS,
+		lm.metadataDownloadBatchSize, func(path string, raw []byte) error {
+			m, err := lm.helper.ParseToMetadata(raw)
+			if err != nil {
+				return err
+			}
+			log.Info("read meta from storage and parse", zap.String("path", path), zap.Uint64("min-ts", m.MinTs),
+				zap.Uint64("max-ts", m.MaxTs), zap.Int32("meta-version", int32(m.MetaVersion)))
+>>>>>>> c8e7dd4d6f2 (log restore: filter backupmeta file by ts to speed up pitr (#61347))
+
+			ts, ok := stream.UpdateShiftTS(m, lm.startTS, lm.restoreTS)
+			shiftTS.Lock()
+			if ok && (!shiftTS.exists || shiftTS.value > ts) {
+				shiftTS.value = ts
+				shiftTS.exists = true
+			}
+			shiftTS.Unlock()
+
+			return nil
+		})
 	if err != nil {
 		return err
 	}
@@ -153,6 +177,7 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 	return nil
 }
 
+<<<<<<< HEAD
 func (rc *LogFileManager) streamingMeta(ctx context.Context) (MetaIter, error) {
 	return rc.streamingMetaByTS(ctx, rc.restoreTS)
 }
@@ -164,6 +189,19 @@ func (rc *LogFileManager) streamingMetaByTS(ctx context.Context, restoreTS uint6
 	}
 	filtered := iter.FilterOut(it, func(metadata *backuppb.Metadata) bool {
 		return restoreTS < metadata.MinTs || metadata.MaxTs < rc.shiftStartTS
+=======
+func (lm *LogFileManager) streamingMeta(ctx context.Context) (MetaNameIter, error) {
+	return lm.streamingMetaByTS(ctx)
+}
+
+func (lm *LogFileManager) streamingMetaByTS(ctx context.Context) (MetaNameIter, error) {
+	it, err := lm.createMetaIterOver(ctx, lm.storage)
+	if err != nil {
+		return nil, err
+	}
+	filtered := iter.FilterOut(it, func(metaname *MetaName) bool {
+		return lm.restoreTS < metaname.meta.MinTs || metaname.meta.MaxTs < lm.shiftStartTS
+>>>>>>> c8e7dd4d6f2 (log restore: filter backupmeta file by ts to speed up pitr (#61347))
 	})
 	return filtered, nil
 }
@@ -175,7 +213,10 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 		if !strings.HasSuffix(path, ".meta") {
 			return nil
 		}
-		names = append(names, path)
+		newPath := stream.FilterPathByTs(path, lm.shiftStartTS, lm.restoreTS)
+		if len(newPath) > 0 {
+			names = append(names, newPath)
+		}
 		return nil
 	})
 	if err != nil {
