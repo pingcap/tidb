@@ -51,10 +51,10 @@ type Plan interface {
 	ID() int
 
 	// TP get the plan type.
-	TP() string
+	TP(...bool) string
 
 	// Get the ID in explain statement
-	ExplainID() fmt.Stringer
+	ExplainID(...bool) fmt.Stringer
 
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
@@ -95,7 +95,7 @@ type PhysicalPlan interface {
 	GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error)
 
 	// GetPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost on model ver2.
-	GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error)
+	GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
 
 	// Attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.

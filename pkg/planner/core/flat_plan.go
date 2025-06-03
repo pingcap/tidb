@@ -126,6 +126,9 @@ type FlatOperator struct {
 	TextTreeIndent string
 	IsLastChild    bool
 
+	// IsINLProbeChild will change the underlying tableScan to rowIDScan for example.
+	IsINLProbeChild bool
+
 	IsPhysicalPlan bool
 }
 
@@ -163,13 +166,14 @@ func (d OperatorLabel) String() string {
 }
 
 type operatorCtx struct {
-	depth       uint32
-	label       OperatorLabel
-	isRoot      bool
-	storeType   kv.StoreType
-	reqType     ReadReqType
-	indent      string
-	isLastChild bool
+	depth           uint32
+	label           OperatorLabel
+	isRoot          bool
+	storeType       kv.StoreType
+	reqType         ReadReqType
+	indent          string
+	isLastChild     bool
+	isINLProbeChild bool
 }
 
 // FlattenPhysicalPlan generates a FlatPhysicalPlan from a PhysicalPlan, Insert, Delete, Update, Explain or Execute.
@@ -227,14 +231,15 @@ func (*FlatPhysicalPlan) flattenSingle(p base.Plan, info *operatorCtx) *FlatOper
 		return nil
 	}
 	res := &FlatOperator{
-		Origin:         p,
-		Label:          info.label,
-		IsRoot:         info.isRoot,
-		StoreType:      info.storeType,
-		Depth:          info.depth,
-		ReqType:        info.reqType,
-		TextTreeIndent: info.indent,
-		IsLastChild:    info.isLastChild,
+		Origin:          p,
+		Label:           info.label,
+		IsRoot:          info.isRoot,
+		StoreType:       info.storeType,
+		Depth:           info.depth,
+		ReqType:         info.reqType,
+		TextTreeIndent:  info.indent,
+		IsLastChild:     info.isLastChild,
+		IsINLProbeChild: info.isINLProbeChild,
 	}
 
 	if _, ok := p.(base.PhysicalPlan); ok {
@@ -348,6 +353,8 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		childIdxs = append(childIdxs, childIdx)
 		childCtx.label = ProbeSide
 		childCtx.isLastChild = true
+		// set the index lookup child signal.
+		childCtx.isINLProbeChild = true
 		target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalIndexMergeReader:
@@ -362,6 +369,8 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		}
 		childCtx.label = ProbeSide
 		childCtx.isLastChild = true
+		// set the index lookup child signal.
+		childCtx.isINLProbeChild = true
 		target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalShuffleReceiverStub:
