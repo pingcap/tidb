@@ -15,6 +15,7 @@
 package domainutil
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -51,6 +52,21 @@ func (r *repairInfo) GetRepairTableList() []string {
 	r.RLock()
 	defer r.RUnlock()
 	return r.repairTableList
+}
+
+// GetMustLoadRepairTableListByDB gets must load repair table ID list.
+func (r *repairInfo) GetMustLoadRepairTableListByDB(dbName string, tableName2ID map[string]int64) []int64 {
+	r.RLock()
+	defer r.RUnlock()
+	tableIDList := []int64{}
+	for _, one := range r.repairTableList {
+		for tableName, id := range tableName2ID {
+			if strings.EqualFold(one, fmt.Sprintf("%s.%s", dbName, tableName)) {
+				tableIDList = append(tableIDList, id)
+			}
+		}
+	}
+	return tableIDList
 }
 
 // SetRepairTableList sets repairing table list.
