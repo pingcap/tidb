@@ -740,8 +740,16 @@ func (c *TopN) BetweenCount(sctx planctx.PlanContext, l, r []byte) (result uint6
 	lIdx, _ := c.LowerBound(l)
 	rIdx, _ := c.LowerBound(r)
 	ret := uint64(0)
-	for i := lIdx; i < rIdx; i++ {
-		ret += c.TopN[i].Count
+	if maxIdx := len(c.TopN) - 1; maxIdx == rIdx {
+		tmp := c.TopN[maxIdx].Count
+		for i := range lIdx - 1 {
+			tmp += c.TopN[i].Count
+		}
+		ret = c.TotalCount() - tmp
+	} else {
+		for i := lIdx; i < rIdx; i++ {
+			ret += c.TopN[i].Count
+		}
 	}
 
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
