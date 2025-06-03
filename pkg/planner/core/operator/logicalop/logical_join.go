@@ -700,6 +700,7 @@ func (p *LogicalJoin) ExtractFD() *funcdep.FDSet {
 
 // ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
 func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
+	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates)
 	innerTable := p.Children()[0]
 	outerTable := p.Children()[1]
 	switchChild := false

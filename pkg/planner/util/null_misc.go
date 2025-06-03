@@ -91,6 +91,8 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 			return isNullRejectedInList(ctx, expr, innerSchema, skipPlanCacheCheck)
 		}
 		return isNullRejectedSimpleExpr(ctx, innerSchema, expr, skipPlanCacheCheck)
+	case *expression.Constant:
+		return false
 	default:
 		return isNullRejectedSimpleExpr(ctx, innerSchema, predicate, skipPlanCacheCheck)
 	}
