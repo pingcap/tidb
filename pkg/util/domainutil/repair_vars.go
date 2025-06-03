@@ -61,8 +61,10 @@ func (r *repairInfo) GetMustLoadRepairTableListByDB(dbName string, tableName2ID 
 
 	repairTableSet := make(map[string]struct{}, len(r.repairTableList))
 	for _, fullTableName := range r.repairTableList {
-		if strings.HasPrefix(strings.ToLower(fullTableName), dbName+".") {
-			repairTableSet[strings.ToLower(fullTableName)] = struct{}{}
+		lowerFullTableName := strings.ToLower(fullTableName)
+		dbNamePrefix := dbName + "."
+		if strings.HasPrefix(lowerFullTableName, dbNamePrefix) {
+			repairTableSet[lowerFullTableName] = struct{}{}
 		}
 	}
 
