@@ -1399,7 +1399,7 @@ func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
 	return record.baseRecord.match(user, host) &&
 		strings.EqualFold(record.DB, db) &&
 		strings.EqualFold(record.TableName, table) &&
-		strings.EqualFold(record.ColumnName, col)
+		(strings.EqualFold(record.ColumnName, col) || col == "*")
 }
 
 // patternMatch matches "%" the same way as ".*" in regular expression, for example,
@@ -1585,6 +1585,7 @@ func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIden
 }
 
 // RequestVerification checks whether the user have sufficient privileges to do the operation.
+// `column == "*"` means it matches ANY column in the table.
 func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, user, host, db, table, column string, priv mysql.PrivilegeType) bool {
 	if priv == mysql.UsagePriv {
 		return true
@@ -1623,11 +1624,10 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 			}
 		}
 	}
-	if tablePriv&priv > 0 || columnPriv&priv > 0 {
+	if tablePriv&priv > 0 {
 		return true
 	}
 
-	columnPriv = 0
 	for _, r := range roleList {
 		columnRecord := p.matchColumns(r.Username, r.Hostname, db, table, column)
 		if columnRecord != nil {
