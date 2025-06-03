@@ -56,7 +56,7 @@ var (
 	tablePrivMask          = computePrivMask(mysql.AllTablePrivs)
 )
 
-const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.ShowDBPriv | mysql.DropPriv | mysql.AlterPriv | mysql.IndexPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.GrantPriv | mysql.TriggerPriv | mysql.ReferencesPriv | mysql.ExecutePriv
+const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.ShowDBPriv | mysql.DropPriv | mysql.AlterPriv | mysql.IndexPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.GrantPriv | mysql.TriggerPriv | mysql.ReferencesPriv | mysql.ExecutePriv | mysql.CreateTMPTablePriv
 
 const (
 	sqlLoadRoleGraph        = "SELECT HIGH_PRIORITY FROM_USER, FROM_HOST, TO_USER, TO_HOST FROM mysql.role_edges"
@@ -256,9 +256,6 @@ type roleGraphEdgesTable struct {
 
 // Find method is used to find role from table
 func (g roleGraphEdgesTable) Find(user, host string) bool {
-	if host == "" {
-		host = "%"
-	}
 	if g.roleList == nil {
 		return false
 	}
@@ -267,6 +264,10 @@ func (g roleGraphEdgesTable) Find(user, host string) bool {
 		Hostname: host,
 	}
 	_, ok := g.roleList[key]
+	if !ok && key.Hostname == "" {
+		key.Hostname = "%"
+		_, ok = g.roleList[key]
+	}
 	return ok
 }
 
@@ -1408,7 +1409,7 @@ func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) 
 		return nil
 	}
 
-	for i := 0; i < len(item.data); i++ {
+	for i := range item.data {
 		record := &item.data[i]
 		if record.match(user, host) {
 			return record
@@ -1429,7 +1430,7 @@ func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) 
 			return nil
 		}
 		for _, addr := range addrs {
-			for i := 0; i < len(item.data); i++ {
+			for i := range item.data {
 				record := &item.data[i]
 				if record.match(user, addr) {
 					return record
@@ -1446,7 +1447,7 @@ func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) 
 func (p *MySQLPrivilege) connectionVerification(user, host string) *UserRecord {
 	records, exists := p.user.Get(itemUser{username: user})
 	if exists {
-		for i := 0; i < len(records.data); i++ {
+		for i := range records.data {
 			record := &records.data[i]
 			if record.Host == host { // exact match
 				return record
@@ -1462,7 +1463,7 @@ func (p *MySQLPrivilege) matchGlobalPriv(user, host string) *globalPrivRecord {
 		return nil
 	}
 	uGlobal := item.data
-	for i := 0; i < len(uGlobal); i++ {
+	for i := range uGlobal {
 		record := &uGlobal[i]
 		if record.match(user, host) {
 			return record
@@ -1475,7 +1476,7 @@ func (p *MySQLPrivilege) matchUser(user, host string) *UserRecord {
 	item, exists := p.user.Get(itemUser{username: user})
 	if exists {
 		records := item.data
-		for i := 0; i < len(records); i++ {
+		for i := range records {
 			record := &records[i]
 			if record.match(user, host) {
 				return record
@@ -1489,7 +1490,7 @@ func (p *MySQLPrivilege) matchDB(user, host, db string) *dbRecord {
 	item, exists := p.db.Get(itemDB{username: user})
 	if exists {
 		records := item.data
-		for i := 0; i < len(records); i++ {
+		for i := range records {
 			record := &records[i]
 			if record.match(user, host, db) {
 				return record
@@ -1503,7 +1504,7 @@ func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRe
 	item, exists := p.tablesPriv.Get(itemTablesPriv{username: user})
 	if exists {
 		records := item.data
-		for i := 0; i < len(records); i++ {
+		for i := range records {
 			record := &records[i]
 			if record.match(user, host, db, table) {
 				return record
@@ -1516,7 +1517,7 @@ func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRe
 func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *columnsPrivRecord {
 	item, exists := p.columnsPriv.Get(itemColumnsPriv{username: user})
 	if exists {
-		for i := 0; i < len(item.data); i++ {
+		for i := range item.data {
 			record := &item.data[i]
 			if record.match(user, host, db, table, column) {
 				return record

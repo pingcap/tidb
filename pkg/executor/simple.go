@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -220,9 +221,6 @@ func (e *SimpleExec) setDefaultRoleNone(s *ast.SetDefaultRoleStmt) error {
 	}
 	sql := new(strings.Builder)
 	for _, u := range s.UserList {
-		if u.Hostname == "" {
-			u.Hostname = "%"
-		}
 		sql.Reset()
 		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", u.Username, u.Hostname)
 		if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
@@ -271,9 +269,6 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 	}
 	sql := new(strings.Builder)
 	for _, user := range s.UserList {
-		if user.Hostname == "" {
-			user.Hostname = "%"
-		}
 		sql.Reset()
 		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
 		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
@@ -331,9 +326,6 @@ func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRol
 	}
 	sql := new(strings.Builder)
 	for _, user := range s.UserList {
-		if user.Hostname == "" {
-			user.Hostname = "%"
-		}
 		sql.Reset()
 		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
 		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
@@ -362,9 +354,6 @@ func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRol
 func (e *SimpleExec) setDefaultRoleForCurrentUser(ctx context.Context, s *ast.SetDefaultRoleStmt) (err error) {
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	user := s.UserList[0]
-	if user.Hostname == "" {
-		user.Hostname = "%"
-	}
 	restrictedCtx, err := e.GetSysSession()
 	if err != nil {
 		return err
@@ -517,7 +506,7 @@ func (e *SimpleExec) setRoleAllExcept(ctx context.Context, s *ast.SetRoleStmt) e
 
 	filter := func(arr []*auth.RoleIdentity, f func(*auth.RoleIdentity) bool) []*auth.RoleIdentity {
 		i, j := 0, 0
-		for i = 0; i < len(arr); i++ {
+		for i = range arr {
 			if f(arr[i]) {
 				arr[j] = arr[i]
 				j++
@@ -759,9 +748,9 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 
 			// delete from activeRoles
 			if curUser == user.Username && curHost == user.Hostname {
-				for i := 0; i < len(activeRoles); i++ {
+				for i := range activeRoles {
 					if activeRoles[i].Username == role.Username && activeRoles[i].Hostname == role.Hostname {
-						activeRoles = append(activeRoles[:i], activeRoles[i+1:]...)
+						activeRoles = slices.Delete(activeRoles, i, i+1)
 						break
 					}
 				}
@@ -973,12 +962,7 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 	if err != nil {
 		return nil, err
 	}
@@ -1331,12 +1315,7 @@ func isRole(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, host str
 	if err != nil {
 		return false, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 1)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 1)
 	if err != nil {
 		return false, err
 	}
@@ -1353,12 +1332,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 	if err != nil {
 		return nil, err
 	}
@@ -1397,10 +1371,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 func getValidTime(sctx sessionctx.Context, passwordReuse *passwordReuseInfo) string {
 	nowTime := time.Now().In(sctx.GetSessionVars().TimeZone)
 	nowTimeS := nowTime.Unix()
-	beforeTimeS := nowTimeS - passwordReuse.passwordReuseInterval*24*int64(time.Hour/time.Second)
-	if beforeTimeS < 0 {
-		beforeTimeS = 0
-	}
+	beforeTimeS := max(nowTimeS-passwordReuse.passwordReuseInterval*24*int64(time.Hour/time.Second), 0)
 	return time.Unix(beforeTimeS, 0).Format("2006-01-02 15:04:05.999999999")
 }
 
@@ -1478,12 +1449,7 @@ func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, us
 	if err != nil {
 		return 0, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 	if err != nil {
 		return 0, err
 	}
@@ -1504,12 +1470,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 		if err != nil {
 			return false, err
 		}
@@ -1524,12 +1485,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, vardef.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1552,12 +1508,7 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 		if err != nil {
 			return false, err
 		}
@@ -1574,12 +1525,7 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, vardef.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1601,12 +1547,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 		if err != nil {
 			return false, err
 		}
@@ -1620,12 +1561,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, vardef.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1643,10 +1579,7 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	}
 
 	// the maximum number of records that can be deleted.
-	canDeleteNum := passwordNum - passwordReuse.passwordHistory + 1
-	if canDeleteNum < 0 {
-		canDeleteNum = 0
-	}
+	canDeleteNum := max(passwordNum-passwordReuse.passwordHistory+1, 0)
 
 	if passwordReuse.passwordHistory <= 0 && passwordReuse.passwordReuseInterval <= 0 {
 		return true, canDeleteNum, nil
@@ -2320,7 +2253,7 @@ func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, use
 }
 
 func (e *SimpleExec) executeDropQueryWatch(s *ast.DropQueryWatchStmt) error {
-	return querywatch.ExecDropQueryWatch(e.Ctx(), s.IntValue)
+	return querywatch.ExecDropQueryWatch(e.Ctx(), s)
 }
 
 func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) error {
@@ -2474,9 +2407,9 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 		// delete from activeRoles
 		if s.IsDropRole {
-			for i := 0; i < len(activeRoles); i++ {
+			for i := range activeRoles {
 				if activeRoles[i].Username == user.Username && activeRoles[i].Hostname == user.Hostname {
-					activeRoles = append(activeRoles[:i], activeRoles[i+1:]...)
+					activeRoles = slices.Delete(activeRoles, i, i+1)
 					break
 				}
 			}

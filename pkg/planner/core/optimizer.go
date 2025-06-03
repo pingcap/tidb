@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -249,6 +250,22 @@ func CheckTableLock(ctx tablelock.TableLockReadContext, is infoschema.InfoSchema
 	return nil
 }
 
+// CheckTableMode checks if the table is accessible by table mode, only TableModeNormal can be accessed.
+func CheckTableMode(node *resolve.NodeW) error {
+	// First make exceptions for stmt that only visit table meta;
+	// For example, `describe <table_name>` and `show create table <table_name>`;
+	switch node.Node.(type) {
+	case *ast.ShowStmt, *ast.ExplainStmt:
+	default:
+		for _, tblNameW := range node.GetResolveContext().GetTableNames() {
+			if err := dbutil.CheckTableModeIsNormal(tblNameW.Name, tblNameW.TableInfo.Mode); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func checkStableResultMode(sctx base.PlanContext) bool {
 	s := sctx.GetSessionVars()
 	st := s.StmtCtx
@@ -375,8 +392,10 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^rule.FlagJoinReOrder
 	}
-	flag |= rule.FlagCollectPredicateColumnsPoint
-	flag |= rule.FlagSyncWaitStatsLoadPoint
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+		flag |= rule.FlagCollectPredicateColumnsPoint
+		flag |= rule.FlagSyncWaitStatsLoadPoint
+	}
 	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
 		flag |= rule.FlagPartitionProcessor // apply partition pruning under static mode
 	}
@@ -578,7 +597,7 @@ func countStarRewriteInternal(plan base.PhysicalPlan) {
 		}
 	}
 	physicalTableScan, ok := physicalAgg.Children()[0].(*PhysicalTableScan)
-	if !ok || !physicalTableScan.isFullScan() || physicalTableScan.StoreType != kv.TiFlash || len(physicalTableScan.schema.Columns) != 1 {
+	if !ok || !physicalTableScan.isFullScan() || physicalTableScan.StoreType != kv.TiFlash || len(physicalTableScan.Schema().Columns) != 1 {
 		return
 	}
 	// rewrite datasource and agg args
@@ -592,7 +611,7 @@ func rewriteTableScanAndAggArgs(physicalTableScan *PhysicalTableScan, aggFuncs [
 	var resultColumn *expression.Column
 
 	resultColumnInfo = physicalTableScan.Columns[0]
-	resultColumn = physicalTableScan.schema.Columns[0]
+	resultColumn = physicalTableScan.Schema().Columns[0]
 	// prefer not null column from table
 	for _, columnInfo := range physicalTableScan.Table.Columns {
 		if columnInfo.FieldType.IsVarLengthType() {
@@ -612,7 +631,7 @@ func rewriteTableScanAndAggArgs(physicalTableScan *PhysicalTableScan, aggFuncs [
 	}
 	// table scan (row_id) -> (not null column)
 	physicalTableScan.Columns[0] = resultColumnInfo
-	physicalTableScan.schema.Columns[0] = resultColumn
+	physicalTableScan.Schema().Columns[0] = resultColumn
 	// agg arg count(1) -> count(not null column)
 	arg := resultColumn.Clone()
 	for _, aggFunc := range aggFuncs {
@@ -895,7 +914,8 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 			joinKeys = x.RightJoinKeys
 			probChild = child0
 		}
-		if len(joinKeys) > 0 { // Not cross join
+
+		if len(joinKeys) > 0 && !x.CanTiFlashUseHashJoinV2(sctx) { // Not cross join and can not use hash join v2 in tiflash
 			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*physicalop.BasePhysicalPlan{}}
 			buildHelper.plans = append(buildHelper.plans, &x.BasePhysicalPlan)
 			buildHelper.joinKeys = joinKeys
@@ -1184,6 +1204,9 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 		return nil, 0, plannererrors.ErrInternal.GenWithStackByArgs(errMsg)
 	}
 
+	// collect the warnings from task.
+	logic.SCtx().GetSessionVars().StmtCtx.AppendWarnings(t.(*RootTask).warnings.GetWarnings())
+
 	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
@@ -1279,12 +1302,7 @@ func existsCartesianProduct(p base.LogicalPlan) bool {
 	if join, ok := p.(*logicalop.LogicalJoin); ok && len(join.EqualConditions) == 0 {
 		return join.JoinType == logicalop.InnerJoin || join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin
 	}
-	for _, child := range p.Children() {
-		if existsCartesianProduct(child) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(p.Children(), existsCartesianProduct)
 }
 
 // DefaultDisabledLogicalRulesList indicates the logical rules which should be banned.

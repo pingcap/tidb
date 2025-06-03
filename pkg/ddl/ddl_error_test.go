@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -145,4 +146,10 @@ func TestCreateDatabaseError(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockModifyJobSchemaId", `return(-1)`))
 	tk.MustExec("create database db1;")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockModifyJobSchemaId"))
+}
+
+// This is a hard-coded test to make sure that the DefMaxOfIndexLimit is 512
+// This limitation can not be loosened to a larger number until tidb can handle more indexes on one table.
+func TestCreateIndexErrTooManyKeys(t *testing.T) {
+	require.Equal(t, 512, config.DefMaxOfIndexLimit)
 }

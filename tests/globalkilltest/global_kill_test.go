@@ -123,7 +123,7 @@ func (s *GlobalKillSuite) connectPD() (cli *clientv3.Client, err error) {
 	wait := 250 * time.Millisecond
 	backoffConfig := backoff.DefaultConfig
 	backoffConfig.MaxDelay = 3 * time.Second
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		log.Info(fmt.Sprintf("trying to connect pd, attempt %d", i))
 		cli, err = clientv3.New(clientv3.Config{
 			LogConfig:        &etcdLogCfg,
@@ -753,10 +753,10 @@ func TestServerIDUpgradeAndDowngrade(t *testing.T) {
 		}
 	}()
 	{
-		for i := 0; i < MaxTiDB32; i++ {
+		for i := range MaxTiDB32 {
 			tidbs[i] = s.mustStartTiDBWithPD(t, *tidbStartPort+i, *tidbStatusPort+i, *pdClientPath)
 		}
-		for i := 0; i < MaxTiDB32; i++ {
+		for i := range MaxTiDB32 {
 			conn := connect(i)
 			conn.mustBe32(t)
 			conn.Close()
@@ -814,7 +814,7 @@ func TestConnIDUpgradeAndDowngrade(t *testing.T) {
 		}
 	}()
 	// 32 bits connection ID
-	for i := 0; i < MaxConn32; i++ {
+	for range MaxConn32 {
 		conn := connect()
 		require.Lessf(t, conn.connID, uint64(1<<32), "connID %x", conn.connID)
 		conns32[conn.connID] = conn

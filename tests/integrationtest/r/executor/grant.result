@@ -330,3 +330,11 @@ GRANT ALL ON t29268 TO u29268;
 DROP USER u29268;
 DROP DATABASE IF EXISTS d29268;
 use executor__grant;
+drop table if exists t;
+drop user if exists test_user;
+create user test_user;
+create temporary table t(id int);
+grant select on t to test_user;
+Error 1146 (42S02): Table 'executor__grant.t' doesn't exist
+drop user test_user;
+drop temporary table t;

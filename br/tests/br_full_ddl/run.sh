@@ -136,10 +136,10 @@ fi
 
 # when we have backup stats during backup, we cannot close domain during one shot session.
 # so we can check the log count of `one shot domain closed`.
-# we will call UseOneShotSession twice to get the value global variable.
+# we will call UseOneShotSession once to get the value global variable.
 one_shot_session_count=$(cat $LOG | grep "one shot session closed" | wc -l | xargs)
 one_shot_domain_count=$(cat $LOG | grep "one shot domain closed" | wc -l | xargs)
-if [ "${one_shot_session_count}" -ne "2" ] || [ "$one_shot_domain_count" -ne "0" ];then
+if [ "${one_shot_session_count}" -ne "1" ] || [ "$one_shot_domain_count" -ne "0" ];then
     echo "TEST: [$TEST_NAME] fail on one shot session check, $one_shot_session_count, $one_shot_domain_count"
     exit 1
 fi
@@ -188,10 +188,11 @@ fi
 # clear restore environment
 run_sql "DROP DATABASE $DB;"
 run_sql "DROP DATABASE __tidb_br_temporary_mysql;"
+run_sql "DROP DATABASE __TiDB_BR_Temporary_Snapshot_Restore_Checkpoint_2000001;"
 # restore full
 echo "restore start..."
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/pdutil/PDEnabledPauseConfig=return(true)"
-run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $LOG || { cat $LOG; exit 1; }
+run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $LOG --fast-load-sys-tables=false || { cat $LOG; exit 1; }
 export GO_FAILPOINTS=""
 
 pause_count=$(cat $LOG | grep "pause configs successful"| wc -l | xargs)

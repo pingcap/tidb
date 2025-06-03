@@ -199,7 +199,7 @@ func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64
 		return nil, errors.Trace(err)
 	}
 	kvPairs := e.SessionCtx.TakeKvPairs()
-	for i := 0; i < len(kvPairs.Pairs); i++ {
+	for i := range kvPairs.Pairs {
 		var encoded [9]byte // The max length of encoded int64 is 9.
 		kvPairs.Pairs[i].RowID = codec.EncodeComparableVarint(encoded[:0], rowID)
 	}
@@ -223,8 +223,8 @@ func (e *BaseKVEncoder) TableMeta() *model.TableInfo {
 }
 
 // ProcessColDatum processes the datum of a column.
-func (e *BaseKVEncoder) ProcessColDatum(col *table.Column, rowID int64, inputDatum *types.Datum) (types.Datum, error) {
-	value, err := e.getActualDatum(col, rowID, inputDatum)
+func (e *BaseKVEncoder) ProcessColDatum(col *table.Column, rowID int64, inputDatum *types.Datum, needCast bool) (types.Datum, error) {
+	value, err := e.getActualDatum(col, rowID, inputDatum, needCast)
 	if err != nil {
 		return value, err
 	}
@@ -248,7 +248,7 @@ func (e *BaseKVEncoder) ProcessColDatum(col *table.Column, rowID int64, inputDat
 	return value, nil
 }
 
-func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatum *types.Datum) (types.Datum, error) {
+func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatum *types.Datum, needCast bool) (types.Datum, error) {
 	var (
 		value types.Datum
 		err   error
@@ -258,9 +258,13 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 	exprCtx := e.SessionCtx.GetExprCtx()
 	errCtx := exprCtx.GetEvalCtx().ErrCtx()
 	if inputDatum != nil {
-		value, err = table.CastColumnValue(exprCtx, *inputDatum, col.ToInfo(), false, false)
-		if err != nil {
-			return value, err
+		if needCast {
+			value, err = table.CastColumnValue(exprCtx, *inputDatum, col.ToInfo(), false, false)
+			if err != nil {
+				return value, err
+			}
+		} else {
+			value = *inputDatum
 		}
 		if err := col.CheckNotNull(&value, 0); err == nil {
 			return value, nil // the most normal case

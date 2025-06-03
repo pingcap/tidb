@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -62,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
-	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -222,11 +220,12 @@ const (
 
 	// CreateStatsMetaTable stores the meta of table statistics.
 	CreateStatsMetaTable = `CREATE TABLE IF NOT EXISTS mysql.stats_meta (
-		version 		BIGINT(64) UNSIGNED NOT NULL,
-		table_id 		BIGINT(64) NOT NULL,
-		modify_count	BIGINT(64) NOT NULL DEFAULT 0,
-		count 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
-		snapshot        BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		version 					BIGINT(64) UNSIGNED NOT NULL,
+		table_id 					BIGINT(64) NOT NULL,
+		modify_count				BIGINT(64) NOT NULL DEFAULT 0,
+		count 						BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		snapshot        			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		last_stats_histograms_version 	BIGINT(64) UNSIGNED DEFAULT NULL,
 		INDEX idx_ver(version),
 		UNIQUE INDEX tbl(table_id)
 	);`
@@ -304,10 +303,11 @@ const (
 		charset TEXT NOT NULL,
 		collation TEXT NOT NULL,
 		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
-		sql_digest varchar(64),
-		plan_digest varchar(64),
+		sql_digest varchar(64) DEFAULT NULL,
+		plan_digest varchar(64) DEFAULT NULL,
 		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
-		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
+		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time",
+		UNIQUE INDEX digest_index(plan_digest, sql_digest) COMMENT "avoid duplicated records"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRoleEdgesTable stores the role and user relationship information.
@@ -719,13 +719,39 @@ const (
 		KEY (status));`
 
 	// CreatePITRIDMap is a table that records the id map from upstream to downstream for PITR.
+	// set restore id default to 0 to make it compatible for old BR tool to restore to a new TiDB, such case should be
+	// rare though.
 	CreatePITRIDMap = `CREATE TABLE IF NOT EXISTS mysql.tidb_pitr_id_map (
+		restore_id BIGINT NOT NULL DEFAULT 0,
 		restored_ts BIGINT NOT NULL,
 		upstream_cluster_id BIGINT NOT NULL,
 		segment_id BIGINT NOT NULL,
 		id_map BLOB(524288) NOT NULL,
 		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		PRIMARY KEY (restored_ts, upstream_cluster_id, segment_id));`
+		PRIMARY KEY (restore_id, restored_ts, upstream_cluster_id, segment_id));`
+
+	// CreateRestoreRegistryTable is a table that tracks active restore tasks to prevent conflicts.
+	CreateRestoreRegistryTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_restore_registry (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		filter_strings TEXT NOT NULL,
+		filter_hash VARCHAR(64) NOT NULL,
+		start_ts BIGINT UNSIGNED NOT NULL,
+		restored_ts BIGINT UNSIGNED NOT NULL,
+		upstream_cluster_id BIGINT UNSIGNED,
+		with_sys_table BOOLEAN NOT NULL DEFAULT TRUE,
+		status VARCHAR(20) NOT NULL DEFAULT 'running',
+		cmd TEXT,
+		task_start_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+		last_heartbeat_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+		UNIQUE KEY unique_registration_params (
+			filter_hash,
+			start_ts,
+			restored_ts,
+			upstream_cluster_id,
+			with_sys_table,
+			cmd(256)
+		)
+	) AUTO_INCREMENT = 1;`
 
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
 	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
@@ -1270,16 +1296,28 @@ const (
 	// Add extra_params to tidb_global_task and tidb_global_task_history.
 	version243 = 243
 
-	// version242 add Max_user_connections into mysql.user.
+	// version244 add Max_user_connections into mysql.user.
 	version244 = 244
 
 	// version245 updates column types of mysql.bind_info.
 	version245 = 245
+
+	// version246 adds new unique index for mysql.bind_info.
+	version246 = 246
+
+	// version 247
+	// Add last_stats_histograms_version to mysql.stats_meta.
+	version247 = 247
+
+	// version 248
+	// Update mysql.tidb_pitr_id_map to add restore_id as a primary key field
+	version248 = 248
+	version249 = 249
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version245
+var currentBootstrapVersion int64 = version249
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1460,6 +1498,10 @@ var (
 		upgradeToVer243,
 		upgradeToVer244,
 		upgradeToVer245,
+		upgradeToVer246,
+		upgradeToVer247,
+		upgradeToVer248,
+		upgradeToVer249,
 	}
 )
 
@@ -1612,31 +1654,6 @@ func upgrade(s sessiontypes.Session) {
 			zap.Int64("from", ver),
 			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
-	}
-}
-
-// checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.
-func checkOwnerVersion(ctx context.Context, dom *domain.Domain) (bool, error) {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	logutil.BgLogger().Info("Waiting for the DDL owner to be elected in the cluster")
-	for {
-		select {
-		case <-ctx.Done():
-			return false, ctx.Err()
-		case <-ticker.C:
-			ownerID, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
-			if err == concurrency.ErrElectionNoLeader {
-				continue
-			}
-			info, err := infosync.GetAllServerInfo(ctx)
-			if err != nil {
-				return false, err
-			}
-			if s, ok := info[ownerID]; ok {
-				return s.Version == mysql.ServerVersion, nil
-			}
-		}
 	}
 }
 
@@ -3034,7 +3051,7 @@ func upgradeToVer175(s sessiontypes.Session, ver int64) {
 		if req.NumRows() == 0 {
 			break
 		}
-		for i := 0; i < req.NumRows(); i++ {
+		for i := range req.NumRows() {
 			originalNormalizedSQL, bindSQL := req.GetRow(i).GetString(0), req.GetRow(i).GetString(1)
 			newNormalizedSQL := parser.NormalizeForBinding(bindSQL, false)
 			// update `in (?)` to `in (...)`
@@ -3401,9 +3418,85 @@ func upgradeToVer245(s sessiontypes.Session, ver int64) {
 	if ver >= version245 {
 		return
 	}
-
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN original_sql LONGTEXT NOT NULL")
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN bind_sql LONGTEXT NOT NULL")
+}
+
+func upgradeToVer246(s sessiontypes.Session, ver int64) {
+	if ver >= version246 {
+		return
+	}
+
+	// log duplicated digests that will be set to null.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx,
+		`select plan_digest, sql_digest from mysql.bind_info group by plan_digest, sql_digest having count(1) > 1`)
+	if err != nil {
+		logutil.BgLogger().Fatal("failed to get duplicated plan and sql digests", zap.Error(err))
+		return
+	}
+	req := rs.NewChunk(nil)
+	duplicatedDigests := make(map[string]struct{})
+	for {
+		err = rs.Next(ctx, req)
+		if err != nil {
+			logutil.BgLogger().Fatal("failed to get duplicated plan and sql digests", zap.Error(err))
+			return
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		for i := range req.NumRows() {
+			planDigest, sqlDigest := req.GetRow(i).GetString(0), req.GetRow(i).GetString(1)
+			duplicatedDigests[sqlDigest+", "+planDigest] = struct{}{}
+		}
+		req.Reset()
+	}
+	if err := rs.Close(); err != nil {
+		logutil.BgLogger().Warn("failed to close record set", zap.Error(err))
+	}
+	if len(duplicatedDigests) > 0 {
+		digestList := make([]string, 0, len(duplicatedDigests))
+		for k := range duplicatedDigests {
+			digestList = append(digestList, "("+k+")")
+		}
+		logutil.BgLogger().Warn("set the following (plan digest, sql digest) in mysql.bind_info to null " +
+			"for adding new unique index: " + strings.Join(digestList, ", "))
+	}
+
+	// to avoid the failure of adding the unique index, remove duplicated rows on these 2 digest columns first.
+	// in most cases, there should be no duplicated rows, since now we only store one binding for each sql_digest.
+	// compared with upgrading failure, it's OK to set these 2 columns to null.
+	doReentrantDDL(s, `UPDATE mysql.bind_info SET plan_digest=null, sql_digest=null
+                       WHERE (plan_digest, sql_digest) in (
+                         select plan_digest, sql_digest from mysql.bind_info
+                         group by plan_digest, sql_digest having count(1) > 1)`)
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN sql_digest VARCHAR(64) DEFAULT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN plan_digest VARCHAR(64) DEFAULT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD UNIQUE INDEX digest_index(plan_digest, sql_digest)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer247(s sessiontypes.Session, ver int64) {
+	if ver >= version247 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer248(s sessiontypes.Session, ver int64) {
+	if ver >= version248 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD COLUMN restore_id BIGINT NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map DROP PRIMARY KEY")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD PRIMARY KEY(restore_id, restored_ts, upstream_cluster_id, segment_id)")
+}
+
+func upgradeToVer249(s sessiontypes.Session, ver int64) {
+	if ver >= version249 {
+		return
+	}
+	doReentrantDDL(s, CreateRestoreRegistryTable)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
@@ -3552,6 +3645,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateRequestUnitByGroupTable)
 	// create tidb_pitr_id_map
 	mustExecute(s, CreatePITRIDMap)
+	// create tidb_restore_registry
+	mustExecute(s, CreateRestoreRegistryTable)
 	// create `sys` schema
 	mustExecute(s, CreateSysSchema)
 	// create `sys.schema_unused_indexes` view
