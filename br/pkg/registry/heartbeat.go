@@ -27,16 +27,16 @@ import (
 const (
 	UpdateHeartbeatSQLTemplate = `
 		UPDATE %s.%s
-		SET last_heartbeat = %%?
+		SET last_heartbeat_time = %%?
 		WHERE id = %%?`
 
 	// defaultHeartbeatIntervalSeconds is the default interval in seconds between heartbeat updates
 	defaultHeartbeatIntervalSeconds = 60
 )
 
-// UpdateHeartbeat updates the last_heartbeat timestamp for a task
+// UpdateHeartbeat updates the last_heartbeat_time timestamp for a task
 func (r *Registry) UpdateHeartbeat(ctx context.Context, restoreID uint64) error {
-	currentTime := uint64(time.Now().Unix())
+	currentTime := time.Now()
 	updateSQL := fmt.Sprintf(UpdateHeartbeatSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 
 	if err := r.heartbeatSession.ExecuteInternal(ctx, updateSQL, currentTime, restoreID); err != nil {
@@ -45,7 +45,7 @@ func (r *Registry) UpdateHeartbeat(ctx context.Context, restoreID uint64) error 
 
 	log.Debug("updated task heartbeat",
 		zap.Uint64("restore_id", restoreID),
-		zap.Uint64("timestamp", currentTime))
+		zap.Time("timestamp", currentTime))
 
 	return nil
 }
