@@ -198,6 +198,8 @@ func TestRangeIntersection(t *testing.T) {
 	tk.MustExec("INSERT INTO tkey_string VALUES('zhenjiang','zhenjiang','zhenjiang','zhenjiang','zhenjiang','zhenjiang','medium','c','linpin');")
 	tk.MustExec("INSERT INTO tkey_string VALUES('suzhou','suzhou','suzhou','suzhou','suzhou','suzhou','large','d','linpin');")
 	tk.MustExec("INSERT INTO tkey_string VALUES('wuxi','wuxi','wuxi','wuxi','wuxi','wuxi','x-large','a','linpin');")
+	tk.MustExec("create table t_issue_60556(a int, b int, ac char(3), bc char(3), key ab(a,b), key acbc(ac,bc));")
+	tk.MustExec("insert into t_issue_60556 values (100, 500, '100', '500');")
 
 	var input []string
 	var output []struct {
@@ -256,7 +258,7 @@ func TestVectorIndex(t *testing.T) {
 		tiflash.Unlock()
 	}()
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 
 	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
 	tk.MustExec("alter table t set tiflash replica 1;")
@@ -292,7 +294,7 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	require.NoError(t, err)
 	testkit.SetTiFlashReplica(t, dom, "test", "t")
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 	tk.MustExec("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW")
 	tk.MustExec("alter table t add vector index idx2((VEC_COSINE_DISTANCE(c))) USING HNSW")
 

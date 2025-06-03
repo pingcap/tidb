@@ -231,6 +231,11 @@ error = '''
 databases already existed in restored cluster
 '''
 
+["BR:Restore:ErrRestoreCheckpointMismatch"]
+error = '''
+restore checkpoint mismatch
+'''
+
 ["BR:Restore:ErrRestoreChecksumMismatch"]
 error = '''
 restore checksum mismatch
@@ -314,6 +319,11 @@ the system table isn't supported for restoring yet
 ["BR:Stream:ErrStreamLogTaskExist"]
 error = '''
 stream task already exists
+'''
+
+["BR:Stream:ErrStreamLogTaskHasNoStorage"]
+error = '''
+stream task has no storage
 '''
 
 ["Lighting:Restore:ErrChecksumMismatch"]
@@ -469,6 +479,11 @@ region not found
 ["Lightning:KV:ServerIsBusy"]
 error = '''
 server is busy
+'''
+
+["Lightning:KV:StoreDiskFull"]
+error = '''
+store disk full
 '''
 
 ["Lightning:Loader:ErrInvalidSchemaFile"]
@@ -1986,6 +2001,11 @@ error = '''
 Delete can not find column %s for table %s
 '''
 
+["executor:8179"]
+error = '''
+Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -2404,6 +2424,11 @@ Table '%s' from one of the %ss cannot be used in %s
 ["planner:1288"]
 error = '''
 The target table %-.100s of the %s is not updatable
+'''
+
+["planner:1305"]
+error = '''
+%s %s does not exist
 '''
 
 ["planner:1345"]
@@ -2944,6 +2969,16 @@ Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_contr
 ["schema:8257"]
 error = '''
 Cannot set resource group for a role
+'''
+
+["schema:8258"]
+error = '''
+Table %s is in mode %s
+'''
+
+["schema:8259"]
+error = '''
+Invalid mode set from (or by default) %s to %s for table %s
 '''
 
 ["server:1040"]

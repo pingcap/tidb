@@ -542,7 +542,7 @@ func (b *castJSONAsArrayFunctionSig) evalJSON(ctx EvalContext, row chunk.Row) (r
 		}
 		arrayVals = append(arrayVals, item)
 	} else {
-		for i := 0; i < val.GetElemCount(); i++ {
+		for i := range val.GetElemCount() {
 			item, err := f(fakeSctx, val.ArrayGetElem(i), ft)
 			if err != nil {
 				return types.BinaryJSON{}, false, err
@@ -2534,8 +2534,15 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 // type int, otherwise, returns `expr` directly.
 func WrapWithCastAsInt(ctx BuildContext, expr Expression, targetType *types.FieldType) Expression {
 	if expr.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeEnum {
+		// since column and correlated column may be referred in other places, deep
+		// clone the one out with its field type as well before change the flag inside.
 		if col, ok := expr.(*Column); ok {
 			col = col.Clone().(*Column)
+			col.RetType = col.RetType.Clone()
+			expr = col
+		}
+		if col, ok := expr.(*CorrelatedColumn); ok {
+			col = col.Clone().(*CorrelatedColumn)
 			col.RetType = col.RetType.Clone()
 			expr = col
 		}

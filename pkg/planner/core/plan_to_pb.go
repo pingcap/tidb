@@ -16,7 +16,6 @@ package core
 
 import (
 	"fmt"
-	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -274,9 +273,11 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 		tsExec.PushedDownFilterConditions = conditions
 	}
 
-	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil && p.AnnIndexExtra.PushDownQueryInfo.TopK != math.MaxUint32 {
-		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
-		tsExec.AnnQuery = &annQueryCopy
+	for _, idx := range p.UsedColumnarIndexes {
+		if idx != nil && idx.QueryInfo != nil {
+			queryInfoCopy := *idx.QueryInfo
+			tsExec.UsedColumnarIndexes = append(tsExec.UsedColumnarIndexes, &queryInfoCopy)
+		}
 	}
 
 	var err error
@@ -319,9 +320,11 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBCont
 
 	ptsExec.Desc = p.Desc
 
-	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil && p.AnnIndexExtra.PushDownQueryInfo.TopK != math.MaxUint32 {
-		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
-		ptsExec.AnnQuery = &annQueryCopy
+	for _, idx := range p.UsedColumnarIndexes {
+		if idx != nil && idx.QueryInfo != nil {
+			queryInfoCopy := *idx.QueryInfo
+			ptsExec.UsedColumnarIndexes = append(ptsExec.UsedColumnarIndexes, &queryInfoCopy)
+		}
 	}
 
 	executorID := p.ExplainID().String()
@@ -482,9 +485,9 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx *base.BuildPBContext, _ kv.StoreType
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.Executor, error) {
-	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
+	columns := make([]*model.ColumnInfo, 0, p.Schema().Len())
 	tableColumns := p.Table.Cols()
-	for _, col := range p.schema.Columns {
+	for _, col := range p.Schema().Columns {
 		if col.ID == model.ExtraHandleID {
 			columns = append(columns, model.NewExtraHandleColInfo())
 		} else if col.ID == model.ExtraPhysTblID {

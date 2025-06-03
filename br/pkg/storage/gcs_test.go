@@ -10,6 +10,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"testing"
@@ -168,7 +170,7 @@ func TestGCS(t *testing.T) {
 
 	// test 1003 files
 	var totalSize int64 = 0
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		err = stg.WriteFile(ctx, fmt.Sprintf("f%d", i), []byte("data"))
 		require.NoError(t, err)
 	}
@@ -186,7 +188,7 @@ func TestGCS(t *testing.T) {
 	require.True(t, ok)
 	_, ok = filesSet["key2"]
 	require.True(t, ok)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		_, ok = filesSet[fmt.Sprintf("f%d", i)]
 		require.True(t, ok)
 	}
@@ -514,13 +516,13 @@ func TestSpeedReadManyFiles(t *testing.T) {
 
 	fileNum := 1000
 	filenames := make([]string, fileNum)
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		filenames[i] = fmt.Sprintf("TestSpeedReadManySmallFiles/%d", i)
 	}
 	fileSize := 1024
 	data := make([]byte, fileSize)
 	eg := &errgroup.Group{}
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		filename := filenames[i]
 		eg.Go(func() error {
 			return s.WriteFile(ctx, filename, data)
@@ -547,12 +549,12 @@ func TestSpeedReadManyFiles(t *testing.T) {
 
 	fileNum = 30
 	filenames = make([]string, fileNum)
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		filenames[i] = fmt.Sprintf("TestSpeedReadManyLargeFiles/%d", i)
 	}
 	fileSize = 100 * 1024 * 1024
 	data = make([]byte, fileSize)
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		filename := filenames[i]
 		eg.Go(func() error {
 			return s.WriteFile(ctx, filename, data)
@@ -574,6 +576,34 @@ func TestSpeedReadManyFiles(t *testing.T) {
 }
 
 func TestGCSShouldRetry(t *testing.T) {
+	require.True(t, shouldRetry(&url.Error{Err: goerrors.New("http2: server sent GOAWAY and closed the connectiont"), Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
 	require.True(t, shouldRetry(&url.Error{Err: goerrors.New("http2: client connection lost"), Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
 	require.True(t, shouldRetry(&url.Error{Err: io.EOF, Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
+}
+
+func TestCtxUsage(t *testing.T) {
+	httpSvr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer httpSvr.Close()
+
+	ctx := context.Background()
+	gcs := &backuppb.GCS{
+		Endpoint:      httpSvr.URL,
+		Bucket:        "test",
+		Prefix:        "prefix",
+		StorageClass:  "NEARLINE",
+		PredefinedAcl: "private",
+		CredentialsBlob: fmt.Sprintf(`
+{
+	"type":"external_account",
+	"audience":"//iam.googleapis.com/projects/1234567890123/locations/global/workloadIdentityPools/my-pool/providers/my-provider",
+	"subject_token_type":"urn:ietf:params:oauth:token-type:access_token",
+	"credential_source":{"url":"%s"}
+}`, httpSvr.URL),
+	}
+	stg, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{})
+	require.NoError(t, err)
+
+	_, err = stg.FileExists(ctx, "key")
+	// before the fix, it's context canceled error
+	require.ErrorContains(t, err, "invalid_request")
 }

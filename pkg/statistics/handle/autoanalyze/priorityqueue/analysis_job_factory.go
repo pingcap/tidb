@@ -226,7 +226,7 @@ func (*AnalysisJobFactory) CheckIndexesNeedAnalyze(tblInfo *model.TableInfo, tbl
 	for _, idx := range tblInfo.Indices {
 		if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
 			// Columnar index doesn't have stats currently.
-			if idx.IsTiFlashLocalIndex() {
+			if idx.IsColumnarIndex() {
 				continue
 			}
 			indexIDs[idx.ID] = struct{}{}
@@ -301,7 +301,7 @@ func (*AnalysisJobFactory) CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 			continue
 		}
 		// Columnar index doesn't have stats currently.
-		if idx.IsTiFlashLocalIndex() {
+		if idx.IsColumnarIndex() {
 			continue
 		}
 

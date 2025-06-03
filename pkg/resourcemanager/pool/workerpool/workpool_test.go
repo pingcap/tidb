@@ -75,7 +75,7 @@ func TestWorkerPool(t *testing.T) {
 
 	// Add some tasks to the pool.
 	cntWg.Add(10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		pool.AddTask(int64Task(i))
 	}
 
@@ -88,7 +88,7 @@ func TestWorkerPool(t *testing.T) {
 
 	// Add some more tasks to the pool.
 	cntWg.Add(10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		pool.AddTask(int64Task(i))
 	}
 
@@ -101,7 +101,7 @@ func TestWorkerPool(t *testing.T) {
 
 	// Add some more tasks to the pool.
 	cntWg.Add(10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		pool.AddTask(int64Task(i))
 	}
 
@@ -120,7 +120,7 @@ func TestTunePoolSize(t *testing.T) {
 		seed := time.Now().UnixNano()
 		rnd := rand.New(rand.NewSource(seed))
 		t.Logf("seed: %d", seed)
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			wait := rnd.Intn(2) == 0
 			larger := pool.Cap() + rnd.Int31n(10) + 2
 			pool.Tune(larger, wait)
@@ -131,6 +131,15 @@ func TestTunePoolSize(t *testing.T) {
 		}
 		pool.Release()
 		pool.Wait()
+	})
+
+	t.Run("change pool size before start", func(t *testing.T) {
+		pool := NewWorkerPool[int64Task]("test", util.UNKNOWN, 10, createMyWorker)
+		pool.Tune(5, true)
+		pool.Start(context.Background())
+		pool.Release()
+		pool.Wait()
+		require.EqualValues(t, 5, pool.Cap())
 	})
 
 	t.Run("context done when reduce pool size and wait", func(t *testing.T) {
@@ -203,7 +212,7 @@ func TestWorkerPoolCustomChan(t *testing.T) {
 	})
 
 	pool.Start(context.Background())
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		taskCh <- int64Task(i)
 	}
 	close(taskCh)

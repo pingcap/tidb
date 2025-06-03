@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -42,6 +43,9 @@ import (
 var hardcodedS3ChunkSize = 5 * 1024 * 1024
 
 const (
+	// S3ExternalID is the key for the external ID used in S3 operations.
+	S3ExternalID = "external-id"
+
 	s3EndpointOption     = "s3.endpoint"
 	s3RegionOption       = "s3.region"
 	s3StorageClassOption = "s3.storage-class"
@@ -50,7 +54,7 @@ const (
 	s3ACLOption          = "s3.acl"
 	s3ProviderOption     = "s3.provider"
 	s3RoleARNOption      = "s3.role-arn"
-	s3ExternalIDOption   = "s3.external-id"
+	s3ExternalIDOption   = "s3." + S3ExternalID
 	notFound             = "NotFound"
 	// number of retries to make of operations.
 	maxRetries = 7
@@ -627,7 +631,7 @@ func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error
 		data    []byte
 		readErr error
 	)
-	for retryCnt := 0; retryCnt < maxErrorRetries; retryCnt += 1 {
+	for retryCnt := range maxErrorRetries {
 		input := &s3.GetObjectInput{
 			Bucket: aws.String(rs.options.Bucket),
 			Key:    aws.String(rs.options.Prefix + file),
@@ -651,6 +655,7 @@ func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error
 				return nil, errors.Annotatef(readErr, "failed to read body from get object result, file info: input.bucket='%s', input.key='%s', retryCnt='%d'",
 					*input.Bucket, *input.Key, retryCnt)
 			}
+			metrics.RetryableErrorCount.WithLabelValues(readErr.Error()).Inc()
 			continue
 		}
 		return data, nil
@@ -984,6 +989,7 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
 	for err != nil && errors.Cause(err) != io.EOF && r.ctx.Err() == nil && retryCnt < maxErrorRetries { //nolint:errorlint
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		log.L().Warn(
 			"read s3 object failed, will retry",
 			zap.String("file", r.name),
@@ -1250,6 +1256,9 @@ func isHTTP2ConnAborted(err error) bool {
 func (rl retryerWithLog) ShouldRetry(r *request.Request) (retry bool) {
 	defer func() {
 		log.Warn("failed to request s3, checking whether we can retry", zap.Error(r.Error), zap.Bool("retry", retry))
+		if retry {
+			metrics.RetryableErrorCount.WithLabelValues(r.Error.Error()).Inc()
+		}
 	}()
 
 	// for unit test

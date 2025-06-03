@@ -1561,13 +1561,13 @@ func TestLpad(t *testing.T) {
 		{"hi", 0, "?", ""},
 		{"hi", -1, "?", nil},
 		{"hi", 1, "", "h"},
-		{"hi", 5, "", nil},
+		{"hi", 5, "", ""},
 		{"hi", 5, "ab", "abahi"},
 		{"hi", 6, "ab", "ababhi"},
 		{"中文", 5, "字符", "字符字中文"},
 		{"中文", 1, "a", "中"},
 		{"中文", -5, "字符", nil},
-		{"中文", 10, "", nil},
+		{"中文", 10, "", ""},
 	}
 	fc := funcs[ast.Lpad]
 	for _, test := range tests {
@@ -1601,13 +1601,13 @@ func TestRpad(t *testing.T) {
 		{"hi", 0, "?", ""},
 		{"hi", -1, "?", nil},
 		{"hi", 1, "", "h"},
-		{"hi", 5, "", nil},
+		{"hi", 5, "", ""},
 		{"hi", 5, "ab", "hiaba"},
 		{"hi", 6, "ab", "hiabab"},
 		{"中文", 5, "字符", "中文字符字"},
 		{"中文", 1, "a", "中"},
 		{"中文", -5, "字符", nil},
-		{"中文", 10, "", nil},
+		{"中文", 10, "", ""},
 	}
 	fc := funcs[ast.Rpad]
 	for _, test := range tests {
@@ -2010,7 +2010,7 @@ func TestFormat(t *testing.T) {
 		if tt.warnings > 0 {
 			warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 			require.Lenf(t, warnings, tt.warnings, "test %v", tt)
-			for i := 0; i < tt.warnings; i++ {
+			for i := range tt.warnings {
 				require.Truef(t, terror.ErrorEqual(types.ErrTruncatedWrongVal, warnings[i].Err), "test %v", tt)
 			}
 			ctx.GetSessionVars().StmtCtx.SetWarnings([]contextutil.SQLWarn{})
@@ -2040,7 +2040,7 @@ func TestFormat(t *testing.T) {
 	testutil.DatumEqual(t, types.NewDatum(formatTests4.ret), r4)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	require.Equal(t, 3, len(warnings))
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		require.True(t, terror.ErrorEqual(errUnknownLocale, warnings[i].Err))
 	}
 	ctx.GetSessionVars().StmtCtx.SetWarnings([]contextutil.SQLWarn{})

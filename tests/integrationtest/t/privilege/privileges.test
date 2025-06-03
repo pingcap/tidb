@@ -977,3 +977,67 @@ alter user test account unlock;
 alter user u59677 identified by 'abcde';
 disconnect u59677;
 connection default;
+
+# TestIssue29280
+drop database if exists tmpdb;
+create database tmpdb;
+drop user test_user;
+create user test_user;
+grant create temporary tables on tmpdb.* to test_user;
+connect (test_user, localhost, test_user,,);
+show databases;
+create temporary table tmpdb.tmp(id int);
+disconnect test_user;
+connection default;
+
+# TestIssue60468
+use privilege__privileges;
+DROP TABLE IF EXISTS t, t1;
+CREATE TABLE t (x INT);
+INSERT INTO t VALUES (100);
+CREATE TABLE t1 (x INT);
+
+DROP USER IF EXISTS foo;
+CREATE USER foo;
+GRANT SELECT ON *.* TO foo;
+
+connect (foo, localhost, foo,,privilege__privileges);
+--error 1142
+SELECT * FROM t FOR UPDATE;
+disconnect foo;
+
+connection default;
+GRANT DELETE ON privilege__privileges.t TO foo;
+
+connect (foo, localhost, foo,,privilege__privileges);
+SELECT * FROM t FOR UPDATE;
+--error 1142
+SELECT * FROM t, t1 where t.x = t1.x FOR UPDATE;
+SELECT * FROM t, t1 where t.x = t1.x FOR UPDATE OF t;
+disconnect foo;
+connection default;
+
+# TestIssue60469
+use privilege__privileges;
+DROP USER IF EXISTS foo;
+CREATE USER foo;
+DROP VIEW IF EXISTS v, v1;
+GRANT SELECT ON privilege__privileges.* TO foo;
+
+connect (foo, localhost, foo,,privilege__privileges);
+--error 1142
+CREATE OR REPLACE VIEW v AS SELECT 1;
+
+connection default;
+GRANT CREATE VIEW ON privilege__privileges.* TO foo;
+
+connection foo;
+CREATE VIEW v AS SELECT 1;
+--error 1142
+CREATE OR REPLACE VIEW v AS SELECT 1, 1;
+--error 1142
+CREATE OR REPLACE VIEW v1 AS SELECT 1, 1;
+
+disconnect foo;
+connection default;
+

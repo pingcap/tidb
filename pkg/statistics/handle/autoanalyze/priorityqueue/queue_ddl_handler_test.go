@@ -897,7 +897,7 @@ func TestVectorIndexTriggerAutoAnalyze(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	h := dom.StatsHandle()
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 
 	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
 	tk.MustExec("analyze table t")
@@ -917,7 +917,7 @@ func TestVectorIndexTriggerAutoAnalyze(t *testing.T) {
 
 	tk.MustExec("alter table t add vector index vecIdx1((vec_cosine_distance(d))) USING HNSW;")
 
-	addIndexEvent := findEventWithTimeout(h.DDLEventCh(), model.ActionAddVectorIndex, 1)
+	addIndexEvent := findEventWithTimeout(h.DDLEventCh(), model.ActionAddColumnarIndex, 1)
 	// No event is found
 	require.Nil(t, addIndexEvent)
 }

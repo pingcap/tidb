@@ -74,10 +74,7 @@ func MergeAndRewriteFileRanges(
 	}
 
 	// RawKV does not have data in write CF.
-	totalRegions := writeCFFile
-	if defaultCFFile > writeCFFile {
-		totalRegions = defaultCFFile
-	}
+	totalRegions := max(defaultCFFile, writeCFFile)
 
 	// Check if files are overlapped
 	rangeTree := rtree.NewRangeStatsTree()
@@ -90,9 +87,11 @@ func MergeAndRewriteFileRanges(
 			rangeCount += f.TotalKvs
 		}
 		rg := &rtree.Range{
-			StartKey: files[0].GetStartKey(),
-			EndKey:   files[0].GetEndKey(),
-			Files:    files,
+			KeyRange: rtree.KeyRange{
+				StartKey: files[0].GetStartKey(),
+				EndKey:   files[0].GetEndKey(),
+			},
+			Files: files,
 		}
 		// rewrite Range for split.
 		// so that splitRanges no need to handle rewrite rules any more.
