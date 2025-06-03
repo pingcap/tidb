@@ -28,15 +28,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
-	snapsplit "github.com/pingcap/tidb/br/pkg/restore/internal/snap_split"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -412,7 +409,7 @@ func (rc *SnapClient) sendRequestToStore(
 		}
 		storeId := store.GetId()
 		pool.ApplyOnErrorGroup(eg, func() error {
-			return sendFn(ectx, rc.fileImporter.importClient, storeId)
+			return sendFn(ectx, rc., storeId)
 		})
 	}
 	return eg.Wait()
