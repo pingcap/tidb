@@ -635,7 +635,7 @@ func TestSaveMetaToStorage(t *testing.T) {
 		tableName := fmt.Sprintf("save_metas_%d", i)
 		tk.MustExec(fmt.Sprintf("drop table if exists test.%s", tableName))
 		tk.MustExec(fmt.Sprintf("create table test.%s (id int)", tableName))
-		tableInfo, err := dom.InfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr(tableName))
+		tableInfo, err := dom.InfoSchema().TableInfoByName(model.NewCIStr("test"), model.NewCIStr(tableName))
 		require.NoError(t, err)
 		metaUpdates = append(metaUpdates, types.MetaUpdate{
 			PhysicalID: tableInfo.ID,

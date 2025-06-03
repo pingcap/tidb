@@ -1546,7 +1546,7 @@ func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 	stg, err := storage.NewLocalStorage("local://" + filepath.ToSlash(t.TempDir()))
 	require.NoError(t, err)
 	logCheckpointMetaManager := checkpoint.NewLogStorageMetaManager(
-		stg, nil, 123, "test")
+		stg, nil, 123, "test", 1)
 	defer logCheckpointMetaManager.Close()
 	baseTableMappingManager := &stream.TableMappingManager{
 		DBReplaceMap: getDBMap(),
@@ -1560,7 +1560,7 @@ func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 	stg, err = storage.NewLocalStorage("local://" + filepath.ToSlash(t.TempDir()) + "/temp_another")
 	require.NoError(t, err)
 	logCheckpointMetaManager2 := checkpoint.NewLogStorageMetaManager(
-		stg, nil, 123, "test")
+		stg, nil, 123, "test", 1)
 	defer logCheckpointMetaManager.Close()
 	newSchemaReplaces, err = client2.TEST_initSchemasMap(ctx, 2, logCheckpointMetaManager2)
 	require.NoError(t, err)
@@ -1710,13 +1710,13 @@ func TestRepairIngestIndexFromCheckpoint(t *testing.T) {
 	require.NotEqual(t, int64(0), indexIDi2)
 
 	// add checkpoint
-	_, err = tk.Exec("CREATE DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint")
+	_, err = tk.Exec("CREATE DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint_1")
 	require.NoError(t, err)
 	defer func() {
-		_, err = tk.Exec("DROP DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint")
+		_, err = tk.Exec("DROP DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint_1")
 		require.NoError(t, err)
 	}()
-	logCheckpointMetaManager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName)
+	logCheckpointMetaManager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName, 1)
 	require.NoError(t, err)
 	defer logCheckpointMetaManager.Close()
 	require.NoError(t, logCheckpointMetaManager.SaveCheckpointIngestIndexRepairSQLs(ctx, &checkpoint.CheckpointIngestIndexRepairSQLs{

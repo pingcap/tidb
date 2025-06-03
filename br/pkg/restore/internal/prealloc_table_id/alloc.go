@@ -10,10 +10,12 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"go.uber.org/zap"
 )
 
 const (
@@ -162,7 +164,7 @@ func (p *PreallocIDs) GetIDRange() (int64, int64) {
 	return p.start, p.end
 }
 
-// preallocTableIDs peralloc the id for [start, end)
+// PreallocIDs peralloc the id for [start, end)
 func (p *PreallocIDs) PreallocIDs(m Allocator) error {
 	if len(p.unallocedIDs) == 0 {
 		return nil
@@ -173,6 +175,7 @@ func (p *PreallocIDs) PreallocIDs(m Allocator) error {
 
 	currentID, err := m.GetGlobalID()
 	if err != nil {
+		log.Error("failed to get global ID", zap.Error(err))
 		return err
 	}
 	p.start = currentID + 1

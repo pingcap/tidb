@@ -1583,6 +1583,7 @@ test_pitr_chaining() {
     . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
     first_restore_ts=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
     echo "Captured first checkpoint timestamp: $first_restore_ts"
+    sleep 5
     
     run_sql "INSERT INTO $DB.table_a VALUES (4, 'post-first-checkpoint data');"
     run_sql "INSERT INTO $DB.table_b VALUES (4, 'post-first-checkpoint data');"

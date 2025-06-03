@@ -107,11 +107,14 @@ func NewLogRestoreManager(
 	}
 
 	if logCheckpointMetaManager != nil {
+		log.Info("starting checkpoint runner for log restore")
 		var err error
 		l.checkpointRunner, err = checkpoint.StartCheckpointRunnerForLogRestore(ctx, logCheckpointMetaManager)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+	} else {
+		log.Info("log checkpoint meta manager is disabled, checkpoint runner not started")
 	}
 	return l, nil
 }
@@ -626,6 +629,7 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 	}
 	if exists {
 		// load the checkpoint since this is not the first time to restore
+		log.Info("loading existing log restore checkpoint")
 		meta, err := logCheckpointMetaManager.LoadCheckpointMetadata(ctx)
 		if err != nil {
 			return "", errors.Trace(err)

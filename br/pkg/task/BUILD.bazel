@@ -34,6 +34,7 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/metautil",
         "//br/pkg/pdutil",
+        "//br/pkg/registry",
         "//br/pkg/restore",
         "//br/pkg/restore/data",
         "//br/pkg/restore/ingestrec",
