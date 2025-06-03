@@ -69,7 +69,7 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 	}
 
 	// Filter out constant columns from aggCols
-	var nonConstCols []*expression.Column
+	nonConstCols := make([]*expression.Column, 0, len(aggCols))
 	for _, col := range aggCols {
 		if col.ID == 0 && !p.Schema().Contains(col) && col.VirtualExpr == nil {
 			continue
