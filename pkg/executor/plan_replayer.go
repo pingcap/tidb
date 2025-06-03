@@ -456,10 +456,10 @@ func loadStats(ctx sessionctx.Context, f *zip.File) error {
 	_, err = buf.ReadFrom(r)
 	if err != nil {
 		if f == nil || f.Name == "" {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Join(fmt.Errorf("fail to read stats file %s", f.Name), err))
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Join(errors.New("fail to read stats file"), err))
 			return nil
 		}
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Join(errors.New("fail to read stats file"), err))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Join(fmt.Errorf("fail to read stats file %s", f.Name), err))
 		return nil
 	}
 	if err := json.Unmarshal(buf.Bytes(), jsonTbl); err != nil {
