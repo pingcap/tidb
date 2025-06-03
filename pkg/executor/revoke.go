@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -343,8 +342,7 @@ func removePrivFromTablePriv(ctx context.Context, sctx sessionctx.Context,
 		updateColumnPriv = sctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 	} else {
 		if removeTablePriv {
-			s := fmt.Sprintf("UPDATE %n.%n SET Table_priv = TRIM(BOTH ',' FROM REPLACE(CONCAT(',', Table_priv, ','), ',%s,', ',')) WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?", mysql.Priv2SetStr[priv])
-			// FIXME(cbc): s := strings.Join([]string{"UPDATE %n.%n SET Table_priv = TRIM(BOTH ',' FROM REPLACE(CONCAT(',', Table_priv, ','),',", mysql.Priv2SetStr[priv], ",',',')) WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?"}, "")
+			s := strings.Join([]string{"UPDATE %n.%n SET Table_priv = TRIM(BOTH ',' FROM REPLACE(CONCAT(',', Table_priv, ','),',", mysql.Priv2SetStr[priv], ",',',')) WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?"}, "")
 			sqlescape.MustFormatSQL(sql, s,
 				mysql.SystemDB, mysql.TablePrivTable, user, host, db, table)
 			_, err = sctx.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
@@ -354,8 +352,7 @@ func removePrivFromTablePriv(ctx context.Context, sctx sessionctx.Context,
 		}
 
 		sql.Reset()
-		s := fmt.Sprintf("UPDATE %n.%n SET Column_priv = TRIM(BOTH ',' FROM REPLACE(CONCAT(',', Column_priv, ','), ',%s,', ',')) WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?", mysql.Priv2SetStr[priv])
-		// FIXME(cbc): s := strings.Join([]string{"UPDATE %n.%n SET Column_priv = TRIM(BOTH ',' FROM REPLACE(CONCAT(',', Column_priv, ','),',", mysql.Priv2SetStr[priv], ",',',')) WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?"}, "")
+		s := strings.Join([]string{"UPDATE %n.%n SET Column_priv = TRIM(BOTH ',' FROM REPLACE(CONCAT(',', Column_priv, ','),',", mysql.Priv2SetStr[priv], ",',',')) WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?"}, "")
 		sqlescape.MustFormatSQL(sql, s,
 			mysql.SystemDB, mysql.TablePrivTable, user, host, db, table)
 		_, err = sctx.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
@@ -381,8 +378,7 @@ func removePrivFromColumnPriv(ctx context.Context, e sqlexec.SQLExecutor,
 		sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET Column_priv = '' WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?",
 			mysql.SystemDB, mysql.ColumnPrivTable, user, host, db, table)
 	} else {
-		s := fmt.Sprintf("UPDATE %n.%n SET Column_priv = TRIM(BOTH ',' FROM REPLACE(CONCAT(',', Column_priv, ','), ',%s,', ',')) WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?", mysql.Priv2SetStr[priv])
-		// FIXME(cbc): s := strings.Join([]string{"UPDATE %n.%n SET Column_priv = TRIM(BOTH ',' FROM REPLACE(CONCAT(',', Column_priv, ','),',", mysql.Priv2SetStr[priv], ",',',')) WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?"}, "")
+		s := strings.Join([]string{"UPDATE %n.%n SET Column_priv = TRIM(BOTH ',' FROM REPLACE(CONCAT(',', Column_priv, ','),',", mysql.Priv2SetStr[priv], ",',',')) WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?"}, "")
 		sqlescape.MustFormatSQL(sql, s,
 			mysql.SystemDB, mysql.ColumnPrivTable, user, host, db, table)
 	}
