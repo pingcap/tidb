@@ -463,7 +463,7 @@ func loadStats(ctx sessionctx.Context, f *zip.File) error {
 		return nil
 	}
 	if err := json.Unmarshal(buf.Bytes(), jsonTbl); err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Join(fmt.Errorf("fail to read stats file %s", f.Name), err))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Join(fmt.Errorf("fail to unmarshal stats JSON for file  %s", f.Name), err))
 		return nil
 	}
 	do := domain.GetDomain(ctx)
