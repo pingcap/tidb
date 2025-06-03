@@ -87,7 +87,7 @@ func rangePointLess(tc types.Context, a, b *point, collator collate.Collator) (i
 	if cmp != 0 {
 		return cmp, nil
 	}
-	return boolToInt(rangePointEqualValueLess(a, b)), errors.Trace(err)
+	return rangePointEqualValueLess(a, b), errors.Trace(err)
 }
 
 func rangePointEnumLess(a, b *point) (int, error) {
@@ -95,25 +95,24 @@ func rangePointEnumLess(a, b *point) (int, error) {
 	if cmp != 0 {
 		return cmp, nil
 	}
-	return boolToInt(rangePointEqualValueLess(a, b)), nil
+	return rangePointEqualValueLess(a, b), nil
 }
 
-func boolToInt(b bool) int {
-	if b {
-		return 1
+func rangePointEqualValueLess(a, b *point) int {
+	var result bool
+	if a.start && b.start {
+		result = !a.excl && b.excl
+	} else if a.start {
+		result = !a.excl && !b.excl
+	} else if b.start {
+		result = a.excl || b.excl
+	} else {
+		result = a.excl && !b.excl
+	}
+	if result {
+		return -1
 	}
 	return 0
-}
-
-func rangePointEqualValueLess(a, b *point) bool {
-	if a.start && b.start {
-		return !a.excl && b.excl
-	} else if a.start {
-		return !a.excl && !b.excl
-	} else if b.start {
-		return a.excl || b.excl
-	}
-	return a.excl && !b.excl
 }
 
 func pointsConvertToSortKey(sctx *rangerctx.RangerContext, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
