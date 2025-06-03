@@ -1229,7 +1229,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
-	if userTableIDNotReusedWhenNeedCheck, err := client.AllocTableIDs(ctx, tables, loadStatsPhysical && !cpEnabledAndExists, reusePreallocIDs); err != nil {
+	if userTableIDNotReusedWhenNeedCheck, err := client.AllocTableIDs(ctx, tables, loadStatsPhysical, loadSysTablePhysical, reusePreallocIDs); err != nil {
 		return errors.Trace(err)
 	} else if userTableIDNotReusedWhenNeedCheck {
 		log.Warn("Cannot load stats physically because not all table ids are reused. Fallback to logically load stats.")
@@ -1237,6 +1237,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		tables = fallbackStatsTables(tables)
 		loadStatsPhysical = false
 	}
+	tables = client.CleanTablesIfTemporarySystemTablesRenamed(loadStatsPhysical, loadSysTablePhysical, tables)
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
 	var restoreSchedulersFunc pdutil.UndoFunc
@@ -1391,13 +1392,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	createdTables, err := createDBsAndTables(ctx, client, cfg, mgr, dbs, tables)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	// TODO: after ID preallocation supports checkpoint, we can remove this check
-	if loadStatsPhysical && cpEnabledAndExists {
-		if err := checkAllUserTableIDsReused(createdTables); err != nil {
-			log.Warn("Cannot load stats physically because not all table ids are reused. Fallback to logically load stats.", zap.Error(err))
-			loadStatsPhysical = false
-		}
 	}
 
 	/* failpoint */
