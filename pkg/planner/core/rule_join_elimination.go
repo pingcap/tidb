@@ -68,14 +68,23 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 		}
 	}
 
-	// outer join elimination with duplicate agnostic aggregate functions
-	matched := ruleutil.IsColsAllFromOuterTable(aggCols, &outerUniqueIDs)
-	if matched {
+	// Filter out constant columns from aggCols
+	var nonConstCols []*expression.Column
+	for _, col := range aggCols {
+		if col.ID == 0 && !p.Schema().Contains(col) && col.VirtualExpr == nil {
+			continue
+		}
+		nonConstCols = append(nonConstCols, col)
+	}
+	// if nonConstCols is empty, it means all columns are constants
+	if len(nonConstCols) == 0 {
 		appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
 		return outerPlan, true, nil
 	}
-	// if we have a single column that is not from any table - we can prune
-	if len(aggCols) == 1 && aggCols[0].ID == 0 && !p.Schema().Contains(aggCols[0]) {
+	// outer join elimination with duplicate agnostic aggregate functions
+	// Uses "nonConstCols" as this is aggCols after filtering out constant columns.
+	matched := ruleutil.IsColsAllFromOuterTable(nonConstCols, &outerUniqueIDs)
+	if matched {
 		appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
 		return outerPlan, true, nil
 	}
