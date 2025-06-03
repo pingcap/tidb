@@ -1147,6 +1147,10 @@ func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
 }
 
 func isTiKVIndexByName(idxName string, tblInfo *model.TableInfo) bool {
+	// when the PKIsHandle of table is true, the primary key is not in the indices list.
+	if idxName == "primary" && tblInfo.PKIsHandle {
+		return true
+	}
 	for _, index := range tblInfo.Indices {
 		if index.Name.L == idxName {
 			return !index.IsColumnarIndex()
@@ -1306,7 +1310,6 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				continue
 			}
 			if isTiKVIndexByName(idxName.L, tblInfo) && !isolationReadEnginesHasTiKV {
-				fmt.Println("TiKV is not supported in isolation read engines")
 				engineVals, _ := ctx.GetSessionVars().GetSystemVar(vardef.TiDBIsolationReadEngines)
 				err := fmt.Errorf("TiDB doesn't support index '%v' in the isolation read engines(value: '%v')", idxName, engineVals)
 				if i < indexHintsLen {
