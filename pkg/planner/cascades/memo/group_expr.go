@@ -15,8 +15,6 @@
 package memo
 
 import (
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"unsafe"
 
 	"github.com/bits-and-blooms/bitset"
@@ -28,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -227,7 +227,9 @@ func (e *GroupExpression) FindBestTask(prop *property.PhysicalProperty, planCoun
 	//	utilfuncp.FindBestTask4LogicalDataSource = findBestTask4LogicalDataSource
 	//	utilfuncp.FindBestTask4LogicalShowDDLJobs = findBestTask4LogicalShowDDLJobs
 	// once we call GE's findBestTask from group expression level, we should judge from here, and get the
-	// wrapped logical plan and then call their specific handle logic inside.
+	// wrapped logical plan and then call their specific function pointer to handle logic inside. At the
+	// same time, we will pass ge (also implement LogicalPlan interface) as the first parameter for iterate
+	// ge's children in memo scenario.
 	// And since base.LogicalPlan is a common parent pointer of GE and LogicalPlan, we can use same portal.
 	switch e.GetWrappedLogicalPlan().(type) {
 	case *logicalop.LogicalCTE:

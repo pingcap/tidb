@@ -50,21 +50,23 @@ import (
 //
 //       tradition:
 //                                                       _______ DataSource.FindBestTask()
-//                                    (logicalOp)      /                                                                                  (child logicalOp)
+//                                    (logicalOp)      / _______ ...                                                                               (child logicalOp)
 //     physicalOptimize()  --->  logic.FindBestTask() ----- BaseLogicalPlan.FindBestTask() -----> iteratePhysicalPlan4BaseLogical() ---> logic.FindBestTask()
-//                                                     \
-//                                                      \__ LogicalCTETable.FindBestTask()
+//                                       ^             \____ ...                                                                                   |
+//                                       |              \__ LogicalCTETable.FindBestTask()                                                         |
+//                                       +---------------------------------------------------------------------------------------------------------+
 //
 //       cascades:
 //                                                                  _______ findBestTask4DataSource(ge, ...)
-//                                   (Group)     router&pass GE   /                                                                                             (Child Group)
+//                                   (Group)     router&pass GE   / _______ ...                                                                                       (Child Group)
 //    ImplementMemoAndCost ---> ImplementGroupAndCost ---------------- findBestTask4BaseLogicalPlan(ge, ...) ----> iteratePhysicalPlan4GroupExpression() ---> ImplementGroupAndCost
-//                                                                \
-//                                                                 \__ findBestTask4LogicalCTETable(ge, ...)
+//                                       ^                        \____ ...                                                                                             |
+//                                       |                         \__ findBestTask4LogicalCTETable(ge, ...)                                                            |
+//                                       +------------------------------------------------------------------------------------------------------------------------------+
 
-// ImplementMemoAndCost is the cascades physicalization and cost portal, it's quite same as physicalOptimize().
-func ImplementMemoAndCost(group *memo.Group, planCounter *base.PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {
-	sctx := group.GetLogicalExpressions().Front().Value.(base.LogicalPlan).SCtx()
+// ImplementMemoAndCost is the cascades physicalization and cost PORTAL, it's quite same as physicalOptimize().
+func ImplementMemoAndCost(rootGroup *memo.Group, planCounter *base.PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {
+	sctx := rootGroup.GetLogicalExpressions().Front().Value.(base.LogicalPlan).SCtx()
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer debugtrace.LeaveContextCommon(sctx)
@@ -99,7 +101,7 @@ func ImplementMemoAndCost(group *memo.Group, planCounter *base.PlanCounterTp) (p
 		}()
 	}
 
-	task, _, implErr := ImplementGroupAndCost(group, rootProp, math.MaxFloat64, planCounter, opt)
+	task, _, implErr := ImplementGroupAndCost(rootGroup, rootProp, math.MaxFloat64, planCounter, opt)
 	if implErr != nil {
 		return nil, 0, implErr
 	}
@@ -155,7 +157,11 @@ func ImplementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, c
 	)
 	group.ForEachGE(func(ge *memo.GroupExpression) bool {
 		// for each group expression inside un-optimized group, try to find the best physical plan prop-accordingly.
-		// GroupExpression overrides the base.LogicalPlan's FindBestTask to do the router job.
+		// GroupExpression overrides the base.LogicalPlan's FindBestTask to do the router job, And this is because
+		// if we call ge.LogicalOperator.FindBestTask, the function receiver will be logical operator himself rather
+		// than the group expression as we expected. ge.FindBestTask will directly call the logicalOp's findBestTask4xxx
+		// for the same effect while pass the ge as the first the parameter because ge also implement the LogicalPlan
+		// interface as well.
 		task, cnt, err := ge.FindBestTask(prop, planCounter, opt)
 		if err != nil {
 			implErr = err

@@ -170,24 +170,24 @@ func rebuildChildTasks(p *logicalop.BaseLogicalPlan, childTasks *[]base.Task, pp
 	return nil
 }
 
-func prepareIterationDownElems(lp base.LogicalPlan) (*memo.GroupExpression, *logicalop.BaseLogicalPlan, int, iterFunc, base.LogicalPlan) {
+func prepareIterationDownElems(super base.LogicalPlan) (*memo.GroupExpression, *logicalop.BaseLogicalPlan, int, iterFunc, base.LogicalPlan) {
 	// get the possible group expression and logical operator from common lp pointer.
-	ge, self := getGEAndSelf(lp)
+	ge, self := getGEAndSelf(super)
 	childLen := len(self.Children())
 	iterObj := self.GetBaseLogicalPlan()
-	iteration := iteratePhysicalPlan4BaseLogical
+	iterFunc := iteratePhysicalPlan4BaseLogical
 	if _, ok := self.(*logicalop.LogicalSequence); ok {
-		iteration = iterateChildPlan4LogicalSequence
+		iterFunc = iterateChildPlan4LogicalSequence
 	}
 	if ge != nil {
 		iterObj = ge
 		childLen = len(ge.Inputs)
-		iteration = iteratePhysicalPlan4GroupExpression
+		iterFunc = iteratePhysicalPlan4GroupExpression
 		if _, ok := self.(*logicalop.LogicalSequence); ok {
-			iteration = iterateChildPlan4LogicalSequenceGE
+			iterFunc = iterateChildPlan4LogicalSequenceGE
 		}
 	}
-	return ge, self.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan), childLen, iteration, iterObj
+	return ge, self.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan), childLen, iterFunc, iterObj
 }
 
 func enumeratePhysicalPlans4Task(
@@ -215,7 +215,7 @@ func enumeratePhysicalPlans4Task(
 		}
 
 		// This check makes sure that there is no invalid child task.
-		if len(childTasks) != baseLP.ChildLen() {
+		if len(childTasks) != childLen {
 			continue
 		}
 
@@ -651,6 +651,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty, planC
 	}
 	// Look up the task with this prop in the task map.
 	// It's used to reduce double counting.
+	// only get the physical cache from logicalOp under volcano mode.
 	if ge == nil {
 		bestTask = p.GetTask(prop)
 		if bestTask != nil {
@@ -663,6 +664,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty, planC
 
 	if prop.TaskTp != property.RootTaskType && !prop.IsFlashProp() {
 		// Currently all plan cannot totally push down to TiKV.
+		// only save the physical to logicalOp under volcano mode.
 		if ge == nil {
 			p.StoreTask(prop, base.InvalidTask)
 		}
@@ -742,6 +744,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty, planC
 	}
 
 END:
+	// only save the physical to logicalOp under volcano mode.
 	if ge == nil {
 		p.StoreTask(prop, bestTask)
 	}
@@ -1503,12 +1506,12 @@ func exploreEnforcedPlan(ds *logicalop.DataSource) bool {
 }
 
 // getGEAndDS get the possible group expression and logical operator from common lp pointer.
-func getGEAndDS(lp base.LogicalPlan) (ge *memo.GroupExpression, ds *logicalop.DataSource) {
+func getGEAndDS(super base.LogicalPlan) (ge *memo.GroupExpression, ds *logicalop.DataSource) {
 	// since base.LogicalPlan can represent GroupExpression and LogicalOperator at same time, we can use the same
 	// function signature as the common portal.
 	// for datasource, since it's a leaf node, we don't need GE inputs to dive its children, so almost all part of
 	// the code below is shared in common, except the physical plan cache.
-	switch x := lp.(type) {
+	switch x := super.(type) {
 	case *memo.GroupExpression:
 		ge = x
 		ds = ge.GetWrappedLogicalPlan().(*logicalop.DataSource)
@@ -1518,10 +1521,10 @@ func getGEAndDS(lp base.LogicalPlan) (ge *memo.GroupExpression, ds *logicalop.Da
 	return ge, ds
 }
 
-func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.PhysicalProperty,
+func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.PhysicalProperty,
 	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	// get the possible group expression and logical operator from common lp pointer.
-	ge, ds := getGEAndDS(lp)
+	ge, ds := getGEAndDS(super)
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
@@ -1552,12 +1555,14 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 			ds.PossibleAccessPaths = newPaths
 		}
 	}
-	// for cascades, operator self map actually don't have the cache, so it's safe here.
-	t = ds.GetTask(prop)
-	if t != nil {
-		cntPlan = 1
-		planCounter.Dec(1)
-		return
+	// only get the physical cache from logicalOp under volcano mode.
+	if ge == nil {
+		t = ds.GetTask(prop)
+		if t != nil {
+			cntPlan = 1
+			planCounter.Dec(1)
+			return
+		}
 	}
 	var cnt int64
 	var unenforcedTask base.Task
@@ -1572,6 +1577,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 			return nil, 0, err
 		}
 		if !unenforcedTask.Invalid() && !exploreEnforcedPlan(ds) {
+			// only save the physical to logicalOp under volcano mode.
 			if ge == nil {
 				ds.StoreTask(prop, unenforcedTask)
 			}
@@ -1606,6 +1612,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 				t = unenforcedTask
 			}
 		}
+		// only save the physical to logicalOp under volcano mode.
 		if ge == nil {
 			ds.StoreTask(prop, t)
 		}
