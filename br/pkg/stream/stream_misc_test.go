@@ -91,58 +91,67 @@ func TestFilterPath(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "valid path, all conditions pass",
+			name: "normal: minDefaultTs < minTs",
 			args: args{
-				path:         "v1/backupmeta/10-100-5-uuid.meta",
+				path:         "v1/backupmeta/000000000000000a-0000000000000005-000000000000000a-000000000000001e.meta", // flush=10, minDefault=5, min=10, max=30
 				shiftStartTS: 5,
-				restoreTS:    20,
+				restoreTS:    10,
 			},
-			expected: "v1/backupmeta/10-100-5-uuid.meta",
+			expected: "v1/backupmeta/000000000000000a-0000000000000005-000000000000000a-000000000000001e.meta",
 		},
 		{
-			name: "restoreTS < minDefaultTs, should be filtered",
+			name: "normal: minDefaultTs == minTs",
 			args: args{
-				path:         "v1/backupmeta/40-100-30-uuid.meta",
+				path:         "v1/backupmeta/000000000000000a-000000000000000a-000000000000000a-000000000000001e.meta", // all = 10
 				shiftStartTS: 5,
-				restoreTS:    20,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/000000000000000a-000000000000000a-000000000000000a-000000000000001e.meta",
+		},
+		{
+			name: "fallback: minDefaultTs == 0",
+			args: args{
+				path:         "v1/backupmeta/000000000000000a-0000000000000000-000000000000000a-000000000000001e.meta", // minDefault=0, min=10
+				shiftStartTS: 5,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/000000000000000a-0000000000000000-000000000000000a-000000000000001e.meta",
+		},
+		{
+			name: "fallback: minDefaultTs > minTs, should fallback to minTs",
+			args: args{
+				path:         "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta", // minDefault=20, min=10
+				shiftStartTS: 5,
+				restoreTS:    11, // fallback to 10, 11>10
+			},
+			expected: "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta",
+		},
+		{
+			name: "restoreTS < fallback minTs, should be filtered",
+			args: args{
+				path:         "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta", // fallback to min=10
+				shiftStartTS: 5,
+				restoreTS:    9, // 9 < 10, should be filtered
 			},
 			expected: "",
-		},
-		{
-			name: "restoreTS < minDefaultTs, but minDefaultTs > minTs",
-			args: args{
-				path:         "v1/backupmeta/10-100-30-uuid.meta",
-				shiftStartTS: 5,
-				restoreTS:    20,
-			},
-			expected: "v1/backupmeta/10-100-30-uuid.meta",
 		},
 		{
 			name: "maxTs < shiftStartTS, should be filtered",
 			args: args{
-				path:         "v1/backupmeta/10-15-5-uuid.meta",
-				shiftStartTS: 16,
-				restoreTS:    17,
+				path:         "v1/backupmeta/000000000000000a-0000000000000005-000000000000000a-0000000000000004.meta", // max=4 < 5
+				shiftStartTS: 5,
+				restoreTS:    10,
 			},
 			expected: "",
 		},
 		{
-			name: "fallback due to minDefaultTs == 0",
+			name: "invalid: minDefaultTs > minTs, fallback, but restoreTS < fallback",
 			args: args{
-				path:         "v1/backupmeta/35-75-0-uuid.meta",
-				shiftStartTS: 25,
-				restoreTS:    36,
+				path:         "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta",
+				shiftStartTS: 5,
+				restoreTS:    8, // fallback to 10, 8 < 10
 			},
-			expected: "v1/backupmeta/35-75-0-uuid.meta",
-		},
-		{
-			name: "fallback due to minDefaultTs > minTs",
-			args: args{
-				path:         "v1/backupmeta/50-100-99-uuid.meta",
-				shiftStartTS: 10,
-				restoreTS:    51, // fallback to 50 → 51 > 50
-			},
-			expected: "v1/backupmeta/50-100-99-uuid.meta",
+			expected: "",
 		},
 		{
 			name: "non-matching file name format, preserved for compatibility",
@@ -152,15 +161,6 @@ func TestFilterPath(t *testing.T) {
 				restoreTS:    10,
 			},
 			expected: "v1/backupmeta/unexpected_format.meta",
-		},
-		{
-			name: "incomplete but matched pattern (matches < 4)",
-			args: args{
-				path:         "v1/backupmeta/10-20.meta",
-				shiftStartTS: 10,
-				restoreTS:    10,
-			},
-			expected: "v1/backupmeta/10-20.meta",
 		},
 	}
 

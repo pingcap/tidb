@@ -45,7 +45,19 @@ const (
 	streamBackupGlobalCheckpointPrefix = "v1/global_checkpoint"
 )
 
-var metaPattern = regexp.MustCompile(`^(\d+)-(\d+)-(\d+)-[^/]+$`)
+// metaPattern is a regular expression used to match backup metadata filenames.
+// The expected filename format is:
+//
+//	{flushTs}-{minDefaultTs}-{minTs}-{maxTs}.meta
+//
+// where each part is a hexadecimal string (0-9, a-f, A-F).
+// Example:
+//
+//	0000000000000001-0000000000003039-065CCFF1D8AC0000-065CCFF1D8AC0006.meta
+//
+// The pattern captures all four parts as separate groups.
+// Leading zeros are necessary for the pattern to match.
+var metaPattern = regexp.MustCompile(`^([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})$`)
 
 func GetStreamBackupMetaPrefix() string {
 	return streamBackupMetaPrefix
@@ -375,19 +387,21 @@ func FilterPathByTs(path string, shiftStartTS, restoreTS uint64) string {
 
 	if metaPattern.MatchString(filename) {
 		matches := metaPattern.FindStringSubmatch(filename)
-		if len(matches) < 4 {
+		if len(matches) < 5 {
 			log.Warn("invalid meta file name format", zap.String("file", path))
 			// consider compatible with future file path change
 			return path
 		}
 
-		minTs, _ := strconv.ParseUint(matches[1], 10, 64)
-		maxTs, _ := strconv.ParseUint(matches[2], 10, 64)
-		minDefaultTs, _ := strconv.ParseUint(matches[3], 10, 64)
+		flushTs, _ := strconv.ParseUint(matches[1], 16, 64)
+		minDefaultTs, _ := strconv.ParseUint(matches[2], 16, 64)
+		minTs, _ := strconv.ParseUint(matches[3], 16, 64)
+		maxTs, _ := strconv.ParseUint(matches[4], 16, 64)
 
 		if minDefaultTs == 0 || minDefaultTs > minTs {
 			log.Warn("minDefaultTs is not correct, fallback to minTs",
 				zap.String("file", path),
+				zap.Uint64("flushTs", flushTs),
 				zap.Uint64("minTs", minTs),
 				zap.Uint64("minDefaultTs", minDefaultTs),
 			)
