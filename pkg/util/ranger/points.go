@@ -79,26 +79,26 @@ func (rp *point) Clone(value types.Datum) *point {
 	}
 }
 
-func rangePointLess(tc types.Context, a, b *point, collator collate.Collator) (int, error) {
+func rangePointCmp(tc types.Context, a, b *point, collator collate.Collator) (int, error) {
 	if a.value.Kind() == types.KindMysqlEnum && b.value.Kind() == types.KindMysqlEnum {
-		return rangePointEnumLess(a, b)
+		return rangePointEnumCmp(a, b)
 	}
 	cmp, err := a.value.Compare(tc, &b.value, collator)
 	if cmp != 0 {
 		return cmp, nil
 	}
-	return rangePointEqualValueLess(a, b), errors.Trace(err)
+	return rangePointEqualValueCmp(a, b), errors.Trace(err)
 }
 
-func rangePointEnumLess(a, b *point) (int, error) {
+func rangePointEnumCmp(a, b *point) (int, error) {
 	cmp := cmp.Compare(a.value.GetInt64(), b.value.GetInt64())
 	if cmp != 0 {
 		return cmp, nil
 	}
-	return rangePointEqualValueLess(a, b), nil
+	return rangePointEqualValueCmp(a, b), nil
 }
 
-func rangePointEqualValueLess(a, b *point) int {
+func rangePointEqualValueCmp(a, b *point) int {
 	var result bool
 	if a.start && b.start {
 		result = !a.excl && b.excl
@@ -696,7 +696,7 @@ func (r *builder) buildFromIn(
 	}
 	collator := collate.GetCollator(colCollate)
 	slices.SortFunc(rangePoints, func(a, b *point) (cmpare int) {
-		cmpare, r.err = rangePointLess(tc, a, b, collator)
+		cmpare, r.err = rangePointCmp(tc, a, b, collator)
 		return cmpare
 	})
 	// check and remove duplicates
@@ -1011,7 +1011,7 @@ func (r *builder) mergeSorted(a, b []*point, collator collate.Collator) []*point
 	i, j := 0, 0
 	tc := r.sctx.TypeCtx
 	for i < len(a) && j < len(b) {
-		less, err := rangePointLess(tc, a[i], b[j], collator)
+		less, err := rangePointCmp(tc, a[i], b[j], collator)
 		if err != nil {
 			r.err = err
 			return nil
