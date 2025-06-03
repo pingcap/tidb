@@ -492,6 +492,38 @@ func (s *mockGCSSuite) TestMultiValueIndex() {
 	))
 }
 
+func (s *mockGCSSuite) TestBasicImportInto2() {
+	time.Sleep(5 * time.Second)
+	// s.tk.MustExec("set global tidb_enable_metadata_lock=0")
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
+	s.tk.MustExec("CREATE DATABASE load_csv;")
+	s.tk.MustExec("CREATE TABLE load_csv.t (id INT, c VARCHAR(20));")
+	s.tk.MustExec("CREATE TABLE load_csv.t2 (id INT, c VARCHAR(20));")
+
+	content := `insert into tbl values (1, 'a'), (2, 'b');`
+
+	// 写入临时文件
+	tempDir := s.T().TempDir()
+	filePath := path.Join(tempDir, "test.sql")
+	s.NoError(os.WriteFile(filePath, []byte(content), 0o644))
+
+	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM '%s' FORMAT 'SQL';`, filePath)
+
+	s.tk.MustQuery(sql)
+	time.Sleep(3 * time.Second)
+	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
+
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("NotEmpty")`)
+	sql = fmt.Sprintf(`IMPORT INTO load_csv.t FROM '%s' FORMAT 'SQL';`, filePath)
+	s.tk.MustGetErrMsg(sql, "PreCheck failed: target table is not empty")
+	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty")
+
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("Error")`)
+	sql = fmt.Sprintf(`IMPORT INTO load_csv.t FROM '%s' FORMAT 'SQL';`, filePath)
+	s.tk.MustGetErrMsg(sql, "PreCheck failed: check if table is empty failed")
+	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty")
+}
+
 func (s *mockGCSSuite) TestLoadSQLDump() {
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
