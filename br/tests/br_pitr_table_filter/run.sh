@@ -417,7 +417,7 @@ test_table_rename() {
     # drop and rename scenario - drop table_to_drop and rename table_to_rename to table_to_drop
     run_sql "DROP TABLE ${DB}_drop_and_rename.table_to_drop;"
     run_sql "RENAME TABLE ${DB}_drop_and_rename.table_to_rename TO ${DB}_drop_and_rename.table_to_drop;"
-
+    
     # add some data to the renamed table
     run_sql "INSERT INTO ${DB}_drop_and_rename.table_to_drop (c) VALUES (300);"
 
@@ -481,7 +481,7 @@ test_table_rename() {
     }
 
     run_sql "drop schema if exists ${DB}_2;"
-
+    
     # Test drop and rename scenario
     echo "testing drop and rename"
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "${DB}_drop_and_rename.table_to_drop"
@@ -1574,68 +1574,69 @@ test_pitr_chaining() {
 
     run_sql "INSERT INTO $DB.table_a VALUES (1, 'initial data 1'), (2, 'initial data 2');"
     run_sql "INSERT INTO $DB.table_b VALUES (1, 'initial data 1'), (2, 'initial data 2');"
-
+    
     run_br backup full -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
 
     run_sql "INSERT INTO $DB.table_a VALUES (3, 'post-backup data 1');"
     run_sql "INSERT INTO $DB.table_b VALUES (3, 'post-backup data 1');"
-
+    
     . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
     first_restore_ts=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
     echo "Captured first checkpoint timestamp: $first_restore_ts"
+    sleep 5
 
     run_sql "INSERT INTO $DB.table_a VALUES (4, 'post-first-checkpoint data');"
     run_sql "INSERT INTO $DB.table_b VALUES (4, 'post-first-checkpoint data');"
-
+    
     run_sql "CREATE TABLE $DB.table_c (
         id INT PRIMARY KEY,
         value VARCHAR(50)
     );"
     run_sql "INSERT INTO $DB.table_c VALUES (1, 'created after first checkpoint');"
-
+    
     . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
 
     run_br --pd $PD_ADDR log stop --task-name $TASK_NAME
-
+    
     run_sql "drop schema if exists $DB;"
-
+    
     echo "Step 1: First restore with full backup to first checkpoint timestamp"
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" \
         --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" \
         --restored-ts $first_restore_ts \
         -f "$DB.*"
-
+    
     run_sql "SELECT COUNT(*) = 3 FROM $DB.table_a" || {
         echo "table_a doesn't have expected row count after first restore"
         exit 1
     }
-
+    
     run_sql "SELECT COUNT(*) = 3 FROM $DB.table_b" || {
         echo "table_b doesn't have expected row count after first restore"
         exit 1
     }
-
+    
     if run_sql "SELECT * FROM $DB.table_c" 2>/dev/null; then
         echo "table_c exists after first restore but shouldn't"
         exit 1
     fi
-
+    
     echo "Step 2: Second restore with log only using first checkpoint timestamp as startTS"
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" \
         --start-ts $first_restore_ts \
         -f "$DB.*"
-
+    
     # Verify data after second restore
     run_sql "SELECT COUNT(*) = 4 FROM $DB.table_a" || {
         echo "table_a doesn't have expected row count after second restore"
         exit 1
     }
-
+    
     run_sql "SELECT COUNT(*) = 4 FROM $DB.table_b" || {
         echo "table_b doesn't have expected row count after second restore"
         exit 1
     }
-
+    
     run_sql "SELECT COUNT(*) = 1 FROM $DB.table_c" || {
         echo "table_c doesn't have expected row count after second restore"
         exit 1
@@ -1656,7 +1657,7 @@ test_pitr_chaining() {
 
     run_sql "drop schema if exists $DB;"
     rm -rf "$TEST_DIR/$TASK_NAME"
-
+    
     echo "PITR sequential restore test passed"
 }
 
@@ -1673,6 +1674,5 @@ test_sequential_restore
 # didn't cherry pick flush so there might be a delay and test will fail
 #test_log_compaction
 test_pitr_chaining
-
 
 echo "br pitr table filter all tests passed"

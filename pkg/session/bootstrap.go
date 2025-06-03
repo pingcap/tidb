@@ -716,6 +716,29 @@ const (
 		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (restore_id, restored_ts, upstream_cluster_id, segment_id));`
 
+	// CreateRestoreRegistryTable is a table that tracks active restore tasks to prevent conflicts.
+	CreateRestoreRegistryTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_restore_registry (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		filter_strings TEXT NOT NULL,
+		filter_hash VARCHAR(64) NOT NULL,
+		start_ts BIGINT UNSIGNED NOT NULL,
+		restored_ts BIGINT UNSIGNED NOT NULL,
+		upstream_cluster_id BIGINT UNSIGNED,
+		with_sys_table BOOLEAN NOT NULL DEFAULT TRUE,
+		status VARCHAR(20) NOT NULL DEFAULT 'running',
+		cmd TEXT,
+		task_start_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+		last_heartbeat_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+		UNIQUE KEY unique_registration_params (
+			filter_hash,
+			start_ts,
+			restored_ts,
+			upstream_cluster_id,
+			with_sys_table,
+			cmd(256)
+		)
+	) AUTO_INCREMENT = 1;`
+
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
 	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
 
@@ -1208,13 +1231,14 @@ const (
 	// ...
 	// [version220, version238] is the version range reserved for patches of 8.5.x
 	// ...
+	version221 = 221
 
 	// next version should start with 239
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version220
+var currentBootstrapVersion int64 = version221
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1390,6 +1414,7 @@ var (
 		upgradeToVer218,
 		upgradeToVer219,
 		upgradeToVer220,
+		upgradeToVer221,
 	}
 )
 
@@ -3290,6 +3315,13 @@ func upgradeToVer220(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD PRIMARY KEY(restore_id, restored_ts, upstream_cluster_id, segment_id)")
 }
 
+func upgradeToVer221(s sessiontypes.Session, ver int64) {
+	if ver >= version221 {
+		return
+	}
+	doReentrantDDL(s, CreateRestoreRegistryTable)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3436,6 +3468,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateRequestUnitByGroupTable)
 	// create tidb_pitr_id_map
 	mustExecute(s, CreatePITRIDMap)
+	// create tidb_restore_registry
+	mustExecute(s, CreateRestoreRegistryTable)
 	// create `sys` schema
 	mustExecute(s, CreateSysSchema)
 	// create `sys.schema_unused_indexes` view

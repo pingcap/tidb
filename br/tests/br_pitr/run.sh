@@ -111,11 +111,18 @@ if [ $restore_fail -ne 1 ]; then
     exit 1
 fi
 
+# clean up failed restore registry entry
+echo "clean up failed restore registry entry"
+run_sql "DELETE FROM mysql.tidb_restore_registry WHERE cmd LIKE '%Point Restore%' AND status = 'paused';"
+
 # PITR restore
 echo "run pitr"
-run_sql "DROP DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint;"
-run_sql "DROP DATABASE __TiDB_BR_Temporary_Custom_SST_Restore_Checkpoint;"
-run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1
+latest_log_db=$(run_sql "select table_schema from information_schema.tables where table_schema like '__TiDB_BR_Temporary_Log_Restore_Checkpoint%' order by table_schema desc limit 1;" | tail -n 1 | awk '{print $2}')
+latest_sst_db=$(run_sql "select table_schema from information_schema.tables where table_schema like '__TiDB_BR_Temporary_Custom_SST_Restore_Checkpoint%' order by table_schema desc limit 1;" | tail -n 1 | awk '{print $2}')
+run_sql "DROP DATABASE IF EXISTS \`$latest_log_db\`;"
+run_sql "DROP DATABASE IF EXISTS \`$latest_sst_db\`;"
+
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1 || ( cat $res_file && exit 1 )
 
 check_result
 
