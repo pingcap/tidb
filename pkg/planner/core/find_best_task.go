@@ -1140,8 +1140,9 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		// color the lowestCountAfterAccessIdx's chosen index.
 		usedIndexMap[indexID] = struct{}{}
 	}
-	// since all the choice is done, check the all single index limitation.
-	if len(usedIndexMap) == 1 && !useMVIndex {
+	// since all the choice is done, check the all single index limitation, skip check for mv index.
+	// since ds index merge hints will prune other path ahead, lift the all single index limitation here.
+	if len(usedIndexMap) == 1 && !useMVIndex && len(ds.IndexMergeHints) <= 0 {
 		// if all partial path are using a same index, meaningless and fail over.
 		return nil, false
 	}
