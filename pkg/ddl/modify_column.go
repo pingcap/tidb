@@ -1253,7 +1253,10 @@ func processModifyColumnOptions(ctx sessionctx.Context, col *table.Column, optio
 	}
 
 	// let col's origin default value be the same as the new default value.
-	col.SetOriginDefaultValue(col.GetDefaultValue())
+	if err = col.SetOriginDefaultValue(col.GetDefaultValue()); err != nil {
+		return errors.Trace(err)
+	}
+
 	return nil
 }
 
