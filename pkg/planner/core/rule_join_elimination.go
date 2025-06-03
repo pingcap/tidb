@@ -74,6 +74,11 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 		appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
 		return outerPlan, true, nil
 	}
+	// if we have a single column that is not from any table - we can prune
+	if len(aggCols) == 1 && aggCols[0].ID == 0 && !p.Schema().Contains(aggCols[0]) {
+		appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
+		return outerPlan, true, nil
+	}
 	// outer join elimination without duplicate agnostic aggregate functions
 	innerJoinKeys := o.extractInnerJoinKeys(p, innerChildIdx)
 	contain, err := o.isInnerJoinKeysContainUniqueKey(innerPlan, innerJoinKeys)

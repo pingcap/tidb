@@ -68,9 +68,6 @@ func IsColsAllFromOuterTable(cols []*expression.Column, outerUniqueIDs *intset.F
 		return false
 	}
 	for _, col := range cols {
-		if col.ID == 0 {
-			continue
-		}
 		if !outerUniqueIDs.Has(int(col.UniqueID)) {
 			return false
 		}
