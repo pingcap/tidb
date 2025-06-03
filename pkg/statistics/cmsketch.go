@@ -742,7 +742,7 @@ func (c *TopN) BetweenCount(sctx planctx.PlanContext, l, r []byte) (result uint6
 	ret := uint64(0)
 	if len(c.TopN)-1 == rIdx && rIdx-lIdx > lIdx {
 		var tmp uint64
-		for i := 0; i < lIdx; i++ {
+		for i := range lIdx {
 			tmp += c.TopN[i].Count
 		}
 		ret = c.TotalCount() - tmp
