@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -80,44 +79,30 @@ func (rp *point) Clone(value types.Datum) *point {
 	}
 }
 
-type pointSorter struct {
-	err      error
-	collator collate.Collator
-	tc       types.Context
-	points   []*point
-}
-
-func (r *pointSorter) Len() int {
-	return len(r.points)
-}
-
-func (r *pointSorter) Less(i, j int) bool {
-	a := r.points[i]
-	b := r.points[j]
-	less, err := rangePointLess(r.tc, a, b, r.collator)
-	if err != nil {
-		r.err = err
-	}
-	return less
-}
-
-func rangePointLess(tc types.Context, a, b *point, collator collate.Collator) (bool, error) {
+func rangePointLess(tc types.Context, a, b *point, collator collate.Collator) (int, error) {
 	if a.value.Kind() == types.KindMysqlEnum && b.value.Kind() == types.KindMysqlEnum {
 		return rangePointEnumLess(a, b)
 	}
 	cmp, err := a.value.Compare(tc, &b.value, collator)
 	if cmp != 0 {
-		return cmp < 0, nil
+		return cmp, nil
 	}
-	return rangePointEqualValueLess(a, b), errors.Trace(err)
+	return boolToInt(rangePointEqualValueLess(a, b)), errors.Trace(err)
 }
 
-func rangePointEnumLess(a, b *point) (bool, error) {
+func rangePointEnumLess(a, b *point) (int, error) {
 	cmp := cmp.Compare(a.value.GetInt64(), b.value.GetInt64())
 	if cmp != 0 {
-		return cmp < 0, nil
+		return cmp, nil
 	}
-	return rangePointEqualValueLess(a, b), nil
+	return boolToInt(rangePointEqualValueLess(a, b)), nil
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func rangePointEqualValueLess(a, b *point) bool {
@@ -173,10 +158,6 @@ func pointConvertToSortKey(
 	}
 
 	return &point{value: types.NewBytesDatum(sortKey), excl: p.excl, start: p.start}, nil
-}
-
-func (r *pointSorter) Swap(i, j int) {
-	r.points[i], r.points[j] = r.points[j], r.points[i]
 }
 
 /*
@@ -714,11 +695,12 @@ func (r *builder) buildFromIn(
 		endPoint := &point{value: endValue}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
-	sorter := pointSorter{points: rangePoints, tc: tc, collator: collate.GetCollator(colCollate)}
-	sort.Sort(&sorter)
-	if sorter.err != nil {
-		r.err = sorter.err
-	}
+	//sorter := pointSorter{points: rangePoints, tc: tc, collator: }
+	collator := collate.GetCollator(colCollate)
+	slices.SortFunc(rangePoints, func(a, b *point) (cmpare int) {
+		cmpare, r.err = rangePointLess(tc, a, b, collator)
+		return cmpare
+	})
 	// check and remove duplicates
 	curPos, frontPos := 0, 0
 	for frontPos < len(rangePoints) {
@@ -1036,7 +1018,7 @@ func (r *builder) mergeSorted(a, b []*point, collator collate.Collator) []*point
 			r.err = err
 			return nil
 		}
-		if less {
+		if less < 0 {
 			ret = append(ret, a[i])
 			i++
 		} else {
