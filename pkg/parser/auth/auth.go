@@ -93,3 +93,14 @@ func (role *RoleIdentity) String() string {
 	// TODO: Escape username and hostname.
 	return fmt.Sprintf("`%s`@`%s`", role.Username, role.Hostname)
 }
+
+// GetUserAndHostName returns the user and host name if the given u is not nil.
+func GetUserAndHostName(u *UserIdentity) (string, string) {
+	if u == nil {
+		return "", ""
+	}
+	if len(u.AuthUsername) > 0 && len(u.AuthHostname) > 0 {
+		return u.AuthUsername, u.AuthHostname
+	}
+	return u.Username, u.Hostname
+}

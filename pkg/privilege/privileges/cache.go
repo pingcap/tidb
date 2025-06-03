@@ -1612,7 +1612,7 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 		if tableRecord != nil {
 			tablePriv |= tableRecord.TablePriv
 			if column != "" {
-				columnPriv |= tableRecord.ColumnPriv
+				columnPriv |= tableRecord.TablePriv
 			}
 		}
 	}
