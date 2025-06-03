@@ -835,10 +835,10 @@ func (p *PhysicalTableScan) ResolveIndicesItself() (err error) {
 		column.Index = i
 	}
 	for i, expr := range p.LateMaterializationFilterCondition {
-		p.LateMaterializationFilterCondition[i], err = expr.ResolveIndices(p.schema)
+		p.LateMaterializationFilterCondition[i], err = expr.ResolveIndices(p.Schema())
 		if err != nil {
 			// Check if there is duplicate virtual expression column matched.
-			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.SCtx().GetExprCtx().GetEvalCtx(), p.schema)
+			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.SCtx().GetExprCtx().GetEvalCtx(), p.Schema())
 			if isOk {
 				p.LateMaterializationFilterCondition[i] = newCond
 				continue
