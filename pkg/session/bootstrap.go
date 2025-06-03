@@ -741,8 +741,8 @@ const (
 		with_sys_table BOOLEAN NOT NULL DEFAULT TRUE,
 		status VARCHAR(20) NOT NULL DEFAULT 'running',
 		cmd TEXT,
-		start_timestamp BIGINT UNSIGNED NOT NULL,
-		last_heartbeat BIGINT UNSIGNED NOT NULL,
+		task_start_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+		last_heartbeat_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
 		UNIQUE KEY unique_registration_params (
 			filter_hash,
 			start_ts,

@@ -63,7 +63,7 @@ const (
 	// resumeTaskByIDSQLTemplate is the SQL template for resuming a paused task by its ID
 	resumeTaskByIDSQLTemplate = `
 		UPDATE %s.%s
-		SET status = 'running', last_heartbeat = %%?
+		SET status = 'running', last_heartbeat_time = %%?
 		WHERE id = %%?`
 
 	// deleteRegistrationSQLTemplate is the SQL template for deleting a registration
@@ -81,7 +81,7 @@ const (
 	createNewTaskSQLTemplate = `
 		INSERT INTO %s.%s
 		(filter_strings, filter_hash, start_ts, restored_ts, upstream_cluster_id,
-		 with_sys_table, status, cmd, start_timestamp, last_heartbeat)
+		 with_sys_table, status, cmd, task_start_time, last_heartbeat_time)
 		VALUES (%%?, MD5(%%?), %%?, %%?, %%?, %%?, 'running', %%?, %%?, %%?)`
 )
 
@@ -236,7 +236,7 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 
 			// strictly check for paused status
 			if status == string(TaskStatusPaused) {
-				currentTime := uint64(time.Now().Unix())
+				currentTime := time.Now()
 				updateSQL := fmt.Sprintf(resumeTaskByIDSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 				_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, updateSQL, currentTime, existingTaskID)
 				if err != nil {
@@ -260,7 +260,7 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 		}
 
 		// no existing task found, create a new one
-		currentTime := uint64(time.Now().Unix())
+		currentTime := time.Now()
 		insertSQL := fmt.Sprintf(createNewTaskSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 		_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, insertSQL,
 			filterStrings, filterStrings, info.StartTS, info.RestoredTS,
