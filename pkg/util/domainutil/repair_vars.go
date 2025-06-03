@@ -15,7 +15,6 @@
 package domainutil
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -70,7 +69,7 @@ func (r *repairInfo) GetMustLoadRepairTableListByDB(dbName string, tableName2ID 
 	var tableIDList []int64
 	// tableName2ID is case sensitive and needs to be traversed to match the table id
 	for tableName, id := range tableName2ID {
-		fullName := fmt.Sprintf("%s.%s", dbName, tableName)
+		fullName := dbName + "" + tableName
 		if _, ok := repairTableSet[strings.ToLower(fullName)]; ok {
 			tableIDList = append(tableIDList, id)
 		}
