@@ -1704,38 +1704,6 @@ func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.
 	return nil
 }
 
-func checkAllUserTableIDsReused(createdTables []*restoreutils.CreatedTable) error {
-	for _, createdTable := range createdTables {
-		if createdTable.OldTable.Info.ID != createdTable.Table.ID {
-			return errors.Errorf("cannot load stats physically because not all table ids are reused, "+
-				"upstream table ID is %d and downstream table ID is %d",
-				createdTable.OldTable.Info.ID,
-				createdTable.Table.ID,
-			)
-		}
-		if createdTable.OldTable.Info.Partition != nil && createdTable.OldTable.Info.Partition.Definitions != nil {
-			if createdTable.Table.Partition == nil || createdTable.Table.Partition.Definitions == nil {
-				return errors.Errorf("the created table has partitions but the origin table does not, "+
-					"table ID is %d", createdTable.Table.ID,
-				)
-			}
-			downstreamTableIDSet := make(map[int64]struct{})
-			for _, def := range createdTable.Table.Partition.Definitions {
-				downstreamTableIDSet[def.ID] = struct{}{}
-			}
-			for _, def := range createdTable.OldTable.Info.Partition.Definitions {
-				if _, exists := downstreamTableIDSet[def.ID]; !exists {
-					return errors.Errorf("the origin table has the partition but the created table does not, "+
-						"table ID is %d and upstream partition ID is %d",
-						createdTable.Table.ID, def.ID,
-					)
-				}
-			}
-		}
-	}
-	return nil
-}
-
 func getAnyFileKeyFromTables(tables []*metautil.Table) []byte {
 	for _, table := range tables {
 		for _, files := range table.FilesOfPhysicals {

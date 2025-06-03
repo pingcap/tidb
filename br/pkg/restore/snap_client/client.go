@@ -356,7 +356,6 @@ func (rc *SnapClient) AllocTableIDs(
 ) (bool, error) {
 	var preallocedTableIDs *tidalloc.PreallocIDs
 	var err error
-	var userTableIDNotReusedWhenNeedCheck bool = false
 	if reusePreallocIDs == nil {
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 		err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
@@ -372,6 +371,7 @@ func (rc *SnapClient) AllocTableIDs(
 			return false, errors.Trace(err)
 		}
 	}
+	userTableIDNotReusedWhenNeedCheck := false
 	if loadStatsPhysical {
 		minUserTableID := getMinUserTableID(tables)
 		start, _ := preallocedTableIDs.GetIDRange()
