@@ -429,6 +429,7 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 	}
 	if firstErr != nil {
 		sm.logger.Warn("cleanup routine failed", zap.Error(errors.Trace(firstErr)))
+		return firstErr
 	}
 
 	failpoint.Inject("mockTransferErr", func() {
