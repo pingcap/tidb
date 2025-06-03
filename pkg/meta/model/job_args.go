@@ -1815,7 +1815,6 @@ func (a *AlterEngineAttributeArgs) getArgsV1(*Job) []any {
 }
 
 func (a *AlterEngineAttributeArgs) decodeV1(job *Job) error {
-	// when the target policy is 'default', policy info is nil
 	return errors.Trace(job.decodeArgs(&a.EngineAttribute))
 }
 

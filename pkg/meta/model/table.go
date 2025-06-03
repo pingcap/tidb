@@ -210,7 +210,7 @@ type TableInfo struct {
 	EngineAttribute string `json:"engine_attribute,omitempty"`
 
 	// StorageClassTier is the storage class tier of the table level.
-	StorageClassTier string `json:"storage_class_tier,omitempty"`
+	StorageClassTier StorageClassTier `json:"storage_class_tier,omitempty"`
 }
 
 // Hash64 implement HashEquals interface.
@@ -1139,13 +1139,13 @@ type PartitionState struct {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID                 int64          `json:"id"`
-	Name               ast.CIStr      `json:"name"`
-	LessThan           []string       `json:"less_than"`
-	InValues           [][]string     `json:"in_values"`
-	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
-	Comment            string         `json:"comment,omitempty"`
-	StorageClassTier   string         `json:"storage_class_tier,omitempty"`
+	ID                 int64            `json:"id"`
+	Name               ast.CIStr        `json:"name"`
+	LessThan           []string         `json:"less_than"`
+	InValues           [][]string       `json:"in_values"`
+	PlacementPolicyRef *PolicyRefInfo   `json:"policy_ref_info"`
+	Comment            string           `json:"comment,omitempty"`
+	StorageClassTier   StorageClassTier `json:"storage_class_tier,omitempty"`
 }
 
 // Clone clones PartitionDefinition.

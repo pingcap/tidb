@@ -706,7 +706,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 
 		var storageClass any
 		if kerneltype.IsNextGen() {
-			storageClass = table.StorageClassTier
+			storageClass = string(table.StorageClassTier)
 		}
 		record := types.MakeDatums(
 			infoschema.CatalogVal, // TABLE_CATALOG
@@ -1427,7 +1427,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				}
 				var storageClass any
 				if kerneltype.IsNextGen() {
-					storageClass = pi.StorageClassTier
+					storageClass = string(pi.StorageClassTier)
 				}
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // TABLE_CATALOG
