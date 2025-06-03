@@ -1270,11 +1270,11 @@ func CheckImportIntoTableIsEmpty(
 		return false, errors.New("check if table is empty failed")
 	}
 	startTS := txn.StartTS()
-	failpoint.Inject("ImportIntoTableIsEmpty", func(val failpoint.Value) {
+	failpoint.Inject("CheckImportIntoTableIsEmpty", func(val failpoint.Value) {
 		switch val.(string) {
-		case "notEmpty":
+		case "NotEmpty":
 			failpoint.Return(false, nil)
-		case "error":
+		case "Error":
 			failpoint.Return(false, errors.New("check if table is empty failed"))
 		}
 	})
