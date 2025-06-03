@@ -709,6 +709,15 @@ func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 	if c == nil {
 		return 0, false
 	}
+	if len(c.TopN) < 10 {
+		// For small TopN, we can use linear search.
+		for i, meta := range c.TopN {
+			if compare := bytes.Compare(meta.Encoded, d); compare >= 0 {
+				return i, compare == 0
+			}
+		}
+		return len(c.TopN), false
+	}
 	idx, match = slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
 		return bytes.Compare(a.Encoded, b)
 	})
@@ -731,9 +740,18 @@ func (c *TopN) BetweenCount(sctx planctx.PlanContext, l, r []byte) (result uint6
 	lIdx, _ := c.LowerBound(l)
 	rIdx, _ := c.LowerBound(r)
 	ret := uint64(0)
-	for i := lIdx; i < rIdx; i++ {
-		ret += c.TopN[i].Count
+	if len(c.TopN)-1 == rIdx && rIdx-lIdx > lIdx {
+		var tmp uint64
+		for i := 0; i < lIdx; i++ {
+			tmp += c.TopN[i].Count
+		}
+		ret = c.TotalCount() - tmp
+	} else {
+		for i := lIdx; i < rIdx; i++ {
+			ret += c.TopN[i].Count
+		}
 	}
+
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugTraceTopNRange(sctx, c, lIdx, rIdx)
 	}
