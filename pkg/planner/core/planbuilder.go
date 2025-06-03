@@ -1145,7 +1145,7 @@ func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
 
 func isTiKVIndexByName(idxName string, tblInfo *model.TableInfo) bool {
 	// when the PKIsHandle of table is true, the primary key is not in the indices list.
-	if idxName == "primary" {
+	if idxName == "primary" && tblInfo.PKIsHandle {
 		return true
 	}
 	for _, index := range tblInfo.Indices {
