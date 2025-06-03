@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -174,14 +173,11 @@ func (lm *LogFileManager) loadShiftTS(ctx context.Context) error {
 		value  uint64
 		exists bool
 	}{}
-	physicalTime := oracle.GetTimeFromTS(lm.startTS)
-	// Assumes transactions do not lag more than 12 hours.
-	newTime := physicalTime.Add(-12 * time.Hour)
-	newBeginTs := oracle.GoTimeToTS(newTime)
 
 	err := stream.FastUnmarshalMetaData(ctx,
 		lm.storage,
-		newBeginTs,
+		// use start ts to calculate shift start ts
+		lm.startTS,
 		lm.restoreTS,
 		lm.metadataDownloadBatchSize, func(path string, raw []byte) error {
 			m, err := lm.helper.ParseToMetadata(raw)

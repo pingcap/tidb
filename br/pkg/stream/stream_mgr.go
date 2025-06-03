@@ -381,7 +381,7 @@ func (m *MetadataHelper) Close() {
 	}
 }
 
-func FilterPathByTs(path string, shiftStartTS, restoreTS uint64) string {
+func FilterPathByTs(path string, left, right uint64) string {
 	filename := strings.TrimSuffix(path, ".meta")
 	filename = filename[strings.LastIndex(filename, "/")+1:]
 
@@ -408,7 +408,7 @@ func FilterPathByTs(path string, shiftStartTS, restoreTS uint64) string {
 			minDefaultTs = minTs
 		}
 
-		if restoreTS < minDefaultTs || maxTs < shiftStartTS {
+		if right < minDefaultTs || maxTs < left {
 			return ""
 		}
 	}
