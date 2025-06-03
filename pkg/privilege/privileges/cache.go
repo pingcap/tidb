@@ -761,19 +761,27 @@ func compareColumnsPrivRecord(x, y columnsPrivRecord) int {
 func compareHost(x, y string) int {
 	// The more-specific, the smaller it is.
 	// The pattern '%' means “any host” and is least specific.
-	if y == `%` {
-		if x == `%` {
+	if x == "%" || y == "%" {
+		if x == "%" && y == "%" {
 			return 0
 		}
-		return -1
+		if y == `%` {
+			return -1
+		}
+		// x == '%'
+		return 1
 	}
 
 	// The empty string '' also means “any host” but sorts after '%'.
-	if y == "" {
-		if x == "" {
+	if x == `` || y == `` {
+		if x == `` && y == `` {
 			return 0
 		}
-		return -1
+		if y == "" {
+			return -1
+		}
+		// x == ``
+		return 1
 	}
 
 	// One of them end with `%`.
@@ -796,11 +804,10 @@ func compareHost(x, y string) int {
 	}
 
 	// For other case, the order is nondeterministic.
-	switch x < y {
-	case true:
-		return -1
-	case false:
+	if x > y {
 		return 1
+	} else if x < y {
+		return -1
 	}
 	return 0
 }
