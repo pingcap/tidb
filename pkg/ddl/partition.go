@@ -1402,7 +1402,7 @@ func buildPartitionDefinitionsInfo(ctx expression.BuildContext, defs []*ast.Part
 			errSc = BuildStorageClassForPartitions(partitions, tbInfo, settings)
 		}
 		if errSc != nil {
-			logutil.DDLLogger().Warn("storage class: build for partition failed", zap.Int64("tableID", tbInfo.ID), zap.Error(errSc))
+			logutil.DDLStorageClassLogger().Warn("build for partition failed", zap.Int64("tableID", tbInfo.ID), zap.Error(errSc))
 			msg := fmt.Sprintf("invalid storage class settings: '%v'", errSc)
 			ctx.GetEvalCtx().AppendWarning(
 				dbterror.ErrStorageClassInvalidSpec.GenWithStackByArgs(msg),

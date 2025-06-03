@@ -43,6 +43,13 @@ func DDLIngestLogger() *zap.Logger {
 	return logutil.BgLogger().With(zap.String(logutil.LogFieldCategory, "ddl-ingest"))
 }
 
+// DDLStorageClassLogger with category "ddl-storage-class" is used to log
+// storage class related messages. Do not use it to log the message that is not
+// related to storage class.
+func DDLStorageClassLogger() *zap.Logger {
+	return logutil.BgLogger().With(zap.String(logutil.LogFieldCategory, "ddl-storage-class"))
+}
+
 // SampleLogger returns a logger that samples logs to avoid too many logs.
 func SampleLogger() *zap.Logger {
 	return sampleLoggerFactory()

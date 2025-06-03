@@ -139,7 +139,8 @@ func checkDuplicatedNamesIn(defs []*model.StorageClassDef) error {
 
 func setStorageClassTierForTable(tbInfo *model.TableInfo, tier model.StorageClassTier) {
 	tbInfo.StorageClassTier = tier
-	logutil.DDLLogger().Info("storage class: set table tier", zap.Int64("tableID", tbInfo.ID), zap.Stringer("tier", tier))
+	logutil.DDLStorageClassLogger().Info("set table tier",
+		zap.Int64("tableID", tbInfo.ID), zap.Stringer("tier", tier))
 }
 
 // BuildStorageClassForTable builds storage class tier for a table.
@@ -161,7 +162,7 @@ func BuildStorageClassForTable(tbInfo *model.TableInfo, settings *model.StorageC
 
 func setStorageClassTierForPartition(tbInfo *model.TableInfo, part *model.PartitionDefinition, tier model.StorageClassTier) {
 	part.StorageClassTier = tier
-	logutil.DDLLogger().Info("storage class: set partition tier",
+	logutil.DDLStorageClassLogger().Info("set partition tier",
 		zap.Int64("tableID", tbInfo.ID), zap.String("partitionName", part.Name.L), zap.Stringer("tier", tier))
 }
 

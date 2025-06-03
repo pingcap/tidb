@@ -39,7 +39,7 @@ func handleEngineAttributeForCreateTable(input string, tbInfo *model.TableInfo) 
 		return errors.Trace(err)
 	}
 
-	logutil.DDLLogger().Info("create table with storage class settings",
+	logutil.DDLStorageClassLogger().Info("create table with storage class settings",
 		zap.Int64("tableID", tbInfo.ID), zap.Any("settings", settings))
 
 	if err = BuildStorageClassForTable(tbInfo, settings); err != nil {
@@ -65,7 +65,7 @@ func getStorageClassSettingsFromTableInfo(tbInfo *model.TableInfo) (*model.Stora
 		return nil, errors.Trace(err)
 	}
 
-	logutil.DDLLogger().Info("storage class: get settings from table info",
+	logutil.DDLStorageClassLogger().Info("get settings from table info",
 		zap.Int64("tableID", tbInfo.ID), zap.Any("settings", settings))
 	return settings, nil
 }
@@ -115,7 +115,7 @@ func onAlterTableStorageClassSettings(storageClass json.RawMessage, tblInfo *mod
 		return errors.Trace(err)
 	}
 
-	logutil.DDLLogger().Info("storage class: alter table settings",
+	logutil.DDLStorageClassLogger().Info("alter table settings",
 		zap.Int64("tableID", tblInfo.ID), zap.Any("settings", settings))
 
 	if err = BuildStorageClassForTable(tblInfo, settings); err != nil {
