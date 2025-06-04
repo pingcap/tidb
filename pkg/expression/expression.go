@@ -1123,12 +1123,19 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, co
 				return nil, nil, errors.Trace(err)
 			}
 			if e != nil {
+				if mysql.HasNotNullFlag(col.FieldType.GetFlag()) {
+					e.GetType(ctx.GetEvalCtx()).AndFlag(mysql.NotNullFlag)
+				}
+				if mysql.HasUniKeyFlag(col.FieldType.GetFlag()) {
+					e.GetType(ctx.GetEvalCtx()).AndFlag(mysql.UniqueKeyFlag)
+				}
 				columns[i].VirtualExpr = e.Clone()
 			}
 			columns[i].VirtualExpr, err = columns[i].VirtualExpr.ResolveIndices(mockSchema)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
+
 		}
 	}
 	return columns, names, nil

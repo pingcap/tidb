@@ -288,7 +288,7 @@ func TestIssue61290(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec(`CREATE TABLE t0(id int default 1, c0 NUMERIC UNSIGNED ZEROFILL , c1 DECIMAL UNSIGNED  AS (c0) VIRTUAL NOT NULL UNIQUE);`)
+	tk.MustExec(`CREATE TABLE t0(id int default 1, c0 NUMERIC UNSIGNED ZEROFILL , c1 DECIMAL UNSIGNED  AS (c0) STORED NOT NULL UNIQUE);`)
 	tk.MustExec(`insert ignore into t0(c0) values (null);`)
 	tk.MustQuery(`explain format='brief' select * from t0;`).Check(testkit.Rows("brief"))
 	tk.MustQuery(`select * from t0;`).Check(testkit.Rows("1"))
