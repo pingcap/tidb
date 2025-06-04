@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tici"
@@ -85,7 +84,7 @@ func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableID int64, in
 		return nil, err
 	}
 	if response.Status != 0 {
-		return nil, errors.New(fmt.Sprintf("GetShardLocalCacheInfo failed: %d", response.Status))
+		return nil, fmt.Errorf("GetShardLocalCacheInfo failed: %d", response.Status)
 	}
 
 	var s = "ShardLocalCacheInfos:["
