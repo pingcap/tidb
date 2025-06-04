@@ -279,7 +279,7 @@ func (w *worker) changeSnapshotInterval(_ context.Context, d string) error {
 	})
 
 	if err != nil {
-		return errWrongValueForVar.GenWithStackByArgs(repositorySnapshotInterval, d)
+		return errWrongValueForVar.GenWithStackByArgs(RepositorySnapshotInterval, d)
 	}
 
 	w.Lock()

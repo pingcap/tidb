@@ -25,6 +25,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -127,14 +128,14 @@ func (handle *Handle) analyzeBasedOnStatementStats(infoSchema infoschema.InfoSch
 	// Step2: extract metrics from ClusterTableTiDBStatementsStats
 	// TODO: use constant for table name and field name/values
 	// TODO: control the cpu, memory , concurrency and timeout for the query
-	startSnapshotId, err := findClosestSnapshotIdByTime(ctx, exec, startTime)
+	startSnapshotId, err := findClosestSnapshotIdByTime(ctx, sctx, exec, startTime)
 	if err != nil {
 		logutil.ErrVerboseLogger().Warn("Failed to query HIST_SNAPSHOTS table to find start snapshot id",
 			zap.Time("start_time", startTime),
 			zap.Error(err))
 		return nil, startTime, startTime
 	}
-	endSnapshotId, err := findClosestSnapshotIdByTime(ctx, exec, endTime)
+	endSnapshotId, err := findClosestSnapshotIdByTime(ctx, sctx, exec, endTime)
 	if err != nil {
 		logutil.ErrVerboseLogger().Warn("Failed to query HIST_SNAPSHOTS table to find end snapshot id",
 			zap.Time("end_time", endTime),
@@ -202,9 +203,19 @@ func (handle *Handle) analyzeBasedOnStatementStats(infoSchema infoschema.InfoSch
 	return tableIdToMetrics, startTime, endTime
 }
 
-func findClosestSnapshotIdByTime(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, time time.Time) (uint64, error) {
+// findClosestSnapshotIdByTime finds the closest snapshot ID in the HIST_SNAPSHOTS table
+// It means that the snapshot is a **past** snapshot whose time is before the given time and **closest** to the given time.
+// Only find the **one closest** snapshot ID, so the result is a single uint64 value.
+func findClosestSnapshotIdByTime(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, time time.Time) (uint64, error) {
+	snapshotIntervalString, err := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), workloadrepo.RepositorySnapshotInterval)
+	snapshotInterval, err := strconv.ParseInt(snapshotIntervalString, 10, 64)
+	if err != nil {
+		return 0, err
+	}
 	sql := `select SNAPSHOT_ID from ` + mysql.WorkloadSchema + `.` + workloadrepo.HistSnapshotsTable + ` where BEGIN_TIME > '%?' and END_TIME != NULL order by ('%?' - BEGIN_TIME) asc limit 1`
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, time.AddDate(0, 0, -1), time)
+	// Due to the time cost of snapshot worker, to ensure that a snapshot ID can be found within the "between and" time interval,
+	// the time interval is extended to within two past snapshot interval.
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, time.AddDate(0, 0, -(int(snapshotInterval)*2)), time)
 	if err != nil {
 		return 0, err
 	}
@@ -354,13 +365,13 @@ func extractScanAndMemoryFromBinaryPlan(binaryPlan string) ([]*TableReadCostMetr
 	// Step2: abstract the scan time and memory usage from explainData
 	operatorExtractMetrics := make([]*TableReadCostMetrics, 1)
 	// extract scan and memory from main part plan
-	err = extractMetricsFromOperatorTree(explainData.Main, operatorExtractMetrics)
+	operatorExtractMetrics, err = extractMetricsFromOperatorTree(explainData.Main, operatorExtractMetrics)
 	if err != nil {
 		return nil, err
 	}
 	// extract scan and memory from CTES part plan
 	for _, cte := range explainData.Ctes {
-		err = extractMetricsFromOperatorTree(cte, operatorExtractMetrics)
+		operatorExtractMetrics, err = extractMetricsFromOperatorTree(cte, operatorExtractMetrics)
 		if err != nil {
 			return nil, err
 		}
@@ -401,12 +412,12 @@ func accumulateMetricsGroupByTableId(currentRecordMetrics []*TableReadCostMetric
 	}
 }
 
-func extractMetricsFromOperatorTree(op *tipb.ExplainOperator, operatorMetrics []*TableReadCostMetrics) error {
+func extractMetricsFromOperatorTree(op *tipb.ExplainOperator, operatorMetrics []*TableReadCostMetrics) ([]*TableReadCostMetrics, error) {
 	// Step1: extract operator metrics
 	// Step1.1: get the operator type from op.name
 	operatorType, err := extractOperatorTypeFromName(op.Name)
 	if err != nil {
-		return err
+		return operatorMetrics, err
 	}
 	switch operatorType {
 	case plancodec.TypeIndexLookUp:
@@ -419,11 +430,11 @@ func extractMetricsFromOperatorTree(op *tipb.ExplainOperator, operatorMetrics []
 		memUsage := op.MemoryBytes
 		scanTime, err := extractScanTimeFromExecutionInfo(op)
 		if err != nil {
-			return fmt.Errorf("failed to extract scan time from execution info, operator name: %s", op.Name)
+			return operatorMetrics, fmt.Errorf("failed to extract scan time from execution info, operator name: %s", op.Name)
 		}
 		dbName, tableName := extractTableNameFromIndexScan(op)
 		if dbName == "" || tableName == "" {
-			return fmt.Errorf("failed to get table name from children index xxx operator, operator name: %s", op.Name)
+			return operatorMetrics, fmt.Errorf("failed to get table name from children index xxx operator, operator name: %s", op.Name)
 		}
 		operatorMetrics = append(operatorMetrics,
 			&TableReadCostMetrics{
@@ -435,16 +446,16 @@ func extractMetricsFromOperatorTree(op *tipb.ExplainOperator, operatorMetrics []
 	case plancodec.TypePointGet:
 	case plancodec.TypeBatchPointGet:
 		if len(op.AccessObjects) == 0 {
-			return fmt.Errorf("faile to get table name while access object is empty, operator name: %s", op.Name)
+			return operatorMetrics, fmt.Errorf("faile to get table name while access object is empty, operator name: %s", op.Name)
 		}
 		// Attention: cannot handle the multi access objects from one operator
 		dbName, tableName := extractTableNameFromAccessObject(op.AccessObjects[0])
 		if dbName == "" || tableName == "" {
-			return fmt.Errorf("failed to get table name from access object, operator name: %s, access object: %s", op.Name, op.AccessObjects[0].String())
+			return operatorMetrics, fmt.Errorf("failed to get table name from access object, operator name: %s, access object: %s", op.Name, op.AccessObjects[0].String())
 		}
 		scanTime, err := extractScanTimeFromExecutionInfo(op)
 		if err != nil {
-			return fmt.Errorf("failed to extract scan time from execution info, operator name: %s, err: %v", op.Name, err)
+			return operatorMetrics, fmt.Errorf("failed to extract scan time from execution info, operator name: %s, err: %v", op.Name, err)
 		}
 		memUsage := defaultPointGetMemUsage
 		operatorMetrics = append(operatorMetrics,
@@ -458,7 +469,7 @@ func extractMetricsFromOperatorTree(op *tipb.ExplainOperator, operatorMetrics []
 		// Ignore TiFlash query
 		isTiFlashOp := checkTiFlashOperator(op)
 		if isTiFlashOp {
-			return nil
+			return operatorMetrics, nil
 		}
 		// Handle the case like:
 		//  └─TableReader_x
@@ -467,12 +478,12 @@ func extractMetricsFromOperatorTree(op *tipb.ExplainOperator, operatorMetrics []
 		// Get the time and memory in this layer and find the table name from child TableXXXScan layer
 		scanTime, err := extractScanTimeFromExecutionInfo(op)
 		if err != nil {
-			return fmt.Errorf("failed to extract scan time from execution info, operator name: %s", op.Name)
+			return operatorMetrics, fmt.Errorf("failed to extract scan time from execution info, operator name: %s", op.Name)
 		}
 		memUsage := op.MemoryBytes
 		dbName, tableName := extractTableNameFromChildrenTableScan(op)
 		if dbName == "" || tableName == "" {
-			return fmt.Errorf("failed to get table name from children table xxx operator, operator name: %s", op.Name)
+			return operatorMetrics, fmt.Errorf("failed to get table name from children table xxx operator, operator name: %s", op.Name)
 		}
 		operatorMetrics = append(operatorMetrics,
 			&TableReadCostMetrics{
@@ -492,7 +503,7 @@ func extractMetricsFromOperatorTree(op *tipb.ExplainOperator, operatorMetrics []
 		totalMemoryUsage := op.MemoryBytes
 		patialMetrics, err := extractPartialMetricsFromChildrenIndexMerge(op)
 		if err != nil || len(patialMetrics) == 0 {
-			return fmt.Errorf("failed to get time and table name from children operator of index merge, operator name: %s", op.Name)
+			return operatorMetrics, fmt.Errorf("failed to get time and table name from children operator of index merge, operator name: %s", op.Name)
 		}
 		memUsage := totalMemoryUsage / int64(len(patialMetrics))
 		for _, patialMetric := range patialMetrics {
@@ -504,15 +515,15 @@ func extractMetricsFromOperatorTree(op *tipb.ExplainOperator, operatorMetrics []
 	}
 	// Step2: Recursively extract the children layer
 	if len(op.Children) == 0 {
-		return nil
+		return operatorMetrics, nil
 	}
 	for _, child := range op.Children {
-		err = extractMetricsFromOperatorTree(child, operatorMetrics)
+		operatorMetrics, err = extractMetricsFromOperatorTree(child, operatorMetrics)
 		if err != nil {
-			return err
+			return operatorMetrics, err
 		}
 	}
-	return nil
+	return operatorMetrics, nil
 }
 
 func checkTiFlashOperator(op *tipb.ExplainOperator) bool {

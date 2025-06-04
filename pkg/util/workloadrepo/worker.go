@@ -61,7 +61,7 @@ var (
 	repositoryDest             = "tidb_workload_repository_dest"
 	repositoryRetentionDays    = "tidb_workload_repository_retention_days"
 	repositorySamplingInterval = "tidb_workload_repository_active_sampling_interval"
-	repositorySnapshotInterval = "tidb_workload_repository_snapshot_interval"
+	RepositorySnapshotInterval = "tidb_workload_repository_snapshot_interval"
 )
 
 var workloadTables = []repositoryTable{
@@ -185,7 +185,7 @@ func init() {
 	})
 	variable.RegisterSysVar(&variable.SysVar{
 		Scope:    vardef.ScopeGlobal,
-		Name:     repositorySnapshotInterval,
+		Name:     RepositorySnapshotInterval,
 		Type:     vardef.TypeInt,
 		Value:    strconv.Itoa(defSnapshotInterval),
 		MinValue: 900,

@@ -504,7 +504,7 @@ func TestSettingSQLVariables(t *testing.T) {
 
 	// Test values less than minimum
 	tk.MustExec("set @@global." + repositorySamplingInterval + " = -1")
-	tk.MustExec("set @@global." + repositorySnapshotInterval + " = 899")
+	tk.MustExec("set @@global." + RepositorySnapshotInterval + " = 899")
 	tk.MustExec("set @@global." + repositoryRetentionDays + " = -1")
 	eventuallyWithLock(t, wrk, func() bool { return int32(0) == wrk.samplingInterval })
 	eventuallyWithLock(t, wrk, func() bool { return int32(900) == wrk.snapshotInterval })
@@ -512,7 +512,7 @@ func TestSettingSQLVariables(t *testing.T) {
 
 	// Test maximum values
 	tk.MustExec("set @@global." + repositorySamplingInterval + " = 600")
-	tk.MustExec("set @@global." + repositorySnapshotInterval + " = 7200")
+	tk.MustExec("set @@global." + RepositorySnapshotInterval + " = 7200")
 	tk.MustExec("set @@global." + repositoryRetentionDays + " = 365")
 	eventuallyWithLock(t, wrk, func() bool { return int32(600) == wrk.samplingInterval })
 	eventuallyWithLock(t, wrk, func() bool { return int32(7200) == wrk.snapshotInterval })
@@ -520,7 +520,7 @@ func TestSettingSQLVariables(t *testing.T) {
 
 	// Test minimum values
 	tk.MustExec("set @@global." + repositorySamplingInterval + " = 0")
-	tk.MustExec("set @@global." + repositorySnapshotInterval + " = 900")
+	tk.MustExec("set @@global." + RepositorySnapshotInterval + " = 900")
 	tk.MustExec("set @@global." + repositoryRetentionDays + " = 0")
 	eventuallyWithLock(t, wrk, func() bool { return int32(0) == wrk.samplingInterval })
 	eventuallyWithLock(t, wrk, func() bool { return int32(900) == wrk.snapshotInterval })
@@ -528,7 +528,7 @@ func TestSettingSQLVariables(t *testing.T) {
 
 	// Test values greater than maximum
 	tk.MustExec("set @@global." + repositorySamplingInterval + " = 601")
-	tk.MustExec("set @@global." + repositorySnapshotInterval + " = 7201")
+	tk.MustExec("set @@global." + RepositorySnapshotInterval + " = 7201")
 	tk.MustExec("set @@global." + repositoryRetentionDays + " = 366")
 	eventuallyWithLock(t, wrk, func() bool { return int32(600) == wrk.samplingInterval })
 	eventuallyWithLock(t, wrk, func() bool { return int32(7200) == wrk.snapshotInterval })
@@ -536,13 +536,13 @@ func TestSettingSQLVariables(t *testing.T) {
 
 	// Test invalid values for intervals
 	tk.MustGetDBError("set @@global."+repositorySamplingInterval+" = 'invalid'", variable.ErrWrongTypeForVar)
-	tk.MustGetDBError("set @@global."+repositorySnapshotInterval+" = 'invalid'", variable.ErrWrongTypeForVar)
+	tk.MustGetDBError("set @@global."+RepositorySnapshotInterval+" = 'invalid'", variable.ErrWrongTypeForVar)
 	tk.MustGetDBError("set @@global."+repositoryRetentionDays+" = 'invalid'", variable.ErrWrongTypeForVar)
 
 	// Test that if the strconv.Atoi call fails that the error is correctly handled.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/workloadrepo/FastRunawayGC", `return(true)`))
 	tk.MustGetDBError("set @@global."+repositorySamplingInterval+" = 10", errWrongValueForVar)
-	tk.MustGetDBError("set @@global."+repositorySnapshotInterval+" = 901", errWrongValueForVar)
+	tk.MustGetDBError("set @@global."+RepositorySnapshotInterval+" = 901", errWrongValueForVar)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/workloadrepo/FastRunawayGC"))
 
 	trueWithLock(t, wrk, func() bool { return int32(600) == wrk.samplingInterval })
