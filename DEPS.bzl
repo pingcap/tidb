@@ -6075,13 +6075,13 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sha256 = "4f13b6fc9e5adf6b065369bc9b1a535b4f3e98764002cd2884fe6656c1bfc4e8",
-        strip_prefix = "github.com/pingcap/tipb@v0.0.0-20250513092957-b555ca3fc078",
+        sha256 = "2eb271d5183161a93819689bea8263cafdb2c14a20ad66d0907967b7af7e1cc1",
+        strip_prefix = "github.com/pingcap/tipb@v0.0.0-20250529123214-bb8180a479ec",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250513092957-b555ca3fc078.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250513092957-b555ca3fc078.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250513092957-b555ca3fc078.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250513092957-b555ca3fc078.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250529123214-bb8180a479ec.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250529123214-bb8180a479ec.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250529123214-bb8180a479ec.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250529123214-bb8180a479ec.zip",
         ],
     )
     go_repository(
