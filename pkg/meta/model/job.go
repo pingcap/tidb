@@ -183,8 +183,8 @@ var ActionMap = map[ActionType]string{
 	ActionDropResourceGroup:             "drop resource group",
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
-	ActionAddColumnarIndex:              "add columnar index",
-	ActionModifyEngineAttribute:         "modify engine attribute",
+	ActionAddVectorIndex:                "add vector index",
+	ActionAlterTableMode:                "alter table mode",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
