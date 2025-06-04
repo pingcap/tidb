@@ -83,7 +83,7 @@ func (e *DDLExec) getLocalTemporaryTable(schema pmodel.CIStr, table pmodel.CIStr
 	}
 
 	if tbl.Meta().TempTableType != model.TempTableLocal {
-		return nil, false
+		return tbl, false
 	}
 
 	return tbl, true
@@ -111,9 +111,12 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		}
 
 		for tbIdx := len(s.Tables) - 1; tbIdx >= 0; tbIdx-- {
-			if _, ok := e.getLocalTemporaryTable(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name); ok {
+			tempTbl, ok := e.getLocalTemporaryTable(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name)
+			if ok {
 				localTempTablesToDrop = append(localTempTablesToDrop, s.Tables[tbIdx])
 				s.Tables = append(s.Tables[:tbIdx], s.Tables[tbIdx+1:]...)
+			} else if tempTbl != nil {
+				localTempTablesToDrop = append(localTempTablesToDrop, s.Tables[tbIdx])
 			}
 		}
 
@@ -241,8 +244,12 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 
 func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	if _, exist := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); exist {
-		return e.tempTableDDL.TruncateLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	tbl, exist := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	if exist || tbl.Meta().TempTableType == model.TempTableGlobalSession {
+		err := e.tempTableDDL.TruncateLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+		if err != nil || exist {
+			return err
+		}
 	}
 	err := e.ddlExecutor.TruncateTable(e.Ctx(), ident)
 	return err

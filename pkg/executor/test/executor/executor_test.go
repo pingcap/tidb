@@ -3127,4 +3127,23 @@ func TestGlobalSessionTemporaryTable(t *testing.T) {
 	tk.MustExec("insert into t1 values (11, 'n11', 11), (12, 'n12', 12)")
 	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("11 n11 11", "12 n12 12"))
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 n1 11", "2 n2 12"))
+
+	tk.MustExec("truncate table t1")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows())
+	tk.MustExec("alter table t1 add column c int")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE GLOBAL TEMPORARY TABLE `t1` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `name` varchar(10) DEFAULT NULL,\n" +
+		"  `num` int(11) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `name` (`name`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT PRESERVE ROWS"))
+	tk.MustExec("drop table t1,t")
+	err := tk.ExecToErr("select * from t1 order by id")
+	require.Error(t, err)
+	require.Equal(t, "[schema:1146]Table 'test.t1' doesn't exist", err.Error())
+	err = tk2.ExecToErr("select * from t1 order by id")
+	require.Error(t, err)
+	require.Equal(t, "[schema:1146]Table 'test.t1' doesn't exist", err.Error())
 }

@@ -1663,18 +1663,23 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 		tempIs := temptable.EnsureLocalTemporaryTables(p.sctx)
-		if !tempIs.TableExists(dbInfo.Name, tableInfo.Name) {
-			localTableInfo := tableInfo.Clone()
-			localTable, err := temptable.NewTemporaryTable(localTableInfo)
-			if err != nil {
-				p.err = err
-				return
-			}
-			err = tempIs.AddTable(dbInfo, localTable)
-			if err != nil {
-				p.err = err
-				return
-			}
+		tempIs.RemoveTable(dbInfo.Name, tableInfo.Name)
+		table, err = p.tableByName(tn)
+		if err != nil {
+			p.err = err
+			return
+		}
+		tableInfo = table.Meta()
+		localTableInfo := tableInfo.Clone()
+		localTable, err := temptable.NewTemporaryTable(localTableInfo)
+		if err != nil {
+			p.err = err
+			return
+		}
+		err = tempIs.AddTable(dbInfo, localTable)
+		if err != nil {
+			p.err = err
+			return
 		}
 	}
 	p.resolveCtx.AddTableName(&resolve.TableNameW{
