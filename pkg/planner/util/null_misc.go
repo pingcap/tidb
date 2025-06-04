@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // allConstants checks if only the expression has only constants.
@@ -76,6 +77,7 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 	if len(predicates) == 0 {
 		return false
 	}
+	intest.Assert(len(predicates) == 1)
 	predicate = expression.PushDownNot(ctx.GetNullRejectCheckExprCtx(), predicates[0])
 	if expression.ContainOuterNot(predicate) {
 		return false
