@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // allConstants checks if only the expression has only constants.
@@ -70,6 +72,10 @@ func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction,
 // IsNullRejected(A AND B) = IsNullRejected(A) OR IsNullRejected(B)
 func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression,
 	skipPlanCacheCheck bool) bool {
+	intest.AssertFunc(func() bool {
+		newPredicate := utilfuncp.ApplyPredicateSimplification(ctx, []expression.Expression{predicate})
+		return len(newPredicate) == 1 && predicate.Equal(ctx.GetExprCtx().GetEvalCtx(), newPredicate[0])
+	}, "Predicate Simplification should be done before calling IsNullRejected")
 	predicate = expression.PushDownNot(ctx.GetNullRejectCheckExprCtx(), predicate)
 	if expression.ContainOuterNot(predicate) {
 		return false
