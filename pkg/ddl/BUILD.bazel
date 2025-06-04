@@ -153,7 +153,6 @@ go_library(
         "//pkg/util/context",
         "//pkg/util/dbterror",
         "//pkg/util/dbterror/exeerrors",
-        "//pkg/util/dbterror/plannererrors",
         "//pkg/util/dbutil",
         "//pkg/util/domainutil",
         "//pkg/util/engine",
