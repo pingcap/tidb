@@ -564,6 +564,8 @@ github.com/ks3sdklib/aws-sdk-go v1.2.9 h1:Eg0fM56r4Gjp9PiK1Bg9agJUxCAWCk236qq9DI
 github.com/ks3sdklib/aws-sdk-go v1.2.9/go.mod h1:xBNbOrxSnd36AQpZ8o99mGGu+blblUd9rI0MKGmeufo=
 github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0SNc=
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
+github.com/lcwangchao/tipb v0.0.0-20250530030657-907dab02b99a h1:WL7MxWvUjPJrowm8J02vTH2POMU0yDC/vEbdNw/JU1s=
+github.com/lcwangchao/tipb v0.0.0-20250530030657-907dab02b99a/go.mod h1:RM8iRcMalzOthG2XJxnNBniM4xFGb/lDwHUwqkaVzt4=
 github.com/ldez/exptostd v0.4.3 h1:Ag1aGiq2epGePuRJhez2mzOpZ8sI9Gimcb4Sb3+pk9Y=
 github.com/ldez/exptostd v0.4.3/go.mod h1:iZBRYaUmcW5jwCR3KROEZ1KivQQp6PHXbDPk9hqJKCQ=
 github.com/lestrrat-go/blackmagic v1.0.2 h1:Cg2gVSc9h7sz9NOByczrbUvLopQmXrfFx//N+AkAr5k=
@@ -690,8 +692,6 @@ github.com/pingcap/log v1.1.1-0.20250514022801-14f3b4ca066e h1:8AZZRv1Ox9FVGATVZ
 github.com/pingcap/log v1.1.1-0.20250514022801-14f3b4ca066e/go.mod h1:ORfBOFp1eteu2odzsyaxI+b8TzJwgjwyQcGhI+9SfEA=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5 h1:T4pXRhBflzDeAhmOQHNPRRogMYxP13V7BkYw3ZsoSfE=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5/go.mod h1:rlimy0GcTvjiJqvD5mXTRr8O2eNZPBrcUgiWVYp9530=
-github.com/pingcap/tipb v0.0.0-20250513092957-b555ca3fc078 h1:vkg2gG9XYbgqaxpiI9Qf0w6V4A9sUS+djrpwvLTx+WU=
-github.com/pingcap/tipb v0.0.0-20250513092957-b555ca3fc078/go.mod h1:RM8iRcMalzOthG2XJxnNBniM4xFGb/lDwHUwqkaVzt4=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmdv1U2eRNDiU2ErMBj1gwrq8eQ=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c/go.mod h1:7rwL4CYBLnjLxUqIJNnCWiEdr3bn6IUYi15bNlnbCCU=
 github.com/pkg/diff v0.0.0-20210226163009-20ebb0f2a09e/go.mod h1:pJLUxLENpZxwdsKMEsNbx1VGcRFpLqf3715MtcvvzbA=
