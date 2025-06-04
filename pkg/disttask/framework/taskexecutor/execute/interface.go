@@ -92,7 +92,7 @@ func (s *RunningSubtaskSummary) ToSummary() *SubtaskSummary {
 
 // Collector is the interface for collecting subtask metrics.
 type Collector interface {
-	OnRead(bytes, rows int64)
+	Add(bytes, rows int64)
 }
 
 // collector is the implement of Collector interface
@@ -100,7 +100,7 @@ type collector struct {
 	readFunc func(bytes, rows int64)
 }
 
-func (c *collector) OnRead(bytes, rows int64) {
+func (c *collector) Add(bytes, rows int64) {
 	c.readFunc(bytes, rows)
 }
 
@@ -113,8 +113,8 @@ func NewDummyCollector() *dummyCollector {
 	return &dummyCollector{}
 }
 
-// OnRead does nothing.
-func (*dummyCollector) OnRead(_, _ int64) {
+// Add does nothing.
+func (*dummyCollector) Add(_, _ int64) {
 }
 
 // NewCollector returns a new collector with the provided read and write functions.

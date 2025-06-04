@@ -933,7 +933,7 @@ type localRowCntCollector struct {
 	}
 }
 
-func (s *localRowCntCollector) OnRead(_, rowCnt int64) {
+func (s *localRowCntCollector) Add(_, rowCnt int64) {
 	s.curPhysicalRowCnt.mu.Lock()
 	s.curPhysicalRowCnt.cnt += rowCnt
 	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + s.curPhysicalRowCnt.cnt)

@@ -903,16 +903,14 @@ func (s *indexWriteResultSink) collectResult() error {
 				if s.backendCtx != nil { // for local sort only
 					total := s.backendCtx.TotalKeyCount()
 					if total > 0 {
-						if c, ok := s.collector.(interface {
-							SetTotal(int)
-						}); ok {
-							c.SetTotal(total)
+						if lc, ok := s.collector.(*localRowCntCollector); ok {
+							lc.SetTotal(total)
 						}
 					}
 				}
 				return err
 			}
-			s.collector.OnRead(0, int64(rs.Added))
+			s.collector.Add(0, int64(rs.Added))
 			if s.backendCtx != nil { // for local sort only
 				err := s.backendCtx.IngestIfQuotaExceeded(s.ctx, rs.ID, rs.Added)
 				if err != nil {
