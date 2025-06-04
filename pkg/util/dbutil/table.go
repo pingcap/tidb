@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	_ "github.com/pingcap/tidb/pkg/types/parser_driver" // for parser driver
 )
 
@@ -45,7 +45,7 @@ func FindColumnByName(cols []*model.ColumnInfo, name string) *model.ColumnInfo {
 // such as for rename table DDL in the `ResolveContext`, so these statements
 // require special handling during the DDL execution phase. Also, the check used
 // in optimize phase.
-func CheckTableModeIsNormal(tableName ast.CIStr, tableMode model.TableMode) error {
+func CheckTableModeIsNormal(tableName pmodel.CIStr, tableMode model.TableMode) error {
 	if tableMode != model.TableModeNormal {
 		return infoschema.ErrProtectedTableMode.FastGenByArgs(tableName, tableMode)
 	}
