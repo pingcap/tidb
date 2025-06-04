@@ -255,10 +255,10 @@ func NewDecoder(chk *Chunk, colTypes []*types.FieldType) *Decoder {
 }
 
 // Decode decodes multiple rows of Decoder.intermChk and stores the result in chk.
-func (c *Decoder) Decode(chk *Chunk) {
+func (c *Decoder) Decode(chk *Chunk, maxRows int) {
 	requiredRows := chk.RequiredRows() - chk.NumRows()
 	// Set the requiredRows to a multiple of 8.
-	requiredRows = min((requiredRows+7)>>3<<3, c.remainedRows)
+	requiredRows = min((requiredRows+7)>>3<<3, c.remainedRows, maxRows)
 	for i := range chk.NumCols() {
 		c.decodeColumn(chk, i, requiredRows)
 	}

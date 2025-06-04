@@ -4226,6 +4226,37 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 		return nil
 	}
 
+	dagPB := ret.dagPB
+	if b.ctx.GetSessionVars().SessionAlias == "test" && is.Table.GetPartitionInfo() == nil && !is.Table.IsCommonHandle && !is.KeepOrder {
+		tblInfo := ret.table.Meta()
+		primaryColumnIDs := []int64{tblInfo.GetPkColInfo().ID}
+		buildSidePrimaryOffsets := make([]uint32, 0, len(primaryColumnIDs))
+		for i := range primaryColumnIDs {
+			buildSidePrimaryOffsets = append(buildSidePrimaryOffsets, uint32(len(dagPB.OutputOffsets)-len(primaryColumnIDs)+i))
+		}
+
+		position := uint32(len(dagPB.Executors))
+		dagPB.Executors = append(dagPB.Executors, &tipb.Executor{
+			Tp: tipb.ExecType_TypeIndexLookup,
+			IndexLookup: &tipb.IndexLookup{
+				TableId:                    tblInfo.ID,
+				Columns:                    ret.tableRequest.Executors[0].TblScan.Columns,
+				PrimaryColumnIds:           primaryColumnIDs,
+				BuildSidePrimaryKeyOffsets: buildSidePrimaryOffsets,
+			},
+		})
+		dagPB.Executors = append(dagPB.Executors, ret.tableRequest.Executors[1:]...)
+		barrier := &tipb.PartialOutputBarrier{
+			OutputOffsets: dagPB.OutputOffsets,
+			EncodeType:    dagPB.EncodeType,
+			Position:      &position,
+		}
+		dagPB.ParitalOutputBarriers = append(dagPB.ParitalOutputBarriers, barrier)
+		dagPB.OutputOffsets = ret.tableRequest.OutputOffsets
+		dagPB.EncodeType = ret.tableRequest.EncodeType
+		ret.lookupPushDown = true
+	}
+
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 
 	ret.ranges = is.Ranges
