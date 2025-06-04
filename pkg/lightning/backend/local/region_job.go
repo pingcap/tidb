@@ -500,12 +500,20 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 			err := writeLimiter.WaitN(wctx, allPeers[i].StoreId, int(size))
 			if err != nil {
 				// We expect to encounter two types of errors here:
-				// 1. context.DeadlineExceeded — occurs when the calculated delay is less than the remaining time in the context, but the context expires while sleeping.
-				// 2. "rate: Wait(n=%d) would exceed context deadline" — a fast-fail path triggered when the delay already exceeds the remaining time for context before sleeping.
+				// 1. context.DeadlineExceeded — occurs when the calculated delay is
+				//    less than the remaining time in the context, but the context
+				//    expires while sleeping.
+				// 2. "rate: Wait(n=%d) would exceed context deadline" — a fast-fail
+				//    path triggered when the delay already exceeds the remaining
+				//    time for context before sleeping.
 				//
-				// Unfortunately, we cannot precisely control when the context will expire, so both scenarios are valid and expected.
-				// Fortunately, the "rate: Wait" error is already treated as retryable, so we only need to explicitly handle context.DeadlineExceeded here.
-				// We reply on the defer function at the top of doWrite to handle it for us in general.
+				// Unfortunately, we cannot precisely control when the context will
+				// expire, so both scenarios are valid and expected.
+				// Fortunately, the "rate: Wait" error is already treated as
+				// retryable, so we only need to explicitly handle
+				// context.DeadlineExceeded here.
+				// We rely on the defer function at the top of doWrite to handle it
+				// for us in general.
 				return errors.Trace(err)
 			}
 			if err := clients[i].SendMsg(preparedMsg); err != nil {
