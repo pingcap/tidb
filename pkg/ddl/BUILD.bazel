@@ -153,11 +153,8 @@ go_library(
         "//pkg/util/context",
         "//pkg/util/dbterror",
         "//pkg/util/dbterror/exeerrors",
-<<<<<<< HEAD
-=======
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/dbutil",
->>>>>>> d9fb3a53376 (ddl: Implement TableMode feature (#59009))
         "//pkg/util/domainutil",
         "//pkg/util/engine",
         "//pkg/util/execdetails",
