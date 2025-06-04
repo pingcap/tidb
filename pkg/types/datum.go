@@ -2410,7 +2410,7 @@ func SortDatums(ctx Context, datums []Datum) error {
 		var cmp int
 		cmp, err = a.Compare(ctx, &b, collate.GetCollator(b.Collation()))
 		if err != nil {
-			return -1
+			return 0
 		}
 		return cmp
 	})
@@ -2418,12 +2418,6 @@ func SortDatums(ctx Context, datums []Datum) error {
 		err = errors.Trace(err)
 	}
 	return err
-}
-
-type datumsSorter struct {
-	datums []Datum
-	ctx    Context
-	err    error
 }
 
 // DatumsToString converts several datums to formatted string.

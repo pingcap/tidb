@@ -56,7 +56,7 @@ func (*PPDSolver) Name() string {
 // DataSource.PredicatePushDown ---> DataSource.AddPrefix4ShardIndexes
 // It transforms the sql "SELECT * FROM test WHERE a = 10" to
 // "SELECT * FROM test WHERE tidb_shard(a) = val AND a = 10", val is the value of tidb_shard(10).
-// It also transforms the sql "SELECT * FROM test WHERE a IN (10, 20, 30)" to
+// It alsot transforms the sql "SELECT * FROM test WHERE a IN (10, 20, 30)" to
 // "SELECT * FROM test WHERE tidb_shard(a) = val1 AND a = 10 OR tidb_shard(a) = val2 AND a = 20"
 // @param[in] conds            the original condtion of this datasource
 // @retval - the new condition after adding expression prefix
