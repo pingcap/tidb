@@ -15,16 +15,19 @@
 package casetest
 
 import (
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTiFlashLateMaterialization(t *testing.T) {
@@ -51,20 +54,31 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 		SQL  string
 		Plan []string
 	}
-	integrationSuiteData := GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
+	planNormalizedSuiteData := GetPlanNormalizedSuiteData()
+	planNormalizedSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
+		tk.Session().GetSessionVars().PlanID.Store(0)
+		tk.MustExec(tt)
+		info := tk.Session().ShowProcess()
+		require.NotNil(t, info)
+		p, ok := info.Plan.(base.Plan)
+		require.True(t, ok)
+		normalized, digest := core.NormalizePlan(p)
+
+		// test the new normalization code
+		flat := core.FlattenPhysicalPlan(p, false)
+		newNormalized, newDigest := core.NormalizeFlatPlan(flat)
+		require.Equal(t, normalized, newNormalized)
+		require.Equal(t, digest, newDigest)
+
+		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
+		normalizedPlanRows := getPlanRows(normalizedPlan)
+		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
+			output[i].Plan = normalizedPlanRows
 		})
-		if strings.HasPrefix(tt, "set") {
-			tk.MustExec(tt)
-			continue
-		}
-		testdata.OnRecord(func() {
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+		compareStringSlice(t, normalizedPlanRows, output[i].Plan)
 	}
 }
 
@@ -98,19 +112,30 @@ func TestInvertedIndex(t *testing.T) {
 		SQL  string
 		Plan []string
 	}
-	integrationSuiteData := GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
+	planNormalizedSuiteData := GetPlanNormalizedSuiteData()
+	planNormalizedSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
+		tk.Session().GetSessionVars().PlanID.Store(0)
+		tk.MustExec(tt)
+		info := tk.Session().ShowProcess()
+		require.NotNil(t, info)
+		p, ok := info.Plan.(base.Plan)
+		require.True(t, ok)
+		normalized, digest := core.NormalizePlan(p)
+
+		// test the new normalization code
+		flat := core.FlattenPhysicalPlan(p, false)
+		newNormalized, newDigest := core.NormalizeFlatPlan(flat)
+		require.Equal(t, normalized, newNormalized)
+		require.Equal(t, digest, newDigest)
+
+		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
+		normalizedPlanRows := getPlanRows(normalizedPlan)
+		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
+			output[i].Plan = normalizedPlanRows
 		})
-		if strings.HasPrefix(tt, "set") {
-			tk.MustExec(tt)
-			continue
-		}
-		testdata.OnRecord(func() {
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+		compareStringSlice(t, normalizedPlanRows, output[i].Plan)
 	}
 }
