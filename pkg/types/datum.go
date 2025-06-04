@@ -2407,13 +2407,16 @@ func MaxValueDatum() Datum {
 func SortDatums(ctx Context, datums []Datum) error {
 	var err error
 	slices.SortFunc(datums, func(a, b Datum) int {
-		cmp, err := a.Compare(ctx, &b, collate.GetCollator(b.Collation()))
+		var cmp int
+		cmp, err = a.Compare(ctx, &b, collate.GetCollator(b.Collation()))
 		if err != nil {
-			err = errors.Trace(err)
 			return -1
 		}
 		return cmp
 	})
+	if err != nil {
+		err = errors.Trace(err)
+	}
 	return err
 }
 
