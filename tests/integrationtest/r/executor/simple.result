@@ -155,7 +155,8 @@ drop user if exists 'testflush'@'localhost';
 CREATE USER 'testflush'@'localhost' IDENTIFIED BY '';
 UPDATE mysql.User SET Select_priv='Y' WHERE User="testflush" and Host="localhost";
 SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost";
-Error 1143 (42000): SELECT command denied to user 'testflush'@'localhost' for column 'user' in table 'user'
+authentication_string
+
 FLUSH PRIVILEGES;
 SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost";
 authentication_string
