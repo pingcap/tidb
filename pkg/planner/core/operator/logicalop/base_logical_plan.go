@@ -194,6 +194,7 @@ func (p *BaseLogicalPlan) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base.
 
 // PredicateSimplification implements the LogicalPlan.<7th> interface.
 func (p *BaseLogicalPlan) PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	// it is only for test
 	s := p.self
 	for i, child := range s.Children() {
 		newChild := child.PredicateSimplification(opt)
