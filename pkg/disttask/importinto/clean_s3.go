@@ -58,7 +58,7 @@ func (*ImportCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 
 	store, err := importer.GetSortStore(ctx, taskMeta.Plan.CloudStorageURI)
 	if err != nil {
-		logger.Warn("failed to build controller", zap.Error(err))
+		logger.Warn("failed to create store", zap.Error(err))
 		return err
 	}
 	defer store.Close()

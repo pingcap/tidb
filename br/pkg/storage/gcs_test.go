@@ -619,7 +619,6 @@ func TestCtxUsage(t *testing.T) {
 }
 
 func TestDeleteFiles(t *testing.T) {
-	require.True(t, intest.InTest)
 	ctx := context.Background()
 
 	stg := createGCSStore(t)
