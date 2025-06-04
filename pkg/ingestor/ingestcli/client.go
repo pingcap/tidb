@@ -270,17 +270,7 @@ func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 		}
 		// we annotate the SST ID to help diagnose.
 		pbErr.Message = fmt.Sprintf("%s(ingest SST ID %d)", pbErr.Message, sstMeta.ID)
-		return &PBError{Err: &pbErr}
+		return NewIngestAPIError(&pbErr, nil)
 	}
 	return nil
-}
-
-// PBError is a implementation of error.
-type PBError struct {
-	Err *errorpb.Error
-}
-
-// Error implements the error.
-func (re *PBError) Error() string {
-	return re.Err.GetMessage()
 }
