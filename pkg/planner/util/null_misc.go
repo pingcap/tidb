@@ -71,7 +71,11 @@ func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction,
 // IsNullRejected(A AND B) = IsNullRejected(A) OR IsNullRejected(B)
 func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression,
 	skipPlanCacheCheck bool) bool {
+	// If the join is outer join, we simplify predicates to make null rejected check easier.
 	predicates := utilfuncp.ApplyPredicateSimplification(ctx, []expression.Expression{predicate})
+	if len(predicates) == 0 {
+		return false
+	}
 	predicate = expression.PushDownNot(ctx.GetNullRejectCheckExprCtx(), predicates[0])
 	if expression.ContainOuterNot(predicate) {
 		return false

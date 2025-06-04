@@ -711,8 +711,6 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 
 	// First, simplify this join
 	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
-		// If the join is outer join, we simplify predicates to make null rejected check easier.
-		predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates)
 		canBeSimplified := false
 		for _, expr := range predicates {
 			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
