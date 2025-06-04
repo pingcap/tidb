@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
@@ -618,6 +619,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 	var lastRetriedErr error
 	for retry := range maxRetryTimes {
 		resp, err := local.doIngest(ctx, j)
+		err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 		if err != nil {
 			if common.IsContextCanceledError(err) {
 				return err
