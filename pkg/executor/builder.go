@@ -4226,6 +4226,31 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 		return nil
 	}
 
+	dagPB := ret.dagPB
+	if b.ctx.GetSessionVars().SessionAlias == "test" && is.Table.GetPartitionInfo() == nil && !is.Table.IsCommonHandle && !is.KeepOrder {
+		tblInfo := ret.table.Meta()
+		buildSidePrimaryOffsets := []uint32{uint32(len(ret.index.Columns))}
+		position := uint32(len(dagPB.Executors))
+		dagPB.Executors = append(dagPB.Executors, &tipb.Executor{
+			Tp: tipb.ExecType_TypeIndexLookup,
+			IndexLookup: &tipb.IndexLookup{
+				TableId:                    tblInfo.ID,
+				Columns:                    ret.tableRequest.Executors[0].TblScan.Columns,
+				BuildSidePrimaryKeyOffsets: buildSidePrimaryOffsets,
+			},
+		})
+		dagPB.Executors = append(dagPB.Executors, ret.tableRequest.Executors[1:]...)
+		barrier := &tipb.PartialOutputBarrier{
+			OutputOffsets: dagPB.OutputOffsets,
+			EncodeType:    dagPB.EncodeType,
+			Position:      &position,
+		}
+		dagPB.ParitalOutputBarriers = append(dagPB.ParitalOutputBarriers, barrier)
+		dagPB.OutputOffsets = ret.tableRequest.OutputOffsets
+		dagPB.EncodeType = ret.tableRequest.EncodeType
+		ret.lookupPushDown = true
+	}
+
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 
 	ret.ranges = is.Ranges

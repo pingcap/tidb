@@ -19,6 +19,8 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"math"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -63,7 +65,7 @@ type SelectResult interface {
 	// NextRaw gets the next raw result.
 	NextRaw(context.Context) ([]byte, error)
 	// Next reads the data into chunk.
-	Next(context.Context, *chunk.Chunk) error
+	Next(context.Context, *chunk.Chunk, ...*chunk.Chunk) error
 	// Close closes the iterator.
 	Close() error
 }
@@ -180,7 +182,11 @@ func (*sortedSelectResults) NextRaw(context.Context) ([]byte, error) {
 	panic("Not support NextRaw for sortedSelectResults")
 }
 
-func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err error) {
+func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk, partialChunks ...*chunk.Chunk) (err error) {
+	if len(partialChunks) > 0 {
+		return errors.New("not supported")
+	}
+
 	c.Reset()
 	for i := range ssr.cachedChunks {
 		if ssr.cachedChunks[i] == nil {
@@ -255,9 +261,9 @@ func (ssr *serialSelectResults) NextRaw(ctx context.Context) ([]byte, error) {
 	return nil, nil
 }
 
-func (ssr *serialSelectResults) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (ssr *serialSelectResults) Next(ctx context.Context, chk *chunk.Chunk, partialChunks ...*chunk.Chunk) error {
 	for ssr.cur < len(ssr.selectResults) {
-		if err := ssr.selectResults[ssr.cur].Next(ctx, chk); err != nil {
+		if err := ssr.selectResults[ssr.cur].Next(ctx, chk, partialChunks...); err != nil {
 			return err
 		}
 		if chk.NumRows() > 0 {
@@ -277,18 +283,38 @@ func (ssr *serialSelectResults) Close() (err error) {
 	return
 }
 
+type readOrderItem struct {
+	outputIdx int
+	chk       *tipb.Chunk
+	left      int
+}
+
+func (i *readOrderItem) exhausted() bool {
+	return len(i.chk.RowsData) == 0 || i.left == 0
+}
+
+func (i *readOrderItem) consume(cnt int) int {
+	intest.Assert(cnt >= 0)
+	intest.Assert(i.left < 0 || i.left >= cnt)
+	if cnt >= 0 && i.left > cnt {
+		i.left -= cnt
+	}
+	return i.left
+}
+
 type selectResult struct {
 	label string
 	resp  kv.Response
 
 	rowLen     int
-	fieldTypes []*types.FieldType
+	fieldTypes [][]*types.FieldType
 	ctx        *dcontext.DistSQLContext
 
-	selectResp       *tipb.SelectResponse
-	selectRespSize   int64 // record the selectResp.Size() when it is initialized.
-	respChkIdx       int
-	respChunkDecoder *chunk.Decoder
+	selectResp     *tipb.SelectResponse
+	selectRespSize int64 // record the selectResp.Size() when it is initialized.
+
+	readOrders        []readOrderItem
+	respChunkDecoders []*chunk.Decoder
 
 	partialCount int64 // number of partial results.
 	sqlType      string
@@ -312,7 +338,7 @@ type selectResult struct {
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
 	for {
-		r.respChkIdx = 0
+		r.readOrders = nil
 		startTime := time.Now()
 		resultSubset, err := r.resp.Next(ctx)
 		duration := time.Since(startTime)
@@ -369,16 +395,42 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
 			}
 		}
-		if len(r.selectResp.Chunks) != 0 {
+
+		readOrders := make([]readOrderItem, 0, len(r.selectResp.PartialOutputs)+1)
+		for i, output := range r.selectResp.PartialOutputs {
+			for j := range output.Chunks {
+				readOrders = append(readOrders, readOrderItem{
+					outputIdx: i,
+					chk:       &output.Chunks[j],
+					left:      -1,
+				})
+			}
+		}
+
+		for i := range r.selectResp.Chunks {
+			readOrders = append(readOrders, readOrderItem{
+				outputIdx: len(r.selectResp.PartialOutputs),
+				chk:       &r.selectResp.Chunks[i],
+				left:      -1,
+			})
+		}
+
+		if len(readOrders) > 0 {
+			r.readOrders = readOrders
 			break
 		}
 	}
+
 	return nil
 }
 
-func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk, partialChunks ...*chunk.Chunk) error {
 	chk.Reset()
-	if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
+	for _, c := range partialChunks {
+		c.Reset()
+	}
+
+	if r.selectResp == nil || len(r.readOrders) == 0 {
 		err := r.fetchResp(ctx)
 		if err != nil {
 			return err
@@ -394,9 +446,9 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	encodeType := r.selectResp.GetEncodeType()
 	switch encodeType {
 	case tipb.EncodeType_TypeDefault:
-		return r.readFromDefault(ctx, chk)
+		return r.readFromDefault(ctx, chk, partialChunks)
 	case tipb.EncodeType_TypeChunk:
-		return r.readFromChunk(ctx, chk)
+		return r.readFromChunk(ctx, chk, partialChunks)
 	}
 	return errors.Errorf("unsupported encode type:%v", encodeType)
 }
@@ -417,57 +469,95 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 	return data, err
 }
 
-func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) error {
-	for !chk.IsFull() {
-		if r.respChkIdx == len(r.selectResp.Chunks) {
+func anyChunksFull(chk *chunk.Chunk, partialChunks []*chunk.Chunk) bool {
+	if chk.IsFull() {
+		return true
+	}
+	for _, partial := range partialChunks {
+		if partial.IsFull() {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk, partialChunks []*chunk.Chunk) error {
+	for !anyChunksFull(chk, partialChunks) {
+		if len(r.readOrders) == 0 {
 			err := r.fetchResp(ctx)
 			if err != nil || r.selectResp == nil {
 				return err
 			}
 		}
-		err := r.readRowsData(chk)
+		err := r.readRowsData(chk, partialChunks)
 		if err != nil {
 			return err
 		}
-		if len(r.selectResp.Chunks[r.respChkIdx].RowsData) == 0 {
-			r.respChkIdx++
+
+		if r.readOrders[0].exhausted() {
+			r.readOrders = r.readOrders[1:]
 		}
 	}
 	return nil
 }
 
-func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) error {
-	if r.respChunkDecoder == nil {
-		r.respChunkDecoder = chunk.NewDecoder(
-			chunk.NewChunkWithCapacity(r.fieldTypes, 0),
-			r.fieldTypes,
-		)
+func (r *selectResult) ensureRespChunkDecoder(outputIdx int) *chunk.Decoder {
+	if len(r.respChunkDecoders) == 0 {
+		r.respChunkDecoders = make([]*chunk.Decoder, len(r.selectResp.PartialOutputs)+1)
 	}
 
-	for !chk.IsFull() {
-		if r.respChkIdx == len(r.selectResp.Chunks) {
+	decoder := r.respChunkDecoders[outputIdx]
+	if decoder == nil {
+		decoder = chunk.NewDecoder(
+			chunk.NewChunkWithCapacity(r.fieldTypes[outputIdx], 0),
+			r.fieldTypes[outputIdx],
+		)
+		r.respChunkDecoders[outputIdx] = decoder
+	}
+
+	return decoder
+}
+
+func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk, partialChunks []*chunk.Chunk) error {
+	for !anyChunksFull(chk, partialChunks) {
+		if len(r.readOrders) == 0 {
 			err := r.fetchResp(ctx)
 			if err != nil || r.selectResp == nil {
 				return err
 			}
 		}
 
-		if r.respChunkDecoder.IsFinished() {
-			r.respChunkDecoder.Reset(r.selectResp.Chunks[r.respChkIdx].RowsData)
+		current := &r.readOrders[0]
+		writeChk := chk
+		if current.outputIdx < len(r.selectResp.PartialOutputs) {
+			writeChk = partialChunks[current.outputIdx]
+		}
+
+		maxDecode := current.left
+		if maxDecode < 0 {
+			maxDecode = math.MaxInt
+		}
+
+		respChunkDecoder := r.ensureRespChunkDecoder(current.outputIdx)
+		if respChunkDecoder.IsFinished() {
+			respChunkDecoder.Reset(current.chk.RowsData)
 		}
 		// If the next chunk size is greater than required rows * 0.8, reuse the memory of the next chunk and return
 		// immediately. Otherwise, splice the data to one chunk and wait the next chunk.
-		if r.respChunkDecoder.RemainedRows() > int(float64(chk.RequiredRows())*0.8) {
-			if chk.NumRows() > 0 {
+		if remain := respChunkDecoder.RemainedRows(); maxDecode >= remain && remain > int(float64(writeChk.RequiredRows())*0.8) {
+			if writeChk.NumRows() > 0 {
 				return nil
 			}
-			r.respChunkDecoder.ReuseIntermChk(chk)
-			r.respChkIdx++
+			respChunkDecoder.ReuseIntermChk(writeChk)
+			r.readOrders = r.readOrders[1:]
 			return nil
 		}
-		r.respChunkDecoder.Decode(chk)
-		if r.respChunkDecoder.IsFinished() {
-			r.respChkIdx++
+
+		before := respChunkDecoder.RemainedRows()
+		respChunkDecoder.Decode(writeChk, maxDecode)
+		current.consume(before - respChunkDecoder.RemainedRows())
+		if respChunkDecoder.IsFinished() || current.exhausted() {
+			r.readOrders = r.readOrders[1:]
 		}
 	}
 	return nil
@@ -576,18 +666,25 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	return
 }
 
-func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
-	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
-	decoder := codec.NewDecoder(chk, r.ctx.Location)
-	for !chk.IsFull() && len(rowsData) > 0 {
+func (r *selectResult) readRowsData(chk *chunk.Chunk, partialChunks []*chunk.Chunk) (err error) {
+	current := &r.readOrders[0]
+	writeChk := chk
+	if current.outputIdx < len(r.selectResp.PartialOutputs) {
+		writeChk = partialChunks[current.outputIdx]
+	}
+
+	rowsData := current.chk.RowsData
+	decoder := codec.NewDecoder(writeChk, r.ctx.Location)
+	for !writeChk.IsFull() && len(rowsData) > 0 && !current.exhausted() {
 		for i := range r.rowLen {
-			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
+			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[current.outputIdx][i])
 			if err != nil {
 				return err
 			}
 		}
+		current.consume(1)
 	}
-	r.selectResp.Chunks[r.respChkIdx].RowsData = rowsData
+	current.chk.RowsData = rowsData
 	return nil
 }
 
