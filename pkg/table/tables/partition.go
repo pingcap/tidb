@@ -1499,7 +1499,7 @@ func (t *partitionedTable) locatePartition(ctx expression.EvalContext, r []types
 		return 0, errors.Trace(err)
 	}
 	pi := t.Meta().GetPartitionInfo()
-	if subIdx >= 0 {
+	if subIdx >= 0 && subIdx < len(pi.Definitions[idx].SubDefinitions) {
 		return pi.Definitions[idx].SubDefinitions[subIdx].ID, nil
 	}
 	return pi.Definitions[idx].ID, nil

@@ -542,9 +542,6 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 		ctx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
 		return nil
 	}
-	//if s.Sub != nil {
-	//	ctx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("Unsupported subpartitioning, only using %v partitioning", s.Tp)))
-	//}
 
 	pi := &model.PartitionInfo{
 		Type:   s.Tp,
@@ -586,6 +583,9 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 			subPi.IsEmptyColumns = isEmptyColumns
 		}
 		pi.Sub = subPi
+	}
+	if s.Sub != nil && pi.Sub == nil {
+		ctx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("Unsupported subpartitioning, only using %v partitioning", s.Tp)))
 	}
 
 	exprCtx := ctx.GetExprCtx()
