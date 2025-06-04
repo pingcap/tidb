@@ -97,11 +97,11 @@ type Collector interface {
 
 // collector is the implement of Collector interface
 type collector struct {
-	readFunc func(bytes, rows int64)
+	addFunc func(bytes, rows int64)
 }
 
 func (c *collector) Add(bytes, rows int64) {
-	c.readFunc(bytes, rows)
+	c.addFunc(bytes, rows)
 }
 
 // dummyCollector is a dummy implementation of Collector that does nothing.
@@ -118,9 +118,9 @@ func (*dummyCollector) Add(_, _ int64) {
 }
 
 // NewCollector returns a new collector with the provided read and write functions.
-func NewCollector(readFunc func(bytes, rows int64)) Collector {
+func NewCollector(addFunc func(bytes, rows int64)) Collector {
 	return &collector{
-		readFunc: readFunc,
+		addFunc: addFunc,
 	}
 }
 
