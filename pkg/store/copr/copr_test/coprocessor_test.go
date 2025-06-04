@@ -34,6 +34,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 	"github.com/tikv/pd/client/opt"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
@@ -262,7 +263,7 @@ func TestBuildCopIteratorWithRunawayChecker(t *testing.T) {
 	}
 
 	ranges := copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
-	resourceCtl, err := rmclient.NewResourceGroupController(context.Background(), 1, mockPrivider, nil)
+	resourceCtl, err := rmclient.NewResourceGroupController(context.Background(), 1, mockPrivider, nil, constants.NullKeyspaceID)
 	require.NoError(t, err)
 	manager := runaway.NewRunawayManager(resourceCtl, "mock://test", nil, nil, nil, nil)
 	defer manager.Stop()
