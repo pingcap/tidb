@@ -110,13 +110,8 @@ const (
 	ActionDropResourceGroup      ActionType = 70
 	ActionAlterTablePartitioning ActionType = 71
 	ActionRemovePartitioning     ActionType = 72
-<<<<<<< HEAD
 	ActionAddVectorIndex         ActionType = 73
-=======
-	ActionAddColumnarIndex       ActionType = 73
-	ActionModifyEngineAttribute  ActionType = 74
-	ActionAlterTableMode         ActionType = 75
->>>>>>> d9fb3a53376 (ddl: Implement TableMode feature (#59009))
+	ActionAlterTableMode         ActionType = 74
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -188,13 +183,8 @@ var ActionMap = map[ActionType]string{
 	ActionDropResourceGroup:             "drop resource group",
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
-<<<<<<< HEAD
 	ActionAddVectorIndex:                "add vector index",
-=======
-	ActionAddColumnarIndex:              "add columnar index",
-	ActionModifyEngineAttribute:         "modify engine attribute",
 	ActionAlterTableMode:                "alter table mode",
->>>>>>> d9fb3a53376 (ddl: Implement TableMode feature (#59009))
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
