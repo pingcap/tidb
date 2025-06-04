@@ -70,14 +70,11 @@ const (
 
 // GetAdjustedBlockSize gets the block size after alignment.
 func GetAdjustedBlockSize(totalBufSize uint64, defBlockSize int) int {
-	// the buf size is aligned to block size, and the target table might have many
-	// indexes, one index KV writer might take much more memory when the buf size
-	// is slightly larger than the N*block-size.
-	// such as when dataKVMemSizePerCon = 2M, block-size = 16M, the aligned size
-	// is 16M, it's 8 times larger.
-	// so we adjust the block size when the aligned size is larger than 1.1 times
-	// of totalBufSize, to avoid OOM
-	// we also use this formula to calculate the block size for data KV writer.
+	// In the case of table with many indexes, the buffer size may be much
+	// smaller than the block size, so aligning size to block size will make
+	// the memory size of each writer too large and cause OOM.
+	// So we adjust the block size when the aligned size is 1.1 times larger
+	// than memSizePerWriter to prevent OOM.
 	alignedSize := membuf.GetAlignedSize(totalBufSize, uint64(defBlockSize))
 	if float64(alignedSize)/float64(totalBufSize) > 1.1 {
 		return int(totalBufSize)

@@ -41,7 +41,7 @@ var (
 	defaultOneWriterMemSizeLimit uint64 = 128 * units.MiB
 	// DefaultOneWriterBlockSize is the default block size for one writer.
 	// TODO currently we don't have per-writer mem size limit, we always use the
-	// default, so we always use the default mem size limit as the block size too.
+	// default mem size limit as the block size.
 	// it's ok for now, we can make it configurable in the future.
 	DefaultOneWriterBlockSize = int(defaultOneWriterMemSizeLimit)
 )

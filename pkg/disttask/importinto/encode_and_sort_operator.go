@@ -269,10 +269,3 @@ func getNumOfIndexGenKV(tblInfo *model.TableInfo) int {
 	}
 	return count
 }
-
-func getKVGroupBlockSize(group string) int {
-	if group == dataKVGroup {
-		return dataKVGroupBlockSize
-	}
-	return external.DefaultBlockSize
-}
