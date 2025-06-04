@@ -1146,15 +1146,12 @@ func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
 		lock.LockType == ast.SelectLockForUpdateWaitN
 }
 
-func isTiKVIndex(indexInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
-	if indexInfo == nil {
-		return false
-	}
+func isTiKVIndexByName(idxName ast.CIStr, indexInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
 	// when the PKIsHandle of table is true, the primary key is not in the indices list.
-	if indexInfo.Name.L == "primary" && tblInfo.PKIsHandle {
+	if idxName.L == "primary" && tblInfo.PKIsHandle {
 		return true
 	}
-	return !indexInfo.IsColumnarIndex()
+	return indexInfo != nil && !indexInfo.IsColumnarIndex()
 }
 
 func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
@@ -1316,7 +1313,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				ignored = append(ignored, path)
 				continue
 			}
-			if isTiKVIndex(path.Index, tblInfo) && !isolationReadEnginesHasTiKV {
+			if isTiKVIndexByName(idxName, path.Index, tblInfo) && !isolationReadEnginesHasTiKV {
 				engineVals, _ := ctx.GetSessionVars().GetSystemVar(vardef.TiDBIsolationReadEngines)
 				err := fmt.Errorf("TiDB doesn't support index '%v' in the isolation read engines(value: '%v')", idxName, engineVals)
 				if i < indexHintsLen {
