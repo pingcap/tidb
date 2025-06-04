@@ -76,17 +76,20 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 		}
 		nonConstCols = append(nonConstCols, col)
 	}
-	// if nonConstCols is empty, it means all columns are constants
-	if len(nonConstCols) == 0 {
-		appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
-		return outerPlan, true, nil
-	}
-	// outer join elimination with duplicate agnostic aggregate functions
-	// Uses "nonConstCols" as this is aggCols after filtering out constant columns.
-	matched := ruleutil.IsColsAllFromOuterTable(nonConstCols, &outerUniqueIDs)
-	if matched {
-		appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
-		return outerPlan, true, nil
+
+	if len(aggCols) > 0 {
+		// if nonConstCols is empty, it means all columns are constants
+		if len(nonConstCols) == 0 {
+			appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
+			return outerPlan, true, nil
+		}
+		// outer join elimination with duplicate agnostic aggregate functions
+		// Uses "nonConstCols" as this is aggCols after filtering out constant columns.
+		matched := ruleutil.IsColsAllFromOuterTable(nonConstCols, &outerUniqueIDs)
+		if matched {
+			appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
+			return outerPlan, true, nil
+		}
 	}
 	// outer join elimination without duplicate agnostic aggregate functions
 	innerJoinKeys := o.extractInnerJoinKeys(p, innerChildIdx)
