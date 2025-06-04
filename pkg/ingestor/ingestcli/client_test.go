@@ -169,7 +169,7 @@ func TestNextClientURL(t *testing.T) {
 		require.Equal(t, "http://", cli.urlSchema)
 		require.Equal(t, c.forHTTP, cli.tikvWorkerURL)
 
-		cli = NewClient(c.inURL, 1, false, util.ClientWithTLS(&tls.Config{}), nil).(*client)
+		cli = NewClient(c.inURL, 1, true, util.ClientWithTLS(&tls.Config{}), nil).(*client)
 		require.Equal(t, "https://", cli.urlSchema)
 		require.Equal(t, c.forHTTPS, cli.tikvWorkerURL)
 	}
