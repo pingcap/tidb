@@ -110,7 +110,7 @@ func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
 		plancodec.EncodePlanNode(
 			int(fop.Depth),
 			strconv.Itoa(fop.Origin.ID())+fop.Label.String(),
-			fop.Origin.TP(),
+			fop.Origin.TP(fop.IsINLProbeChild),
 			estRows,
 			taskTypeInfo,
 			fop.Origin.ExplainInfo(),
