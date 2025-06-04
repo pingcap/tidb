@@ -1131,8 +1131,6 @@ func (pi *SubPartitionInfo) Clone() *SubPartitionInfo {
 	return &newPi
 }
 
-const emptySubPartitionInfoSize = int64(unsafe.Sizeof(SubPartitionInfo{}))
-
 // MemoryUsage return the memory usage of SubPartitionInfo
 func (pi *SubPartitionInfo) MemoryUsage() (sum int64) {
 	if pi == nil {
