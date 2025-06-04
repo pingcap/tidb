@@ -346,7 +346,7 @@ func TestQ22(t *testing.T) {
 	}
 }
 
-func BenchmarkQ4(b *testing.B) {
+func BenchmarkTPCHQ4(b *testing.B) {
 	store, dom := testkit.CreateMockStoreAndDomain(b)
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")
@@ -357,13 +357,34 @@ func BenchmarkQ4(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		tk.MustQuery("SELECT o_orderpriority, COUNT(*) AS order_count FROM orders WHERE o_orderdate >= '1995-01-01' AND o_orderdate < DATE_ADD('1995-01-01', INTERVAL '3' MONTH) AND EXISTS (SELECT * FROM lineitem WHERE l_orderkey = o_orderkey AND l_commitdate < l_receiptdate) GROUP BY o_orderpriority ORDER BY o_orderpriority;")
-		tk.MustQuery("SELECT /*+ NO_INDEX_JOIN(orders, lineitem),NO_INDEX_HASH_JOIN(orders, lineitem) */ o_orderpriority, COUNT(*) AS order_count FROM orders WHERE o_orderdate >= '1995-01-01' AND o_orderdate < DATE_ADD('1995-01-01', INTERVAL '3' MONTH) AND EXISTS (SELECT * FROM lineitem WHERE l_orderkey = o_orderkey AND l_commitdate < l_receiptdate) GROUP BY o_orderpriority ORDER BY o_orderpriority;")
+		tk.MustQuery("explain format='cost_trace' SELECT o_orderpriority, COUNT(*) AS order_count FROM orders WHERE o_orderdate >= '1995-01-01' AND o_orderdate < DATE_ADD('1995-01-01', INTERVAL '3' MONTH) AND EXISTS (SELECT * FROM lineitem WHERE l_orderkey = o_orderkey AND l_commitdate < l_receiptdate) GROUP BY o_orderpriority ORDER BY o_orderpriority;")
+		tk.MustQuery("explain format='cost_trace' SELECT /*+ NO_INDEX_JOIN(orders, lineitem),NO_INDEX_HASH_JOIN(orders, lineitem) */ o_orderpriority, COUNT(*) AS order_count FROM orders WHERE o_orderdate >= '1995-01-01' AND o_orderdate < DATE_ADD('1995-01-01', INTERVAL '3' MONTH) AND EXISTS (SELECT * FROM lineitem WHERE l_orderkey = o_orderkey AND l_commitdate < l_receiptdate) GROUP BY o_orderpriority ORDER BY o_orderpriority;")
+	}
+}
+
+func BenchmarkTPCHQ21(b *testing.B) {
+	store, dom := testkit.CreateMockStoreAndDomain(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec(`use test`)
+	createSupplier(b, tk, dom)
+	createLineItem(b, tk, dom)
+	createOrders(b, tk, dom)
+	createNation(b, tk, dom)
+	testkit.LoadTableStats("test.supplier.json", dom)
+	testkit.LoadTableStats("test.lineitem.json", dom)
+	testkit.LoadTableStats("test.orders.json", dom)
+	testkit.LoadTableStats("test.nation.json", dom)
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		tk.MustQuery("explain format='cost_trace' SELECT o_orderpriority, COUNT(*) AS order_count FROM orders WHERE o_orderdate >= '1995-01-01' AND o_orderdate < DATE_ADD('1995-01-01', INTERVAL '3' MONTH) AND EXISTS (SELECT * FROM lineitem WHERE l_orderkey = o_orderkey AND l_commitdate < l_receiptdate) GROUP BY o_orderpriority ORDER BY o_orderpriority;")
+		tk.MustQuery("explain format='cost_trace' SELECT /*+ NO_INDEX_JOIN(orders, lineitem),NO_INDEX_HASH_JOIN(orders, lineitem) */ o_orderpriority, COUNT(*) AS order_count FROM orders WHERE o_orderdate >= '1995-01-01' AND o_orderdate < DATE_ADD('1995-01-01', INTERVAL '3' MONTH) AND EXISTS (SELECT * FROM lineitem WHERE l_orderkey = o_orderkey AND l_commitdate < l_receiptdate) GROUP BY o_orderpriority ORDER BY o_orderpriority;")
 	}
 }
 
 func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
-		BenchmarkQ4,
+		BenchmarkTPCHQ4,
+		BenchmarkTPCHQ21,
 	)
 }
