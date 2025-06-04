@@ -208,9 +208,9 @@ type client struct {
 }
 
 // NewClient creates a new Client instance.
-func NewClient(tikvWorkerURL string, clusterID uint64, httpClient *http.Client, splitCli split.SplitClient) Client {
+func NewClient(tikvWorkerURL string, clusterID uint64, isHTTPS bool, httpClient *http.Client, splitCli split.SplitClient) Client {
 	urlSchema := "http://"
-	if httpClient.Transport.(*http.Transport).TLSClientConfig != nil {
+	if isHTTPS {
 		urlSchema = "https://"
 	}
 	// if tikvWorkerURL doesn't contain schema, add it.

@@ -34,7 +34,7 @@ go_test(
     ],
     embed = [":ingestcli"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         "//br/pkg/restore/split",
         "//pkg/ingestor/errdef",

@@ -1,3 +1,17 @@
+// Copyright 2025 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package ingestcli
 
 import (
@@ -40,6 +54,38 @@ func TestConvertPBError2Error(t *testing.T) {
 		t.Run(fmt.Sprintf("case %d", i), func(t *testing.T) {
 			err := NewIngestAPIError(c.pbErr, nil)
 			require.ErrorIs(t, err, c.res.Err)
+		})
+	}
+}
+
+func TestGetIngestFailedMsg(t *testing.T) {
+	cases := []struct {
+		pbErr *errorpb.Error
+		msg   string
+	}{
+		{pbErr: &errorpb.Error{KeyNotInRegion: &errorpb.KeyNotInRegion{}}, msg: "KeyNotInRegion"},
+		{pbErr: &errorpb.Error{StaleCommand: &errorpb.StaleCommand{}}, msg: "StaleCommand"},
+		{pbErr: &errorpb.Error{StoreNotMatch: &errorpb.StoreNotMatch{}}, msg: "StoreNotMatch"},
+		{pbErr: &errorpb.Error{RaftEntryTooLarge: &errorpb.RaftEntryTooLarge{}}, msg: "RaftEntryTooLarge"},
+		{pbErr: &errorpb.Error{MaxTimestampNotSynced: &errorpb.MaxTimestampNotSynced{}}, msg: "MaxTimestampNotSynced"},
+		{pbErr: &errorpb.Error{ProposalInMergingMode: &errorpb.ProposalInMergingMode{}}, msg: "ProposalInMergingMode"},
+		{pbErr: &errorpb.Error{DataIsNotReady: &errorpb.DataIsNotReady{}}, msg: "DataIsNotReady"},
+		{pbErr: &errorpb.Error{RegionNotInitialized: &errorpb.RegionNotInitialized{}}, msg: "RegionNotInitialized"},
+		{pbErr: &errorpb.Error{RecoveryInProgress: &errorpb.RecoveryInProgress{}}, msg: "RecoveryInProgress"},
+		{pbErr: &errorpb.Error{FlashbackInProgress: &errorpb.FlashbackInProgress{}}, msg: "FlashbackInProgress"},
+		{pbErr: &errorpb.Error{FlashbackNotPrepared: &errorpb.FlashbackNotPrepared{}}, msg: "FlashbackNotPrepared"},
+		{pbErr: &errorpb.Error{IsWitness: &errorpb.IsWitness{}}, msg: "IsWitness"},
+		{pbErr: &errorpb.Error{MismatchPeerId: &errorpb.MismatchPeerId{}}, msg: "MismatchPeerId"},
+		{pbErr: &errorpb.Error{BucketVersionNotMatch: &errorpb.BucketVersionNotMatch{}}, msg: "BucketVersionNotMatch"},
+		{pbErr: &errorpb.Error{UndeterminedResult: &errorpb.UndeterminedResult{}}, msg: "UndeterminedResult"},
+		{pbErr: &errorpb.Error{RegionNotInitialized: &errorpb.RegionNotInitialized{}, Message: "the message"}, msg: "RegionNotInitialized the message"},
+		{pbErr: &errorpb.Error{Message: "the message"}, msg: "the message"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.msg, func(t *testing.T) {
+			msg := getIngestFailedMsg(c.pbErr)
+			require.Equal(t, c.msg, msg)
 		})
 	}
 }

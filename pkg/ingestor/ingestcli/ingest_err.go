@@ -15,6 +15,7 @@
 package ingestcli
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -80,7 +81,53 @@ func NewIngestAPIError(errPb *errorpb.Error, extractRegionFn func([]*metapb.Regi
 		res.Err = errdef.ErrKVDiskFull.GenWithStack(errPb.GetMessage())
 	default:
 		// all others doIngest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
-		res.Err = errdef.ErrKVIngestFailed.GenWithStack(errPb.GetMessage())
+		res.Err = errdef.ErrKVIngestFailed.GenWithStack(getIngestFailedMsg(errPb))
 	}
 	return res
+}
+
+// if some of the below error happens, the original message might be empty, such
+// as RegionNotInitialized, so we prepend the error type in the error message.
+func getIngestFailedMsg(errPb *errorpb.Error) string {
+	var tp string
+	switch {
+	case errPb.KeyNotInRegion != nil:
+		tp = "KeyNotInRegion"
+	case errPb.StaleCommand != nil:
+		tp = "StaleCommand"
+	case errPb.StoreNotMatch != nil:
+		tp = "StoreNotMatch"
+	case errPb.RaftEntryTooLarge != nil:
+		tp = "RaftEntryTooLarge"
+	case errPb.MaxTimestampNotSynced != nil:
+		tp = "MaxTimestampNotSynced"
+	case errPb.ProposalInMergingMode != nil:
+		tp = "ProposalInMergingMode"
+	case errPb.DataIsNotReady != nil:
+		tp = "DataIsNotReady"
+	case errPb.RegionNotInitialized != nil:
+		tp = "RegionNotInitialized"
+	case errPb.RecoveryInProgress != nil:
+		tp = "RecoveryInProgress"
+	case errPb.FlashbackInProgress != nil:
+		tp = "FlashbackInProgress"
+	case errPb.FlashbackNotPrepared != nil:
+		tp = "FlashbackNotPrepared"
+	case errPb.IsWitness != nil:
+		tp = "IsWitness"
+	case errPb.MismatchPeerId != nil:
+		tp = "MismatchPeerId"
+	case errPb.BucketVersionNotMatch != nil:
+		tp = "BucketVersionNotMatch"
+	case errPb.UndeterminedResult != nil:
+		tp = "UndeterminedResult"
+	}
+	message := errPb.GetMessage()
+	if tp == "" {
+		return message
+	}
+	if message == "" {
+		return tp
+	}
+	return fmt.Sprintf("%s %s", tp, message)
 }
