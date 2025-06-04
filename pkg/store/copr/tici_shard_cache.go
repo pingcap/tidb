@@ -28,24 +28,24 @@ import (
 	"google.golang.org/grpc"
 )
 
-type ShardInfo = coprocessor.ShardInfo
-type KeyRange = kv.KeyRange
-
+// Shard represents a shard of data for tici.
 type Shard struct {
-	ShardId  uint64
+	ShardID  uint64
 	StartKey string
 	EndKey   string
 	Epoch    uint64
 }
 
+// ShardWithAddr represents a shard of data with local cache addresses.
 type ShardWithAddr struct {
 	Shard
-	local_cache_addrs []string
+	localCacheAddrs []string
 }
 
+// ShardInfoWithAddr represents a shard of data with local cache addresses.
 type ShardInfoWithAddr struct {
-	ShardInfo
-	local_cache_addrs []string
+	coprocessor.ShardInfo
+	localCacheAddrs []string
 }
 
 type shardIndexMu struct {
@@ -54,23 +54,27 @@ type shardIndexMu struct {
 	shareds map[uint64]*ShardWithAddr
 }
 
+// Client is the interface for the TiCI shard cache client.
 type Client interface {
-	ScanRanges(ctx context.Context, tableId int64, indexId int64, keyRanges []KeyRange, limit int) ([]ShardWithAddr, error)
+	ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) ([]ShardWithAddr, error)
 }
 
+// TiCIShardCacheClient is a gRPC client for the TiCI shard cache service.
 type TiCIShardCacheClient struct {
 	c *grpc.ClientConn
 }
 
+// NewTiCIShardCacheClient creates a new TiCIShardCacheClient instance.
 func NewTiCIShardCacheClient() (*TiCIShardCacheClient, error) {
 	c, err := grpc.DialContext(context.Background(), "127.0.0.1:50061", grpc.WithInsecure())
 	return &TiCIShardCacheClient{c}, err
 }
 
-func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableId int64, indexId int64, keyRanges []KeyRange, limit int) (ret []ShardWithAddr, err error) {
+// ScanRanges sends a request to the TiCI shard cache service to scan ranges for a given table and index.
+func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) (ret []ShardWithAddr, err error) {
 	request := &tici.GetShardLocalCacheRequest{
-		TableId:   tableId,
-		IndexId:   indexId,
+		TableId:   tableID,
+		IndexId:   indexID,
 		KeyRanges: nil,
 		Limit:     int32(limit),
 	}
@@ -98,7 +102,7 @@ func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableId int64, in
 		if s != nil {
 			ret = append(ret, ShardWithAddr{
 				Shard{
-					ShardId:  s.Shard.ShardId,
+					ShardID:  s.Shard.ShardId,
 					StartKey: s.Shard.StartKey,
 					EndKey:   s.Shard.EndKey,
 					Epoch:    s.Shard.Epoch,
@@ -111,11 +115,13 @@ func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableId int64, in
 	return ret, nil
 }
 
+// TiCIShardCache is a cache for TiCI shard information.
 type TiCIShardCache struct {
 	client Client
 	mu     shardIndexMu
 }
 
+// NewTiCIShardCache creates a new TiCIShardCache instance with the provided client.
 func NewTiCIShardCache(client Client) *TiCIShardCache {
 	return &TiCIShardCache{
 		client: client,
@@ -125,8 +131,9 @@ func NewTiCIShardCache(client Client) *TiCIShardCache {
 	}
 }
 
-func (s *TiCIShardCache) ScanRanges(ctx context.Context, tableId int64, indexId int64, keyRanges []KeyRange, limit int) ([]ShardInfoWithAddr, error) {
-	shards, err := s.client.ScanRanges(ctx, tableId, indexId, keyRanges, limit)
+// ScanRanges scans the ranges for a given table and index, and returns the shard information with local cache addresses.
+func (s *TiCIShardCache) ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) ([]ShardInfoWithAddr, error) {
+	shards, err := s.client.ScanRanges(ctx, tableID, indexID, keyRanges, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -135,19 +142,19 @@ func (s *TiCIShardCache) ScanRanges(ctx context.Context, tableId int64, indexId 
 	defer s.mu.Unlock()
 
 	for _, shard := range shards {
-		s.mu.shareds[shard.ShardId] = &shard
+		s.mu.shareds[shard.ShardID] = &shard
 	}
 
 	// Mock the local cache addresses for testing purposes
 	ret := make([]ShardInfoWithAddr, 0, len(shards))
 	for _, shard := range shards {
 		ret = append(ret, ShardInfoWithAddr{
-			ShardInfo: ShardInfo{
-				ShardId:    shard.ShardId,
+			ShardInfo: coprocessor.ShardInfo{
+				ShardId:    shard.ShardID,
 				ShardEpoch: shard.Epoch,
 				// Ranges: []kv.KeyRange{},
 			},
-			local_cache_addrs: shard.local_cache_addrs,
+			localCacheAddrs: shard.localCacheAddrs,
 		})
 	}
 

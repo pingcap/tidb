@@ -1625,10 +1625,10 @@ func buildBatchCopTasksForFullText(store *kvStore, tableID int64, indexID int64,
 	storeShard := make(map[string][]*coprocessor.ShardInfo)
 	for _, shard := range ret {
 		// Always use the first local cache address as the store address.
-		if _, ok := storeShard[shard.local_cache_addrs[0]]; !ok {
-			storeShard[shard.local_cache_addrs[0]] = make([]*coprocessor.ShardInfo, 0)
+		if _, ok := storeShard[shard.localCacheAddrs[0]]; !ok {
+			storeShard[shard.localCacheAddrs[0]] = make([]*coprocessor.ShardInfo, 0)
 		}
-		storeShard[shard.local_cache_addrs[0]] = append(storeShard[shard.local_cache_addrs[0]], &shard.ShardInfo)
+		storeShard[shard.localCacheAddrs[0]] = append(storeShard[shard.localCacheAddrs[0]], &shard.ShardInfo)
 	}
 
 	for addr, shardInfos := range storeShard {
