@@ -180,6 +180,12 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 		if err != nil {
 			return nil, nil, err
 		}
+	} else {
+		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+			// If there's no fts filters, we should remove all the fts index paths.
+			// They're not suitable do normal scan.
+			return path.Index != nil && path.Index.FullTextInfo != nil
+		})
 	}
 	return predicates, ds, nil
 }
