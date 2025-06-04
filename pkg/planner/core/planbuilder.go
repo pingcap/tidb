@@ -1146,7 +1146,7 @@ func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
 		lock.LockType == ast.SelectLockForUpdateWaitN
 }
 
-func isTiKVIndexByName(indexInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
+func isTiKVIndex(indexInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
 	if indexInfo == nil {
 		return false
 	}
@@ -1316,7 +1316,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				ignored = append(ignored, path)
 				continue
 			}
-			if isTiKVIndexByName(path.Index, tblInfo) && !isolationReadEnginesHasTiKV {
+			if isTiKVIndex(path.Index, tblInfo) && !isolationReadEnginesHasTiKV {
 				engineVals, _ := ctx.GetSessionVars().GetSystemVar(vardef.TiDBIsolationReadEngines)
 				err := fmt.Errorf("TiDB doesn't support index '%v' in the isolation read engines(value: '%v')", idxName, engineVals)
 				if i < indexHintsLen {
