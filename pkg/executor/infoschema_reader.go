@@ -3961,16 +3961,15 @@ func (e *memtableRetriever) setDataFromColumnPrivileges(ctx context.Context, sct
 	pm := privilege.GetPrivilegeManager(sctx)
 	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil,
 		`SELECT c.user,
-			concat("'", c.user, "'@'", c.host, "'") AS GRANTEE,
-			'def' AS TABLE_CATALOG,
-			c.db AS TABLE_SCHEMA,
-			c.table_name AS TABLE_NAME,
-			c.column_name AS COLUMN_NAME,
-			c.column_priv AS PRIVILEGE_TYPE,
+			Concat("'", c.USER, "'@'", c.host, "'") AS GRANTEE,
+			c.db                                    AS TABLE_SCHEMA,
+			c.table_name                            AS TABLE_NAME,
+			c.column_name                           AS COLUMN_NAME,
+			c.column_priv                           AS PRIVILEGE_TYPE,
 			CASE
 				WHEN find_in_set('Grant', t.table_priv) > 0 THEN "YES"
 				ELSE "NO"
-			END AS IS_GRANTABLE
+			END                                     AS IS_GRANTABLE
 		FROM mysql.columns_priv AS c
     	JOIN mysql.tables_priv AS t
 			ON c.user = t.user
@@ -3986,26 +3985,26 @@ func (e *memtableRetriever) setDataFromColumnPrivileges(ctx context.Context, sct
 
 	rows := make([][]types.Datum, 0, len(chunkRows))
 	for _, chunkRow := range chunkRows {
-		if chunkRow.Len() != 8 {
+		if chunkRow.Len() != 7 {
 			continue
 		}
 		userName := chunkRow.GetString(0)
-		if !(pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "columns_priv", "", mysql.SelectPriv) &&
-			pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv)) &&
+		if pm != nil &&
+			!(pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "columns_priv", "", mysql.SelectPriv) &&
+				pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv)) &&
 			user != nil && userName != user.Username {
 			continue
 		}
 		grantee := chunkRow.GetString(1)
-		tableCatalog := chunkRow.GetString(2) // always "def"
-		db := chunkRow.GetString(3)
-		tableName := chunkRow.GetString(4)
-		columnName := chunkRow.GetString(5)
-		privilegeTypes := chunkRow.GetSet(6)
-		isGrantable := chunkRow.GetString(7)
+		db := chunkRow.GetString(2)
+		tableName := chunkRow.GetString(3)
+		columnName := chunkRow.GetString(4)
+		privilegeTypes := chunkRow.GetSet(5)
+		isGrantable := chunkRow.GetString(6)
 		for _, priv := range strings.Split(privilegeTypes.String(), ",") {
 			rows = append(rows, types.MakeDatums(
 				grantee,
-				tableCatalog,
+				"def",
 				db,
 				tableName,
 				columnName,
@@ -4027,14 +4026,13 @@ func (e *memtableRetriever) setDataFromTablePrivileges(ctx context.Context, sctx
 	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil,
 		`SELECT user,
 			concat("'", user, "'@'", host, "'") AS GRANTEE,
-			"def" AS TABLE_CATALOG,
-			db AS TABLE_SCHEMA,
-			table_name AS TABLE_NAME,
-			table_priv AS PRIVILEGE_TYPE,
+			db 																	AS TABLE_SCHEMA,
+			table_name 													AS TABLE_NAME,
+			table_priv 													AS PRIVILEGE_TYPE,
 			CASE
 				WHEN find_in_set('Grant', table_priv) > 0 THEN "YES"
 				ELSE "NO"
-			END AS IS_GRANTABLE
+			END 																AS IS_GRANTABLE
 		FROM mysql.tables_priv
 		WHERE table_priv != '';`)
 	if err != nil {
@@ -4046,7 +4044,7 @@ func (e *memtableRetriever) setDataFromTablePrivileges(ctx context.Context, sctx
 
 	rows := make([][]types.Datum, 0, len(chunkRows))
 	for _, chunkRow := range chunkRows {
-		if chunkRow.Len() != 7 {
+		if chunkRow.Len() != 6 {
 			continue
 		}
 		userName := chunkRow.GetString(0)
@@ -4054,16 +4052,15 @@ func (e *memtableRetriever) setDataFromTablePrivileges(ctx context.Context, sctx
 			continue
 		}
 		grantee := chunkRow.GetString(1)
-		tableCatalog := chunkRow.GetString(2) // always "def"
-		db := chunkRow.GetString(3)
-		tableName := chunkRow.GetString(4)
-		privilegeTypes := chunkRow.GetSet(5)
-		isGrantable := chunkRow.GetString(6)
+		db := chunkRow.GetString(2)
+		tableName := chunkRow.GetString(3)
+		privilegeTypes := chunkRow.GetSet(4)
+		isGrantable := chunkRow.GetString(5)
 		for _, priv := range strings.Split(privilegeTypes.String(), ",") {
 			if u := strings.ToUpper(priv); u != "GRANT" {
 				rows = append(rows, types.MakeDatums(
 					grantee,
-					tableCatalog,
+					"def",
 					db,
 					tableName,
 					u,
@@ -4085,7 +4082,6 @@ func (e *memtableRetriever) setDataFromSchemaPrivileges(ctx context.Context, sct
 	chunkRows, resFields, err := exec.ExecRestrictedSQL(ctx, nil,
 		`SELECT user,
 			concat("'", user, "'@'", host, "'") AS GRANTEE,
-			"def" AS TABLE_CATALOG,
 			db AS TABLE_SCHEMA,
 			Grant_priv,
 			Select_priv,
@@ -4116,7 +4112,7 @@ func (e *memtableRetriever) setDataFromSchemaPrivileges(ctx context.Context, sct
 
 	rows := make([][]types.Datum, 0, len(chunkRows))
 	for _, chunkRow := range chunkRows {
-		if chunkRow.Len() != 23 {
+		if chunkRow.Len() != 22 {
 			continue
 		}
 		userName := chunkRow.GetString(0)
@@ -4124,20 +4120,18 @@ func (e *memtableRetriever) setDataFromSchemaPrivileges(ctx context.Context, sct
 			continue
 		}
 		grantee := chunkRow.GetString(1)
-		tableCatalog := chunkRow.GetString(2) // always "def"
-		tableSchema := chunkRow.GetString(3)
+		tableSchema := chunkRow.GetString(2)
 		isGrantable := "NO"
-		if chunkRow.GetEnum(4).String() == "Y" {
+		if chunkRow.GetEnum(3).String() == "Y" {
 			isGrantable = "YES"
 		}
-		for i := 5; i < 23; i++ {
+		for i := 4; i < 22; i++ {
 			if chunkRow.GetEnum(i).String() == "Y" {
-				privilegeType := strings.ToUpper(mysql.Priv2Str[mysql.Col2PrivType[resFields[i].Column.Name.O]])
 				rows = append(rows, types.MakeDatums(
 					grantee,
-					tableCatalog,
+					"def",
 					tableSchema,
-					privilegeType,
+					strings.ToUpper(mysql.Priv2Str[mysql.Col2PrivType[resFields[i].Column.Name.O]]),
 					isGrantable,
 				))
 			}

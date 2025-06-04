@@ -2929,7 +2929,7 @@ const (
 	GrantLevelGlobal
 	// GrantLevelDB means the privileges apply to all objects in a given database.
 	GrantLevelDB
-	// GrantLevelTable means the privileges apply to columns in a given table.
+	// GrantLevelTable means the privileges apply to some or all columns in a given table.
 	GrantLevelTable
 )
 

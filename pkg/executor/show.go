@@ -699,18 +699,11 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 	priv := mysql.InsertPriv | mysql.SelectPriv | mysql.UpdatePriv | mysql.ReferencesPriv
 	if checker != nil && e.Ctx().GetSessionVars().User != nil {
-		// check privileges in table level
-		if tb.Meta().TempTableType == model.TempTableLocal {
-			priv |= mysql.CreateTMPTablePriv
-		}
 		if checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", priv) {
 			passTblPrivCheck = true
 		}
 	} else {
 		passTblPrivCheck = true
-	}
-	if !passTblPrivCheck && e.Ctx().GetSessionVars().StmtCtx.InExplainStmt {
-		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
 	var cols []*table.Column
@@ -724,7 +717,6 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	if err := tryFillViewColumnType(ctx, e.Ctx(), e.is, e.DBName, tb.Meta()); err != nil {
 		return err
 	}
-	priv = mysql.InsertPriv | mysql.SelectPriv | mysql.UpdatePriv | mysql.ReferencesPriv
 	for _, col := range cols {
 		if fieldFilter != "" && col.Name.L != fieldFilter {
 			continue
