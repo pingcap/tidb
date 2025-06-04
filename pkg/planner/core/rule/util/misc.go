@@ -75,5 +75,15 @@ func IsColsAllFromOuterTable(cols []*expression.Column, outerUniqueIDs *intset.F
 	return true
 }
 
+// IsColFromInnerTable check whether a column exists in the inner plan
+func IsColFromInnerTable(cols []*expression.Column, innerUniqueIDs *intset.FastIntSet) bool {
+	for _, col := range cols {
+		if innerUniqueIDs.Has(int(col.UniqueID)) {
+			return true
+		}
+	}
+	return false
+}
+
 // SetPredicatePushDownFlag is a hook for other packages to set rule flag.
 var SetPredicatePushDownFlag func(uint64) uint64

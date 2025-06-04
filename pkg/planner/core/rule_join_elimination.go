@@ -68,25 +68,25 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 		}
 	}
 
-	// Filter out constant columns from aggCols
-	nonConstCols := make([]*expression.Column, 0, len(aggCols))
-	for _, col := range aggCols {
-		if col.ID == 0 && !p.Schema().Contains(col) && col.VirtualExpr == nil {
-			continue
-		}
-		nonConstCols = append(nonConstCols, col)
+	innerUniqueIDs := intset.NewFastIntSet()
+	for _, innerCol := range innerPlan.Schema().Columns {
+		innerUniqueIDs.Insert(int(innerCol.UniqueID))
 	}
 
 	if len(aggCols) > 0 {
-		// if nonConstCols is empty, it means all columns are constants
-		if len(nonConstCols) == 0 {
+		// Determine if all columns are ALL the outer table.
+		// If so, we can eliminate the outer join.
+		// This check wont succeed if a column is NOT from any table (such as a constant).
+		outerMatched := ruleutil.IsColsAllFromOuterTable(aggCols, &outerUniqueIDs)
+		if outerMatched {
 			appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
 			return outerPlan, true, nil
 		}
-		// outer join elimination with duplicate agnostic aggregate functions
-		// Uses "nonConstCols" as this is aggCols after filtering out constant columns.
-		matched := ruleutil.IsColsAllFromOuterTable(nonConstCols, &outerUniqueIDs)
-		if matched {
+		// Check if any column is from the inner table.
+		// If any column is from the inner table, we cannot eliminate the outer join.
+		// NOTE: This check may make the outer table check above redundant.
+		innerFound := ruleutil.IsColFromInnerTable(aggCols, &innerUniqueIDs)
+		if !innerFound {
 			appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
 			return outerPlan, true, nil
 		}
