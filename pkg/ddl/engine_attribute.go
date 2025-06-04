@@ -34,6 +34,9 @@ func handleEngineAttributeForCreateTable(input string, tbInfo *model.TableInfo) 
 	// Keep the original string for SHOW CREATE TABLE.
 	tbInfo.EngineAttribute = input
 
+	// BuildStorageClassSettingsFromJSON also validates the storage class settings.
+	// Even though it has been check before submitting the job, we still need to
+	// check it again here to ensure the settings are valid.
 	settings, err := BuildStorageClassSettingsFromJSON(attr.StorageClass)
 	if err != nil {
 		return errors.Trace(err)

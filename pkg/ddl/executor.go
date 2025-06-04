@@ -6749,8 +6749,14 @@ func (e *executor) AlterTableEngineAttribute(ctx sessionctx.Context, ident ast.I
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
-	if _, err = model.ParseEngineAttributeFromString(spec.EngineAttribute); err != nil {
+	if attr, err := model.ParseEngineAttributeFromString(spec.EngineAttribute); err != nil {
 		return dbterror.ErrEngineAttributeInvalidFormat.GenWithStackByArgs(fmt.Sprintf("'%v'", err))
+	} else {
+		// Proactively validate the storage class before submitting the job.
+		_, err := BuildStorageClassSettingsFromJSON(attr.StorageClass)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	job := &model.Job{
