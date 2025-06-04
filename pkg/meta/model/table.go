@@ -1114,6 +1114,7 @@ func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
 	return
 }
 
+// SubPartitionInfo provides sub-partition info.
 type SubPartitionInfo struct {
 	Type           model.PartitionType `json:"type"`
 	Num            uint64              `json:"num"`
