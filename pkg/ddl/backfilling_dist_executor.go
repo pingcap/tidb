@@ -49,7 +49,7 @@ type BackfillTaskMeta struct {
 	CloudStorageURI string `json:"cloud_storage_uri"`
 	EstimateRowSize int    `json:"estimate_row_size"`
 
-	Version int `json:"version"`
+	Version int `json:"version,omitempty"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
