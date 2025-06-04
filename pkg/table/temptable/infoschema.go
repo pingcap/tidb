@@ -15,8 +15,12 @@
 package temptable
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
 )
 
 // AttachLocalTemporaryTableInfoSchema attach local temporary table information schema to is
@@ -65,4 +69,14 @@ func EnsureLocalTemporaryTables(sctx variable.SessionVarsProvider) *infoschema.S
 	}
 
 	return sessVars.LocalTemporaryTables.(*infoschema.SessionTables)
+}
+
+func GetLocalTemporaryTable(sctx variable.SessionVarsProvider, schema model.CIStr, table model.CIStr) table.Table {
+	sessVars := sctx.GetSessionVars()
+	if sessVars.LocalTemporaryTables == nil {
+		return nil
+	}
+
+	tbl, _ := sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), schema, table)
+	return tbl
 }

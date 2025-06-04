@@ -3146,4 +3146,7 @@ func TestGlobalSessionTemporaryTable(t *testing.T) {
 	err = tk2.ExecToErr("select * from t1 order by id")
 	require.Error(t, err)
 	require.Equal(t, "[schema:1146]Table 'test.t1' doesn't exist", err.Error())
+
+	tk.MustExec("create global temporary table t1 (id int key, name varchar(10), num int, index(name)) on commit preserve rows")
+	tk.MustExec("drop table t1")
 }

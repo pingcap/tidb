@@ -83,7 +83,12 @@ func (e *DDLExec) getLocalTemporaryTable(schema pmodel.CIStr, table pmodel.CIStr
 	}
 
 	if tbl.Meta().TempTableType != model.TempTableLocal {
-		return tbl, false
+		if tbl.Meta().TempTableType == model.TempTableGlobalSession {
+			if temptable.GetLocalTemporaryTable(e.Ctx(), schema, table) != nil {
+				return tbl, false
+			}
+		}
+		return nil, false
 	}
 
 	return tbl, true
@@ -116,6 +121,7 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 				localTempTablesToDrop = append(localTempTablesToDrop, s.Tables[tbIdx])
 				s.Tables = append(s.Tables[:tbIdx], s.Tables[tbIdx+1:]...)
 			} else if tempTbl != nil {
+
 				localTempTablesToDrop = append(localTempTablesToDrop, s.Tables[tbIdx])
 			}
 		}
