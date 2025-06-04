@@ -1981,9 +1981,18 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		//cuncurrently resolve addresses
+		var wg sync.WaitGroup
 		for i := range nodes {
-			nodes[i].ResolveLoopBackAddr()
+			wg.Add(1)
+			node := &nodes[i] //copy pointer for goroutine
+			go func(n *ServerInfo) {
+				defer wg.Done()
+				n.ResolveLoopBackAddr()
+			}(node)
 		}
+		wg.Wait()
 		servers = append(servers, nodes...)
 	}
 	return servers, nil
