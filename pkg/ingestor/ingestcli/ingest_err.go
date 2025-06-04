@@ -33,6 +33,7 @@ type IngestAPIError struct {
 	NewRegion *split.RegionInfo
 }
 
+// Error implements the error interface.
 func (e *IngestAPIError) Error() string {
 	return e.Err.Error()
 }
@@ -49,7 +50,7 @@ func (e *IngestAPIError) Unwrap() error {
 
 // NewIngestAPIError creates a new IngestAPIError from the errorpb.Error.
 // TODO remove regionExtractFn after we move region job to this pkg.
-func NewIngestAPIError(errPb *errorpb.Error, regionExtractFn func([]*metapb.Region) *split.RegionInfo) *IngestAPIError {
+func NewIngestAPIError(errPb *errorpb.Error, extractRegionFn func([]*metapb.Region) *split.RegionInfo) *IngestAPIError {
 	res := &IngestAPIError{}
 	switch {
 	case errPb.NotLeader != nil:
@@ -58,8 +59,8 @@ func NewIngestAPIError(errPb *errorpb.Error, regionExtractFn func([]*metapb.Regi
 		res.Err = errdef.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
 	case errPb.EpochNotMatch != nil:
 		res.Err = errdef.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
-		if regionExtractFn != nil {
-			res.NewRegion = regionExtractFn(errPb.GetEpochNotMatch().GetCurrentRegions())
+		if extractRegionFn != nil {
+			res.NewRegion = extractRegionFn(errPb.GetEpochNotMatch().GetCurrentRegions())
 		}
 	case strings.Contains(errPb.Message, "raft: proposal dropped"):
 		res.Err = errdef.ErrKVRaftProposalDropped.GenWithStack(errPb.GetMessage())
