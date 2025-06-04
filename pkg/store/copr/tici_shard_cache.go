@@ -56,6 +56,7 @@ type shardIndexMu struct {
 // Client is the interface for the TiCI shard cache client.
 type Client interface {
 	ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) ([]ShardWithAddr, error)
+	Close()
 }
 
 // TiCIShardCacheClient is a gRPC client for the TiCI shard cache service.
@@ -112,6 +113,11 @@ func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableID int64, in
 	}
 
 	return ret, nil
+}
+
+// Close closes the gRPC client connection.
+func (c *TiCIShardCacheClient) Close() {
+	c.c.Close()
 }
 
 // TiCIShardCache is a cache for TiCI shard information.

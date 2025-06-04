@@ -117,6 +117,9 @@ func (s *Store) Close() {
 	if s.coprCache != nil {
 		s.coprCache.cache.Close()
 	}
+	if s.TiCIShardCache != nil {
+		s.TiCIShardCache.client.Close()
+	}
 }
 
 func (s *Store) nextReplicaReadSeed() uint32 {
