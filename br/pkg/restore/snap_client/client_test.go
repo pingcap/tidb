@@ -16,6 +16,8 @@ package snapclient_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"slices"
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -42,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -397,6 +401,10 @@ func createTestTable(schemaID, tableID int64) *metautil.Table {
 }
 
 func generateMetautilTable(dbName string, tableID int64, partitionIDs ...int64) *metautil.Table {
+	return generateMetautilTableWithName(dbName, "", tableID, partitionIDs...)
+}
+
+func generateMetautilTableWithName(dbName string, tableName string, tableID int64, partitionIDs ...int64) *metautil.Table {
 	var partition *model.PartitionInfo
 	if len(partitionIDs) > 0 {
 		partition = &model.PartitionInfo{
@@ -414,6 +422,7 @@ func generateMetautilTable(dbName string, tableID int64, partitionIDs ...int64) 
 		},
 		Info: &model.TableInfo{
 			ID:        tableID,
+			Name:      pmodel.NewCIStr(tableName),
 			Partition: partition,
 		},
 	}
@@ -442,7 +451,7 @@ func TestAllocTableIDs(t *testing.T) {
 		generateMetautilTable("__TiDB_BR_Temporary_mysql", globalID-2),
 		generateMetautilTable("mysql", globalID-3),
 		generateMetautilTable("__TiDB_BR_Temporary_mysql", globalID-4),
-	}, true, nil)
+	}, true, false, nil)
 	require.NoError(t, err)
 	require.False(t, userTableIDNotReusedWhenNeedCheck)
 	err = kv.RunInNewTxn(ctx, cluster.Storage, true, func(_ context.Context, txn kv.Transaction) error {
@@ -454,7 +463,7 @@ func TestAllocTableIDs(t *testing.T) {
 	userTableIDNotReusedWhenNeedCheck, err = client.AllocTableIDs(ctx, []*metautil.Table{
 		generateMetautilTable("mysql", globalID-1, globalID+1),
 		generateMetautilTable("test", globalID+2, globalID+3),
-	}, true, nil)
+	}, true, false, nil)
 	require.NoError(t, err)
 	require.False(t, userTableIDNotReusedWhenNeedCheck)
 	err = kv.RunInNewTxn(ctx, cluster.Storage, true, func(_ context.Context, txn kv.Transaction) error {
@@ -467,9 +476,98 @@ func TestAllocTableIDs(t *testing.T) {
 		generateMetautilTable("mysql", globalID-1, globalID+1),
 		generateMetautilTable("test", globalID+2, globalID),
 		generateMetautilTable("test2", globalID+3, globalID+4),
-	}, true, nil)
+	}, true, false, nil)
 	require.NoError(t, err)
 	require.True(t, userTableIDNotReusedWhenNeedCheck)
+
+	tableInfo, err := cluster.Domain.InfoSchema().TableInfoByName(pmodel.NewCIStr("mysql"), pmodel.NewCIStr("user"))
+	require.NoError(t, err)
+	userDownstreamTableID := tableInfo.ID
+	tables := []*metautil.Table{
+		generateMetautilTableWithName("__TiDB_BR_Temporary_mysql", "user", userDownstreamTableID),
+		generateMetautilTableWithName("test", "user", 100),
+		generateMetautilTableWithName("__TiDB_BR_Temporary_mysql", "test", 200),
+		generateMetautilTableWithName("mysql", "test", 300),
+	}
+	userTableIDNotReusedWhenNeedCheck, err = client.AllocTableIDs(ctx, tables, false, true, &checkpoint.PreallocIDs{
+		Start:          1,
+		ReusableBorder: 10000,
+		End:            20000,
+		Hash:           computeIDsHash([]int64{userDownstreamTableID, 100, 200, 300}),
+	})
+	require.NoError(t, err)
+	require.False(t, userTableIDNotReusedWhenNeedCheck)
+	newTables := client.CleanTablesIfTemporarySystemTablesRenamed(false, true, tables)
+	require.True(t, mustNoTable(newTables, "mysql", "user"))
+	require.Len(t, newTables, 3)
+
+	tableInfo, err = cluster.Domain.InfoSchema().TableInfoByName(pmodel.NewCIStr("mysql"), pmodel.NewCIStr("stats_meta"))
+	require.NoError(t, err)
+	statsMetaDownstreamTableID := tableInfo.ID
+	tables = []*metautil.Table{
+		generateMetautilTableWithName("test", "stats_meta", 100),
+		generateMetautilTableWithName("__TiDB_BR_Temporary_mysql", "stats_meta", statsMetaDownstreamTableID),
+		generateMetautilTableWithName("__TiDB_BR_Temporary_mysql", "test", 200),
+		generateMetautilTableWithName("mysql", "test", 300),
+	}
+	userTableIDNotReusedWhenNeedCheck, err = client.AllocTableIDs(ctx, tables, true, false, &checkpoint.PreallocIDs{
+		Start:          1,
+		ReusableBorder: 10000,
+		End:            20000,
+		Hash:           computeIDsHash([]int64{statsMetaDownstreamTableID, 100, 200, 300}),
+	})
+	require.NoError(t, err)
+	require.False(t, userTableIDNotReusedWhenNeedCheck)
+	newTables = client.CleanTablesIfTemporarySystemTablesRenamed(true, false, tables)
+	require.True(t, mustNoTable(newTables, "mysql", "stats_meta"))
+	require.Len(t, newTables, 3)
+
+	tables = []*metautil.Table{
+		generateMetautilTableWithName("test", "stats_meta", 100),
+		generateMetautilTableWithName("__TiDB_BR_Temporary_mysql", "stats_meta", statsMetaDownstreamTableID),
+		generateMetautilTableWithName("__TiDB_BR_Temporary_mysql", "test", 200),
+		generateMetautilTableWithName("__TiDB_BR_Temporary_mysql", "user", userDownstreamTableID),
+		generateMetautilTableWithName("mysql", "test", 300),
+	}
+	userTableIDNotReusedWhenNeedCheck, err = client.AllocTableIDs(ctx, tables, true, true, &checkpoint.PreallocIDs{
+		Start:          1,
+		ReusableBorder: 10000,
+		End:            20000,
+		Hash:           computeIDsHash([]int64{statsMetaDownstreamTableID, userDownstreamTableID, 100, 200, 300}),
+	})
+	require.NoError(t, err)
+	require.False(t, userTableIDNotReusedWhenNeedCheck)
+	newTables = client.CleanTablesIfTemporarySystemTablesRenamed(true, true, tables)
+	require.True(t, mustNoTable(newTables, "mysql", "stats_meta"))
+	require.True(t, mustNoTable(newTables, "mysql", "user"))
+	require.Len(t, newTables, 3)
+}
+
+func mustNoTable(tables []*metautil.Table, dbName, tableName string) bool {
+	for _, table := range tables {
+		if table.DB.Name.O == dbName && table.Info.Name.O == tableName {
+			return false
+		}
+	}
+	return true
+}
+
+func computeIDsHash(ids []int64) [32]byte {
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	h := sha256.New()
+	buffer := make([]byte, 8)
+
+	for _, id := range ids {
+		binary.BigEndian.PutUint64(buffer, uint64(id))
+		_, err := h.Write(buffer)
+		if err != nil {
+			panic(errors.Wrapf(err, "failed to write table ID %d to hash", id))
+		}
+	}
+
+	var digest [32]byte
+	copy(digest[:], h.Sum(nil))
+	return digest
 }
 
 func TestGetMinUserTableID(t *testing.T) {

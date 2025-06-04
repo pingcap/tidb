@@ -126,7 +126,7 @@ var upgradeStatsTableSchemaList = []versionSchemaUpdateSQL{
 		{
 			schemaName: "mysql",
 			tableName:  "stats_meta",
-			sql:        "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL",
+			sql:        "ALTER TABLE __TiDB_BR_Temporary_mysql.stats_meta ADD COLUMN IF NOT EXISTS last_stats_histograms_version bigint unsigned DEFAULT NULL",
 		},
 	}},
 	// TODO: add new update here if version > 8.1.0
@@ -139,7 +139,7 @@ var downgradeStatsTableSchemaList = []versionSchemaUpdateSQL{
 		{
 			schemaName: "mysql",
 			tableName:  "stats_meta",
-			sql:        "ALTER TABLE mysql.stats_meta DROP COLUMN last_stats_histograms_version",
+			sql:        "ALTER TABLE __TiDB_BR_Temporary_mysql.stats_meta DROP COLUMN IF EXISTS last_stats_histograms_version",
 		},
 	}},
 }

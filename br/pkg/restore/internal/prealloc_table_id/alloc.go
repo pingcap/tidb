@@ -203,7 +203,7 @@ func (p *PreallocIDs) PreallocIDs(m Allocator) error {
 	return nil
 }
 
-func (p *PreallocIDs) allocID(originalID int64) (int64, error) {
+func (p *PreallocIDs) AllocID(originalID int64) (int64, error) {
 	if p.unallocedIDs != nil {
 		return 0, errors.Errorf("table ID %d is not allocated yet", originalID)
 	}
@@ -220,7 +220,7 @@ func (p *PreallocIDs) RewriteTableInfo(info *model.TableInfo) (*model.TableInfo,
 	}
 	infoCopy := info.Clone()
 
-	newID, err := p.allocID(info.ID)
+	newID, err := p.AllocID(info.ID)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to allocate table ID for %d", info.ID)
 	}
@@ -229,7 +229,7 @@ func (p *PreallocIDs) RewriteTableInfo(info *model.TableInfo) (*model.TableInfo,
 	if infoCopy.Partition != nil {
 		for i := range infoCopy.Partition.Definitions {
 			def := &infoCopy.Partition.Definitions[i]
-			newPartID, err := p.allocID(def.ID)
+			newPartID, err := p.AllocID(def.ID)
 			if err != nil {
 				return nil, errors.Wrapf(err, "failed to allocate partition ID for %d", def.ID)
 			}

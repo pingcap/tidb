@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -162,6 +163,8 @@ type SnapClient struct {
 
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
 
+	temporarySystemTablesRenamed bool
+
 	// restoreUUID is the UUID of this restore.
 	// restore from a checkpoint inherits the same restoreUUID.
 	restoreUUID uuid.UUID
@@ -228,6 +231,24 @@ func (rc *SnapClient) SetRateLimit(rateLimit uint64) {
 
 func (rc *SnapClient) SetCrypter(crypter *backuppb.CipherInfo) {
 	rc.cipher = crypter
+}
+
+func (rc *SnapClient) CleanTablesIfTemporarySystemTablesRenamed(loadStatsPhysical, loadSysTablePhysical bool, tables []*metautil.Table) []*metautil.Table {
+	if !rc.temporarySystemTablesRenamed {
+		return tables
+	}
+	newTables := make([]*metautil.Table, 0, len(tables))
+	temporaryTableChecker := &TemporaryTableChecker{
+		loadStatsPhysical:    loadStatsPhysical,
+		loadSysTablePhysical: loadSysTablePhysical,
+	}
+	for _, table := range tables {
+		if _, ok := temporaryTableChecker.CheckTemporaryTables(table.DB.Name.O, table.Info.Name.O); ok {
+			continue
+		}
+		newTables = append(newTables, table)
+	}
+	return newTables
 }
 
 // GetClusterID gets the cluster id from down-stream cluster.
@@ -326,7 +347,12 @@ func getMinUserTableID(tables []*metautil.Table) int64 {
 // AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
 // the download stage.
 // It returns whether any user table ID is not reused when need check.
-func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table, checkUserTableIDReused bool, reusePreallocIDs *checkpoint.PreallocIDs) (bool, error) {
+func (rc *SnapClient) AllocTableIDs(
+	ctx context.Context,
+	tables []*metautil.Table,
+	loadStatsPhysical, loadSysTablePhysical bool,
+	reusePreallocIDs *checkpoint.PreallocIDs,
+) (bool, error) {
 	var preallocedTableIDs *tidalloc.PreallocIDs
 	var err error
 	if reusePreallocIDs == nil {
@@ -345,11 +371,32 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 		}
 	}
 	userTableIDNotReusedWhenNeedCheck := false
-	if checkUserTableIDReused {
+	if loadStatsPhysical {
 		minUserTableID := getMinUserTableID(tables)
 		start, _ := preallocedTableIDs.GetIDRange()
 		if minUserTableID != int64(math.MaxInt64) && minUserTableID < start {
 			userTableIDNotReusedWhenNeedCheck = true
+			loadStatsPhysical = false
+		}
+	}
+	if reusePreallocIDs != nil && (loadStatsPhysical || loadSysTablePhysical) {
+		temporaryTableChecker := &TemporaryTableChecker{
+			loadStatsPhysical:    loadStatsPhysical,
+			loadSysTablePhysical: loadSysTablePhysical,
+		}
+		for _, table := range tables {
+			if dbName, ok := temporaryTableChecker.CheckTemporaryTables(table.DB.Name.O, table.Info.Name.O); ok {
+				downstreamId, err := preallocedTableIDs.AllocID(table.Info.ID)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				if tableInfo, err := rc.dom.InfoSchema().TableInfoByName(pmodel.NewCIStr(dbName), table.Info.Name); err == nil {
+					if tableInfo.ID == downstreamId {
+						rc.temporarySystemTablesRenamed = true
+					}
+					break
+				}
+			}
 		}
 	}
 

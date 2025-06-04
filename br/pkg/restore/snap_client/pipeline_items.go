@@ -155,11 +155,11 @@ func (rc *SnapClient) replaceTables(
 		return 0, errors.Trace(err)
 	}
 
-	if err := rc.moveRenamedTable(ctx, restoreTS, renamedTables); err != nil {
+	if err := updateStatsTableSchema(ctx, renamedTables, schemaVersionPair, rc.db.Session().Execute); err != nil {
 		return 0, errors.Trace(err)
 	}
 
-	if err := updateStatsTableSchema(ctx, renamedTables, schemaVersionPair, rc.db.Session().Execute); err != nil {
+	if err := rc.moveRenamedTable(ctx, restoreTS, renamedTables); err != nil {
 		return 0, errors.Trace(err)
 	}
 

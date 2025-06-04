@@ -1354,7 +1354,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
-	if userTableIDNotReusedWhenNeedCheck, err := client.AllocTableIDs(ctx, tables, loadStatsPhysical && !cpEnabledAndExists, reusePreallocIDs); err != nil {
+	if userTableIDNotReusedWhenNeedCheck, err := client.AllocTableIDs(ctx, tables, loadStatsPhysical, loadSysTablePhysical, reusePreallocIDs); err != nil {
 		return errors.Trace(err)
 	} else if userTableIDNotReusedWhenNeedCheck {
 		log.Warn("Cannot load stats physically because not all table ids are reused. Fallback to logically load stats.")
@@ -1362,6 +1362,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		tables = fallbackStatsTables(tables)
 		loadStatsPhysical = false
 	}
+	tables = client.CleanTablesIfTemporarySystemTablesRenamed(loadStatsPhysical, loadSysTablePhysical, tables)
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
 	var restoreSchedulersFunc pdutil.UndoFunc
@@ -1516,13 +1517,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	createdTables, err := createDBsAndTables(ctx, client, cfg, mgr, dbs, tables)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	// TODO: after ID preallocation supports checkpoint, we can remove this check
-	if loadStatsPhysical && cpEnabledAndExists {
-		if err := checkAllUserTableIDsReused(createdTables); err != nil {
-			log.Warn("Cannot load stats physically because not all table ids are reused. Fallback to logically load stats.", zap.Error(err))
-			loadStatsPhysical = false
-		}
 	}
 
 	/* failpoint */
@@ -1831,38 +1825,6 @@ func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.
 	}
 	if !allUnique {
 		return errors.Annotate(berrors.ErrTablesAlreadyExisted, message)
-	}
-	return nil
-}
-
-func checkAllUserTableIDsReused(createdTables []*restoreutils.CreatedTable) error {
-	for _, createdTable := range createdTables {
-		if createdTable.OldTable.Info.ID != createdTable.Table.ID {
-			return errors.Errorf("cannot load stats physically because not all table ids are reused, "+
-				"upstream table ID is %d and downstream table ID is %d",
-				createdTable.OldTable.Info.ID,
-				createdTable.Table.ID,
-			)
-		}
-		if createdTable.OldTable.Info.Partition != nil && createdTable.OldTable.Info.Partition.Definitions != nil {
-			if createdTable.Table.Partition == nil || createdTable.Table.Partition.Definitions == nil {
-				return errors.Errorf("the created table has partitions but the origin table does not, "+
-					"table ID is %d", createdTable.Table.ID,
-				)
-			}
-			downstreamTableIDSet := make(map[int64]struct{})
-			for _, def := range createdTable.Table.Partition.Definitions {
-				downstreamTableIDSet[def.ID] = struct{}{}
-			}
-			for _, def := range createdTable.OldTable.Info.Partition.Definitions {
-				if _, exists := downstreamTableIDSet[def.ID]; !exists {
-					return errors.Errorf("the origin table has the partition but the created table does not, "+
-						"table ID is %d and upstream partition ID is %d",
-						createdTable.Table.ID, def.ID,
-					)
-				}
-			}
-		}
 	}
 	return nil
 }
