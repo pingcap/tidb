@@ -1137,7 +1137,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store.kvStore, keyRanges, req.StoreType, false, 0, false, 0, partitionIDs, tiflashcompute.DispatchPolicyInvalid, option.TiFlashReplicaRead, option.AppendWarning)
 	} else {
 		if req.StoreType == kv.TiFlash && req.FullText {
-			ranges := NewKeyRanges([]KeyRange{{StartKey: nil, EndKey: nil}}) // Mock Range, -inf to inf
+			ranges := NewKeyRanges([]kv.KeyRange{{StartKey: nil, EndKey: nil}}) // Mock Range, -inf to inf
 			tasks, err = buildBatchCopTasksForFullText(c.store.kvStore, req.FullTextInfo.TableID, req.FullTextInfo.IndexID, req.FullTextInfo.ExecutorID, ranges)
 		} else {
 			// TODO: merge the if branch.
