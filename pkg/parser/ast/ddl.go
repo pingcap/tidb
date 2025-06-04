@@ -592,6 +592,9 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 				printOuterParentheses = true
 			}
 		}
+		if _, ok := n.Expr.(*ColumnNameExpr); ok {
+			printOuterParentheses = true
+		}
 		if printOuterParentheses {
 			ctx.WritePlain("(")
 		}
