@@ -9,7 +9,9 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+    shard_count = 3,
     deps = [
+        "//pkg/domain",
         "//pkg/parser",
         "//pkg/planner/cascades/memo",
         "//pkg/planner/cascades/util",
@@ -22,6 +24,7 @@ go_test(
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "//pkg/util/hint",
+        "//tests/realtikvtest",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
