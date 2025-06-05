@@ -1465,7 +1465,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		DB:                    s.sessionVars.CurrentDB,
 		Command:               command,
 		Plan:                  p,
-		PlanExplainRows:       plannercore.GetExplainRowsForPlan(p),
 		BriefBinaryPlan:       plannercore.GetBriefBinaryPlan(p),
 		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:                  t,
@@ -1493,10 +1492,9 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if p == nil {
 		// Store the last valid plan when the current plan is nil.
 		// This is for `explain for connection` statement has the ability to query the last valid plan.
-		if oldPi != nil && oldPi.Plan != nil && len(oldPi.PlanExplainRows) > 0 {
+		if oldPi != nil && oldPi.Plan != nil && len(oldPi.BriefBinaryPlan) > 0 {
 			pi.Plan = oldPi.Plan
 			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
-			pi.PlanExplainRows = oldPi.PlanExplainRows
 			pi.BriefBinaryPlan = oldPi.BriefBinaryPlan
 		}
 	}
@@ -1511,7 +1509,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	_, digest := s.sessionVars.StmtCtx.SQLDigest()
 	pi.Digest = digest.String()
 	// DO NOT reset the currentPlan to nil until this query finishes execution, otherwise reentrant calls
-	// of SetProcessInfo would override Plan and PlanExplainRows to nil.
+	// of SetProcessInfo would override Plan and BriefBinaryPlan to nil.
 	if command == mysql.ComSleep {
 		s.currentPlan = nil
 	}

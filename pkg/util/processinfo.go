@@ -70,7 +70,6 @@ type ProcessInfo struct {
 	BriefBinaryPlan       string
 	IndexNames            []string
 	TableIDs              []int64
-	PlanExplainRows       [][]string
 	OOMAlarmVariablesInfo OOMAlarmVariablesInfo
 	ID                    uint64
 	CurTxnStartTS         uint64

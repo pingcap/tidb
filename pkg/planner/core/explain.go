@@ -355,6 +355,11 @@ func (p *PhysicalTableReader) OperatorInfo(_ bool) string {
 	return "data:" + p.tablePlan.ExplainID().String()
 }
 
+// BriefOperatorInfo returns brief operator information for 'EXPLAIN FOR CONNECTION' with brief format.
+func (p *PhysicalTableReader) BriefOperatorInfo() string {
+	return "data:" + p.tablePlan.TP()
+}
+
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainInfo() string {
 	return "index:" + p.indexPlan.ExplainID().String()
