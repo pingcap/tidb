@@ -686,9 +686,6 @@ func (t *Time) FromPackedUint(packed uint64) error {
 func (t Time) Check(ctx Context) error {
 	allowZeroInDate := ctx.Flags().IgnoreZeroInDate()
 	allowInvalidDate := ctx.Flags().IgnoreInvalidDateErr()
-	if strings.HasPrefix(t.String(), "2025-03-30 02:30") {
-		logutil.BgLogger().Info("MJONSS Interesting!!!")
-	}
 	var err error
 	switch t.Type() {
 	case mysql.TypeTimestamp:
@@ -2199,7 +2196,6 @@ func checkTimestampType(t CoreTime, tz *gotime.Location) error {
 		convertTime := NewTime(t, mysql.TypeTimestamp, DefaultFsp)
 		err := convertTime.ConvertTimeZone(tz, BoundTimezone)
 		if err != nil {
-			// TODO: try to adjust the DST value?
 			_, err = adjustTimestampErrForDST(tz, t.String(), mysql.TypeTimestamp, Time{t}, err)
 			return err
 		}
