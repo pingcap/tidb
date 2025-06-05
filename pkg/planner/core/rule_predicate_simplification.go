@@ -404,6 +404,7 @@ func shortCircuitANDORLogicalConstants(sctx base.PlanContext, predicate expressi
 // and returns the potentially simplified condition and its updated type.
 func processCondition(sctx base.PlanContext, condition expression.Expression) (expression.Expression, predicateType) {
 	applied := false
+	maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCacheForMultiExpression(sctx.GetExprCtx(), condition)
 	_, conditionType := FindPredicateType(sctx, condition)
 
 	if conditionType == orPredicate {
@@ -412,7 +413,7 @@ func processCondition(sctx base.PlanContext, condition expression.Expression) (e
 		condition, applied = shortCircuitANDORLogicalConstants(sctx, condition, false)
 	}
 
-	if applied && expression.MaybeOverOptimized4PlanCacheForMultiExpression(sctx.GetExprCtx(), condition) {
+	if applied && maybeOverOptimized4PlanCache {
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("True/False predicate simplification is triggered")
 	}
 
