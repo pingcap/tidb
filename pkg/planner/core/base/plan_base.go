@@ -54,7 +54,7 @@ type Plan interface {
 	TP(...bool) string
 
 	// Get the ID in explain statement
-	ExplainID(...bool) fmt.Stringer
+	ExplainID(isChildOfINL ...bool) fmt.Stringer
 
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
