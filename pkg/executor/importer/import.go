@@ -29,9 +29,11 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -61,8 +63,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -154,6 +158,14 @@ var (
 		linesTerminatedByOption:   {},
 		skipRowsOption:            {},
 		splitFileOption:           {},
+	}
+
+	// we only support global sort on nextgen cluster when SEM enabled, and doesn't
+	// allow set separate cloud storage URI.
+	disallowedOptionsOfNextGen = map[string]struct{}{
+		diskQuotaOption:       {},
+		maxWriteSpeedOption:   {},
+		cloudStorageURIOption: {},
 	}
 
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
@@ -409,6 +421,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 
 // NewImportPlan creates a new import into plan.
 func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
+	failpoint.InjectCall("NewImportPlan", plan)
 	var format string
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
@@ -606,6 +619,22 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		specifiedOptions[opt.Name] = opt
 	}
 	p.specifiedOptions = specifiedOptions
+
+	if kerneltype.IsNextGen() && sem.IsEnabled() {
+		if p.DataSourceType == DataSourceTypeQuery {
+			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from select")
+		}
+		// we put the check here, not in planner, to make sure the cloud_storage_uri
+		// won't change in between.
+		if p.IsLocalSort() {
+			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with local sort")
+		}
+		for k := range disallowedOptionsOfNextGen {
+			if _, ok := specifiedOptions[k]; ok {
+				return exeerrors.ErrLoadDataUnsupportedOption.GenWithStackByArgs(k, "nextgen kernel")
+			}
+		}
+	}
 
 	// DataFormatAuto means format is unspecified from stmt,
 	// will validate below CSV options when init data files.
@@ -1064,12 +1093,12 @@ func (e *LoadDataController) Close() {
 func (*LoadDataController) initExternalStore(ctx context.Context, u *url.URL, target string) (storage.ExternalStorage, error) {
 	b, err2 := storage.ParseBackendFromURL(u, nil)
 	if err2 != nil {
-		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, GetMsgFromBRError(err2))
+		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, errors.GetErrStackMsg(err2))
 	}
 
 	s, err := storage.NewWithDefaultOpt(ctx, b)
 	if err != nil {
-		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, GetMsgFromBRError(err))
+		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, errors.GetErrStackMsg(err))
 	}
 	return s, nil
 }
@@ -1136,14 +1165,14 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	if idx == -1 {
 		fileReader, err2 := s.Open(ctx, fileNameKey, nil)
 		if err2 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the file location is correct")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "Please check the file location is correct")
 		}
 		defer func() {
 			terror.Log(fileReader.Close())
 		}()
 		size, err3 := fileReader.Seek(0, io.SeekEnd)
 		if err3 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "failed to read file size by seek")
 		}
 		e.detectAndUpdateFormat(fileNameKey)
 		sourceType = e.getSourceType()
@@ -1185,7 +1214,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				totalSize += size
 				return nil
 			}); err != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err), "failed to walk dir")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err), "failed to walk dir")
 		}
 
 		var err error
@@ -1266,7 +1295,7 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 			Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
 				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore, storage.DecompressConfig{})
 				if err2 != nil {
-					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the INFILE path is correct")
+					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "Please check the INFILE path is correct")
 				}
 				return fileReader, nil
 			},
@@ -1498,24 +1527,6 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 type JobImportResult struct {
 	Affected uint64
 	Warnings []contextutil.SQLWarn
-}
-
-// GetMsgFromBRError get msg from BR error.
-// TODO: add GetMsg() to errors package to replace this function.
-// see TestGetMsgFromBRError for more details.
-func GetMsgFromBRError(err error) string {
-	if err == nil {
-		return ""
-	}
-	if berr, ok := err.(*errors.Error); ok {
-		return berr.GetMsg()
-	}
-	raw := err.Error()
-	berrMsg := errors.Cause(err).Error()
-	if len(raw) <= len(berrMsg)+len(": ") {
-		return raw
-	}
-	return raw[:len(raw)-len(berrMsg)-len(": ")]
 }
 
 // GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.

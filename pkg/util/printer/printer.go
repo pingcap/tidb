@@ -47,6 +47,11 @@ func PrintTiDBInfo() {
 		zap.Bool("Race Enabled", israce.RaceEnabled),
 		zap.Bool("Check Table Before Drop", config.CheckTableBeforeDrop),
 	}
+	if kerneltype.IsNextGen() {
+		fields = append(fields, zap.String("Kernel Type", "Next Generation"))
+	} else {
+		fields = append(fields, zap.String("Kernel Type", "Classic"))
+	}
 	if versioninfo.TiDBEnterpriseExtensionGitHash != "" {
 		fields = append(fields, zap.String("Enterprise Extension Commit Hash", versioninfo.TiDBEnterpriseExtensionGitHash))
 	}
@@ -87,6 +92,8 @@ func GetTiDBInfo() string {
 	)
 	if kerneltype.IsNextGen() {
 		info += "\nKernel Type: Next Generation"
+	} else {
+		info += "\nKernel Type: Classic"
 	}
 	return info
 }

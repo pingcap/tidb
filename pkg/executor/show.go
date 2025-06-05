@@ -2137,7 +2137,7 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	physicalIDs := []int64{}
-	partitonNames := make([]string, 0)
+	partitionNames := make([]string, 0)
 	if pi := tb.Meta().GetPartitionInfo(); pi != nil {
 		for _, name := range e.Table.PartitionNames {
 			pid, err := tables.FindPartitionByName(tb.Meta(), name.L)
@@ -2145,12 +2145,12 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 				return err
 			}
 			physicalIDs = append(physicalIDs, pid)
-			partitonNames = append(partitonNames, name.L)
+			partitionNames = append(partitionNames, name.L)
 		}
 		if len(physicalIDs) == 0 {
 			for _, p := range pi.Definitions {
 				physicalIDs = append(physicalIDs, p.ID)
-				partitonNames = append(partitonNames, p.Name.L)
+				partitionNames = append(partitionNames, p.Name.L)
 			}
 		}
 	} else {
@@ -2158,11 +2158,11 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 			return plannererrors.ErrPartitionClauseOnNonpartitioned
 		}
 		physicalIDs = append(physicalIDs, tb.Meta().ID)
-		partitonNames = append(partitonNames, tb.Meta().Name.L)
+		partitionNames = append(partitionNames, tb.Meta().Name.L)
 	}
 	distributions := make([]*pdHttp.RegionDistribution, 0)
 	var resp *pdHttp.RegionDistributions
-	for _, pid := range physicalIDs {
+	for idx, pid := range physicalIDs {
 		startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
 		endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
 		// todo： support engine type
@@ -2170,9 +2170,9 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		e.fillDistributionsToChunk(partitionNames[idx], resp.RegionDistributions)
 		distributions = append(distributions, resp.RegionDistributions...)
 	}
-	e.fillDistributionsToChunk(partitonNames, distributions)
 	return nil
 }
 
@@ -2333,9 +2333,9 @@ func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvS
 	return regions, nil
 }
 
-func (e *ShowExec) fillDistributionsToChunk(partitionNams []string, distributions []*pdHttp.RegionDistribution) {
-	for idx, dis := range distributions {
-		e.result.AppendString(0, partitionNams[idx])
+func (e *ShowExec) fillDistributionsToChunk(partitionName string, distributions []*pdHttp.RegionDistribution) {
+	for _, dis := range distributions {
+		e.result.AppendString(0, partitionName)
 		e.result.AppendUint64(1, dis.StoreID)
 		e.result.AppendString(2, dis.EngineType)
 		e.result.AppendInt64(3, int64(dis.RegionLeaderCount))

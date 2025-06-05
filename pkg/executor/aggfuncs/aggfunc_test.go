@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -905,4 +906,25 @@ func baseBenchmarkAggFunc(b *testing.B, ctx aggfuncs.AggFuncUpdateContext, final
 		output.Reset()
 		b.StartTimer()
 	}
+}
+
+func TestAggApproxCountDistinctPushDown(t *testing.T) {
+	ctx := mock.NewContext()
+
+	args := make([]expression.Expression, 0)
+	args = append(args, &expression.Column{
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+		ID:      1,
+		Index:   int(1),
+	})
+
+	aggDesc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncApproxCountDistinct, args, false)
+
+	require.NoError(t, err)
+
+	// can only pushdown to TiFlash
+	require.True(t, aggregation.CheckAggPushDown(ctx, aggDesc, kv.TiFlash))
+	require.False(t, aggregation.CheckAggPushDown(ctx, aggDesc, kv.TiKV))
+	require.False(t, aggregation.CheckAggPushDown(ctx, aggDesc, kv.TiDB))
+	require.False(t, aggregation.CheckAggPushDown(ctx, aggDesc, kv.UnSpecified))
 }

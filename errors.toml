@@ -231,6 +231,11 @@ error = '''
 databases already existed in restored cluster
 '''
 
+["BR:Restore:ErrRestoreCheckpointMismatch"]
+error = '''
+restore checkpoint mismatch
+'''
+
 ["BR:Restore:ErrRestoreChecksumMismatch"]
 error = '''
 restore checksum mismatch
@@ -314,6 +319,11 @@ the system table isn't supported for restoring yet
 ["BR:Stream:ErrStreamLogTaskExist"]
 error = '''
 stream task already exists
+'''
+
+["BR:Stream:ErrStreamLogTaskHasNoStorage"]
+error = '''
+stream task has no storage
 '''
 
 ["Lighting:Restore:ErrChecksumMismatch"]
@@ -1989,6 +1999,11 @@ Your query has been cancelled due to exceeding the allowed memory limit for the 
 ["executor:8177"]
 error = '''
 Delete can not find column %s for table %s
+'''
+
+["executor:8179"]
+error = '''
+Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'
 '''
 
 ["executor:8212"]
