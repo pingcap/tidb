@@ -19,13 +19,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
@@ -132,6 +135,18 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 		return err
 	}
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
-		return importer.VerifyChecksum(ctx, &taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
+		err = importer.VerifyChecksum(ctx, &taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
+		err2 := ddl.CreateAlterTableModeJob(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
+		if err != nil {
+			if err2 == nil {
+				taskMeta.Plan.ResetTableMode = true
+			}
+			return err
+		}
+		if err2 != nil {
+			return err2
+		}
+		taskMeta.Plan.ResetTableMode = true
+		return nil
 	})
 }

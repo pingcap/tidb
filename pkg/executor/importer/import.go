@@ -293,6 +293,8 @@ type Plan struct {
 	ForceMergeStep bool
 	// see ManualRecovery in proto.ExtraParams
 	ManualRecovery bool
+	// reset table mode to normal in post process or not.
+	ResetTableMode bool
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.

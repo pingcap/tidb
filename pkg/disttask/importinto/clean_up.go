@@ -53,20 +53,26 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 	}
 	defer redactSensitiveInfo(task, taskMeta)
 
-	taskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		err2 := ddl.CreateAlterTableModeJob(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
-		if err2 != nil {
-			return err2
+	if !taskMeta.Plan.ResetTableMode {
+		taskManager, err := storage.GetTaskManager()
+		if err != nil {
+			return err
 		}
-		return nil
-	}); err != nil {
-		return err
+		if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			err2 := ddl.CreateAlterTableModeJob(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
+			if err2 != nil {
+				return err2
+			}
+			taskMeta.Plan.ResetTableMode = true
+			task.Meta, err2 = json.Marshal(taskMeta)
+			if err2 != nil {
+				return err2
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
 	}
-
 	// Not use cloud storage, no need to cleanUp.
 	if taskMeta.Plan.CloudStorageURI == "" {
 		return nil
