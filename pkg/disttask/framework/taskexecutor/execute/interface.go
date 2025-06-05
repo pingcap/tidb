@@ -18,9 +18,8 @@ import (
 	"context"
 	"reflect"
 
-	"go.uber.org/atomic"
-
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"go.uber.org/atomic"
 )
 
 // StepExecutor defines the executor for subtasks of a task step.
