@@ -336,9 +336,7 @@ func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Express
 			_, jType := FindPredicateType(sctx, jthPredicate)
 			iType = comparisonPred(iType)
 			jType = comparisonPred(jType)
-			var maybeOverOptimized4PlanCache bool
-			maybeOverOptimized4PlanCache = maybeOverOptimized4PlanCache ||
-				expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), []expression.Expression{ithPredicate})
+			maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), []expression.Expression{ithPredicate})
 			// if maybeOverOptimized4PlanCache is true, we do not need to check jthPredicate
 			if !maybeOverOptimized4PlanCache {
 				maybeOverOptimized4PlanCache = maybeOverOptimized4PlanCache ||
