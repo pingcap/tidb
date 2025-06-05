@@ -176,7 +176,7 @@ func isInIndexMergeHints(ds *logicalop.DataSource, name string) bool {
 			return true
 		}
 		for _, hintName := range hint.IndexHint.IndexNames {
-			if strings.EqualFold(strings.ToLower(name), strings.ToLower(hintName.String())) {
+			if strings.EqualFold(name, hintName.String()) {
 				return true
 			}
 		}
@@ -204,7 +204,7 @@ func isSpecifiedInIndexMergeHints(ds *logicalop.DataSource, name string) bool {
 			continue
 		}
 		for _, hintName := range hint.IndexHint.IndexNames {
-			if strings.EqualFold(strings.ToLower(name), strings.ToLower(hintName.String())) {
+			if strings.EqualFold(name, hintName.String()) {
 				return true
 			}
 		}

@@ -202,7 +202,7 @@ func (b *PBPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (base.Physic
 		AggFuncs:     aggFuncs,
 		GroupByItems: groupBys,
 	}
-	baseAgg.schema = schema
+	baseAgg.SetSchema(schema)
 	var partialAgg base.PhysicalPlan
 	if isStreamAgg {
 		partialAgg = baseAgg.initForStream(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
@@ -293,12 +293,12 @@ func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predic
 		}
 		// Set the expression column unique ID.
 		// Since the expression is build from PB, It has not set the expression column ID yet.
-		schemaCols := memTable.schema.Columns
+		schemaCols := memTable.Schema().Columns
 		cols := expression.ExtractColumnsFromExpressions([]*expression.Column{}, predicates, nil)
 		for i := range cols {
 			cols[i].UniqueID = schemaCols[cols[i].Index].UniqueID
 		}
-		predicates = memTable.Extractor.Extract(b.sctx, memTable.schema, names, predicates)
+		predicates = memTable.Extractor.Extract(b.sctx, memTable.Schema(), names, predicates)
 		return predicates, memTable
 	case *PhysicalSelection:
 		selection := plan
