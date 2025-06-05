@@ -272,36 +272,54 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			buffer.WriteString(runtimeFilter.ExplainInfo(false))
 		}
 	}
-	for _, idx := range p.UsedColumnarIndexes {
-		if idx != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector && idx.QueryInfo != nil {
-			buffer.WriteString(", annIndex:")
-			buffer.WriteString(idx.QueryInfo.GetAnnQueryInfo().GetDistanceMetric().String())
-			buffer.WriteString("(")
-			buffer.WriteString(idx.QueryInfo.GetAnnQueryInfo().GetColumnName())
-			buffer.WriteString("..")
-			if normalized {
-				buffer.WriteString("[?]")
-			} else {
-				v, _, err := types.ZeroCopyDeserializeVectorFloat32(idx.QueryInfo.GetAnnQueryInfo().RefVecF32)
-				if err != nil {
-					buffer.WriteString("[?]")
+	if len(p.UsedColumnarIndexes) > 0 {
+		annIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
+		invertedIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
+		for _, idx := range p.UsedColumnarIndexes {
+			if idx == nil {
+				continue
+			}
+			if idx.QueryInfo != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector {
+				annIndexBuffer := bytes.NewBuffer(make([]byte, 0, 256))
+				annIndexBuffer.WriteString(idx.QueryInfo.GetAnnQueryInfo().GetDistanceMetric().String())
+				annIndexBuffer.WriteString("(")
+				annIndexBuffer.WriteString(idx.QueryInfo.GetAnnQueryInfo().GetColumnName())
+				annIndexBuffer.WriteString("..")
+				if normalized {
+					annIndexBuffer.WriteString("[?]")
 				} else {
-					buffer.WriteString(v.TruncatedString())
+					v, _, err := types.ZeroCopyDeserializeVectorFloat32(idx.QueryInfo.GetAnnQueryInfo().RefVecF32)
+					if err != nil {
+						annIndexBuffer.WriteString("[?]")
+					} else {
+						annIndexBuffer.WriteString(v.TruncatedString())
+					}
 				}
-			}
-			buffer.WriteString(", limit:")
-			if normalized {
-				buffer.WriteString("?")
-			} else {
-				buffer.WriteString(fmt.Sprint(idx.QueryInfo.GetAnnQueryInfo().TopK))
-			}
-			buffer.WriteString(")")
+				annIndexBuffer.WriteString(", limit:")
+				if normalized {
+					annIndexBuffer.WriteString("?")
+				} else {
+					fmt.Fprint(annIndexBuffer, idx.QueryInfo.GetAnnQueryInfo().TopK)
+				}
+				annIndexBuffer.WriteString(")")
 
-			if idx.QueryInfo.GetAnnQueryInfo().GetEnableDistanceProj() {
-				buffer.WriteString("->")
-				cols := p.Schema().Columns
-				buffer.WriteString(cols[len(cols)-1].String())
+				if idx.QueryInfo.GetAnnQueryInfo().GetEnableDistanceProj() {
+					annIndexBuffer.WriteString("->")
+					cols := p.Schema().Columns
+					annIndexBuffer.WriteString(cols[len(cols)-1].String())
+				}
+				annIndexes = append(annIndexes, annIndexBuffer.String())
+			} else if idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeInverted && idx.QueryInfo != nil {
+				invertedIndexes = append(invertedIndexes, idx.IndexInfo.Name.L)
 			}
+		}
+		if len(annIndexes) > 0 {
+			buffer.WriteString(", annIndex:")
+			buffer.WriteString(strings.Join(annIndexes, ", "))
+		}
+		if len(invertedIndexes) > 0 {
+			buffer.WriteString(", invertedindex:")
+			buffer.WriteString(strings.Join(invertedIndexes, ", "))
 		}
 	}
 
