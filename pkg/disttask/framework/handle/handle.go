@@ -273,7 +273,7 @@ func GetCloudStorageURI(store kv.Storage) string {
 	if s, ok := store.(kv.StorageWithPD); ok {
 		return vardef.CloudStorageURI.Load() + "/" + strconv.FormatUint(s.GetPDClient().GetClusterID(context.TODO()), 10)
 	}
-	logutil.BgLogger().Info("cannot get cluster id from store, use default cloud storage uri")
+	logutil.BgLogger().Error("Can't get cluster id from store, use default cloud storage uri")
 	return vardef.CloudStorageURI.Load()
 }
 

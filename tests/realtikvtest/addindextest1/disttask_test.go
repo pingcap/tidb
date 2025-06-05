@@ -18,8 +18,11 @@ import (
 	"context"
 	goerrors "errors"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/kv"
 	"io/fs"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -501,4 +504,15 @@ func TestAddIndexDistCleanUpBlock(t *testing.T) {
 	}
 	wg.Wait()
 	close(ch)
+}
+
+func TestUseClusterIdInGlobalSortPath(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	s, ok := store.(kv.StorageWithPD)
+	require.True(t, ok)
+	vardef.CloudStorageURI.Store("s3://bucket/path")
+	path := handle.GetCloudStorageURI(store)
+	require.Equal(t, "s3://bucket/path/"+strconv.FormatUint(s.GetPDClient().GetClusterID(context.TODO()), 10), path)
+	// without cluster id, it should be the same as CloudStorageURI
+	require.Equal(t, "s3://bucket/path", handle.GetCloudStorageURI(nil))
 }
