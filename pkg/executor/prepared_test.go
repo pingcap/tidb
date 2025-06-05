@@ -92,10 +92,10 @@ func TestIssue29850(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use PointGet
-		`Projection 1.00 2338.32 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
-		`└─HashJoin 1.00 2337.92 root  CARTESIAN inner join`,
-		`  ├─Point_Get(Build) 1.00 253.44 root table:warehouse handle:1262`,
-		`  └─Point_Get(Probe) 1.00 514.80 root table:customer, clustered index:PRIMARY(c_w_id, c_d_id, c_id) `))
+		`Projection 1.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
+		`└─HashJoin 1.00 root  CARTESIAN inner join`,
+		`  ├─Point_Get(Build) 1.00 root table:warehouse handle:1262`,
+		`  └─Point_Get(Probe) 1.00 root table:customer, clustered index:PRIMARY(c_w_id, c_d_id, c_id) `))
 	tk.MustQuery(`execute stmt using @w_id, @c_d_id, @c_id`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the cached plan
 
@@ -978,7 +978,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	res = tk.MustQuery("explain analyze select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);")
 	require.Contains(t, res.Rows()[1][0], "Apply")
 	require.Contains(t, res.Rows()[1][5], "Concurrency")
 
@@ -987,11 +987,11 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	res = tk.MustQuery("explain analyze select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);")
 	require.Contains(t, res.Rows()[1][0], "Apply")
-	executionInfo := fmt.Sprintf("%v", res.Rows()[1][4])
+	executionInfo := fmt.Sprintf("%v", res.Rows()[1][5])
 	// Do not use the parallel apply.
-	require.False(t, strings.Contains(executionInfo, "Concurrency"))
+	require.True(t, strings.Contains(executionInfo, "concurrency:OFF"))
 	tk.MustExec("execute stmt;")
 	// The subquery plan with PhysicalApply can't be cached.
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
@@ -1010,7 +1010,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	res = tk.MustQuery("explain analyze select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);")
 	require.Contains(t, res.Rows()[1][0], "Apply")
 	require.Contains(t, res.Rows()[1][5], "cache:ON")
 
@@ -1019,7 +1019,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	res = tk.MustQuery("explain analyze select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);")
 	require.Contains(t, res.Rows()[1][0], "Apply")
 	executionInfo = fmt.Sprintf("%v", res.Rows()[1][5])
 	// Do not use the apply cache.
