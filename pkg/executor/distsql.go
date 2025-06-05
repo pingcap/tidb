@@ -795,6 +795,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			if e.index.IsFulltextIndex() {
 				builder.SetPaging(false)
 				builder.SetFullText(true)
+				builder.FullTextInfo.TableID = e.table.Meta().ID
+				builder.FullTextInfo.IndexID = e.index.ID
+				builder.FullTextInfo.ExecutorID = e.idxPlans[0].ExplainID().String()
 			}
 
 			if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
