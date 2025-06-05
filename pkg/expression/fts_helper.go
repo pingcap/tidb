@@ -26,15 +26,17 @@ type FTSInfo struct {
 
 // ContainsFullTextSearchFn recursively checks whether the expression tree contains a
 // possible FullTextSearch function.
-func ContainsFullTextSearchFn(expr Expression) bool {
-	switch x := expr.(type) {
-	case *ScalarFunction:
-		if x.FuncName.L == ast.FTSMatchWord {
-			return true
-		}
-		for _, arg := range x.GetArgs() {
-			if ContainsFullTextSearchFn(arg) {
+func ContainsFullTextSearchFn(exprs ...Expression) bool {
+	for _, expr := range exprs {
+		switch x := expr.(type) {
+		case *ScalarFunction:
+			if x.FuncName.L == ast.FTSMatchWord {
 				return true
+			}
+			for _, arg := range x.GetArgs() {
+				if ContainsFullTextSearchFn(arg) {
+					return true
+				}
 			}
 		}
 	}
