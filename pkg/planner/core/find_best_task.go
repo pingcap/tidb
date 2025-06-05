@@ -2187,6 +2187,10 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		// TODO: make IndexReader support accessing MVIndex directly.
 		return base.InvalidTask, nil
 	}
+	// TiCI must read row table from tikv, and can not set the order property.
+	if candidate.path.FtsQueryInfo != nil && (prop.TaskTp != property.RootTaskType || !prop.IsSortItemEmpty()) {
+		return base.InvalidTask, nil
+	}
 	if !candidate.path.IsSingleScan {
 		// If it's parent requires single read task, return max cost.
 		if prop.TaskTp == property.CopSingleReadTaskType {
