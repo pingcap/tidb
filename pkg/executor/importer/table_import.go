@@ -306,10 +306,19 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 		return nil, err
 	}
 
-	if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
-		return nil, err
+	if chunk.Chunk.Offset == 0 {
+		// if data file is split, only the first chunk need to do skip.
+		// see check in initOptions.
+		if err = ti.LoadDataController.HandleSkipNRows(parser); err != nil {
+			return nil, err
+		}
+		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
+	} else {
+		// if we reached here, the file must be an uncompressed CSV file.
+		if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
+			return nil, err
+		}
 	}
-
 	return parser, nil
 }
 

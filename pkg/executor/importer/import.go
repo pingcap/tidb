@@ -96,6 +96,7 @@ const (
 	fieldsDefinedNullByOption = "fields_defined_null_by"
 	linesTerminatedByOption   = "lines_terminated_by"
 	csvHeaderOption           = "has_csv_header"
+	skipRowsOption            = "skip_rows"
 	splitFileOption           = "split_file"
 	diskQuotaOption           = "disk_quota"
 	threadOption              = "thread"
@@ -133,6 +134,7 @@ var (
 		fieldsDefinedNullByOption:   true,
 		linesTerminatedByOption:     true,
 		csvHeaderOption:             true,
+		skipRowsOption:              true,
 		splitFileOption:             false,
 		diskQuotaOption:             true,
 		threadOption:                true,
@@ -156,6 +158,7 @@ var (
 		fieldsDefinedNullByOption: {},
 		linesTerminatedByOption:   {},
 		csvHeaderOption:           {},
+		skipRowsOption:            {},
 		splitFileOption:           {},
 	}
 
@@ -258,6 +261,9 @@ type Plan struct {
 	// FieldsOptEnclosed is not used in either IMPORT INTO or LOAD DATA
 	plannercore.LineFieldsInfo
 	CSVHeaderOption mydump.CSVHeaderOption
+
+	// TODO(joechenrh): remove IgnoreLines
+	IgnoreLines uint64
 
 	DiskQuota             config.ByteSize
 	Checksum              config.PostOpLevel
@@ -374,9 +380,9 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode() &&
 		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
 
-	csvHeaderOption := mydump.CSVHeaderFalse
+	var ignoreLines uint64
 	if plan.IgnoreLines != nil {
-		csvHeaderOption = mydump.CSVHeaderTrue
+		ignoreLines = *plan.IgnoreLines
 	}
 
 	var (
@@ -407,10 +413,12 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 		FieldNullDef:         nullDef,
 		NullValueOptEnclosed: nullValueOptEnclosed,
 		LineFieldsInfo:       lineFieldsInfo,
-		CSVHeaderOption:      csvHeaderOption,
-		SQLMode:              userSctx.GetSessionVars().SQLMode,
-		Charset:              charset,
-		ImportantSysVars:     getImportantSysVars(userSctx),
+		IgnoreLines:          ignoreLines,
+		CSVHeaderOption:      mydump.CSVHeaderFalse,
+
+		SQLMode:          userSctx.GetSessionVars().SQLMode,
+		Charset:          charset,
+		ImportantSysVars: getImportantSysVars(userSctx),
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
 		DataSourceType:         DataSourceTypeFile,
@@ -720,12 +728,23 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 		p.LinesTerminatedBy = v
 	}
+	if opt, ok := specifiedOptions[skipRowsOption]; ok {
+		vInt, err := optAsInt64(opt)
+		if err != nil || vInt < 0 {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		p.IgnoreLines = uint64(vInt)
+	}
 	if opt, ok := specifiedOptions[csvHeaderOption]; ok {
 		v, err := optAsString(opt)
 		if err != nil || v == "" {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		if p.CSVHeaderOption, err = mydump.GetCSVHeaderOption(v); err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		// ignore lines cannot be used together with csv header option.
+		if p.IgnoreLines > 0 && p.CSVHeaderOption != mydump.CSVHeaderFalse {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
@@ -822,6 +841,15 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if p.MaxNodeCnt == -1 { // -1 means calculate automatically
 			p.MaxNodeCnt = ddl.GetDXFDefaultMaxNodeCntAuto(seCtx.GetStore())
 		}
+	}
+
+	// when split-file is set, data file will be split into chunks of 256 MiB.
+	// skip_rows should be 0 or 1, we add this restriction to simplify skip_rows
+	// logic, so we only need to skip on the first chunk for each data file.
+	// CSV parser limit each row size to LargestEntryLimit(120M), the first row
+	// will NOT cross file chunk.
+	if p.SplitFile && p.IgnoreLines > 1 {
+		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("skip_rows, should be <= 1 when split-file is enabled")
 	}
 
 	if p.SplitFile && len(p.LinesTerminatedBy) == 0 {
@@ -1373,6 +1401,32 @@ func (e *LoadDataController) GetParser(
 	parser.SetLogger(litlog.Logger{Logger: logutil.Logger(ctx)})
 
 	return parser, nil
+}
+
+// HandleSkipNRows skips the first N rows of the data file.
+func (e *LoadDataController) HandleSkipNRows(parser mydump.Parser) error {
+	// handle IGNORE N LINES
+	ignoreOneLineFn := parser.ReadRow
+	if csvParser, ok := parser.(*mydump.CSVParser); ok {
+		ignoreOneLineFn = func() error {
+			_, _, err3 := csvParser.ReadUntilTerminator()
+			return err3
+		}
+	}
+
+	ignoreLineCnt := e.IgnoreLines
+	for ignoreLineCnt > 0 {
+		err := ignoreOneLineFn()
+		if err != nil {
+			if errors.Cause(err) == io.EOF {
+				return nil
+			}
+			return err
+		}
+
+		ignoreLineCnt--
+	}
+	return nil
 }
 
 func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
