@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
-
 	"go.uber.org/zap"
 )
 
