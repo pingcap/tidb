@@ -192,7 +192,7 @@ func TestDisableFold(t *testing.T) {
 		rewriter := builder.getExpressionRewriter(context.TODO(), nil)
 		require.NotNil(t, rewriter)
 		require.Equal(t, 0, rewriter.disableFoldCounter)
-		rewrittenExpression, _, err := rewriteExprNode(rewriter, expr, true, nil)
+		rewrittenExpression, _, err := rewriteExprNode(rewriter, expr, true)
 		require.NoError(t, err)
 		require.Equal(t, 0, rewriter.disableFoldCounter)
 		builder.rewriterCounter--

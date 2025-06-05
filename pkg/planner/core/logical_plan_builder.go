@@ -259,6 +259,12 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 	b.optFlag |= rule.FlagEliminateAgg
 	b.optFlag |= rule.FlagEliminateProjection
 
+	originColPriv := b.checkColPriv
+	b.checkColPriv = reportColumnErrOption
+	defer func() {
+		b.checkColPriv = originColPriv
+	}()
+
 	if b.ctx.GetSessionVars().EnableSkewDistinctAgg {
 		b.optFlag |= rule.FlagSkewDistinctAgg
 	}
@@ -285,7 +291,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 	for i, aggFunc := range aggFuncList {
 		newArgList := make([]expression.Expression, 0, len(aggFunc.Args))
 		for _, arg := range aggFunc.Args {
-			newArg, np, err := b.rewrite(ctx, arg, p, nil, true, requireColumnPriv)
+			newArg, np, err := b.rewrite(ctx, arg, p, nil, true)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -312,7 +318,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 				if resolver.err != nil {
 					return nil, nil, errors.Trace(resolver.err)
 				}
-				newByItem, np, err := b.rewrite(ctx, retExpr.(ast.ExprNode), p, nil, true, requireColumnPriv)
+				newByItem, np, err := b.rewrite(ctx, retExpr.(ast.ExprNode), p, nil, true)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -671,7 +677,10 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		}
 	} else if joinNode.On != nil {
 		b.curClause = onClause
-		onExpr, newPlan, err := b.rewrite(ctx, joinNode.On.Expr, joinPlan, nil, false, requireColumnPriv)
+		originColPriv := b.checkColPriv
+		b.checkColPriv = reportColumnErrOption
+		onExpr, newPlan, err := b.rewrite(ctx, joinNode.On.Expr, joinPlan, nil, false)
+		b.checkColPriv = originColPriv
 		if err != nil {
 			return nil, err
 		}
@@ -918,12 +927,17 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 	if b.curClause != havingClause {
 		b.curClause = whereClause
 	}
+	originColPriv := b.checkColPriv
+	b.checkColPriv = reportColumnErrOption
+	defer func() {
+		b.checkColPriv = originColPriv
+	}()
 
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
 	selection := logicalop.LogicalSelection{}.Init(b.ctx, b.getSelectOffset())
 	for _, cond := range conditions {
-		expr, np, err := b.rewrite(ctx, cond, p, aggMapper, false, requireColumnPriv)
+		expr, np, err := b.rewrite(ctx, cond, p, aggMapper, false)
 		if err != nil {
 			return nil, err
 		}
@@ -1167,7 +1181,7 @@ func (p *userVarTypeProcessor) Enter(in ast.Node) (ast.Node, bool) {
 	if v.IsSystem || v.Value == nil {
 		return in, true
 	}
-	_, p.plan, p.err = p.builder.rewrite(p.ctx, v, p.plan, p.mapper, true, nil)
+	_, p.plan, p.err = p.builder.rewrite(p.ctx, v, p.plan, p.mapper, true)
 	return in, true
 }
 
@@ -1335,11 +1349,14 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 			newNames = append(newNames, name)
 			continue
 		}
-		priv := *requireColumnPriv
+		originColPriv := b.checkColPriv
 		if field.IsUnfoldFromWildCard {
-			priv.unfoldFromWildcard = true
+			b.checkColPriv = reportTableErrOption
+		} else {
+			b.checkColPriv = reportColumnErrOption
 		}
-		newExpr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil, &priv)
+		newExpr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil)
+		b.checkColPriv = originColPriv
 		if err != nil {
 			return nil, nil, 0, err
 		}
@@ -1935,6 +1952,11 @@ func (b *PlanBuilder) buildSort(ctx context.Context, p base.LogicalPlan, byItems
 
 func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p base.LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int,
 	projExprs []expression.Expression, oldLen int, hasDistinct bool) (*logicalop.LogicalSort, error) {
+	originColPriv := b.checkColPriv
+	defer func() {
+		b.checkColPriv = originColPriv
+	}()
+	b.checkColPriv = reportColumnErrOption
 	if _, isUnion := p.(*logicalop.LogicalUnionAll); isUnion {
 		b.curClause = globalOrderByClause
 	} else {
@@ -1946,7 +1968,7 @@ func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p base.LogicalPlan
 	for i, item := range byItems {
 		newExpr, _ := item.Expr.Accept(transformer)
 		item.Expr = newExpr.(ast.ExprNode)
-		it, np, err := b.rewriteWithPreprocess(ctx, item.Expr, p, aggMapper, windowMapper, true, nil, requireColumnPriv)
+		it, np, err := b.rewriteWithPreprocess(ctx, item.Expr, p, aggMapper, windowMapper, true, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -2448,10 +2470,12 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 	// this part is used to fetch correlated column from sub-query item in order-by clause, and append the origin
 	// auxiliary select filed in select list, otherwise, sub-query itself won't get the name resolved in outer schema.
 	if sel.OrderBy != nil {
+		originColPriv := b.checkColPriv
+		b.checkColPriv = reportColumnErrOption
 		for _, byItem := range sel.OrderBy.Items {
 			if _, ok := byItem.Expr.(*ast.SubqueryExpr); ok {
 				// correlated agg will be extracted completely latter.
-				_, np, err := b.rewrite(ctx, byItem.Expr, p, nil, true, requireColumnPriv)
+				_, np, err := b.rewrite(ctx, byItem.Expr, p, nil, true)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -2489,6 +2513,7 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 				}
 			}
 		}
+		b.checkColPriv = originColPriv
 	}
 	return havingAggMapper, extractor.aggMapper, nil
 }
@@ -2536,9 +2561,14 @@ func (b *PlanBuilder) extractCorrelatedAggFuncs(ctx context.Context, p base.Logi
 	corCols := make([]*expression.CorrelatedColumn, 0, len(aggFuncs))
 	cols := make([]*expression.Column, 0, len(aggFuncs))
 	aggMapper := make(map[*ast.AggregateFuncExpr]int)
+	originColPriv := b.checkColPriv
+	b.checkColPriv = reportColumnErrOption
+	defer func() {
+		b.checkColPriv = originColPriv
+	}()
 	for _, agg := range aggFuncs {
 		for _, arg := range agg.Args {
-			expr, _, err := b.rewrite(ctx, arg, p, aggMapper, true, requireColumnPriv)
+			expr, _, err := b.rewrite(ctx, arg, p, aggMapper, true)
 			if err != nil {
 				return nil, err
 			}
@@ -3485,6 +3515,11 @@ func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p base.LogicalPlan, g
 		names:      p.OutputNames(),
 		skipAggMap: b.correlatedAggMapper,
 	}
+	originColPriv := b.checkColPriv
+	b.checkColPriv = reportColumnErrOption
+	defer func() {
+		b.checkColPriv = originColPriv
+	}()
 	for _, item := range gby.Items {
 		resolver.inExpr = false
 		resolver.exprDepth = 0
@@ -3498,7 +3533,7 @@ func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p base.LogicalPlan, g
 		}
 
 		itemExpr := retExpr.(ast.ExprNode)
-		expr, np, err := b.rewrite(ctx, itemExpr, p, nil, true, requireColumnPriv)
+		expr, np, err := b.rewrite(ctx, itemExpr, p, nil, true)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -4667,6 +4702,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds.SampleInfo = tablesampler.NewTableSampleInfo(tn.TableSample, schema, b.partitionedTable)
 	b.isSampling = ds.SampleInfo != nil
 
+	originColPriv := b.checkColPriv
 	for i, colExpr := range ds.Schema().Columns {
 		var expr expression.Expression
 		if i < len(columns) {
@@ -4674,7 +4710,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				var err error
 				originVal := b.allowBuildCastArray
 				b.allowBuildCastArray = true
-				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr.Clone(), ds, nil, true, requireColumnPriv)
+				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr.Clone(), ds, nil, true)
 				b.allowBuildCastArray = originVal
 				if err != nil {
 					return nil, err
@@ -4683,6 +4719,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			}
 		}
 	}
+	b.checkColPriv = originColPriv
 
 	// Init CommonHandleCols and CommonHandleLens for data source.
 	if tableInfo.IsCommonHandle {
@@ -5747,6 +5784,12 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 
 	allAssignments := append(list, virtualAssignments...)
 	dependentColumnsModified := make(map[int64]bool)
+
+	originColPriv := b.checkColPriv
+	b.checkColPriv = reportColumnErrOption
+	defer func() {
+		b.checkColPriv = originColPriv
+	}()
 	for i, assign := range allAssignments {
 		var idx int
 		var err error
@@ -5771,7 +5814,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if expr := extractDefaultExpr(assign.Expr); expr != nil {
 				expr.Name = assign.Column
 			}
-			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, true, requireColumnPriv)
+			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, true)
 			if err != nil {
 				return nil, nil, false, err
 			}
@@ -5795,7 +5838,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 
 			o := b.allowBuildCastArray
 			b.allowBuildCastArray = true
-			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, true, rewritePreprocess(assign), requireColumnPriv)
+			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, true, rewritePreprocess(assign))
 			b.allowBuildCastArray = o
 			if err != nil {
 				return nil, nil, false, err
@@ -6165,7 +6208,7 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p base.Logic
 
 	newArgList := make([]expression.Expression, 0, len(args))
 	for _, arg := range args {
-		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true, requireColumnPriv)
+		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true)
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
@@ -6197,7 +6240,7 @@ func (b *PlanBuilder) buildArgs4WindowFunc(ctx context.Context, p base.LogicalPl
 	// it's okay here because we only want to return the args used in window function
 	newColIndex := 0
 	for _, arg := range args {
-		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true, requireColumnPriv)
+		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true)
 		if err != nil {
 			return nil, err
 		}
@@ -6229,7 +6272,7 @@ func (b *PlanBuilder) buildByItemsForWindow(
 	for _, item := range items {
 		newExpr, _ := item.Expr.Accept(transformer)
 		item.Expr = newExpr.(ast.ExprNode)
-		it, np, err := b.rewrite(ctx, item.Expr, p, aggMap, true, requireColumnPriv)
+		it, np, err := b.rewrite(ctx, item.Expr, p, aggMap, true)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -6373,6 +6416,11 @@ func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.Wi
 }
 
 func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p base.LogicalPlan, windowFuncExprs []*ast.WindowFuncExpr, windowAggMap map[*ast.AggregateFuncExpr]int) error {
+	originColPriv := b.checkColPriv
+	b.checkColPriv = reportColumnErrOption
+	defer func() {
+		b.checkColPriv = originColPriv
+	}()
 	checker := &expression.ParamMarkerInPrepareChecker{}
 	for _, windowFuncExpr := range windowFuncExprs {
 		if strings.ToLower(windowFuncExpr.Name) == ast.AggFuncGroupConcat {
@@ -6459,6 +6507,11 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p base.LogicalPl
 	if b.buildingCTE {
 		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
+	originColPriv := b.checkColPriv
+	b.checkColPriv = reportColumnErrOption
+	defer func() {
+		b.checkColPriv = originColPriv
+	}()
 	args := make([]ast.ExprNode, 0, 4)
 	windowMap := make(map[*ast.WindowFuncExpr]int)
 	for _, window := range sortWindowSpecs(groupedFuncs, orderedSpec) {

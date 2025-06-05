@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -1129,37 +1130,17 @@ func TestAggPrune(t *testing.T) {
 }
 
 func TestVisitInfo(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/point-get-visit-info", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/point-get-visit-info"))
-	}()
+	t.Run("test non-column privilege visit info", testNormalVisitInfo)
+	t.Run("test column privilege visit info", testColumnPrivilegeVisitInfo)
+	t.Run("test column privilege visit info with PointGet", testColumnPrivilegePointGetVisitInfo)
+}
+
+func testNormalVisitInfo(t *testing.T) {
 	variable.EnableMDL.Store(false)
 	tests := []struct {
-		sql            string
-		ans            []visitInfo
-		isPointGetPlan bool
+		sql string
+		ans []visitInfo
 	}{
-		{
-			sql: "insert into t (a) values (1)",
-			ans: []visitInfo{
-				{mysql.InsertPriv, "test", "t", "a", nil, false, nil, false},
-			},
-		},
-		{
-			sql: "delete from t where a = 1",
-			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.DeletePriv, "test", "t", "", plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", "", "", "t"), false, nil, false},
-			},
-			isPointGetPlan: true,
-		},
-		{
-			sql: "delete from t order by a",
-			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-			},
-		},
 		{
 			sql: "delete from t",
 			ans: []visitInfo{
@@ -1174,61 +1155,6 @@ func TestVisitInfo(t *testing.T) {
 			},
 		},
 		*/
-		{
-			sql: "delete from a1 using t as a1 inner join t as a2 where a1.a = a2.a",
-			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil, false, nil, false},
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-			},
-		},
-		{
-			sql: "update t set a = 7 where a = 1",
-			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-			},
-			isPointGetPlan: true,
-		},
-		{
-			sql: "update t set a = 7 where b = 1",
-			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "b", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
-			},
-		},
-		{
-			sql: "update t, (select * from t) a1 set t.a = a1.a;",
-			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "c_str", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "d", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "d_str", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "e", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "e_str", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "f", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "g", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "h", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "i_date", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-			},
-		},
-		{
-			sql: "update t a1 set a1.a = a1.a + 1",
-			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-			},
-		},
-		{
-			sql: "select a, sum(e) from t group by a",
-			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "e", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "e", "t"), false, nil, false},
-			},
-		},
 		{
 			sql: "truncate table t",
 			ans: []visitInfo{
@@ -1570,29 +1496,91 @@ func TestVisitInfo(t *testing.T) {
 		require.NoError(t, err, tt.sql)
 
 		checkVisitInfo(t, builder.visitInfo, tt.ans, tt.sql)
-		if tt.isPointGetPlan {
-			p := TryFastPlan(s.ctx, nodeW)
-			require.NotNil(t, p)
-			checkVisitInfo(t, pointGetVisitInfo4Test, tt.ans, tt.sql)
-		} else {
-			require.Nil(t, TryFastPlan(s.ctx, nodeW))
-		}
+		require.Nil(t, TryFastPlan(s.ctx, nodeW))
 
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}
 }
 
-func TestColumnPrivilegeVisitInfo(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/point-get-visit-info", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/point-get-visit-info"))
-	}()
+func testColumnPrivilegeVisitInfo(t *testing.T) {
 	variable.EnableMDL.Store(false)
 	tests := []struct {
-		sql            string
-		ans            []visitInfo
-		isPointGetPlan bool
+		sql string
+		ans []visitInfo
 	}{
+		{
+			sql: "insert into t (a) values (1)",
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t", "a", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "delete from t order by a",
+			ans: []visitInfo{
+				{mysql.DeletePriv, "test", "t", "", plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: "delete from a1 using t as a1 inner join t as a2 where a1.a = a2.a",
+			ans: []visitInfo{
+				{mysql.DeletePriv, "test", "t", "", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: "update t set a = 7 where b = 1",
+			ans: []visitInfo{
+				{mysql.UpdatePriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: "update t, (select * from t) a1 set t.a = a1.a;",
+			ans: []visitInfo{
+				{mysql.UpdatePriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c_str", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "d", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "d_str", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "e", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "e_str", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "f", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "g", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "h", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "i_date", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+			},
+		},
+
+		{
+			sql: "update t a1 set a1.a = a1.a + 1",
+			ans: []visitInfo{
+				{mysql.UpdatePriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: "select a, sum(e) from t group by a",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "e", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "e", "t"), false, nil, false},
+			},
+		},
+
+		// View
+		{
+			sql: `select * from v where b = 1`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "v", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "v"), false, nil, false},
+				{mysql.SelectPriv, "test", "v", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "v"), false, nil, false},
+				{mysql.SelectPriv, "test", "v", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "v"), false, nil, false},
+				{mysql.SelectPriv, "test", "v", "d", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "v"), false, nil, false},
+			},
+		},
+
 		// Aggregation
 		{
 			sql: "SELECT min(a), b AS b_alias, max(c) AS c_max FROM t",
@@ -1952,102 +1940,18 @@ func TestColumnPrivilegeVisitInfo(t *testing.T) {
 			},
 		},
 
-		// Point Get and Batch Point Get for (SelectStmt, UpdateStmt, DeleteStmt)
-		{
-			sql: `SELECT b FROM t where a = 1;`,
-			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
-			},
-			isPointGetPlan: true,
-		},
-		{
-			sql: `SELECT c, d, e FROM t WHERE (c, d, e) in ((1, 1, 1), (2, 2, 2))`,
-			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "d", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "d", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "e", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "e", "t"), false, nil, false},
-			},
-			isPointGetPlan: true,
-		},
-		{
-			sql: "select * from t where a = 1",
-			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "c_str", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "d", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "d_str", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "e", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "e_str", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "f", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "g", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "h", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "i_date", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-			},
-			isPointGetPlan: true,
-		},
-		{
-			sql: `UPDATE t SET b = 1 WHERE a = 1;`,
-			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.UpdatePriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "b", "t"), false, nil, false},
-			},
-			isPointGetPlan: true,
-		},
-		{
-			sql: `UPDATE t SET b = b+1 WHERE a = 1;`,
-			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
-				{mysql.UpdatePriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "b", "t"), false, nil, false},
-			},
-			isPointGetPlan: true,
-		},
-		{
-			sql: `UPDATE t SET b = a + 1 WHERE (c, d, e) in ((1,1,1),(2,2,2));`,
-			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "d", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "d", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "e", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "e", "t"), false, nil, false},
-				{mysql.UpdatePriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "b", "t"), false, nil, false},
-			},
-			isPointGetPlan: true,
-		},
-		{
-			sql: `DELETE FROM t WHERE a = 1;`,
-			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.DeletePriv, "test", "t", "", plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", "", "", "t"), false, nil, false},
-			},
-			isPointGetPlan: true,
-		},
-		{
-			sql: `DELETE FROM t WHERE (c, d, e) in ((1,1,1),(2,2,2));`,
-			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "d", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "d", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "e", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "e", "t"), false, nil, false},
-				{mysql.DeletePriv, "test", "t", "", plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", "", "", "t"), false, nil, false},
-			},
-			isPointGetPlan: true,
-		},
-
 		// Function Call
 		{
 			sql: `SELECT count(a) FROM t`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
 				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
 			},
 		},
 		{
 			sql: `SELECT sum(a) FROM t`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
 			},
 		},
 		{
@@ -2065,8 +1969,8 @@ func TestColumnPrivilegeVisitInfo(t *testing.T) {
 		{
 			sql: `SELECT count(*) FROM t JOIN t2 ON t.a = t2.a`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "a", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
 				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
 			},
@@ -2087,13 +1991,125 @@ func TestColumnPrivilegeVisitInfo(t *testing.T) {
 		_, err = builder.Build(context.TODO(), nodeW)
 		require.NoError(t, err, tt.sql)
 		checkVisitInfo(t, builder.visitInfo, tt.ans, tt.sql)
-		if tt.isPointGetPlan {
-			p := TryFastPlan(s.ctx, nodeW)
-			require.NotNil(t, p)
-			checkVisitInfo(t, pointGetVisitInfo4Test, tt.ans, tt.sql)
-		} else {
-			require.Nil(t, TryFastPlan(s.ctx, nodeW))
-		}
+
+		require.Nil(t, TryFastPlan(s.ctx, nodeW))
+	}
+}
+
+func testColumnPrivilegePointGetVisitInfo(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/point-get-visit-info", `return(true)`)
+	variable.EnableMDL.Store(false)
+	tests := []struct {
+		sql string
+		ans []visitInfo
+	}{
+		{
+			sql: "delete from t where a = 1",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.DeletePriv, "test", "t", "", plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", "", "", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: "update t set a = 7 where a = 1",
+			ans: []visitInfo{
+				{mysql.UpdatePriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT b FROM t where a = 1;`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT c, d, e FROM t WHERE (c, d, e) in ((1, 1, 1), (2, 2, 2))`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "d", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "d", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "e", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "e", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: "select * from t where a = 1",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c_str", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "d", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "d_str", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "e", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "e_str", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "f", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "g", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "h", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "i_date", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: `UPDATE t SET b = 1 WHERE a = 1;`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.UpdatePriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "b", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: `UPDATE t SET b = b+1 WHERE a = 1;`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.UpdatePriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "b", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: `UPDATE t SET b = a + 1 WHERE (c, d, e) in ((1,1,1),(2,2,2));`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "d", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "d", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "e", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "e", "t"), false, nil, false},
+				{mysql.UpdatePriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "b", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: `DELETE FROM t WHERE a = 1;`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.DeletePriv, "test", "t", "", plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", "", "", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: `DELETE FROM t WHERE (c, d, e) in ((1,1,1),(2,2,2));`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "d", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "d", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "e", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "e", "t"), false, nil, false},
+				{mysql.DeletePriv, "test", "t", "", plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", "", "", "t"), false, nil, false},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		s := createPlannerSuite()
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, tt.sql)
+
+		nodeW := resolve.NewNodeW(stmt)
+		require.NoError(t, Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is})))
+		sctx := MockContext()
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
+		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
+		builder.ctx.GetSessionVars().SetHashJoinConcurrency(1)
+		_, err = builder.Build(context.TODO(), nodeW)
+		require.NoError(t, err, tt.sql)
+		checkVisitInfo(t, builder.visitInfo, tt.ans, tt.sql)
+		fp := TryFastPlan(s.ctx, nodeW)
+		require.NotNil(t, fp, "expect '%s' to get point get plan", tt.sql)
+		checkVisitInfo(t, pointGetVisitInfo4Test, tt.ans, tt.sql)
 	}
 }
 
@@ -2180,9 +2196,11 @@ func checkVisitInfo(t *testing.T, actual, expected []visitInfo, comment string) 
 		return sb.String()
 	}
 	require.Equal(t, len(expected), len(actual), "sql: %s\nactual visitinfo: %s", comment, info(actual))
-	for i := 0; i < len(actual); i++ {
+	for i := range actual {
 		// loose compare errors for code match
-		require.True(t, terror.ErrorEqual(expected[i].err, actual[i].err), "expected %v, actual %v for %s\n%s\n", expected[i].err, actual[i].err, comment, info(actual))
+		require.True(t, terror.ErrorEqual(expected[i].err, actual[i].err),
+			"expected %v, actual %v for %s\n%s\n%s\n", expected[i].err, actual[i].err, comment,
+			info(expected), info(actual))
 		// compare remainder
 		actual[i].err = expected[i].err
 		require.Equal(t, expected[i], actual[i], comment)

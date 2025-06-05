@@ -1063,6 +1063,7 @@ func getVisitInfo(user, host, db, tbl string, outputNames types.NameSlice, unfol
 			outputNames = outputNames[:len(unfold)]
 		}
 	}
+	// FIXME(cbc): should consider CTE/derived-table here?
 	for i, name := range outputNames {
 		var authErr error
 		if !unfold[i] {
@@ -1768,19 +1769,19 @@ func checkFastPlanPrivilege(ctx base.PlanContext, visitInfos ...visitInfo) error
 	return CheckTableLock(ctx, infoSchema, lockVisitInfos)
 }
 
-// The last return value is a flag to indicate whether the FieldName is Unfolded from wildcard
+// The return 'unfold' is a flag to indicate whether the FieldName is unfolded from wildcard
 func buildSchemaFromFields(
 	dbName pmodel.CIStr,
 	tbl *model.TableInfo,
 	tblName pmodel.CIStr,
 	fields []*ast.SelectField,
 ) (
-	*expression.Schema,
-	[]*types.FieldName,
-	[]bool,
+	_ *expression.Schema,
+	names []*types.FieldName,
+	unfold []bool,
 ) {
 	columns := make([]*expression.Column, 0, len(tbl.Columns)+1)
-	names := make([]*types.FieldName, 0, len(tbl.Columns)+1)
+	names = make([]*types.FieldName, 0, len(tbl.Columns)+1)
 	if len(fields) > 0 {
 		unfold := make([]bool, 0, len(tbl.Columns)+1)
 		for _, field := range fields {
@@ -1843,13 +1844,11 @@ func buildSchemaFromFields(
 			OrigColName: col.Name,
 			ColName:     col.Name,
 		})
+		unfold = append(unfold, false)
 		column := colInfoToColumn(col, len(columns))
 		columns = append(columns, column)
 	}
-	schema := expression.NewSchema(columns...)
-	// We don't need to return the 'unfold', since for DELETE and UPDATE,
-	// we don't check the outputNames' column-privilege
-	return schema, names, nil
+	return expression.NewSchema(columns...), names, nil
 }
 
 func tryExtractRowChecksumColumn(field *ast.SelectField, idx int) (*types.FieldName, *expression.Column, bool) {
@@ -1925,6 +1924,10 @@ func getNameValuePairs(ctx expression.BuildContext, tbl *model.TableInfo, tblNam
 		}
 		return nvPairs, isTableDual
 	} else if binOp.Op == opcode.EQ {
+		// Views' columns have no FieldType.
+		if tbl.IsView() {
+			return nil, false
+		}
 		var (
 			d       types.Datum
 			colName *ast.ColumnNameExpr
@@ -1964,10 +1967,6 @@ func getNameValuePairs(ctx expression.BuildContext, tbl *model.TableInfo, tblNam
 			return nil, false
 		}
 		if d.IsNull() {
-			return nil, false
-		}
-		// Views' columns have no FieldType.
-		if tbl.IsView() {
 			return nil, false
 		}
 		if colName.Name.Table.L != "" && colName.Name.Table.L != tblName.L {
@@ -2298,7 +2297,7 @@ func buildOrderedList(ctx base.PlanContext, pointPlan base.Plan, list []*ast.Ass
 		if defaultExpr != nil {
 			defaultExpr.Name = assign.Column
 		}
-		expr, vs, err := rewriteAstExprWithPlanCtxWithVisitInfos(ctx, assign.Expr, pointPlan.Schema(), pointPlan.OutputNames(), false)
+		expr, vs, err := rewriteAstExprWithPlanCtx(ctx, assign.Expr, pointPlan.Schema(), pointPlan.OutputNames(), false)
 		if err != nil {
 			return nil, nil, true
 		}

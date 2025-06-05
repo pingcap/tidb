@@ -1026,7 +1026,6 @@ func TestLoadDataPrivilege(t *testing.T) {
 }
 
 func TestLoadDataColumnPrivilege(t *testing.T) {
-	require.FailNow(t, "FIXME(cbc)")
 	// Create file.
 	path := filepath.Join(t.TempDir(), "load_data_priv.csv")
 	fp, err := os.Create(path)
@@ -1036,7 +1035,7 @@ func TestLoadDataColumnPrivilege(t *testing.T) {
 		require.NoError(t, fp.Close())
 		require.NoError(t, os.Remove(path))
 	}()
-	_, err = fp.WriteString("1\n")
+	_, err = fp.WriteString("1,2,3\n")
 	require.NoError(t, err)
 
 	store := testkit.CreateMockStore(t)
@@ -1045,7 +1044,11 @@ func TestLoadDataColumnPrivilege(t *testing.T) {
 	tk.MustExec("use test")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`CREATE USER 'test_load'@'localhost';`)
-	tk.MustExec(`CREATE TABLE t_load(a int)`)
+	tk.MustExec(`GRANT SELECT on *.* to 'test_load'@'localhost'`)
+	tk.MustExec(`CREATE TABLE t_load(a int, b int, c int)`)
+	tk1 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
+	tk1.MustExec("use test")
 
 	var reader io.ReadCloser = mydump.NewStringReader("1")
 	var readerBuilder executor.LoadDataReaderBuilder = func(_ string) (
@@ -1054,24 +1057,21 @@ func TestLoadDataColumnPrivilege(t *testing.T) {
 		return reader, nil
 	}
 
-	tk.Session().(sessionctx.Context).SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
-
-	tk.MustExec(`GRANT SELECT on *.* to 'test_load'@'localhost'`)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
-	err = tk.ExecToErr(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load", path))
+	tk1.Session().(sessionctx.Context).SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+	err = tk1.ExecToErr(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load", path))
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`GRANT INSERT(a) on test.t_load to 'test_load'@'localhost'`)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
-	time.Sleep(3 * time.Second)
-	tk.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load(a)", path))
+	tk1.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load(a)", path))
+	tk1.MustGetErrCode(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load(a, @var) set b = @var + 1", path), mysql.ErrColumnaccessDenied)
+	tk.MustExec(`GRANT INSERT(b) on test.t_load to 'test_load'@'localhost'`)
+	tk1.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load(a, @var) set b = @var + 1", path))
+	tk1.MustGetErrCode(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load", path), mysql.ErrTableaccessDenied)
 
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`GRANT INSERT on *.* to 'test_load'@'localhost'`)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
-	err = tk.ExecToErr(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' REPLACE INTO TABLE t_load", path))
+	tk1.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load", path))
+	err = tk1.ExecToErr(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' REPLACE INTO TABLE t_load", path))
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 }
@@ -2303,9 +2303,18 @@ func TestInsertColumnPrivilege(t *testing.T) {
 	userTk.MustGetErrCode(`INSERT INTO test.t1 VALUES (1, 2)`, errno.ErrTableaccessDenied)
 	userTk.MustExec(`INSERT INTO test.t1 SET a = 2;`)
 	userTk.MustGetErrCode(`INSERT INTO test.t1 SET b = 1`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`INSERT INTO test.t1 SET a = 1, b = 2;`, errno.ErrColumnaccessDenied)
+	tk.MustExec(`GRANT INSERT(b) ON test.t1 TO 'testuser'@'localhost';`)
+	userTk.MustExec(`INSERT INTO test.t1 SET a = 1, b = 2;`)
+	userTk.MustExec(`INSERT INTO test.t1 VALUES (1,2);`)
+	// FIXME(cbc): for tidb, the parser will treat `INSERT INTO test.t1 SET a = 1, b = a * 2;` the same
+	// 	as `INSERT INTO test.t1 SET a = 1, b = a * 2`, so it does NOT require SELECT privilege of a
+	// userTk.MustGetErrCode(`INSERT INTO test.t1 SET a = 1, b = a * 2;`, errno.ErrColumnaccessDenied)
+	tk.MustExec(`GRANT SELECT(a) ON test.t1 TO 'testuser'@'localhost';`)
+	userTk.MustExec(`INSERT INTO test.t1 SET a = 1, b = a * 2;`)
+
 	userTk.MustExec(`INSERT INTO test.t1(a) SELECT a FROM test.t2;`)
 	userTk.MustGetErrCode(`INSERT INTO test.t1(a) SELECT b FROM test.t2;`, errno.ErrColumnaccessDenied)
-	userTk.MustGetErrCode(`INSERT INTO test.t1(b) SELECT a FROM test.t2;`, errno.ErrColumnaccessDenied)
 }
 
 func TestUpdateColumnPrivilege(t *testing.T) {
