@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -91,6 +92,9 @@ func validateTableMode(origin, target model.TableMode) bool {
 
 // CreateAlterTableModeJob creates a DDL job to change the table mode.
 func CreateAlterTableModeJob(de Executor, sctx sessionctx.Context, mode model.TableMode, schemaID, tableID int64) error {
+	failpoint.Inject("errorWhenCreateAlterTableModeJob", func() {
+		failpoint.Return(errors.New("occur an error when create alter table mode job"))
+	})
 	args := &model.AlterTableModeArgs{
 		TableMode: mode,
 		SchemaID:  schemaID,

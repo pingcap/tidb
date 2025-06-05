@@ -289,14 +289,19 @@ func (s *mockGCSSuite) TestTableMode() {
 	s.prepareAndUseDB("import_into")
 
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("NotEmpty")`)
-	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM '%s';`, filePath)
+	sql := fmt.Sprintf(`IMPORT INTO import_into.t FROM '%s';`, filePath)
 	s.tk.MustGetErrMsg(sql, "PreCheck failed: target table is not empty")
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty")
 
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("Error")`)
-	sql = fmt.Sprintf(`IMPORT INTO load_csv.t FROM '%s' FORMAT 'SQL';`, filePath)
+	sql = fmt.Sprintf(`IMPORT INTO import_into.t FROM '%s' FORMAT 'SQL';`, filePath)
 	s.tk.MustGetErrMsg(sql, "PreCheck failed: check if table is empty failed")
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty")
+
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/errorWhenCreateAlterTableModeJob", `return(true)`)
+	sql = fmt.Sprintf(`IMPORT INTO import_into.t FROM '%s';`, filePath)
+	s.tk.MustGetErrMsg(sql, "occur an error when sort chunk")
+	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/errorWhenCreateAlterTableModeJob")
 }
 
 func (s *mockGCSSuite) TestInputNull() {
