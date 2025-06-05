@@ -331,15 +331,6 @@ func updateOrPredicate(ctx base.PlanContext, orPredicateList expression.Expressi
 	return newPred
 }
 
-func MaybeOverOptimized4PlanCacheForMultiExpression(ctx exprctx.ExprContext, exprs ...[]expression.Expression) bool {
-	for _, expr := range exprs {
-		if expression.MaybeOverOptimized4PlanCache(ctx, expr) {
-			return true
-		}
-	}
-	return false
-}
-
 // pruneEmptyORBranches applies iteratively updateOrPredicate for each pair of OR predicate
 // and another scalar predicate.
 func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Expression) {
