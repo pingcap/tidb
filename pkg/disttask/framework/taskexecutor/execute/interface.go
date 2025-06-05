@@ -82,15 +82,6 @@ type Collector interface {
 	Add(bytes, rows int64)
 }
 
-// collector is the implement of Collector interface
-type collector struct {
-	addFunc func(bytes, rows int64)
-}
-
-func (c *collector) Add(bytes, rows int64) {
-	c.addFunc(bytes, rows)
-}
-
 // dummyCollector is a dummy implementation of Collector that does nothing.
 type dummyCollector struct {
 }
