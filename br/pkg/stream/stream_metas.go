@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -106,48 +107,51 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
 	metadataMap.metas = make(map[string]*MetadataInfo)
 	// `shiftUntilTS` must be less than `until`
 	metadataMap.shiftUntilTS = until
-	err := FastUnmarshalMetaData(ctx, s, ms.MetadataDownloadBatchSize, func(path string, raw []byte) error {
-		m, err := ms.Helper.ParseToMetadataHard(raw)
-		if err != nil {
-			return err
-		}
-		// If the meta file contains only files with ts grater than `until`, when the file is from
-		// `Default`: it should be kept, because its corresponding `write` must has commit ts grater
-		//            than it, which should not be considered.
-		// `Write`: it should trivially not be considered.
-		if m.MinTs <= until {
-			// record these meta-information for statistics and filtering
-			fileGroupInfos := make([]*FileGroupInfo, 0, len(m.FileGroups))
-			for _, group := range m.FileGroups {
-				var kvCount int64 = 0
-				for _, file := range group.DataFilesInfo {
-					kvCount += file.NumberOfEntries
+	err := FastUnmarshalMetaData(ctx, s,
+		0,
+		until,
+		ms.MetadataDownloadBatchSize, func(path string, raw []byte) error {
+			m, err := ms.Helper.ParseToMetadataHard(raw)
+			if err != nil {
+				return err
+			}
+			// If the meta file contains only files with ts grater than `until`, when the file is from
+			// `Default`: it should be kept, because its corresponding `write` must has commit ts grater
+			//            than it, which should not be considered.
+			// `Write`: it should trivially not be considered.
+			if m.MinTs <= until {
+				// record these meta-information for statistics and filtering
+				fileGroupInfos := make([]*FileGroupInfo, 0, len(m.FileGroups))
+				for _, group := range m.FileGroups {
+					var kvCount int64 = 0
+					for _, file := range group.DataFilesInfo {
+						kvCount += file.NumberOfEntries
+					}
+					fileGroupInfos = append(fileGroupInfos, &FileGroupInfo{
+						MaxTS:   group.MaxTs,
+						Length:  group.Length,
+						KVCount: kvCount,
+					})
 				}
-				fileGroupInfos = append(fileGroupInfos, &FileGroupInfo{
-					MaxTS:   group.MaxTs,
-					Length:  group.Length,
-					KVCount: kvCount,
-				})
+				metadataMap.Lock()
+				metadataMap.metas[path] = &MetadataInfo{
+					MinTS:          m.MinTs,
+					FileGroupInfos: fileGroupInfos,
+				}
+				metadataMap.Unlock()
 			}
-			metadataMap.Lock()
-			metadataMap.metas[path] = &MetadataInfo{
-				MinTS:          m.MinTs,
-				FileGroupInfos: fileGroupInfos,
+			// filter out the metadatas whose ts-range is overlap with [until, +inf)
+			// and calculate their minimum begin-default-ts
+			ts, ok := UpdateShiftTS(m, until, mathutil.MaxUint)
+			if ok {
+				metadataMap.Lock()
+				if ts < metadataMap.shiftUntilTS {
+					metadataMap.shiftUntilTS = ts
+				}
+				metadataMap.Unlock()
 			}
-			metadataMap.Unlock()
-		}
-		// filter out the metadatas whose ts-range is overlap with [until, +inf)
-		// and calculate their minimum begin-default-ts
-		ts, ok := UpdateShiftTS(m, until, mathutil.MaxUint)
-		if ok {
-			metadataMap.Lock()
-			if ts < metadataMap.shiftUntilTS {
-				metadataMap.shiftUntilTS = ts
-			}
-			metadataMap.Unlock()
-		}
-		return nil
-	})
+			return nil
+		})
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -166,10 +170,8 @@ func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalSto
 
 func (ms *StreamMetadataSet) iterateDataFiles(f func(d *FileGroupInfo) (shouldBreak bool)) {
 	for _, m := range ms.metadataInfos {
-		for _, d := range m.FileGroupInfos {
-			if f(d) {
-				return
-			}
+		if slices.ContainsFunc(m.FileGroupInfos, f) {
+			return
 		}
 	}
 }
@@ -302,7 +304,7 @@ func UpdateShiftTS(m *pb.Metadata, startTS uint64, restoreTS uint64) (uint64, bo
 
 	for _, ds := range m.FileGroups {
 		for _, d := range ds.DataFilesInfo {
-			if d.Cf == DefaultCF || d.MinBeginTsInDefaultCf == 0 {
+			if d.Cf == consts.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
 				continue
 			}
 			if d.MinTs > restoreTS || d.MaxTs < startTS {

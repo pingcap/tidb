@@ -118,31 +118,20 @@ func TestCreateTable(t *testing.T) {
 
 	// test multiple collate specified in column when create.
 	tk.MustExec("drop table if exists test_multiple_column_collate;")
-	tk.MustExec("create table test_multiple_column_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
-	tt, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_multiple_column_collate"))
-	require.NoError(t, err)
-	require.Equal(t, "utf8", tt.Cols()[0].GetCharset())
-	require.Equal(t, "utf8_general_ci", tt.Cols()[0].GetCollate())
-	require.Equal(t, "utf8mb4", tt.Meta().Charset)
-	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
+	tk.MustContainErrMsg("create table test_multiple_column_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin",
+		"Multiple COLLATE clauses")
 
 	tk.MustExec("drop table if exists test_multiple_column_collate;")
-	tk.MustExec("create table test_multiple_column_collate (a char(1) charset utf8 collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
-	tt, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_multiple_column_collate"))
-	require.NoError(t, err)
-	require.Equal(t, "utf8", tt.Cols()[0].GetCharset())
-	require.Equal(t, "utf8_general_ci", tt.Cols()[0].GetCollate())
-	require.Equal(t, "utf8mb4", tt.Meta().Charset)
-	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
-
-	// test Err case for multiple collate specified in column when create.
-	tk.MustExec("drop table if exists test_err_multiple_collate;")
-	tk.MustGetErrMsg("create table test_err_multiple_collate (a char(1) charset utf8mb4 collate utf8_unicode_ci collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin",
-		dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_unicode_ci", "utf8mb4").Error())
+	tk.MustContainErrMsg("create table test_multiple_column_collate (a char(1) charset utf8 collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin",
+		"Multiple COLLATE clauses")
 
 	tk.MustExec("drop table if exists test_err_multiple_collate;")
-	tk.MustGetErrMsg("create table test_err_multiple_collate (a char(1) collate utf8_unicode_ci collate utf8mb4_general_ci) charset utf8mb4 collate utf8mb4_bin",
-		dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_general_ci", "utf8").Error())
+	tk.MustContainErrMsg("create table test_err_multiple_collate (a char(1) charset utf8mb4 collate utf8_unicode_ci collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin",
+		"Multiple COLLATE clauses")
+
+	tk.MustExec("drop table if exists test_err_multiple_collate;")
+	tk.MustContainErrMsg("create table test_err_multiple_collate (a char(1) collate utf8_unicode_ci collate utf8mb4_general_ci) charset utf8mb4 collate utf8mb4_bin",
+		"Multiple COLLATE clauses")
 
 	// table option is auto-increment
 	tk.MustExec("drop table if exists create_auto_increment_test;")
@@ -356,7 +345,7 @@ func TestAlterTableModifyColumn(t *testing.T) {
 
 	// test multiple collate modification in column.
 	tk.MustExec("drop table if exists modify_column_multiple_collate")
-	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	tk.MustExec("alter table modify_column_multiple_collate modify column a char(1) collate utf8mb4_bin;")
 	tt, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("modify_column_multiple_collate"))
 	require.NoError(t, err)
@@ -366,7 +355,7 @@ func TestAlterTableModifyColumn(t *testing.T) {
 	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
 
 	tk.MustExec("drop table if exists modify_column_multiple_collate;")
-	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	tk.MustExec("alter table modify_column_multiple_collate modify column a char(1) charset utf8mb4 collate utf8mb4_bin;")
 	tt, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("modify_column_multiple_collate"))
 	require.NoError(t, err)
@@ -377,12 +366,12 @@ func TestAlterTableModifyColumn(t *testing.T) {
 
 	// test Err case for multiple collate modification in column.
 	tk.MustExec("drop table if exists err_modify_multiple_collate;")
-	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	tk.MustGetErrMsg("alter table err_modify_multiple_collate modify column a char(1) charset utf8mb4 collate utf8_bin;", dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_bin", "utf8mb4").Error())
 
 	tk.MustExec("drop table if exists err_modify_multiple_collate;")
-	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
-	tk.MustGetErrMsg("alter table err_modify_multiple_collate modify column a char(1) collate utf8_bin collate utf8mb4_bin;", dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_bin", "utf8").Error())
+	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	tk.MustContainErrMsg("alter table err_modify_multiple_collate modify column a char(1) collate utf8_bin collate utf8mb4_bin;", "Multiple COLLATE clauses")
 }
 
 func TestColumnCharsetAndCollate(t *testing.T) {
@@ -476,7 +465,7 @@ func TestShardRowIDBits(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int) shard_row_id_bits = 15")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?)", i)
 	}
 
@@ -559,7 +548,7 @@ func TestShardRowIDBits(t *testing.T) {
 
 	// Test shard_row_id_bits with auto_increment column
 	tk.MustExec("create table auto (a int, b int auto_increment unique) shard_row_id_bits = 15")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into auto(a) values (?)", i)
 	}
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("auto"))
@@ -609,7 +598,7 @@ func TestAutoRandomBitsData(t *testing.T) {
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	tk.MustExec("create table t (a bigint primary key clustered auto_random(15), b int)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t(b) values (?)", i)
 	}
 	allHandles := extractAllHandles()
@@ -672,7 +661,7 @@ func TestAutoRandomBitsData(t *testing.T) {
 
 	// Test signed/unsigned types.
 	tk.MustExec("create table t (a bigint primary key auto_random(10), b int)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t (b) values(?)", i)
 	}
 	for _, h := range extractAllHandles() {
@@ -682,7 +671,7 @@ func TestAutoRandomBitsData(t *testing.T) {
 	tk.MustExec("drop table t")
 
 	tk.MustExec("create table t (a bigint unsigned primary key auto_random(10), b int)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t (b) values(?)", i)
 	}
 	signBitUnused := true
@@ -696,15 +685,15 @@ func TestAutoRandomBitsData(t *testing.T) {
 	// Test rename table does not affect incremental part of auto_random ID.
 	tk.MustExec("create database test_auto_random_bits_rename;")
 	tk.MustExec("create table t (a bigint auto_random primary key);")
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("insert into t values ();")
 	}
 	tk.MustExec("alter table t rename to test_auto_random_bits_rename.t1;")
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("insert into test_auto_random_bits_rename.t1 values ();")
 	}
 	tk.MustExec("alter table test_auto_random_bits_rename.t1 rename to t;")
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("insert into t values ();")
 	}
 	uniqueHandles := make(map[int64]struct{})

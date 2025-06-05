@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/structure"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -278,11 +279,11 @@ func (m *Mutator) GetPolicyID() (int64, error) {
 }
 
 func (*Mutator) policyKey(policyID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mPolicyPrefix, policyID))
+	return fmt.Appendf(nil, "%s:%d", mPolicyPrefix, policyID)
 }
 
 func (*Mutator) resourceGroupKey(groupID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mResourceGroupPrefix, groupID))
+	return fmt.Appendf(nil, "%s:%d", mResourceGroupPrefix, groupID)
 }
 
 func (*Mutator) dbKey(dbID int64) []byte {
@@ -291,7 +292,7 @@ func (*Mutator) dbKey(dbID int64) []byte {
 
 // DBkey encodes the dbID into dbKey.
 func DBkey(dbID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mDBPrefix, dbID))
+	return fmt.Appendf(nil, "%s:%d", mDBPrefix, dbID)
 }
 
 // ParseDBKey decodes the dbkey to get dbID.
@@ -316,7 +317,7 @@ func (*Mutator) autoTableIDKey(tableID int64) []byte {
 
 // AutoTableIDKey decodes the auto tableID key.
 func AutoTableIDKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mTableIDPrefix, tableID))
+	return fmt.Appendf(nil, "%s:%d", mTableIDPrefix, tableID)
 }
 
 // IsAutoTableIDKey checks whether the key is auto tableID key.
@@ -341,7 +342,7 @@ func (*Mutator) autoIncrementIDKey(tableID int64) []byte {
 
 // AutoIncrementIDKey decodes the auto inc table key.
 func AutoIncrementIDKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mIncIDPrefix, tableID))
+	return fmt.Appendf(nil, "%s:%d", mIncIDPrefix, tableID)
 }
 
 // IsAutoIncrementIDKey checks whether the key is auto increment key.
@@ -366,7 +367,7 @@ func (*Mutator) autoRandomTableIDKey(tableID int64) []byte {
 
 // AutoRandomTableIDKey encodes the auto random tableID key.
 func AutoRandomTableIDKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mRandomIDPrefix, tableID))
+	return fmt.Appendf(nil, "%s:%d", mRandomIDPrefix, tableID)
 }
 
 // IsAutoRandomTableIDKey checks whether the key is auto random tableID key.
@@ -391,7 +392,7 @@ func (*Mutator) tableKey(tableID int64) []byte {
 
 // TableKey encodes the tableID into tableKey.
 func TableKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mTablePrefix, tableID))
+	return fmt.Appendf(nil, "%s:%d", mTablePrefix, tableID)
 }
 
 // IsTableKey checks whether the tableKey comes from TableKey().
@@ -416,7 +417,7 @@ func (*Mutator) sequenceKey(sequenceID int64) []byte {
 
 // SequenceKey encodes the sequence key.
 func SequenceKey(sequenceID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mSequencePrefix, sequenceID))
+	return fmt.Appendf(nil, "%s:%d", mSequencePrefix, sequenceID)
 }
 
 // IsSequenceKey checks whether the key is sequence key.
@@ -436,7 +437,7 @@ func ParseSequenceKey(key []byte) (int64, error) {
 }
 
 func (*Mutator) sequenceCycleKey(sequenceID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mSeqCyclePrefix, sequenceID))
+	return fmt.Appendf(nil, "%s:%d", mSeqCyclePrefix, sequenceID)
 }
 
 // DDLJobHistoryKey is only used for testing.
@@ -995,6 +996,87 @@ func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) e
 		return errors.Trace(err)
 	})
 	return errors.Trace(err)
+}
+
+func splitRangeInt64Max(n int64) [][]string {
+	ranges := make([][]string, n)
+
+	// 9999999999999999999 is the max number than maxInt64 in string format.
+	batch := 9999999999999999999 / uint64(n)
+
+	for k := range n {
+		start := batch * uint64(k)
+		end := batch * uint64(k+1)
+
+		startStr := fmt.Sprintf("%019d", start)
+		if k == 0 {
+			startStr = "0"
+		}
+		endStr := fmt.Sprintf("%019d", end)
+
+		ranges[k] = []string{startStr, endStr}
+	}
+
+	return ranges
+}
+
+// IterAllTables iterates all the table at once, in order to avoid oom. It can use at most 15 concurrency to iterate.
+// This function is optimized for 'many databases' scenario. Only 1 concurrency can work for 'many tables in one database' scenario.
+func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error) error {
+	cancelCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	workGroup, egCtx := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
+
+	if concurrency >= 15 {
+		concurrency = 15
+	}
+
+	kvRanges := splitRangeInt64Max(int64(concurrency))
+
+	mu := sync.Mutex{}
+	for i := range concurrency {
+		snapshot := store.GetSnapshot(kv.NewVersion(startTs))
+		snapshot.SetOption(kv.RequestSourceInternal, true)
+		snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
+		t := structure.NewStructure(snapshot, nil, mMetaPrefix)
+		workGroup.Go(func() error {
+			startKey := fmt.Appendf(nil, "%s:", mDBPrefix)
+			startKey = codec.EncodeBytes(startKey, []byte(kvRanges[i][0]))
+			endKey := fmt.Appendf(nil, "%s:", mDBPrefix)
+			endKey = codec.EncodeBytes(endKey, []byte(kvRanges[i][1]))
+
+			return t.IterateHashWithBoundedKey(startKey, endKey, func(key []byte, field []byte, value []byte) error {
+				select {
+				case <-egCtx.Done():
+					return egCtx.Err()
+				default:
+				}
+				// only handle table meta
+				tableKey := string(field)
+				if !strings.HasPrefix(tableKey, mTablePrefix) {
+					return nil
+				}
+
+				tbInfo := &model.TableInfo{}
+				err := json.Unmarshal(value, tbInfo)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				dbID, err := ParseDBKey(key)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				tbInfo.DBID = dbID
+
+				mu.Lock()
+				err = fn(tbInfo)
+				mu.Unlock()
+				return errors.Trace(err)
+			})
+		})
+	}
+
+	return errors.Trace(workGroup.Wait())
 }
 
 // GetMetasByDBID return all meta information of a database.
@@ -1716,7 +1798,7 @@ func DecodeElement(b []byte) (*Element, error) {
 }
 
 func (*Mutator) schemaDiffKey(schemaVersion int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mSchemaDiffPrefix, schemaVersion))
+	return fmt.Appendf(nil, "%s:%d", mSchemaDiffPrefix, schemaVersion)
 }
 
 // GetSchemaDiff gets the modification information on a given schema version.

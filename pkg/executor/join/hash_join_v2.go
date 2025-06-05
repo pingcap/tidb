@@ -74,7 +74,7 @@ func (htc *hashTableContext) reset() {
 func (htc *hashTableContext) getAllMemoryUsageInHashTable() int64 {
 	partNum := len(htc.hashTable.tables)
 	totalMemoryUsage := int64(0)
-	for i := 0; i < partNum; i++ {
+	for i := range partNum {
 		mem := htc.hashTable.getPartitionMemoryUsage(i)
 		totalMemoryUsage += mem
 	}
@@ -83,7 +83,7 @@ func (htc *hashTableContext) getAllMemoryUsageInHashTable() int64 {
 
 func (htc *hashTableContext) clearHashTable() {
 	partNum := len(htc.hashTable.tables)
-	for i := 0; i < partNum; i++ {
+	for i := range partNum {
 		htc.hashTable.clearPartitionSegments(i)
 	}
 }
@@ -179,7 +179,7 @@ func (*hashTableContext) calculateHashTableMemoryUsage(rowTables []*rowTable) (i
 	totalMemoryUsage := int64(0)
 	partitionsMemoryUsage := make([]int64, 0)
 	for _, table := range rowTables {
-		hashTableLength := getHashTableLength(table)
+		hashTableLength := getHashTableLengthByRowTable(table)
 		memoryUsage := getHashTableMemoryUsage(hashTableLength)
 		partitionsMemoryUsage = append(partitionsMemoryUsage, memoryUsage)
 		totalMemoryUsage += memoryUsage
@@ -223,7 +223,7 @@ func (htc *hashTableContext) tryToSpill(rowTables []*rowTable, spillHelper *hash
 
 func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber uint, spillHelper *hashJoinSpillHelper) (int, error) {
 	rowTables := make([]*rowTable, partitionNumber)
-	for i := 0; i < int(partitionNumber); i++ {
+	for i := range partitionNumber {
 		rowTables[i] = newRowTable()
 	}
 
@@ -251,7 +251,7 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber uint, spi
 	}
 
 	taggedBits := uint8(maxTaggedBits)
-	for i := 0; i < int(partitionNumber); i++ {
+	for i := range partitionNumber {
 		for _, seg := range rowTables[i].segments {
 			taggedBits = min(taggedBits, seg.taggedBits)
 		}
@@ -356,8 +356,9 @@ type ProbeWorkerV2 struct {
 func (w *ProbeWorkerV2) updateProbeStatistic(start time.Time, probeTime int64) {
 	t := time.Since(start)
 	atomic.AddInt64(&w.HashJoinCtx.stats.probe, probeTime)
+	atomic.AddInt64(&w.HashJoinCtx.stats.workerFetchAndProbe, int64(t))
 	setMaxValue(&w.HashJoinCtx.stats.maxProbeForCurrentRound, probeTime)
-	setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbeForCurrentRound, int64(t))
+	setMaxValue(&w.HashJoinCtx.stats.maxWorkerFetchAndProbeForCurrentRound, int64(t))
 }
 
 func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks, start time.Time) {
@@ -375,7 +376,7 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks, start 
 
 	chunkNum := inDisk.NumChunks()
 
-	for i := 0; i < chunkNum; i++ {
+	for i := range chunkNum {
 		select {
 		case <-w.HashJoinCtx.closeCh:
 			return
@@ -494,7 +495,7 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chun
 
 	hasErr := false
 	chunkNum := inDisk.NumChunks()
-	for i := 0; i < chunkNum; i++ {
+	for i := range chunkNum {
 		_, ok := <-syncCh
 		if !ok {
 			break
@@ -634,6 +635,8 @@ type HashJoinV2Exec struct {
 	prepared  bool
 	inRestore bool
 
+	IsGA bool
+
 	isMemoryClearedForTest bool
 }
 
@@ -701,6 +704,11 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		e.prepared = false
 		return err
 	}
+	return e.OpenSelf()
+}
+
+// OpenSelf opens hash join itself and initializes the hash join context.
+func (e *HashJoinV2Exec) OpenSelf() error {
 	e.prepared = false
 	e.inRestore = false
 	needScanRowTableAfterProbeDone := e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
@@ -747,6 +755,8 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 
 	if e.stats != nil {
 		e.stats.reset()
+		e.stats.spill.partitionNum = int(e.partitionNumber)
+		e.stats.isHashJoinGA = e.IsGA
 	}
 	return nil
 }
@@ -782,8 +792,10 @@ func (e *HashJoinV2Exec) initializeForProbe() {
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.Concurrency+1)
 	e.ProbeSideTupleFetcher.initializeForProbeBase(e.Concurrency, e.joinResultCh)
 	e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty = e.canSkipProbeIfHashTableIsEmpty()
+	// set buildSuccess to false by default, it will be set to true if build finishes successfully
+	e.ProbeSideTupleFetcher.buildSuccess = false
 
-	for i := uint(0); i < e.Concurrency; i++ {
+	for i := range e.Concurrency {
 		e.ProbeWorkers[i].initializeForProbe(e.ProbeSideTupleFetcher.probeChkResourceCh, e.ProbeSideTupleFetcher.probeResultChs[i], e)
 		e.ProbeWorkers[i].JoinProbe.ResetProbeCollision()
 	}
@@ -819,9 +831,11 @@ func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 		if err != nil {
 			return
 		}
+		// in restore, there is no standalone probe fetcher goroutine, so set buildSuccess here
+		e.ProbeSideTupleFetcher.buildSuccess = true
 	}
 
-	for i := uint(0); i < e.Concurrency; i++ {
+	for i := range e.Concurrency {
 		workerID := i
 		e.workerWg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "HashJoinWorker").End()
@@ -869,14 +883,17 @@ func (e *HashJoinV2Exec) waitJoinWorkers(start time.Time) {
 		}
 	}
 
-	if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
-		for i := uint(0); i < e.Concurrency; i++ {
-			var workerID = i
-			e.workerWg.RunWithRecover(func() {
-				e.ProbeWorkers[workerID].scanRowTableAfterProbeDone()
-			}, e.handleJoinWorkerPanic)
+	if e.ProbeSideTupleFetcher.buildSuccess {
+		// only scan row table if build is successful
+		if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
+			for i := range e.Concurrency {
+				var workerID = i
+				e.workerWg.RunWithRecover(func() {
+					e.ProbeWorkers[workerID].scanRowTableAfterProbeDone()
+				}, e.handleJoinWorkerPanic)
+			}
+			e.workerWg.Wait()
 		}
-		e.workerWg.Wait()
 	}
 }
 
@@ -1040,11 +1057,37 @@ func (w *ProbeWorkerV2) getNewJoinResult() (bool, *hashjoinWorkerResult) {
 func (e *HashJoinV2Exec) reset() {
 	e.resetProbeStatus()
 	e.releaseDisk()
+	// set buildSuccess to false by default, it will be set to true if build finishes successfully
+	e.ProbeSideTupleFetcher.buildSuccess = false
 	e.resetHashTableContextForRestore()
 	e.spillHelper.setCanSpillFlag(true)
 	if e.HashJoinCtxV2.stats != nil {
 		e.HashJoinCtxV2.stats.resetCurrentRound()
 	}
+}
+
+func (e *HashJoinV2Exec) collectSpillStats() {
+	if e.stats == nil || !e.spillHelper.isSpillTriggered() {
+		return
+	}
+
+	round := e.spillHelper.round
+	if len(e.stats.spill.totalSpillBytesPerRound) < round+1 {
+		e.stats.spill.totalSpillBytesPerRound = append(e.stats.spill.totalSpillBytesPerRound, 0)
+		e.stats.spill.spillBuildRowTableBytesPerRound = append(e.stats.spill.spillBuildRowTableBytesPerRound, 0)
+		e.stats.spill.spillBuildHashTableBytesPerRound = append(e.stats.spill.spillBuildHashTableBytesPerRound, 0)
+		e.stats.spill.spilledPartitionNumPerRound = append(e.stats.spill.spilledPartitionNumPerRound, 0)
+	}
+
+	buildRowTableSpillBytes := e.spillHelper.getBuildSpillBytes()
+	buildHashTableSpillBytes := getHashTableMemoryUsage(getHashTableLengthByRowLen(e.spillHelper.spilledValidRowNum.Load()))
+	probeSpillBytes := e.spillHelper.getProbeSpillBytes()
+	spilledPartitionNum := e.spillHelper.getSpilledPartitionsNum()
+
+	e.stats.spill.spillBuildRowTableBytesPerRound[round] += buildRowTableSpillBytes
+	e.stats.spill.spillBuildHashTableBytesPerRound[round] += buildHashTableSpillBytes
+	e.stats.spill.totalSpillBytesPerRound[round] += buildRowTableSpillBytes + probeSpillBytes
+	e.stats.spill.spilledPartitionNumPerRound[round] += spilledPartitionNum
 }
 
 func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
@@ -1067,6 +1110,7 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		e.fetchAndProbeHashTable(ctx)
 
 		e.waiterWg.Wait()
+		e.collectSpillStats()
 		e.reset()
 
 		e.spillHelper.spillRoundForTest = max(e.spillHelper.spillRoundForTest, lastRound)
@@ -1081,6 +1125,7 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 			// No more data to restore
 			return
 		}
+		e.spillHelper.round = restoredPartition.round
 
 		if e.memTracker.BytesConsumed() != 0 {
 			e.isMemoryClearedForTest = false
@@ -1089,6 +1134,10 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		lastRound = restoredPartition.round
 		e.restoredBuildInDisk = restoredPartition.buildSideChunks
 		e.restoredProbeInDisk = restoredPartition.probeSideChunks
+
+		if e.stats != nil && e.stats.spill.round < lastRound {
+			e.stats.spill.round = lastRound
+		}
 
 		e.inRestore = true
 	}
@@ -1198,7 +1247,7 @@ func (e *HashJoinV2Exec) createTasks(buildTaskCh chan<- *buildTask, totalSegment
 
 	partitionStartIndex := make([]int, len(subTables))
 	partitionSegmentLength := make([]int, len(subTables))
-	for i := 0; i < len(subTables); i++ {
+	for i := range subTables {
 		partitionStartIndex[i] = 0
 		partitionSegmentLength[i] = len(subTables[i].rowData.segments)
 	}
@@ -1350,7 +1399,7 @@ func (e *HashJoinV2Exec) controlWorkersForRestore(chunkNum int, syncCh chan *chu
 		close(waitForController)
 	}()
 
-	for i := 0; i < chunkNum; i++ {
+	for range chunkNum {
 		if e.finished.Load() {
 			return
 		}
@@ -1387,7 +1436,7 @@ func handleErr(err error, errCh chan error, doneCh chan struct{}) {
 
 func (e *HashJoinV2Exec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
 	wg.Add(int(e.Concurrency))
-	for i := uint(0); i < e.Concurrency; i++ {
+	for i := range e.Concurrency {
 		workIndex := i
 		e.workerWg.RunWithRecover(
 			func() {
@@ -1425,7 +1474,7 @@ func (e *HashJoinV2Exec) createBuildTasks(totalSegmentCnt int, wg *sync.WaitGrou
 }
 
 func (e *HashJoinV2Exec) buildHashTable(buildTaskCh chan *buildTask, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
-	for i := uint(0); i < e.Concurrency; i++ {
+	for i := range e.Concurrency {
 		wg.Add(1)
 		workID := i
 		e.workerWg.RunWithRecover(
@@ -1473,6 +1522,12 @@ func rehash(oldHashValue uint64, rehashBuf []byte, hash hash.Hash64) uint64 {
 	hash.Reset()
 	hash.Write(rehashBuf)
 	return hash.Sum64()
+}
+
+func issue59377Intest(err *error) {
+	failpoint.Inject("Issue59377", func() {
+		*err = errors.New("Random failpoint error is triggered")
+	})
 }
 
 func triggerIntest(errProbability int) error {

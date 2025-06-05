@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 )
@@ -135,7 +137,7 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 }
 
 // NewCMSketchAndTopN returns a new CM sketch with TopN elements, the estimate NDV and the scale ratio.
-func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uint64) (*CMSketch, *TopN, uint64, uint64) {
+func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uint64) (c *CMSketch, t *TopN, estimateNDV, scaleRatio uint64) {
 	if rowCount == 0 || len(sample) == 0 {
 		return nil, nil, 0, 0
 	}
@@ -143,9 +145,9 @@ func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uin
 	// rowCount is not a accurate value when fast analyzing
 	// In some cases, if user triggers fast analyze when rowCount is close to sampleSize, unexpected bahavior might happen.
 	rowCount = max(rowCount, uint64(len(sample)))
-	estimateNDV, scaleRatio := calculateEstimateNDV(helper, rowCount)
+	estimateNDV, scaleRatio = calculateEstimateNDV(helper, rowCount)
 	defaultVal := calculateDefaultVal(helper, estimateNDV, scaleRatio, rowCount)
-	c, t := buildCMSAndTopN(helper, d, w, scaleRatio, defaultVal)
+	c, t = buildCMSAndTopN(helper, d, w, scaleRatio, defaultVal)
 	return c, t, estimateNDV, scaleRatio
 }
 
@@ -154,7 +156,7 @@ func buildCMSAndTopN(helper *topNHelper, d, w int32, scaleRatio uint64, defaultV
 	enableTopN := helper.sampleSize/topNThreshold <= helper.sumTopN
 	if enableTopN {
 		t = NewTopN(int(helper.actualNumTop))
-		for i := uint32(0); i < helper.actualNumTop; i++ {
+		for i := range helper.actualNumTop {
 			data, cnt := helper.sorted[i].data, helper.sorted[i].cnt
 			t.AppendTopN(data, cnt*scaleRatio)
 		}
@@ -314,10 +316,7 @@ func (c *CMSketch) queryHashValue(sctx planctx.PlanContext, h1, h2 uint64) (resu
 		}
 	}
 	slices.Sort(vals)
-	res := vals[(c.depth-1)/2] + (vals[c.depth/2]-vals[(c.depth-1)/2])/2
-	if res > minValue+temp {
-		res = minValue + temp
-	}
+	res := min(vals[(c.depth-1)/2]+(vals[c.depth/2]-vals[(c.depth-1)/2])/2, minValue+temp)
 	if res == 0 {
 		return uint64(0)
 	}
@@ -523,13 +522,11 @@ func (c *CMSketch) CalcDefaultValForAnalyze(ndv uint64) {
 // TopN stores most-common values, which is used to estimate point queries.
 type TopN struct {
 	TopN []TopNMeta
-}
 
-// Scale scales the TopN by the given factor.
-func (c *TopN) Scale(scaleFactor float64) {
-	for i := range c.TopN {
-		c.TopN[i].Count = uint64(float64(c.TopN[i].Count) * scaleFactor)
-	}
+	totalCount uint64
+	minCount   uint64
+	// minCount and totalCount are initialized only once.
+	once sync.Once
 }
 
 // AppendTopN appends a topn into the TopN struct.
@@ -547,7 +544,7 @@ func (c *TopN) String() string {
 	builder := &strings.Builder{}
 	fmt.Fprintf(builder, "TopN{length: %v, ", len(c.TopN))
 	fmt.Fprint(builder, "[")
-	for i := 0; i < len(c.TopN); i++ {
+	for i := range c.TopN {
 		fmt.Fprintf(builder, "(%v, %v)", c.TopN[i].Encoded, c.TopN[i].Count)
 		if i+1 != len(c.TopN) {
 			fmt.Fprint(builder, ", ")
@@ -577,7 +574,7 @@ func (c *TopN) DecodedString(ctx sessionctx.Context, colTypes []byte) (string, e
 	fmt.Fprintf(builder, "TopN{length: %v, ", len(c.TopN))
 	fmt.Fprint(builder, "[")
 	var tmpDatum types.Datum
-	for i := 0; i < len(c.TopN); i++ {
+	for i := range c.TopN {
 		tmpDatum.SetBytes(c.TopN[i].Encoded)
 		valStr, err := ValueToString(ctx.GetSessionVars(), &tmpDatum, len(colTypes), colTypes)
 		if err != nil {
@@ -607,6 +604,45 @@ func (c *TopN) Copy() *TopN {
 	return &TopN{
 		TopN: topN,
 	}
+}
+
+// MinCount returns the minimum count in the TopN.
+func (c *TopN) MinCount() uint64 {
+	if c == nil || len(c.TopN) == 0 {
+		return 0
+	}
+	c.calculateMinCountAndCount()
+	return c.minCount
+}
+
+func (c *TopN) calculateMinCountAndCount() {
+	if intest.InTest {
+		// In test, After the sync.Once is called, topN will not be modified anymore.
+		minCount, totalCount := c.calculateMinCountAndCountInternal()
+		c.onceCalculateMinCountAndCount()
+		intest.Assert(minCount == c.minCount, "minCount should be equal to the calculated minCount")
+		intest.Assert(totalCount == c.totalCount, "totalCount should be equal to the calculated totalCount")
+		return
+	}
+	c.onceCalculateMinCountAndCount()
+}
+
+func (c *TopN) onceCalculateMinCountAndCount() {
+	c.once.Do(func() {
+		// Initialize to the first value in TopN
+		minCount, total := c.calculateMinCountAndCountInternal()
+		c.minCount = minCount
+		c.totalCount = total
+	})
+}
+
+func (c *TopN) calculateMinCountAndCountInternal() (minCount, total uint64) {
+	minCount = c.TopN[0].Count
+	for _, t := range c.TopN {
+		minCount = min(minCount, t.Count)
+		total += t.Count
+	}
+	return minCount, total
 }
 
 // TopNMeta stores the unit of the TopN.
@@ -716,14 +752,11 @@ func (c *TopN) Sort() {
 
 // TotalCount returns how many data is stored in TopN.
 func (c *TopN) TotalCount() uint64 {
-	if c == nil {
+	if c == nil || len(c.TopN) == 0 {
 		return 0
 	}
-	total := uint64(0)
-	for _, t := range c.TopN {
-		total += t.Count
-	}
-	return total
+	c.calculateMinCountAndCount()
+	return c.totalCount
 }
 
 // Equal checks whether the two TopN are equal.
@@ -756,7 +789,7 @@ func (c *TopN) RemoveVal(val []byte) {
 	if pos == -1 {
 		return
 	}
-	c.TopN = append(c.TopN[:pos], c.TopN[pos+1:]...)
+	c.TopN = slices.Delete(c.TopN, pos, pos+1)
 }
 
 // MemoryUsage returns the total memory usage of a topn.

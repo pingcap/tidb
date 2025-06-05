@@ -111,8 +111,10 @@ const (
 	ActionDropResourceGroup      ActionType = 70
 	ActionAlterTablePartitioning ActionType = 71
 	ActionRemovePartitioning     ActionType = 72
-	ActionAddVectorIndex         ActionType = 73
+	ActionAddColumnarIndex       ActionType = 73
 	ActionModifyEngineAttribute  ActionType = 74
+	ActionAlterTableMode         ActionType = 75
+	ActionRefreshMeta            ActionType = 76
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -184,8 +186,10 @@ var ActionMap = map[ActionType]string{
 	ActionDropResourceGroup:             "drop resource group",
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
-	ActionAddVectorIndex:                "add vector index",
+	ActionAddColumnarIndex:              "add columnar index",
 	ActionModifyEngineAttribute:         "modify engine attribute",
+	ActionAlterTableMode:                "alter table mode",
+	ActionRefreshMeta:                   "refresh meta",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -385,6 +389,9 @@ type Job struct {
 
 	// SQLMode for executing DDL query.
 	SQLMode mysql.SQLMode `json:"sql_mode"`
+
+	// SessionVars store session variables
+	SessionVars map[string]string `json:"session_vars,omitempty"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -559,12 +566,9 @@ func (job *Job) decodeArgs(args ...any) error {
 		return errors.Trace(err)
 	}
 
-	sz := len(rawArgs)
-	if sz > len(args) {
-		sz = len(args)
-	}
+	sz := min(len(rawArgs), len(args))
 
-	for i := 0; i < sz; i++ {
+	for i := range sz {
 		if err := json.Unmarshal(rawArgs[i], args[i]); err != nil {
 			return errors.Trace(err)
 		}
@@ -635,7 +639,7 @@ func (job *Job) IsPausing() bool {
 // IsPausable checks whether we can pause the job.
 func (job *Job) IsPausable() bool {
 	// TODO: We can remove it after TiFlash supports the pause operation.
-	if job.Type == ActionAddVectorIndex && job.SchemaState == StateWriteReorganization {
+	if job.Type == ActionAddColumnarIndex && job.SchemaState == StateWriteReorganization {
 		return false
 	}
 	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
@@ -644,7 +648,7 @@ func (job *Job) IsPausable() bool {
 // IsAlterable checks whether the job type can be altered.
 func (job *Job) IsAlterable() bool {
 	// Currently, only non-distributed add index reorg task can be altered
-	return job.Type == ActionAddIndex && !job.ReorgMeta.IsDistReorg ||
+	return job.Type == ActionAddIndex ||
 		job.Type == ActionModifyColumn ||
 		job.Type == ActionReorganizePartition
 }
@@ -690,6 +694,17 @@ func (job *Job) Started() bool {
 // history where the job is in final state.
 func (job *Job) InFinalState() bool {
 	return job.State == JobStateSynced || job.State == JobStateCancelled || job.State == JobStatePaused
+}
+
+// AddSessionVars add a session variable in DDL job.
+func (job *Job) AddSessionVars(name, value string) {
+	job.SessionVars[name] = value
+}
+
+// GetSessionVars get a session variable in DDL job.
+func (job *Job) GetSessionVars(name string) (string, bool) {
+	value, ok := job.SessionVars[name]
+	return value, ok
 }
 
 // MayNeedReorg indicates that this job may need to reorganize the data.

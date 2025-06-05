@@ -29,6 +29,8 @@ type TaskManager interface {
 	// to make sure low ranking tasks can be scheduled if resource is enough.
 	// The returned tasks are sorted by task order, see proto.Task.
 	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error)
+	// GetAllTasks gets all tasks with basic columns.
+	GetAllTasks(ctx context.Context) ([]*proto.TaskBase, error)
 	// GetAllSubtasks gets all subtasks with basic columns.
 	GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error)
 	GetTasksInStates(ctx context.Context, states ...any) (task []*proto.Task, err error)
@@ -45,6 +47,8 @@ type TaskManager interface {
 	FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error
 	// RevertTask updates task state to reverting, and task error.
 	RevertTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error
+	// AwaitingResolveTask updates task state to awaiting-resolve, also set task err.
+	AwaitingResolveTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error
 	// RevertedTask updates task state to reverted.
 	RevertedTask(ctx context.Context, taskID int64) error
 	// PauseTask updated task state to pausing.
@@ -146,6 +150,12 @@ type Param struct {
 	slotMgr        *SlotManager
 	serverID       string
 	allocatedSlots bool
+	nodeRes        *proto.NodeResource
+}
+
+// GetNodeResource returns the node resource.
+func (p *Param) GetNodeResource() *proto.NodeResource {
+	return p.nodeRes
 }
 
 // schedulerFactoryFn is used to create a scheduler.

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -320,6 +321,22 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 	return false
 }
 
+// GetUserResources gets the maximum number of connections for the current user
+func (p *UserPrivileges) GetUserResources(user, host string) (int64, error) {
+	terror.Log(p.Handle.ensureActiveUser(context.Background(), user))
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		logutil.BgLogger().Error("get user privilege record fail",
+			zap.String("user", user), zap.String("host", host))
+		return 0, errors.New("Failed to get user record")
+	}
+	if p.isValidHash(record) {
+		return record.MaxUserConnections, nil
+	}
+	return 0, errors.New("Failed to get max user connections")
+}
+
 // GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
 func (p *UserPrivileges) GetAuthPluginForConnection(ctx context.Context, user, host string) (string, error) {
 	if SkipWithGrant {
@@ -362,7 +379,7 @@ func (p *UserPrivileges) MatchIdentity(ctx context.Context, user, host string, s
 			zap.String("user", user))
 	}
 	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.matchIdentity(p.Handle.sctx, user, host, skipNameResolve)
+	record := mysqlPriv.matchIdentity(user, host, skipNameResolve)
 	if record != nil {
 		return record.User, record.Host, true
 	}
@@ -840,11 +857,8 @@ func checkCertSAN(priv *globalPrivRecord, cert *x509.Certificate, sans map[util.
 		}
 		var givenMatchOne bool
 		for _, req := range requireOr {
-			for _, give := range given {
-				if req == give {
-					givenMatchOne = true
-					break
-				}
+			if slices.Contains(given, req) {
+				givenMatchOne = true
 			}
 		}
 		if !givenMatchOne {
@@ -966,12 +980,7 @@ func (p *UserPrivileges) GetAllRoles(user, host string) []*auth.RoleIdentity {
 // IsDynamicPrivilege returns true if the DYNAMIC privilege is built-in or has been registered by a plugin
 func (p *UserPrivileges) IsDynamicPrivilege(privName string) bool {
 	privNameInUpper := strings.ToUpper(privName)
-	for _, priv := range dynamicPrivs {
-		if privNameInUpper == priv {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(dynamicPrivs, privNameInUpper)
 }
 
 // RegisterDynamicPrivilege is used by plugins to add new privileges to TiDB
@@ -986,10 +995,8 @@ func RegisterDynamicPrivilege(privName string) error {
 	}
 	dynamicPrivLock.Lock()
 	defer dynamicPrivLock.Unlock()
-	for _, priv := range dynamicPrivs {
-		if privNameInUpper == priv {
-			return errors.New("privilege is already registered")
-		}
+	if slices.Contains(dynamicPrivs, privNameInUpper) {
+		return errors.New("privilege is already registered")
 	}
 	dynamicPrivs = append(dynamicPrivs, privNameInUpper)
 	return nil
@@ -1013,7 +1020,7 @@ func RemoveDynamicPrivilege(privName string) bool {
 	defer dynamicPrivLock.Unlock()
 	for idx, priv := range dynamicPrivs {
 		if privNameInUpper == priv {
-			dynamicPrivs = append(dynamicPrivs[:idx], dynamicPrivs[idx+1:]...)
+			dynamicPrivs = slices.Delete(dynamicPrivs, idx, idx+1)
 			return true
 		}
 	}

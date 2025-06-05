@@ -67,7 +67,7 @@ func (q *queue) getOldestWaiter() (*Waiter, []*Waiter) {
 func (q *queue) removeWaiter(w *Waiter) {
 	for i, waiter := range q.waiters {
 		if waiter == w {
-			q.waiters = append(q.waiters[:i], q.waiters[i+1:]...)
+			q.waiters = slices.Delete(q.waiters, i, i+1)
 			break
 		}
 	}
@@ -232,7 +232,7 @@ func (lw *Manager) WakeUpForDeadlock(resp *deadlock.DeadlockResponse) {
 			if curWaiter.startTS == resp.Entry.Txn && curWaiter.KeyHash == resp.Entry.KeyHash {
 				log.Info("deadlock detection response got", zap.Stringer("entry", &resp.Entry))
 				waiter = curWaiter
-				q.waiters = append(q.waiters[:i], q.waiters[i+1:]...)
+				q.waiters = slices.Delete(q.waiters, i, i+1)
 				break
 			}
 		}

@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
@@ -103,7 +102,7 @@ func newTaskExecutorRunEnv0(t *testing.T) *taskExecutorRunEnv {
 	taskExecutor := NewBaseTaskExecutor(context.Background(), &task1, Param{
 		taskTable: taskTable,
 		slotMgr:   newSlotManager(16),
-		nodeRc:    NewNodeResource(16, 32*units.GiB),
+		nodeRc:    proto.NodeResourceForTest,
 		execID:    "id",
 	})
 	taskExecutor.Extension = taskExecExt
@@ -190,7 +189,7 @@ func TestTaskExecutorRun(t *testing.T) {
 
 	t.Run("retry on error of GetFirstSubtaskInStates", func(t *testing.T) {
 		e := newTaskExecutorRunEnv(t)
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.task1, nil)
 			e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne,
 				unfinishedNormalSubtaskStates...).Return(nil, errors.New("some err"))
@@ -305,7 +304,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		// already started by prev StartSubtask
 		runningSubtask := *e.pendingSubtask1
 		runningSubtask.State = proto.SubtaskStateRunning
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.task1, nil)
 			e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne,
 				unfinishedNormalSubtaskStates...).Return(&runningSubtask, nil)
@@ -378,7 +377,7 @@ func TestTaskExecutorRun(t *testing.T) {
 	t.Run("run subtasks one by one, and exit due to no subtask to run for a while", func(t *testing.T) {
 		e := newTaskExecutorRunEnv(t)
 		e.mockForCheckBalanceSubtask()
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			subtaskID := int64(i + 1)
 			e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.task1, nil)
 			theSubtask := &proto.Subtask{SubtaskBase: proto.SubtaskBase{
@@ -419,7 +418,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		} {
 			taskOfStep := *e.task1
 			taskOfStep.Step = s.step
-			for j := 0; j < s.count; j++ {
+			for j := range s.count {
 				subtaskID := idAlloc
 				idAlloc++
 				e.taskTable.EXPECT().GetTaskByID(gomock.Any(), taskOfStep.ID).Return(&taskOfStep, nil)
@@ -893,7 +892,7 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		env := newTestEnv(t, time.Millisecond)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			env.taskTable.EXPECT().GetTaskByID(gomock.Any(), env.task1.ID).Return(nil, errors.New("some err"))
 		}
 		env.taskTable.EXPECT().GetTaskByID(gomock.Any(), env.task1.ID).DoAndReturn(func(context.Context, int64) (*proto.Task, error) {
@@ -1127,7 +1126,7 @@ func TestCheckBalanceSubtask(t *testing.T) {
 	taskExecutor := NewBaseTaskExecutor(ctx, task, Param{
 		taskTable: mockSubtaskTable,
 		slotMgr:   newSlotManager(16),
-		nodeRc:    NewNodeResource(16, 32*units.GiB),
+		nodeRc:    proto.NodeResourceForTest,
 		execID:    "tidb1",
 	})
 	taskExecutor.Extension = mockExtension

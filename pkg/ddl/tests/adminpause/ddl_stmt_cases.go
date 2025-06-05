@@ -117,6 +117,9 @@ const dropIndexStmt string = alterTableDropPrefix + "index if exists idx_name;"
 const addVectorIndexStmt string = "alter table " + adminPauseTestTableWithVec + " add vector index v_idx((VEC_COSINE_DISTANCE(vec))) USING HNSW;"
 const dropVectorIndexStmt string = "alter table " + adminPauseTestTableWithVec + " drop index if exists v_idx;"
 
+const addColumnarStmt string = "alter table " + adminPauseTestTableWithVec + " add columnar index c_idx(age) using inverted;"
+const dropColumnarStmt string = "alter table " + adminPauseTestTableWithVec + " drop index if exists c_idx;"
+
 var indexDDLStmtCase = [...]StmtCase{
 	// Add primary key
 	{ai.globalID(), addPrimaryIndexStmt, model.StateNone, true, nil, []string{dropPrimaryIndexStmt}},
@@ -156,6 +159,18 @@ var indexDDLStmtCase = [...]StmtCase{
 	{ai.globalID(), dropVectorIndexStmt, model.StateWriteOnly, false, []string{addVectorIndexStmt}, []string{dropVectorIndexStmt}},
 	{ai.globalID(), dropVectorIndexStmt, model.StateDeleteOnly, false, []string{addVectorIndexStmt}, []string{dropVectorIndexStmt}},
 	{ai.globalID(), dropVectorIndexStmt, model.StateDeleteReorganization, false, []string{addVectorIndexStmt}, []string{dropVectorIndexStmt}},
+
+	// Add columnar index
+	{ai.globalID(), addColumnarStmt, model.StateNone, true, nil, []string{dropColumnarStmt}},
+	{ai.globalID(), addColumnarStmt, model.StateDeleteOnly, true, nil, []string{dropColumnarStmt}},
+	{ai.globalID(), addColumnarStmt, model.StateWriteOnly, true, nil, []string{dropColumnarStmt}},
+	{ai.globalID(), addColumnarStmt, model.StatePublic, false, nil, []string{dropColumnarStmt}},
+
+	// Drop columnar index
+	{ai.globalID(), dropColumnarStmt, model.StatePublic, true, []string{addColumnarStmt}, []string{dropColumnarStmt}},
+	{ai.globalID(), dropColumnarStmt, model.StateWriteOnly, false, []string{addColumnarStmt}, []string{dropColumnarStmt}},
+	{ai.globalID(), dropColumnarStmt, model.StateDeleteOnly, false, []string{addColumnarStmt}, []string{dropColumnarStmt}},
+	{ai.globalID(), dropColumnarStmt, model.StateDeleteReorganization, false, []string{addColumnarStmt}, []string{dropColumnarStmt}},
 
 	// Drop normal key
 	{ai.globalID(), dropIndexStmt, model.StatePublic, true, []string{addIndexStmt}, []string{dropIndexStmt}},

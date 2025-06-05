@@ -199,7 +199,7 @@ func getPseudoRowCountByIndexRanges(tc types.Context, indexRanges []*ranger.Rang
 		count = count / tableRowCount * rowCount
 		// If the condition is a = 1, b = 1, c = 1, d = 1, we think every a=1, b=1, c=1 only filtrate 1/100 data,
 		// so as to avoid collapsing too fast.
-		for j := 0; j < i; j++ {
+		for range i {
 			count = count / float64(100)
 		}
 		totalCount += count

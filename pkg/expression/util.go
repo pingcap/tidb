@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -91,7 +92,7 @@ func FilterOutInPlace(input []Expression, filter func(Expression) bool) (remaine
 	for i := len(input) - 1; i >= 0; i-- {
 		if filter(input[i]) {
 			filteredOut = append(filteredOut, input[i])
-			input = append(input[:i], input[i+1:]...)
+			input = slices.Delete(input, i, i+1)
 		}
 	}
 	return input, filteredOut
@@ -568,10 +569,8 @@ func checkCollationStrictness(coll, newFuncColl string) bool {
 			return true
 		}
 
-		for _, id := range CollationStrictness[collGroupID] {
-			if newFuncCollGroupID == id {
-				return true
-			}
+		if slices.Contains(CollationStrictness[collGroupID], newFuncCollGroupID) {
+			return true
 		}
 	}
 
@@ -593,7 +592,7 @@ func getValidPrefix(s string, base int64) string {
 		return ""
 	}
 Loop:
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		c := rune(s[i])
 		switch {
 		case unicode.IsDigit(c) || unicode.IsLower(c) || unicode.IsUpper(c):
@@ -1019,17 +1018,12 @@ func containOuterNot(expr Expression, not bool) bool {
 
 // Contains tests if `exprs` contains `e`.
 func Contains(ectx EvalContext, exprs []Expression, e Expression) bool {
-	for _, expr := range exprs {
-		// Check string equivalence if one of the expressions is a clone.
-		sameString := false
-		if e != nil && expr != nil {
-			sameString = (e.StringWithCtx(ectx, errors.RedactLogDisable) == expr.StringWithCtx(ectx, errors.RedactLogDisable))
+	return slices.ContainsFunc(exprs, func(expr Expression) bool {
+		if expr == nil {
+			return e == nil
 		}
-		if e == expr || sameString {
-			return true
-		}
-	}
-	return false
+		return e == expr || expr.Equal(ectx, e)
+	})
 }
 
 // ExtractFiltersFromDNFs checks whether the cond is DNF. If so, it will get the extracted part and the remained part.
@@ -1042,7 +1036,7 @@ func ExtractFiltersFromDNFs(ctx BuildContext, conditions []Expression) []Express
 			extracted, remained := extractFiltersFromDNF(ctx, sf)
 			allExtracted = append(allExtracted, extracted...)
 			if remained == nil {
-				conditions = append(conditions[:i], conditions[i+1:]...)
+				conditions = slices.Delete(conditions, i, i+1)
 			} else {
 				conditions[i] = remained
 			}
@@ -1335,10 +1329,8 @@ func CheckNonDeterministic(e Expression) bool {
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return true
 		}
-		for _, arg := range x.GetArgs() {
-			if CheckNonDeterministic(arg) {
-				return true
-			}
+		if slices.ContainsFunc(x.GetArgs(), CheckNonDeterministic) {
+			return true
 		}
 	}
 	return false
@@ -1369,10 +1361,8 @@ func IsMutableEffectsExpr(expr Expression) bool {
 		if _, ok := mutableEffectsFunctions[x.FuncName.L]; ok {
 			return true
 		}
-		for _, arg := range x.GetArgs() {
-			if IsMutableEffectsExpr(arg) {
-				return true
-			}
+		if slices.ContainsFunc(x.GetArgs(), IsMutableEffectsExpr) {
+			return true
 		}
 	case *Column:
 	case *Constant:
@@ -1510,6 +1500,10 @@ func jsonUnquoteFunctionBenefitsFromPushedDown(sf *ScalarFunction) bool {
 // Projections are not pushed down to tikv by default, thus we need to check strictly here to avoid potential performance degradation.
 // Note: virtual column is not considered here, since this function cares performance instead of functionality
 func ProjectionBenefitsFromPushedDown(exprs []Expression, inputSchemaLen int) bool {
+	// In debug usage, we need to force push down projections to tikv to check tikv expression behavior.
+	failpoint.Inject("forcePushDownTiKV", func() {
+		failpoint.Return(true)
+	})
 	allColRef := true
 	colRefCount := 0
 	for _, expr := range exprs {
@@ -1883,6 +1877,25 @@ func ExprsToStringsForDisplay(ctx EvalContext, exprs []Expression) []string {
 	return strs
 }
 
+// HasColumnWithCondition tries to retrieve the expression (column or function) if it contains the target column.
+func HasColumnWithCondition(e Expression, cond func(*Column) bool) bool {
+	return hasColumnWithCondition(e, cond)
+}
+
+func hasColumnWithCondition(e Expression, cond func(*Column) bool) bool {
+	switch v := e.(type) {
+	case *Column:
+		return cond(v)
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			if hasColumnWithCondition(arg, cond) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ConstExprConsiderPlanCache indicates whether the expression can be considered as a constant expression considering planCache.
 // If the expression is in plan cache, it should have a const level `ConstStrict` because it can be shared across statements.
 // If the expression is not in plan cache, `ConstOnlyInContext` is enough because it is only used in one statement.
@@ -1900,12 +1913,7 @@ func ConstExprConsiderPlanCache(expr Expression, inPlanCache bool) bool {
 
 // ExprsHasSideEffects checks if any of the expressions has side effects.
 func ExprsHasSideEffects(exprs []Expression) bool {
-	for _, expr := range exprs {
-		if ExprHasSetVarOrSleep(expr) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(exprs, ExprHasSetVarOrSleep)
 }
 
 // ExprHasSetVarOrSleep checks if the expression has SetVar function or Sleep function.
@@ -1917,12 +1925,7 @@ func ExprHasSetVarOrSleep(expr Expression) bool {
 	if scalaFunc.FuncName.L == ast.SetVar || scalaFunc.FuncName.L == ast.Sleep {
 		return true
 	}
-	for _, arg := range scalaFunc.GetArgs() {
-		if ExprHasSetVarOrSleep(arg) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(scalaFunc.GetArgs(), ExprHasSetVarOrSleep)
 }
 
 // ExecBinaryParam parse execute binary param arguments to datum slice.
@@ -1933,7 +1936,7 @@ func ExecBinaryParam(typectx types.Context, binaryParams []param.BinaryParam) (p
 
 	params = make([]Expression, len(binaryParams))
 	args := make([]types.Datum, len(binaryParams))
-	for i := 0; i < len(args); i++ {
+	for i := range args {
 		tp := binaryParams[i].Tp
 		isUnsigned := binaryParams[i].IsUnsigned
 
@@ -2161,4 +2164,20 @@ func binaryDurationWithMS(pos int, paramValues []byte,
 	microSecond := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
 	pos += 4
 	return pos, fmt.Sprintf("%s.%06d", dur, microSecond)
+}
+
+// IsConstNull is used to check whether the expression is a constant null expression.
+// For example, `1 > NULL` is a constant null expression.
+// Now we just assume that the first argrument is a column,
+// the second argument is a constant null.
+func IsConstNull(expr Expression) bool {
+	if e, ok := expr.(*ScalarFunction); ok {
+		switch e.FuncName.L {
+		case ast.LT, ast.LE, ast.GT, ast.GE, ast.EQ, ast.NE:
+			if constExpr, ok := e.GetArgs()[1].(*Constant); ok && constExpr.Value.IsNull() && constExpr.DeferredExpr == nil {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -41,7 +41,7 @@ func TestRowIter(t *testing.T) {
 	require.NoError(t, err)
 
 	iter := newRowIter(rows, 1)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		require.True(t, iter.HasNext())
 	}
 
@@ -74,7 +74,7 @@ func TestChunkRowIter(t *testing.T) {
 	twentyBytes := strings.Repeat("x", 20)
 	thirtyBytes := strings.Repeat("x", 30)
 	expectedRows := mock.NewRows([]string{"a", "b"})
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		expectedRows.AddRow(twentyBytes, thirtyBytes)
 	}
 	mock.ExpectQuery("SELECT a, b FROM t").WillReturnRows(expectedRows)

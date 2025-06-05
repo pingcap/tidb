@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	dxfhandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -67,11 +68,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
@@ -118,6 +121,7 @@ type Executor interface {
 	RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) error
 	LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error
+	AlterTableMode(ctx sessionctx.Context, args *model.AlterTableModeArgs) error
 	CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error
 	UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error
 	RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStmt) error
@@ -131,6 +135,8 @@ type Executor interface {
 	AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) error
 	DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) error
 	FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
+	// RefreshMeta can only be called by BR during the log restore phase.
+	RefreshMeta(ctx sessionctx.Context, args *model.RefreshMetaArgs) error
 
 	// CreateSchemaWithInfo creates a database (schema) given its database info.
 	//
@@ -457,7 +463,7 @@ func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID i
 		configWaitTime = time.Millisecond * 200
 	})
 
-	for retry := 0; retry < configRetry; retry++ {
+	for range configRetry {
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", schemaID), zap.Uint32("isKilled", killed))
@@ -1061,6 +1067,14 @@ func (e *executor) createTableWithInfoJob(
 		switch cfg.OnExist {
 		case OnExistIgnore:
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			// if target TableMode is ModeRestore, we check if the existing mode is consistent the new one
+			if tbInfo.Mode == model.TableModeRestore {
+				oldTableMode := oldTable.Meta().Mode
+				if oldTableMode != model.TableModeRestore {
+					return nil, infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(oldTableMode, tbInfo.Mode, tbInfo.Name)
+				}
+			}
+			// Currently, target TableMode will NEVER be ModeImport because ImportInto does not use this function
 			return nil, nil
 		case OnExistReplace:
 			// only CREATE OR REPLACE VIEW is supported at the moment.
@@ -1115,7 +1129,9 @@ func (e *executor) createTableWithInfoJob(
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involvingSchemas,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
+		SessionVars:         make(map[string]string),
 	}
+	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.CreateTableArgs{
 		TableInfo:      tbInfo,
 		OnExistReplace: cfg.OnExist == OnExistReplace,
@@ -1147,13 +1163,14 @@ func (e *executor) createTableWithInfoPost(
 	ctx sessionctx.Context,
 	tbInfo *model.TableInfo,
 	schemaID int64,
+	scatterScope string,
 ) error {
 	var err error
 	var partitions []model.PartitionDefinition
 	if pi := tbInfo.GetPartitionInfo(); pi != nil {
 		partitions = pi.Definitions
 	}
-	preSplitAndScatter(ctx, e.store, tbInfo, partitions)
+	preSplitAndScatter(ctx, e.store, tbInfo, partitions, scatterScope)
 	if tbInfo.AutoIncID > 1 {
 		// Default tableAutoIncID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
@@ -1208,7 +1225,11 @@ func (e *executor) CreateTableWithInfo(
 			err = nil
 		}
 	} else {
-		err = e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID)
+		var scatterScope string
+		if val, ok := jobW.GetSessionVars(vardef.TiDBScatterRegion); ok {
+			scatterScope = val
+		}
+		err = e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID, scatterScope)
 	}
 
 	return errors.Trace(err)
@@ -1232,7 +1253,9 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SessionVars:    make(map[string]string),
 	}
+	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 
 	var err error
 
@@ -1298,9 +1321,12 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		}
 		return errors.Trace(err)
 	}
-
+	var scatterScope string
+	if val, ok := jobW.GetSessionVars(vardef.TiDBScatterRegion); ok {
+		scatterScope = val
+	}
 	for _, tblArgs := range args.Tables {
-		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID); err != nil {
+		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID, scatterScope); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1363,7 +1389,8 @@ func (e *executor) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy 
 
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
 // If `pi` is not nil, will only split region for `pi`, this is used when add partition.
-func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.TableInfo, parts []model.PartitionDefinition) {
+func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.TableInfo, parts []model.PartitionDefinition, scatterScope string) {
+	failpoint.InjectCall("preSplitAndScatter", scatterScope)
 	if tbInfo.TempTableType != model.TempTableNone {
 		return
 	}
@@ -1371,16 +1398,7 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
 		return
 	}
-	var (
-		preSplit     func()
-		scatterScope string
-	)
-	val, ok := ctx.GetSessionVars().GetSystemVar(vardef.TiDBScatterRegion)
-	if !ok {
-		logutil.DDLLogger().Warn("get system variable met problem, won't scatter region")
-	} else {
-		scatterScope = val
-	}
+	var preSplit func()
 	if len(parts) > 0 {
 		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scatterScope) }
 	} else {
@@ -1803,16 +1821,14 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				err = e.CreateForeignKey(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			case ast.ConstraintPrimaryKey:
 				err = e.CreatePrimaryKey(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
-			case ast.ConstraintFulltext:
-				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
 			case ast.ConstraintCheck:
 				if !vardef.EnableCheckConstraint.Load() {
 					sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 				} else {
 					err = e.CreateCheckConstraint(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint)
 				}
-			case ast.ConstraintVector:
-				err = e.createVectorIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+			case ast.ConstraintColumnar:
+				err = e.createColumnarIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			default:
 				// Nothing to do now.
 			}
@@ -2275,7 +2291,9 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SessionVars:    make(map[string]string),
 	}
+	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TablePartitionArgs{
 		PartInfo: partInfo,
 	}
@@ -2689,11 +2707,11 @@ func (e *executor) CoalescePartitions(sctx sessionctx.Context, ident ast.Ident, 
 func (e *executor) hashPartitionManagement(sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, pi *model.PartitionInfo) error {
 	newSpec := *spec
 	newSpec.PartitionNames = make([]ast.CIStr, len(pi.Definitions))
-	for i := 0; i < len(pi.Definitions); i++ {
+	for i := range pi.Definitions {
 		// reorganize ALL partitions into the new number of partitions
 		newSpec.PartitionNames[i] = pi.Definitions[i].Name
 	}
-	for i := 0; i < len(newSpec.PartDefinitions); i++ {
+	for i := range newSpec.PartDefinitions {
 		switch newSpec.PartDefinitions[i].Clause.(type) {
 		case *ast.PartitionDefinitionClauseNone:
 			// OK, expected
@@ -2786,7 +2804,9 @@ func (e *executor) TruncateTablePartition(ctx sessionctx.Context, ident ast.Iden
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SessionVars:    make(map[string]string),
 	}
+	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TruncateTableArgs{
 		OldPartitionIDs: pids,
 		// job submitter will fill new partition IDs.
@@ -2963,6 +2983,8 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		source.Collate != target.Collate ||
 		source.ShardRowIDBits != target.ShardRowIDBits ||
 		source.MaxShardRowIDBits != target.MaxShardRowIDBits ||
+		source.PKIsHandle != target.PKIsHandle ||
+		source.IsCommonHandle != target.IsCommonHandle ||
 		!checkTiFlashReplicaCompatible(source.TiFlashReplica, target.TiFlashReplica) {
 		return errors.Trace(dbterror.ErrTablesDifferentMetadata)
 	}
@@ -4002,7 +4024,7 @@ func checkIndexLengthWithNewCharset(tblInfo *model.TableInfo, toCharset, toColla
 	}
 
 	for _, indexInfo := range tblInfo.Indices {
-		err := checkIndexPrefixLength(columns, indexInfo.Columns)
+		err := checkIndexPrefixLength(columns, indexInfo.Columns, indexInfo.GetColumnarIndexType())
 		if err != nil {
 			return err
 		}
@@ -4066,7 +4088,7 @@ var systemTables = map[string]struct{}{
 }
 
 func isUndroppableTable(schema, table string) bool {
-	if schema == "workload_schema" {
+	if schema == mysql.WorkloadSchema {
 		return true
 	}
 	if schema != mysql.SystemDB {
@@ -4140,6 +4162,9 @@ func (e *executor) dropTableObject(
 			notExistTables = append(notExistTables, fullti.String())
 			continue
 		} else if err != nil {
+			return err
+		}
+		if err = dbutil.CheckTableModeIsNormal(tableInfo.Meta().Name, tableInfo.Meta().Mode); err != nil {
 			return err
 		}
 
@@ -4283,7 +4308,9 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SessionVars:    make(map[string]string),
 	}
+	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TruncateTableArgs{
 		FKCheck:         fkCheck,
 		OldPartitionIDs: oldPartitionIDs,
@@ -4333,6 +4360,9 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 			return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Table"))
 		}
+		if err = dbutil.CheckTableModeIsNormal(tbl.Meta().Name, tbl.Meta().Mode); err != nil {
+			return err
+		}
 	}
 
 	job := &model.Job{
@@ -4370,7 +4400,7 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 
 	tables := make(map[string]int64)
 	infos := make([]*model.RenameTableArgs, 0, len(oldIdents))
-	for i := 0; i < len(oldIdents); i++ {
+	for i := range oldIdents {
 		schemas, tableID, err = ExtractTblInfos(is, oldIdents[i], newIdents[i], isAlterTable, tables)
 		if err != nil {
 			return err
@@ -4379,6 +4409,9 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 		if t, ok := is.TableByID(e.ctx, tableID); ok {
 			if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Tables"))
+			}
+			if err = dbutil.CheckTableModeIsNormal(t.Meta().Name, t.Meta().Mode); err != nil {
+				return err
 			}
 		}
 
@@ -4498,12 +4531,14 @@ func getIdentKey(ident ast.Ident) string {
 	return fmt.Sprintf("%s.%s", ident.Schema.L, ident.Name.L)
 }
 
+// getAnonymousIndexPrefix returns the prefix for anonymous index name.
+// Column name of vector index IndexPartSpecifications is nil,
+// so we need a different prefix to distinguish between vector index and expression index.
 func getAnonymousIndexPrefix(isVector bool) string {
-	colName := "expression_index"
 	if isVector {
-		colName = "vector_index"
+		return "vector_index"
 	}
-	return colName
+	return "expression_index"
 }
 
 // GetName4AnonymousIndex returns a valid name for anonymous index.
@@ -4592,7 +4627,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, false)
+	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeNA)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4657,10 +4692,10 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 }
 
 func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName ast.CIStr,
-	indexPartSpecifications []*ast.IndexPartSpecification, isVector, ifNotExists bool) (ast.CIStr, []*model.ColumnInfo, error) {
+	indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType, ifNotExists bool) (ast.CIStr, []*model.ColumnInfo, error) {
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
-		colName := ast.NewCIStr(getAnonymousIndexPrefix(isVector))
+		colName := ast.NewCIStr(getAnonymousIndexPrefix(columnarIndexType == model.ColumnarIndexTypeVector))
 		if indexPartSpecifications[0].Column != nil {
 			colName = indexPartSpecifications[0].Column.Name
 		}
@@ -4690,7 +4725,7 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName a
 
 	// Build hidden columns if necessary.
 	var hiddenCols []*model.ColumnInfo
-	if !isVector {
+	if columnarIndexType == model.ColumnarIndexTypeNA {
 		hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
 		if err != nil {
 			return ast.CIStr{}, nil, err
@@ -4703,24 +4738,24 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName a
 	return indexName, hiddenCols, nil
 }
 
-func checkTableTypeForVectorIndex(tblInfo *model.TableInfo) error {
+func checkTableTypeForColumnarIndex(tblInfo *model.TableInfo) error {
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Vector Index")
+		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("create columnar index")
 	}
 	if tblInfo.TempTableType != model.TempTableNone {
-		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("vector index")
+		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("columnar index")
 	}
 	if tblInfo.GetPartitionInfo() != nil {
-		return dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported partition table")
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported partition table")
 	}
 	if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
-		return dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported empty TiFlash replica, the replica is nil")
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("columnar replica must exist to create vector index, columnar index or fulltext index")
 	}
 
 	return nil
 }
 
-func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
+func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
@@ -4728,18 +4763,43 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	}
 
 	tblInfo := t.Meta()
-	if err := checkTableTypeForVectorIndex(tblInfo); err != nil {
+	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
 		return errors.Trace(err)
 	}
 
+	var columnarIndexType model.ColumnarIndexType
+	switch indexOption.Tp {
+	case ast.IndexTypeInverted:
+		columnarIndexType = model.ColumnarIndexTypeInverted
+	case ast.IndexTypeVector:
+		columnarIndexType = model.ColumnarIndexTypeVector
+	case ast.IndexTypeFulltext:
+		columnarIndexType = model.ColumnarIndexTypeFulltext
+	default:
+		return dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(indexOption.Tp)
+	}
+
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
-	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, true, ifNotExists)
+	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, columnarIndexType, ifNotExists)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, funcExpr, err := buildVectorInfoWithCheck(indexPartSpecifications, tblInfo)
-	if err != nil {
-		return errors.Trace(err)
+
+	// Do some checks here to fast fail the DDL job.
+	var funcExpr string
+	switch columnarIndexType {
+	case model.ColumnarIndexTypeInverted:
+		if _, err := buildInvertedInfoWithCheck(indexPartSpecifications, tblInfo); err != nil {
+			return errors.Trace(err)
+		}
+	case model.ColumnarIndexTypeVector:
+		if _, funcExpr, err = buildVectorInfoWithCheck(indexPartSpecifications, tblInfo); err != nil {
+			return errors.Trace(err)
+		}
+	case model.ColumnarIndexTypeFulltext:
+		if _, err = buildFullTextInfoWithCheck(indexPartSpecifications, indexOption, tblInfo); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	// Check before the job is put to the queue.
@@ -4748,7 +4808,7 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, true)
+	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, columnarIndexType)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4761,7 +4821,8 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 
 	job := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
 	job.Version = model.GetJobVerInUse()
-	job.Type = model.ActionAddVectorIndex
+	job.Type = model.ActionAddColumnarIndex
+	// indexPartSpecifications[0].Expr can not be unmarshaled, so we set it to nil.
 	indexPartSpecifications[0].Expr = nil
 
 	// TODO: support CDCWriteSource
@@ -4772,7 +4833,8 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 			IndexPartSpecifications: indexPartSpecifications,
 			IndexOption:             indexOption,
 			FuncExpr:                funcExpr,
-			IsVector:                true,
+			IsColumnar:              true,
+			ColumnarIndexType:       columnarIndexType,
 		}},
 		OpType: model.OpAddIndex,
 	}
@@ -4833,11 +4895,11 @@ func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableNa
 func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	// not support Spatial and FullText index
-	if keyType == ast.IndexKeyTypeFullText || keyType == ast.IndexKeyTypeSpatial {
-		return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT and SPATIAL index is not supported")
-	}
-	if keyType == ast.IndexKeyTypeVector {
-		return e.createVectorIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
+	switch keyType {
+	case ast.IndexKeyTypeSpatial:
+		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is not supported")
+	case ast.IndexKeyTypeColumnar:
+		return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
 	}
 	unique := keyType == ast.IndexKeyTypeUnique
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
@@ -4848,8 +4910,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
+
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
-	indexName, hiddenCols, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, false, ifNotExists)
+	indexName, hiddenCols, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, model.ColumnarIndexTypeNA, ifNotExists)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4864,7 +4927,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, false)
+	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, model.ColumnarIndexTypeNA)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4882,7 +4945,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	}
 
 	if indexOption != nil && indexOption.Tp == ast.IndexTypeHypo { // for hypo-index
-		indexInfo, err := BuildIndexInfo(metaBuildCtx, tblInfo, indexName, false, unique, false,
+		indexInfo, err := BuildIndexInfo(metaBuildCtx, tblInfo, indexName, false, unique, model.ColumnarIndexTypeNA,
 			indexPartSpecifications, indexOption, model.StatePublic)
 		if err != nil {
 			return err
@@ -4931,8 +4994,29 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	return errors.Trace(err)
 }
 
+// GetDXFDefaultMaxNodeCntAuto calcuates a default max node count for distributed task execution.
+func GetDXFDefaultMaxNodeCntAuto(store kv.Storage) int {
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		logutil.DDLLogger().Warn("not an TiKV or TiFlash store instance", zap.String("type", fmt.Sprintf("%T", store)))
+		return 0
+	}
+	pdClient := tikvStore.GetRegionCache().PDClient()
+	if pdClient == nil {
+		logutil.DDLLogger().Warn("pd unavailable when get default max node count")
+		return 0
+	}
+	stores, err := pdClient.GetAllStores(context.Background())
+	if err != nil {
+		logutil.DDLLogger().Warn("get all stores failed when get default max node count", zap.Error(err))
+		return 0
+	}
+	return max(3, len(stores)/3)
+}
+
 func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) error {
 	m := NewDDLReorgMeta(sctx)
+
 	setReorgParam := func() {
 		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
 			m.SetConcurrency(variable.TidbOptInt(sv, 0))
@@ -4945,7 +5029,13 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 	setDistTaskParam := func() error {
 		m.IsDistReorg = vardef.EnableDistTask.Load()
 		m.IsFastReorg = vardef.EnableFastReorg.Load()
-		m.TargetScope = vardef.ServiceScope.Load()
+		m.TargetScope = dxfhandle.GetTargetScope()
+		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
+			m.MaxNodeCount = variable.TidbOptInt(sv, 0)
+			if m.MaxNodeCount == -1 { // -1 means calculate automatically
+				m.MaxNodeCount = GetDXFDefaultMaxNodeCntAuto(sctx.GetStore())
+			}
+		}
 		if hasSysDB(job) {
 			if m.IsDistReorg {
 				logutil.DDLLogger().Info("cannot use distributed task execution on system DB",
@@ -5002,6 +5092,7 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		zap.Bool("enableDistTask", m.IsDistReorg),
 		zap.Bool("enableFastReorg", m.IsFastReorg),
 		zap.String("targetScope", m.TargetScope),
+		zap.Int("maxNodeCount", m.MaxNodeCount),
 		zap.Int("concurrency", m.GetConcurrency()),
 		zap.Int("batchSize", m.GetBatchSize()),
 	)
@@ -5647,6 +5738,41 @@ func (e *executor) UnlockTables(ctx sessionctx.Context, unlockTables []model.Tab
 	if err == nil {
 		ctx.ReleaseAllTableLocks()
 	}
+	return errors.Trace(err)
+}
+
+func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTableModeArgs) error {
+	is := e.infoCache.GetLatest()
+
+	schema, ok := is.SchemaByID(args.SchemaID)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("SchemaID: %v", args.SchemaID))
+	}
+
+	table, ok := is.TableByID(e.ctx, args.TableID)
+	if !ok {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name, args.TableID)
+	}
+
+	ok = validateTableMode(table.Meta().Mode, args.TableMode)
+	if !ok {
+		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(table.Meta().Mode, args.TableMode, table.Meta().Name.O)
+	}
+	if table.Meta().Mode == args.TableMode {
+		return nil
+	}
+
+	job := &model.Job{
+		Version:        model.JobVersion2,
+		SchemaID:       args.SchemaID,
+		TableID:        args.TableID,
+		Type:           model.ActionAlterTableMode,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        sctx.GetSessionVars().SQLMode,
+	}
+	sctx.SetValue(sessionctx.QueryString, "skip")
+	err := e.doDDLJob2(sctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -6944,4 +7070,35 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 		ResourceGroupName: ctx.GetSessionVars().StmtCtx.ResourceGroupName,
 		Version:           model.CurrentReorgMetaVersion,
 	}
+}
+
+// RefreshMeta is a internal DDL job. In some cases, BR log restore will EXCHANGE
+// PARTITION\DROP TABLE by write meta kv directly, and table info in meta kv
+// is inconsistent with info schema. So when BR call AlterTableMode for new table
+// will failure. RefreshMeta will reload schema diff to update info schema by
+// schema ID and table ID to make sure data in meta kv and info schema is consistent.
+func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaArgs) error {
+	job := &model.Job{
+		Version:        model.JobVersion2,
+		SchemaID:       args.SchemaID,
+		TableID:        args.TableID,
+		Type:           model.ActionRefreshMeta,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        sctx.GetSessionVars().SQLMode,
+	}
+	sctx.SetValue(sessionctx.QueryString, "skip")
+	err := e.doDDLJob2(sctx, job, args)
+	return errors.Trace(err)
+}
+
+func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
+	var scatterScope string
+	val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBScatterRegion)
+	if !ok {
+		logutil.DDLLogger().Info("won't scatter region since system variable didn't set")
+	} else {
+		scatterScope = val
+	}
+	return scatterScope
 }

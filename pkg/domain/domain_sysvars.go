@@ -107,6 +107,13 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
 		if err != nil {
 			return err
 		}
+	case vardef.TiDBEnableBatchQueryRegion:
+		val := variable.TiDBOptOn(sVal)
+		err := do.updatePDClient(opt.EnableRouterClient, val)
+		if err != nil {
+			return err
+		}
+		vardef.EnableBatchQueryRegion.Store(val)
 	}
 	return nil
 }
@@ -152,7 +159,12 @@ func (do *Domain) changeSchemaCacheSize(ctx context.Context, size uint64) error 
 	if err != nil {
 		return err
 	}
-	do.infoCache.Data.SetCacheCapacity(size)
+	if size > 0 {
+		// Note: change the value to 0 is changing from infoschema v2 to v1.
+		// What we do is change the implementation rather than set the cache capacity.
+		// The change will not take effect until a schema reload happen.
+		do.infoCache.Data.SetCacheCapacity(size)
+	}
 	return nil
 }
 

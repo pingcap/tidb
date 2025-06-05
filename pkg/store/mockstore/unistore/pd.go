@@ -32,8 +32,10 @@ import (
 	us "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/gc"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/clients/tso"
+	"github.com/tikv/pd/client/constants"
 	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
 	sd "github.com/tikv/pd/client/servicediscovery"
@@ -55,37 +57,21 @@ type pdClient struct {
 	// which needs PD server HTTP address.
 	addrs []string
 
-	keyspaceNameMap map[string]keyspacepb.KeyspaceMeta
-	keyspaceIDMap   map[uint32]keyspacepb.KeyspaceMeta
+	keyspaceMeta *keyspacepb.KeyspaceMeta
 }
 
-func makeKeyspace() (map[string]keyspacepb.KeyspaceMeta, map[uint32]keyspacepb.KeyspaceMeta) {
-	keyspaceNameMap := make(map[string]keyspacepb.KeyspaceMeta)
-	keyspaceIDMap := make(map[uint32]keyspacepb.KeyspaceMeta)
-
-	// keyspace id = 2
-	keyspaceMeta2 := keyspacepb.KeyspaceMeta{Id: 2, Name: "test_ks_name2"}
-	keyspaceNameMap[keyspaceMeta2.Name] = keyspaceMeta2
-	keyspaceIDMap[keyspaceMeta2.Id] = keyspaceMeta2
-
-	// keyspace id = 3
-	keyspaceMeta3 := keyspacepb.KeyspaceMeta{Id: 3, Name: "test_ks_name3"}
-	keyspaceNameMap[keyspaceMeta3.Name] = keyspaceMeta3
-	keyspaceIDMap[keyspaceMeta3.Id] = keyspaceMeta3
-
-	return keyspaceNameMap, keyspaceIDMap
-}
-
-func newPDClient(pd *us.MockPD, addrs []string) *pdClient {
-	keyspaceNameMap, keyspaceIDMap := makeKeyspace()
+func newPDClient(pd *us.MockPD, addrs []string, keyspaceMeta *keyspacepb.KeyspaceMeta) *pdClient {
+	keyspaceID := constants.NullKeyspaceID
+	if keyspaceMeta != nil {
+		keyspaceID = keyspaceMeta.GetId()
+	}
 	return &pdClient{
 		MockPD:                pd,
-		ResourceManagerClient: infosync.NewMockResourceManagerClient(),
+		ResourceManagerClient: infosync.NewMockResourceManagerClient(keyspaceID),
 		serviceSafePoints:     make(map[string]uint64),
 		globalConfig:          make(map[string]string),
 		addrs:                 addrs,
-		keyspaceNameMap:       keyspaceNameMap,
-		keyspaceIDMap:         keyspaceIDMap,
+		keyspaceMeta:          keyspaceMeta,
 	}
 }
 
@@ -116,7 +102,7 @@ func (c *pdClient) WatchGlobalConfig(ctx context.Context, configPath string, rev
 				return
 			}
 		}()
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			for k, v := range c.globalConfig {
 				globalConfigWatcherCh <- []pd.GlobalConfigItem{{Name: k, Value: v}}
 			}
@@ -261,6 +247,14 @@ func (c *mockPDServiceDiscovery) AddServingURLSwitchedCallback(callbacks ...func
 
 func (c *mockPDServiceDiscovery) AddServiceURLsSwitchedCallback(callbacks ...func()) {}
 
+func (c *mockPDServiceDiscovery) AddLeaderSwitchedCallback(sd.LeaderSwitchedCallbackFunc) {
+}
+
+func (c *mockPDServiceDiscovery) AddMembersChangedCallback(func()) {}
+
+func (c *mockPDServiceDiscovery) ExecAndAddLeaderSwitchedCallback(sd.LeaderSwitchedCallbackFunc) {
+}
+
 type mockTSFuture struct {
 	pdc  *pdClient
 	ctx  context.Context
@@ -310,7 +304,7 @@ func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetO
 	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
 }
 
-func (c *pdClient) GetAllMembers(ctx context.Context) ([]*pdpb.Member, error) {
+func (c *pdClient) GetAllMembers(ctx context.Context) (*pdpb.GetMembersResponse, error) {
 	return nil, nil
 }
 
@@ -340,10 +334,10 @@ func (c *pdClient) GetAllKeyspaces(ctx context.Context, startID uint32, limit ui
 
 // LoadKeyspace loads and returns target keyspace's metadata.
 func (c *pdClient) LoadKeyspace(ctx context.Context, name string) (*keyspacepb.KeyspaceMeta, error) {
-	if keyspaceMeta, exists := c.keyspaceNameMap[name]; exists {
-		return &keyspaceMeta, nil
+	if c.keyspaceMeta.Name != name {
+		return nil, errors.New(pdpb.ErrorType_ENTRY_NOT_FOUND.String())
 	}
-	return nil, errors.New(pdpb.ErrorType_ENTRY_NOT_FOUND.String())
+	return c.keyspaceMeta, nil
 }
 
 // WatchKeyspaces watches keyspace meta changes.
@@ -436,4 +430,12 @@ func (c *pdClient) WatchGCSafePointV2(ctx context.Context, revision int64) (chan
 
 func (c *pdClient) WithCallerComponent(component caller.Component) pd.Client {
 	return c
+}
+
+func (c *pdClient) GetGCInternalController(keyspaceID uint32) gc.InternalController {
+	return nil
+}
+
+func (c *pdClient) GetGCStatesClient(keyspaceID uint32) gc.GCStatesClient {
+	return nil
 }

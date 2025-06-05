@@ -198,6 +198,8 @@ func TestRangeIntersection(t *testing.T) {
 	tk.MustExec("INSERT INTO tkey_string VALUES('zhenjiang','zhenjiang','zhenjiang','zhenjiang','zhenjiang','zhenjiang','medium','c','linpin');")
 	tk.MustExec("INSERT INTO tkey_string VALUES('suzhou','suzhou','suzhou','suzhou','suzhou','suzhou','large','d','linpin');")
 	tk.MustExec("INSERT INTO tkey_string VALUES('wuxi','wuxi','wuxi','wuxi','wuxi','wuxi','x-large','a','linpin');")
+	tk.MustExec("create table t_issue_60556(a int, b int, ac char(3), bc char(3), key ab(a,b), key acbc(ac,bc));")
+	tk.MustExec("insert into t_issue_60556 values (100, 500, '100', '500');")
 
 	var input []string
 	var output []struct {
@@ -256,7 +258,7 @@ func TestVectorIndex(t *testing.T) {
 		tiflash.Unlock()
 	}()
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 
 	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
 	tk.MustExec("alter table t set tiflash replica 1;")
@@ -269,7 +271,39 @@ func TestVectorIndex(t *testing.T) {
 	tk.MustExecToErr("select * from t use index(vecIdx1) where a = 5 order by vec_cosine_distance(d, '[1,1,1,1]') limit 1")
 }
 
-func TestAnalyzeVectorIndex(t *testing.T) {
+func TestInvertedIndex(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
+
+	tk.MustExec("create table t (a int, b bigint, c tinyint, d smallint unsigned, columnar index idx_a (a) using inverted, columnar index idx_b (b) using inverted);")
+	tk.MustExec("alter table t add columnar index idx_c (c) USING inverted;")
+	tk.MustExec("alter table t add columnar index idx_d (d) USING inverted;")
+	tk.MustExec("insert into t values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3), (4, 4, 4, 4);")
+	dom := domain.GetDomain(tk.Session())
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+	tk.MustUseIndex("select * from t force index(idx_a) where a > 0", "idx_a")
+	tk.MustUseIndex("select * from t force index(idx_b) where b < 0", "idx_b")
+	tk.MustUseIndex("select * from t force index(idx_c) where c = 0", "idx_c")
+	tk.MustUseIndex("select * from t force index(idx_d) where d != 0", "idx_d")
+	tk.MustNoIndexUsed("select * from t ignore index(idx_a) where a = 1")
+	tk.MustNoIndexUsed("select * from t ignore index(idx_b) where b = 2")
+	tk.MustNoIndexUsed("select * from t ignore index(idx_c) where c = 3")
+	tk.MustNoIndexUsed("select * from t ignore index(idx_d) where d < 1")
+}
+
+func TestAnalyzeColumnarIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -282,8 +316,8 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 		tiflash.StatusServer.Close()
 		tiflash.Unlock()
 	}()
-	tk.MustExec(`create table t(a int, b vector(2), c vector(3), j json, index(a))`)
-	tk.MustExec("insert into t values(1, '[1, 0]', '[1, 0, 0]', '{\"a\": 1}')")
+	tk.MustExec(`create table t(a int, b vector(2), c datetime, j json, index(a))`)
+	tk.MustExec("insert into t values(1, '[1, 0]', '2022-01-01 12:00:00', '{\"a\": 1}')")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
@@ -292,9 +326,9 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	require.NoError(t, err)
 	testkit.SetTiFlashReplica(t, dom, "test", "t")
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 	tk.MustExec("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW")
-	tk.MustExec("alter table t add vector index idx2((VEC_COSINE_DISTANCE(c))) USING HNSW")
+	tk.MustExec("alter table t add columnar index idx2(c) USING INVERTED")
 
 	tk.MustUseIndex("select * from t use index(idx) order by vec_cosine_distance(b, '[1, 0]') limit 1", "idx")
 	tk.MustUseIndex("select * from t order by vec_cosine_distance(b, '[1, 0]') limit 1", "idx")
@@ -305,15 +339,15 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
-		"Warning 1105 analyzing vector index is not supported, skip idx",
-		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx",
+		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/1) as the sample-rate=1\"",
 		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
-		"Warning 1105 analyzing vector index is not supported, skip idx",
-		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx",
+		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 
 	statsHandle := dom.StatsHandle()
 	statsTbl := statsHandle.GetTableStats(tblInfo)
@@ -332,15 +366,15 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	tk.MustExec("set tidb_analyze_version=1")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 1105 analyzing vector index is not supported, skip idx",
-		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx",
+		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 1105 analyzing vector index is not supported, skip idx"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx"))
 	tk.MustExec("analyze table t index a")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
 	tk.MustExec("analyze table t index a, idx, idx2")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 1105 analyzing vector index is not supported, skip idx",
-		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx",
+		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 }

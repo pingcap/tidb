@@ -49,7 +49,7 @@ func TestXFormedOperatorShouldDeriveTheirStatsOwn(t *testing.T) {
 	// we just left cascades to it to xform and generate a join operator.
 	tk.MustExec("INSERT INTO t1 (a1, b1, c1) VALUES (1, 2, 3), (4, NULL, 5),  (NULL, 6, 7),  (8, 9, NULL),  (10, 11, 12);")
 	tk.MustExec("INSERT INTO t2 values (1,1),(2,2),(3,3)")
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("INSERT INTO t2 select * from t2")
 	}
 	tk.MustExec("analyze table t1, t2")
@@ -71,6 +71,7 @@ func TestXFormedOperatorShouldDeriveTheirStatsOwn(t *testing.T) {
 	res2 = tk.MustQuery("explain format=\"brief\" SELECT /*+ inl_hash_join(tab, t2@sel_2) */ 1 FROM t1 AS tab WHERE  (EXISTS(SELECT  1 FROM t2 WHERE a2 = a1 ))").String()
 	require.Equal(t, res1, res2)
 
+	tk.MustExec("set tidb_hash_join_version=optimized")
 	tk.Session().GetSessionVars().SetEnableCascadesPlanner(false)
 	res1 = tk.MustQuery("explain format=\"brief\" SELECT /*+ hash_join(tab, t2@sel_2) */ 1 FROM t1 AS tab WHERE  (EXISTS(SELECT  1 FROM t2 WHERE a2 = a1 ))").String()
 	tk.Session().GetSessionVars().SetEnableCascadesPlanner(true)

@@ -160,7 +160,7 @@ func (e *AlterDDLJobExec) processAlterDDLJobConfig(
 ) (err error) {
 	ns := sess.NewSession(sessCtx)
 	var job *model.Job
-	for tryN := uint(0); tryN < alterDDLJobMaxRetryCnt; tryN++ {
+	for range alterDDLJobMaxRetryCnt {
 		if err = ns.Begin(ctx); err != nil {
 			continue
 		}
@@ -170,7 +170,7 @@ func (e *AlterDDLJobExec) processAlterDDLJobConfig(
 		}
 		if !job.IsAlterable() {
 			return fmt.Errorf("unsupported DDL operation: %s. "+
-				"Supported DDL operations are: ADD INDEX (with tidb_enable_dist_task=OFF), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION", job.Type.String())
+				"Supported DDL operations are: ADD INDEX, MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION", job.Type.String())
 		}
 		if err = e.updateReorgMeta(job, model.AdminCommandByEndUser); err != nil {
 			continue

@@ -220,6 +220,8 @@ type SessionManager interface {
 	StoreInternalSession(se any)
 	// DeleteInternalSession deletes the internal session pointer from the map in the SessionManager.
 	DeleteInternalSession(se any)
+	// ContainsInternalSession checks if the internal session pointer is in the map in the SessionManager.
+	ContainsInternalSession(se any) bool
 	// GetInternalSessionStartTSList gets all startTS of every transactions running in the current internal sessions.
 	GetInternalSessionStartTSList() []uint64
 	// CheckOldRunningTxn checks if there is an old transaction running in the current sessions

@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -514,7 +515,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.Job
 					break
 				}
 
-				if err == systable.ErrNotFound {
+				if goerrors.Is(err, systable.ErrNotFound) {
 					logutil.DDLLogger().Info("job not found, might already finished",
 						zap.Int64("job_id", jobID))
 					return
@@ -542,6 +543,7 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *tracing.TraceInfo) *
 		store:                s.store,
 		schemaVerSyncer:      s.schemaVerSyncer,
 		eventPublishStore:    s.eventPublishStore,
+		sysTblMgr:            s.sysTblMgr,
 
 		notifyCh: ch,
 		logger: tidblogutil.LoggerWithTraceInfo(
@@ -575,7 +577,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 					return err
 				}
 				s.cleanMDLInfo(job, ownerID)
-			} else if err != systable.ErrNotFound {
+			} else if !goerrors.Is(err, systable.ErrNotFound) {
 				jobCtx.logger.Warn("check MDL info failed", zap.Error(err))
 				return err
 			}
@@ -589,7 +591,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		jobCtx.setAlreadyRunOnce(job.ID)
 	}
 
-	schemaVer, err := wk.transitOneJobStep(jobCtx, jobW, s.sysTblMgr)
+	schemaVer, err := wk.transitOneJobStep(jobCtx, jobW)
 	if err != nil {
 		jobCtx.logger.Info("transit one job step failed", zap.Error(err), zap.Stringer("job", job))
 		return err
@@ -646,7 +648,7 @@ func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 	// TODO we need clean it when version of JobStateRollbackDone is synced also.
 	if job.State == model.JobStateSynced && s.etcdCli != nil {
 		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, job.ID)
-		_, err = s.etcdCli.Delete(s.schCtx, path, clientv3.WithPrefix())
+		err = util.DeleteKeysWithPrefixFromEtcd(path, s.etcdCli, util.KeyOpDefaultRetryCnt, util.KeyOpDefaultTimeout)
 		if err != nil {
 			logutil.DDLLogger().Warn("delete versions failed", zap.Int64("job ID", job.ID), zap.Error(err))
 		}

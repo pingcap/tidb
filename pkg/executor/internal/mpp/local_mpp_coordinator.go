@@ -53,7 +53,7 @@ import (
 )
 
 const (
-	receiveReportTimeout = 3 * time.Second
+	receiveReportTimeout = 100 * time.Millisecond
 )
 
 // mppResponse wraps mpp data packet.
@@ -193,11 +193,11 @@ func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is inf
 }
 
 func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment, allTiFlashZoneInfo map[string]string) error {
-	dagReq, err := builder.ConstructDAGReq(c.sessionCtx, []base.PhysicalPlan{pf.ExchangeSender}, kv.TiFlash)
+	dagReq, err := builder.ConstructDAGReq(c.sessionCtx, []base.PhysicalPlan{pf.Sink}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for i := range pf.ExchangeSender.Schema().Columns {
+	for i := range pf.Sink.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 	if !pf.IsRoot {
@@ -207,7 +207,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment, all
 	}
 	zoneHelper := taskZoneInfoHelper{}
 	zoneHelper.init(allTiFlashZoneInfo)
-	for _, mppTask := range pf.ExchangeSender.Tasks {
+	for _, mppTask := range pf.Sink.GetSelfTasks() {
 		if mppTask.PartitionTableIDs != nil {
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
 		} else if !mppTask.TiFlashStaticPrune {
@@ -237,9 +237,9 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment, all
 		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs),
 			zap.Int64("ID", mppTask.ID), zap.Uint64("QueryTs", mppTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", mppTask.MppQueryID.LocalQueryID),
 			zap.Uint64("ServerID", mppTask.MppQueryID.ServerID), zap.String("address", mppTask.Meta.GetAddress()),
-			zap.String("plan", plannercore.ToString(pf.ExchangeSender)),
+			zap.String("plan", plannercore.ToString(pf.Sink)),
 			zap.Int64("mpp-version", mppTask.MppVersion.ToInt64()),
-			zap.String("exchange-compression-mode", pf.ExchangeSender.CompressionMode.Name()),
+			zap.String("exchange-compression-mode", pf.Sink.GetCompressionMode().Name()),
 			zap.Uint64("GatherID", c.gatherID),
 			zap.String("resource_group", rgName),
 		)
@@ -372,7 +372,7 @@ func (h *taskZoneInfoHelper) init(allTiFlashZoneInfo map[string]string) {
 
 func (h *taskZoneInfoHelper) tryQuickFillWithUncertainZones(exec *tipb.Executor, slots int, sameZoneFlags []bool) (bool, []bool) {
 	if exec.ExecutorId == nil || len(h.currentTaskZone) == 0 {
-		for i := 0; i < slots; i++ {
+		for range slots {
 			sameZoneFlags = append(sameZoneFlags, true)
 		}
 		return true, sameZoneFlags
@@ -385,7 +385,7 @@ func (h *taskZoneInfoHelper) tryQuickFillWithUncertainZones(exec *tipb.Executor,
 	// For CTE exchange nodes, data is passed locally, set all to true
 	if (exec.Tp == tipb.ExecType_TypeExchangeSender && len(exec.ExchangeSender.UpstreamCteTaskMeta) != 0) ||
 		(exec.Tp == tipb.ExecType_TypeExchangeReceiver && len(exec.ExchangeReceiver.OriginalCtePrdocuerTaskMeta) != 0) {
-		for i := 0; i < slots; i++ {
+		for range slots {
 			sameZoneFlags = append(sameZoneFlags, true)
 		}
 		return true, sameZoneFlags
@@ -423,13 +423,13 @@ func (h *taskZoneInfoHelper) inferSameZoneFlag(exec *tipb.Executor, encodedTaskM
 
 	if len(zoneInfos) != slots {
 		// This branch is for safety purpose, not expected
-		for i := 0; i < slots; i++ {
+		for range slots {
 			sameZoneFlags = append(sameZoneFlags, true)
 		}
 		return sameZoneFlags
 	}
 
-	for i := 0; i < slots; i++ {
+	for i := range slots {
 		sameZoneFlags = append(sameZoneFlags, len(zoneInfos[i]) == 0 || h.currentTaskZone == zoneInfos[i])
 	}
 	return sameZoneFlags
@@ -781,7 +781,7 @@ func (c *localMppCoordinator) handleAllReports() error {
 			distsql.FillDummySummariesForTiFlashTasks(c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl, kv.TiFlash, c.planIDs, recordedPlanIDs)
 		case <-time.After(receiveReportTimeout):
 			metrics.MppCoordinatorStatsReportNotReceived.Inc()
-			logutil.BgLogger().Warn(fmt.Sprintf("Mpp coordinator not received all reports within %d seconds", int(receiveReportTimeout.Seconds())),
+			logutil.BgLogger().Info(fmt.Sprintf("Mpp coordinator not received all reports within %d ms", int(receiveReportTimeout.Milliseconds())),
 				zap.Uint64("txnStartTS", c.startTS),
 				zap.Uint64("gatherID", c.gatherID),
 				zap.Int("expectCount", len(c.mppReqs)),
@@ -807,8 +807,10 @@ func (c *localMppCoordinator) closeWithoutReport() {
 	if atomic.CompareAndSwapUint32(&c.closed, 0, 1) {
 		close(c.finishCh)
 	}
-	c.cancelFunc()
-	<-c.wgDoneChan
+	if c.cancelFunc != nil {
+		c.cancelFunc()
+		<-c.wgDoneChan
+	}
 }
 
 func (c *localMppCoordinator) handleMPPStreamResponse(bo *backoff.Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {

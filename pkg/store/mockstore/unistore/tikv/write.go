@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -101,7 +102,7 @@ func (w writeDBWorker) run() {
 			batches = append(batches, batch)
 		}
 		chLen := len(w.batchCh)
-		for i := 0; i < chLen; i++ {
+		for range chLen {
 			batches = append(batches, <-w.batchCh)
 		}
 		if len(batches) > 0 {
@@ -153,7 +154,7 @@ func (w writeLockWorker) run() {
 			batches = append(batches, batch)
 		}
 		chLen := len(w.batchCh)
-		for i := 0; i < chLen; i++ {
+		for range chLen {
 			batches = append(batches, <-w.batchCh)
 		}
 		hint := new(lockstore.Hint)
@@ -166,6 +167,11 @@ func (w writeLockWorker) run() {
 					// Ignore if the key doesn't exist
 					ls.DeleteWithHint(entry.Key.UserKey, hint)
 				default:
+					// Make sure it fits into an arena block.
+					if len(entry.Key.UserKey)+len(entry.Value) > ls.MaxEntrySize() {
+						batch.err = fmt.Errorf("unistore lock entry too big %d > %d", len(entry.Key.UserKey)+len(entry.Value), ls.MaxEntrySize())
+						break
+					}
 					insertCnt++
 					ls.PutWithHint(entry.Key.UserKey, entry.Value, hint)
 				}

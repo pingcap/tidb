@@ -581,7 +581,11 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		partitions = tblInfo.GetPartitionInfo().Definitions
 	}
-	preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, partitions)
+	var scatterScope string
+	if val, ok := job.GetSessionVars(vardef.TiDBScatterRegion); ok {
+		scatterScope = val
+	}
+	preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, partitions, scatterScope)
 
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
@@ -927,7 +931,7 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(
 		childFKInfo.RefTable = newTableName
 	}
 	for _, info := range fkh.loaded {
-		err := updateTable(t, info.schemaID, info.tblInfo)
+		err := updateTable(t, info.schemaID, info.tblInfo, false)
 		if err != nil {
 			return err
 		}
@@ -1323,12 +1327,19 @@ func updateVersionAndTableInfo(jobCtx *jobContext, job *model.Job, tblInfo *mode
 		}
 	}
 
-	err = updateTable(jobCtx.metaMut, job.SchemaID, tblInfo)
+	needUpdateTs := tblInfo.State == model.StatePublic &&
+		job.Type != model.ActionTruncateTable &&
+		job.Type != model.ActionTruncateTablePartition &&
+		job.Type != model.ActionRenameTable &&
+		job.Type != model.ActionRenameTables &&
+		job.Type != model.ActionExchangeTablePartition
+
+	err = updateTable(jobCtx.metaMut, job.SchemaID, tblInfo, needUpdateTs)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	for _, info := range multiInfos {
-		err = updateTable(jobCtx.metaMut, info.schemaID, info.tblInfo)
+		err = updateTable(jobCtx.metaMut, info.schemaID, info.tblInfo, needUpdateTs)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -1336,8 +1347,8 @@ func updateVersionAndTableInfo(jobCtx *jobContext, job *model.Job, tblInfo *mode
 	return ver, nil
 }
 
-func updateTable(t *meta.Mutator, schemaID int64, tblInfo *model.TableInfo) error {
-	if tblInfo.State == model.StatePublic {
+func updateTable(t *meta.Mutator, schemaID int64, tblInfo *model.TableInfo, needUpdateTs bool) error {
+	if needUpdateTs {
 		tblInfo.UpdateTS = t.StartTS
 	}
 	return t.UpdateTable(schemaID, tblInfo)
@@ -1575,10 +1586,9 @@ func onAlterTablePlacement(jobCtx *jobContext, job *model.Job) (ver int64, err e
 	return ver, nil
 }
 
-func getOldLabelRules(tblInfo *model.TableInfo, oldSchemaName, oldTableName string) (string, []string, []string, map[string]*label.Rule, error) {
-	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, oldSchemaName, oldTableName)
-	oldRuleIDs := []string{tableRuleID}
-	var partRuleIDs []string
+func getOldLabelRules(tblInfo *model.TableInfo, oldSchemaName, oldTableName string) (tableRuleID string, partRuleIDs, oldRuleIDs []string, oldRules map[string]*label.Rule, err error) {
+	tableRuleID = fmt.Sprintf(label.TableIDFormat, label.IDPrefix, oldSchemaName, oldTableName)
+	oldRuleIDs = []string{tableRuleID}
 	if tblInfo.GetPartitionInfo() != nil {
 		for _, def := range tblInfo.GetPartitionInfo().Definitions {
 			partRuleIDs = append(partRuleIDs, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName, oldTableName, def.Name.L))
@@ -1586,7 +1596,7 @@ func getOldLabelRules(tblInfo *model.TableInfo, oldSchemaName, oldTableName stri
 	}
 
 	oldRuleIDs = append(oldRuleIDs, partRuleIDs...)
-	oldRules, err := infosync.GetLabelRules(context.TODO(), oldRuleIDs)
+	oldRules, err = infosync.GetLabelRules(context.TODO(), oldRuleIDs)
 	return tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err
 }
 
@@ -1692,4 +1702,20 @@ func onAlterNoCacheTable(jobCtx *jobContext, job *model.Job) (ver int64, err err
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("alter table no cache", tbInfo.TableCacheStatusType.String())
 	}
 	return ver, err
+}
+
+func onRefreshMeta(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	_, err = model.GetRefreshMetaArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+	// update schema version
+	ver, err = updateSchemaVersion(jobCtx, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.State = model.JobStateDone
+	job.SchemaState = model.StatePublic
+	return ver, nil
 }

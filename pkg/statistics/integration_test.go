@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -237,7 +238,7 @@ func TestExpBackoffEstimation(t *testing.T) {
 	// Query a = 1, b = 1, c = 1, d >= 3 and d <= 5 separately. We got 5, 3, 2, 3.
 	// And then query and a = 1 and b = 1 and c = 1 and d >= 3 and d <= 5. It's result should follow the exp backoff,
 	// which is 2/5 * (3/5)^{1/2} * (3/5)*{1/4} * 1^{1/8} * 5 = 1.3634.
-	for i := 0; i < inputLen-1; i++ {
+	for i := range inputLen - 1 {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
 		})
@@ -280,7 +281,7 @@ func TestNULLOnFullSampling(t *testing.T) {
 	integrationSuiteData := statistics.GetIntegrationSuiteData()
 	integrationSuiteData.LoadTestCases(t, &input, &output)
 	// Check the topn and buckets contains no null values.
-	for i := 0; i < len(input); i++ {
+	for i := range input {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
 		})
@@ -430,7 +431,7 @@ func TestSingleColumnIndexNDV(t *testing.T) {
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("insert into t values (1, 1, 'xxx', 'zzz'), (2, 2, 'yyy', 'zzz'), (1, 3, null, 'zzz')")
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		tk.MustExec("insert into t select * from t")
 	}
 	tk.MustExec("analyze table t")
@@ -593,7 +594,7 @@ func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
 
 	tblID := dom.MustGetTableID(t, "test", "t")
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("analyze table t")
 	}
 	// Each analyze will only generate one record
@@ -622,4 +623,93 @@ func TestLastAnalyzeVersionNotChangedWithAsyncStatsLoad(t *testing.T) {
 	require.Len(t, result.Rows(), 1)
 	// The last analyze time.
 	require.Equal(t, "<nil>", result.Rows()[0][6])
+}
+
+func TestSaveMetaToStorage(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tableCount := 10
+	metaUpdates := make([]types.MetaUpdate, 0, tableCount)
+	tableIDs := make([]string, 0, tableCount)
+	for i := range tableCount {
+		tableName := fmt.Sprintf("save_metas_%d", i)
+		tk.MustExec(fmt.Sprintf("drop table if exists test.%s", tableName))
+		tk.MustExec(fmt.Sprintf("create table test.%s (id int)", tableName))
+		tableInfo, err := dom.InfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr(tableName))
+		require.NoError(t, err)
+		metaUpdates = append(metaUpdates, types.MetaUpdate{
+			PhysicalID: tableInfo.ID,
+			Count:      tableInfo.ID,
+		})
+		tableIDs = append(tableIDs, fmt.Sprintf("%d", tableInfo.ID))
+	}
+	statsHandler := dom.StatsHandle()
+	err := statsHandler.SaveMetaToStorage("test", false, metaUpdates...)
+	require.NoError(t, err)
+	rows := tk.MustQuery(
+		fmt.Sprintf(
+			"select version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta where table_id in (%s)",
+			strings.Join(tableIDs, ","),
+		),
+	).Rows()
+	require.Len(t, rows, tableCount)
+	baseVersion := ""
+	for _, cols := range rows {
+		require.Len(t, cols, 6)
+		version := cols[0].(string)
+		tableID := cols[1].(string)
+		modifyCount := cols[2].(string)
+		count := cols[3].(string)
+		snapshot := cols[4].(string)
+		lastStatsHistogramsVersion := cols[5].(string)
+		if len(baseVersion) > 0 {
+			require.Equal(t, baseVersion, version)
+		} else {
+			baseVersion = version
+		}
+		require.NotEqual(t, "0", tableID)
+		require.Equal(t, tableID, count)
+		require.Equal(t, "0", snapshot)
+		require.Equal(t, "0", modifyCount)
+		require.Equal(t, "<nil>", lastStatsHistogramsVersion)
+	}
+
+	for i := range tableCount {
+		metaUpdates[i].ModifyCount = metaUpdates[i].Count
+		metaUpdates[i].Count += metaUpdates[i].ModifyCount
+	}
+	err = statsHandler.SaveMetaToStorage("test", true, metaUpdates...)
+	require.NoError(t, err)
+	rows = tk.MustQuery(
+		fmt.Sprintf(
+			"select version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta where table_id in (%s)",
+			strings.Join(tableIDs, ","),
+		),
+	).Rows()
+	require.Len(t, rows, tableCount)
+	nextVersion := ""
+	for _, cols := range rows {
+		require.Len(t, cols, 6)
+		version := cols[0].(string)
+		tableID := cols[1].(string)
+		var tableIDI64 int64
+		_, err := fmt.Sscanf(tableID, "%d", &tableIDI64)
+		require.NoError(t, err)
+		expectCount := fmt.Sprintf("%d", tableIDI64*2)
+		modifyCount := cols[2].(string)
+		count := cols[3].(string)
+		snapshot := cols[4].(string)
+		lastStatsHistogramsVersion := cols[5].(string)
+		if len(nextVersion) > 0 {
+			require.Equal(t, nextVersion, version)
+		} else {
+			nextVersion = version
+			require.NotEqual(t, baseVersion, nextVersion)
+		}
+		require.NotEqual(t, "0", tableID)
+		require.Equal(t, expectCount, count)
+		require.Equal(t, "0", snapshot)
+		require.Equal(t, tableID, modifyCount)
+		require.Equal(t, version, lastStatsHistogramsVersion)
+	}
 }

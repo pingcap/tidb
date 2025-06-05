@@ -64,7 +64,7 @@ const (
 	flagRateLimit           = "ratelimit"
 	flagRateLimitUnit       = "ratelimit-unit"
 	flagConcurrency         = "concurrency"
-	FlagChecksum            = "checksum"
+	flagChecksum            = "checksum"
 	flagFilter              = "filter"
 	flagCaseSensitive       = "case-sensitive"
 	flagRemoveTiFlash       = "remove-tiflash"
@@ -252,9 +252,12 @@ type Config struct {
 	// should be removed after TiDB upgrades the BR dependency.
 	Filter filter.MySQLReplicationRules
 
-	FilterStr          []string      `json:"filter-strings" toml:"filter-strings"`
-	TableFilter        filter.Filter `json:"-" toml:"-"`
-	SwitchModeInterval time.Duration `json:"switch-mode-interval" toml:"switch-mode-interval"`
+	FilterStr   []string      `json:"filter-strings" toml:"filter-strings"`
+	TableFilter filter.Filter `json:"-" toml:"-"`
+	// PiTRTableTracker generated from TableFilter during snapshot restore, it has all the db id and table id that needs
+	// to be restored
+	PiTRTableTracker   *utils.PiTRIdTracker `json:"-" toml:"-"`
+	SwitchModeInterval time.Duration        `json:"switch-mode-interval" toml:"switch-mode-interval"`
 	// Schemas is a database name set, to check whether the restore database has been backup
 	Schemas map[string]struct{}
 	// Tables is a table name set, to check whether the restore table has been backup
@@ -297,7 +300,8 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.Uint(flagChecksumConcurrency, vardef.DefChecksumTableConcurrency, "The concurrency of checksumming in one table")
 
 	flags.Uint64(flagRateLimit, unlimited, "The rate limit of the task, MB/s per node")
-	flags.Bool(FlagChecksum, true, "Run checksum at end of task")
+	// default to false as we think it's unnecessary to run in production as it's resource intensive
+	flags.Bool(flagChecksum, false, "Run checksum at end of task")
 	flags.Bool(flagRemoveTiFlash, true,
 		"Remove TiFlash replicas before backup or restore, for unsupported versions of TiFlash")
 
@@ -359,7 +363,7 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 
 // HiddenFlagsForStream temporary hidden flags that stream cmd not support.
 func HiddenFlagsForStream(flags *pflag.FlagSet) {
-	_ = flags.MarkHidden(FlagChecksum)
+	_ = flags.MarkHidden(flagChecksum)
 	_ = flags.MarkHidden(flagLoadStats)
 	_ = flags.MarkHidden(flagChecksumConcurrency)
 	_ = flags.MarkHidden(flagRateLimit)
@@ -401,7 +405,7 @@ func DefineTableFlags(command *cobra.Command) {
 	_ = command.MarkFlagRequired(flagTable)
 }
 
-// DefineFilterFlags defines the --filter and --case-sensitive flags for `full` subcommand.
+// DefineFilterFlags defines the --filter and --case-sensitive flags.
 func DefineFilterFlags(command *cobra.Command, defaultFilter []string, setHidden bool) {
 	flags := command.Flags()
 	flags.StringArrayP(flagFilter, "f", defaultFilter, "select tables to process")
@@ -613,7 +617,7 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if cfg.Checksum, err = flags.GetBool(FlagChecksum); err != nil {
+	if cfg.Checksum, err = flags.GetBool(flagChecksum); err != nil {
 		return errors.Trace(err)
 	}
 	if cfg.ChecksumConcurrency, err = flags.GetUint(flagChecksumConcurrency); err != nil {
@@ -659,11 +663,14 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 				Schema: db,
 				Name:   tbl,
 			})
+			cfg.FilterStr = []string{fmt.Sprintf("`%s`.`%s`", db, tbl)}
 		} else {
 			cfg.TableFilter = filter.NewSchemasFilter(db)
+			cfg.FilterStr = []string{fmt.Sprintf("`%s`.*", db)}
 		}
 	} else {
 		cfg.TableFilter, _ = filter.Parse([]string{"*.*"})
+		cfg.FilterStr = []string{"*.*"}
 	}
 	if !caseSensitive {
 		cfg.TableFilter = filter.CaseInsensitive(cfg.TableFilter)
@@ -998,9 +1005,15 @@ func progressFileWriterRoutine(ctx context.Context, progress glue.Progress, tota
 		cur := progress.GetCurrent()
 		p := float64(cur) / float64(total)
 		p *= 100
-		err := os.WriteFile(progressFile, []byte(fmt.Sprintf("%.2f", p)), 0600)
+		err := os.WriteFile(progressFile, fmt.Appendf(nil, "%.2f", p), 0600)
 		if err != nil {
 			log.Warn("failed to update tmp progress file", zap.Error(err))
 		}
 	}
+}
+
+func WriteStringToConsole(g glue.Glue, msg string) error {
+	b := []byte(msg)
+	_, err := glue.GetConsole(g).Out().Write(b)
+	return err
 }

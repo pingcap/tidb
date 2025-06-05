@@ -17,8 +17,10 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"math"
 	"math/bits"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -203,6 +205,7 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
+	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
@@ -388,10 +391,15 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 
 	// The LogicalJoin may be also a LogicalApply. So we must use self to set parents.
 	if topN != nil {
-		if topnEliminated && len(topN.ByItems) > 0 {
-			sort := LogicalSort{ByItems: topN.ByItems}.Init(p.SCtx(), p.QueryBlockOffset())
-			sort.SetChildren(p.Self())
-			return sort
+		if topnEliminated {
+			// Add a sort if the topN has order by items.
+			if len(topN.ByItems) > 0 {
+				sort := LogicalSort{ByItems: topN.ByItems}.Init(p.SCtx(), p.QueryBlockOffset())
+				sort.SetChildren(p.Self())
+				return sort
+			}
+			// If the topN has no order by items, simply return the join itself.
+			return p.Self()
 		}
 		return topN.AttachChild(p.Self(), opt)
 	}
@@ -529,9 +537,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			RowCount: leftProfile.RowCount,
 			ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 		})
-		for id, c := range leftProfile.ColNDVs {
-			p.StatsInfo().ColNDVs[id] = c
-		}
+		maps.Copy(p.StatsInfo().ColNDVs, leftProfile.ColNDVs)
 		p.StatsInfo().ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
 		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
 		return p.StatsInfo(), true, nil
@@ -678,7 +684,7 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
 		canBeSimplified := false
 		for _, expr := range predicates {
-			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr)
+			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
 			if isOk {
 				canBeSimplified = true
 				break
@@ -731,7 +737,7 @@ func (p *LogicalJoin) Shallow() *LogicalJoin {
 }
 
 // ExtractFDForSemiJoin extracts FD for semi join.
-func (p *LogicalJoin) ExtractFDForSemiJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
+func (p *LogicalJoin) ExtractFDForSemiJoin(equivFromApply [][]intset.FastIntSet) *funcdep.FDSet {
 	// 1: since semi join will keep the part or all rows of the outer table, it's outer FD can be saved.
 	// 2: the un-projected column will be left for the upper layer projection or already be pruned from bottom up.
 	outerFD, _ := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
@@ -739,10 +745,13 @@ func (p *LogicalJoin) ExtractFDForSemiJoin(filtersFromApply []expression.Express
 
 	eqCondSlice := expression.ScalarFuncs2Exprs(p.EqualConditions)
 	allConds := append(eqCondSlice, p.OtherConditions...)
-	allConds = append(allConds, filtersFromApply...)
 	notNullColsFromFilters := util.ExtractNotNullFromConds(allConds, p)
 
 	constUniqueIDs := util.ExtractConstantCols(p.LeftConditions, p.SCtx(), fds)
+
+	for _, equiv := range equivFromApply {
+		fds.AddEquivalence(equiv[0], equiv[1])
+	}
 
 	fds.MakeNotNull(notNullColsFromFilters)
 	fds.AddConstants(constUniqueIDs)
@@ -751,7 +760,7 @@ func (p *LogicalJoin) ExtractFDForSemiJoin(filtersFromApply []expression.Express
 }
 
 // ExtractFDForInnerJoin extracts FD for inner join.
-func (p *LogicalJoin) ExtractFDForInnerJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
+func (p *LogicalJoin) ExtractFDForInnerJoin(equivFromApply [][]intset.FastIntSet) *funcdep.FDSet {
 	leftFD, rightFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
 	fds := leftFD
 	fds.MakeCartesianProduct(rightFD)
@@ -759,7 +768,6 @@ func (p *LogicalJoin) ExtractFDForInnerJoin(filtersFromApply []expression.Expres
 	eqCondSlice := expression.ScalarFuncs2Exprs(p.EqualConditions)
 	// some join eq conditions are stored in the OtherConditions.
 	allConds := append(eqCondSlice, p.OtherConditions...)
-	allConds = append(allConds, filtersFromApply...)
 	notNullColsFromFilters := util.ExtractNotNullFromConds(allConds, p)
 
 	constUniqueIDs := util.ExtractConstantCols(allConds, p.SCtx(), fds)
@@ -769,6 +777,9 @@ func (p *LogicalJoin) ExtractFDForInnerJoin(filtersFromApply []expression.Expres
 	fds.MakeNotNull(notNullColsFromFilters)
 	fds.AddConstants(constUniqueIDs)
 	for _, equiv := range equivUniqueIDs {
+		fds.AddEquivalence(equiv[0], equiv[1])
+	}
+	for _, equiv := range equivFromApply {
 		fds.AddEquivalence(equiv[0], equiv[1])
 	}
 	// merge the not-null-cols/registered-map from both side together.
@@ -793,7 +804,7 @@ func (p *LogicalJoin) ExtractFDForInnerJoin(filtersFromApply []expression.Expres
 }
 
 // ExtractFDForOuterJoin extracts FD for outer join.
-func (p *LogicalJoin) ExtractFDForOuterJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
+func (p *LogicalJoin) ExtractFDForOuterJoin(equivFromApply [][]intset.FastIntSet) *funcdep.FDSet {
 	outerFD, innerFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
 	innerCondition := p.RightConditions
 	outerCondition := p.LeftConditions
@@ -815,7 +826,6 @@ func (p *LogicalJoin) ExtractFDForOuterJoin(filtersFromApply []expression.Expres
 	allConds := append(eqCondSlice, p.OtherConditions...)
 	allConds = append(allConds, innerCondition...)
 	allConds = append(allConds, outerCondition...)
-	allConds = append(allConds, filtersFromApply...)
 	notNullColsFromFilters := util.ExtractNotNullFromConds(allConds, p)
 
 	filterFD := &funcdep.FDSet{HashCodeToUniqueID: make(map[string]int)}
@@ -827,6 +837,14 @@ func (p *LogicalJoin) ExtractFDForOuterJoin(filtersFromApply []expression.Expres
 	filterFD.AddConstants(constUniqueIDs)
 	equivOuterUniqueIDs := intset.NewFastIntSet()
 	equivAcrossNum := 0
+	// apply (left join)
+	//   +--- child0 [t1.a]
+	//   +--- project [correlated col{t1.a} --> col#9]
+	// since project correlated col{t1.a} is equivalent to t1.a, we should maintain t1.a == col#9. since apply is
+	// a left join, the probe side will append null value for the non-matched row, so we should maintain the equivalence
+	// before the fds.MakeOuterJoin(). Even correlated col{t1.a} is not from outer side here, we could also maintain
+	// the equivalence before the fds.MakeOuterJoin().
+	equivUniqueIDs = append(equivUniqueIDs, equivFromApply...)
 	for _, equiv := range equivUniqueIDs {
 		filterFD.AddEquivalence(equiv[0], equiv[1])
 		if equiv[0].SubsetOf(outerCols) && equiv[1].SubsetOf(innerCols) {
@@ -991,7 +1009,7 @@ func (p *LogicalJoin) ColumnSubstituteAll(schema *expression.Schema, exprs []exp
 		// we can push this filter to it.
 		if expression.ExprFromSchema(newCond, p.Children()[0].Schema()) {
 			p.LeftConditions = append(p.LeftConditions, newCond)
-			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			p.EqualConditions = slices.Delete(p.EqualConditions, i, i+1)
 			continue
 		}
 
@@ -999,7 +1017,7 @@ func (p *LogicalJoin) ColumnSubstituteAll(schema *expression.Schema, exprs []exp
 		// child, we can push this filter to it.
 		if expression.ExprFromSchema(newCond, p.Children()[1].Schema()) {
 			p.RightConditions = append(p.RightConditions, newCond)
-			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			p.EqualConditions = slices.Delete(p.EqualConditions, i, i+1)
 			continue
 		}
 
@@ -1010,7 +1028,7 @@ func (p *LogicalJoin) ColumnSubstituteAll(schema *expression.Schema, exprs []exp
 		// we can not use it as join's equal condition.
 		if !(lhsIsCol && rhsIsCol) {
 			p.OtherConditions = append(p.OtherConditions, newCond)
-			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			p.EqualConditions = slices.Delete(p.EqualConditions, i, i+1)
 			continue
 		}
 
@@ -1064,23 +1082,22 @@ func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (left
 	rChild := p.Children()[1]
 	lSchema := lChild.Schema()
 	rSchema := rChild.Schema()
+	var lFullSchema, rFullSchema *expression.Schema
 	// parentused col = t2.a
 	// leftChild schema = t1.a(t2.a) + and others
 	// rightChild schema = t3 related + and others
 	if join, ok := lChild.(*LogicalJoin); ok {
-		if join.FullSchema != nil {
-			lSchema = join.FullSchema
-		}
+		lFullSchema = join.FullSchema
 	}
 	if join, ok := rChild.(*LogicalJoin); ok {
-		if join.FullSchema != nil {
-			rSchema = join.FullSchema
-		}
+		rFullSchema = join.FullSchema
 	}
 	for _, col := range parentUsedCols {
-		if lSchema != nil && lSchema.Contains(col) {
+		if (lSchema != nil && lSchema.Contains(col)) ||
+			(lFullSchema != nil && lFullSchema.Contains(col)) {
 			leftCols = append(leftCols, col)
-		} else if rSchema != nil && rSchema.Contains(col) {
+		} else if (rSchema != nil && rSchema.Contains(col)) ||
+			(rFullSchema != nil && rFullSchema.Contains(col)) {
 			rightCols = append(rightCols, col)
 		}
 	}
@@ -1253,13 +1270,13 @@ func (p *LogicalJoin) ExtractOnCondition(
 				}
 				if leftCol != nil && rightCol != nil {
 					if deriveLeft {
-						if util.IsNullRejected(ctx, leftSchema, expr) && !mysql.HasNotNullFlag(leftCol.RetType.GetFlag()) {
+						if util.IsNullRejected(ctx, leftSchema, expr, true) && !mysql.HasNotNullFlag(leftCol.RetType.GetFlag()) {
 							notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), leftCol)
 							leftCond = append(leftCond, notNullExpr)
 						}
 					}
 					if deriveRight {
-						if util.IsNullRejected(ctx, rightSchema, expr) && !mysql.HasNotNullFlag(rightCol.RetType.GetFlag()) {
+						if util.IsNullRejected(ctx, rightSchema, expr, true) && !mysql.HasNotNullFlag(rightCol.RetType.GetFlag()) {
 							notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), rightCol)
 							rightCond = append(rightCond, notNullExpr)
 						}
@@ -1319,7 +1336,7 @@ func (p *LogicalJoin) ExtractOnCondition(
 // children of join, whatever the join type is; if false, push it down to inner child of outer join,
 // and both children of non-outer-join.
 func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []expression.Expression,
-	rightCond []expression.Expression, filterCond bool) ([]expression.Expression, []expression.Expression) {
+	rightCond []expression.Expression, filterCond bool) (_, _ []expression.Expression) {
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		if filterCond {
@@ -1544,7 +1561,7 @@ func (p *LogicalJoin) updateEQCond() {
 			}
 		}
 		if need2Remove {
-			p.OtherConditions = append(p.OtherConditions[:i], p.OtherConditions[i+1:]...)
+			p.OtherConditions = slices.Delete(p.OtherConditions, i, i+1)
 		}
 	}
 	// eg: explain select * from t1, t3 where t1.a+1 = t3.a;
@@ -1595,7 +1612,7 @@ func (p *LogicalJoin) updateEQCond() {
 	canBeNAAJ := (p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin) && len(p.EqualConditions) == 0
 	if canBeNAAJ && p.SCtx().GetSessionVars().OptimizerEnableNAAJ {
 		var otherCond expression.CNFExprs
-		for i := 0; i < len(p.OtherConditions); i++ {
+		for i := range p.OtherConditions {
 			eqCond, ok := p.OtherConditions[i].(*expression.ScalarFunction)
 			if ok && eqCond.FuncName.L == ast.EQ && expression.IsEQCondFromIn(eqCond) {
 				// here must be a EQCondFromIn.
@@ -1865,29 +1882,8 @@ func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema 
 	if childCol == nil {
 		childCol = schema.RetrieveColumn(arg1)
 	}
-	if util.IsNullRejected(ctx, schema, expr) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
+	if util.IsNullRejected(ctx, schema, expr, true) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
 		return expression.BuildNotNullExpr(ctx.GetExprCtx(), childCol)
-	}
-	return nil
-}
-
-// Conds2TableDual builds a LogicalTableDual if cond is constant false or null.
-func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.LogicalPlan {
-	if len(conds) != 1 {
-		return nil
-	}
-	con, ok := conds[0].(*expression.Constant)
-	if !ok {
-		return nil
-	}
-	sc := p.SCtx().GetSessionVars().StmtCtx
-	if expression.MaybeOverOptimized4PlanCache(p.SCtx().GetExprCtx(), []expression.Expression{con}) {
-		return nil
-	}
-	if isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault()); (err == nil && isTrue == 0) || con.Value.IsNull() {
-		dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
-		dual.SetSchema(p.Schema())
-		return dual
 	}
 	return nil
 }

@@ -85,6 +85,7 @@ func InitMetrics() {
 	InitLogBackupMetrics()
 	InitMetaMetrics()
 	InitOwnerMetrics()
+	InitRawKVMetrics()
 	InitResourceManagerMetrics()
 	InitServerMetrics()
 	InitSessionMetrics()
@@ -98,8 +99,6 @@ func InitMetrics() {
 	InitInfoSchemaV2Metrics()
 	timermetrics.InitTimerMetrics()
 
-	// For now, those metrics are initialized but not registered.
-	// They will be printed to log during restoring...
 	InitBRMetrics()
 
 	PanicCounter = NewCounterVec(
@@ -245,6 +244,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatsHealthyGauge)
 	prometheus.MustRegister(StatsDeltaLoadHistogram)
 	prometheus.MustRegister(StatsDeltaUpdateHistogram)
+	prometheus.MustRegister(StatsUsageUpdateHistogram)
 	prometheus.MustRegister(TxnStatusEnteringCounter)
 	prometheus.MustRegister(TxnDurationHistogram)
 	prometheus.MustRegister(LastCheckpoint)
@@ -257,6 +257,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(RegionCheckpointSubscriptionEvent)
 	prometheus.MustRegister(RCCheckTSWriteConfilictCounter)
 	prometheus.MustRegister(FairLockingUsageCount)
+	prometheus.MustRegister(PessimisticLockKeysDuration)
 	prometheus.MustRegister(MemoryLimit)
 
 	prometheus.MustRegister(TTLQueryDuration)
@@ -277,8 +278,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PlanReplayerTaskCounter)
 	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
 
-	prometheus.MustRegister(DistTaskGauge)
-	prometheus.MustRegister(DistTaskStartTimeGauge)
 	prometheus.MustRegister(DistTaskUsedSlotsGauge)
 	prometheus.MustRegister(RunawayCheckerCounter)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageDuration)
@@ -288,6 +287,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GlobalSortIngestWorkerCnt)
 	prometheus.MustRegister(GlobalSortUploadWorkerCount)
 	prometheus.MustRegister(AddIndexScanRate)
+	prometheus.MustRegister(RetryableErrorCount)
 
 	prometheus.MustRegister(InfoSchemaV2CacheCounter)
 	prometheus.MustRegister(InfoSchemaV2CacheMemUsage)
@@ -301,8 +301,30 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BindingCacheMemLimit)
 	prometheus.MustRegister(BindingCacheNumBindings)
 	prometheus.MustRegister(InternalSessions)
+	prometheus.MustRegister(ActiveUser)
 
-	tikvmetrics.InitMetrics(TiDB, TiKVClient)
+	prometheus.MustRegister(NetworkTransmissionStats)
+
+	prometheus.MustRegister(RestoreTableCreatedCount)
+	prometheus.MustRegister(RestoreImportFileSeconds)
+	prometheus.MustRegister(RestoreUploadSSTForPiTRSeconds)
+	prometheus.MustRegister(RestoreUploadSSTMetaForPiTRSeconds)
+
+	prometheus.MustRegister(RawKVBatchPutDurationSeconds)
+	prometheus.MustRegister(RawKVBatchPutBatchSize)
+
+	prometheus.MustRegister(MetaKVBatchFiles)
+	prometheus.MustRegister(MetaKVBatchFilteredKeys)
+	prometheus.MustRegister(MetaKVBatchKeys)
+	prometheus.MustRegister(MetaKVBatchSize)
+
+	prometheus.MustRegister(KVApplyBatchDuration)
+	prometheus.MustRegister(KVApplyBatchFiles)
+	prometheus.MustRegister(KVApplyBatchRegions)
+	prometheus.MustRegister(KVApplyBatchSize)
+	prometheus.MustRegister(KVApplyRegionFiles)
+
+	tikvmetrics.InitMetricsWithConstLabels(TiDB, TiKVClient, GetConstLabels())
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
 }

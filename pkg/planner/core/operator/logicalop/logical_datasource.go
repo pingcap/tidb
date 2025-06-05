@@ -67,7 +67,14 @@ type DataSource struct {
 	StatisticTable *statistics.Table
 	TableStats     *property.StatsInfo
 
-	// PossibleAccessPaths stores all the possible access path for physical plan, including table scan.
+	// AllPossibleAccessPaths stores all the possible access path from build datasource phase.
+	AllPossibleAccessPaths []*util.AccessPath
+	// PossibleAccessPaths stores all the possible access path for one specific logical alternative.
+	// because different logical alternative may have different filter condition, so the possible access path may be different.
+	// like:
+	// * special rule XForm will gen additional selection which will be push down to a ds alternative.
+	// * correlate rule XForm will gen additional correlated condition which will be push down to a ds alternative.
+	// No matter whether the newly generated ds is always good or not, we should both derive the stats from the conditions we so far.
 	PossibleAccessPaths []*util.AccessPath
 
 	// The data source may be a partition, rather than a real table.
@@ -155,6 +162,11 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 	// TODO: remove it to the place building logical plan
 	predicates = utilfuncp.AddPrefix4ShardIndexes(ds, ds.SCtx(), predicates)
 	ds.AllConds = predicates
+	dual := Conds2TableDual(ds, ds.AllConds)
+	if dual != nil {
+		AppendTableDualTraceStep(ds, dual, predicates, opt)
+		return nil, dual
+	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
 	return predicates, ds
@@ -187,6 +199,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 				continue
 			}
 			prunedColumns = append(prunedColumns, ds.Schema().Columns[i])
+			// TODO: investigate why we cannot use slices.Delete for these two:
 			ds.Schema().Columns = append(ds.Schema().Columns[:i], ds.Schema().Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
 		}
@@ -301,8 +314,8 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
 func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	result := make([][]*expression.Column, 0, len(ds.PossibleAccessPaths))
-	for _, path := range ds.PossibleAccessPaths {
+	result := make([][]*expression.Column, 0, len(ds.AllPossibleAccessPaths))
+	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsIntHandlePath {
 			col := ds.GetPKIsHandleCol()
 			if col != nil {

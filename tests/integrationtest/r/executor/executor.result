@@ -2454,6 +2454,10 @@ select x.a from (select 1 a) `x`, (select 2 a) `x`;
 Error 1066 (42000): Not unique table/alias: 'x'
 select a from (select 1 a), (select 2 a);
 Error 1248 (42000): Every derived table must have its own alias
+select * from (select 1 union select 1);
+Error 1248 (42000): Every derived table must have its own alias
+select * from (select 1 INTERSECT select 1);
+Error 1248 (42000): Every derived table must have its own alias
 set sql_mode = 'oracle';
 select a, b from (select 1 a) ``, (select 2 b) ``;
 a	b
@@ -2472,6 +2476,12 @@ select x.a from (select 1 a) `x`, (select 2 a) `x`;
 Error 1052 (23000): Column 'a' in field list is ambiguous
 select a from (select 1 a), (select 2 a);
 Error 1052 (23000): Column 'a' in field list is ambiguous
+select * from (select 1 union select 1);
+1
+1
+select * from (select 1 INTERSECT select 1);
+1
+1
 set sql_mode = default;
 drop table if exists th;
 create table th (a int, b int) partition by hash(a) partitions 3;
@@ -2765,47 +2775,35 @@ create table t (c1 year(4), c2 int, key(c1));
 insert into t values(2001, 1);
 explain format = 'brief' select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
-MergeJoin	0.00	root		inner join, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-├─TableDual(Build)	0.00	root		rows:0
-└─TableDual(Probe)	0.00	root		rows:0
+TableDual	0.00	root		rows:0
 select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c1
 explain format = 'brief' select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
-MergeJoin	0.00	root		inner join, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-├─TableDual(Build)	0.00	root		rows:0
-└─TableDual(Probe)	0.00	root		rows:0
+TableDual	0.00	root		rows:0
 select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c2	c1	c2
 explain format = 'brief' select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#7
-└─MergeJoin	0.00	root		inner join, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-  ├─TableDual(Build)	0.00	root		rows:0
-  └─TableDual(Probe)	0.00	root		rows:0
+└─TableDual	0.00	root		rows:0
 select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 count(*)
 0
 explain format = 'brief' select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
-MergeJoin	0.00	root		left outer join, left side:TableDual, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-├─TableDual(Build)	0.00	root		rows:0
-└─TableDual(Probe)	0.00	root		rows:0
+TableDual	0.00	root		rows:0
 select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c1
 explain format = 'brief' select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
-MergeJoin	0.00	root		left outer join, left side:TableDual, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-├─TableDual(Build)	0.00	root		rows:0
-└─TableDual(Probe)	0.00	root		rows:0
+TableDual	0.00	root		rows:0
 select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c2	c1	c2
 explain format = 'brief' select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#7
-└─MergeJoin	0.00	root		left outer join, left side:TableDual, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-  ├─TableDual(Build)	0.00	root		rows:0
-  └─TableDual(Probe)	0.00	root		rows:0
+└─TableDual	0.00	root		rows:0
 select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 count(*)
 0
@@ -4273,6 +4271,9 @@ commit;
 commit;
 Error 9007 (HY000): Write conflict, <detail> reason=Optimistic [try again later]
 set global tidb_txn_mode=pessimistic;
+select 1 for update;
+1
+1
 drop table if exists t, t1;
 create table t (i int);
 create table t1 (i int);
