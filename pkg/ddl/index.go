@@ -1256,6 +1256,7 @@ func checkIfTableReorgWorkCanSkip(
 	return true
 }
 
+// CheckImportIntoTableIsEmpty check import into table is empty or not.
 func CheckImportIntoTableIsEmpty(
 	store kv.Storage,
 	sessCtx sessionctx.Context,
