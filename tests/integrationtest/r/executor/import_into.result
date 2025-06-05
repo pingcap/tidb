@@ -64,14 +64,26 @@ import into t from '/file.csv' with lines_terminated_by=true;
 Error 8164 (HY000): Invalid option value for lines_terminated_by
 import into t from '/file.csv' with lines_terminated_by='';
 Error 8164 (HY000): Invalid option value for lines_terminated_by
+import into t from '/file.csv' with skip_rows=null;
+Error 8164 (HY000): Invalid option value for skip_rows
+import into t from '/file.csv' with skip_rows='';
+Error 8164 (HY000): Invalid option value for skip_rows
+import into t from '/file.csv' with skip_rows=-1;
+Error 8164 (HY000): Invalid option value for skip_rows
+import into t from '/file.csv' with skip_rows=true;
+Error 8164 (HY000): Invalid option value for skip_rows
 import into t from '/file.csv' with has_csv_header=null;
 Error 8164 (HY000): Invalid option value for has_csv_header
 import into t from '/file.csv' with has_csv_header="None";
+Error 8164 (HY000): Invalid option value for has_csv_header
+import into t from '/file.csv' with has_csv_header="auto", skip_rows=1;
 Error 8164 (HY000): Invalid option value for has_csv_header
 import into t from '/file.csv' with split_file='aa';
 Error 8164 (HY000): Invalid option value for split_file
 import into t from '/file.csv' with split_file;
 Error 8164 (HY000): Invalid option value for lines_terminated_by, should not be empty when use split_file
+import into t from '/file.csv' with split_file, skip_rows=2;
+Error 8164 (HY000): Invalid option value for skip_rows, should be <= 1 when split-file is enabled
 import into t from '/file.csv' with disk_quota='aa';
 Error 8164 (HY000): Invalid option value for disk_quota
 import into t from '/file.csv' with disk_quota='220MiBxxx';
@@ -152,6 +164,10 @@ import into t from '/file.csv' format 'parquet' with lines_terminated_by='a';
 Error 8166 (HY000): Unsupported option lines_terminated_by for non-CSV format
 import into t from '/file.csv' format 'sql' with lines_terminated_by='a';
 Error 8166 (HY000): Unsupported option lines_terminated_by for non-CSV format
+import into t from '/file.csv' format 'parquet' with skip_rows=1;
+Error 8166 (HY000): Unsupported option skip_rows for non-CSV format
+import into t from '/file.csv' format 'sql' with skip_rows=1;
+Error 8166 (HY000): Unsupported option skip_rows for non-CSV format
 import into t from '/file.csv' format 'parquet' with split_file;
 Error 8166 (HY000): Unsupported option split_file for non-CSV format
 import into t from '/file.csv' format 'sql' with split_file;

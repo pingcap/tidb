@@ -300,6 +300,50 @@ func (s *mockGCSSuite) TestInputNull() {
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 def 11", "2 test2 22"}...))
 }
 
+func (s *mockGCSSuite) TestIgnoreNLines() {
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-multi-load", Name: "skip-rows-1.csv"},
+		Content: []byte(`1,test1,11
+2,test2,22
+3,test3,33
+4,test4,44`),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-multi-load", Name: "skip-rows-2.csv"},
+		Content: []byte(`5,test5,55
+6,test6,66
+7,test7,77
+8,test8,88
+9,test9,99`),
+	})
+	s.prepareAndUseDB("load_data")
+	s.tk.MustExec("drop table if exists t;")
+	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
+	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
+	s.tk.MustQuery(loadDataSQL)
+	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
+		"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44",
+		"5 test5 55", "6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
+	}...))
+	s.tk.MustExec("truncate table t")
+	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
+		with thread=1, skip_rows=1`, gcsEndpoint)
+	s.tk.MustQuery(loadDataSQL)
+	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
+		"2 test2 22", "3 test3 33", "4 test4 44",
+		"6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
+	}...))
+	s.tk.MustExec("truncate table t")
+	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
+		with thread=1, skip_rows=3`, gcsEndpoint)
+	s.tk.MustQuery(loadDataSQL)
+	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
+		"4 test4 44",
+		"8 test8 88", "9 test9 99",
+	}...))
+}
+
 func (s *mockGCSSuite) TestCSVHeaderOption() {
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "csv-option"})
 
@@ -493,7 +537,7 @@ func (s *mockGCSSuite) TestMultiValueIndex() {
 	})
 
 	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-csv/1.csv?endpoint=%s'
-		WITH has_csv_header="true";`, gcsEndpoint)
+		WITH skip_rows=1;`, gcsEndpoint)
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"1 [1, 2, 3]",

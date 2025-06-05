@@ -309,7 +309,7 @@ func TestProcessChunkWith(t *testing.T) {
 			Chunk:    mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
 		ti := getTableImporter(ctx, t, store, "t", fileName, importer.DataFormatCSV, []*plannercore.LoadDataOpt{
-			{Name: "has_csv_header", Value: expression.NewStrConst("true")}})
+			{Name: "skip_rows", Value: expression.NewInt64Const(1)}})
 		defer func() {
 			ti.LoadDataController.Close()
 			ti.Backend().CloseEngineMgr()

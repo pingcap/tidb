@@ -74,7 +74,7 @@ func (s *mockGCSSuite) TestSplitFile() {
 	// skip 1 row
 	s.tk.MustExec("truncate table t")
 	importSQL = fmt.Sprintf(`import into split_file.t FROM 'gs://split-file/1.csv?endpoint=%s'
-		with split_file, lines_terminated_by = '\n', has_csv_header = "true", __max_engine_size = '1'`, gcsEndpoint)
+		with split_file, lines_terminated_by = '\n', skip_rows = 1, __max_engine_size = '1'`, gcsEndpoint)
 	s.tk.MustQuery(importSQL)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData[1:]...))
 
