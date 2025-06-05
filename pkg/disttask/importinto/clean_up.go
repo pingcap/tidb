@@ -40,7 +40,6 @@ type ImportCleanUp struct {
 }
 
 func newImportCleanUpS3() scheduler.CleanUpRoutine {
-	resetTableModeTaskSet = make(map[int64]struct{})
 	return &ImportCleanUp{}
 }
 
@@ -109,5 +108,6 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 }
 
 func init() {
+	resetTableModeTaskSet = make(map[int64]struct{})
 	scheduler.RegisterSchedulerCleanUpFactory(proto.ImportInto, newImportCleanUpS3)
 }
