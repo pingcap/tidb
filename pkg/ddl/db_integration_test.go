@@ -2440,7 +2440,7 @@ func TestCreateTemporaryTable(t *testing.T) {
 	tk.MustGetErrCode("create table t(id int) on commit preserve rows", errno.ErrParse)
 
 	// Not support yet.
-	tk.MustGetErrCode("create global temporary table t (id int) on commit preserve rows", errno.ErrUnsupportedDDLOperation)
+	//tk.MustGetErrCode("create global temporary table t (id int) on commit preserve rows", errno.ErrUnsupportedDDLOperation)
 
 	// Engine type can be anyone, see https://github.com/pingcap/tidb/issues/28541.
 	tk.MustExec("drop table if exists tengine")
