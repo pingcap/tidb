@@ -4,7 +4,7 @@
 // - protoc             v3.21.12
 // source: tici.proto
 
-package __
+package tici
 
 import (
 	context "context"
