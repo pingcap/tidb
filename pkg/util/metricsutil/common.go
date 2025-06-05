@@ -66,7 +66,7 @@ func RegisterMetrics() error {
 	}
 
 	timeoutSec := time.Duration(cfg.PDClient.PDServerTimeout) * time.Second
-	// Note: for NextGen, pdCli is created to init the metrics' const labels
+	// Note: for NextGen, we need to use the side effect of `NewClient` to init the metrics' builtin const labels
 	pdCli, err := pd.NewClient(componentName, pdAddrs, pd.SecurityOption{
 		CAPath:   cfg.Security.ClusterSSLCA,
 		CertPath: cfg.Security.ClusterSSLCert,
