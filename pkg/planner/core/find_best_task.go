@@ -1137,7 +1137,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 				useMVIndex = true
 			}
 		}
-		// color the lowestCountAfterAccessIdx's chosen index.
+		// record the lowestCountAfterAccessIdx's chosen index.
 		usedIndexMap[indexID] = struct{}{}
 	}
 	// since all the choice is done, check the all single index limitation, skip check for mv index.
