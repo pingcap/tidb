@@ -3,8 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "tici",
     srcs = [
-        "indexer.pb.go",
-        "indexer_grpc.pb.go",
         "tici.pb.go",
         "tici_grpc.pb.go",
     ],
