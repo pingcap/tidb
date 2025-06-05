@@ -461,6 +461,13 @@ func (t Time) Convert(ctx Context, tp uint8) (Time, error) {
 
 	t1.SetType(tp)
 	err := t1.Check(ctx)
+	if tp == mysql.TypeTimestamp && ErrTimestampInDSTTransition.Equal(err) {
+		tAdj, adjErr := t1.AdjustedGoTime(ctx.Location())
+		if adjErr == nil {
+			ctx.AppendWarning(err)
+			return Time{FromGoTime(tAdj)}, nil
+		}
+	}
 	return t1, errors.Trace(err)
 }
 
@@ -679,6 +686,9 @@ func (t *Time) FromPackedUint(packed uint64) error {
 func (t Time) Check(ctx Context) error {
 	allowZeroInDate := ctx.Flags().IgnoreZeroInDate()
 	allowInvalidDate := ctx.Flags().IgnoreInvalidDateErr()
+	if strings.HasPrefix(t.String(), "2025-03-30 02:30") {
+		logutil.BgLogger().Info("MJONSS Interesting!!!")
+	}
 	var err error
 	switch t.Type() {
 	case mysql.TypeTimestamp:
@@ -2007,20 +2017,30 @@ func parseTime(ctx Context, str string, tp byte, fsp int, isFloat bool) (Time, e
 
 	t.SetType(tp)
 	if err = t.Check(ctx); err != nil {
-		minTS, maxTS := MinTimestamp, MaxTimestamp
-		minErr := minTS.ConvertTimeZone(gotime.UTC, ctx.Location())
-		maxErr := maxTS.ConvertTimeZone(gotime.UTC, ctx.Location())
-		if minErr == nil && maxErr == nil && tp == mysql.TypeTimestamp && !t.IsZero() &&
-			t.Compare(minTS) > 0 && t.Compare(maxTS) < 0 {
-			// Handle the case when the timestamp given is in the DST transition
-			if tAdjusted, err2 := t.AdjustedGoTime(ctx.Location()); err2 == nil {
-				t.SetCoreTime(FromGoTime(tAdjusted))
-				return t, errors.Trace(ErrTimestampInDSTTransition.GenWithStackByArgs(str, ctx.Location().String()))
-			}
+		if tp == mysql.TypeTimestamp && !t.IsZero() {
+			t, err = adjustTimestampErrForDST(ctx.Location(), str, tp, t, err)
 		}
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 	return t, nil
+}
+
+func adjustTimestampErrForDST(loc *gotime.Location, str string, tp byte, t Time, err error) (Time, error) {
+	if tp != mysql.TypeTimestamp || t.IsZero() {
+		return t, err
+	}
+	minTS, maxTS := MinTimestamp, MaxTimestamp
+	minErr := minTS.ConvertTimeZone(gotime.UTC, loc)
+	maxErr := maxTS.ConvertTimeZone(gotime.UTC, loc)
+	if minErr == nil && maxErr == nil &&
+		t.Compare(minTS) > 0 && t.Compare(maxTS) < 0 {
+		// Handle the case when the timestamp given is in the DST transition
+		if tAdjusted, err2 := t.AdjustedGoTime(loc); err2 == nil {
+			t.SetCoreTime(FromGoTime(tAdjusted))
+			return t, errors.Trace(ErrTimestampInDSTTransition.GenWithStackByArgs(str, loc.String()))
+		}
+	}
+	return t, err
 }
 
 // ParseDatetime is a helper function wrapping ParseTime with datetime type and default fsp.
@@ -2179,6 +2199,8 @@ func checkTimestampType(t CoreTime, tz *gotime.Location) error {
 		convertTime := NewTime(t, mysql.TypeTimestamp, DefaultFsp)
 		err := convertTime.ConvertTimeZone(tz, BoundTimezone)
 		if err != nil {
+			// TODO: try to adjust the DST value?
+			_, err = adjustTimestampErrForDST(tz, t.String(), mysql.TypeTimestamp, Time{t}, err)
 			return err
 		}
 		checkTime = convertTime.coreTime
