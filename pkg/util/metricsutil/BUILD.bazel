@@ -14,6 +14,7 @@ go_library(
         "//pkg/infoschema/metrics",
         "//pkg/keyspace",
         "//pkg/metrics",
+        "//pkg/metrics/common",
         "//pkg/planner/core/metrics",
         "//pkg/server/metrics",
         "//pkg/session/metrics",
