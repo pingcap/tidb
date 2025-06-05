@@ -852,23 +852,23 @@ func TestRefreshMetaBasic(t *testing.T) {
 	tk.MustExec("create database test1 placement policy p1")
 	tk.MustExec("use test1")
 	tk.MustExec("create table t1(id int)")
-	dbInfo, ok := domain.InfoSchema().SchemaByName(ast.NewCIStr("test1"))
+	dbInfo, ok := domain.InfoSchema().SchemaByName(pmodel.NewCIStr("test1"))
 	require.True(t, ok)
 	clonedTableInfo := getClonedTableInfoFromDomain(t, "test1", "t1", domain)
 	// update t1 table name to t2 by txn
-	clonedTableInfo.Name = ast.NewCIStr("t2")
+	clonedTableInfo.Name = pmodel.NewCIStr("t2")
 	updateTableMeta(t, store, dbInfo.ID, clonedTableInfo)
 	t2TableInfo := testutil.GetTableInfoByTxn(t, store, dbInfo.ID, clonedTableInfo.ID)
 	require.Equal(t, clonedTableInfo, t2TableInfo)
 	// validate infoschema doesn't conatain t2 table info
-	_, err := domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t2"))
+	_, err := domain.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test1"), pmodel.NewCIStr("t2"))
 	require.ErrorContains(t, err, "Table 'test1.t2' doesn't exist")
 	// refresh meta, validate infoschema store table t2 and schema version increase 1
 	oldSchemaVer := getSchemaVer(t, sctx)
 	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID)
 	newSchemaVer := getSchemaVer(t, sctx)
 	require.Equal(t, oldSchemaVer+1, newSchemaVer)
-	_, err = domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t2"))
+	_, err = domain.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test1"), pmodel.NewCIStr("t2"))
 	require.NoError(t, err)
 
 	// table not exists in kv, exists in infoschema
@@ -896,7 +896,7 @@ func TestRefreshMetaBasic(t *testing.T) {
 	require.False(t, ok)
 
 	// table exists in kv, not exists in infoschema
-	clonedTableInfo.Name = ast.NewCIStr("t4")
+	clonedTableInfo.Name = pmodel.NewCIStr("t4")
 	clonedTableInfo.ID = 40000
 	txn, err = store.Begin()
 	require.NoError(t, err)
@@ -945,7 +945,7 @@ func TestRefreshMetaBasic(t *testing.T) {
 	require.False(t, ok)
 
 	// schema exists in kv, not exists in infoschema
-	clonedDBInfo.Name = ast.NewCIStr("test2")
+	clonedDBInfo.Name = pmodel.NewCIStr("test2")
 	clonedDBInfo.ID = 20000
 	txn, err = store.Begin()
 	require.NoError(t, err)
