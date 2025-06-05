@@ -44,14 +44,14 @@ func newImportCleanUpS3() scheduler.CleanUpRoutine {
 	return &ImportCleanUp{}
 }
 
-// addResetTableModeTask add table which table mode alter to normal to the set.
-func addResetTableModeTask(taskId int64) {
-	resetTableModeTaskSet[taskId] = struct{}{}
+// addResetTableModeTask add task which table mode had alter to normal to the set.
+func addResetTableModeTask(taskID int64) {
+	resetTableModeTaskSet[taskID] = struct{}{}
 }
 
-// deleteResetTableModeTask remove table which finish clean up.
-func deleteResetTableModeTask(taskId int64) {
-	delete(resetTableModeTaskSet, taskId)
+// deleteResetTableModeTask remove task which finished clean up.
+func deleteResetTableModeTask(taskID int64) {
+	delete(resetTableModeTaskSet, taskID)
 }
 
 // CleanUp implements the CleanUpRoutine.CleanUp interface.
