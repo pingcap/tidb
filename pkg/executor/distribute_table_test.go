@@ -97,17 +97,16 @@ func TestShowDistributionJobs(t *testing.T) {
 	job["engine"] = "tikv"
 	job["rule"] = "leader-scatter"
 	now := time.Now()
-	layout := "2006-01-02T15:04:05.999999-07:00"
-	job["create"] = now.Add(-time.Minute).Format(layout)
-	job["start"] = now.Add(-time.Second * 30).Format(layout)
+	job["create"] = now.Add(-time.Minute)
+	job["start"] = now.Add(-time.Second * 30)
 	job["status"] = "finished"
-	job["timeout"] = "30m"
+	job["timeout"] = 30 * time.Minute
 	jobs := make([]map[string]any, 0)
 	jobs = append(jobs, job)
 	cli.jobs = jobs
 
 	tk.MustQuery("show distribution jobs").Check(testkit.Rows(
-		fmt.Sprintf("1 test test partition(P0,P1) tikv leader-scatter finished 30m %s %s <nil>",
+		fmt.Sprintf("1 test test partition(P0,P1) tikv leader-scatter finished 30m0s %s %s <nil>",
 			now.Add(-time.Minute).Format("2006-01-02 15:04:05"),
 			now.Add(-time.Second*30).Format("2006-01-02 15:04:05"))))
 

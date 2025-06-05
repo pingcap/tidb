@@ -2543,33 +2543,35 @@ func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result 
 	result.AppendString(4, job["engine"].(string))
 	result.AppendString(5, job["rule"].(string))
 	result.AppendString(6, job["status"].(string))
-	result.AppendString(7, job["timeout"].(string))
-	layout := "2006-01-02T15:04:05.999999-07:00" // RFC3339 with microseconds
+	timeout := uint64(job["timeout"].(float64))
+	result.AppendString(7, time.Duration(timeout).String())
 	if create, ok := job["create"]; ok {
-		logutil.Logger(ctx).Info("fillDistributionJobToChunk", zap.String("create", create.(string)))
-		creatTime, err := time.Parse(layout, create.(string))
+		createTime := &time.Time{}
+		err := createTime.UnmarshalText([]byte(create.(string)))
 		if err != nil {
 			return err
 		}
-		result.AppendTime(8, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
+		result.AppendTime(8, types.NewTime(types.FromGoTime(*createTime), mysql.TypeDatetime, types.DefaultFsp))
 	} else {
 		result.AppendNull(8)
 	}
 	if start, ok := job["start"]; ok {
-		creatTime, err := time.Parse(layout, start.(string))
+		startTime := &time.Time{}
+		err := startTime.UnmarshalText([]byte(start.(string)))
 		if err != nil {
 			return err
 		}
-		result.AppendTime(9, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
+		result.AppendTime(9, types.NewTime(types.FromGoTime(*startTime), mysql.TypeDatetime, types.DefaultFsp))
 	} else {
 		result.AppendNull(9)
 	}
 	if finish, ok := job["finish"]; ok {
-		creatTime, err := time.Parse(layout, finish.(string))
+		finishedTime := &time.Time{}
+		err := finishedTime.UnmarshalText([]byte(finish.(string)))
 		if err != nil {
 			return err
 		}
-		result.AppendTime(10, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
+		result.AppendTime(10, types.NewTime(types.FromGoTime(*finishedTime), mysql.TypeDatetime, types.DefaultFsp))
 	} else {
 		result.AppendNull(10)
 	}
