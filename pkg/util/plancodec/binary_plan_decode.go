@@ -104,7 +104,8 @@ func DecodeBinaryPlan(binaryPlan string) (string, error) {
 	return b.String(), nil
 }
 
-// DecodeBinaryPlan4Connection decode the binary plan and display it similar to EXPLAIN ANALYZE statement. Now it only supports types.ExplainFormatBrief.
+// DecodeBinaryPlan4Connection decodes a binary execution plan for the `EXPLAIN FOR CONNECTION` statement.
+// This function is also used by TopSQL for plan analysis.
 func DecodeBinaryPlan4Connection(binaryPlan string, format string) ([][]string, error) {
 	protoBytes, err := decompress(binaryPlan)
 	if err != nil {
@@ -129,17 +130,25 @@ func DecodeBinaryPlan4Connection(binaryPlan string, format string) ([][]string, 
 
 	// Define column indices for each format
 	var columnIndices []int
-	switch format {
-	case types.ExplainFormatBrief:
-		columnIndices = []int{1, 2, 4, 5, 6, 7, 9, 10, 11}
-	case types.ExplainFormatROW, types.ExplainFormatPlanCache:
-		columnIndices = []int{0, 2, 4, 5, 6, 7, 8, 10, 11}
-	case types.ExplainFormatVerbose:
-		columnIndices = []int{0, 2, 3, 4, 5, 6, 7, 8, 10, 11}
-	default:
-		return nil, nil
+	if pb.WithRuntimeStats {
+		switch format {
+		case types.ExplainFormatBrief:
+			columnIndices = []int{1, 2, 4, 5, 6, 7, 9, 10, 11}
+		case types.ExplainFormatROW, types.ExplainFormatPlanCache:
+			columnIndices = []int{0, 2, 4, 5, 6, 7, 8, 10, 11}
+		case types.ExplainFormatVerbose:
+			columnIndices = []int{0, 2, 3, 4, 5, 6, 7, 8, 10, 11}
+		}
+	} else {
+		switch format {
+		case types.ExplainFormatBrief:
+			columnIndices = []int{1, 2, 4, 5, 7}
+		case types.ExplainFormatROW, types.ExplainFormatPlanCache:
+			columnIndices = []int{0, 2, 4, 5, 6}
+		case types.ExplainFormatVerbose:
+			columnIndices = []int{0, 2, 3, 4, 5, 6}
+		}
 	}
-
 	// Extract specified columns
 	result := make([][]string, len(rows))
 	for i, row := range rows {

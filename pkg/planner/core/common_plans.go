@@ -895,7 +895,7 @@ func (e *Explain) prepareSchema() error {
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
 	case format == types.ExplainFormatVerbose:
-		if e.Analyze || e.RuntimeStatsColl != nil || e.BriefBinaryPlan != "" {
+		if e.Analyze || e.RuntimeStatsColl != nil {
 			fieldNames = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 		} else {
 			fieldNames = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
@@ -1058,7 +1058,7 @@ func (e *Explain) RenderResult() error {
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	case types.ExplainFormatBinary:
 		flat := FlattenPhysicalPlan(e.TargetPlan, false)
-		str := BinaryPlanStrFromFlatPlan(e.SCtx(), flat)
+		str := BinaryPlanStrFromFlatPlan(e.SCtx(), flat, false)
 		e.Rows = append(e.Rows, []string{str})
 	case types.ExplainFormatTiDBJSON:
 		flat := FlattenPhysicalPlan(e.TargetPlan, true)
@@ -1130,9 +1130,8 @@ func (e *Explain) explainOpRecursivelyInJSONFormat(flatOp *FlatOperator, flats F
 		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
 	}
 	explainID := flatOp.Origin.ExplainID().String() + flatOp.Label.String()
-	textTreeExplainID := texttree.PrettyIdentifier(explainID, flatOp.TextTreeIndent, flatOp.IsLastChild)
 
-	cur := e.prepareOperatorInfoForJSONFormat(flatOp.Origin, taskTp, textTreeExplainID, explainID)
+	cur := e.prepareOperatorInfoForJSONFormat(flatOp.Origin, taskTp, explainID)
 
 	for _, idx := range flatOp.ChildrenIdx {
 		cur.SubOperators = append(cur.SubOperators,
@@ -1244,7 +1243,7 @@ func prepareOperatorInfo(flatOp *FlatOperator, format string, analyze bool,
 	return append(rows, row)
 }
 
-func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id string, explainID string) *ExplainInfoForEncode {
+func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, explainID string) *ExplainInfoForEncode {
 	if p.ExplainID().String() == "_0" {
 		return nil
 	}
@@ -1300,13 +1299,8 @@ func getOperatorInfo(p base.Plan) (estRows, estCost, costFormula, accessObject, 
 }
 
 // BinaryPlanStrFromFlatPlan generates the compressed and encoded binary plan from a FlatPhysicalPlan.
-// BriefBinaryPlan is optional and defaults to false if not provided.
-func BinaryPlanStrFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan, briefBinaryPlan ...bool) string {
-	isBrief := false
-	if len(briefBinaryPlan) > 0 {
-		isBrief = briefBinaryPlan[0]
-	}
-	binary := binaryDataFromFlatPlan(explainCtx, flat, isBrief)
+func BinaryPlanStrFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan, briefBinaryPlan bool) string {
+	binary := binaryDataFromFlatPlan(explainCtx, flat, briefBinaryPlan)
 	if binary == nil {
 		return ""
 	}
@@ -1318,7 +1312,7 @@ func BinaryPlanStrFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPl
 	return str
 }
 
-func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan, BriefBinaryPlan bool) *tipb.ExplainData {
+func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan, briefBinaryPlan bool) *tipb.ExplainData {
 	if len(flat.Main) == 0 {
 		return nil
 	}
@@ -1336,17 +1330,17 @@ func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan,
 			break
 		}
 	}
-	res.Main = binaryOpTreeFromFlatOps(explainCtx, flat.Main, BriefBinaryPlan)
+	res.Main = binaryOpTreeFromFlatOps(explainCtx, flat.Main, briefBinaryPlan)
 	for _, explainedCTE := range flat.CTEs {
-		res.Ctes = append(res.Ctes, binaryOpTreeFromFlatOps(explainCtx, explainedCTE, BriefBinaryPlan))
+		res.Ctes = append(res.Ctes, binaryOpTreeFromFlatOps(explainCtx, explainedCTE, briefBinaryPlan))
 	}
 	return res
 }
 
-func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, BriefBinaryPlan bool) *tipb.ExplainOperator {
+func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, briefBinaryPlan bool) *tipb.ExplainOperator {
 	s := make([]tipb.ExplainOperator, len(ops))
 	for i, op := range ops {
-		binaryOpFromFlatOp(explainCtx, op, &s[i], BriefBinaryPlan)
+		binaryOpFromFlatOp(explainCtx, op, &s[i], briefBinaryPlan)
 		for _, idx := range op.ChildrenIdx {
 			s[i].Children = append(s[i].Children, &s[idx])
 		}
@@ -1354,9 +1348,9 @@ func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, Brie
 	return &s[0]
 }
 
-func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tipb.ExplainOperator, BriefBinaryPlan bool) {
+func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tipb.ExplainOperator, briefBinaryPlan bool) {
 	out.Name = fop.Origin.ExplainID().String()
-	if BriefBinaryPlan {
+	if briefBinaryPlan {
 		out.BriefName = fop.Origin.TP()
 	}
 	switch fop.Label {
@@ -1429,7 +1423,7 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 	}
 
 	// Operator info
-	fillOperatorInfo(fop, out, BriefBinaryPlan)
+	fillOperatorInfo(fop, out, briefBinaryPlan)
 
 	// Access object
 	switch p := fop.Origin.(type) {
@@ -1446,13 +1440,13 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 	}
 }
 
-func fillOperatorInfo(fop *FlatOperator, out *tipb.ExplainOperator, BriefBinaryPlan bool) {
+func fillOperatorInfo(fop *FlatOperator, out *tipb.ExplainOperator, briefBinaryPlan bool) {
 	if plan, ok := fop.Origin.(dataAccesser); ok {
 		out.OperatorInfo = plan.OperatorInfo(false)
 		return
 	}
 
-	if BriefBinaryPlan {
+	if briefBinaryPlan {
 		// Handle brief binary plan cases with a unified approach
 		if briefInfo := getBriefOperatorInfo(fop.Origin); briefInfo != "" {
 			out.BriefOperatorInfo = briefInfo
