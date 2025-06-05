@@ -16,7 +16,6 @@ package local
 
 import (
 	"context"
-	goerrors "errors"
 	"io"
 	"strings"
 	"sync"
@@ -378,11 +377,7 @@ func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) er
 	}
 	err := w.ingestCli.Ingest(ctx, in)
 	if err != nil {
-		pbErr := &ingestcli.PBError{}
-		if goerrors.As(err, &pbErr) {
-			return convertPBError2Error(job, pbErr.Err)
-		}
-		return &ingestAPIError{err: err}
+		return err
 	}
 	return nil
 }
