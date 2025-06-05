@@ -60,6 +60,7 @@ func getLocalTemporaryTables(sctx variable.SessionVarsProvider) *infoschema.Sess
 	return localTemporaryTables.(*infoschema.SessionTables)
 }
 
+// EnsureLocalTemporaryTables ensures that the session has a local temporary tables info schema.
 func EnsureLocalTemporaryTables(sctx variable.SessionVarsProvider) *infoschema.SessionTables {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.LocalTemporaryTables == nil {
@@ -71,6 +72,7 @@ func EnsureLocalTemporaryTables(sctx variable.SessionVarsProvider) *infoschema.S
 	return sessVars.LocalTemporaryTables.(*infoschema.SessionTables)
 }
 
+// GetLocalTemporaryTable returns a local temporary table.
 func GetLocalTemporaryTable(sctx variable.SessionVarsProvider, schema model.CIStr, table model.CIStr) table.Table {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.LocalTemporaryTables == nil {

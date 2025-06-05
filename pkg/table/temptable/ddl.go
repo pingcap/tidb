@@ -143,6 +143,7 @@ func getSessionData(sctx sessionctx.Context) variable.TemporaryTableData {
 	return sctx.GetSessionVars().TemporaryTableData
 }
 
+// EnsureSessionData ensures that the session has a temporary table data.
 func EnsureSessionData(sctx sessionctx.Context) (variable.TemporaryTableData, error) {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.TemporaryTableData == nil {
@@ -180,6 +181,7 @@ func newTemporaryTableFromTableInfo(sctx sessionctx.Context, tbInfo *model.Table
 	return NewTemporaryTable(tbInfo)
 }
 
+// NewTemporaryTable creates a new temporary table from the given TableInfo.
 func NewTemporaryTable(tbInfo *model.TableInfo) (table.Table, error) {
 	// AutoID is allocated in mocked..
 	alloc := autoid.NewAllocatorFromTempTblInfo(tbInfo)
