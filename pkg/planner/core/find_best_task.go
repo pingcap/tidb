@@ -927,6 +927,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	// step1: match the property from all the index partial alternative paths.
 	determinedIndexPartialPaths := make([]*util.AccessPath, 0, len(path.PartialAlternativeIndexPaths))
 	usedIndexMap := make(map[int64]struct{}, 1)
+<<<<<<< HEAD
 	type idxWrapper struct {
 		// matchIdx is those match alternative paths from one alternative paths set.
 		// like we said above, for a=1, it has two partial alternative paths: [a, ac]
@@ -947,6 +948,10 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	// if we choose pk in the first path, then path2 has no choice but pk, this will result in all single index failure.
 	// so we should collect all match prop paths down, stored as matchIdxes here.
 	for pathIdx, oneItemAlternatives := range path.PartialAlternativeIndexPaths {
+=======
+	useMVIndex := false
+	for _, oneORBranch := range path.PartialAlternativeIndexPaths {
+>>>>>>> 1f7fda4c45f (planner: fix index merge skyline pruning may be prior to choose distinct partial index rather than the low count one. (#61372))
 		matchIdxes := make([]int, 0, 1)
 		for i, oneIndexAlternativePath := range oneItemAlternatives {
 			// if there is some sort items and this path doesn't match this prop, continue.
@@ -990,6 +995,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 				return -cmp.Compare(lIsGlobalIndex, rIsGlobalIndex)
 			})
 		}
+<<<<<<< HEAD
 		allMatchIdxes = append(allMatchIdxes, idxWrapper{matchIdxes, pathIdx})
 	}
 	// sort allMatchIdxes by its element length.
@@ -1032,6 +1038,27 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		}
 	}
 	if len(usedIndexMap) == 1 {
+=======
+		lowestCountAfterAccessIdx := matchIdxes[0]
+		determinedIndexPartialPaths = append(determinedIndexPartialPaths, util.SliceDeepClone(oneORBranch[lowestCountAfterAccessIdx])...)
+		// record the index usage info to avoid choosing a single index for all partial paths
+		var indexID int64
+		if oneORBranch[lowestCountAfterAccessIdx][0].IsTablePath() {
+			indexID = -1
+		} else {
+			indexID = oneORBranch[lowestCountAfterAccessIdx][0].Index.ID
+			// record mv index because it's not affected by the all single index limitation.
+			if oneORBranch[lowestCountAfterAccessIdx][0].Index.MVIndex {
+				useMVIndex = true
+			}
+		}
+		// record the lowestCountAfterAccessIdx's chosen index.
+		usedIndexMap[indexID] = struct{}{}
+	}
+	// since all the choice is done, check the all single index limitation, skip check for mv index.
+	// since ds index merge hints will prune other path ahead, lift the all single index limitation here.
+	if len(usedIndexMap) == 1 && !useMVIndex && len(ds.IndexMergeHints) <= 0 {
+>>>>>>> 1f7fda4c45f (planner: fix index merge skyline pruning may be prior to choose distinct partial index rather than the low count one. (#61372))
 		// if all partial path are using a same index, meaningless and fail over.
 		return nil, false
 	}
