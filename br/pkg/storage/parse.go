@@ -226,3 +226,8 @@ func IsLocalPath(p string) (bool, error) {
 func IsLocal(u *url.URL) bool {
 	return u.Scheme == "local" || u.Scheme == "file" || u.Scheme == ""
 }
+
+// IsS3 returns true if the URL is an S3 URL.
+func IsS3(u *url.URL) bool {
+	return u.Scheme == "s3"
+}

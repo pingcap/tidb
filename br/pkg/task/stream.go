@@ -1195,6 +1195,19 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 
+	// begin to remove log restore table IDs blocklist files
+	removeLogRestoreTableIDsMarkerFilesDone := console.ShowTask("Removing log restore table IDs blocklist files...", glue.WithTimeCost())
+	defer func() {
+		if removeLogRestoreTableIDsMarkerFilesDone != nil {
+			removeLogRestoreTableIDsMarkerFilesDone()
+		}
+	}()
+	if err := restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, extStorage, cfg.Until); err != nil {
+		return errors.Trace(err)
+	}
+	removeLogRestoreTableIDsMarkerFilesDone()
+	removeLogRestoreTableIDsMarkerFilesDone = nil
+
 	// begin to remove
 	p := console.StartProgressBar(
 		"Truncating Data Files and Metadata", fileCount,
@@ -1232,24 +1245,32 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 
 // checkConflictingLogBackup checks whether there is a log backup task running.
 // If so, return an error.
-func checkConflictingLogBackup(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.Client) error {
+// If the execution is PITR restore, returns the external storage backend of taskInfos to record log restore table ids marker.
+func checkConflictingLogBackup(ctx context.Context, cfg *RestoreConfig, streamRestore bool, etcdCLI *clientv3.Client) (*backuppb.StorageBackend, error) {
 	if err := checkConfigForStatus(cfg.PD); err != nil {
-		return err
+		return nil, err
 	}
 
 	cli := streamhelper.NewMetaDataClient(etcdCLI)
 	// check log backup task
 	tasks, err := cli.GetAllTasks(ctx)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	if streamRestore && len(tasks) > 0 {
+		if tasks[0].Info.Storage == nil {
+			return nil, errors.Annotatef(berrors.ErrStreamLogTaskHasNoStorage,
+				"cannot save log restore table IDs blocklist file because the external storage backend of the task[%s] is empty", tasks[0].Info.Name)
+		}
+		return tasks[0].Info.Storage, nil
 	}
 	for _, task := range tasks {
 		if err := checkTaskCompat(cfg, task); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	return nil
+	return nil, nil
 }
 
 func checkTaskCompat(cfg *RestoreConfig, task streamhelper.Task) error {
@@ -1257,9 +1278,6 @@ func checkTaskCompat(cfg *RestoreConfig, task streamhelper.Task) error {
 		"You may check the extra information to get rid of this. If that doesn't work, you may "+
 		"stop the task before restore, and after the restore operation finished, "+
 		"create log-backup task again and create a full backup on this cluster.", task.Info.Name)
-	if len(cfg.FullBackupStorage) > 0 {
-		return errors.Annotate(baseErr, "you want to do point in time restore, which isn't compatible with an enabled log backup task yet")
-	}
 	if !cfg.UserFiltered() {
 		return errors.Annotate(baseErr,
 			"you want to restore a whole cluster, you may use `-f` or `restore table|database` to "+
@@ -1395,6 +1413,7 @@ func RunStreamRestore(
 		snapshotRestoreConfig := SnapshotRestoreConfig{
 			RestoreConfig:          cfg,
 			piTRTaskInfo:           taskInfo,
+			logRestoreStorage:      s,
 			logTableHistoryManager: metaInfoProcessor.GetTableHistoryManager(),
 			tableMappingManager:    metaInfoProcessor.GetTableMappingManager(),
 		}
@@ -1579,7 +1598,7 @@ func restoreStream(
 	var rp *logclient.RestoreMetaKVProcessor
 	if err = glue.WithProgress(ctx, g, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress, func(p glue.Progress) error {
 		rp = logclient.NewRestoreMetaKVProcessor(client, schemasReplace, updateStats, p.Inc)
-		return rp.RestoreAndRewriteMetaKVFiles(ctx, cfg.ExplicitFilter, ddlFiles)
+		return rp.RestoreAndRewriteMetaKVFiles(ctx, cfg.ExplicitFilter, ddlFiles, schemasReplace)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
@@ -1663,12 +1682,6 @@ func restoreStream(
 	}
 
 	if cfg.ExplicitFilter {
-		// refresh metadata will sync data from TiKV to info schema one table at a time.
-		// this must succeed to ensure schema consistency
-		if err = client.RefreshMetaForTables(ctx, schemasReplace); err != nil {
-			return errors.Trace(err)
-		}
-
 		failpoint.Inject("before-set-table-mode-to-normal", func(_ failpoint.Value) {
 			failpoint.Return(errors.New("fail before setting table mode to normal"))
 		})
@@ -2131,7 +2144,9 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 
 	// either getting base id map from previous pitr or this is a new task and get base map from snapshot restore phase
 	// do filter
-	cfg.tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
+	if cfg.PiTRTableTracker != nil {
+		cfg.tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
+	}
 	// replace temp id with read global id
 	err = cfg.tableMappingManager.ReplaceTemporaryIDs(ctx, client.GenGlobalIDs)
 	if err != nil {

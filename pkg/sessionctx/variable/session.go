@@ -2373,6 +2373,7 @@ func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
 
 // GetAllowPreferRangeScan get preferRangeScan from SessionVars.preferRangeScan.
 func (s *SessionVars) GetAllowPreferRangeScan() bool {
+	s.RecordRelevantOptVar(vardef.TiDBOptPreferRangeScan)
 	return s.preferRangeScan
 }
 

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"net/url"
 	"reflect"
 	"slices"
 	"strconv"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -56,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -554,7 +557,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		*ast.BeginStmt, *ast.CommitStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.AlterRangeStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
-		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt,
+		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt, *ast.CancelDistributionJobStmt,
 		*ast.ImportIntoActionStmt, *ast.CalibrateResourceStmt, *ast.AddQueryWatchStmt, *ast.DropQueryWatchStmt, *ast.DropProcedureStmt:
 		return b.buildSimple(ctx, node.Node.(ast.StmtNode))
 	case ast.DDLNode:
@@ -2186,7 +2189,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 			return columns, nil, nil
 		default:
 			// Usually, this won't happen.
-			logutil.BgLogger().Warn("Unknown default column choice, analyze all columns", zap.String("choice", columnOptions))
+			statslogutil.StatsLogger().Warn("Unknown default column choice, analyze all columns", zap.String("choice", columnOptions))
 			return tbl.TableInfo.Columns, nil, nil
 		}
 	case ast.AllColumns:
@@ -4607,14 +4610,23 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	)
 
 	if ld.Select == nil {
-		importFromServer, err = storage.IsLocalPath(ld.Path)
+		u, err := url.Parse(ld.Path)
 		if err != nil {
 			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
 		}
-	}
-
-	if importFromServer && sem.IsEnabled() {
-		return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
+		importFromServer = storage.IsLocal(u)
+		if sem.IsEnabled() {
+			if importFromServer {
+				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
+			}
+			if kerneltype.IsNextGen() && storage.IsS3(u) {
+				newPath, err := processSemNextGenS3Path(u)
+				if err != nil {
+					return nil, err
+				}
+				ld.Path = newPath
+			}
+		}
 	}
 
 	for _, opt := range ld.Options {
@@ -4781,21 +4793,21 @@ func (b *PlanBuilder) requireInsertAndSelectPriv(tables []*ast.TableName) {
 	}
 }
 
-var ruleList = []string{"leader", "peer", "learner"}
+var ruleList = []string{"leader-scatter", "peer-scatter", "learner-scatter"}
 var engineList = []string{"tikv", "tiflash"}
 
 func (b *PlanBuilder) buildDistributeTable(node *ast.DistributeTableStmt) (base.Plan, error) {
 	tnW := b.resolveCtx.GetTableName(node.Table)
 	tblInfo := tnW.TableInfo
 	if !slices.Contains(ruleList, node.Rule.L) {
-		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("rule must be leader, follower or learner")
+		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("rule must be leader-scatter, follower-scatter or learner-scatter")
 	}
 	if !slices.Contains(engineList, node.Engine.L) {
 		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("engine must be tikv or tiflash")
 	}
 
-	if node.Engine.L == "tiflash" && node.Rule.L != "learner" {
-		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("the rule of tiflash must be learner")
+	if node.Engine.L == "tiflash" && node.Rule.L != "learner-scatter" {
+		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("the rule of tiflash must be learner-scatter")
 	}
 	plan := &DistributeTable{
 		TableInfo:      tblInfo,
@@ -6130,6 +6142,25 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 		}
 	}
 	return nil
+}
+
+// for nextgen import-into with SEM, we disallow user to set S3 external ID explicitly,
+// and we will use the keyspace name as the S3 external ID.
+// a nextgen cluster might be shared by multiple tenants, and they might share the
+// same AWS role to access import-into source data bucket, this external ID can
+// be used to restrict the access only to the current tenant.
+func processSemNextGenS3Path(u *url.URL) (string, error) {
+	values := u.Query()
+	for k := range values {
+		lowerK := strings.ToLower(k)
+		if lowerK == storage.S3ExternalID {
+			return "", plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with S3 external ID")
+		}
+	}
+	values.Set(storage.S3ExternalID, config.GetGlobalKeyspaceName())
+	u.RawQuery = values.Encode()
+
+	return u.String(), nil
 }
 
 // GetThreadOrBatchSizeFromExpression gets the numeric value of the thread or batch size from the expression.
