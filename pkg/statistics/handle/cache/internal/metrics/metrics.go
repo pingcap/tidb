@@ -16,6 +16,7 @@ package metrics
 
 import (
 	"github.com/pingcap/tidb/pkg/metrics"
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -44,6 +45,20 @@ func init() {
 
 // initMetricsVars init copr metrics vars.
 func initMetricsVars() {
+	metrics.StatsCacheCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "stats_cache_op",
+			Help:      "Counter for statsCache operation",
+		}, []string{metrics.LblType})
+	metrics.StatsCacheGauge = metricscommon.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "statistics",
+		Name:      "stats_cache_val",
+		Help:      "gauge of stats cache value",
+	}, []string{metrics.LblType})
+
 	MissCounter = metrics.StatsCacheCounter.WithLabelValues("miss")
 	HitCounter = metrics.StatsCacheCounter.WithLabelValues("hit")
 	UpdateCounter = metrics.StatsCacheCounter.WithLabelValues("update")

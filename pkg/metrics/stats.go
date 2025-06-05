@@ -173,17 +173,4 @@ func InitStatsMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 24), // 10ms ~ 24h
 		},
 	)
-	StatsCacheCounter = metricscommon.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "statistics",
-			Name:      "stats_cache_op",
-			Help:      "Counter for statsCache operation",
-		}, []string{LblType})
-	StatsCacheGauge = metricscommon.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: "tidb",
-		Subsystem: "statistics",
-		Name:      "stats_cache_val",
-		Help:      "gauge of stats cache value",
-	}, []string{LblType})
 }
