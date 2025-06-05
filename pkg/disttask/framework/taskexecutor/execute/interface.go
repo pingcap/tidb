@@ -68,7 +68,7 @@ type StepExecutor interface {
 // These fields represent the number of data/rows inputed to the subtask.
 type SubtaskSummary struct {
 	RowCnt atomic.Int64 `json:"row_count,omitempty"`
-	Bytes  atomic.Int64 `json:"row_count,omitempty"`
+	Bytes  atomic.Int64 `json:"bytes,omitempty"`
 }
 
 // Reset resets the summary to the given row count and bytes.
