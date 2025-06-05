@@ -289,7 +289,7 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 		p := fop.Origin.(base.PhysicalPlan)
 		plancodec.NormalizePlanNode(
 			int(fop.Depth-uint32(selectPlanOffset)),
-			fop.Origin.TP(),
+			fop.Origin.TP(fop.IsINLProbeChild),
 			taskTypeInfo,
 			p.ExplainNormalizedInfo(),
 			&d.buf,
