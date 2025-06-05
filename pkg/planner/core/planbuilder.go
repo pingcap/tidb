@@ -4769,10 +4769,10 @@ func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) base.Plan {
 	return p
 }
 
-func (b *PlanBuilder) buildRefreshStats(ld *ast.RefreshStatsStmt) base.Plan {
+func (b *PlanBuilder) buildRefreshStats(rs *ast.RefreshStatsStmt) base.Plan {
 	// TODO: We need to check the select privilege here.
 	p := &Simple{
-		Statement:    ld,
+		Statement:    rs,
 		IsFromRemote: false,
 		ResolveCtx:   b.resolveCtx,
 	}
