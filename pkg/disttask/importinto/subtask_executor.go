@@ -134,19 +134,20 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 	if err != nil {
 		return err
 	}
+
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
 		err = importer.VerifyChecksum(ctx, &taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
 		err2 := ddl.CreateAlterTableModeJob(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
 		if err != nil {
 			if err2 == nil {
-				taskMeta.Plan.ResetTableMode = true
+				addResetTableModeTask(taskMeta.JobID)
 			}
 			return err
 		}
 		if err2 != nil {
 			return err2
 		}
-		taskMeta.Plan.ResetTableMode = true
+		addResetTableModeTask(taskMeta.JobID)
 		return nil
 	})
 }

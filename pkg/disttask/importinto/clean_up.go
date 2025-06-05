@@ -33,13 +33,25 @@ import (
 )
 
 var _ scheduler.CleanUpRoutine = (*ImportCleanUp)(nil)
+var resetTableModeTaskSet map[int64]struct{}
 
 // ImportCleanUp implements scheduler.CleanUpRoutine.
 type ImportCleanUp struct {
 }
 
 func newImportCleanUpS3() scheduler.CleanUpRoutine {
+	resetTableModeTaskSet = make(map[int64]struct{})
 	return &ImportCleanUp{}
+}
+
+// addResetTableModeTask add table which table mode alter to normal to the set.
+func addResetTableModeTask(taskId int64) {
+	resetTableModeTaskSet[taskId] = struct{}{}
+}
+
+// deleteResetTableModeTask remove table which finish clean up.
+func deleteResetTableModeTask(taskId int64) {
+	delete(resetTableModeTaskSet, taskId)
 }
 
 // CleanUp implements the CleanUpRoutine.CleanUp interface.
@@ -53,7 +65,7 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 	}
 	defer redactSensitiveInfo(task, taskMeta)
 
-	if !taskMeta.Plan.ResetTableMode {
+	if _, ok := resetTableModeTaskSet[task.ID]; !ok {
 		taskManager, err := storage.GetTaskManager()
 		if err != nil {
 			return err
@@ -63,11 +75,7 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 			if err2 != nil {
 				return err2
 			}
-			taskMeta.Plan.ResetTableMode = true
-			task.Meta, err2 = json.Marshal(taskMeta)
-			if err2 != nil {
-				return err2
-			}
+			addResetTableModeTask(task.ID)
 			return nil
 		}); err != nil {
 			return err
@@ -96,6 +104,7 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 		logger.Warn("failed to clean up files of task", zap.Error(err))
 		return err
 	}
+	deleteResetTableModeTask(task.ID)
 	return nil
 }
 
