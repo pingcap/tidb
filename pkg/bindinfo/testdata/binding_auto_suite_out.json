@@ -57,23 +57,14 @@
           [
             "StreamAgg  1.00  root    funcs:max(test.t.b)->Column#5",
             "└─TopN  1.00  root    test.t.b:desc, offset:0, count:1",
-            "  └─IndexLookUp  1.00  root    ",
-            "    ├─IndexRangeScan(Build)  10.00  cop[tikv]  table:t, index:a(a)  range:[1,1], keep order:false, stats:pseudo",
-            "    └─TopN(Probe)  1.00  cop[tikv]    test.t.b:desc, offset:0, count:1",
-            "      └─Selection  9.99  cop[tikv]    not(isnull(test.t.b))",
-            "        └─TableRowIDScan  10.00  cop[tikv]  table:t  keep order:false, stats:pseudo"
+            "  └─TableReader  1.00  root    data:TopN",
+            "    └─TopN  1.00  cop[tikv]    test.t.b:desc, offset:0, count:1",
+            "      └─Selection  9.99  cop[tikv]    eq(test.t.a, 1), not(isnull(test.t.b))",
+            "        └─TableFullScan  10000.00  cop[tikv]  table:t  keep order:false, stats:pseudo"
           ],
           [
             "StreamAgg  1.00  root    funcs:max(test.t.b)->Column#5",
             "└─TopN  1.00  root    test.t.b:desc, offset:0, count:1",
-            "  └─TableReader  1.00  root    data:TopN",
-            "    └─TopN  1.00  cop[tikv]    test.t.b:desc, offset:0, count:1",
-            "      └─Selection  9.99  cop[tikv]    eq(test.t.a, 1), not(isnull(test.t.b))",
-            "        └─TableFullScan  10000.00  cop[tikv]  table:t  keep order:false, stats:pseudo"
-          ],
-          [
-            "HashAgg  1.00  root    funcs:max(test.t.b)->Column#5",
-            "└─TopN  1.00  root    test.t.b:desc, offset:0, count:1",
             "  └─IndexLookUp  1.00  root    ",
             "    ├─IndexRangeScan(Build)  10.00  cop[tikv]  table:t, index:a(a)  range:[1,1], keep order:false, stats:pseudo",
             "    └─TopN(Probe)  1.00  cop[tikv]    test.t.b:desc, offset:0, count:1",
@@ -87,6 +78,15 @@
             "    └─TopN  1.00  cop[tikv]    test.t.b:desc, offset:0, count:1",
             "      └─Selection  9.99  cop[tikv]    eq(test.t.a, 1), not(isnull(test.t.b))",
             "        └─TableFullScan  10000.00  cop[tikv]  table:t  keep order:false, stats:pseudo"
+          ],
+          [
+            "HashAgg  1.00  root    funcs:max(test.t.b)->Column#5",
+            "└─TopN  1.00  root    test.t.b:desc, offset:0, count:1",
+            "  └─IndexLookUp  1.00  root    ",
+            "    ├─IndexRangeScan(Build)  10.00  cop[tikv]  table:t, index:a(a)  range:[1,1], keep order:false, stats:pseudo",
+            "    └─TopN(Probe)  1.00  cop[tikv]    test.t.b:desc, offset:0, count:1",
+            "      └─Selection  9.99  cop[tikv]    not(isnull(test.t.b))",
+            "        └─TableRowIDScan  10.00  cop[tikv]  table:t  keep order:false, stats:pseudo"
           ]
         ]
       },
@@ -211,6 +211,16 @@
             "    └─TableRowIDScan(Probe)  9990.00  cop[tikv]  table:t2  keep order:false, stats:pseudo"
           ],
           [
+            "IndexHashJoin  12487.50  root    inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+            "├─TableReader(Build)  9990.00  root    data:Selection",
+            "│ └─Selection  9990.00  cop[tikv]    not(isnull(test.t1.a))",
+            "│   └─TableFullScan  10000.00  cop[tikv]  table:t1  keep order:false, stats:pseudo",
+            "└─IndexLookUp(Probe)  12487.50  root    ",
+            "  ├─Selection(Build)  12487.50  cop[tikv]    not(isnull(test.t2.a))",
+            "  │ └─IndexRangeScan  12500.00  cop[tikv]  table:t2, index:a(a)  range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+            "  └─TableRowIDScan(Probe)  12487.50  cop[tikv]  table:t2  keep order:false, stats:pseudo"
+          ],
+          [
             "Projection  12487.50  root    test.t1.a, test.t1.b, test.t1.c, test.t2.a, test.t2.b, test.t2.c",
             "└─IndexHashJoin  12487.50  root    inner join, inner:IndexLookUp, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
             "  ├─TableReader(Build)  9990.00  root    data:Selection",
@@ -220,26 +230,6 @@
             "    ├─Selection(Build)  12487.50  cop[tikv]    not(isnull(test.t1.a))",
             "    │ └─IndexRangeScan  12500.00  cop[tikv]  table:t1, index:a(a)  range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo",
             "    └─TableRowIDScan(Probe)  12487.50  cop[tikv]  table:t1  keep order:false, stats:pseudo"
-          ],
-          [
-            "IndexHashJoin  12487.50  root    inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-            "├─IndexLookUp(Build)  9990.00  root    ",
-            "│ ├─IndexFullScan(Build)  9990.00  cop[tikv]  table:t1, index:a(a)  keep order:false, stats:pseudo",
-            "│ └─TableRowIDScan(Probe)  9990.00  cop[tikv]  table:t1  keep order:false, stats:pseudo",
-            "└─IndexLookUp(Probe)  12487.50  root    ",
-            "  ├─Selection(Build)  12487.50  cop[tikv]    not(isnull(test.t2.a))",
-            "  │ └─IndexRangeScan  12500.00  cop[tikv]  table:t2, index:a(a)  range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
-            "  └─TableRowIDScan(Probe)  12487.50  cop[tikv]  table:t2  keep order:false, stats:pseudo"
-          ],
-          [
-            "IndexHashJoin  12487.50  root    inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-            "├─TableReader(Build)  9990.00  root    data:Selection",
-            "│ └─Selection  9990.00  cop[tikv]    not(isnull(test.t1.a))",
-            "│   └─TableFullScan  10000.00  cop[tikv]  table:t1  keep order:false, stats:pseudo",
-            "└─IndexLookUp(Probe)  12487.50  root    ",
-            "  ├─Selection(Build)  12487.50  cop[tikv]    not(isnull(test.t2.a))",
-            "  │ └─IndexRangeScan  12500.00  cop[tikv]  table:t2, index:a(a)  range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
-            "  └─TableRowIDScan(Probe)  12487.50  cop[tikv]  table:t2  keep order:false, stats:pseudo"
           ],
           [
             "Projection  12487.50  root    test.t1.a, test.t1.b, test.t1.c, test.t2.a, test.t2.b, test.t2.c",
@@ -259,6 +249,16 @@
             "└─TableReader(Build)  9990.00  root    data:Selection",
             "  └─Selection  9990.00  cop[tikv]    not(isnull(test.t2.a))",
             "    └─TableFullScan  10000.00  cop[tikv]  table:t2  keep order:false, stats:pseudo"
+          ],
+          [
+            "IndexHashJoin  12487.50  root    inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+            "├─IndexLookUp(Build)  9990.00  root    ",
+            "│ ├─IndexFullScan(Build)  9990.00  cop[tikv]  table:t1, index:a(a)  keep order:false, stats:pseudo",
+            "│ └─TableRowIDScan(Probe)  9990.00  cop[tikv]  table:t1  keep order:false, stats:pseudo",
+            "└─IndexLookUp(Probe)  12487.50  root    ",
+            "  ├─Selection(Build)  12487.50  cop[tikv]    not(isnull(test.t2.a))",
+            "  │ └─IndexRangeScan  12500.00  cop[tikv]  table:t2, index:a(a)  range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+            "  └─TableRowIDScan(Probe)  12487.50  cop[tikv]  table:t2  keep order:false, stats:pseudo"
           ]
         ]
       }
