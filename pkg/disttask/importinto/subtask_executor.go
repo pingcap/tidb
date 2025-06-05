@@ -134,7 +134,6 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 	if err != nil {
 		return err
 	}
-
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
 		err = importer.VerifyChecksum(ctx, &taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
 		err2 := ddl.CreateAlterTableModeJob(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
