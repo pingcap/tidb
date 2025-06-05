@@ -19,6 +19,7 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -203,16 +204,24 @@ func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Express
 			jthPredicate := predicates[j]
 			iCol, iType := FindPredicateType(sctx, ithPredicate)
 			jCol, jType := FindPredicateType(sctx, jthPredicate)
+			maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCacheForMultiExpression(
+				sctx.GetExprCtx(),
+				ithPredicate,
+				jthPredicate)
 			if iCol == jCol {
 				if iType == notEqualPredicate && jType == inListPredicate {
 					predicates[j], specialCase = updateInPredicate(sctx, jthPredicate, ithPredicate)
-					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
+					if maybeOverOptimized4PlanCache {
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
+					}
 					if !specialCase {
 						removeValues = append(removeValues, i)
 					}
 				} else if iType == inListPredicate && jType == notEqualPredicate {
 					predicates[i], specialCase = updateInPredicate(sctx, ithPredicate, jthPredicate)
-					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
+					if maybeOverOptimized4PlanCache {
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
+					}
 					if !specialCase {
 						removeValues = append(removeValues, j)
 					}
@@ -322,6 +331,15 @@ func updateOrPredicate(ctx base.PlanContext, orPredicateList expression.Expressi
 	return newPred
 }
 
+func MaybeOverOptimized4PlanCacheForMultiExpression(ctx exprctx.ExprContext, exprs ...[]expression.Expression) bool {
+	for _, expr := range exprs {
+		if expression.MaybeOverOptimized4PlanCache(ctx, expr) {
+			return true
+		}
+	}
+	return false
+}
+
 // pruneEmptyORBranches applies iteratively updateOrPredicate for each pair of OR predicate
 // and another scalar predicate.
 func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Expression) {
@@ -336,12 +354,10 @@ func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Express
 			_, jType := FindPredicateType(sctx, jthPredicate)
 			iType = comparisonPred(iType)
 			jType = comparisonPred(jType)
-			maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), []expression.Expression{ithPredicate})
-			// if maybeOverOptimized4PlanCache is true, we do not need to check jthPredicate
-			if !maybeOverOptimized4PlanCache {
-				maybeOverOptimized4PlanCache = maybeOverOptimized4PlanCache ||
-					expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), []expression.Expression{jthPredicate})
-			}
+			maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCacheForMultiExpression(
+				sctx.GetExprCtx(),
+				ithPredicate,
+				jthPredicate)
 			if iType == scalarPredicate && jType == orPredicate {
 				predicates[j] = updateOrPredicate(sctx, jthPredicate, ithPredicate)
 				if maybeOverOptimized4PlanCache {
