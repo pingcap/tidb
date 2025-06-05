@@ -60,6 +60,12 @@ func AdjustRowCountForTableScanByLimit(sctx planctx.PlanContext,
 			rowCount = min(path.CountAfterAccess, uniformEst/correlationFactor)
 		}
 	}
+	// if orderRatio is enabled, we use it to recognize that we must scan more rows to find the first row.
+	orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
+	minRowCount := min(expectedCnt, dsStatsInfo.RowCount)
+	if orderRatio >= 0 && path.CountAfterAccess > rowCount {
+		rowCount += (path.CountAfterAccess - minRowCount) * orderRatio
+	}
 	return rowCount
 }
 
