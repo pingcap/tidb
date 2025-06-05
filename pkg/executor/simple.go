@@ -2781,7 +2781,7 @@ func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
 		return errors.Trace(err)
 	}
 
-	logutil.BgLogger().Info("Broadcast query", zap.String("sql", sql))
+	logutil.BgLogger().Info("Successfully broadcast query", zap.String("sql", sql))
 	return nil
 }
 
