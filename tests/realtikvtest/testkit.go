@@ -105,6 +105,7 @@ func RunTestMain(m *testing.M) {
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
+// TestOption is used to customize a special tk for usage.
 type TestOption func(tk *testkit.TestKit)
 
 // WithCascades test func body under different planner mode.
