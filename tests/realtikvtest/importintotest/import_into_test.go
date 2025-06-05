@@ -287,21 +287,42 @@ func (s *mockGCSSuite) TestTableMode() {
 	filePath := path.Join(tempDir, "file.csv")
 	s.NoError(os.WriteFile(filePath, content, 0644))
 	s.prepareAndUseDB("import_into")
+	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
 
+	// Test import into will alter table mode to Import and reset to Normal.
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		sql := fmt.Sprintf(`IMPORT INTO import_into.t FROM '%s';`, filePath)
+		s.tk.MustExec(sql)
+	}()
+	go func() {
+		defer wg.Done()
+		require.Eventually(s.T(), func() bool {
+			err := s.tk.QueryToErr("SELECT * FROM import_into.t;")
+			return strings.Contains(err.Error(), "is in mode Import")
+		}, 5*time.Second, 100*time.Millisecond)
+		s.tk.EventuallyMustQueryAndCheck("SELECT * FROM import_into.t;", nil, testkit.Rows("1 test 11", "2 test2 22"), 5*time.Second, 100*time.Millisecond)
+	}()
+	wg.Wait()
+
+	// Test check import into target table is empty or get error.
+	s.tk.MustExec("truncate table t;")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("NotEmpty")`)
 	sql := fmt.Sprintf(`IMPORT INTO import_into.t FROM '%s';`, filePath)
 	s.tk.MustGetErrMsg(sql, "PreCheck failed: target table is not empty")
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty")
-
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("Error")`)
 	sql = fmt.Sprintf(`IMPORT INTO import_into.t FROM '%s' FORMAT 'SQL';`, filePath)
 	s.tk.MustGetErrMsg(sql, "PreCheck failed: check if table is empty failed")
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty")
-
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/errorWhenCreateAlterTableModeJob", `return(true)`)
+	// Test import into clean up can alter table mode to Normal finally.
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/errorWhenResetTableMode", `return(true)`)
 	sql = fmt.Sprintf(`IMPORT INTO import_into.t FROM '%s';`, filePath)
-	s.tk.MustGetErrMsg(sql, "occur an error when sort chunk")
-	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/errorWhenCreateAlterTableModeJob")
+	s.tk.MustGetErrMsg(sql, "occur an error when reset table mode to normal")
+	s.tk.EventuallyMustQueryAndCheck("SELECT * FROM import_into.t;", nil, testkit.Rows("1 test 11", "2 test2 22"), 5*time.Second, 100*time.Millisecond)
+	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/errorWhenResetTableMode")
 }
 
 func (s *mockGCSSuite) TestInputNull() {
