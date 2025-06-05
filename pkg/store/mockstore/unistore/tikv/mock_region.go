@@ -17,6 +17,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -37,9 +38,13 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
+	pdgc "github.com/tikv/pd/client/clients/gc"
 	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/constants"
 	"github.com/tikv/pd/client/opt"
+	"go.uber.org/zap"
 )
 
 // MPPTaskHandlerMap is a map of *cophandler.MPPTaskHandler.
@@ -720,8 +725,12 @@ func (rm *MockRegionManager) AddPeer(regionID, storeID, peerID uint64) {
 
 // MockPD implements gRPC PDServer.
 type MockPD struct {
-	rm          *MockRegionManager
-	gcSafePoint uint64
+	rm *MockRegionManager
+
+	gcStatesMu   sync.Mutex
+	gcSafePoint  uint64
+	txnSafePoint uint64
+	gcBarriers   map[string]uint64
 
 	externalTimestamp atomic.Uint64
 }
@@ -832,6 +841,20 @@ func (pd *MockPD) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint
 		if atomic.CompareAndSwapUint64(&pd.gcSafePoint, old, safePoint) {
 			return safePoint, nil
 		}
+	}
+}
+
+func (pd *MockPD) GetGCInternalController(keyspaceID uint32) pdgc.InternalController {
+	return gcInternalController{
+		inner:      pd,
+		keyspaceID: keyspaceID,
+	}
+}
+
+func (pd *MockPD) GetGCStatesClient(keyspaceID uint32) pdgc.GCStatesClient {
+	return gcStatesClient{
+		inner:      pd,
+		keyspaceID: keyspaceID,
 	}
 }
 
@@ -952,3 +975,167 @@ func (pd *MockPD) ScatterRegion(ctx context.Context, regionID uint64) error {
 
 // Close closes the MockPD.
 func (pd *MockPD) Close() {}
+
+type gcInternalController struct {
+	inner      *MockPD
+	keyspaceID uint32
+}
+
+func (c gcInternalController) AdvanceTxnSafePoint(ctx context.Context, target uint64) (pdgc.AdvanceTxnSafePointResult, error) {
+	if c.keyspaceID != constants.NullKeyspaceID {
+		panic("unimplemented")
+	}
+
+	c.inner.gcStatesMu.Lock()
+	defer c.inner.gcStatesMu.Unlock()
+
+	if target < c.inner.txnSafePoint {
+		return pdgc.AdvanceTxnSafePointResult{},
+			errors.Errorf("trying to update txn safe point to a smaller value, current value: %v, given: %v",
+				c.inner.txnSafePoint, target)
+	}
+
+	res := pdgc.AdvanceTxnSafePointResult{
+		OldTxnSafePoint:    c.inner.txnSafePoint,
+		Target:             target,
+		NewTxnSafePoint:    target,
+		BlockerDescription: "",
+	}
+
+	minGCBarrierName := ""
+	var minGCBarrierTS uint64 = 0
+	for name, ts := range c.inner.gcBarriers {
+		if ts == 0 {
+			panic("found 0 in barrier ts of GC barriers")
+		}
+		if ts < minGCBarrierTS || minGCBarrierTS == 0 {
+			minGCBarrierName = name
+			minGCBarrierTS = ts
+		}
+	}
+
+	if minGCBarrierTS != 0 && minGCBarrierTS < res.NewTxnSafePoint {
+		res.NewTxnSafePoint = minGCBarrierTS
+		res.BlockerDescription = fmt.Sprintf("GCBarrier { BarrierID: %+q, BarrierTS: %d, ExpirationTime: <nil> }", minGCBarrierName, res.NewTxnSafePoint)
+		logutil.Logger(ctx).Info("txn safe point blocked",
+			zap.Uint64("oldTxnSafePoint", res.OldTxnSafePoint), zap.Uint64("newTxnSafePoint", res.NewTxnSafePoint),
+			zap.String("blocker", res.BlockerDescription))
+	}
+
+	if res.NewTxnSafePoint < res.OldTxnSafePoint {
+		res.NewTxnSafePoint = res.OldTxnSafePoint
+		logutil.Logger(ctx).Info("txn safe point unable to be blocked",
+			zap.Uint64("oldTxnSafePoint", res.OldTxnSafePoint), zap.Uint64("newTxnSafePoint", res.NewTxnSafePoint),
+			zap.String("blocker", res.BlockerDescription))
+	}
+
+	c.inner.txnSafePoint = res.NewTxnSafePoint
+
+	return res, nil
+}
+
+func (c gcInternalController) AdvanceGCSafePoint(ctx context.Context, target uint64) (pdgc.AdvanceGCSafePointResult, error) {
+	if c.keyspaceID != constants.NullKeyspaceID {
+		panic("unimplemented")
+	}
+
+	c.inner.gcStatesMu.Lock()
+	defer c.inner.gcStatesMu.Unlock()
+
+	if target < c.inner.gcSafePoint {
+		return pdgc.AdvanceGCSafePointResult{},
+			errors.Errorf("trying to update gc safe point to a smaller value, current value: %v, given: %v",
+				c.inner.gcSafePoint, target)
+	}
+
+	if target > c.inner.txnSafePoint {
+		return pdgc.AdvanceGCSafePointResult{},
+			errors.Errorf("trying to update GC safe point to a too large value that exceeds the txn safe point, current value: %v, given: %v, current txn safe point: %v",
+				c.inner.gcSafePoint, target, c.inner.txnSafePoint)
+	}
+
+	res := pdgc.AdvanceGCSafePointResult{
+		OldGCSafePoint: c.inner.gcSafePoint,
+		Target:         target,
+		NewGCSafePoint: target,
+	}
+
+	c.inner.gcSafePoint = res.NewGCSafePoint
+
+	return res, nil
+}
+
+type gcStatesClient struct {
+	inner      *MockPD
+	keyspaceID uint32
+}
+
+func (c gcStatesClient) SetGCBarrier(ctx context.Context, barrierID string, barrierTS uint64, ttl time.Duration) (*pdgc.GCBarrierInfo, error) {
+	if c.keyspaceID != constants.NullKeyspaceID {
+		panic("unimplemented")
+	}
+
+	startTime := time.Now()
+
+	c.inner.gcStatesMu.Lock()
+	defer c.inner.gcStatesMu.Unlock()
+
+	if barrierTS == 0 || barrierID == "" || ttl <= 0 {
+		return nil, errors.New("invalid arguments")
+	}
+
+	// TTL is unimplemented here.
+
+	if barrierTS < c.inner.txnSafePoint {
+		return nil, errors.Errorf("trying to set a GC barrier on ts %d which is already behind the txn safe point %d", barrierTS, c.inner.txnSafePoint)
+	}
+
+	res := pdgc.NewGCBarrierInfo(barrierID, barrierTS, pdgc.TTLNeverExpire, startTime)
+	c.inner.gcBarriers[barrierID] = barrierTS
+	return res, nil
+}
+
+func (c gcStatesClient) DeleteGCBarrier(ctx context.Context, barrierID string) (*pdgc.GCBarrierInfo, error) {
+	if c.keyspaceID != constants.NullKeyspaceID {
+		panic("unimplemented")
+	}
+
+	startTime := time.Now()
+
+	c.inner.gcStatesMu.Lock()
+	defer c.inner.gcStatesMu.Unlock()
+
+	barrierTS, exists := c.inner.gcBarriers[barrierID]
+
+	if !exists {
+		return nil, nil
+	}
+
+	delete(c.inner.gcBarriers, barrierID)
+	return pdgc.NewGCBarrierInfo(barrierID, barrierTS, pdgc.TTLNeverExpire, startTime), nil
+}
+
+func (c gcStatesClient) GetGCState(ctx context.Context) (pdgc.GCState, error) {
+	if c.keyspaceID != constants.NullKeyspaceID {
+		panic("unimplemented")
+	}
+
+	startTime := time.Now()
+
+	c.inner.gcStatesMu.Lock()
+	defer c.inner.gcStatesMu.Unlock()
+
+	res := pdgc.GCState{
+		KeyspaceID:   c.keyspaceID,
+		TxnSafePoint: c.inner.txnSafePoint,
+		GCSafePoint:  c.inner.gcSafePoint,
+	}
+
+	gcBarriers := make([]*pdgc.GCBarrierInfo, 0, len(c.inner.gcBarriers))
+	for barrierID, barrierTS := range c.inner.gcBarriers {
+		gcBarriers = append(gcBarriers, pdgc.NewGCBarrierInfo(barrierID, barrierTS, pdgc.TTLNeverExpire, startTime))
+	}
+	res.GCBarriers = gcBarriers
+
+	return res, nil
+}
