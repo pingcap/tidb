@@ -17,13 +17,16 @@ package handle
 import (
 	"context"
 	goerrors "errors"
+	"strconv"
 	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
@@ -249,6 +252,14 @@ func GetNodeResource() *proto.NodeResource {
 // SetNodeResource gets the node resource.
 func SetNodeResource(rc *proto.NodeResource) {
 	nodeResource.Store(rc)
+}
+
+func GetCloudStorageURI(store kv.Storage) string {
+	if s, ok := store.(kv.StorageWithPD); ok {
+		return vardef.CloudStorageURI.Load() + "/" + strconv.FormatUint(s.GetPDClient().GetClusterID(context.TODO()), 10)
+	}
+	logutil.BgLogger().Info("cannot get cluster id from store, use default cloud storage uri")
+	return vardef.CloudStorageURI.Load()
 }
 
 func init() {
