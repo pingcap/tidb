@@ -16,12 +16,14 @@ package handle
 
 import (
 	"context"
-	goerrors "errors"
+	"path/filepath"
 	"strconv"
 	"time"
 
+	goerrors "errors"
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	litstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -269,12 +271,17 @@ func GetTargetScope() string {
 	return vardef.ServiceScope.Load()
 }
 
+// GetCloudStorageURI returns the cloud storage URI with cluster ID appended to the path.
 func GetCloudStorageURI(store kv.Storage) string {
+	cloudURI := vardef.CloudStorageURI.Load()
 	if s, ok := store.(kv.StorageWithPD); ok {
-		return vardef.CloudStorageURI.Load() + "/" + strconv.FormatUint(s.GetPDClient().GetClusterID(context.TODO()), 10)
+		// When setting the cloudURI value by SQL, we already checked the effectiveness, so we don't need to check it again here.
+		u, _ := litstorage.ParseRawURL(cloudURI)
+		u.Path = filepath.Join(u.Path, strconv.FormatUint(s.GetPDClient().GetClusterID(context.TODO()), 10))
+		return u.String()
 	}
 	logutil.BgLogger().Error("Can't get cluster id from store, use default cloud storage uri")
-	return vardef.CloudStorageURI.Load()
+	return cloudURI
 }
 
 func init() {
