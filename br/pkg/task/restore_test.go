@@ -544,11 +544,11 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 	// Setup common test database and table maps
 	dbInfo1 := model.DBInfo{
 		ID:   1,
-		Name: ast.NewCIStr("test_db_1"),
+		Name: pmodel.NewCIStr("test_db_1"),
 	}
 	dbInfo2 := model.DBInfo{
 		ID:   2,
-		Name: ast.NewCIStr("test_db_2"),
+		Name: pmodel.NewCIStr("test_db_2"),
 	}
 	snapshotDBMap := map[int64]*metautil.Database{
 		1: {
@@ -558,14 +558,14 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 					DB: &dbInfo1,
 					Info: &model.TableInfo{
 						ID:   11,
-						Name: ast.NewCIStr("test_table_11"),
+						Name: pmodel.NewCIStr("test_table_11"),
 					},
 				},
 				{
 					DB: &dbInfo1,
 					Info: &model.TableInfo{
 						ID:   12,
-						Name: ast.NewCIStr("test_table_12"),
+						Name: pmodel.NewCIStr("test_table_12"),
 					},
 				},
 			},
@@ -577,7 +577,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 					DB: &dbInfo2,
 					Info: &model.TableInfo{
 						ID:   21,
-						Name: ast.NewCIStr("test_table_21"),
+						Name: pmodel.NewCIStr("test_table_21"),
 					},
 				},
 			},
