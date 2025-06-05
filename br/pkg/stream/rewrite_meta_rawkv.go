@@ -131,8 +131,7 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, error)
 
 	dbMap, exist := sr.DbReplaceMap[dbID]
 	if !exist {
-		// db filtered out
-		return nil, nil
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
 	}
 	if dbMap.FilteredOut {
 		return nil, nil
@@ -153,8 +152,7 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
 
 	dbMap, exist := sr.DbReplaceMap[dbInfo.ID]
 	if !exist {
-		// db filtered out
-		return nil, nil
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbInfo.ID)
 	}
 	if dbMap.FilteredOut {
 		return nil, nil
@@ -219,8 +217,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 
 	dbReplace, exist := sr.DbReplaceMap[dbID]
 	if !exist {
-		// db filtered out
-		return nil, nil
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
 	}
 	if dbReplace.FilteredOut {
 		return nil, nil
@@ -228,8 +225,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 
 	tableReplace, exist := dbReplace.TableMap[tableID]
 	if !exist {
-		// table filtered out
-		return nil, nil
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find table id:%v in maps", tableID)
 	}
 
 	// don't restore meta kv change for system db, not supported yet
@@ -260,8 +256,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 	// construct or find the id map.
 	dbReplace, exist = sr.DbReplaceMap[dbID]
 	if !exist {
-		// db filtered out
-		return nil, nil
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
 	}
 	if dbReplace.FilteredOut {
 		return nil, nil
@@ -269,8 +264,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 
 	tableReplace, exist = dbReplace.TableMap[tableInfo.ID]
 	if !exist {
-		// table filtered out
-		return nil, nil
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find table id:%v in maps", tableInfo.ID)
 	}
 	if tableReplace.FilteredOut {
 		return nil, nil
