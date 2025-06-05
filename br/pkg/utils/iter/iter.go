@@ -145,6 +145,7 @@ func AsSeq[T any](ctx context.Context, i TryNextor[T]) goiter.Seq2[error, T] {
 	}
 }
 
+// WithEmitSizeTrace adds a trace to the iterator that counts the size of each emitted item.
 func WithEmitSizeTrace[T interface{ Size() int }](it TryNextor[T], counter prometheus.Counter) TryNextor[T] {
 	return Tap(it, func(t T) {
 		counter.Add(float64(t.Size()))
