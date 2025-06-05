@@ -2298,7 +2298,7 @@ func buildOrderedList(ctx base.PlanContext, pointPlan base.Plan, list []*ast.Ass
 		if defaultExpr != nil {
 			defaultExpr.Name = assign.Column
 		}
-		expr, vs, err := rewriteAstExprWithPlanCtxWithVisitInfos(ctx, assign.Expr, pointPlan.Schema(), pointPlan.OutputNames(), false)
+		expr, vs, err := rewriteAstExprWithPlanCtx(ctx, assign.Expr, pointPlan.Schema(), pointPlan.OutputNames(), false)
 		if err != nil {
 			return nil, nil, true
 		}
