@@ -336,12 +336,24 @@ func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Express
 			_, jType := FindPredicateType(sctx, jthPredicate)
 			iType = comparisonPred(iType)
 			jType = comparisonPred(jType)
+			var maybeOverOptimized4PlanCache bool
+			maybeOverOptimized4PlanCache = maybeOverOptimized4PlanCache ||
+				expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), []expression.Expression{ithPredicate})
+			// if maybeOverOptimized4PlanCache is true, we do not need to check jthPredicate
+			if !maybeOverOptimized4PlanCache {
+				maybeOverOptimized4PlanCache = maybeOverOptimized4PlanCache ||
+					expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), []expression.Expression{jthPredicate})
+			}
 			if iType == scalarPredicate && jType == orPredicate {
 				predicates[j] = updateOrPredicate(sctx, jthPredicate, ithPredicate)
-				sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
+				if maybeOverOptimized4PlanCache {
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
+				}
 			} else if iType == orPredicate && jType == scalarPredicate {
 				predicates[i] = updateOrPredicate(sctx, ithPredicate, jthPredicate)
-				sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
+				if maybeOverOptimized4PlanCache {
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
+				}
 			}
 		}
 	}
@@ -396,7 +408,7 @@ func processCondition(sctx base.PlanContext, condition expression.Expression) (e
 		condition, applied = shortCircuitANDORLogicalConstants(sctx, condition, false)
 	}
 
-	if applied {
+	if applied && expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), []expression.Expression{condition}) {
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("True/False predicate simplification is triggered")
 	}
 
