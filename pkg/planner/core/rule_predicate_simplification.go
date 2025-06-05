@@ -59,7 +59,7 @@ func logicalConstant(bc base.PlanContext, cond expression.Expression) predicateT
 	if !ok {
 		return otherPredicate
 	}
-	if expression.MaybeOverOptimized4PlanCache(bc.GetExprCtx(), []expression.Expression{con}) {
+	if expression.MaybeOverOptimized4PlanCacheForMultiExpression(bc.GetExprCtx(), con) {
 		return otherPredicate
 	}
 	isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault())
