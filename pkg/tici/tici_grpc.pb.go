@@ -193,7 +193,7 @@ func RegisterMetaServiceServer(s grpc.ServiceRegistrar, srv MetaServiceServer) {
 	s.RegisterService(&MetaService_ServiceDesc, srv)
 }
 
-func _MetaService_WorkerNodeHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_WorkerNodeHeartbeat_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(WorkerNodeHeartbeatRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -205,13 +205,13 @@ func _MetaService_WorkerNodeHeartbeat_Handler(srv interface{}, ctx context.Conte
 		Server:     srv,
 		FullMethod: MetaService_WorkerNodeHeartbeat_FullMethodName,
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).WorkerNodeHeartbeat(ctx, req.(*WorkerNodeHeartbeatRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_ReaderNodeHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_ReaderNodeHeartbeat_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(ReaderNodeHeartbeatRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -223,13 +223,13 @@ func _MetaService_ReaderNodeHeartbeat_Handler(srv interface{}, ctx context.Conte
 		Server:     srv,
 		FullMethod: MetaService_ReaderNodeHeartbeat_FullMethodName,
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).ReaderNodeHeartbeat(ctx, req.(*ReaderNodeHeartbeatRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_CreateIndex_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_CreateIndex_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(CreateIndexRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -241,13 +241,13 @@ func _MetaService_CreateIndex_Handler(srv interface{}, ctx context.Context, dec 
 		Server:     srv,
 		FullMethod: MetaService_CreateIndex_FullMethodName,
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).CreateIndex(ctx, req.(*CreateIndexRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_DropIndex_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_DropIndex_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(DropIndexRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -259,13 +259,13 @@ func _MetaService_DropIndex_Handler(srv interface{}, ctx context.Context, dec fu
 		Server:     srv,
 		FullMethod: MetaService_DropIndex_FullMethodName,
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).DropIndex(ctx, req.(*DropIndexRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_GetIndexProgress_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_GetIndexProgress_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(GetIndexProgressRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -277,13 +277,13 @@ func _MetaService_GetIndexProgress_Handler(srv interface{}, ctx context.Context,
 		Server:     srv,
 		FullMethod: MetaService_GetIndexProgress_FullMethodName,
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).GetIndexProgress(ctx, req.(*GetIndexProgressRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_AppendFragMeta_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_AppendFragMeta_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(AppendFragMetaRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -295,13 +295,13 @@ func _MetaService_AppendFragMeta_Handler(srv interface{}, ctx context.Context, d
 		Server:     srv,
 		FullMethod: MetaService_AppendFragMeta_FullMethodName,
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).AppendFragMeta(ctx, req.(*AppendFragMetaRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_GetShardLocalCacheInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_GetShardLocalCacheInfo_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(GetShardLocalCacheRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -313,13 +313,13 @@ func _MetaService_GetShardLocalCacheInfo_Handler(srv interface{}, ctx context.Co
 		Server:     srv,
 		FullMethod: MetaService_GetShardLocalCacheInfo_FullMethodName,
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).GetShardLocalCacheInfo(ctx, req.(*GetShardLocalCacheRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_DebugGetShardManifest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_DebugGetShardManifest_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(DebugGetShardManifestRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -331,7 +331,7 @@ func _MetaService_DebugGetShardManifest_Handler(srv interface{}, ctx context.Con
 		Server:     srv,
 		FullMethod: MetaService_DebugGetShardManifest_FullMethodName,
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).DebugGetShardManifest(ctx, req.(*DebugGetShardManifestRequest))
 	}
 	return interceptor(ctx, in, info, handler)
@@ -439,7 +439,7 @@ func RegisterIndexerServiceServer(s grpc.ServiceRegistrar, srv IndexerServiceSer
 	s.RegisterService(&IndexerService_ServiceDesc, srv)
 }
 
-func _IndexerService_AddShard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _IndexerService_AddShard_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(AddShardRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -451,7 +451,7 @@ func _IndexerService_AddShard_Handler(srv interface{}, ctx context.Context, dec 
 		Server:     srv,
 		FullMethod: IndexerService_AddShard_FullMethodName,
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(IndexerServiceServer).AddShard(ctx, req.(*AddShardRequest))
 	}
 	return interceptor(ctx, in, info, handler)
