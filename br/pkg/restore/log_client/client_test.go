@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -47,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/keepalive"
 )
@@ -95,7 +95,7 @@ func TestDeleteRangeQueryExec(t *testing.T) {
 	ctx := context.Background()
 	m := mc
 	g := gluetidb.New()
-	client := logclient.NewRestoreClient(
+	client := logclient.NewLogClient(
 		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
 	err := client.Init(ctx, g, m.Storage)
 	require.NoError(t, err)
@@ -114,7 +114,7 @@ func TestDeleteRangeQuery(t *testing.T) {
 	m := mc
 
 	g := gluetidb.New()
-	client := logclient.NewRestoreClient(
+	client := logclient.NewLogClient(
 		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
 	err := client.Init(ctx, g, m.Storage)
 	require.NoError(t, err)
@@ -136,22 +136,8 @@ func TestDeleteRangeQuery(t *testing.T) {
 	}
 }
 
-func MockEmptySchemasReplace() *stream.SchemasReplace {
-	dbMap := make(map[stream.UpstreamID]*stream.DBReplace)
-	return stream.NewSchemasReplace(
-		dbMap,
-		true,
-		nil,
-		1,
-		filter.All(),
-		nil,
-		nil,
-		nil,
-	)
-}
-
 func TestRestoreBatchMetaKVFiles(t *testing.T) {
-	client := logclient.NewRestoreClient(nil, nil, nil, keepalive.ClientParameters{})
+	client := logclient.NewLogClient(nil, nil, nil, keepalive.ClientParameters{})
 	files := []*backuppb.DataFileInfo{}
 	// test empty files and entries
 	next, err := client.RestoreBatchMetaKVFiles(context.Background(), files[0:], nil, make([]*logclient.KvEntryWithTS, 0), math.MaxUint64, nil, nil, "")
@@ -160,41 +146,35 @@ func TestRestoreBatchMetaKVFiles(t *testing.T) {
 }
 
 func TestRestoreMetaKVFilesWithBatchMethod1(t *testing.T) {
-	files_default := []*backuppb.DataFileInfo{}
-	files_write := []*backuppb.DataFileInfo{}
+	var filesDefault []*backuppb.DataFileInfo
+	var filesWrite []*backuppb.DataFileInfo
 	batchCount := 0
 
-	sr := MockEmptySchemasReplace()
-	err := logclient.RestoreMetaKVFilesWithBatchMethod(
-		context.Background(),
-		files_default,
-		files_write,
-		sr,
-		nil,
-		nil,
-		func(
-			ctx context.Context,
+	mockProcessor := &mockBatchProcessor{
+		processFunc: func(ctx context.Context,
 			files []*backuppb.DataFileInfo,
-			schemasReplace *stream.SchemasReplace,
 			entries []*logclient.KvEntryWithTS,
 			filterTS uint64,
-			updateStats func(kvCount uint64, size uint64),
-			progressInc func(),
-			cf string,
-		) ([]*logclient.KvEntryWithTS, error) {
+			cf string) ([]*logclient.KvEntryWithTS, error) {
 			require.Equal(t, 0, len(entries))
 			require.Equal(t, 0, len(files))
 			batchCount++
 			return nil, nil
 		},
+	}
+	err := logclient.LoadAndProcessMetaKVFilesInBatch(
+		context.Background(),
+		filesDefault,
+		filesWrite,
+		mockProcessor,
 	)
 	require.Nil(t, err)
 	require.Equal(t, batchCount, 2)
 }
 
 func TestRestoreMetaKVFilesWithBatchMethod2_default_empty(t *testing.T) {
-	files_default := []*backuppb.DataFileInfo{}
-	files_write := []*backuppb.DataFileInfo{
+	var filesDefault []*backuppb.DataFileInfo
+	filesWrite := []*backuppb.DataFileInfo{
 		{
 			Path:  "f1",
 			MinTs: 100,
@@ -203,89 +183,78 @@ func TestRestoreMetaKVFilesWithBatchMethod2_default_empty(t *testing.T) {
 	}
 	batchCount := 0
 
-	sr := MockEmptySchemasReplace()
-	err := logclient.RestoreMetaKVFilesWithBatchMethod(
-		context.Background(),
-		files_default,
-		files_write,
-		sr,
-		nil,
-		nil,
-		func(
-			ctx context.Context,
+	mockProcessor := &mockBatchProcessor{
+		processFunc: func(ctx context.Context,
 			files []*backuppb.DataFileInfo,
-			schemasReplace *stream.SchemasReplace,
 			entries []*logclient.KvEntryWithTS,
 			filterTS uint64,
-			updateStats func(kvCount uint64, size uint64),
-			progressInc func(),
-			cf string,
-		) ([]*logclient.KvEntryWithTS, error) {
+			cf string) ([]*logclient.KvEntryWithTS, error) {
 			if len(entries) == 0 && len(files) == 0 {
-				require.Equal(t, stream.DefaultCF, cf)
+				require.Equal(t, consts.DefaultCF, cf)
 				batchCount++
 			} else {
 				require.Equal(t, 0, len(entries))
 				require.Equal(t, 1, len(files))
 				require.Equal(t, uint64(100), files[0].MinTs)
-				require.Equal(t, stream.WriteCF, cf)
+				require.Equal(t, consts.WriteCF, cf)
 			}
 			require.Equal(t, uint64(math.MaxUint64), filterTS)
 			return nil, nil
 		},
+	}
+	err := logclient.LoadAndProcessMetaKVFilesInBatch(
+		context.Background(),
+		filesDefault,
+		filesWrite,
+		mockProcessor,
 	)
 	require.Nil(t, err)
 	require.Equal(t, batchCount, 1)
 }
 
 func TestRestoreMetaKVFilesWithBatchMethod2_write_empty_1(t *testing.T) {
-	files_default := []*backuppb.DataFileInfo{
+	filesDefault := []*backuppb.DataFileInfo{
 		{
 			Path:  "f1",
 			MinTs: 100,
 			MaxTs: 120,
 		},
 	}
-	files_write := []*backuppb.DataFileInfo{}
+	var filesWrite []*backuppb.DataFileInfo
 	batchCount := 0
 
-	sr := MockEmptySchemasReplace()
-	err := logclient.RestoreMetaKVFilesWithBatchMethod(
-		context.Background(),
-		files_default,
-		files_write,
-		sr,
-		nil,
-		nil,
-		func(
-			ctx context.Context,
+	mockProcessor := &mockBatchProcessor{
+		processFunc: func(ctx context.Context,
 			files []*backuppb.DataFileInfo,
-			schemasReplace *stream.SchemasReplace,
 			entries []*logclient.KvEntryWithTS,
 			filterTS uint64,
-			updateStats func(kvCount uint64, size uint64),
-			progressInc func(),
-			cf string,
-		) ([]*logclient.KvEntryWithTS, error) {
+			cf string) ([]*logclient.KvEntryWithTS, error) {
 			if len(entries) == 0 && len(files) == 0 {
-				require.Equal(t, stream.WriteCF, cf)
+				require.Equal(t, consts.WriteCF, cf)
 				batchCount++
 			} else {
 				require.Equal(t, 0, len(entries))
 				require.Equal(t, 1, len(files))
 				require.Equal(t, uint64(100), files[0].MinTs)
-				require.Equal(t, stream.DefaultCF, cf)
+				require.Equal(t, consts.DefaultCF, cf)
 			}
 			require.Equal(t, uint64(math.MaxUint64), filterTS)
 			return nil, nil
 		},
+	}
+
+	err := logclient.LoadAndProcessMetaKVFilesInBatch(
+		context.Background(),
+		filesDefault,
+		filesWrite,
+		mockProcessor,
 	)
 	require.Nil(t, err)
 	require.Equal(t, batchCount, 1)
 }
 
 func TestRestoreMetaKVFilesWithBatchMethod2_write_empty_2(t *testing.T) {
-	files_default := []*backuppb.DataFileInfo{
+	filesDefault := []*backuppb.DataFileInfo{
 		{
 			Path:   "f1",
 			MinTs:  100,
@@ -299,31 +268,19 @@ func TestRestoreMetaKVFilesWithBatchMethod2_write_empty_2(t *testing.T) {
 			Length: logclient.MetaKVBatchSize,
 		},
 	}
-	files_write := []*backuppb.DataFileInfo{}
+	var filesWrite []*backuppb.DataFileInfo
 	emptyCount := 0
 	batchCount := 0
 
-	sr := MockEmptySchemasReplace()
-	err := logclient.RestoreMetaKVFilesWithBatchMethod(
-		context.Background(),
-		files_default,
-		files_write,
-		sr,
-		nil,
-		nil,
-		func(
-			ctx context.Context,
+	mockProcessor := &mockBatchProcessor{
+		processFunc: func(ctx context.Context,
 			files []*backuppb.DataFileInfo,
-			schemasReplace *stream.SchemasReplace,
 			entries []*logclient.KvEntryWithTS,
 			filterTS uint64,
-			updateStats func(kvCount uint64, size uint64),
-			progressInc func(),
-			cf string,
-		) ([]*logclient.KvEntryWithTS, error) {
+			cf string) ([]*logclient.KvEntryWithTS, error) {
 			if len(entries) == 0 && len(files) == 0 {
 				// write - write
-				require.Equal(t, stream.WriteCF, cf)
+				require.Equal(t, consts.WriteCF, cf)
 				emptyCount++
 				if emptyCount == 1 {
 					require.Equal(t, uint64(110), filterTS)
@@ -334,7 +291,7 @@ func TestRestoreMetaKVFilesWithBatchMethod2_write_empty_2(t *testing.T) {
 				// default - default
 				batchCount++
 				require.Equal(t, 1, len(files))
-				require.Equal(t, stream.DefaultCF, cf)
+				require.Equal(t, consts.DefaultCF, cf)
 				if batchCount == 1 {
 					require.Equal(t, uint64(100), files[0].MinTs)
 					require.Equal(t, uint64(110), filterTS)
@@ -344,6 +301,13 @@ func TestRestoreMetaKVFilesWithBatchMethod2_write_empty_2(t *testing.T) {
 			}
 			return nil, nil
 		},
+	}
+
+	err := logclient.LoadAndProcessMetaKVFilesInBatch(
+		context.Background(),
+		filesDefault,
+		filesWrite,
+		mockProcessor,
 	)
 	require.Nil(t, err)
 	require.Equal(t, batchCount, 2)
@@ -351,7 +315,7 @@ func TestRestoreMetaKVFilesWithBatchMethod2_write_empty_2(t *testing.T) {
 }
 
 func TestRestoreMetaKVFilesWithBatchMethod_with_entries(t *testing.T) {
-	files_default := []*backuppb.DataFileInfo{
+	filesDefault := []*backuppb.DataFileInfo{
 		{
 			Path:   "f1",
 			MinTs:  100,
@@ -365,31 +329,19 @@ func TestRestoreMetaKVFilesWithBatchMethod_with_entries(t *testing.T) {
 			Length: logclient.MetaKVBatchSize,
 		},
 	}
-	files_write := []*backuppb.DataFileInfo{}
+	var filesWrite []*backuppb.DataFileInfo
 	emptyCount := 0
 	batchCount := 0
 
-	sr := MockEmptySchemasReplace()
-	err := logclient.RestoreMetaKVFilesWithBatchMethod(
-		context.Background(),
-		files_default,
-		files_write,
-		sr,
-		nil,
-		nil,
-		func(
-			ctx context.Context,
+	mockProcessor := &mockBatchProcessor{
+		processFunc: func(ctx context.Context,
 			files []*backuppb.DataFileInfo,
-			schemasReplace *stream.SchemasReplace,
 			entries []*logclient.KvEntryWithTS,
 			filterTS uint64,
-			updateStats func(kvCount uint64, size uint64),
-			progressInc func(),
-			cf string,
-		) ([]*logclient.KvEntryWithTS, error) {
+			cf string) ([]*logclient.KvEntryWithTS, error) {
 			if len(entries) == 0 && len(files) == 0 {
 				// write - write
-				require.Equal(t, stream.WriteCF, cf)
+				require.Equal(t, consts.WriteCF, cf)
 				emptyCount++
 				if emptyCount == 1 {
 					require.Equal(t, uint64(110), filterTS)
@@ -400,7 +352,7 @@ func TestRestoreMetaKVFilesWithBatchMethod_with_entries(t *testing.T) {
 				// default - default
 				batchCount++
 				require.Equal(t, 1, len(files))
-				require.Equal(t, stream.DefaultCF, cf)
+				require.Equal(t, consts.DefaultCF, cf)
 				if batchCount == 1 {
 					require.Equal(t, uint64(100), files[0].MinTs)
 					require.Equal(t, uint64(110), filterTS)
@@ -410,6 +362,13 @@ func TestRestoreMetaKVFilesWithBatchMethod_with_entries(t *testing.T) {
 			}
 			return nil, nil
 		},
+	}
+
+	err := logclient.LoadAndProcessMetaKVFilesInBatch(
+		context.Background(),
+		filesDefault,
+		filesWrite,
+		mockProcessor,
 	)
 	require.Nil(t, err)
 	require.Equal(t, batchCount, 2)
@@ -476,31 +435,27 @@ func TestRestoreMetaKVFilesWithBatchMethod3(t *testing.T) {
 	result := make(map[int][]*backuppb.DataFileInfo)
 	resultKV := make(map[int]int)
 
-	sr := MockEmptySchemasReplace()
-	err := logclient.RestoreMetaKVFilesWithBatchMethod(
-		context.Background(),
-		defaultFiles,
-		writeFiles,
-		sr,
-		nil,
-		nil,
-		func(
-			ctx context.Context,
-			fs []*backuppb.DataFileInfo,
-			schemasReplace *stream.SchemasReplace,
+	mockProcessor := &mockBatchProcessor{
+		processFunc: func(ctx context.Context,
+			files []*backuppb.DataFileInfo,
 			entries []*logclient.KvEntryWithTS,
 			filterTS uint64,
-			updateStats func(kvCount uint64, size uint64),
-			progressInc func(),
-			cf string,
-		) ([]*logclient.KvEntryWithTS, error) {
-			result[batchCount] = fs
+			cf string) ([]*logclient.KvEntryWithTS, error) {
+			result[batchCount] = files
 			t.Log(filterTS)
 			resultKV[batchCount] = len(entries)
 			batchCount++
 			return make([]*logclient.KvEntryWithTS, batchCount), nil
 		},
+	}
+
+	err := logclient.LoadAndProcessMetaKVFilesInBatch(
+		context.Background(),
+		defaultFiles,
+		writeFiles,
+		mockProcessor,
 	)
+
 	require.Nil(t, err)
 	require.Equal(t, len(result), 4)
 	require.Equal(t, result[0], defaultFiles[0:3])
@@ -562,29 +517,25 @@ func TestRestoreMetaKVFilesWithBatchMethod4(t *testing.T) {
 	batchCount := 0
 	result := make(map[int][]*backuppb.DataFileInfo)
 
-	sr := MockEmptySchemasReplace()
-	err := logclient.RestoreMetaKVFilesWithBatchMethod(
-		context.Background(),
-		defaultFiles,
-		writeFiles,
-		sr,
-		nil,
-		nil,
-		func(
-			ctx context.Context,
-			fs []*backuppb.DataFileInfo,
-			schemasReplace *stream.SchemasReplace,
+	mockProcessor := &mockBatchProcessor{
+		processFunc: func(ctx context.Context,
+			files []*backuppb.DataFileInfo,
 			entries []*logclient.KvEntryWithTS,
 			filterTS uint64,
-			updateStats func(kvCount uint64, size uint64),
-			progressInc func(),
-			cf string,
-		) ([]*logclient.KvEntryWithTS, error) {
-			result[batchCount] = fs
+			cf string) ([]*logclient.KvEntryWithTS, error) {
+			result[batchCount] = files
 			batchCount++
 			return nil, nil
 		},
+	}
+
+	err := logclient.LoadAndProcessMetaKVFilesInBatch(
+		context.Background(),
+		defaultFiles,
+		writeFiles,
+		mockProcessor,
 	)
+
 	require.Nil(t, err)
 	require.Equal(t, len(result), 4)
 	require.Equal(t, result[0], defaultFiles[0:2])
@@ -642,28 +593,22 @@ func TestRestoreMetaKVFilesWithBatchMethod5(t *testing.T) {
 	batchCount := 0
 	result := make(map[int][]*backuppb.DataFileInfo)
 
-	sr := MockEmptySchemasReplace()
-	err := logclient.RestoreMetaKVFilesWithBatchMethod(
-		context.Background(),
-		defaultFiles,
-		writeFiles,
-		sr,
-		nil,
-		nil,
-		func(
-			ctx context.Context,
-			fs []*backuppb.DataFileInfo,
-			schemasReplace *stream.SchemasReplace,
+	mockProcessor := &mockBatchProcessor{
+		processFunc: func(ctx context.Context,
+			files []*backuppb.DataFileInfo,
 			entries []*logclient.KvEntryWithTS,
 			filterTS uint64,
-			updateStats func(kvCount uint64, size uint64),
-			progressInc func(),
-			cf string,
-		) ([]*logclient.KvEntryWithTS, error) {
-			result[batchCount] = fs
+			cf string) ([]*logclient.KvEntryWithTS, error) {
+			result[batchCount] = files
 			batchCount++
 			return nil, nil
 		},
+	}
+	err := logclient.LoadAndProcessMetaKVFilesInBatch(
+		context.Background(),
+		defaultFiles,
+		writeFiles,
+		mockProcessor,
 	)
 	require.Nil(t, err)
 	require.Equal(t, len(result), 4)
@@ -739,30 +684,24 @@ func TestRestoreMetaKVFilesWithBatchMethod6(t *testing.T) {
 	result := make(map[int][]*backuppb.DataFileInfo)
 	resultKV := make(map[int]int)
 
-	sr := MockEmptySchemasReplace()
-	err := logclient.RestoreMetaKVFilesWithBatchMethod(
-		context.Background(),
-		defaultFiles,
-		writeFiles,
-		sr,
-		nil,
-		nil,
-		func(
-			ctx context.Context,
-			fs []*backuppb.DataFileInfo,
-			schemasReplace *stream.SchemasReplace,
+	mockProcessor := &mockBatchProcessor{
+		processFunc: func(ctx context.Context,
+			files []*backuppb.DataFileInfo,
 			entries []*logclient.KvEntryWithTS,
 			filterTS uint64,
-			updateStats func(kvCount uint64, size uint64),
-			progressInc func(),
-			cf string,
-		) ([]*logclient.KvEntryWithTS, error) {
-			result[batchCount] = fs
+			cf string) ([]*logclient.KvEntryWithTS, error) {
+			result[batchCount] = files
 			t.Log(filterTS)
 			resultKV[batchCount] = len(entries)
 			batchCount++
 			return make([]*logclient.KvEntryWithTS, batchCount), nil
 		},
+	}
+	err := logclient.LoadAndProcessMetaKVFilesInBatch(
+		context.Background(),
+		defaultFiles,
+		writeFiles,
+		mockProcessor,
 	)
 	require.Nil(t, err)
 	require.Equal(t, len(result), 6)
@@ -842,20 +781,20 @@ func TestApplyKVFilesWithSingelMethod(t *testing.T) {
 			Path:            "log3",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Delete,
 		},
 		{
 			Path:            "log1",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.DefaultCF,
+			Cf:              consts.DefaultCF,
 			Type:            backuppb.FileType_Put,
 		}, {
 			Path:            "log2",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Put,
 		},
 	}
@@ -897,28 +836,28 @@ func TestApplyKVFilesWithBatchMethod1(t *testing.T) {
 			Path:            "log5",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Delete,
 			RegionId:        1,
 		}, {
 			Path:            "log3",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Put,
 			RegionId:        1,
 		}, {
 			Path:            "log4",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Put,
 			RegionId:        1,
 		}, {
 			Path:            "log1",
 			NumberOfEntries: 5,
 			Length:          800,
-			Cf:              stream.DefaultCF,
+			Cf:              consts.DefaultCF,
 			Type:            backuppb.FileType_Put,
 			RegionId:        1,
 		},
@@ -926,7 +865,7 @@ func TestApplyKVFilesWithBatchMethod1(t *testing.T) {
 			Path:            "log2",
 			NumberOfEntries: 5,
 			Length:          200,
-			Cf:              stream.DefaultCF,
+			Cf:              consts.DefaultCF,
 			Type:            backuppb.FileType_Put,
 			RegionId:        1,
 		},
@@ -980,35 +919,35 @@ func TestApplyKVFilesWithBatchMethod2(t *testing.T) {
 			Path:            "log1",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Delete,
 			RegionId:        1,
 		}, {
 			Path:            "log2",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Put,
 			RegionId:        1,
 		}, {
 			Path:            "log3",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Put,
 			RegionId:        1,
 		}, {
 			Path:            "log4",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Put,
 			RegionId:        1,
 		}, {
 			Path:            "log5",
 			NumberOfEntries: 5,
 			Length:          800,
-			Cf:              stream.DefaultCF,
+			Cf:              consts.DefaultCF,
 			Type:            backuppb.FileType_Put,
 			RegionId:        1,
 		},
@@ -1016,7 +955,7 @@ func TestApplyKVFilesWithBatchMethod2(t *testing.T) {
 			Path:            "log6",
 			NumberOfEntries: 5,
 			Length:          200,
-			Cf:              stream.DefaultCF,
+			Cf:              consts.DefaultCF,
 			Type:            backuppb.FileType_Put,
 			RegionId:        1,
 		},
@@ -1071,28 +1010,28 @@ func TestApplyKVFilesWithBatchMethod3(t *testing.T) {
 			Path:            "log1",
 			NumberOfEntries: 5,
 			Length:          2000,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Delete,
 			RegionId:        1,
 		}, {
 			Path:            "log2",
 			NumberOfEntries: 5,
 			Length:          2000,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Put,
 			RegionId:        1,
 		}, {
 			Path:            "log3",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Put,
 			RegionId:        1,
 		}, {
 			Path:            "log5",
 			NumberOfEntries: 5,
 			Length:          800,
-			Cf:              stream.DefaultCF,
+			Cf:              consts.DefaultCF,
 			Type:            backuppb.FileType_Put,
 			RegionId:        3,
 		},
@@ -1100,7 +1039,7 @@ func TestApplyKVFilesWithBatchMethod3(t *testing.T) {
 			Path:            "log6",
 			NumberOfEntries: 5,
 			Length:          200,
-			Cf:              stream.DefaultCF,
+			Cf:              consts.DefaultCF,
 			Type:            backuppb.FileType_Put,
 			RegionId:        3,
 		},
@@ -1154,35 +1093,35 @@ func TestApplyKVFilesWithBatchMethod4(t *testing.T) {
 			Path:            "log1",
 			NumberOfEntries: 5,
 			Length:          2000,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Delete,
 			TableId:         1,
 		}, {
 			Path:            "log2",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Put,
 			TableId:         1,
 		}, {
 			Path:            "log3",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Put,
 			TableId:         2,
 		}, {
 			Path:            "log4",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Put,
 			TableId:         1,
 		}, {
 			Path:            "log5",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.DefaultCF,
+			Cf:              consts.DefaultCF,
 			Type:            backuppb.FileType_Put,
 			TableId:         2,
 		},
@@ -1232,35 +1171,35 @@ func TestApplyKVFilesWithBatchMethod5(t *testing.T) {
 			Path:            "log1",
 			NumberOfEntries: 5,
 			Length:          2000,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Delete,
 			TableId:         1,
 		}, {
 			Path:            "log2",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Put,
 			TableId:         1,
 		}, {
 			Path:            "log3",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Put,
 			TableId:         2,
 		}, {
 			Path:            "log4",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.WriteCF,
+			Cf:              consts.WriteCF,
 			Type:            backuppb.FileType_Put,
 			TableId:         1,
 		}, {
 			Path:            "log5",
 			NumberOfEntries: 5,
 			Length:          100,
-			Cf:              stream.DefaultCF,
+			Cf:              consts.DefaultCF,
 			Type:            backuppb.FileType_Put,
 			TableId:         2,
 		},
@@ -1387,16 +1326,16 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 
 	{
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
-		cfg := &logclient.InitSchemaConfig{IsNewTask: false}
-		_, err := client.InitSchemasReplaceForDDL(ctx, cfg, nil)
+		cfg := &logclient.GetIDMapConfig{LoadSavedIDMap: false}
+		_, err := client.GetBaseIDMap(ctx, cfg)
 		require.Error(t, err)
 		require.Regexp(t, "failed to get pitr id map from mysql.tidb_pitr_id_map.* [2, 1]", err.Error())
 	}
 
 	{
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
-		cfg := &logclient.InitSchemaConfig{IsNewTask: true}
-		_, err := client.InitSchemasReplaceForDDL(ctx, cfg, nil)
+		cfg := &logclient.GetIDMapConfig{LoadSavedIDMap: true}
+		_, err := client.GetBaseIDMap(ctx, cfg)
 		require.Error(t, err)
 		require.Regexp(t, "failed to get pitr id map from mysql.tidb_pitr_id_map.* [1, 1]", err.Error())
 	}
@@ -1409,8 +1348,8 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		se, err := g.CreateSession(s.Mock.Storage)
 		require.NoError(t, err)
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), se)
-		cfg := &logclient.InitSchemaConfig{IsNewTask: true}
-		_, err = client.InitSchemasReplaceForDDL(ctx, cfg, nil)
+		cfg := &logclient.GetIDMapConfig{LoadSavedIDMap: true}
+		_, err = client.GetBaseIDMap(ctx, cfg)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "miss upstream table information at `start-ts`(1) but the full backup path is not specified")
 	}
@@ -1480,10 +1419,10 @@ func TestPITRIDMap(t *testing.T) {
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 	client := logclient.TEST_NewLogClient(123, 1, 2, 3, nil, se)
-	baseSchemaReplaces := &stream.SchemasReplace{
-		DbMap: getDBMap(),
+	baseTableMappingManager := &stream.TableMappingManager{
+		DBReplaceMap: getDBMap(),
 	}
-	err = client.TEST_saveIDMap(ctx, baseSchemaReplaces)
+	err = client.TEST_saveIDMap(ctx, baseTableMappingManager)
 	require.NoError(t, err)
 	newSchemaReplaces, err := client.TEST_initSchemasMap(ctx, 1)
 	require.NoError(t, err)
@@ -1495,9 +1434,9 @@ func TestPITRIDMap(t *testing.T) {
 	newSchemaReplaces, err = client.TEST_initSchemasMap(ctx, 2)
 	require.NoError(t, err)
 
-	require.Equal(t, len(baseSchemaReplaces.DbMap), len(newSchemaReplaces))
+	require.Equal(t, len(baseTableMappingManager.DBReplaceMap), len(newSchemaReplaces))
 	for _, dbMap := range newSchemaReplaces {
-		baseDbMap := baseSchemaReplaces.DbMap[dbMap.IdMap.UpstreamId]
+		baseDbMap := baseTableMappingManager.DBReplaceMap[dbMap.IdMap.UpstreamId]
 		require.NotNil(t, baseDbMap)
 		require.Equal(t, baseDbMap.DbID, dbMap.IdMap.DownstreamId)
 		require.Equal(t, baseDbMap.Name, dbMap.Name)
@@ -1988,4 +1927,24 @@ func fakeRowKey(tableID, rowID int64) kv.Key {
 
 func fakeRowRawKey(tableID, rowID int64) kv.Key {
 	return tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(tableID), kv.IntHandle(rowID))
+}
+
+type mockBatchProcessor struct {
+	processFunc func(
+		ctx context.Context,
+		files []*backuppb.DataFileInfo,
+		entries []*logclient.KvEntryWithTS,
+		filterTS uint64,
+		cf string,
+	) ([]*logclient.KvEntryWithTS, error)
+}
+
+func (m *mockBatchProcessor) ProcessBatch(
+	ctx context.Context,
+	files []*backuppb.DataFileInfo,
+	entries []*logclient.KvEntryWithTS,
+	filterTS uint64,
+	cf string,
+) ([]*logclient.KvEntryWithTS, error) {
+	return m.processFunc(ctx, files, entries, filterTS, cf)
 }

@@ -287,7 +287,7 @@ func (db *DB) canReuseTableID(ti *model.TableInfo) bool {
 	}
 	prealloced := db.preallocedIDs.PreallocedFor(ti)
 	if prealloced {
-		log.Info("reusing table ID", zap.Stringer("table", ti.Name))
+		log.Info("reusing table ID", zap.Stringer("table", ti.Name), zap.Int64("tableID", ti.ID))
 	}
 	return prealloced
 }
