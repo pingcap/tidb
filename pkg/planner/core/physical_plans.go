@@ -908,8 +908,8 @@ type PhysicalTableScan struct {
 	filterCondition []expression.Expression
 	// LateMaterializationFilterCondition is used to record the filter conditions
 	// that are pushed down to table scan from selection by late materialization.
-	// TODO: remove this field after we support pushing down selection to coprocessor.
 	LateMaterializationFilterCondition []expression.Expression
+	lateMaterializationSelectivity     float64
 
 	Table   *model.TableInfo    `plan-cache-clone:"shallow"`
 	Columns []*model.ColumnInfo `plan-cache-clone:"shallow"`
