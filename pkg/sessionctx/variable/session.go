@@ -2805,8 +2805,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	return sv.SetSessionFromHook(s, val)
 }
 
-// SetSystemVarWithOldValAsRet is wrapper of SetSystemVar. Return the old value for later use.
-func (s *SessionVars) SetSystemVarWithOldValAsRet(name string, val string) (string, error) {
+// SetSystemVarWithOldStateAsRet is wrapper of SetSystemVar. Return the old value for later use.
+func (s *SessionVars) SetSystemVarWithOldStateAsRet(name string, val string) (string, error) {
 	sv := GetSysVar(name)
 	if sv == nil {
 		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -2815,12 +2815,24 @@ func (s *SessionVars) SetSystemVarWithOldValAsRet(name string, val string) (stri
 	if err != nil {
 		return "", err
 	}
-	// The map s.systems[sv.Name] is lazy initialized. If we directly read it, we might read empty result.
-	// Since this code path is not a hot path, we directly call GetSessionOrGlobalSystemVar to get the value safely.
-	oldV, err := s.GetSessionOrGlobalSystemVar(context.Background(), sv.Name)
-	if err != nil {
-		return "", err
+
+	var oldV string
+
+	// Call GetStateValue first if it exists. Otherwise, call GetSession.
+	if sv.GetStateValue != nil {
+		oldV, _ /* not_default */, err = sv.GetStateValue(s)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		// The map s.systems[sv.Name] is lazy initialized. If we directly read it, we might read empty result.
+		// Since this code path is not a hot path, we directly call GetSessionOrGlobalSystemVar to get the value safely.
+		oldV, err = s.GetSessionOrGlobalSystemVar(context.Background(), sv.Name)
+		if err != nil {
+			return "", err
+		}
 	}
+
 	return oldV, sv.SetSessionFromHook(s, val)
 }
 
