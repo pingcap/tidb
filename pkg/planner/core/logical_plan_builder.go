@@ -5270,6 +5270,7 @@ func (t *TblColPosInfo) MemoryUsage() (sum int64) {
 	return
 }
 
+// Cmp compares two TblColPosInfo by their Start field.
 func (t *TblColPosInfo) Cmp(a TblColPosInfo) int {
 	return cmp.Compare(t.Start, a.Start)
 }
