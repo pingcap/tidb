@@ -90,7 +90,7 @@ func validateTableMode(origin, target model.TableMode) bool {
 	return true
 }
 
-// CreateAlterTableModeJob creates a DDL job to change the table mode.
+// CreateAlterTableModeJob creates a DDL job for alter table mode.
 func CreateAlterTableModeJob(de Executor, sctx sessionctx.Context, mode model.TableMode, schemaID, tableID int64) error {
 	failpoint.Inject("errorWhenCreateAlterTableModeJob", func() {
 		failpoint.Return(errors.New("occur an error when create alter table mode job"))
