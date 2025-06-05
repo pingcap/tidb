@@ -1132,7 +1132,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 			indexID = -1
 		} else {
 			indexID = oneORBranch[lowestCountAfterAccessIdx][0].Index.ID
-			// record mv index, cuz it can break the all single index limitation.
+			// record mv index because it's not affected by the all single index limitation.
 			if oneORBranch[lowestCountAfterAccessIdx][0].Index.MVIndex {
 				useMVIndex = true
 			}
