@@ -1426,7 +1426,7 @@ func buildPartitionDefinitionsInfo(ctx expression.BuildContext, defs []*ast.Part
 			partitions[0].Comment = comment
 		}
 	case pmodel.PartitionTypeRange:
-		partitions, err = buildRangePartitionDefinitions(ctx, defs, tbInfo, sub)
+		partitions, err = buildRangePartitionDefinitions(ctx, defs, tbInfo)
 	case pmodel.PartitionTypeHash, pmodel.PartitionTypeKey:
 		partitions, err = buildHashPartitionDefinitions(defs, tbInfo, numParts)
 	case pmodel.PartitionTypeList:
@@ -1625,7 +1625,7 @@ func collectColumnsType(tbInfo *model.TableInfo) []types.FieldType {
 	return nil
 }
 
-func buildRangePartitionDefinitions(ctx expression.BuildContext, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo, sub *ast.PartitionMethod) ([]model.PartitionDefinition, error) {
+func buildRangePartitionDefinitions(ctx expression.BuildContext, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
 	definitions := make([]model.PartitionDefinition, 0, len(defs))
 	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed)
 	colTypes := collectColumnsType(tbInfo)
