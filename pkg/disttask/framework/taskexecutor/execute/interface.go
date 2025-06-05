@@ -17,7 +17,8 @@ package execute
 import (
 	"context"
 	"reflect"
-	"sync/atomic"
+
+	"go.uber.org/atomic"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 )
@@ -66,28 +67,14 @@ type StepExecutor interface {
 // SubtaskSummary contains the summary of a subtask
 // These fields represent the number of data/rows inputed to the subtask.
 type SubtaskSummary struct {
-	RowCnt int64 `json:"row_count"`
-	Bytes  int64 `json:"bytes"`
+	RowCnt atomic.Int64 `json:"row_count,omitempty"`
+	Bytes  atomic.Int64 `json:"row_count,omitempty"`
 }
 
-// RunningSubtaskSummary is used to store the summary of a running subtask.
-type RunningSubtaskSummary struct {
-	RowCnt atomic.Int64
-	Bytes  atomic.Int64
-}
-
-// ResetMetrics resets the summary to the given row count and bytes.
-func (s *RunningSubtaskSummary) ResetMetrics() {
+// Reset resets the summary to the given row count and bytes.
+func (s *SubtaskSummary) Reset() {
 	s.RowCnt.Store(0)
 	s.Bytes.Store(0)
-}
-
-// ToSummary converts the running subtask summary to a subtask summary.
-func (s *RunningSubtaskSummary) ToSummary() *SubtaskSummary {
-	return &SubtaskSummary{
-		RowCnt: s.RowCnt.Load(),
-		Bytes:  s.Bytes.Load(),
-	}
 }
 
 // Collector is the interface for collecting subtask metrics.
@@ -115,13 +102,6 @@ func NewDummyCollector() *dummyCollector {
 
 // Add does nothing.
 func (*dummyCollector) Add(_, _ int64) {
-}
-
-// NewCollector returns a new collector with the provided read and write functions.
-func NewCollector(addFunc func(bytes, rows int64)) Collector {
-	return &collector{
-		addFunc: addFunc,
-	}
 }
 
 // StepExecFrameworkInfo is an interface that should be embedded into the

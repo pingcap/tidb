@@ -126,6 +126,11 @@ func (ctx *OperatorCtx) OperatorErr() error {
 	return *err
 }
 
+var (
+	_ execute.Collector = (*distTaskRowCntCollector)(nil)
+	_ execute.Collector = (*localRowCntCollector)(nil)
+)
+
 // MockDMLExecutionBeforeScan is only used for test.
 var MockDMLExecutionBeforeScan func()
 
