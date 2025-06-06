@@ -33,6 +33,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -2025,4 +2026,100 @@ func (LabelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	writeData(w, config.GetGlobalConfig().Labels)
+}
+
+type IngestParam string
+
+const (
+	IngestParamMaxBatchSplitRanges IngestParam = "max_batch_split_ranges"
+	IngestParamMaxConcurrency      IngestParam = "max_concurrency"
+)
+
+// IngestConcurrencyHandler is the handler for lightning max_batch_split_ranges and max_concurrency.
+type IngestConcurrencyHandler struct {
+	*handler.TikvHandlerTool
+	param IngestParam
+}
+
+// NewIngestConcurrencyHandler creates a new IngestConcurrencyHandler.
+func NewIngestConcurrencyHandler(tool *handler.TikvHandlerTool, param IngestParam) IngestConcurrencyHandler {
+	return IngestConcurrencyHandler{tool, param}
+}
+
+// ServeHTTP handles request of lightning max_batch_split_ranges.
+func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	var getter func(*meta.Meta) (int, bool, error)
+	var setter func(*meta.Meta, int) error
+	switch h.param {
+	case IngestParamMaxBatchSplitRanges:
+		getter = func(m *meta.Meta) (int, bool, error) {
+			return m.GetIngestMaxBatchSplitRanges()
+		}
+		setter = func(m *meta.Meta, value int) error {
+			return m.SetIngestMaxBatchSplitRanges(value)
+		}
+	case IngestParamMaxConcurrency:
+		getter = func(m *meta.Meta) (int, bool, error) {
+			return m.GetIngestMaxConcurrency()
+		}
+		setter = func(m *meta.Meta, value int) error {
+			return m.SetIngestMaxConcurrency(value)
+		}
+	default:
+		handler.WriteError(w, errors.Errorf("unsupported ingest parameter: %s", h.param))
+	}
+	switch req.Method {
+	case http.MethodGet:
+		var respValue int
+		var respIsNull bool
+		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), false, func(_ context.Context, txn kv.Transaction) error {
+			mutator := meta.NewMeta(txn)
+			var getErr error
+			respValue, respIsNull, getErr = getter(mutator)
+			return getErr
+		})
+
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+
+		data := map[string]any{
+			"value":   respValue,
+			"is_null": respIsNull,
+		}
+		handler.WriteData(w, data)
+	case http.MethodPost:
+		var payload struct {
+			Value int `json:"value"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		newValue := payload.Value
+		if newValue <= 0 {
+			handler.WriteError(w, errors.New("value must be greater than 0"))
+			return
+		}
+		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), true, func(_ context.Context, txn kv.Transaction) error {
+			mutator := meta.NewMeta(txn)
+			return setter(mutator, newValue)
+		})
+
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		switch h.param {
+		case IngestParamMaxBatchSplitRanges:
+			local.CurrentMaxBatchSplitRanges.Store(int64(newValue))
+		case IngestParamMaxConcurrency:
+			local.CurrentMaxIngestConcurrency.Store(int64(newValue))
+		}
+		handler.WriteData(w, map[string]string{"message": "success"})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		handler.WriteError(w, errors.New("method not allowed"))
+	}
 }

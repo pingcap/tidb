@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/autoid"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -333,6 +334,17 @@ func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Servic
 		logutil.BgLogger().Info("leader change of autoid service, this node become owner",
 			zap.String("addr", selfAddr),
 			zap.String("category", "autoid service"))
+
+		if err := kv.RunInNewTxn(context.Background(), store, true, func(_ context.Context, txn kv.Transaction) error {
+			m := meta.NewMeta(txn)
+			err := local.InitializeGlobalMaxBatchSplitRanges(m, logutil.BgLogger())
+			if err != nil {
+				return err
+			}
+			return local.InitializeGlobalIngestConcurrency(m, logutil.BgLogger())
+		}); err != nil {
+			logutil.BgLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
+		}
 	})
 	// 10 means that autoid service's etcd lease is 10s.
 	err := l.CampaignOwner(10)
