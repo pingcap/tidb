@@ -122,7 +122,7 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 		if i != 0 {
 			ctx.WritePlain(",")
 		}
-		ctx.WriteName(partition.O)
+		ctx.WriteName(partition.O.Value())
 	}
 	if n.HistogramOperation != HistogramOperationNop {
 		ctx.WritePlain(" ")
@@ -134,7 +134,7 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 				if i != 0 {
 					ctx.WritePlain(",")
 				}
-				ctx.WriteName(columnName.O)
+				ctx.WriteName(columnName.O.Value())
 			}
 		}
 	}
@@ -149,7 +149,7 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			ctx.WriteName(columnName.O)
+			ctx.WriteName(columnName.O.Value())
 		}
 	}
 	if n.IndexFlag {
@@ -161,7 +161,7 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 		} else {
 			ctx.WritePlain(" ")
 		}
-		ctx.WriteName(index.O)
+		ctx.WriteName(index.O.Value())
 	}
 	if len(n.AnalyzeOpts) != 0 {
 		ctx.WriteKeyWord(" WITH")
@@ -228,7 +228,7 @@ func (n *DropStatsStmt) Restore(ctx *format.RestoreCtx) error {
 		if i != 0 {
 			ctx.WritePlain(",")
 		}
-		ctx.WriteName(partition.O)
+		ctx.WriteName(partition.O.Value())
 	}
 	return nil
 }

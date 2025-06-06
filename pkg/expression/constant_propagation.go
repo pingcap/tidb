@@ -76,9 +76,9 @@ func ValidCompareConstantPredicate(ctx EvalContext, candidatePredicate Expressio
 	if !ok {
 		return false
 	}
-	if scalarFunction.FuncName.L != ast.GT && scalarFunction.FuncName.L != ast.GE &&
-		scalarFunction.FuncName.L != ast.LT && scalarFunction.FuncName.L != ast.LE &&
-		scalarFunction.FuncName.L != ast.EQ {
+	switch scalarFunction.FuncName.L.Value() {
+	case ast.GT, ast.GE, ast.LT, ast.LE, ast.EQ:
+	default:
 		return false
 	}
 	column, _ := ValidCompareConstantPredicateHelper(ctx, scalarFunction, true)
@@ -122,7 +122,7 @@ func ValidCompareConstantPredicateHelper(ctx EvalContext, eq *ScalarFunction, co
 // validEqualCond checks if the cond is an expression like [column eq constant].
 func validEqualCond(ctx EvalContext, cond Expression) (*Column, *Constant) {
 	if eq, ok := cond.(*ScalarFunction); ok {
-		if eq.FuncName.L != ast.EQ {
+		if eq.FuncName.L.Value() != ast.EQ {
 			return nil, nil
 		}
 		col, con := ValidCompareConstantPredicateHelper(ctx, eq, true)
@@ -156,10 +156,10 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 	}
 	replaced := false
 	var args []Expression
-	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
+	if _, ok := unFoldableFunctions[sf.FuncName.L.Value()]; ok {
 		return false, true, cond
 	}
-	if _, ok := inequalFunctions[sf.FuncName.L]; ok {
+	if _, ok := inequalFunctions[sf.FuncName.L.Value()]; ok {
 		return false, true, cond
 	}
 	// See
@@ -170,10 +170,10 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 	// A more strict check is that after we replace the arg. We check the nullability of the new expression.
 	// But we haven't maintained it yet, so don't replace the arg of the control function currently.
 	if nullAware &&
-		(sf.FuncName.L == ast.Ifnull ||
-			sf.FuncName.L == ast.If ||
-			sf.FuncName.L == ast.Case ||
-			sf.FuncName.L == ast.NullEQ) {
+		(sf.FuncName.L.Value() == ast.Ifnull ||
+			sf.FuncName.L.Value() == ast.If ||
+			sf.FuncName.L.Value() == ast.Case ||
+			sf.FuncName.L.Value() == ast.NullEQ) {
 		return false, true, cond
 	}
 	for idx, expr := range sf.GetArgs() {
@@ -203,7 +203,7 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 		}
 	}
 	if replaced {
-		return true, false, NewFunctionInternal(ctx, sf.FuncName.L, sf.GetType(ctx.GetEvalCtx()), args...)
+		return true, false, NewFunctionInternal(ctx, sf.FuncName.L.Value(), sf.GetType(ctx.GetEvalCtx()), args...)
 	}
 	return false, false, cond
 }

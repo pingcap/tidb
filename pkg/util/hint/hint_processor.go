@@ -17,6 +17,7 @@ package hint
 import (
 	"fmt"
 	"strings"
+	"unique"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -127,7 +128,7 @@ func checkInsertStmtHintDuplicated(node ast.Node, warnHandler hintWarnHandler) {
 		if len(x.TableHints) > 0 {
 			var supportedHint *ast.TableOptimizerHint
 			for _, hint := range x.TableHints {
-				if _, ok := supportedHintNameForInsertStmt[hint.HintName.L]; ok {
+				if _, ok := supportedHintNameForInsertStmt[hint.HintName.L.Value()]; ok {
 					supportedHint = hint
 					break
 				}
@@ -275,7 +276,7 @@ func BindHint(stmt ast.StmtNode, hintsSet *HintsSet) ast.StmtNode {
 }
 
 // ParseHintsSet parses a SQL string, then collects and normalizes the HintsSet.
-func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*HintsSet, ast.StmtNode, []error, error) {
+func ParseHintsSet(p *parser.Parser, sql, charset, collation string, db unique.Handle[string]) (*HintsSet, ast.StmtNode, []error, error) {
 	stmtNodes, warns, err := p.ParseSQL(sql,
 		parser.CharsetConnection(charset),
 		parser.CollationConnection(collation))
@@ -296,7 +297,7 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 			curOffset = curOffset - 1
 		}
 		for _, tblHint := range tblHints {
-			if tblHint.HintName.L == hintQBName {
+			if tblHint.HintName.L.Value() == hintQBName {
 				if len(tblHint.Tables) > 0 {
 					newHints = append(newHints, tblHint)
 				}
@@ -317,7 +318,7 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 			}
 			for i, tbl := range tblHint.Tables {
 				if tbl.DBName.String() == "" {
-					tblHint.Tables[i].DBName = ast.NewCIStr(db)
+					tblHint.Tables[i].DBName = ast.NewCIStrWithUnique(db)
 				}
 			}
 			newHints = append(newHints, tblHint)

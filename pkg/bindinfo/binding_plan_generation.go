@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unique"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -32,7 +33,7 @@ import (
 
 // PlanGenerator is used to generate new Plan Candidates for this specified query.
 type PlanGenerator interface {
-	Generate(defaultSchema, sql, charset, collation string) (plans []*BindingPlanInfo, err error)
+	Generate(defaultSchema unique.Handle[string], sql, charset, collation string) (plans []*BindingPlanInfo, err error)
 }
 
 // planGenerator implements PlanGenerator.
@@ -42,7 +43,7 @@ type planGenerator struct {
 }
 
 // Generate generates new plans for the given SQL statement.
-func (g *planGenerator) Generate(defaultSchema, sql, charset, collation string) (plans []*BindingPlanInfo, err error) {
+func (g *planGenerator) Generate(defaultSchema unique.Handle[string], sql, charset, collation string) (plans []*BindingPlanInfo, err error) {
 	// TODO: only support SQL starting with SELECT for now, support other types of SQLs later.
 	// TODO: make this check more strict.
 	sql = strings.TrimSpace(sql)
@@ -201,7 +202,7 @@ func newStateWithNewFix(old *state, fixID uint64, fixVal string) *state {
 	return newState
 }
 
-func generatePlanWithSCtx(sctx sessionctx.Context, defaultSchema, sql, charset, collation string) (plans []*genedPlan, err error) {
+func generatePlanWithSCtx(sctx sessionctx.Context, defaultSchema unique.Handle[string], sql, charset, collation string) (plans []*genedPlan, err error) {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(sql, charset, collation)
 	if err != nil {

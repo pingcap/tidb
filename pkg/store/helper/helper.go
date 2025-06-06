@@ -426,12 +426,12 @@ func (*Helper) FindTableIndexOfRegion(is infoschema.SchemaAndTable, hotRange *Re
 func findRangeInTable(hotRange *RegionFrameRange, db *model.DBInfo, tbl *model.TableInfo) *FrameItem {
 	pi := tbl.GetPartitionInfo()
 	if pi == nil {
-		return findRangeInPhysicalTable(hotRange, tbl.ID, db.Name.O, tbl.Name.O, tbl.Indices, tbl.IsCommonHandle)
+		return findRangeInPhysicalTable(hotRange, tbl.ID, db.Name.O.Value(), tbl.Name.O.Value(), tbl.Indices, tbl.IsCommonHandle)
 	}
 
 	for _, def := range pi.Definitions {
-		tablePartition := fmt.Sprintf("%s(%s)", tbl.Name.O, def.Name)
-		if f := findRangeInPhysicalTable(hotRange, def.ID, db.Name.O, tablePartition, tbl.Indices, tbl.IsCommonHandle); f != nil {
+		tablePartition := fmt.Sprintf("%s(%s)", tbl.Name.O.Value(), def.Name)
+		if f := findRangeInPhysicalTable(hotRange, def.ID, db.Name.O.Value(), tablePartition, tbl.Indices, tbl.IsCommonHandle); f != nil {
 			return f
 		}
 	}
@@ -443,7 +443,7 @@ func findRangeInPhysicalTable(hotRange *RegionFrameRange, physicalID int64, dbNa
 		return f
 	}
 	for _, idx := range indices {
-		if f := hotRange.GetIndexFrame(physicalID, idx.ID, dbName, tblName, idx.Name.O); f != nil {
+		if f := hotRange.GetIndexFrame(physicalID, idx.ID, dbName, tblName, idx.Name.O.Value()); f != nil {
 			return f
 		}
 	}
@@ -669,7 +669,7 @@ func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model
 // FilterMemDBs filters memory databases in the input schemas.
 func (*Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo) {
 	for _, dbInfo := range oldSchemas {
-		if util.IsMemDB(dbInfo.Name.L) {
+		if util.IsMemDB(dbInfo.Name.L.Value()) {
 			continue
 		}
 		schemas = append(schemas, dbInfo)

@@ -162,14 +162,14 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
-		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
+		if _, ok := unFoldableFunctions[x.FuncName.L.Value()]; ok {
 			return expr, false
 		}
 		if _, ok := x.Function.(*extensionFuncSig); ok {
 			// we should not fold the extension function, because it may have a side effect.
 			return expr, false
 		}
-		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
+		if function := specialFoldHandler[x.FuncName.L.Value()]; function != nil && !MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
 			return function(ctx, x)
 		}
 
@@ -194,7 +194,7 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 			//
 			// NullEQ and ConcatWS are excluded, because they could have different value when the non-constant value is
 			// 1 or NULL. For example, concat_ws(NULL, NULL) gives NULL, but concat_ws(1, NULL) gives ''
-			if !hasNullArg || !ctx.IsInNullRejectCheck() || x.FuncName.L == ast.NullEQ || x.FuncName.L == ast.ConcatWS {
+			if !hasNullArg || !ctx.IsInNullRejectCheck() || x.FuncName.L.Value() == ast.NullEQ || x.FuncName.L.Value() == ast.ConcatWS {
 				return expr, isDeferredConst
 			}
 			constArgs := make([]Expression, len(args))
@@ -205,7 +205,7 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 					constArgs[i] = NewOne()
 				}
 			}
-			dummyScalarFunc, err := NewFunctionBase(ctx, x.FuncName.L, x.GetType(ctx.GetEvalCtx()), constArgs...)
+			dummyScalarFunc, err := NewFunctionBase(ctx, x.FuncName.L.Value(), x.GetType(ctx.GetEvalCtx()), constArgs...)
 			if err != nil {
 				return expr, isDeferredConst
 			}
