@@ -839,6 +839,11 @@ func (pd *MockPD) UpdateGCSafePoint(ctx context.Context, target uint64) (uint64,
 	c := pd.gcStatesManagerSimulator.GetGCInternalController(constants.NullKeyspaceID)
 	res, err := c.AdvanceGCSafePoint(ctx, target)
 	if err != nil {
+		var decreasingErr errDecreasingGCSafePoint
+		if goerrors.As(err, &decreasingErr) {
+			// Fail silently and return the previous value.
+			return decreasingErr.currentGCSafePoint, nil
+		}
 		return 0, err
 	}
 	return res.NewGCSafePoint, nil
@@ -1015,13 +1020,20 @@ func (m *gcStatesManagerSimulator) UpdateServiceGCSafePoint(ctx context.Context,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	ttl := time.Duration(math.MaxInt64)
-	if ttlSecs <= math.MaxInt64/int64(time.Second) {
-		ttl = time.Duration(ttlSecs) * time.Second
-	}
-	_, err := m.setGCBarrierImpl(ctx, constants.NullKeyspaceID, serviceID, safePoint, ttl, startTime)
-	if err != nil && goerrors.Is(err, errGCBarrierTSBehindTxnSafePoint{}) {
-		return 0, err
+	if ttlSecs > 0 {
+		ttl := time.Duration(math.MaxInt64)
+		if ttlSecs <= math.MaxInt64/int64(time.Second) {
+			ttl = time.Duration(ttlSecs) * time.Second
+		}
+		_, err := m.setGCBarrierImpl(ctx, constants.NullKeyspaceID, serviceID, safePoint, ttl, startTime)
+		if err != nil && goerrors.Is(err, errGCBarrierTSBehindTxnSafePoint{}) {
+			return 0, err
+		}
+	} else {
+		_, err := m.deleteGCBarrierImpl(ctx, constants.NullKeyspaceID, serviceID, startTime)
+		if err != nil {
+			return 0, err
+		}
 	}
 
 	// Simulate the case in which the "gc_worker" has the minimum service safe point, by return the value of txn safe
@@ -1050,6 +1062,16 @@ type errGCBarrierTSBehindTxnSafePoint struct {
 
 func (e errGCBarrierTSBehindTxnSafePoint) Error() string {
 	return fmt.Sprintf("trying to set a GC barrier on ts %d which is already behind the txn safe point %d", e.attemptedBarrierTS, e.txnSafePoint)
+}
+
+type errDecreasingGCSafePoint struct {
+	currentGCSafePoint uint64
+	target             uint64
+}
+
+func (e errDecreasingGCSafePoint) Error() string {
+	return fmt.Sprintf("trying to update gc safe point to a smaller value, current value: %v, given: %v",
+		e.currentGCSafePoint, e.target)
 }
 
 func (m *gcStatesManagerSimulator) setGCBarrierImpl(ctx context.Context, keyspaceID uint32, barrierID string, barrierTS uint64, ttl time.Duration, startTime time.Time) (*pdgc.GCBarrierInfo, error) {
@@ -1151,9 +1173,10 @@ func (c gcInternalController) AdvanceGCSafePoint(ctx context.Context, target uin
 	internalState := c.inner.getGCState(c.keyspaceID)
 
 	if target < internalState.gcSafePoint {
-		return pdgc.AdvanceGCSafePointResult{},
-			errors.Errorf("trying to update gc safe point to a smaller value, current value: %v, given: %v",
-				internalState.gcSafePoint, target)
+		return pdgc.AdvanceGCSafePointResult{}, errDecreasingGCSafePoint{
+			currentGCSafePoint: internalState.gcSafePoint,
+			target:             target,
+		}
 	}
 
 	if target > internalState.txnSafePoint {
