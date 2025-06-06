@@ -52,7 +52,7 @@ func (m *MockMetaInfoCollector) OnDatabaseInfo(dbId int64, dbName string, commit
 	if existingTs, exists := m.dbTimestamps[dbId]; !exists || commitTs > existingTs {
 		dbInfo := &model.DBInfo{
 			ID:   dbId,
-			Name: ast.NewCIStr(dbName),
+			Name: pmodel.NewCIStr(dbName),
 		}
 		m.dbInfos[dbInfo.ID] = dbInfo
 		m.dbTimestamps[dbId] = commitTs
@@ -71,7 +71,7 @@ func (m *MockMetaInfoCollector) OnTableInfo(dbID, tableId int64, tableSimpleInfo
 	if existingTs, exists := m.tableTimestamps[dbID][tableId]; !exists || commitTs > existingTs {
 		tableInfo := &model.TableInfo{
 			ID:   tableId,
-			Name: ast.NewCIStr(tableSimpleInfo.Name),
+			Name: pmodel.NewCIStr(tableSimpleInfo.Name),
 		}
 		m.tableInfos[dbID][tableInfo.ID] = tableInfo
 		m.tableTimestamps[dbID][tableId] = commitTs

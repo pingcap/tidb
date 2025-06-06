@@ -601,7 +601,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 		2: {
 			Info: &model.DBInfo{
 				ID:   2,
-				Name: ast.NewCIStr("test_db_2"),
+				Name: pmodel.NewCIStr("test_db_2"),
 			},
 			Tables: []*metautil.Table{
 				{
