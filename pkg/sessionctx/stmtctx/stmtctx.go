@@ -477,6 +477,9 @@ type StatementContext struct {
 
 	// OperatorNum is used to record the number of operators in the current logical plan.
 	OperatorNum uint64
+
+	// MemBufferSnapshot is a snapshot of the memory buffer, every in-txn read of the buffer should use the snapshot to bypass the mutations of current statement.
+	MemBufferSnapshot kv.MemBufferSnapshot
 }
 
 // DefaultStmtErrLevels is the default error levels for statement
