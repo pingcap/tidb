@@ -1532,6 +1532,12 @@ func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bo
 	return containMutableConst(ctx, exprs)
 }
 
+// MaybeOverOptimized4PlanCacheForMultiExpression is the same as MaybeOverOptimized4PlanCache,
+// but it accepts multiple expressions as input.
+func MaybeOverOptimized4PlanCacheForMultiExpression(ctx BuildContext, exprs ...Expression) bool {
+	return MaybeOverOptimized4PlanCache(ctx, exprs)
+}
+
 // containMutableConst checks if the expressions contain a lazy constant.
 func containMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 	for _, expr := range exprs {
