@@ -34,7 +34,7 @@ import (
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	txninfo "github.com/pingcap/tidb/pkg/session/txninfo"
 	isolation_metrics "github.com/pingcap/tidb/pkg/sessiontxn/isolation/metrics"
-	statsCache_metrics "github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
+	statscache_metrics "github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
 	statshandler_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	copr_metrics "github.com/pingcap/tidb/pkg/store/copr/metrics"
@@ -140,7 +140,7 @@ func initMetrics() {
 	server_metrics.InitMetricsVars()
 	session_metrics.InitMetricsVars()
 	statshandler_metrics.InitMetricsVars()
-	statsCache_metrics.InitMetricsVars()
+	statscache_metrics.InitMetricsVars()
 	topsqlreporter_metrics.InitMetricsVars()
 	ttlmetrics.InitMetricsVars()
 	txninfo.InitMetricsVars()
