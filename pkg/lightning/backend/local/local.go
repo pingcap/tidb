@@ -1418,6 +1418,7 @@ func (local *Backend) doImport(
 		toCh            = jobToWorkerCh
 		afterExecuteJob func([]*metapb.Peer)
 		clusterID       uint64
+		ingestLimiter   = newIngestLimiter(workerCtx, maxIngestRequestWorkers, maxIngestReqPerSec)
 	)
 	if local.pdCli != nil {
 		clusterID = local.pdCli.GetClusterID(ctx)
@@ -1432,7 +1433,6 @@ func (local *Backend) doImport(
 		afterExecuteJob = balancer.releaseStoreLoad
 	}
 
-	ingestLimiter := newIngestLimiter(workerCtx, maxIngestRequestWorkers, maxIngestReqPerSec)
 	for range local.WorkerConcurrency {
 		worker := local.newRegionJobWorker(clusterID, toCh, jobFromWorkerCh, &jobWg, afterExecuteJob, ingestLimiter)
 		workGroup.Go(func() error {

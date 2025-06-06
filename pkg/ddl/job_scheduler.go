@@ -124,7 +124,7 @@ func (l *ownerListener) OnBecomeOwner() {
 	l.ddl.reorgCtx.setOwnerTS(time.Now().Unix())
 	l.scheduler.start()
 
-	if err := kv.RunInNewTxn(l.ddl.ctx, l.ddl.store, false, func(_ context.Context, txn kv.Transaction) error {
+	if err := kv.RunInNewTxn(l.ddl.ctx, l.ddl.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
 		return local.InitializeGlobalMaxBatchSplitRanges(t)
 	}); err != nil {
