@@ -1457,11 +1457,13 @@ func (local *Backend) newRegionJobWorker(
 		regenerateJobsFn: local.generateJobForRange,
 	}
 	if kerneltype.IsNextGen() {
+		tlsConfig := local.tls.TLSConfig()
 		if local.nextgenHTTPCli == nil {
-			local.nextgenHTTPCli = util.ClientWithTLS(local.tls.TLSConfig())
+			local.nextgenHTTPCli = util.ClientWithTLS(tlsConfig)
 		}
+		isHTTPS := tlsConfig != nil
 		cloudW := &objStoreRegionJobWorker{
-			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, clusterID, local.nextgenHTTPCli, local.splitCli),
+			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, clusterID, isHTTPS, local.nextgenHTTPCli, local.splitCli),
 			writeBatchSize: local.KVWriteBatchSize,
 			bufPool:        local.engineMgr.getBufferPool(),
 		}
