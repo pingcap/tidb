@@ -20,6 +20,7 @@ go_library(
         "//pkg/session/metrics",
         "//pkg/session/txninfo",
         "//pkg/sessiontxn/isolation/metrics",
+        "//pkg/statistics/handle/cache/metrics",
         "//pkg/statistics/handle/metrics",
         "//pkg/store",
         "//pkg/store/copr/metrics",
