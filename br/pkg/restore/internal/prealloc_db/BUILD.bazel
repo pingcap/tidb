@@ -15,7 +15,6 @@ go_library(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/model",
-        "//pkg/parser/mysql",
         "//pkg/sessionctx/variable",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",

@@ -872,7 +872,7 @@ func (rc *SnapClient) GetPartitionMap() map[int64]*stream.TableLocationInfo {
 // HasBackedUpSysDB whether we have backed up system tables
 // br backs system tables up since 5.1.0
 func (rc *SnapClient) HasBackedUpSysDB() bool {
-	sysDBs := []string{mysql.SystemDB, mysql.SysDB, mysql.WorkloadSchema}
+	sysDBs := []string{mysql.SystemDB, mysql.SysDB}
 	for _, db := range sysDBs {
 		temporaryDB := utils.TemporaryDBName(db)
 		_, backedUp := rc.databases[temporaryDB.O]

@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 )
 
 type SnapshotMetaManagerT = MetaManager[
@@ -196,7 +196,7 @@ func (manager *TableMetaManager[K, SV, LV, M]) ExistsCheckpointMetadata(
 	// we only check the existence of the checkpoint data table
 	// because the checkpoint metadata is not used for restore
 	return manager.dom.InfoSchema().
-		TableExists(ast.NewCIStr(manager.dbName), ast.NewCIStr(checkpointMetaTableName)), nil
+		TableExists(pmodel.NewCIStr(manager.dbName), pmodel.NewCIStr(checkpointMetaTableName)), nil
 }
 
 func (manager *TableMetaManager[K, SV, LV, M]) RemoveCheckpointData(
@@ -231,7 +231,7 @@ func (manager *TableMetaManager[K, SV, LV, M]) ExistsCheckpointProgress(
 	ctx context.Context,
 ) (bool, error) {
 	return manager.dom.InfoSchema().
-		TableExists(ast.NewCIStr(manager.dbName), ast.NewCIStr(checkpointProgressTableName)), nil
+		TableExists(pmodel.NewCIStr(manager.dbName), pmodel.NewCIStr(checkpointProgressTableName)), nil
 }
 
 func (manager *TableMetaManager[K, SV, LV, M]) LoadCheckpointIngestIndexRepairSQLs(
@@ -254,7 +254,7 @@ func (manager *TableMetaManager[K, SV, LV, M]) ExistsCheckpointIngestIndexRepair
 	ctx context.Context,
 ) (bool, error) {
 	return manager.dom.InfoSchema().
-		TableExists(ast.NewCIStr(manager.dbName), ast.NewCIStr(checkpointIngestTableName)), nil
+		TableExists(pmodel.NewCIStr(manager.dbName), pmodel.NewCIStr(checkpointIngestTableName)), nil
 }
 
 func (manager *TableMetaManager[K, SV, LV, M]) StartCheckpointRunner(

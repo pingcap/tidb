@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
 
@@ -302,7 +302,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 	}
 	// Set Table Name directly to be the name at the end of the restore to avoid potential name conflicts
 	if tableReplace.Name != "" {
-		tableInfo.Name = ast.NewCIStr(tableReplace.Name)
+		tableInfo.Name = pmodel.NewCIStr(tableReplace.Name)
 	}
 	if sr.AfterTableRewrittenFn != nil {
 		sr.AfterTableRewrittenFn(false, &tableInfo)

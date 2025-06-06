@@ -20,7 +20,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"math"
-	"os"
 	"slices"
 	"strconv"
 	"strings"

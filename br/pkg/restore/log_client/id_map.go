@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
 
@@ -40,7 +40,7 @@ func pitrIDMapsFilename(clusterID, restoredTS uint64) string {
 }
 
 func (rc *LogClient) pitrIDMapTableExists() bool {
-	return rc.dom.InfoSchema().TableExists(ast.NewCIStr("mysql"), ast.NewCIStr("tidb_pitr_id_map"))
+	return rc.dom.InfoSchema().TableExists(pmodel.NewCIStr("mysql"), pmodel.NewCIStr("tidb_pitr_id_map"))
 }
 
 func (rc *LogClient) pitrIDMapHasRestoreIDColumn() bool {
