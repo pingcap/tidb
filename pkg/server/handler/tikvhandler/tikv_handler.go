@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -2021,4 +2022,67 @@ func (LabelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	handler.WriteData(w, config.GetGlobalConfig().Labels)
+}
+
+// LightningMaxBatchSplitRangesHandler is the handler for lightning max_batch_split_ranges.
+type LightningMaxBatchSplitRangesHandler struct {
+	*handler.TikvHandlerTool
+}
+
+// NewLightningMaxBatchSplitRangesHandler creates a new LightningMaxBatchSplitRangesHandler.
+func NewLightningMaxBatchSplitRangesHandler(tool *handler.TikvHandlerTool) LightningMaxBatchSplitRangesHandler {
+	return LightningMaxBatchSplitRangesHandler{tool}
+}
+
+// ServeHTTP handles request of lightning max_batch_split_ranges.
+func (h LightningMaxBatchSplitRangesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case http.MethodGet:
+		var respValue int
+		var respIsNull bool
+		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), false, func(_ context.Context, txn kv.Transaction) error {
+			mutator := meta.NewMutator(txn)
+			var getErr error
+			respValue, respIsNull, getErr = mutator.GetLightningMaxBatchSplitRanges()
+			return getErr
+		})
+
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+
+		data := map[string]any{
+			"value":   respValue,
+			"is_null": respIsNull,
+		}
+		handler.WriteData(w, data)
+	case http.MethodPost:
+		var payload struct {
+			Value int `json:"value"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		newValue := payload.Value
+		if newValue <= 0 {
+			handler.WriteError(w, errors.New("value must be greater than 0"))
+			return
+		}
+		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), true, func(_ context.Context, txn kv.Transaction) error {
+			mutator := meta.NewMutator(txn)
+			return mutator.SetLightningMaxBatchSplitRanges(newValue)
+		})
+
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		local.CurrentMaxBatchSplitRanges.Store(int64(newValue))
+		handler.WriteData(w, map[string]string{"message": "success"})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		handler.WriteError(w, errors.New("method not allowed"))
+	}
 }

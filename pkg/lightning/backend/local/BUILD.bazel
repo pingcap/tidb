@@ -53,6 +53,7 @@ go_library(
         "//pkg/lightning/mydump",
         "//pkg/lightning/tikv",
         "//pkg/lightning/verification",
+        "//pkg/meta",
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser/mysql",

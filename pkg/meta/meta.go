@@ -97,6 +97,8 @@ var (
 	mMetaDataLock        = []byte("metadataLock")
 	mSchemaCacheSize     = []byte("SchemaCacheSize")
 	mRequestUnitStats    = []byte("RequestUnitStats")
+
+	mLightningMaxBatchSplitRangesKey = []byte("LightningMaxBatchSplitRanges")
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
 	defaultGroupID = int64(1)
@@ -1872,6 +1874,24 @@ func (m *Mutator) SetRUStats(stats *RUStats) error {
 
 	err = m.txn.Set(mRequestUnitStats, data)
 	return errors.Trace(err)
+}
+
+// SetLightningMaxBatchSplitRanges sets the lightning max_batch_split_ranges.
+func (m *Mutator) SetLightningMaxBatchSplitRanges(val int) error {
+	return errors.Trace(m.txn.Set(mLightningMaxBatchSplitRangesKey, []byte(strconv.Itoa(val))))
+}
+
+// GetLightningMaxBatchSplitRanges gets the lightning max_batch_split_ranges.
+func (m *Mutator) GetLightningMaxBatchSplitRanges() (val int, isNull bool, err error) {
+	sVal, err := m.txn.Get(mLightningMaxBatchSplitRangesKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.Atoi(string(sVal))
+	return val, false, errors.Trace(err)
 }
 
 // GetOldestSchemaVersion gets the oldest schema version at the GC safe point.

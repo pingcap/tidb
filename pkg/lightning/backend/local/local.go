@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
@@ -53,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -86,9 +88,6 @@ const (
 	gRPCKeepAliveTimeout = 5 * time.Minute
 	gRPCBackOffMaxDelay  = 10 * time.Minute
 
-	// The max ranges count in a batch to split and scatter.
-	maxBatchSplitRanges = 4096
-
 	propRangeIndex = "tikv.range_index"
 
 	defaultPropSizeIndexDistance = 4 * units.MiB
@@ -119,9 +118,46 @@ var (
 	// A large retry times is for tolerating tikv cluster failures.
 	MaxWriteAndIngestRetryTimes = 30
 
+	// defaultMaxBatchSplitRanges is the default max ranges count in a batch to split and scatter.
+	defaultMaxBatchSplitRanges = 4096
+
 	// Unlimited RPC receive message size for TiKV importer
 	unlimitedRPCRecvMsgSize = math.MaxInt32
 )
+
+var (
+	// CurrentMaxBatchSplitRanges stores the current limit for batch split ranges.
+	// It is initialized with defaultMaxBatchSplitRanges.
+	CurrentMaxBatchSplitRanges atomic.Int64
+)
+
+// InitializeGlobalMaxBatchSplitRanges loads the maxBatchSplitRanges value using meta.Meta or sets a default.
+func InitializeGlobalMaxBatchSplitRanges(m *meta.Mutator) error {
+	valInt, isNull, err := m.GetLightningMaxBatchSplitRanges()
+	if err != nil {
+		return errors.Annotate(err, "failed to read maxBatchSplitRanges from meta store")
+	}
+
+	if isNull || valInt <= 0 {
+		valInt = defaultMaxBatchSplitRanges
+		log.L().Info("maxBatchSplitRanges not found in meta store, initialized to default and persisted",
+			zap.Int("value", defaultMaxBatchSplitRanges))
+	} else {
+		log.L().Info("loaded maxBatchSplitRanges from meta store", zap.Int("value", valInt))
+	}
+
+	CurrentMaxBatchSplitRanges.Store(int64(valInt))
+	return nil
+}
+
+// GetMaxBatchSplitRanges returns the current maximum number of ranges in a batch to split and scatter.
+func GetMaxBatchSplitRanges() int {
+	val := CurrentMaxBatchSplitRanges.Load()
+	if val == 0 { // Not yet initialized from TiKV or invalid value caused fallback to 0
+		return defaultMaxBatchSplitRanges
+	}
+	return int(val)
+}
 
 // importClientFactory is factory to create new import client for specific store.
 type importClientFactory interface {
@@ -929,7 +965,7 @@ func (local *Backend) prepareAndSendJob(
 				failpoint.Break()
 			})
 
-			err = local.splitAndScatterRegionInBatches(ctx, regionSplitKeys, maxBatchSplitRanges)
+			err = local.splitAndScatterRegionInBatches(ctx, regionSplitKeys, GetMaxBatchSplitRanges())
 			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}
