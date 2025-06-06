@@ -111,7 +111,7 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(s.store, se, s.tableImporter.Table)
 		if err2 != nil {
 			return err2
