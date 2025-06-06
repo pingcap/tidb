@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -109,11 +108,10 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 	s.tableImporter = tableImporter
 
 	taskManager, err := storage.GetTaskManager()
-	ctx = util.WithInternalSourceType(ctx, tidbkv.InternalDistTask)
 	if err != nil {
 		return err
 	}
-	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(s.store, se, s.tableImporter.Table)
 		if err2 != nil {
 			return err2
