@@ -272,13 +272,13 @@ func GetTargetScope() string {
 }
 
 // GetCloudStorageURI returns the cloud storage URI with cluster ID appended to the path.
-func GetCloudStorageURI(store kv.Storage) string {
+func GetCloudStorageURI(store kv.Storage, ctx context.Context) string {
 	cloudURI := vardef.CloudStorageURI.Load()
 	if s, ok := store.(kv.StorageWithPD); ok {
 		// When setting the cloudURI value by SQL, we already checked the effectiveness, so we don't need to check it again here.
 		u, _ := litstorage.ParseRawURL(cloudURI)
 		if len(u.Path) != 0 {
-			u.Path = filepath.Join(u.Path, strconv.FormatUint(s.GetPDClient().GetClusterID(context.TODO()), 10))
+			u.Path = filepath.Join(u.Path, strconv.FormatUint(s.GetPDClient().GetClusterID(ctx), 10))
 			return u.String()
 		}
 	}
