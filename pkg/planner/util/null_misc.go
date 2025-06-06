@@ -127,7 +127,7 @@ func isNullRejectedSimpleExpr(ctx planctx.PlanContext, schema *expression.Schema
 		return !ok
 	}, "isNullRejectedSimpleExpr should not be called with a constant expression")
 	// The expression should reference at least one field in innerSchema or all constants.
-	if !expression.ExprReferenceSchema(expr, schema) || !allConstants(ctx.GetExprCtx(), expr) {
+	if !expression.ExprReferenceSchema(expr, schema) && !allConstants(ctx.GetExprCtx(), expr) {
 		return false
 	}
 	exprCtx := ctx.GetNullRejectCheckExprCtx()
