@@ -40,7 +40,7 @@ func initRegistryTest(t *testing.T) (*testkit.TestKit, *domain.Domain, glue.Glue
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	cfg := config.GetGlobalConfig()
-	cfg.Store = config.StoreTypeTiKV
+	cfg.Store = "tikv"
 	cfg.Path = "127.0.0.1:2379"
 	config.StoreGlobalConfig(cfg)
 
