@@ -256,9 +256,8 @@ func CheckTableMode(node *resolve.NodeW) error {
 	switch node.Node.(type) {
 	case *ast.ShowStmt, *ast.ExplainStmt:
 	default:
-		// Special handling to the `ADMIN CHECKSUM TABLE` statement, as
-		// `IMPORT INTO` will executes this statement during post checksum
-		// to verify data.
+		// Special handling to the `ADMIN CHECKSUM TABLE`, as `IMPORT INTO` will
+		// executes this statement during post checksum to verify data.
 		// TODO: only allow `ADMIN CHECKSUM TABLE` from import into task
 		adminStmt, ok := node.Node.(*ast.AdminStmt)
 		if ok && adminStmt.Tp == ast.AdminChecksumTable {
