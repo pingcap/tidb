@@ -131,6 +131,10 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		rows                      []chunk.Row
 		err                       error
 	)
+	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "select new stats_meta where version > ?"))
+	defer func() {
+		logutil.BgLogger().Info("[stats_meta] end")
+	}()
 	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		query := "SELECT version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta where version > %? "
 		args := []any{lastVersion}
