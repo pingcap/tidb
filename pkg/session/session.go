@@ -1561,9 +1561,6 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) 
 		// Restore the goroutine label by using the original ctx after execution is finished.
 		pprof.SetGoroutineLabels(ctx)
 	}()
-	if s.sessionVars.CostModelVersion <= 1 {
-		logutil.BgLogger().Info("wtf!")
-	}
 	r, ctx := tracing.StartRegionEx(ctx, "session.ExecuteInternal")
 	defer r.End()
 	logutil.Eventf(ctx, "execute: %s", sql)
