@@ -147,6 +147,8 @@ const (
 	SumUnpackedBytesReceivedTiFlashTotalStr    = "SUM_UNPACKED_BYTES_RECEIVED_TIFLASH_TOTAL"
 	SumUnpackedBytesSentTiFlashCrossZoneStr    = "SUM_UNPACKED_BYTES_SENT_TIFLASH_CROSS_ZONE"
 	SumUnpackedBytesReceiveTiFlashCrossZoneStr = "SUM_UNPACKED_BYTES_RECEIVED_TIFLASH_CROSS_ZONE"
+	StorageKVStr                               = "STORAGE_KV"
+	StorageMPPStr                              = "STORAGE_MPP"
 )
 
 type columnInfo interface {
@@ -529,6 +531,12 @@ var columnFactoryMap = map[string]columnFactory{
 	},
 	SumUnpackedBytesReceiveTiFlashCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.UnpackedBytesReceivedTiFlashCrossZone
+	},
+	StorageKVStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.StorageKV
+	},
+	StorageMPPStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.StorageMPP
 	},
 }
 
