@@ -536,23 +536,43 @@ func (m *JobManager) checkNotOwnJob() {
 	}
 }
 
+func (m *JobManager) findAllTasksForJob(se session.Session, jobID string) ([]*cache.TTLTask, error) {
+	timeoutJobCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
+	defer cancel()
+
+	sql, args := cache.SelectFromTTLTaskWithJobID(jobID)
+	rows, err := se.ExecuteSQL(timeoutJobCtx, sql, args...)
+	cancel()
+	if err != nil {
+		logutil.Logger(m.ctx).Warn("fail to execute sql", zap.String("sql", sql), zap.Any("args", args), zap.Error(err))
+		return nil, err
+	}
+
+	allTasks := make([]*cache.TTLTask, 0, len(rows))
+	for _, r := range rows {
+		task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), r)
+		if err != nil {
+			logutil.Logger(m.ctx).Warn("fail to read task", zap.Error(err), zap.String("jobID", jobID))
+			return nil, err
+		}
+		allTasks = append(allTasks, task)
+	}
+
+	return allTasks, nil
+}
+
 func (m *JobManager) checkFinishedJob(se session.Session) {
 	// reverse iteration so that we could remove the job safely in the loop
-j:
 	for i := len(m.runningJobs) - 1; i >= 0; i-- {
 		job := m.runningJobs[i]
-
-		timeoutJobCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
-
-		sql, args := cache.SelectFromTTLTaskWithJobID(job.id)
-		rows, err := se.ExecuteSQL(timeoutJobCtx, sql, args...)
-		cancel()
+		allTasks, err := m.findAllTasksForJob(se, job.id)
 		if err != nil {
-			logutil.Logger(m.ctx).Warn("fail to execute sql", zap.String("sql", sql), zap.Any("args", args), zap.Error(err))
+			logutil.Logger(m.ctx).Warn("fail to find all tasks for job. Skip check finished", zap.String("jobID", job.id), zap.Error(err))
 			continue
 		}
 
 		allFinished := true
+<<<<<<< HEAD
 		allTasks := make([]*cache.TTLTask, 0, len(rows))
 		for _, r := range rows {
 			task, err := cache.RowToTTLTask(se, r)
@@ -563,13 +583,24 @@ j:
 			allTasks = append(allTasks, task)
 
 			if task.Status != "finished" {
+=======
+		for _, task := range allTasks {
+			if task.Status != cache.TaskStatusFinished {
+>>>>>>> 835472c3859 (ttl: fix the issue that the TTL execution summary for timeout job is empty (#61518))
 				allFinished = false
+				break
 			}
 		}
 
 		if allFinished {
+<<<<<<< HEAD
 			logutil.Logger(m.ctx).Info("job has finished", zap.String("jobID", job.id))
 			summary, err := summarizeTaskResult(allTasks)
+=======
+			logger := m.jobLogger(job)
+			logger.Info("job has finished")
+			summary, err := summarizeTaskResultWithError(allTasks, nil)
+>>>>>>> 835472c3859 (ttl: fix the issue that the TTL execution summary for timeout job is empty (#61518))
 			if err != nil {
 				logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
 			}
@@ -580,7 +611,6 @@ j:
 			}
 			m.removeJob(job)
 		}
-		cancel()
 	}
 }
 
@@ -620,7 +650,11 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 					zap.String("table", job.tbl.FullName()),
 				)
 				logger.Info(fmt.Sprintf("cancel job because %s", cancelReason))
-				summary, err := summarizeErr(errors.New(cancelReason))
+				allTasks, err := m.findAllTasksForJob(se, job.id)
+				if err != nil {
+					logger.Warn("fail to find all tasks for job. Summarize nothing for cancel job", zap.String("jobID", job.id), zap.Error(err))
+				}
+				summary, err := summarizeTaskResultWithError(allTasks, errors.New(cancelReason))
 				if err != nil {
 					logutil.Logger(m.ctx).Warn("fail to summarize job", zap.Error(err))
 				}
@@ -646,8 +680,18 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		}
 
 		// when the job is locked, it can be found in `infoSchemaCache`. Therefore, it must have been dropped.
+<<<<<<< HEAD
 		logutil.Logger(m.ctx).Info("cancel job because the table has been dropped or it's no longer TTL table", zap.String("jobID", job.id), zap.Int64("tableID", job.tbl.ID))
 		summary, err := summarizeErr(errors.New("TTL table has been removed or the TTL on this table has been stopped"))
+=======
+		logger := m.jobLogger(job)
+		logger.Info("cancel job because the table has been dropped or it's no longer TTL table")
+		allTasks, err := m.findAllTasksForJob(se, job.id)
+		if err != nil {
+			logger.Warn("fail to find all tasks for job. Summarize nothing for cancel job", zap.String("jobID", job.id), zap.Error(err))
+		}
+		summary, err := summarizeTaskResultWithError(allTasks, errors.New("TTL table has been removed or the TTL on this table has been stopped"))
+>>>>>>> 835472c3859 (ttl: fix the issue that the TTL execution summary for timeout job is empty (#61518))
 		if err != nil {
 			logutil.Logger(m.ctx).Warn("fail to summarize job", zap.Error(err))
 		}
@@ -925,8 +969,18 @@ func (m *JobManager) updateHeartBeat(ctx context.Context, se session.Session, no
 
 func (m *JobManager) updateHeartBeatForJob(ctx context.Context, se session.Session, now time.Time, job *ttlJob) error {
 	if job.createTime.Add(ttlJobTimeout).Before(now) {
+<<<<<<< HEAD
 		logutil.Logger(m.ctx).Info("job is timeout", zap.String("jobID", job.id))
 		summary, err := summarizeErr(errors.New("job is timeout"))
+=======
+		m.jobLogger(job).Info("job is timeout")
+		tasks, err := m.findAllTasksForJob(se, job.id)
+		if err != nil {
+			m.jobLogger(job).Warn("fail to find all tasks for job. Summarize nothing for timeout job",
+				zap.String("jobID", job.id), zap.Error(err))
+		}
+		summary, err := summarizeTaskResultWithError(tasks, errors.New("job is timeout"))
+>>>>>>> 835472c3859 (ttl: fix the issue that the TTL execution summary for timeout job is empty (#61518))
 		if err != nil {
 			return errors.Wrapf(err, "fail to summarize job")
 		}
@@ -1006,22 +1060,9 @@ type TTLSummary struct {
 	SummaryText string `json:"-"`
 }
 
-func summarizeErr(err error) (*TTLSummary, error) {
-	summary := &TTLSummary{
-		ScanTaskErr: err.Error(),
-	}
-
-	buf, err := json.Marshal(summary)
-	if err != nil {
-		return nil, err
-	}
-	summary.SummaryText = string(buf)
-	return summary, nil
-}
-
-func summarizeTaskResult(tasks []*cache.TTLTask) (*TTLSummary, error) {
+func summarizeTaskResultWithError(tasks []*cache.TTLTask, err error) (*TTLSummary, error) {
 	summary := &TTLSummary{}
-	var allErr error
+	allErr := err
 	for _, t := range tasks {
 		if t.State != nil {
 			summary.TotalRows += t.State.TotalRows
