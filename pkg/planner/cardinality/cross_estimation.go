@@ -36,7 +36,7 @@ const SelectionFactor = 0.8
 // should be adjusted by the limit number 1, because only one row is returned.
 func AdjustRowCountForTableScanByLimit(sctx planctx.PlanContext,
 	dsStatsInfo, dsTableStats *property.StatsInfo, dsStatisticTable *statistics.Table,
-	path *util.AccessPath, expectedCnt float64, desc bool) float64 {
+	path *util.AccessPath, expectedCnt float64, isMatchProp, desc bool) float64 {
 	rowCount := path.CountAfterAccess
 	if expectedCnt < dsStatsInfo.RowCount {
 		selectivity := dsStatsInfo.RowCount / path.CountAfterAccess
@@ -62,9 +62,8 @@ func AdjustRowCountForTableScanByLimit(sctx planctx.PlanContext,
 	}
 	// if orderRatio is enabled, we use it to recognize that we must scan more rows to find the first row.
 	orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
-	minRowCount := min(expectedCnt, dsStatsInfo.RowCount)
-	if orderRatio >= 0 && path.CountAfterAccess > rowCount {
-		rowCount += (path.CountAfterAccess - minRowCount) * orderRatio
+	if orderRatio >= 0 && isMatchProp && path.CountAfterAccess > rowCount {
+		rowCount += max(0, (path.CountAfterAccess-rowCount)) * orderRatio
 	}
 	return rowCount
 }

@@ -3128,14 +3128,12 @@ func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema().Clone())
 	rowCount := path.CountAfterAccess
-	noSort := isMatchProp || prop.IsSortItemEmpty()
 	// Add an arbitrary tolerance factor to account for comparison with floating point
-	earlyOut := prop.ExpectedCnt+cost.ToleranceFactor < ds.StatsInfo().RowCount || min(prop.ExpectedCnt, ds.StatsInfo().RowCount) < rowCount
-
-	if noSort && earlyOut {
+	if (prop.ExpectedCnt+cost.ToleranceFactor) < ds.StatsInfo().RowCount ||
+		(isMatchProp && ds.StatsInfo().RowCount < rowCount) {
 		rowCount = cardinality.AdjustRowCountForTableScanByLimit(ds.SCtx(),
 			ds.StatsInfo(), ds.TableStats, ds.StatisticTable,
-			path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
+			path, prop.ExpectedCnt, isMatchProp, isMatchProp && prop.SortItems[0].Desc)
 	}
 	// We need NDV of columns since it may be used in cost estimation of join. Precisely speaking,
 	// we should track NDV of each histogram bucket, and sum up the NDV of buckets we actually need
@@ -3185,15 +3183,12 @@ func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		ds.AccessPathMinSelectivity <= ds.SCtx().GetSessionVars().OptOrderingIdxSelThresh &&
 		len(path.IndexFilters)+len(path.TableFilters) > 0
 
-	if !ignoreExpectedCnt {
-		noSort := isMatchProp || prop.IsSortItemEmpty()
-		earlyOut := prop.ExpectedCnt < ds.StatsInfo().RowCount || min(prop.ExpectedCnt, ds.StatsInfo().RowCount) < rowCount
-		if noSort && earlyOut {
-			rowCount = cardinality.AdjustRowCountForIndexScanByLimit(ds.SCtx(),
-				ds.StatsInfo(), ds.TableStats, ds.StatisticTable,
-				path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
-		}
+	if (isMatchProp || prop.IsSortItemEmpty()) && prop.ExpectedCnt < ds.StatsInfo().RowCount && !ignoreExpectedCnt {
+		rowCount = cardinality.AdjustRowCountForIndexScanByLimit(ds.SCtx(),
+			ds.StatsInfo(), ds.TableStats, ds.StatisticTable,
+			path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
 	}
+
 	// ScaleByExpectCnt only allows to scale the row count smaller than the table total row count.
 	// But for MV index, it's possible that the IndexRangeScan row count is larger than the table total row count.
 	// Please see the Case 2 in CalcTotalSelectivityForMVIdxPath for an example.
