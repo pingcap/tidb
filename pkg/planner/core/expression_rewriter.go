@@ -2457,7 +2457,8 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	}
 	if idx >= 0 {
 		column := er.schema.Columns[idx]
-		if column.IsHidden {
+		// When MVIndexScan is enabled, we may use virtual columns directly in selection.
+		if column.IsHidden && !GetEnableMVIndexScan(er.ctx) {
 			er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
 			return
 		}
