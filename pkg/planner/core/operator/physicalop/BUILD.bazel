@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "physicalop",
-    srcs = ["base_physical_plan.go"],
+    srcs = [
+        "base_physical_plan.go",
+        "physical_schema_producer.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/physicalop",
     visibility = ["//visibility:public"],
     deps = [

@@ -1018,17 +1018,12 @@ func containOuterNot(expr Expression, not bool) bool {
 
 // Contains tests if `exprs` contains `e`.
 func Contains(ectx EvalContext, exprs []Expression, e Expression) bool {
-	for _, expr := range exprs {
-		// Check string equivalence if one of the expressions is a clone.
-		sameString := false
-		if e != nil && expr != nil {
-			sameString = (e.StringWithCtx(ectx, errors.RedactLogDisable) == expr.StringWithCtx(ectx, errors.RedactLogDisable))
+	return slices.ContainsFunc(exprs, func(expr Expression) bool {
+		if expr == nil {
+			return e == nil
 		}
-		if e == expr || sameString {
-			return true
-		}
-	}
-	return false
+		return e == expr || expr.Equal(ectx, e)
+	})
 }
 
 // ExtractFiltersFromDNFs checks whether the cond is DNF. If so, it will get the extracted part and the remained part.
@@ -1559,6 +1554,12 @@ func MaybeOverOptimized4PlanCache(ctx BuildContext, exprs []Expression) bool {
 		return false
 	}
 	return containMutableConst(ctx.GetEvalCtx(), exprs)
+}
+
+// MaybeOverOptimized4PlanCacheForMultiExpression is the same as MaybeOverOptimized4PlanCache,
+// but it accepts multiple expressions as input.
+func MaybeOverOptimized4PlanCacheForMultiExpression(ctx BuildContext, exprs ...Expression) bool {
+	return MaybeOverOptimized4PlanCache(ctx, exprs)
 }
 
 // containMutableConst checks if the expressions contain a lazy constant.

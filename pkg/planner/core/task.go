@@ -160,7 +160,7 @@ func (p *PhysicalApply) Attach2Task(tasks ...base.Task) base.Task {
 	lTask := tasks[0].ConvertToRootTask(p.SCtx())
 	rTask := tasks[1].ConvertToRootTask(p.SCtx())
 	p.SetChildren(lTask.Plan(), rTask.Plan())
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
+	p.SetSchema(BuildPhysicalJoinSchema(p.JoinType, p))
 	t := &RootTask{}
 	t.SetPlan(p)
 	// inherit left and right child's warnings.
@@ -359,7 +359,7 @@ func appendExpr(p *PhysicalProjection, expr expression.Expression) *expression.C
 		RetType:  expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
 	}
 	col.SetCoercibility(expr.Coercibility())
-	p.schema.Append(col)
+	p.Schema().Append(col)
 	return col
 }
 
@@ -535,10 +535,10 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	for _, hashCol := range task.hashCols {
 		hashColArray = append(hashColArray, hashCol.Col)
 	}
-	if p.schema.Len() < defaultSchema.Len() {
-		if p.schema.Len() > 0 {
+	if p.Schema().Len() < defaultSchema.Len() {
+		if p.Schema().Len() > 0 {
 			proj := PhysicalProjection{
-				Exprs: expression.Column2Exprs(p.schema.Columns),
+				Exprs: expression.Column2Exprs(p.Schema().Columns),
 			}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 
 			proj.SetSchema(p.Schema().Clone())
@@ -559,10 +559,10 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 					Exprs: expr,
 				}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 
-				proj.schema = expression.NewSchema(&expression.Column{
+				proj.SetSchema(expression.NewSchema(&expression.Column{
 					UniqueID: proj.SCtx().GetSessionVars().AllocPlanColumnID(),
 					RetType:  constOne.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
-				})
+				}))
 				attachPlan2Task(proj, task)
 			} else {
 				proj := PhysicalProjection{
@@ -583,7 +583,7 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 			}
 		}
 	}
-	p.schema = defaultSchema
+	p.SetSchema(defaultSchema)
 	return task
 }
 
@@ -593,20 +593,12 @@ func (p *PhysicalHashJoin) attach2TaskForTiFlash(tasks ...base.Task) base.Task {
 	if !lok || !rok {
 		return p.attach2TaskForMpp(tasks...)
 	}
-	p.SetChildren(lTask.Plan(), rTask.Plan())
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
-	if !lTask.indexPlanFinished {
-		lTask.finishIndexPlan()
-	}
-	if !rTask.indexPlanFinished {
-		rTask.finishIndexPlan()
-	}
-
-	task := &CopTask{
-		tblColHists:       rTask.tblColHists,
-		indexPlanFinished: true,
-		tablePlan:         p,
-	}
+	rRoot := rTask.ConvertToRootTask(p.SCtx())
+	lRoot := lTask.ConvertToRootTask(p.SCtx())
+	p.SetChildren(lRoot.Plan(), rRoot.Plan())
+	p.SetSchema(BuildPhysicalJoinSchema(p.JoinType, p))
+	task := &RootTask{}
+	task.SetPlan(p)
 	task.warnings.CopyFrom(&rTask.warnings, &lTask.warnings)
 	return task
 }
@@ -872,9 +864,9 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t base.Task) bool {
 	// So we add an extra projection to solve the problem.
 	if p.Schema().Len() != reader.Schema().Len() {
 		extraProj := PhysicalProjection{
-			Exprs: expression.Column2Exprs(p.schema.Columns),
+			Exprs: expression.Column2Exprs(p.Schema().Columns),
 		}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), nil)
-		extraProj.SetSchema(p.schema)
+		extraProj.SetSchema(p.Schema())
 		// If the root.p is already a Projection. We left the optimization for the later Projection Elimination.
 		extraProj.SetChildren(root.GetPlan())
 		root.SetPlan(extraProj)
@@ -929,10 +921,10 @@ func (p *PhysicalLimit) sinkIntoIndexMerge(t base.Task) bool {
 			ts.StatsInfo().RowCount = originStats.RowCount
 		}
 	}
-	needProj := p.schema.Len() != root.GetPlan().Schema().Len()
+	needProj := p.Schema().Len() != root.GetPlan().Schema().Len()
 	if !needProj {
-		for i := range p.schema.Len() {
-			if !p.schema.Columns[i].EqualColumn(root.GetPlan().Schema().Columns[i]) {
+		for i := range p.Schema().Len() {
+			if !p.Schema().Columns[i].EqualColumn(root.GetPlan().Schema().Columns[i]) {
 				needProj = true
 				break
 			}
@@ -940,9 +932,9 @@ func (p *PhysicalLimit) sinkIntoIndexMerge(t base.Task) bool {
 	}
 	if needProj {
 		extraProj := PhysicalProjection{
-			Exprs: expression.Column2Exprs(p.schema.Columns),
+			Exprs: expression.Column2Exprs(p.Schema().Columns),
 		}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), nil)
-		extraProj.SetSchema(p.schema)
+		extraProj.SetSchema(p.Schema())
 		// If the root.p is already a Projection. We left the optimization for the later Projection Elimination.
 		extraProj.SetChildren(root.GetPlan())
 		root.SetPlan(extraProj)
@@ -1902,10 +1894,10 @@ func BuildFinalModeAggregation(
 // If there is no avg, nothing is changed and return nil.
 func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	newSchema := expression.NewSchema()
-	newSchema.PKOrUK = p.schema.PKOrUK
-	newSchema.NullableUK = p.schema.NullableUK
+	newSchema.PKOrUK = p.Schema().PKOrUK
+	newSchema.NullableUK = p.Schema().NullableUK
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, 2*len(p.AggFuncs))
-	exprs := make([]expression.Expression, 0, 2*len(p.schema.Columns))
+	exprs := make([]expression.Expression, 0, 2*len(p.Schema().Columns))
 	exprCtx := p.SCtx().GetExprCtx()
 	// add agg functions schema
 	for i, aggFunc := range p.AggFuncs {
@@ -1931,7 +1923,7 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			}
 			newAggFuncs = append(newAggFuncs, avgSum)
 			avgSumCol := &expression.Column{
-				UniqueID: p.schema.Columns[i].UniqueID,
+				UniqueID: p.Schema().Columns[i].UniqueID,
 				RetType:  avgSum.RetTp,
 			}
 			newSchema.Append(avgSumCol)
@@ -1939,32 +1931,32 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			eq := expression.NewFunctionInternal(exprCtx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, expression.NewZero())
 			caseWhen := expression.NewFunctionInternal(exprCtx, ast.Case, avgCountCol.RetType, eq, expression.NewOne(), avgCountCol)
 			divide := expression.NewFunctionInternal(exprCtx, ast.Div, avgSumCol.RetType, avgSumCol, caseWhen)
-			divide.(*expression.ScalarFunction).RetType = p.schema.Columns[i].RetType
+			divide.(*expression.ScalarFunction).RetType = p.Schema().Columns[i].RetType
 			exprs = append(exprs, divide)
 		} else {
 			// other non-avg agg use the old schema as it did.
 			newAggFuncs = append(newAggFuncs, aggFunc)
-			newSchema.Append(p.schema.Columns[i])
-			exprs = append(exprs, p.schema.Columns[i])
+			newSchema.Append(p.Schema().Columns[i])
+			exprs = append(exprs, p.Schema().Columns[i])
 		}
 	}
 	// no avgs
 	// for final agg, always add project due to in-compatibility between TiDB and TiFlash
-	if len(p.schema.Columns) == len(newSchema.Columns) && !p.IsFinalAgg() {
+	if len(p.Schema().Columns) == len(newSchema.Columns) && !p.IsFinalAgg() {
 		return nil
 	}
 	// add remaining columns to exprs
-	for i := len(p.AggFuncs); i < len(p.schema.Columns); i++ {
-		exprs = append(exprs, p.schema.Columns[i])
+	for i := len(p.AggFuncs); i < len(p.Schema().Columns); i++ {
+		exprs = append(exprs, p.Schema().Columns[i])
 	}
 	proj := PhysicalProjection{
 		Exprs:            exprs,
 		CalculateNoDelay: false,
 	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), p.GetChildReqProps(0).CloneEssentialFields())
-	proj.SetSchema(p.schema)
+	proj.SetSchema(p.Schema())
 
 	p.AggFuncs = newAggFuncs
-	p.schema = newSchema
+	p.SetSchema(newSchema)
 
 	return proj
 }
@@ -2000,7 +1992,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 	}
 	p.AggFuncs = partialPref.AggFuncs
 	p.GroupByItems = partialPref.GroupByItems
-	p.schema = partialPref.Schema
+	p.SetSchema(partialPref.Schema)
 	partialAgg := p.Self
 	// Create physical "final" aggregation.
 	prop := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
@@ -2010,7 +2002,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 			GroupByItems: finalPref.GroupByItems,
 			MppRunMode:   p.MppRunMode,
 		}.initForStream(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), prop)
-		finalAgg.schema = finalPref.Schema
+		finalAgg.SetSchema(finalPref.Schema)
 		return partialAgg, finalAgg
 	}
 
@@ -2019,7 +2011,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 		GroupByItems: finalPref.GroupByItems,
 		MppRunMode:   p.MppRunMode,
 	}.initForHash(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), prop)
-	finalAgg.schema = finalPref.Schema
+	finalAgg.SetSchema(finalPref.Schema)
 	// partialAgg and finalAgg use the same ref of stats
 	return partialAgg, finalAgg
 }
@@ -2447,7 +2439,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.Physica
 			}
 			middleSchema.Append(col)
 		}
-		middleHashAgg.schema = middleSchema
+		middleHashAgg.SetSchema(middleSchema)
 
 		// step2: adjust final agg.
 		finalHashAgg := finalAgg.(*PhysicalHashAgg)
@@ -2496,7 +2488,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.Physica
 	}
 	// append the physical expand op with groupingID column.
 	physicalExpand.SetSchema(mpp.p.Schema().Clone())
-	physicalExpand.schema.Append(groupingIDCol.(*expression.Column))
+	physicalExpand.Schema().Append(groupingIDCol.(*expression.Column))
 	physicalExpand.GroupingIDCol = groupingIDCol.(*expression.Column)
 	// attach PhysicalExpand to mpp
 	attachPlan2Task(physicalExpand, mpp)
@@ -2524,7 +2516,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.Physica
 
 	partialHashAgg := partialAgg.(*PhysicalHashAgg)
 	partialHashAgg.GroupByItems = append(partialHashAgg.GroupByItems, groupingIDCol)
-	partialHashAgg.schema.Append(groupingIDCol.(*expression.Column))
+	partialHashAgg.Schema().Append(groupingIDCol.(*expression.Column))
 	// it will create a new stats for partial agg.
 	partialHashAgg.scaleStats4GroupingSets(groupingSets, groupingIDCol.(*expression.Column), proj4Partial.Schema(), proj4Partial.StatsInfo())
 	for _, fun := range partialHashAgg.AggFuncs {
@@ -2565,7 +2557,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.Physica
 		}
 		middleSchema.Append(col)
 	}
-	middleHashAgg.schema = middleSchema
+	middleHashAgg.SetSchema(middleSchema)
 
 	// step3: adjust final agg
 	finalHashAgg := finalAgg.(*PhysicalHashAgg)
@@ -2723,7 +2715,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 			for _, col := range p.Schema().Columns {
 				proj.Exprs = append(proj.Exprs, col)
 			}
-			proj.SetSchema(p.schema)
+			proj.SetSchema(p.Schema())
 		}
 		attachPlan2Task(proj, newMpp)
 		return newMpp
@@ -2789,7 +2781,7 @@ func (p *PhysicalWindow) attach2TaskForMPP(mpp *MppTask) base.Task {
 	// so we have to rebuild the schema of join and operators which may inherit schema from join.
 	// for window, we take the sub-plan's schema, and the schema generated by windowDescs.
 	columns := p.Schema().Clone().Columns[len(p.Schema().Columns)-len(p.WindowFuncDescs):]
-	p.schema = expression.MergeSchema(mpp.Plan().Schema(), expression.NewSchema(columns...))
+	p.SetSchema(expression.MergeSchema(mpp.Plan().Schema(), expression.NewSchema(columns...)))
 
 	failpoint.Inject("CheckMPPWindowSchemaLength", func() {
 		if len(p.Schema().Columns) != len(mpp.Plan().Schema().Columns)+len(p.WindowFuncDescs) {
@@ -2903,7 +2895,7 @@ func accumulateNetSeekCost4MPP(p base.PhysicalPlan) (cost float64) {
 
 func tryExpandVirtualColumn(p base.PhysicalPlan) {
 	if ts, ok := p.(*PhysicalTableScan); ok {
-		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
 		return
 	}
 	for _, child := range p.Children() {

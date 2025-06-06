@@ -198,6 +198,16 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	require.Equal(t, "t", tableName)
 	require.Equal(t, int64(4), modifyCount)
 	require.Equal(t, int64(8), count)
+
+	// Extra. check the plan replayer file not exists
+	resp2, err := client.FetchStatus(filepath.Join("/plan_replayer/dump/", filename+"a"))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, resp2.Body.Close())
+	}()
+	body, err = io.ReadAll(resp2.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "can't find dump file")
 }
 
 // prepareData4PlanReplayer trigger tidb to dump 2 plan replayer files,

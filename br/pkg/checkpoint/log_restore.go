@@ -191,7 +191,7 @@ func (t *TaskInfoForLogRestore) IdMapSaved() bool {
 	return t.Progress == InLogRestoreAndIdMapPersisted
 }
 
-func TryToGetCheckpointTaskInfo(
+func GetCheckpointTaskInfo(
 	ctx context.Context,
 	snapshotManager SnapshotMetaManagerT,
 	logManager LogMetaManagerT,
