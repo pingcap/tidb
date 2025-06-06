@@ -51,7 +51,7 @@ id	estRows	task	access object	operator info
 Limit	10.00	root		offset:0, count:10
 └─TableReader	10.00	root		data:Limit
   └─Limit	10.00	cop[tikv]		offset:0, count:10
-    └─TableFullScan	10.00	cop[tikv]	table:t	keep order:true, stats:pseudo
+    └─TableFullScan	109.90	cop[tikv]	table:t	keep order:true, stats:pseudo
 explain FORMAT='brief' select b from t use index(b) order by b;
 id	estRows	task	access object	operator info
 IndexReader	10000.00	root		index:IndexFullScan
@@ -80,7 +80,7 @@ id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─TableReader	1.00	root		data:Limit
   └─Limit	1.00	cop[tikv]		offset:0, count:1
-    └─TableRangeScan	1.00	cop[tikv]	table:t	range:(0,+inf], keep order:true, stats:pseudo
+    └─TableRangeScan	34.32	cop[tikv]	table:t	range:(0,+inf], keep order:true, stats:pseudo
 set tidb_enable_ordered_result_mode=1;
 drop table if exists t;
 create table t (a int primary key, b int, c int, key(b));
