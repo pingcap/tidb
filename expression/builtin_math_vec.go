@@ -310,7 +310,7 @@ func (b *builtinRadiansSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column
 		if result.IsNull(i) {
 			continue
 		}
-		f64s[i] = f64s[i] * math.Pi / 180
+		f64s[i] = f64s[i] * (math.Pi / 180)
 	}
 	return nil
 }
