@@ -49,7 +49,37 @@ const (
 	otherPredicate
 )
 
+<<<<<<< HEAD
 func findPredicateType(expr expression.Expression) (*expression.Column, predicateType) {
+=======
+func logicalConstant(bc base.PlanContext, cond expression.Expression) predicateType {
+	sc := bc.GetSessionVars().StmtCtx
+	con, ok := cond.(*expression.Constant)
+	if !ok {
+		return otherPredicate
+	}
+	if expression.MaybeOverOptimized4PlanCacheForMultiExpression(bc.GetExprCtx(), con) {
+		return otherPredicate
+	}
+	isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault())
+	if err == nil {
+		if isTrue == 0 {
+			return falsePredicate
+		}
+		return truePredicate
+	}
+	return otherPredicate
+}
+
+// FindPredicateType determines the type of predicate represented by a given expression.
+// It analyzes the provided expression and returns a column (if applicable) and a corresponding predicate type.
+// The function handles different expression types, including constants, scalar functions, and their specific cases:
+// - Logical operators (`OR` and `AND`).
+// - Comparison operators (`EQ`, `NE`, `LT`, `GT`, `LE`, `GE`).
+// - IN predicates with a list of constants.
+// If the expression doesn't match any of these recognized patterns, it returns an `otherPredicate` type.
+func FindPredicateType(bc base.PlanContext, expr expression.Expression) (*expression.Column, predicateType) {
+>>>>>>> 92925e96899 (planner: fix wrongly skip plan cache with predicate simplification (#61515))
 	switch v := expr.(type) {
 	case *expression.ScalarFunction:
 		if v.FuncName.L == ast.LogicOr {
@@ -166,18 +196,31 @@ func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Express
 		for j := i + 1; j < len(predicates); j++ {
 			ithPredicate := predicates[i]
 			jthPredicate := predicates[j]
+<<<<<<< HEAD
 			iCol, iType := findPredicateType(ithPredicate)
 			jCol, jType := findPredicateType(jthPredicate)
+=======
+			iCol, iType := FindPredicateType(sctx, ithPredicate)
+			jCol, jType := FindPredicateType(sctx, jthPredicate)
+			maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCacheForMultiExpression(
+				sctx.GetExprCtx(),
+				ithPredicate,
+				jthPredicate)
+>>>>>>> 92925e96899 (planner: fix wrongly skip plan cache with predicate simplification (#61515))
 			if iCol == jCol {
 				if iType == notEqualPredicate && jType == inListPredicate {
 					predicates[j], specialCase = updateInPredicate(sctx, jthPredicate, ithPredicate)
-					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
+					if maybeOverOptimized4PlanCache {
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
+					}
 					if !specialCase {
 						removeValues = append(removeValues, i)
 					}
 				} else if iType == inListPredicate && jType == notEqualPredicate {
 					predicates[i], specialCase = updateInPredicate(sctx, ithPredicate, jthPredicate)
-					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
+					if maybeOverOptimized4PlanCache {
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
+					}
 					if !specialCase {
 						removeValues = append(removeValues, j)
 					}
@@ -320,17 +363,151 @@ func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Express
 			_, jType := findPredicateType(jthPredicate)
 			iType = comparisonPred(iType)
 			jType = comparisonPred(jType)
+			maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCacheForMultiExpression(
+				sctx.GetExprCtx(),
+				ithPredicate,
+				jthPredicate)
 			if iType == scalarPredicate && jType == orPredicate {
 				predicates[j] = updateOrPredicate(sctx, jthPredicate, ithPredicate)
-				sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
+				if maybeOverOptimized4PlanCache {
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
+				}
 			} else if iType == orPredicate && jType == scalarPredicate {
 				predicates[i] = updateOrPredicate(sctx, ithPredicate, jthPredicate)
-				sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
+				if maybeOverOptimized4PlanCache {
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
+				}
 			}
 		}
 	}
 }
 
+<<<<<<< HEAD
+=======
+// shortCircuitANDORLogicalConstants simplifies logical expressions by performing short-circuit evaluation
+// based on the logical AND/OR nature of the predicate and constant truth/falsehood values.
+func shortCircuitANDORLogicalConstants(sctx base.PlanContext, predicate expression.Expression, orCase bool) (expression.Expression, bool) {
+	con, _ := predicate.(*expression.ScalarFunction)
+	args := con.GetArgs()
+	firstCondition, secondCondition := args[0], args[1]
+
+	// Recursively process first and second conditions
+	firstCondition, firstType := processCondition(sctx, firstCondition)
+	secondCondition, secondType := processCondition(sctx, secondCondition)
+
+	switch {
+	case firstType == truePredicate && orCase:
+		return firstCondition, true
+	case secondType == truePredicate && orCase:
+		return secondCondition, true
+	case firstType == falsePredicate && orCase:
+		return secondCondition, true
+	case secondType == falsePredicate && orCase:
+		return firstCondition, true
+	case firstType == truePredicate && !orCase:
+		return secondCondition, true
+	case secondType == truePredicate && !orCase:
+		return firstCondition, true
+	case firstType == falsePredicate && !orCase:
+		return firstCondition, true
+	case secondType == falsePredicate && !orCase:
+		return secondCondition, true
+	default:
+		if firstCondition != args[0] || secondCondition != args[1] {
+			finalResult := expression.NewFunctionInternal(sctx.GetExprCtx(), con.FuncName.L, con.GetStaticType(), firstCondition, secondCondition)
+			return finalResult, true
+		}
+		return predicate, false
+	}
+}
+
+// processCondition handles individual predicate evaluation for logical AND/OR cases
+// and returns the potentially simplified condition and its updated type.
+func processCondition(sctx base.PlanContext, condition expression.Expression) (expression.Expression, predicateType) {
+	applied := false
+	maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCacheForMultiExpression(sctx.GetExprCtx(), condition)
+	_, conditionType := FindPredicateType(sctx, condition)
+
+	if conditionType == orPredicate {
+		condition, applied = shortCircuitANDORLogicalConstants(sctx, condition, true)
+	} else if conditionType == andPredicate {
+		condition, applied = shortCircuitANDORLogicalConstants(sctx, condition, false)
+	}
+
+	if applied && maybeOverOptimized4PlanCache {
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("True/False predicate simplification is triggered")
+	}
+
+	_, conditionType = FindPredicateType(sctx, condition)
+	return condition, conditionType
+}
+
+// shortCircuitLogicalConstants evaluates a list of predicates, applying short-circuit logic
+// to simplify the list and eliminate redundant or trivially true/false predicates.
+func shortCircuitLogicalConstants(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
+	finalResult := make([]expression.Expression, 0, len(predicates))
+
+	for _, predicate := range predicates {
+		predicate, predicateType := processCondition(sctx, predicate)
+
+		if predicateType == falsePredicate {
+			return []expression.Expression{predicate}
+		}
+
+		if predicateType != truePredicate {
+			finalResult = append(finalResult, predicate)
+		}
+	}
+
+	return finalResult
+}
+
+// removeRedundantORBranch recursively iterates over a list of predicates, try to find OR lists and remove redundant in
+// each OR list.
+// It modifies the input slice in place.
+func removeRedundantORBranch(sctx base.PlanContext, predicates []expression.Expression) {
+	for i, predicate := range predicates {
+		predicates[i] = recursiveRemoveRedundantORBranch(sctx, predicate)
+	}
+}
+
+func recursiveRemoveRedundantORBranch(sctx base.PlanContext, predicate expression.Expression) expression.Expression {
+	_, tp := FindPredicateType(sctx, predicate)
+	if tp != orPredicate {
+		return predicate
+	}
+	orFunc := predicate.(*expression.ScalarFunction)
+	orList := expression.SplitDNFItems(orFunc)
+
+	dedupMap := make(map[string]struct{}, len(orList))
+	newORList := make([]expression.Expression, 0, len(orList))
+
+	for _, orItem := range orList {
+		_, tp := FindPredicateType(sctx, orItem)
+		// 1. If it's an AND predicate, we recursively call removeRedundantORBranch() on it.
+		if tp == andPredicate {
+			andFunc := orItem.(*expression.ScalarFunction)
+			andList := expression.SplitCNFItems(andFunc)
+			removeRedundantORBranch(sctx, andList)
+			newORList = append(newORList, expression.ComposeCNFCondition(sctx.GetExprCtx(), andList...))
+		} else {
+			// 2. Otherwise, we check if it's a duplicate predicate by checking HashCode().
+			hashCode := string(orItem.HashCode())
+			// 2-1. If it's not a duplicate, we need to keep this predicate.
+			if _, ok := dedupMap[hashCode]; !ok {
+				dedupMap[hashCode] = struct{}{}
+				newORList = append(newORList, orItem)
+			} else if expression.IsMutableEffectsExpr(orItem) {
+				// 2-2. If it's a duplicate, but it's nondeterministic or has side effects, we also need to keep it.
+				newORList = append(newORList, orItem)
+			}
+			// 2-3. Otherwise, we remove it.
+		}
+	}
+	return expression.ComposeDNFCondition(sctx.GetExprCtx(), newORList...)
+}
+
+>>>>>>> 92925e96899 (planner: fix wrongly skip plan cache with predicate simplification (#61515))
 // Name implements base.LogicalOptRule.<1st> interface.
 func (*PredicateSimplification) Name() string {
 	return "predicate_simplification"
