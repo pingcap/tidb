@@ -3130,7 +3130,7 @@ func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 	rowCount := path.CountAfterAccess
 	// Add an arbitrary tolerance factor to account for comparison with floating point
 	if (prop.ExpectedCnt+cost.ToleranceFactor) < ds.StatsInfo().RowCount ||
-		(isMatchProp && ds.StatsInfo().RowCount < rowCount) {
+		(isMatchProp && min(ds.StatsInfo().RowCount, prop.ExpectedCnt) < rowCount && len(path.AccessConds) > 0) {
 		rowCount = cardinality.AdjustRowCountForTableScanByLimit(ds.SCtx(),
 			ds.StatsInfo(), ds.TableStats, ds.StatisticTable,
 			path, prop.ExpectedCnt, isMatchProp, isMatchProp && prop.SortItems[0].Desc)
