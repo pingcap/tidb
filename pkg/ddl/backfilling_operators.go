@@ -486,7 +486,11 @@ func (w *tableScanWorker) getChunk() *chunk.Chunk {
 }
 
 func (w *tableScanWorker) recycleChunk(chk *chunk.Chunk) {
-	w.srcChkPool <- chk
+	select {
+	case <-w.ctx.Done():
+		return
+	case w.srcChkPool <- chk:
+	}
 }
 
 // WriteExternalStoreOperator writes index records to external storage.
