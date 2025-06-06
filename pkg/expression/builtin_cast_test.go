@@ -1740,3 +1740,81 @@ func TestCastArrayFunc(t *testing.T) {
 		}
 	}
 }
+
+func TestCastAsCharFieldType(t *testing.T) {
+	type testCase struct {
+		input      *Constant
+		resultFlen int
+	}
+	allTestCase := []testCase{
+		// test int
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeTiny).BuildP(), Value: types.NewIntDatum(0)}, 4},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeShort).BuildP(), Value: types.NewIntDatum(0)}, 6},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeInt24).BuildP(), Value: types.NewIntDatum(0)}, 9},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeLong).BuildP(), Value: types.NewIntDatum(0)}, 11},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP(), Value: types.NewIntDatum(0)}, 20},
+		// test uint
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeTiny).SetFlag(mysql.UnsignedFlag).BuildP(), Value: types.NewUintDatum(0)}, 3},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeShort).SetFlag(mysql.UnsignedFlag).BuildP(), Value: types.NewUintDatum(1)}, 5},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeInt24).SetFlag(mysql.UnsignedFlag).BuildP(), Value: types.NewUintDatum(11111)}, 8},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeLong).SetFlag(mysql.UnsignedFlag).BuildP(), Value: types.NewUintDatum(1111111111)}, 10},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP(), Value: types.NewUintDatum(111111111111111)}, 20},
+		// test decimal
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(10).SetDecimal(5).BuildP(), Value: types.NewDecimalDatum(types.NewDecFromStringForTest("12345"))}, 12},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(2).SetDecimal(1).BuildP(), Value: types.NewDecimalDatum(types.NewDecFromStringForTest("1"))}, 4},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(30).SetDecimal(0).BuildP(), Value: types.NewDecimalDatum(types.NewDecFromStringForTest("12345"))}, 31},
+		// test unsigned decimal
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(10).SetDecimal(5).SetFlag(mysql.UnsignedFlag).BuildP(), Value: types.NewDecimalDatum(types.NewDecFromStringForTest("12345"))}, 11},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(2).SetDecimal(1).SetFlag(mysql.UnsignedFlag).BuildP(), Value: types.NewDecimalDatum(types.NewDecFromStringForTest("1"))}, 3},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(30).SetDecimal(0).SetFlag(mysql.UnsignedFlag).BuildP(), Value: types.NewDecimalDatum(types.NewDecFromStringForTest("12345"))}, 30},
+		// test real
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP(), Value: types.NewFloat64Datum(1.234)}, 12},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).BuildP(), Value: types.NewFloat64Datum(1.23456789)}, 22},
+		// test unsigned real
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).SetFlag(mysql.UnsignedFlag).BuildP(), Value: types.NewFloat64Datum(1.234)}, 12},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).SetFlag(mysql.UnsignedFlag).BuildP(), Value: types.NewFloat64Datum(1.23456789)}, 22},
+		// test timestamp
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeTimestamp).SetFlen(types.UnspecifiedLength).SetDecimal(0).BuildP(), Value: types.NewTimeDatum(types.NewTime(types.FromDate(2020, 10, 10, 10, 10, 10, 110), mysql.TypeTimestamp, 0))}, 19},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeTimestamp).SetFlen(types.UnspecifiedLength).SetDecimal(3).BuildP(), Value: types.NewTimeDatum(types.NewTime(types.FromDate(2020, 10, 10, 10, 10, 10, 110), mysql.TypeTimestamp, 0))}, 23},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeTimestamp).SetFlen(types.UnspecifiedLength).SetDecimal(6).BuildP(), Value: types.NewTimeDatum(types.NewTime(types.FromDate(2020, 10, 10, 10, 10, 10, 110), mysql.TypeTimestamp, 0))}, 26},
+		// test datetime
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).SetFlen(types.UnspecifiedLength).SetDecimal(0).BuildP(), Value: types.NewTimeDatum(types.NewTime(types.FromDate(2020, 10, 10, 10, 10, 10, 110), mysql.TypeDatetime, 0))}, 19},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).SetFlen(types.UnspecifiedLength).SetDecimal(3).BuildP(), Value: types.NewTimeDatum(types.NewTime(types.FromDate(2020, 10, 10, 10, 10, 10, 110), mysql.TypeDatetime, 0))}, 23},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).SetFlen(types.UnspecifiedLength).SetDecimal(6).BuildP(), Value: types.NewTimeDatum(types.NewTime(types.FromDate(2020, 10, 10, 10, 10, 10, 110), mysql.TypeDatetime, 0))}, 26},
+		// test time
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeDuration).SetFlen(types.UnspecifiedLength).SetDecimal(0).BuildP(), Value: types.NewDurationDatum(types.NewDuration(10, 10, 10, 110, 0))}, 10},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeDuration).SetFlen(types.UnspecifiedLength).SetDecimal(3).BuildP(), Value: types.NewDurationDatum(types.NewDuration(10, 10, 10, 110, 3))}, 14},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeDuration).SetFlen(types.UnspecifiedLength).SetDecimal(6).BuildP(), Value: types.NewDurationDatum(types.NewDuration(10, 10, 10, 110, 6))}, 17},
+		// test date
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeDate).SetFlen(types.UnspecifiedLength).SetDecimal(0).BuildP(), Value: types.NewTimeDatum(types.NewTime(types.FromDate(2020, 10, 10, 10, 10, 10, 110), mysql.TypeDate, 0))}, 10},
+		// test json
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).BuildP(), Value: types.NewJSONDatum(types.CreateBinaryJSON(int64(1)))}, 4294967295},
+		// test string
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlen(50).SetCollate("binary").BuildP(), Value: types.NewStringDatum("abcde")}, 50},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlen(50).SetCollate("utf8mb4_bin").BuildP(), Value: types.NewStringDatum("abcde")}, 50},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlen(50).SetCollate("binary").BuildP(), Value: types.NewStringDatum("abcde")}, 50},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlen(50).SetCollate("utf8mb4_bin").BuildP(), Value: types.NewStringDatum("abcde")}, 50},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeTinyBlob).SetFlen(types.UnspecifiedLength).SetCollate("binary").BuildP(), Value: types.NewStringDatum("abcde")}, 255},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeTinyBlob).SetFlen(types.UnspecifiedLength).SetCollate("utf8mb4_bin").BuildP(), Value: types.NewStringDatum("abcde")}, 255},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeBlob).SetFlen(types.UnspecifiedLength).SetCollate("binary").BuildP(), Value: types.NewStringDatum("abcde")}, 262140},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeBlob).SetFlen(types.UnspecifiedLength).SetCollate("utf8mb4_bin").BuildP(), Value: types.NewStringDatum("abcde")}, 262140},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeMediumBlob).SetFlen(types.UnspecifiedLength).SetCollate("binary").BuildP(), Value: types.NewStringDatum("abcde")}, 67108860},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeMediumBlob).SetFlen(types.UnspecifiedLength).SetCollate("utf8mb4_bin").BuildP(), Value: types.NewStringDatum("abcde")}, 67108860},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeLongBlob).SetFlen(types.UnspecifiedLength).SetCollate("binary").BuildP(), Value: types.NewStringDatum("abcde")}, 4294967295},
+		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeLongBlob).SetFlen(types.UnspecifiedLength).SetCollate("utf8mb4_bin").BuildP(), Value: types.NewStringDatum("abcde")}, 4294967295},
+	}
+	ctx := createContext(t)
+	for i, tc := range allTestCase {
+		t.Run(fmt.Sprintf("case %d", i), func(t *testing.T) {
+			ft := types.NewFieldTypeBuilder().
+				SetType(mysql.TypeString).
+				SetFlen(types.UnspecifiedLength).
+				SetCharset(charset.CharsetUTF8MB4).
+				SetCollate(charset.CollationUTF8MB4).
+				BuildP()
+			expr, err := BuildCastFunctionWithCheck(ctx, tc.input, ft, false, false)
+			require.NoError(t, err)
+			require.Equal(t, tc.resultFlen, expr.GetType(ctx).GetFlen())
+		})
+	}
+}
