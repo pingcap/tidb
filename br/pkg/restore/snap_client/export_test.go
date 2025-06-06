@@ -40,7 +40,6 @@ var (
 	GetKeyRangeByMode       = getKeyRangeByMode
 	GetFileRangeKey         = getFileRangeKey
 	GetSortedPhysicalTables = getSortedPhysicalTables
-	GetMinUserTableID       = getMinUserTableID
 )
 
 // MockClient create a fake Client used to test.

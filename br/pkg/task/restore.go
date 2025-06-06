@@ -1105,6 +1105,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if backupMeta.IsRawKv || backupMeta.IsTxnKv {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
 	}
+	if cfg.UpstreamClusterID == 0 {
+		cfg.UpstreamClusterID = backupMeta.ClusterId
+	}
 	if cfg.CheckRequirements {
 		log.Info("Checking incompatible TiCDC changefeeds before restoring.",
 			logutil.ShortError(err), zap.Uint64("restore-ts", backupMeta.EndVersion))

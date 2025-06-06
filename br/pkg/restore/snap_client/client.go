@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -303,25 +302,6 @@ func (rc *SnapClient) SetPlacementPolicyMode(withPlacementPolicy string) {
 		rc.policyMode = strictPlacementPolicyMode
 	}
 	log.Info("set placement policy mode", zap.String("mode", rc.policyMode))
-}
-
-func getMinUserTableID(tables []*metautil.Table) int64 {
-	minUserTableID := int64(math.MaxInt64)
-	for _, table := range tables {
-		if !utils.IsSysOrTempSysDB(table.DB.Name.O) {
-			if table.Info.ID < minUserTableID {
-				minUserTableID = table.Info.ID
-			}
-			if table.Info.Partition != nil && table.Info.Partition.Definitions != nil {
-				for _, part := range table.Info.Partition.Definitions {
-					if part.ID < minUserTableID {
-						minUserTableID = part.ID
-					}
-				}
-			}
-		}
-	}
-	return minUserTableID
 }
 
 // AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in

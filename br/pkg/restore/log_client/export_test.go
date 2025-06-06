@@ -117,6 +117,10 @@ func TEST_NewLogFileManager(startTS, restoreTS, shiftStartTS uint64, helper stre
 	}
 }
 
+func (rc *LogClient) SetUseCheckpoint() {
+	rc.useCheckpoint = true
+}
+
 type FakeStreamMetadataHelper struct {
 	streamMetadataHelper
 
