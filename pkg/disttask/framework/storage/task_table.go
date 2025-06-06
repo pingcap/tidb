@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	clitutil "github.com/tikv/client-go/v2/util"
@@ -604,15 +605,19 @@ func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, st
 	return rs[0].GetInt64(0), nil
 }
 
-// UpdateSubtaskRowCount updates the subtask row count.
-func (mgr *TaskManager) UpdateSubtaskRowCount(ctx context.Context, subtaskID int64, rowCount int64) error {
+// UpdateSubtaskSummary updates the subtask summary.
+func (mgr *TaskManager) UpdateSubtaskSummary(ctx context.Context, subtaskID int64, summary any) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	_, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`update mysql.tidb_background_subtask
-		set summary = json_set(summary, '$.row_count', %?) where id = %?`,
-		rowCount, subtaskID)
+
+	summaryBytes, err := json.Marshal(summary)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = mgr.ExecuteSQLWithNewSession(ctx,
+		`update mysql.tidb_background_subtask set summary = %? where id = %?`,
+		hack.String(summaryBytes), subtaskID)
 	return err
 }
 
