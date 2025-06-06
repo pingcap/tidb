@@ -27,17 +27,17 @@ import (
 var errUnknownFieldType = dbterror.ClassServer.NewStd(errno.ErrUnknownFieldType)
 
 // parseBinaryParams decodes the binary params according to the protocol
-func parseBinaryParams(params []param.BinaryParam, boundParams [][]byte, nullBitmap, paramTypes, paramValues []byte, enc *util2.InputDecoder) (err error) {
-	pos := 0
+func parseBinaryParams(params []param.BinaryParam, boundParams [][]byte, nullBitmap, paramTypes, paramValues []byte, enc *util2.InputDecoder) (pos int, err error) {
 	if enc == nil {
 		enc = util2.NewInputDecoder(charset.CharsetUTF8)
 	}
+	boundParamsSize := len(boundParams)
 
 	for i := range params {
 		// if params had received via ComStmtSendLongData, use them directly.
 		// ref https://dev.mysql.com/doc/internals/en/com-stmt-send-long-data.html
 		// see clientConn#handleStmtSendLongData
-		if boundParams[i] != nil {
+		if i < boundParamsSize && boundParams[i] != nil {
 			params[i] = param.BinaryParam{
 				Tp:  mysql.TypeBlob,
 				Val: boundParams[i],
@@ -76,7 +76,7 @@ func parseBinaryParams(params []param.BinaryParam, boundParams [][]byte, nullBit
 		}
 
 		if (i<<1)+1 >= len(paramTypes) {
-			return mysql.ErrMalformPacket
+			return pos, mysql.ErrMalformPacket
 		}
 
 		tp := paramTypes[i<<1]
