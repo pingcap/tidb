@@ -330,7 +330,6 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
-	cloudStorageURI = handle.GetCloudStorageURI(store) // path with cluster id
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
 	t.Cleanup(func() {
