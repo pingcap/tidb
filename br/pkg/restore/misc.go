@@ -354,7 +354,7 @@ func GetTSWithRetry(ctx context.Context, pdClient pd.Client) (uint64, error) {
 
 // HasRestoreIDColumn checks if the tidb_pitr_id_map table has restore_id column
 func HasRestoreIDColumn(dom *domain.Domain) bool {
-	table, err := GetTableSchema(dom, ast.NewCIStr("mysql"), ast.NewCIStr("tidb_pitr_id_map"))
+	table, err := GetTableSchema(dom, pmodel.NewCIStr("mysql"), pmodel.NewCIStr("tidb_pitr_id_map"))
 	if err != nil {
 		return false
 	}
