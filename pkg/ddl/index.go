@@ -1262,7 +1262,7 @@ func CheckImportIntoTableIsEmpty(
 	sessCtx sessionctx.Context,
 	tbl table.Table,
 ) (bool, error) {
-	txn, err := sessCtx.Txn(false)
+	txn, err := sessCtx.Txn(true)
 	if err != nil {
 		return false, err
 	}
