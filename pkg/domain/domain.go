@@ -998,12 +998,12 @@ func (do *Domain) topologySyncerKeeper() {
 		case <-ticker.C:
 			err := do.info.StoreTopologyInfo(context.Background())
 			if err != nil {
-				logutil.BgLogger().Error("refresh topology in loop failed", zap.Error(err))
+				logutil.BgLogger().Warn("refresh topology in loop failed", zap.Error(err))
 			}
 		case <-do.info.TopologyDone():
 			logutil.BgLogger().Info("server topology syncer need to restart")
 			if err := do.info.RestartTopology(context.Background()); err != nil {
-				logutil.BgLogger().Error("server topology syncer restart failed", zap.Error(err))
+				logutil.BgLogger().Warn("server topology syncer restart failed", zap.Error(err))
 			} else {
 				logutil.BgLogger().Info("server topology syncer restarted")
 			}

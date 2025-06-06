@@ -23,7 +23,6 @@ import (
 	"io"
 	"math"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -635,7 +635,9 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 		if resp.GetError() == nil {
 			return nil
 		}
-		return convertPBError2Error(j, resp.GetError())
+		return ingestcli.NewIngestAPIError(resp.GetError(), func(regions []*metapb.Region) *split.RegionInfo {
+			return extractRegionFromErr(j, regions)
+		})
 	}
 	return lastRetriedErr
 }
@@ -782,64 +784,6 @@ func (local *Backend) GetWriteSpeedLimit() int {
 	return local.writeLimiter.Limit()
 }
 
-// ingestAPIError is the converted error when we call Ingest or MultiIngest successfully,
-// but the server return some logic error, i.e. errorpb.Error.
-// TODO: better move to ingestcli pkg, but the split.RegionInfo might cause import cycle.
-type ingestAPIError struct {
-	// the converted internal error
-	err error
-	// if theErr = ErrKVEpochNotMatch, the new region info maybe extracted from
-	// the PB error
-	newRegion *split.RegionInfo
-}
-
-func (e *ingestAPIError) Error() string {
-	return e.err.Error()
-}
-
-// Cause is used for pingcap/errors.Cause
-func (e *ingestAPIError) Cause() error {
-	return e.err
-}
-
-// Unwrap is used for golang/errors.Is and As
-func (e *ingestAPIError) Unwrap() error {
-	return e.err
-}
-
-func convertPBError2Error(job *regionJob, errPb *errorpb.Error) *ingestAPIError {
-	res := &ingestAPIError{}
-	switch {
-	case errPb.NotLeader != nil:
-		// meet a problem that the region leader+peer are all updated but the return
-		// error is only "NotLeader", we should update the whole region info.
-		res.err = common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
-	case errPb.EpochNotMatch != nil:
-		res.err = common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
-		res.newRegion = extractRegionFromErr(job, errPb.GetEpochNotMatch().GetCurrentRegions())
-	case strings.Contains(errPb.Message, "raft: proposal dropped"):
-		res.err = common.ErrKVRaftProposalDropped.GenWithStack(errPb.GetMessage())
-	case errPb.ServerIsBusy != nil:
-		res.err = common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
-	case errPb.RegionNotFound != nil:
-		res.err = common.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
-	case errPb.ReadIndexNotReady != nil:
-		// this error happens when this region is splitting, the error might be:
-		//   read index not ready, reason can not read index due to split, region 64037
-		// we have paused schedule, but it's temporary,
-		// if next request takes a long time, there's chance schedule is enabled again
-		// or on key range border, another engine sharing this region tries to split this
-		// region may cause this error too.
-		res.err = common.ErrKVReadIndexNotReady.GenWithStack(errPb.GetMessage())
-	case errPb.DiskFull != nil:
-		res.err = common.ErrKVDiskFull.GenWithStack(errPb.GetMessage())
-	default:
-		// all others doIngest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
-		res.err = common.ErrKVIngestFailed.GenWithStack(errPb.GetMessage())
-	}
-	return res
-}
-
 func extractRegionFromErr(job *regionJob, currentRegions []*metapb.Region) *split.RegionInfo {
 	// unlike classic kernel, nextgen cannot return the full current region infos
 	// for the range of the region which is used for ingest, it can only return
@@ -878,16 +822,16 @@ func extractRegionFromErr(job *regionJob, currentRegions []*metapb.Region) *spli
 
 // the input error must be an retryable error
 func getNextStageOnIngestError(err error) (*split.RegionInfo, jobStageTp) {
-	var theErr *ingestAPIError
+	var theErr *ingestcli.IngestAPIError
 	if goerrors.As(err, &theErr) {
 		switch {
-		case goerrors.Is(theErr.err, common.ErrKVIngestFailed):
+		case goerrors.Is(theErr.Err, errdef.ErrKVIngestFailed):
 			return nil, regionScanned
-		case goerrors.Is(theErr.err, common.ErrKVServerIsBusy):
+		case goerrors.Is(theErr.Err, errdef.ErrKVServerIsBusy):
 			return nil, wrote
 		default:
-			if theErr.newRegion != nil {
-				return theErr.newRegion, regionScanned
+			if theErr.NewRegion != nil {
+				return theErr.NewRegion, regionScanned
 			}
 			return nil, needRescan
 		}
