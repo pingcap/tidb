@@ -144,6 +144,7 @@ func (handle *Handle) analyzeBasedOnStatementStats(infoSchema infoschema.InfoSch
 	}
 	sql := `select summary_end.DIGEST, summary_end.DIGEST_TEXT, summary_end.BINARY_PLAN,
             ifNULL(summary_start.EXEC_COUNT, summary_end.EXEC_COUNT, summary_end.EXEC_COUNT - summary_start.EXEC_COUNT) as EXEC_COUNT
+            FROM
             (SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT
 	        FROM ` + mysql.WorkloadSchema + `.HIST_TIDB_STATEMENTS_STATS
             WHERE LOWER(STMT_TYPE) = 'Select'
