@@ -1395,8 +1395,10 @@ func (local *Backend) doImport(
 		toCh = balancer.innerJobToWorkerCh
 		afterExecuteJob = balancer.releaseStoreLoad
 	}
+
+	ingestLimiter := newIngestLimiter(workerCtx, maxIngestRequestWorkers, maxIngestReqPerSec)
 	for range local.WorkerConcurrency {
-		worker := local.newRegionJobWorker(clusterID, toCh, jobFromWorkerCh, &jobWg, afterExecuteJob)
+		worker := local.newRegionJobWorker(clusterID, toCh, jobFromWorkerCh, &jobWg, afterExecuteJob, ingestLimiter)
 		workGroup.Go(func() error {
 			return worker.run(workerCtx)
 		})
@@ -1448,6 +1450,7 @@ func (local *Backend) newRegionJobWorker(
 	toCh, jobFromWorkerCh chan *regionJob,
 	jobWg *sync.WaitGroup,
 	afterExecuteJob func([]*metapb.Peer),
+	ingestLimiter *ingestLimiter,
 ) regionJobWorker {
 	base := &regionJobBaseWorker{
 		jobInCh:          toCh,
@@ -1455,6 +1458,7 @@ func (local *Backend) newRegionJobWorker(
 		jobWg:            jobWg,
 		afterRunJobFn:    afterExecuteJob,
 		regenerateJobsFn: local.generateJobForRange,
+		ingestLimiter:    ingestLimiter,
 	}
 	if kerneltype.IsNextGen() {
 		tlsConfig := local.tls.TLSConfig()
