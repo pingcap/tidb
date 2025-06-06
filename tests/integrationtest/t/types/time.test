@@ -150,3 +150,25 @@ SELECT { t '14:00:00' };
 SELECT { d '2024-01-01 01:12:31' };
 
 # TODO: Also test if there are difference between explicitly give the timestamp/datetime as literal/string or having it from a varchar in a table
+
+SET time_zone = 'UTC';
+CREATE TABLE t (id int primary key, ts TIMESTAMP);
+INSERT INTO t VALUES (1, '2025-03-30 00:59:59');
+INSERT INTO t VALUES (2, '2025-03-30 01:00:00');
+SET time_zone = 'Europe/Paris';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t;
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = '2025-03-30 02:00:00';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts < '2025-03-30 02:00:00';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <= '2025-03-30 02:00:00';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts > '2025-03-30 02:00:00';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts >= '2025-03-30 02:00:00';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <=> '2025-03-30 02:00:00';
+ALTER TABLE t ADD INDEX idx_ts (ts);
+# Note: MySQL would return 03:00:00 on '=', different from not being indexed!
+# TiDB is better, by being consistent regardless if indexed or not!
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = '2025-03-30 02:00:00';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts < '2025-03-30 02:00:00';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <= '2025-03-30 02:00:00';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts > '2025-03-30 02:00:00';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts >= '2025-03-30 02:00:00';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <=> '2025-03-30 02:00:00';
