@@ -379,7 +379,7 @@ func (s *mockGCSSuite) TestCSVHeaderOption() {
 		{0, "csv_without_header.csv", true, 4},
 		{-1, "*.csv", true, 8},
 		{0, "*.csv", false, -1},
-		{-1, "*.csv", true, 7},
+		{1, "*.csv", true, 7},
 	}
 
 	for _, tc := range testCases {

@@ -105,7 +105,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		fieldsEscapedByOption+"='', "+
 		fieldsDefinedNullByOption+"='N', "+
 		linesTerminatedByOption+"='END', "+
-		csvHeaderOption+"='true', "+
+		skipRowsOption+"=1, "+
 		diskQuotaOption+"='100gib', "+
 		checksumTableOption+"='optional', "+
 		threadOption+"=100000, "+
