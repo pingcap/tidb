@@ -29,7 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/paging"
+	"go.uber.org/zap"
 )
 
 const (
@@ -87,6 +89,9 @@ func (p *PhysicalProjection) GetCost(count float64) float64 {
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalProjection) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	if p.SCtx().GetSessionVars().InRestrictedSQL {
+		logutil.BgLogger().Info("[FUCK!!!]GetPlanCostVer1 called for PhysicalProjection", zap.Stack("stack"))
+	}
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
