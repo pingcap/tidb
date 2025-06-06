@@ -198,3 +198,84 @@ SELECT { t '14:00:00' };
 14:00:00
 SELECT { d '2024-01-01 01:12:31' };
 Error 1292 (22007): Incorrect date value: '2024-01-01 01:12:31'
+set @old_sql_mode = @@sql_mode;
+set @@sql_mode = '';
+create table t (id int not null auto_increment primary key, ts timestamp, tz varchar(255));
+set time_zone = 'Europe/Amsterdam';
+insert into t values (NULL, '2024-10-27 02:30:00', @@time_zone);
+insert into t values (NULL, '2024-10-27 02:30:00+01:00', @@time_zone);
+insert into t values (NULL, '2024-10-27 02:30:00+02:00', @@time_zone);
+insert into t values (NULL, '2025-10-26 02:30:00', @@time_zone);
+insert into t values (NULL, '2025-10-26 02:30:00+01:00', @@time_zone);
+insert into t values (NULL, '2025-10-26 02:30:00+02:00', @@time_zone);
+insert into t values (NULL, '2037-10-25 02:30:00', @@time_zone);
+insert into t values (NULL, '2037-10-25 02:30:00+01:00', @@time_zone);
+insert into t values (NULL, '2037-10-25 02:30:00+02:00', @@time_zone);
+set time_zone = 'Australia/Lord_Howe';
+insert into t values (NULL, '2024-04-07 01:45:00', @@time_zone);
+insert into t values (NULL, '2024-04-07 01:45:00+11:00', @@time_zone);
+insert into t values (NULL, '2024-04-07 01:45:00+10:30', @@time_zone);
+insert into t values (NULL, '2025-04-06 01:45:00', @@time_zone);
+insert into t values (NULL, '2025-04-06 01:45:00+11:00', @@time_zone);
+insert into t values (NULL, '2025-04-06 01:45:00+10:30', @@time_zone);
+set time_zone = 'Canada/Newfoundland';
+insert into t values (NULL, '1998-04-03 00:00:59', @@time_zone);
+insert into t values (NULL, '1998-04-03 00:01:00', @@time_zone);
+insert into t values (NULL, '1998-04-03 02:00:59', @@time_zone);
+insert into t values (NULL, '1998-04-03 02:01:00', @@time_zone);
+insert into t values (NULL, '1998-10-29 23:30:00', @@time_zone);
+insert into t values (NULL, '1998-10-29 23:30:00-01:30', @@time_zone);
+insert into t values (NULL, '1998-10-29 23:30:00-03:30', @@time_zone);
+insert into t values (NULL, '1998-10-29 22:00:59', @@time_zone);
+insert into t values (NULL, '1998-10-29 22:01:00', @@time_zone);
+insert into t values (NULL, '1998-10-30 00:00:59', @@time_zone);
+insert into t values (NULL, '1998-10-30 00:01:00', @@time_zone);
+set time_zone = 'Pacific/Apia';
+insert into t values (NULL, '2011-12-29 23:59:59', @@time_zone);
+insert into t values (NULL, '2011-12-30 00:00:00', @@time_zone);
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2011-12-30 00:00:00' for column 'ts' at row 1
+insert into t values (NULL, '2011-12-30 23:59:59', @@time_zone);
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2011-12-30 23:59:59' for column 'ts' at row 1
+insert into t values (NULL, '2011-12-31 00:00:00', @@time_zone);
+select * from t where tz = @@time_zone order by id;
+id	ts	tz
+27	2011-12-29 23:59:59	Pacific/Apia
+28	0000-00-00 00:00:00	Pacific/Apia
+29	0000-00-00 00:00:00	Pacific/Apia
+30	2011-12-31 00:00:00	Pacific/Apia
+set time_zone = 'UTC';
+select * from t order by id;
+id	ts	tz
+1	2024-10-27 00:30:00	Europe/Amsterdam
+2	2024-10-27 00:30:00	Europe/Amsterdam
+3	2024-10-27 00:30:00	Europe/Amsterdam
+4	2025-10-26 00:30:00	Europe/Amsterdam
+5	2025-10-26 00:30:00	Europe/Amsterdam
+6	2025-10-26 00:30:00	Europe/Amsterdam
+7	2037-10-25 00:30:00	Europe/Amsterdam
+8	2037-10-25 00:30:00	Europe/Amsterdam
+9	2037-10-25 00:30:00	Europe/Amsterdam
+10	2024-04-06 14:45:00	Australia/Lord_Howe
+11	2024-04-06 14:45:00	Australia/Lord_Howe
+12	2024-04-06 14:45:00	Australia/Lord_Howe
+13	2025-04-05 14:45:00	Australia/Lord_Howe
+14	2025-04-05 14:45:00	Australia/Lord_Howe
+15	2025-04-05 14:45:00	Australia/Lord_Howe
+16	1998-04-03 03:30:59	Canada/Newfoundland
+17	1998-04-03 03:31:00	Canada/Newfoundland
+18	1998-04-03 05:30:59	Canada/Newfoundland
+19	1998-04-03 05:31:00	Canada/Newfoundland
+20	1998-10-30 03:00:00	Canada/Newfoundland
+21	1998-10-30 01:00:00	Canada/Newfoundland
+22	1998-10-30 03:00:00	Canada/Newfoundland
+23	1998-10-30 01:30:59	Canada/Newfoundland
+24	1998-10-30 01:31:00	Canada/Newfoundland
+25	1998-10-30 03:30:59	Canada/Newfoundland
+26	1998-10-30 03:31:00	Canada/Newfoundland
+27	2011-12-30 09:59:59	Pacific/Apia
+28	0000-00-00 00:00:00	Pacific/Apia
+29	0000-00-00 00:00:00	Pacific/Apia
+30	2011-12-30 10:00:00	Pacific/Apia
+set @@sql_mode = @old_sql_mode;
