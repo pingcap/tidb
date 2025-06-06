@@ -160,6 +160,8 @@ func TestAddStatement(t *testing.T) {
 				UnpackedBytesSentTiFlashCrossZone:     stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentMPPCrossZone,
 				UnpackedBytesReceivedTiFlashCrossZone: stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedMPPCrossZone,
 			},
+			storageKV:  stmtExecInfo1.StmtCtx.IsTiKV.Load(),
+			storageMPP: stmtExecInfo1.StmtCtx.IsTiFlash.Load(),
 		},
 	}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
@@ -330,6 +332,8 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo2.RUDetail.RUWaitDuration()
 	expectedSummaryElement.MaxRUWaitDuration = stmtExecInfo2.RUDetail.RUWaitDuration()
 	expectedSummaryElement.StmtNetworkTrafficSummary.Add(stmtExecInfo2.TiKVExecDetails)
+	expectedSummaryElement.storageKV = stmtExecInfo2.StmtCtx.IsTiKV.Load()
+	expectedSummaryElement.storageMPP = stmtExecInfo2.StmtCtx.IsTiFlash.Load()
 
 	ssMap.AddStatement(stmtExecInfo2)
 	summary, ok = ssMap.summaryMap.Get(key)
@@ -464,6 +468,8 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.SumWRU += stmtExecInfo3.RUDetail.WRU()
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo3.RUDetail.RUWaitDuration()
 	expectedSummaryElement.StmtNetworkTrafficSummary.Add(stmtExecInfo3.TiKVExecDetails)
+	expectedSummaryElement.storageKV = stmtExecInfo3.StmtCtx.IsTiKV.Load()
+	expectedSummaryElement.storageMPP = stmtExecInfo3.StmtCtx.IsTiFlash.Load()
 
 	ssMap.AddStatement(stmtExecInfo3)
 	summary, ok = ssMap.summaryMap.Get(key)
@@ -612,7 +618,9 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 			!ssElement1.lastSeen.Equal(ssElement2.lastSeen) ||
 			ssElement1.resourceGroupName != ssElement2.resourceGroupName ||
 			ssElement1.StmtRUSummary != ssElement2.StmtRUSummary ||
-			ssElement1.StmtNetworkTrafficSummary != ssElement2.StmtNetworkTrafficSummary {
+			ssElement1.StmtNetworkTrafficSummary != ssElement2.StmtNetworkTrafficSummary ||
+			ssElement1.storageKV != ssElement2.storageKV ||
+			ssElement1.storageMPP != ssElement2.storageMPP {
 			return false
 		}
 		if len(ssElement1.backoffTypes) != len(ssElement2.backoffTypes) {
@@ -654,6 +662,8 @@ func generateAnyExecInfo() *StmtExecInfo {
 	sc.StmtType = "Select"
 	sc.Tables = tables
 	sc.IndexNames = indexes
+	sc.IsTiKV.Store(true)
+	sc.IsTiFlash.Store(true)
 
 	stmtExecInfo := &StmtExecInfo{
 		SchemaName:     "schema_name",
@@ -884,6 +894,8 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 		ResourceGroupName,
 		AvgTidbCPUTimeStr,
 		AvgTikvCPUTimeStr,
+		StorageKVStr,
+		StorageMPPStr,
 	}
 	cols := make([]*model.ColumnInfo, len(columnNames))
 	for i := range columnNames {
@@ -913,6 +925,14 @@ func TestToDatum(t *testing.T) {
 	n := types.NewTime(types.FromGoTime(time.Unix(ssMap.beginTimeForCurInterval, 0).In(time.UTC)), mysql.TypeTimestamp, types.DefaultFsp)
 	e := types.NewTime(types.FromGoTime(time.Unix(ssMap.beginTimeForCurInterval+1800, 0).In(time.UTC)), mysql.TypeTimestamp, types.DefaultFsp)
 	f := types.NewTime(types.FromGoTime(stmtExecInfo1.StartTime), mysql.TypeTimestamp, types.DefaultFsp)
+	isTiKV := 0
+	if stmtExecInfo1.StmtCtx.IsTiKV.Load() {
+		isTiKV = 1
+	}
+	isTiFlash := 0
+	if stmtExecInfo1.StmtCtx.IsTiFlash.Load() {
+		isTiFlash = 1
+	}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Lock()
 	bindingSQL, bindingDigest := stmtExecInfo1.LazyInfo.GetBindingSQLAndDigest()
 	expectedDatum := []any{n, e, "Select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL, bindingDigest, bindingSQL,
@@ -944,7 +964,8 @@ func TestToDatum(t *testing.T) {
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, stmtExecInfo1.LazyInfo.GetOriginalSQL(), stmtExecInfo1.PrevSQL, "plan_digest", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
-		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime)}
+		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime),
+		isTiKV, isTiFlash}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
 	match(t, datums[0], expectedDatum...)
 	datums = reader.GetStmtSummaryHistoryRows()
@@ -994,7 +1015,8 @@ func TestToDatum(t *testing.T) {
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, "", "", "", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
-		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime)}
+		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime),
+		0, 0}
 	expectedDatum[4] = stmtExecInfo2.Digest
 	match(t, datums[0], expectedDatum...)
 	match(t, datums[1], expectedEvictedDatum...)
