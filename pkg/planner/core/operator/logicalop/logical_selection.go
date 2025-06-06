@@ -185,10 +185,6 @@ func (p *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base
 }
 
 // PredicateSimplification inherits BaseLogicalPlan.<7th> implementation.
-func (p *LogicalSelection) PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	p.Conditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.Conditions)
-	return p
-}
 
 // ConstantPropagation inherits BaseLogicalPlan.<8th> implementation.
 
