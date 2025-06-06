@@ -19,26 +19,42 @@ import (
 	"encoding/json"
 	"strconv"
 
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-var _ scheduler.CleanUpRoutine = (*ImportCleanUpS3)(nil)
+var _ scheduler.CleanUpRoutine = (*ImportCleanUp)(nil)
+var resetTableModeTaskSet map[int64]struct{}
 
-// ImportCleanUpS3 implements scheduler.CleanUpRoutine.
-type ImportCleanUpS3 struct {
+// ImportCleanUp implements scheduler.CleanUpRoutine.
+type ImportCleanUp struct {
 }
 
 func newImportCleanUpS3() scheduler.CleanUpRoutine {
-	return &ImportCleanUpS3{}
+	return &ImportCleanUp{}
+}
+
+// addResetTableModeTask add task which table mode had alter to normal to the set.
+func addResetTableModeTask(taskID int64) {
+	resetTableModeTaskSet[taskID] = struct{}{}
+}
+
+// deleteResetTableModeTask remove task which finished clean up.
+func deleteResetTableModeTask(taskID int64) {
+	delete(resetTableModeTaskSet, taskID)
 }
 
 // CleanUp implements the CleanUpRoutine.CleanUp interface.
-func (*ImportCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
+func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 	// we can only clean up files after all write&ingest subtasks are finished,
 	// since they might share the same file.
 	taskMeta := &TaskMeta{}
@@ -47,6 +63,23 @@ func (*ImportCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 		return err
 	}
 	defer redactSensitiveInfo(task, taskMeta)
+
+	if _, ok := resetTableModeTaskSet[task.ID]; !ok {
+		taskManager, err := storage.GetTaskManager()
+		if err != nil {
+			return err
+		}
+		if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+			err2 := ddl.CreateAlterTableModeJob(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
+			if err2 != nil {
+				return err2
+			}
+			addResetTableModeTask(task.ID)
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
 	// Not use cloud storage, no need to cleanUp.
 	if taskMeta.Plan.CloudStorageURI == "" {
 		return nil
@@ -70,9 +103,11 @@ func (*ImportCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 		logger.Warn("failed to clean up files of task", zap.Error(err))
 		return err
 	}
+	deleteResetTableModeTask(task.ID)
 	return nil
 }
 
 func init() {
+	resetTableModeTaskSet = make(map[int64]struct{})
 	scheduler.RegisterSchedulerCleanUpFactory(proto.ImportInto, newImportCleanUpS3)
 }
