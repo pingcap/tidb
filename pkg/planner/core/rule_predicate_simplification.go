@@ -58,7 +58,7 @@ func logicalConstant(bc base.PlanContext, cond expression.Expression) predicateT
 	if !ok {
 		return otherPredicate
 	}
-	if expression.MaybeOverOptimized4PlanCacheForMultiExpression(bc.GetExprCtx(), con) {
+	if expression.MaybeOverOptimized4PlanCache(bc.GetExprCtx(), con) {
 		return otherPredicate
 	}
 	isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault())
@@ -203,7 +203,7 @@ func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Express
 			jthPredicate := predicates[j]
 			iCol, iType := FindPredicateType(sctx, ithPredicate)
 			jCol, jType := FindPredicateType(sctx, jthPredicate)
-			maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCacheForMultiExpression(
+			maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCache(
 				sctx.GetExprCtx(),
 				ithPredicate,
 				jthPredicate)
@@ -344,7 +344,7 @@ func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Express
 			_, jType := FindPredicateType(sctx, jthPredicate)
 			iType = comparisonPred(iType)
 			jType = comparisonPred(jType)
-			maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCacheForMultiExpression(
+			maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCache(
 				sctx.GetExprCtx(),
 				ithPredicate,
 				jthPredicate)
@@ -404,7 +404,7 @@ func shortCircuitANDORLogicalConstants(sctx base.PlanContext, predicate expressi
 // and returns the potentially simplified condition and its updated type.
 func processCondition(sctx base.PlanContext, condition expression.Expression) (expression.Expression, predicateType) {
 	applied := false
-	maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCacheForMultiExpression(sctx.GetExprCtx(), condition)
+	maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), condition)
 	_, conditionType := FindPredicateType(sctx, condition)
 
 	if conditionType == orPredicate {
