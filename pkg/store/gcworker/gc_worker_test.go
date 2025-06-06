@@ -1540,7 +1540,7 @@ func TestGCWithPendingTxn(t *testing.T) {
 	spkv := s.tikvStore.GetSafePointKV()
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(txn.StartTS(), 10))
 	require.NoError(t, err)
-	s.mustSetTiDBServiceSafePoint(t, txn.StartTS(), txn.StartTS())
+	//s.mustSetTiDBServiceSafePoint(t, txn.StartTS(), txn.StartTS())
 	veryLong := gcDefaultLifeTime * 100
 	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
 	require.NoError(t, err)
@@ -1583,7 +1583,7 @@ func TestGCWithPendingTxn2(t *testing.T) {
 	spkv := s.tikvStore.GetSafePointKV()
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(now, 10))
 	require.NoError(t, err)
-	s.mustSetTiDBServiceSafePoint(t, now, now)
+	//s.mustSetTiDBServiceSafePoint(t, now, now)
 	veryLong := gcDefaultLifeTime * 100
 	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
 	require.NoError(t, err)

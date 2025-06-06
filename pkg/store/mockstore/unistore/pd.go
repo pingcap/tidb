@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,8 +46,6 @@ type pdClient struct {
 	*us.MockPD
 	pd.ResourceManagerClient
 
-	serviceSafePoints map[string]uint64
-	gcSafePointMu     sync.Mutex
 	globalConfig      map[string]string
 	externalTimestamp atomic.Uint64
 
@@ -67,7 +64,6 @@ func newPDClient(pd *us.MockPD, addrs []string, keyspaceMeta *keyspacepb.Keyspac
 	return &pdClient{
 		MockPD:                pd,
 		ResourceManagerClient: infosync.NewMockResourceManagerClient(keyspaceID),
-		serviceSafePoints:     make(map[string]uint64),
 		globalConfig:          make(map[string]string),
 		addrs:                 addrs,
 		keyspaceMeta:          keyspaceMeta,
@@ -269,35 +265,6 @@ func (m *mockTSFuture) Wait() (int64, int64, error) {
 }
 
 func (c *pdClient) GetLeaderURL() string { return "mockpd" }
-
-func (c *pdClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
-	c.gcSafePointMu.Lock()
-	defer c.gcSafePointMu.Unlock()
-
-	if ttl == 0 {
-		delete(c.serviceSafePoints, serviceID)
-	} else {
-		var minSafePoint uint64 = math.MaxUint64
-		for _, ssp := range c.serviceSafePoints {
-			if ssp < minSafePoint {
-				minSafePoint = ssp
-			}
-		}
-
-		if len(c.serviceSafePoints) == 0 || minSafePoint <= safePoint {
-			c.serviceSafePoints[serviceID] = safePoint
-		}
-	}
-
-	// The minSafePoint may have changed. Reload it.
-	var minSafePoint uint64 = math.MaxUint64
-	for _, ssp := range c.serviceSafePoints {
-		if ssp < minSafePoint {
-			minSafePoint = ssp
-		}
-	}
-	return minSafePoint, nil
-}
 
 func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
 	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
