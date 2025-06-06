@@ -390,7 +390,7 @@ func findMatchingRowForSnapshot(t *testing.T, rowidx int, snapRows [][]any, row 
 }
 
 func SnapshotTimingWorker(t *testing.T, tk *testkit.TestKit, lastRowTs time.Time, lastSnapID int, cnt int, maxSecs int) (time.Time, int) {
-	rows := getRows(t, tk, cnt, maxSecs, "select snap_id, begin_time from "+mysql.WorkloadSchema+"."+histSnapshotsTable+" where begin_time > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by begin_time asc")
+	rows := getRows(t, tk, cnt, maxSecs, "select snap_id, begin_time from "+mysql.WorkloadSchema+"."+HistSnapshotsTable+" where begin_time > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by begin_time asc")
 
 	// We want to get all rows if we are starting from 0.
 	snapWhere := ""
@@ -467,19 +467,19 @@ func TestStoppingAndRestartingWorker(t *testing.T) {
 		return len(tk.MustQuery("select instance_id from workload_schema.hist_memory_usage").Rows()) > 0
 	}, time.Minute, time.Second)
 	require.Eventually(t, func() bool {
-		return len(tk.MustQuery("select snap_id from workload_schema."+histSnapshotsTable).Rows()) > 0
+		return len(tk.MustQuery("select snap_id from workload_schema."+HistSnapshotsTable).Rows()) > 0
 	}, time.Minute, time.Second)
 
 	// Stop worker and verify no new samples are taken
 	wrk.setRepositoryDest(ctx, "")
 	eventuallyWithLock(t, wrk, func() bool { return wrk.cancel == nil })
 	samplingCnt := len(tk.MustQuery("select instance_id from workload_schema.hist_memory_usage").Rows())
-	snapshotCnt := len(tk.MustQuery("select snap_id from workload_schema." + histSnapshotsTable).Rows())
+	snapshotCnt := len(tk.MustQuery("select snap_id from workload_schema." + HistSnapshotsTable).Rows())
 
 	// Wait for 5 seconds to make sure no new samples are taken
 	time.Sleep(time.Second * 5)
 	require.True(t, len(tk.MustQuery("select instance_id from workload_schema.hist_memory_usage").Rows()) == samplingCnt)
-	require.True(t, len(tk.MustQuery("select snap_id from workload_schema."+histSnapshotsTable).Rows()) == snapshotCnt)
+	require.True(t, len(tk.MustQuery("select snap_id from workload_schema."+HistSnapshotsTable).Rows()) == snapshotCnt)
 
 	// Restart worker and verify new samples are taken
 	wrk.setRepositoryDest(ctx, "table")
@@ -488,7 +488,7 @@ func TestStoppingAndRestartingWorker(t *testing.T) {
 		return len(tk.MustQuery("select instance_id from workload_schema.hist_memory_usage").Rows()) >= samplingCnt
 	}, time.Minute, time.Second)
 	require.Eventually(t, func() bool {
-		return len(tk.MustQuery("select snap_id from workload_schema."+histSnapshotsTable).Rows()) >= snapshotCnt
+		return len(tk.MustQuery("select snap_id from workload_schema."+HistSnapshotsTable).Rows()) >= snapshotCnt
 	}, time.Minute, time.Second)
 }
 
@@ -504,7 +504,7 @@ func TestSettingSQLVariables(t *testing.T) {
 
 	// Test values less than minimum
 	tk.MustExec("set @@global." + repositorySamplingInterval + " = -1")
-	tk.MustExec("set @@global." + repositorySnapshotInterval + " = 899")
+	tk.MustExec("set @@global." + RepositorySnapshotInterval + " = 899")
 	tk.MustExec("set @@global." + repositoryRetentionDays + " = -1")
 	eventuallyWithLock(t, wrk, func() bool { return int32(0) == wrk.samplingInterval })
 	eventuallyWithLock(t, wrk, func() bool { return int32(900) == wrk.snapshotInterval })
@@ -512,7 +512,7 @@ func TestSettingSQLVariables(t *testing.T) {
 
 	// Test maximum values
 	tk.MustExec("set @@global." + repositorySamplingInterval + " = 600")
-	tk.MustExec("set @@global." + repositorySnapshotInterval + " = 7200")
+	tk.MustExec("set @@global." + RepositorySnapshotInterval + " = 7200")
 	tk.MustExec("set @@global." + repositoryRetentionDays + " = 365")
 	eventuallyWithLock(t, wrk, func() bool { return int32(600) == wrk.samplingInterval })
 	eventuallyWithLock(t, wrk, func() bool { return int32(7200) == wrk.snapshotInterval })
@@ -520,7 +520,7 @@ func TestSettingSQLVariables(t *testing.T) {
 
 	// Test minimum values
 	tk.MustExec("set @@global." + repositorySamplingInterval + " = 0")
-	tk.MustExec("set @@global." + repositorySnapshotInterval + " = 900")
+	tk.MustExec("set @@global." + RepositorySnapshotInterval + " = 900")
 	tk.MustExec("set @@global." + repositoryRetentionDays + " = 0")
 	eventuallyWithLock(t, wrk, func() bool { return int32(0) == wrk.samplingInterval })
 	eventuallyWithLock(t, wrk, func() bool { return int32(900) == wrk.snapshotInterval })
@@ -528,7 +528,7 @@ func TestSettingSQLVariables(t *testing.T) {
 
 	// Test values greater than maximum
 	tk.MustExec("set @@global." + repositorySamplingInterval + " = 601")
-	tk.MustExec("set @@global." + repositorySnapshotInterval + " = 7201")
+	tk.MustExec("set @@global." + RepositorySnapshotInterval + " = 7201")
 	tk.MustExec("set @@global." + repositoryRetentionDays + " = 366")
 	eventuallyWithLock(t, wrk, func() bool { return int32(600) == wrk.samplingInterval })
 	eventuallyWithLock(t, wrk, func() bool { return int32(7200) == wrk.snapshotInterval })
@@ -536,13 +536,13 @@ func TestSettingSQLVariables(t *testing.T) {
 
 	// Test invalid values for intervals
 	tk.MustGetDBError("set @@global."+repositorySamplingInterval+" = 'invalid'", variable.ErrWrongTypeForVar)
-	tk.MustGetDBError("set @@global."+repositorySnapshotInterval+" = 'invalid'", variable.ErrWrongTypeForVar)
+	tk.MustGetDBError("set @@global."+RepositorySnapshotInterval+" = 'invalid'", variable.ErrWrongTypeForVar)
 	tk.MustGetDBError("set @@global."+repositoryRetentionDays+" = 'invalid'", variable.ErrWrongTypeForVar)
 
 	// Test that if the strconv.Atoi call fails that the error is correctly handled.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/workloadrepo/FastRunawayGC", `return(true)`))
 	tk.MustGetDBError("set @@global."+repositorySamplingInterval+" = 10", errWrongValueForVar)
-	tk.MustGetDBError("set @@global."+repositorySnapshotInterval+" = 901", errWrongValueForVar)
+	tk.MustGetDBError("set @@global."+RepositorySnapshotInterval+" = 901", errWrongValueForVar)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/workloadrepo/FastRunawayGC"))
 
 	trueWithLock(t, wrk, func() bool { return int32(600) == wrk.samplingInterval })

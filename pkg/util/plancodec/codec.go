@@ -111,7 +111,7 @@ type planInfo struct {
 }
 
 func (pd *planDecoder) decode(planString string) (string, error) {
-	b, err := decompress(planString)
+	b, err := Decompress(planString)
 	if err != nil {
 		if planString == PlanDiscardedEncoded {
 			return planDiscardedDecoded, nil
@@ -434,7 +434,7 @@ func Compress(input []byte) string {
 	return base64.StdEncoding.EncodeToString(compressBytes)
 }
 
-func decompress(str string) ([]byte, error) {
+func Decompress(str string) ([]byte, error) {
 	decodeBytes, err := base64.StdEncoding.DecodeString(str)
 	if err != nil {
 		return nil, err
