@@ -95,7 +95,6 @@ const (
 	fieldsEscapedByOption     = "fields_escaped_by"
 	fieldsDefinedNullByOption = "fields_defined_null_by"
 	linesTerminatedByOption   = "lines_terminated_by"
-	csvHeaderOption           = "has_csv_header"
 	skipRowsOption            = "skip_rows"
 	splitFileOption           = "split_file"
 	diskQuotaOption           = "disk_quota"
@@ -133,7 +132,6 @@ var (
 		fieldsEscapedByOption:       true,
 		fieldsDefinedNullByOption:   true,
 		linesTerminatedByOption:     true,
-		csvHeaderOption:             true,
 		skipRowsOption:              true,
 		splitFileOption:             false,
 		diskQuotaOption:             true,
@@ -157,7 +155,6 @@ var (
 		fieldsEscapedByOption:     {},
 		fieldsDefinedNullByOption: {},
 		linesTerminatedByOption:   {},
-		csvHeaderOption:           {},
 		skipRowsOption:            {},
 		splitFileOption:           {},
 	}
@@ -730,22 +727,19 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	if opt, ok := specifiedOptions[skipRowsOption]; ok {
 		vInt, err := optAsInt64(opt)
-		if err != nil || vInt < 0 {
+		if err != nil || vInt < -1 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		p.IgnoreLines = uint64(vInt)
-	}
-	if opt, ok := specifiedOptions[csvHeaderOption]; ok {
-		v, err := optAsString(opt)
-		if err != nil || v == "" {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		if p.CSVHeaderOption, err = mydump.GetCSVHeaderOption(v); err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		// ignore lines cannot be used together with csv header option.
-		if p.IgnoreLines > 0 && p.CSVHeaderOption != mydump.CSVHeaderFalse {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+
+		if vInt > 0 {
+			p.CSVHeaderOption = mydump.CSVHeaderTrue
+			p.IgnoreLines = uint64(vInt - 1)
+		} else if vInt == 0 {
+			p.CSVHeaderOption = mydump.CSVHeaderFalse
+			p.IgnoreLines = 0
+		} else if vInt == -1 {
+			p.CSVHeaderOption = mydump.CSVHeaderAuto
+			p.IgnoreLines = 0
 		}
 	}
 	if _, ok := specifiedOptions[splitFileOption]; ok {

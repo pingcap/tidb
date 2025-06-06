@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -367,26 +366,26 @@ func (s *mockGCSSuite) TestCSVHeaderOption() {
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
 
 	testCases := []struct {
-		csvOption mydump.CSVHeaderOption
-		file      string
-		result    bool
-		count     int
+		skipRows int64
+		file     string
+		result   bool
+		count    int
 	}{
-		{mydump.CSVHeaderAuto, "csv_with_header.csv", true, 4},
-		{mydump.CSVHeaderAuto, "csv_without_header.csv", true, 4},
-		{mydump.CSVHeaderTrue, "csv_with_header.csv", true, 4},
-		{mydump.CSVHeaderTrue, "csv_without_header.csv", true, 3}, // the first row is skipped
-		{mydump.CSVHeaderFalse, "csv_with_header.csv", false, -1},
-		{mydump.CSVHeaderFalse, "csv_without_header.csv", true, 4},
-		{mydump.CSVHeaderAuto, "*.csv", true, 8},
-		{mydump.CSVHeaderFalse, "*.csv", false, -1},
-		{mydump.CSVHeaderTrue, "*.csv", true, 7},
+		{-1, "csv_with_header.csv", true, 4},
+		{-1, "csv_without_header.csv", true, 4},
+		{1, "csv_with_header.csv", true, 4},
+		{1, "csv_without_header.csv", true, 3}, // the first row is skipped
+		{0, "csv_with_header.csv", false, -1},
+		{0, "csv_without_header.csv", true, 4},
+		{-1, "*.csv", true, 8},
+		{0, "*.csv", false, -1},
+		{-1, "*.csv", true, 7},
 	}
 
 	for _, tc := range testCases {
 		s.tk.MustExec("truncate table t")
 		loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://csv-option/%s?endpoint=%s'
-		with has_csv_header="%s", thread=1`, tc.file, gcsEndpoint, tc.csvOption)
+		with skip_rows=%d, thread=1`, tc.file, gcsEndpoint, tc.skipRows)
 		if tc.result {
 			s.tk.MustQuery(loadDataSQL)
 			s.tk.MustQuery("SELECT count(*) FROM t;").Check(testkit.Rows(strconv.Itoa(tc.count)))
