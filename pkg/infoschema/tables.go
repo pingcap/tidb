@@ -1982,7 +1982,7 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			return nil, err
 		}
 
-		//cuncurrently resolve addresses
+		//concurrently resolve addresses
 		var wg sync.WaitGroup
 		for i := range nodes {
 			wg.Add(1)
