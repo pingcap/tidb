@@ -302,7 +302,7 @@ func Selectivity(
 
 	// Try to cover remaining Constants
 	for i, c := range notCoveredConstants {
-		if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), []expression.Expression{c}) {
+		if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), c) {
 			continue
 		}
 		if c.Value.IsNull() {

@@ -1,4 +1,6 @@
-# Copyright 2024 PingCAP, Inc.
+#!/bin/sh
+#
+# Copyright 2025 PingCAP, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,19 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM rockylinux:9
+set -eu
 
-ENV GOLANG_VERSION 1.23.10
-ENV ARCH amd64
-ENV GOLANG_DOWNLOAD_URL https://dl.google.com/go/go$GOLANG_VERSION.linux-$ARCH.tar.gz
-ENV GOPATH /home/prow/go
-ENV GOROOT /usr/local/go
-ENV PATH $GOPATH/bin:$GOROOT/bin:$PATH
+log_file="${TEST_DIR}/lightning.log"
+if [ $# -gt 1 ]; then
+    log_file=$2
+fi
 
-ADD run.sh /bin
-RUN chmod 700 /bin/run.sh
-RUN dnf update -y
-RUN dnf install -y git mysql-server
-RUN curl -fsSL "$GOLANG_DOWNLOAD_URL" -o golang.tar.gz \
-	&& tar -C /usr/local -xzf golang.tar.gz \
-	&& rm golang.tar.gz
+if ! grep -Fq "$1" "$log_file"; then
+    echo "TEST FAILED: LIGHTNING LOG DOES NOT CONTAIN '$1'"
+    echo "____________________________________"
+    cat "$log_file"
+    echo "^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
+    exit 1
+fi

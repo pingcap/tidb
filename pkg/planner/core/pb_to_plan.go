@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -76,6 +77,8 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 		p, err = b.pbToAgg(e, true)
 	case tipb.ExecType_TypeKill:
 		p, err = b.pbToKill(e)
+	case tipb.ExecType_TypeBroadcastQuery:
+		p, err = b.pbToBroadcastQuery(e)
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet", e.GetTp())
@@ -269,6 +272,18 @@ func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (base.PhysicalPlan, error) {
 		Query:        e.Kill.Query,
 	}
 	simple := Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
+	return &PhysicalSimpleWrapper{Inner: simple}, nil
+}
+
+func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan, error) {
+	vars := b.sctx.GetSessionVars()
+	charset, collation := vars.GetCharsetInfo()
+	pa := parser.New()
+	stmt, err := pa.ParseOneStmt(*e.BroadcastQuery.Query, charset, collation)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	simple := Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
 	return &PhysicalSimpleWrapper{Inner: simple}, nil
 }
 

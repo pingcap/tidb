@@ -1558,7 +1558,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		// if we already know the range of the scan is empty, just return a TableDual
 		if len(path.Ranges) == 0 {
 			// We should uncache the tableDual plan.
-			if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), path.AccessConds) {
+			if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), path.AccessConds...) {
 				ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("get a TableDual plan")
 			}
 			dual := PhysicalTableDual{}.Init(ds.SCtx(), ds.StatsInfo(), ds.QueryBlockOffset())
@@ -1643,7 +1643,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 
 				// Batch/PointGet plans may be over-optimized, like `a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1).
 				// For safety, prevent these plans from the plan cache here.
-				if !pointGetTask.Invalid() && expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), candidate.path.AccessConds) && !isSafePointGetPath4PlanCache(ds.SCtx(), candidate.path) {
+				if !pointGetTask.Invalid() && expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), candidate.path.AccessConds...) && !isSafePointGetPath4PlanCache(ds.SCtx(), candidate.path) {
 					ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("Batch/PointGet plans may be over-optimized")
 				}
 

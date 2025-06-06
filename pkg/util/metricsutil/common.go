@@ -28,11 +28,13 @@ import (
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/metrics"
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	txninfo "github.com/pingcap/tidb/pkg/session/txninfo"
 	isolation_metrics "github.com/pingcap/tidb/pkg/sessiontxn/isolation/metrics"
+	statscache_metrics "github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
 	statshandler_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	copr_metrics "github.com/pingcap/tidb/pkg/store/copr/metrics"
@@ -57,7 +59,7 @@ func RegisterMetrics() error {
 	}
 
 	if kerneltype.IsNextGen() {
-		metrics.SetConstLabels("keyspace_name", cfg.KeyspaceName)
+		metricscommon.SetConstLabels("keyspace_name", cfg.KeyspaceName)
 	}
 
 	pdAddrs, _, _, err := tikvconfig.ParsePath("tikv://" + cfg.Path)
@@ -71,7 +73,7 @@ func RegisterMetrics() error {
 		CAPath:   cfg.Security.ClusterSSLCA,
 		CertPath: cfg.Security.ClusterSSLCert,
 		KeyPath:  cfg.Security.ClusterSSLKey,
-	}, opt.WithCustomTimeoutOption(timeoutSec), opt.WithMetricsLabels(metrics.GetConstLabels()))
+	}, opt.WithCustomTimeoutOption(timeoutSec), opt.WithMetricsLabels(metricscommon.GetConstLabels()))
 	if err != nil {
 		return err
 	}
@@ -97,7 +99,7 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 	}
 
 	if kerneltype.IsNextGen() {
-		metrics.SetConstLabels("keyspace_name", keyspaceName)
+		metricscommon.SetConstLabels("keyspace_name", keyspaceName)
 	}
 
 	timeoutSec := 10 * time.Second
@@ -107,7 +109,7 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 	}
 	// Note: for NextGen, pdCli is created to init the metrics' const labels
 	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt,
-		opt.WithCustomTimeoutOption(timeoutSec), opt.WithMetricsLabels(metrics.GetConstLabels()))
+		opt.WithCustomTimeoutOption(timeoutSec), opt.WithMetricsLabels(metricscommon.GetConstLabels()))
 	if err != nil {
 		return err
 	}
@@ -138,6 +140,7 @@ func initMetrics() {
 	server_metrics.InitMetricsVars()
 	session_metrics.InitMetricsVars()
 	statshandler_metrics.InitMetricsVars()
+	statscache_metrics.InitMetricsVars()
 	topsqlreporter_metrics.InitMetricsVars()
 	ttlmetrics.InitMetricsVars()
 	txninfo.InitMetricsVars()
@@ -149,7 +152,7 @@ func initMetrics() {
 
 func registerMetrics(keyspaceMeta *keyspacepb.KeyspaceMeta) {
 	if keyspaceMeta != nil {
-		metrics.SetConstLabels("keyspace_id", fmt.Sprint(keyspaceMeta.GetId()))
+		metricscommon.SetConstLabels("keyspace_id", fmt.Sprint(keyspaceMeta.GetId()))
 	}
 	initMetrics()
 }
