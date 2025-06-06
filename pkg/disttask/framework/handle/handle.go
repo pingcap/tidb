@@ -277,8 +277,10 @@ func GetCloudStorageURI(store kv.Storage) string {
 	if s, ok := store.(kv.StorageWithPD); ok {
 		// When setting the cloudURI value by SQL, we already checked the effectiveness, so we don't need to check it again here.
 		u, _ := litstorage.ParseRawURL(cloudURI)
-		u.Path = filepath.Join(u.Path, strconv.FormatUint(s.GetPDClient().GetClusterID(context.TODO()), 10))
-		return u.String()
+		if len(u.Path) != 0 {
+			u.Path = filepath.Join(u.Path, strconv.FormatUint(s.GetPDClient().GetClusterID(context.TODO()), 10))
+			return u.String()
+		}
 	}
 	logutil.BgLogger().Error("Can't get cluster id from store, use default cloud storage uri")
 	return cloudURI
