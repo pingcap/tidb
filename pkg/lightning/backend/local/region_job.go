@@ -338,7 +338,13 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 	ctx, cancel = context.WithTimeoutCause(ctx, timeout, common.ErrWriteTooSlow)
 	defer cancel()
 
-	// A defer function to handle all DeadlineExceeded errors that may occur during the write operation using this context with 15 minutes timeout. When the error is "context deadline exceeded", we will check if the cause is common.ErrWriteTooSlow and return thecommon.ErrWriteTooSlow instead so our caller would be able to retry this doWrite operation. By doing this defer we are hoping to handle all DeadlineExceeded error during this write, either from gRPC stream or write limiter WaitN operation.
+	// A defer function to handle all DeadlineExceeded errors that may occur
+	// during the write operation using this context with 15 minutes timeout.
+	// When the error is "context deadline exceeded", we will check if the cause
+	// is common.ErrWriteTooSlow and return the common.ErrWriteTooSlow instead so
+	// our caller would be able to retry this doWrite operation. By doing this
+	// defer we are hoping to handle all DeadlineExceeded error during this
+	// write, either from gRPC stream or write limiter WaitN operation.
 	wctx := ctx
 	defer func() {
 		if err == nil {
