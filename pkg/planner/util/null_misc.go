@@ -108,8 +108,6 @@ func isNullRejectedInternal(ctx base.PlanContext, innerSchema *expression.Schema
 			return isNullRejectedInList(ctx, expr, innerSchema, skipPlanCacheCheck)
 		}
 		return isNullRejectedSimpleExpr(ctx, innerSchema, expr, skipPlanCacheCheck)
-	case *expression.Constant:
-		return false
 	default:
 		return isNullRejectedSimpleExpr(ctx, innerSchema, predicate, skipPlanCacheCheck)
 	}
@@ -122,7 +120,7 @@ func isNullRejectedInternal(ctx base.PlanContext, innerSchema *expression.Schema
 func isNullRejectedSimpleExpr(ctx planctx.PlanContext, schema *expression.Schema, expr expression.Expression,
 	skipPlanCacheCheck bool) bool {
 	// The expression should reference at least one field in innerSchema or all constants.
-	if !expression.ExprReferenceSchema(expr, schema) && !allConstants(ctx.GetExprCtx(), expr) {
+	if !expression.ExprReferenceSchema(expr, schema) || !allConstants(ctx.GetExprCtx(), expr) {
 		return false
 	}
 	exprCtx := ctx.GetNullRejectCheckExprCtx()
