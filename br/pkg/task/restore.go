@@ -51,7 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -310,7 +310,6 @@ type immutableRestoreConfig struct {
 	ExplictFilter     bool
 	FilterStr         []string
 	WithSysTable      bool
-	FastLoadSysTables bool
 	LoadStats         bool
 }
 
@@ -321,7 +320,6 @@ func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 		Storage:           ast.RedactURL(cfg.Storage),
 		FilterStr:         cfg.FilterStr,
 		WithSysTable:      cfg.WithSysTable,
-		FastLoadSysTables: cfg.FastLoadSysTables,
 		LoadStats:         cfg.LoadStats,
 	}
 	data, err := json.Marshal(config)
@@ -906,7 +904,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}()
 
 	if err = g.UseOneShotSession(mgr.GetStorage(), false, func(se glue.Session) error {
-		enableFollowerHandleRegion, err := se.GetGlobalSysVar(vardef.PDEnableFollowerHandleRegion)
+		enableFollowerHandleRegion, err := se.GetGlobalSysVar(variable.PDEnableFollowerHandleRegion)
 		if err != nil {
 			return err
 		}
@@ -1193,7 +1191,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// filters out db/table/files using filter
-	tableMap, dbMap, err := filterRestoreFiles(client, cfg.RestoreConfig, loadStatsPhysical)
+	tableMap, dbMap, err := filterRestoreFiles(client, cfg.RestoreConfig)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1300,12 +1298,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
-	if userTableIDNotReusedWhenNeedCheck, err := client.AllocTableIDs(ctx, tables, loadStatsPhysical && !cpEnabledAndExists, reusePreallocIDs); err != nil {
+	if err := client.AllocTableIDs(ctx, tables, !cpEnabledAndExists, reusePreallocIDs); err != nil {
 		return errors.Trace(err)
-	} else if userTableIDNotReusedWhenNeedCheck {
-		log.Warn("Cannot load stats physically because not all table ids are reused. Fallback to logically load stats.")
-		// Notice that it will break the pitr id tracker since log restore support system restore
-		tables = fallbackStatsTables(tables)
 	}
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
@@ -2144,7 +2138,7 @@ func PreCheckTableClusterIndex(
 		if job.Type == model.ActionCreateTable {
 			tableInfo := job.BinlogInfo.TableInfo
 			if tableInfo != nil {
-				oldTableInfo, err := restore.GetTableSchema(dom, ast.NewCIStr(job.SchemaName), tableInfo.Name)
+				oldTableInfo, err := restore.GetTableSchema(dom, pmodel.NewCIStr(job.SchemaName), tableInfo.Name)
 				// table exists in database
 				if err == nil {
 					if tableInfo.IsCommonHandle != oldTableInfo.IsCommonHandle {
@@ -2384,10 +2378,10 @@ func buildLogBackupMetaTables(dbNameToTableNames map[string]map[string]struct{})
 		for tableName := range tableNames {
 			table := &metautil.Table{
 				DB: &model.DBInfo{
-					Name: ast.NewCIStr(dbName),
+					Name: pmodel.NewCIStr(dbName),
 				},
 				Info: &model.TableInfo{
-					Name: ast.NewCIStr(tableName),
+					Name: pmodel.NewCIStr(tableName),
 				},
 			}
 			tables = append(tables, table)

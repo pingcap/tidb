@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -232,7 +231,7 @@ func NewMgr(
 	}
 
 	if err = g.UseOneShotSession(storage, !needDomain, func(se glue.Session) error {
-		enableFollowerHandleRegion, err := se.GetGlobalSysVar(vardef.PDEnableFollowerHandleRegion)
+		enableFollowerHandleRegion, err := se.GetGlobalSysVar(variable.PDEnableFollowerHandleRegion)
 		if err != nil {
 			return err
 		}
