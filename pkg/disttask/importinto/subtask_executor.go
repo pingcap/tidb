@@ -16,7 +16,6 @@ package importinto
 
 import (
 	"context"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -138,15 +137,12 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
 		err = importer.VerifyChecksum(ctx, &taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
 		err2 := ddl.CreateAlterTableModeJob(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
-		failpoint.Inject("errorWhenResetTableMode", func(_val failpoint.Value) {
-			if val, ok := _val.(string); ok {
-				switch val {
-				case "Sleep":
-					time.Sleep(2 * time.Second)
-				case "Error":
-					err2 = errors.New("occur an error when reset table mode to normal")
-				}
-			}
+		if err2 != nil {
+			callLog.Warn("alter table mode to normal failure", zap.Error(err2))
+		}
+		failpoint.Inject("beforeResetTableMode", func() {})
+		failpoint.Inject("errorWhenResetTableMode", func() {
+			failpoint.Return(errors.New("occur an error when reset table mode to normal"))
 		})
 		if err != nil {
 			if err2 == nil {
