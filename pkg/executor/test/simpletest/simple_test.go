@@ -827,21 +827,21 @@ func TestSelectWhereInvalidDSTTime(t *testing.T) {
 	tk.MustExec(`set sql_mode = ''`)
 	tk.MustExec(`set time_zone = "Europe/Amsterdam"`)
 	tk.MustExec("insert into t values (1, '2025-03-30 02:00:00')")
-	//tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '2025-03-30 02:00:00' for column 'ts' at row 1"))
-	// TODO: Why is this ZERO date and not adjusted?!?
-	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 0000-00-00 00:00:00"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '2025-03-30 02:00:00' for column 'ts' at row 1"))
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 2025-03-30 03:00:00"))
 	tk.MustExec(`set sql_mode = DEFAULT`)
 	tk.MustExec("insert into t values (2, '2025-03-30 01:59:59')")
 	tk.MustExec("insert into t values (3, '2025-03-30 03:00:00')")
 	tk.MustExec("insert into t values (4, '1970-01-01 01:00:01')")
-	tk.MustExec(`set time_zone = "Europe/Amsterdam"`)
-	tk.MustQuery(`select *, unix_timestamp(ts) from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`).Check(testkit.Rows("3 2025-03-30 03:00:00 1743296400"))
-	tk.MustQuery(`select * from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`).Check(testkit.Rows("3 2025-03-30 03:00:00"))
+	tk.MustQuery(`select *, unix_timestamp(ts) from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`).Sort().Check(testkit.Rows("1 2025-03-30 03:00:00 1743296400", "3 2025-03-30 03:00:00 1743296400"))
+	tk.MustQuery(`select * from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`).Sort().Check(testkit.Rows("1 2025-03-30 03:00:00", "3 2025-03-30 03:00:00"))
 	tk.MustQuery(`select * from t where ts between '2025-03-30 01:00:00' AND '2025-03-30 02:00:00'`).Check(testkit.Rows("2 2025-03-30 01:59:59"))
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Amsterdam'",
 		"Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Amsterdam'",
 		"Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Amsterdam'"))
-	tk.MustQuery(`explain select * from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`).CheckNotContain("2025-03-30 02:30:00")
+	explain := tk.MustQuery(`explain select * from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`)
+	explain.CheckNotContain("2025-03-30 02:30:00")
+	explain.CheckContain("kalle")
 }
 
 func TestSelectWhereInvalidDSTTimeAgain(t *testing.T) {
@@ -856,20 +856,28 @@ func TestSelectWhereInvalidDSTTimeAgain(t *testing.T) {
 	tk.MustExec(`set time_zone = "Europe/Amsterdam"`)
 	tk.MustExec(`set sql_mode = ''`)
 	// This will be adjusted to '2025-03-30 03:00:00+02:00'
-	// TODO: FIXME!!!
-	//tk.MustExec("insert into t values (4, '2025-03-30 02:30:00')")
-	//tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec("insert into t values (4, '2025-03-30 02:30:00')")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '2025-03-30 02:30:00' for column 'ts' at row 1"))
 	tk.MustExec(`set sql_mode = DEFAULT`)
 	tk.MustQuery(`select *, unix_timestamp(ts) from t`).Sort().Check(testkit.Rows(""+
 		"1 1970-01-01 01:00:01 1",
 		"2 2025-03-30 01:59:59 1743296399",
-		"3 2025-03-30 03:00:00 1743296400"))
-	// Compares
-	tk.MustQuery(`select *, unix_timestamp(ts) from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`).Check(testkit.Rows("3 2025-03-30 03:00:00 1743296400"))
+		"3 2025-03-30 03:00:00 1743296400",
+		"4 2025-03-30 03:00:00 1743296400"))
+
+	// Compares like DATETIME; every row is read and converted to DATETIME by current TIME_ZONE, and compared
+	// with the range which is in DATETIME
+	tk.MustQuery(`select *, unix_timestamp(ts) from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`).Check(testkit.Rows("3 2025-03-30 03:00:00 1743296400", "4 2025-03-30 03:00:00 1743296400"))
 	tk.MustQuery(`show warnings`).Sort().Check(testkit.Rows("Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'"))
+	tk.MustQuery(`explain select *, unix_timestamp(ts) from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`).MultiCheckContain([]string{"02:30:00", "TableFullScan"})
+
+	// Compares like TIMESTAMP; the range is converted to TIMESTAMP by current TIME_ZONE,
+	// and then compared with the row which is TIMESTAMP.
 	tk.MustExec("alter table t add index idx_ts(ts)")
 	tk.MustQuery(`select *, unix_timestamp(ts) from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00' order by ts limit 1`).Check(testkit.Rows("3 2025-03-30 03:00:00 1743296400"))
-	tk.MustQuery(`explain select *, unix_timestamp(ts) from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00' order by ts limit 1`).CheckContain("IndexLookUp")
+	explain := tk.MustQuery(`explain select *, unix_timestamp(ts) from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00' order by ts limit 1`)
+	explain.CheckContain("IndexLookUp")
+	explain.CheckNotContain("02:30:00")
 	// Why 3 warnings?!?
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'",
 		"Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'",

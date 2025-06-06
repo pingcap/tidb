@@ -2015,7 +2015,10 @@ func parseTime(ctx Context, str string, tp byte, fsp int, isFloat bool) (Time, e
 	t.SetType(tp)
 	if err = t.Check(ctx); err != nil {
 		if tp == mysql.TypeTimestamp && !t.IsZero() {
-			t, err = adjustTimestampErrForDST(ctx.Location(), str, tp, t, err)
+			tAdjusted, errAdjusted := adjustTimestampErrForDST(ctx.Location(), str, tp, t, err)
+			if ErrTimestampInDSTTransition.Equal(errAdjusted) {
+				return tAdjusted, errors.Trace(errAdjusted)
+			}
 		}
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
