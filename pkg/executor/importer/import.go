@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/expression"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -576,7 +577,7 @@ func (e *LoadDataController) checkFieldParams() error {
 	return nil
 }
 
-func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
+func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, store tidbkv.Storage) {
 	threadCnt := int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
 	if p.DataSourceType == DataSourceTypeQuery {
 		threadCnt = 2
@@ -590,7 +591,7 @@ func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 	p.Detached = false
 	p.DisableTiKVImportMode = false
 	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
-	p.CloudStorageURI = vardef.CloudStorageURI.Load()
+	p.CloudStorageURI = handle.GetCloudStorageURI(ctx, store)
 
 	v := defaultCharacterSet
 	p.Charset = &v
@@ -601,7 +602,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	if err != nil {
 		return err
 	}
-	p.initDefaultOptions(targetNodeCPUCnt)
+	p.initDefaultOptions(ctx, targetNodeCPUCnt, seCtx.GetStore())
 
 	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
 	for _, opt := range options {
