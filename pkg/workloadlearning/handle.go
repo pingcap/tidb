@@ -164,6 +164,10 @@ func (handle *Handle) analyzeBasedOnStatementStats(infoSchema infoschema.InfoSch
 	}
 	tableIdToMetrics := make(map[int64]*TableReadCostMetrics)
 	for _, row := range rows {
+		if row.IsNull(0) || row.IsNull(1) || row.IsNull(2) || row.IsNull(3) {
+			logutil.ErrVerboseLogger().Debug("Skip this row because there is null in the row")
+			continue
+		}
 		digest := row.GetString(0)
 		sql := row.GetString(1)
 		binaryPlan := row.GetString(2)
