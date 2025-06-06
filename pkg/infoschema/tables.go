@@ -966,6 +966,8 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogWaitRUDuration, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogTidbCPUUsageDuration, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogTikvCPUUsageDuration, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogStorageFromKV, tp: mysql.TypeTiny, size: 1},
+	{name: variable.SlowLogStorageFromMPP, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
 	{name: variable.SlowLogBinaryPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
