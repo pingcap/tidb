@@ -16,11 +16,11 @@ package handle
 
 import (
 	"context"
+	goerrors "errors"
 	"path/filepath"
 	"strconv"
 	"time"
 
-	goerrors "errors"
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	litstorage "github.com/pingcap/tidb/br/pkg/storage"
