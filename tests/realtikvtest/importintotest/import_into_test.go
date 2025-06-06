@@ -295,8 +295,12 @@ func (s *mockGCSSuite) TestTableMode() {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
-		defer wg.Done()
-		sql := fmt.Sprintf(`IMPORT INTO import_into.t FROM '%s';`, filePath)
+		testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/errorWhenResetTableMode", `return("Sleep")`)
+		defer func() {
+			wg.Done()
+			testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/errorWhenResetTableMode")
+		}()
+		sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://table-mode-test/db.tbl.001.csv?endpoint=%s'`, gcsEndpoint)
 		s.tk.MustExec(sql)
 	}()
 	go func() {
@@ -305,23 +309,23 @@ func (s *mockGCSSuite) TestTableMode() {
 			err := s.tk.QueryToErr("SELECT * FROM import_into.t;")
 			return strings.Contains(err.Error(), "is in mode Import")
 		}, 5*time.Second, 100*time.Millisecond)
-		s.tk.EventuallyMustQueryAndCheck("SELECT * FROM import_into.t;", nil, testkit.Rows("1 test 11", "2 test2 22"), 5*time.Second, 100*time.Millisecond)
+		s.tk.EventuallyMustQueryAndCheck("SELECT * FROM import_into.t;", nil, testkit.Rows("1 test1 11", "2 test2 22"), 5*time.Second, 100*time.Millisecond)
 	}()
 	wg.Wait()
 
 	// Test check import into target table is empty or get error.
 	s.tk.MustExec("truncate table t;")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("NotEmpty")`)
-	sql := fmt.Sprintf(`IMPORT INTO import_into.t FROM '%s';`, filePath)
+	sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://table-mode-test/db.tbl.001.csv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustGetErrMsg(sql, "PreCheck failed: target table is not empty")
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("Error")`)
-	sql = fmt.Sprintf(`IMPORT INTO import_into.t FROM '%s' FORMAT 'SQL';`, filePath)
+	sql = fmt.Sprintf(`IMPORT INTO t FROM 'gs://table-mode-test/db.tbl.001.csv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustGetErrMsg(sql, "PreCheck failed: check if table is empty failed")
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty")
 	// Test import into clean up can alter table mode to Normal finally.
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/errorWhenResetTableMode", `return(true)`)
-	sql = fmt.Sprintf(`IMPORT INTO import_into.t FROM '%s';`, filePath)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/errorWhenResetTableMode", `return("Error")`)
+	sql = fmt.Sprintf(`IMPORT INTO t FROM 'gs://table-mode-test/db.tbl.001.csv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustGetErrMsg(sql, "occur an error when reset table mode to normal")
 	s.tk.EventuallyMustQueryAndCheck("SELECT * FROM import_into.t;", nil, testkit.Rows("1 test 11", "2 test2 22"), 5*time.Second, 100*time.Millisecond)
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/errorWhenResetTableMode")
