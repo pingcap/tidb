@@ -387,7 +387,7 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 	}
 
 	// Keep these partial filters as a part of table filters for safety if there is any parameter.
-	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), partialFilters) {
+	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), partialFilters...) {
 		dedupedFinalFilters = append(dedupedFinalFilters, partialFilters...)
 	}
 
@@ -1319,7 +1319,7 @@ func jsonArrayExpr2Exprs(
 	targetType *types.FieldType,
 	checkForSkipPlanCache bool,
 ) ([]expression.Expression, bool) {
-	if checkForSkipPlanCache && expression.MaybeOverOptimized4PlanCache(sctx, []expression.Expression{jsonArrayExpr}) {
+	if checkForSkipPlanCache && expression.MaybeOverOptimized4PlanCache(sctx, jsonArrayExpr) {
 		// skip plan cache and try to generate the best plan in this case.
 		sctx.SetSkipPlanCache(jsonFuncName + " function with immutable parameters can affect index selection")
 	}
