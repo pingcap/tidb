@@ -166,11 +166,9 @@ func TestLockTableAndUnlockTableStatsRepeatedly(t *testing.T) {
 }
 
 func TestLockAndUnlockTablesStats(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = true
-	})
+	})()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version = 1")

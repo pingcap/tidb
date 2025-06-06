@@ -1103,10 +1103,9 @@ func TestCoprocessorPriority(t *testing.T) {
 	// Insert some data to make sure plan build IndexLookup for t.
 	tk.MustExecWithContext(ctx, "insert into t values (1), (2)")
 
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.ExpensiveThreshold = 0
-	})
+	})()
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_High)
 	tk.MustQueryWithContext(ctx, "select id from t where id = 1")

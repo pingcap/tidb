@@ -360,11 +360,10 @@ func TestCheckTxnStatusOnOptimisticTxnBreakConsistency(t *testing.T) {
 	}
 
 	// Allow async commit
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 500 * time.Millisecond
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-	})
+	})()
 
 	// A helper function to determine whether a KV RPC request is handled on TiKV without RPC error or region error.
 	isRequestHandled := func(resp *tikvrpc.Response, err error) bool {
@@ -537,11 +536,10 @@ func TestCheckTxnStatusOnOptimisticTxnBreakConsistency(t *testing.T) {
 }
 
 func TestDMLWithAddForeignKey(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 10 * time.Second
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 500 * time.Millisecond
-	})
+	})()
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)

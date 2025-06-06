@@ -1595,10 +1595,9 @@ func TestShowStateFail(t *testing.T) {
 		},
 	}
 
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
-	})
+	})()
 	for _, tt := range tests {
 		conn1 := server.CreateMockConn(t, sv)
 		conn1.Context().Session.GetSessionVars().User = nil
