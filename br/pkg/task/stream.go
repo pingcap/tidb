@@ -2198,7 +2198,7 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 	}
 
 	// skip registration if target TiDB version doesn't support restore registry
-	if !restore.HasRestoreIDColumn(domain) {
+	if !restore.HasRestoreRegistryTable(domain) {
 		log.Info("skipping restore registration since target TiDB version doesn't support restore registry")
 		return nil
 	}
