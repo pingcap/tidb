@@ -134,14 +134,6 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		changingCol.Name = newColName
 		changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
 
-		originDefVal, err := GetOriginDefaultValueForModifyColumn(newReorgExprCtx(), changingCol, oldCol)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		if err = changingCol.SetOriginDefaultValue(originDefVal); err != nil {
-			return ver, errors.Trace(err)
-		}
-
 		var redundantIdxs []int64
 
 		InitAndAddColumnToTable(tblInfo, changingCol)
@@ -218,38 +210,6 @@ func getModifyColumnInfo(
 	}
 
 	return dbInfo, tblInfo, oldCol, errors.Trace(err)
-}
-
-// GetOriginDefaultValueForModifyColumn gets the original default value for modifying column.
-// Since column type change is implemented as adding a new column then substituting the old one.
-// Case exists when update-where statement fetch a NULL for not-null column without any default data,
-// it will errors.
-// So we set original default value here to prevent this error. If the oldCol has the original default value, we use it.
-// Otherwise we set the zero value as original default value.
-// Besides, in insert & update records, we have already implement using the casted value of relative column to insert
-// rather than the original default value.
-func GetOriginDefaultValueForModifyColumn(ctx exprctx.BuildContext, changingCol, oldCol *model.ColumnInfo) (any, error) {
-	var err error
-	originDefVal := oldCol.GetOriginDefaultValue()
-	if originDefVal != nil {
-		odv, err := table.CastColumnValue(ctx, types.NewDatum(originDefVal), changingCol, false, false)
-		if err != nil {
-			logutil.DDLLogger().Info("cast origin default value failed", zap.Error(err))
-		}
-		if !odv.IsNull() {
-			if originDefVal, err = odv.ToString(); err != nil {
-				originDefVal = nil
-				logutil.DDLLogger().Info("convert default value to string failed", zap.Error(err))
-			}
-		}
-	}
-	if originDefVal == nil {
-		originDefVal, err = generateOriginDefaultValue(changingCol, nil)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return originDefVal, nil
 }
 
 // rollbackModifyColumnJobWithData is used to rollback modify-column job which need to reorg the data.
@@ -768,13 +728,11 @@ func GetModifiableColumnJob(
 		// a new version TiDB builds the DDL job that doesn't be set the column's offset and state,
 		// and the old version TiDB is the DDL owner, it doesn't get offset and state from the store. Then it will encounter errors.
 		// So here we set offset and state to support the rolling upgrade.
-		Offset:                col.Offset,
-		State:                 col.State,
-		OriginDefaultValue:    col.OriginDefaultValue,
-		OriginDefaultValueBit: col.OriginDefaultValueBit,
-		FieldType:             *specNewColumn.Tp,
-		Name:                  newColName,
-		Version:               col.Version,
+		Offset:    col.Offset,
+		State:     col.State,
+		FieldType: *specNewColumn.Tp,
+		Name:      newColName,
+		Version:   col.Version,
 	})
 
 	if err = ProcessColumnCharsetAndCollation(NewMetaBuildContextWithSctx(sctx), col, newCol, t.Meta(), specNewColumn, schema); err != nil {
@@ -793,7 +751,7 @@ func GetModifiableColumnJob(
 		// TODO: If user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull.
 	}
 
-	if err = ProcessModifyColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
+	if err = processModifyColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1218,8 +1176,8 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 	return errors.Trace(err)
 }
 
-// ProcessModifyColumnOptions process column options.
-func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
+// processModifyColumnOptions process column options.
+func processModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
 		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutSchemaName
@@ -1291,6 +1249,11 @@ func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, optio
 	}
 
 	if err = processAndCheckDefaultValueAndColumn(ctx.GetExprCtx(), col, nil, hasDefaultValue, setOnUpdateNow, hasNullFlag); err != nil {
+		return errors.Trace(err)
+	}
+
+	// let col's origin default value be the same as the new default value.
+	if err = col.SetOriginDefaultValue(col.GetDefaultValue()); err != nil {
 		return errors.Trace(err)
 	}
 
