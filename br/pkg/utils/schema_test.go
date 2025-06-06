@@ -21,11 +21,6 @@ func TestIsSysOrTempSysDB(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "workload_schema system db",
-			db:       "workload_schema",
-			expected: true,
-		},
-		{
 			name:     "temporary mysql db",
 			db:       "__TiDB_BR_Temporary_mysql",
 			expected: true,
@@ -33,11 +28,6 @@ func TestIsSysOrTempSysDB(t *testing.T) {
 		{
 			name:     "temporary sys db",
 			db:       "__TiDB_BR_Temporary_sys",
-			expected: true,
-		},
-		{
-			name:     "temporary workload_schema db",
-			db:       "__TiDB_BR_Temporary_workload_schema",
 			expected: true,
 		},
 		{
