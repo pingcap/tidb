@@ -48,7 +48,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	plan := &Plan{
 		DataSourceType: DataSourceTypeQuery,
 	}
-	plan.initDefaultOptions(10, nil, context.Background())
+	plan.initDefaultOptions(context.Background(), 10, nil)
 	require.Equal(t, 2, plan.ThreadCnt)
 
 	plan = &Plan{
@@ -58,7 +58,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	t.Cleanup(func() {
 		vardef.CloudStorageURI.Store("")
 	})
-	plan.initDefaultOptions(1, nil, context.Background())
+	plan.initDefaultOptions(context.Background(), 1, nil)
 	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
 	require.Equal(t, config.OpLevelRequired, plan.Checksum)
 	require.Equal(t, 1, plan.ThreadCnt)
@@ -71,7 +71,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
 	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
 
-	plan.initDefaultOptions(10, nil, context.Background())
+	plan.initDefaultOptions(context.Background(), 10, nil)
 	require.Equal(t, 5, plan.ThreadCnt)
 }
 

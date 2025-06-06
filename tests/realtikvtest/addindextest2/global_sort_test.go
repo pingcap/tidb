@@ -159,7 +159,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
-	cloudStorageURI = handle.GetCloudStorageURI(store, context.Background()) // path with cluster id
+	cloudStorageURI = handle.GetCloudStorageURI(context.Background(), store) // path with cluster id
 	defer func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		vardef.CloudStorageURI.Store("")

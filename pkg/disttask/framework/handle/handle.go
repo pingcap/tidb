@@ -272,7 +272,7 @@ func GetTargetScope() string {
 }
 
 // GetCloudStorageURI returns the cloud storage URI with cluster ID appended to the path.
-func GetCloudStorageURI(store kv.Storage, ctx context.Context) string {
+func GetCloudStorageURI(ctx context.Context, store kv.Storage) string {
 	cloudURI := vardef.CloudStorageURI.Load()
 	if s, ok := store.(kv.StorageWithPD); ok {
 		// When setting the cloudURI value by SQL, we already checked the effectiveness, so we don't need to check it again here.

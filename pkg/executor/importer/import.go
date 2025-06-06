@@ -577,7 +577,7 @@ func (e *LoadDataController) checkFieldParams() error {
 	return nil
 }
 
-func (p *Plan) initDefaultOptions(targetNodeCPUCnt int, store tidbkv.Storage, ctx context.Context) {
+func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, store tidbkv.Storage) {
 	threadCnt := int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
 	if p.DataSourceType == DataSourceTypeQuery {
 		threadCnt = 2
@@ -591,7 +591,7 @@ func (p *Plan) initDefaultOptions(targetNodeCPUCnt int, store tidbkv.Storage, ct
 	p.Detached = false
 	p.DisableTiKVImportMode = false
 	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
-	p.CloudStorageURI = handle.GetCloudStorageURI(store, ctx)
+	p.CloudStorageURI = handle.GetCloudStorageURI(ctx, store)
 
 	v := defaultCharacterSet
 	p.Charset = &v
@@ -602,7 +602,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	if err != nil {
 		return err
 	}
-	p.initDefaultOptions(targetNodeCPUCnt, seCtx.GetStore(), ctx)
+	p.initDefaultOptions(ctx, targetNodeCPUCnt, seCtx.GetStore())
 
 	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
 	for _, opt := range options {
