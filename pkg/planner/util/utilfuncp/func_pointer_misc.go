@@ -162,6 +162,10 @@ var GetEstimatedProbeCntFromProbeParents func(probeParents []base.PhysicalPlan) 
 // GetActualProbeCntFromProbeParents will be called by BasePhysicalPlan in physicalOp pkg.
 var GetActualProbeCntFromProbeParents func(pps []base.PhysicalPlan, statsColl *execdetails.RuntimeStatsColl) int64
 
+// GetPlanCost export the getPlanCost from core pkg for cascades usage.
+// todo: remove this three func pointer when physical op are all migrated to physicalop pkg.
+var GetPlanCost func(base.PhysicalPlan, property.TaskType, *optimizetrace.PlanCostOption) (float64, error)
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
@@ -170,6 +174,12 @@ var AttachPlan2Task func(p base.PhysicalPlan, t base.Task) base.Task
 // WindowIsTopN is used in DeriveTopNFromWindow rule.
 // todo: @arenatlx: remove it after logical_datasource is migrated to logicalop.
 var WindowIsTopN func(p base.LogicalPlan) (bool, uint64)
+
+// GetTaskPlanCost export the getTaskPlanCost from core pkg for cascades usage.
+var GetTaskPlanCost func(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float64, bool, error)
+
+// CompareTaskCost export the compareTaskCost from core pkg for cascades usage.
+var CompareTaskCost func(curTask, bestTask base.Task, op *optimizetrace.PhysicalOptimizeOp) (curIsBetter bool, err error)
 
 // ****************************************** optimize portal *********************************************
 

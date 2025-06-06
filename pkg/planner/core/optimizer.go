@@ -18,6 +18,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/cascades/impl"
 	"math"
 	"slices"
 	"strconv"
@@ -309,22 +310,31 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	)
 	// At current phase, cascades just iterate every logic plan out for feeding physicalOptimize.
 	// TODO: In the near future, physicalOptimize will be refactored as receiving *Group as param directly.
-	cas.GetMemo().NewIterator().Each(func(oneLogic base.LogicalPlan) bool {
-		planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
-		if planCounter == 0 {
-			planCounter = -1
-		}
-		tmpPhysical, tmpCost, tmpErr := physicalOptimize(oneLogic, &planCounter)
-		if tmpErr != nil {
-			err = tmpErr
-			return false
-		}
-		if tmpCost < cost {
-			physical = tmpPhysical
-			cost = tmpCost
-		}
-		return true
-	})
+	//cas.GetMemo().NewIterator().Each(func(oneLogic base.LogicalPlan) bool {
+	//	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
+	//	if planCounter == 0 {
+	//		planCounter = -1
+	//	}
+	//	tmpPhysical, tmpCost, tmpErr := physicalOptimize(oneLogic, &planCounter)
+	//	if tmpErr != nil {
+	//		err = tmpErr
+	//		return false
+	//	}
+	//	if tmpCost < cost {
+	//		physical = tmpPhysical
+	//		cost = tmpCost
+	//	}
+	//	return true
+	//})
+	//if err != nil {
+	//	return nil, nil, 0, err
+	//}
+
+	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
+	if planCounter == 0 {
+		planCounter = -1
+	}
+	physical, cost, err = impl.ImplementMemoAndCost(cas.GetMemo().GetRootGroup(), &planCounter)
 	if err != nil {
 		return nil, nil, 0, err
 	}
