@@ -20,7 +20,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -103,46 +102,6 @@ func RunTestMain(m *testing.M) {
 		return i
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
-}
-
-// TestOption is used to customize a special tk for usage.
-type TestOption func(tk *testkit.TestKit)
-
-// WithCascades test func body under different planner mode.
-func WithCascades(on bool) TestOption {
-	return func(tk *testkit.TestKit) {
-		val := "off"
-		if on {
-			val = "on"
-		}
-		tk.MustExec(fmt.Sprintf("set @@tidb_enable_cascades_planner = %s", val))
-	}
-}
-
-// RunTestUnderCascades run the basic test body among two different planner mode.
-func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string)) {
-	options := []struct {
-		name string
-		opt  TestOption
-	}{
-		{"off", WithCascades(false)},
-		{"on", WithCascades(true)},
-	}
-	// get func name
-	pc, _, _, ok := runtime.Caller(1)
-	require.True(t, ok)
-	details := runtime.FuncForPC(pc)
-	funcNameIdx := strings.LastIndex(details.Name(), ".")
-	funcName := details.Name()[funcNameIdx+1:]
-	// iter the options
-	for _, val := range options {
-		t.Run(val.name, func(t *testing.T) {
-			store, dom := CreateMockStoreAndDomainAndSetup(t)
-			tk := testkit.NewTestKit(t, store)
-			val.opt(tk)
-			testFunc(t, tk, dom, val.name, funcName)
-		})
-	}
 }
 
 // CreateMockStoreAndSetup return a new kv.Storage.

@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/util"
@@ -32,13 +31,12 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCascadesTemplate(t *testing.T) {
 	// wrap your test body with
-	realtikvtest.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		// test your basic sql interface and assert the execution result.
 		tk.MustExec("use test")
 		tk.MustExec("create table t(a int primary key, b int)")
