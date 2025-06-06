@@ -25,7 +25,7 @@ RESTORE_LOG="$TEST_DIR/restore.log"
 rm -rf $PROGRESS_FILE
 
 run_sql "create schema $DB;"
-run_sql "create placement policy fivereplicas followers=4;"
+run_sql "create placement policy fivereplicas with replicas=5;"
 run_sql "create placement policy tworeplicas followers=1;"
 
 # generate 30 tables with 1 row content with policy fivereplicas;.
@@ -87,7 +87,7 @@ run_sql "DROP DATABASE $DB;"
 
 echo "test backup db can ignore placement policy"
 run_sql "create schema $DB;"
-run_sql "create placement policy fivereplicas followers=4;"
+run_sql "CREATE PLACEMENT POLICY fivereplicas WITH REPLICAS=5;"
 run_sql "create placement policy tworeplicas followers=1;"
 
 # generate one table with one row content with policy fivereplicas;.
@@ -116,7 +116,7 @@ run_sql "DROP DATABASE $DB;"
 echo "test only restore related placement policy..."
 run_sql "create schema $DB;"
 # we have three policies
-run_sql "create placement policy fivereplicas followers=4;"
+run_sql "CREATE PLACEMENT POLICY fivereplicas WITH REPLICAS=5;"
 run_sql "create placement policy tworeplicas followers=1;"
 run_sql "create placement policy foureplicas followers=3;"
 
@@ -165,7 +165,7 @@ run_sql "DROP PLACEMENT POLICY tworeplicas;"
 echo "test restore all placement policies..."
 run_sql "create schema $DB;"
 # we have three policies
-run_sql "create placement policy fivereplicas followers=4;"
+run_sql "CREATE PLACEMENT POLICY fivereplicas WITH REPLICAS=5;"
 run_sql "create placement policy tworeplicas followers=1;"
 run_sql "create placement policy foureplicas followers=3;"
 
