@@ -44,7 +44,7 @@ func TestIssue54803(t *testing.T) {
 		"  └─HashAgg 8.00 root  group by:test.t1db47fc1.col_68, funcs:firstrow(test.t1db47fc1.col_68)->test.t1db47fc1.col_68",
 		"    └─TableReader 10.00 root partition:p0 data:Selection",
 		"      └─Selection 10.00 cop[tikv]  isnull(test.t1db47fc1.col_68), or(isnull(test.t1db47fc1.col_68), in(test.t1db47fc1.col_68, 62, 200, 196, 99))",
-		"        └─TableFullScan 10000.00 cop[tikv] table:t1db47fc1 keep order:false, stats:pseudo"))
+		"        └─TableFullScan 10000.00 cop[tikv] table:t1db47fc1, partition:p0 keep order:false, stats:pseudo"))
 	// Issue55299
 	tk.MustExec(`
 CREATE TABLE tcd8c2aac (
