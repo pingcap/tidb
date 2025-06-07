@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -181,13 +180,6 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return nil, nil, 0, err
 	}
 
-	if cacheable && destBuilder.optFlag&rule.FlagPartitionProcessor > 0 {
-		// dynamic prune mode is not used, could be that global statistics not yet available!
-		cacheable = false
-		reason = "static partition prune mode used"
-		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("skip prepared plan-cache: " + reason))
-	}
-
 	// Collect information for metadata lock.
 	dbName := make([]ast.CIStr, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
 	tbls := make([]table.Table, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
@@ -207,7 +199,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		tbls = append(tbls, tbl)
 		relateVersion[id] = tbl.Meta().Revision
 	}
-
+	sctx.GetSessionVars().StmtCtx.StmtCacheable = cacheable
 	preparedObj := &PlanCacheStmt{
 		PreparedAst:         prepared,
 		ResolveCtx:          nodeW.GetResolveContext(),

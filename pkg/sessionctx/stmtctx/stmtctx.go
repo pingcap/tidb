@@ -356,7 +356,8 @@ type StatementContext struct {
 	// stmtCache is used to store some statement-related values.
 	// add mutex to protect stmtCache concurrent access
 	// https://github.com/pingcap/tidb/issues/36159
-	stmtCache *stmtCache
+	stmtCache     *stmtCache
+	StmtCacheable bool
 
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.

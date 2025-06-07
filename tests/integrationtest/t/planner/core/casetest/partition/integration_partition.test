@@ -131,6 +131,7 @@ insert into tto_seconds values ('2019-12-31 12:00:00', '2019-12-31 23:59:59'), (
 select * from tto_seconds;
 --sorted_result
 select * from tto_seconds partition(p0);
+set @@tidb_partition_prune_mode = 'dynamic';
 
 # TestEstimationForTopNPushToDynamicPartition
 set tidb_cost_model_version=2;
