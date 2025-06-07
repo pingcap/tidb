@@ -1230,6 +1230,7 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		se.sessionVars.CostModelVersion = vardef.DefTiDBCostModelVer
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		// Internal session uses default format to prevent memory leak problem.
@@ -1260,6 +1261,7 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		se.sessionVars.CostModelVersion = vardef.DefTiDBCostModelVer
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		// Internal session uses default format to prevent memory leak problem.
@@ -1559,7 +1561,6 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) 
 		// Restore the goroutine label by using the original ctx after execution is finished.
 		pprof.SetGoroutineLabels(ctx)
 	}()
-
 	r, ctx := tracing.StartRegionEx(ctx, "session.ExecuteInternal")
 	defer r.End()
 	logutil.Eventf(ctx, "execute: %s", sql)
