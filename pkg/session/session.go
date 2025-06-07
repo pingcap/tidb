@@ -1646,6 +1646,13 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 // ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
 // Note that it will not do escaping if no variable arguments are passed.
 func (s *session) ParseWithParams(ctx context.Context, sql string, args ...any) (ast.StmtNode, error) {
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		if dur > 100*time.Millisecond {
+			fmt.Println("ParseWithParams slow: ", time.Since(start))
+		}
+	}()
 	var err error
 	if len(args) > 0 {
 		sql, err = sqlescape.EscapeSQL(sql, args...)
