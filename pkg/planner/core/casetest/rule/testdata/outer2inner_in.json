@@ -64,7 +64,13 @@
       "select * from (select null as c1 ) as t1 right outer join (select null as c2) as t2 on null",
       "select * from (select null as c1 ) as t1 right outer join (select null as c2) as t2 on 1 where t2.c2 != null;",
       "select * from (select null as c1 ) as t1 right outer join (select null as c2) as t2 on 0 where t2.c2 != null;",
-      "select * from (select null as c1 ) as t1 right outer join (select null as c2) as t2 on null where t2.c2 != null;"
+      "select * from (select null as c1 ) as t1 right outer join (select null as c2) as t2 on null where t2.c2 != null;",
+      "select * from (select null as c1 ) as t1 left outer join (select null as c2) as t2 on 1",
+      "select * from (select null as c1 ) as t1 left outer join (select null as c2) as t2 on 0",
+      "select * from (select null as c1 ) as t1 left outer join (select null as c2) as t2 on null",
+      "select * from (select null as c1 ) as t1 left outer join (select null as c2) as t2 on 1 where t2.c2 != null;",
+      "select * from (select null as c1 ) as t1 left outer join (select null as c2) as t2 on 0 where t2.c2 != null;",
+      "select * from (select null as c1 ) as t1 left outer join (select null as c2) as t2 on null where t2.c2 != null;"
     ]
   }
 ]

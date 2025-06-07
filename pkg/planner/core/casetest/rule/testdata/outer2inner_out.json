@@ -731,6 +731,64 @@
           "TableDual 0.00 root  rows:0"
         ],
         "Result": null
+      },
+      {
+        "SQL": "select * from (select null as c1 ) as t1 left outer join (select null as c2) as t2 on 1",
+        "Plan": [
+          "HashJoin 1.00 root  CARTESIAN left outer join, left side:Projection",
+          "├─Projection(Build) 1.00 root  <nil>->Column#2",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection(Probe) 1.00 root  <nil>->Column#1",
+          "  └─TableDual 1.00 root  rows:1"
+        ],
+        "Result": [
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "SQL": "select * from (select null as c1 ) as t1 left outer join (select null as c2) as t2 on 0",
+        "Plan": [
+          "HashJoin 1.00 root  CARTESIAN left outer join, left side:Projection",
+          "├─TableDual(Build) 0.00 root  rows:0",
+          "└─Projection(Probe) 1.00 root  <nil>->Column#1",
+          "  └─TableDual 1.00 root  rows:1"
+        ],
+        "Result": [
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "SQL": "select * from (select null as c1 ) as t1 left outer join (select null as c2) as t2 on null",
+        "Plan": [
+          "HashJoin 1.00 root  CARTESIAN left outer join, left side:Projection",
+          "├─TableDual(Build) 0.00 root  rows:0",
+          "└─Projection(Probe) 1.00 root  <nil>->Column#1",
+          "  └─TableDual 1.00 root  rows:1"
+        ],
+        "Result": [
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "SQL": "select * from (select null as c1 ) as t1 left outer join (select null as c2) as t2 on 1 where t2.c2 != null;",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from (select null as c1 ) as t1 left outer join (select null as c2) as t2 on 0 where t2.c2 != null;",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from (select null as c1 ) as t1 left outer join (select null as c2) as t2 on null where t2.c2 != null;",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
       }
     ]
   }
