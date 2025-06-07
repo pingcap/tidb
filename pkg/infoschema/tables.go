@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -1981,9 +1982,24 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		//Limit concurrency to number of CPU cores
+		concurrencyLimit := runtime.GOMAXPROCS(0)
+		sem := make(chan struct{}, concurrencyLimit)
+
+		//concurrently resolve addresses
+		var wg sync.WaitGroup
 		for i := range nodes {
-			nodes[i].ResolveLoopBackAddr()
+			wg.Add(1)
+			node := &nodes[i] //copy pointer for goroutine
+			sem <- struct{}{} //acquire slot
+			go func(n *ServerInfo) {
+				defer wg.Done()
+				defer func() { <-sem }() //release slot
+				n.ResolveLoopBackAddr()
+			}(node)
 		}
+		wg.Wait()
 		servers = append(servers, nodes...)
 	}
 	return servers, nil
