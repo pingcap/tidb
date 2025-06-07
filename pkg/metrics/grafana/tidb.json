@@ -13877,7 +13877,12 @@
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
-          "seriesOverrides": [],
+          "seriesOverrides": [
+            {
+              "alias": "/table_id.*/",
+              "yaxis": 2
+            }
+          ],
           "spaceLength": 10,
           "stack": false,
           "steppedLine": false,
@@ -13895,6 +13900,33 @@
               "intervalFactor": 1,
               "legendFormat": "{{instance}}-{{type}}",
               "refId": "B"
+            },
+            {
+              "exemplar": false,
+              "expr": "sum by (table_id) (tidb_ddl_temp_index_op_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"single_write\"})",
+              "instant": false,
+              "interval": "",
+              "legendFormat": "write-table_id_{{table_id}}",
+              "range": true,
+              "refId": "C"
+            },
+            {
+              "expr": "tidb_ddl_temp_index_op_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"merge\"}",
+              "legendFormat": "{{instance}}-merged-table_id_{{table_id}}",
+              "range": true,
+              "refId": "D"
+            },
+            {
+              "expr": "tidb_ddl_temp_index_op_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"scan\"}",
+              "legendFormat": "{{instance}}-scanned-table_id_{{table_id}}",
+              "range": true,
+              "refId": "E"
+            },
+            {
+              "expr": "sum by (table_id) (tidb_ddl_temp_index_op_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"double_write\"})",
+              "legendFormat": "double-write-table_id_{{table_id}}",
+              "range": true,
+              "refId": "F"
             }
           ],
           "thresholds": [],
@@ -13917,10 +13949,10 @@
           },
           "yaxes": [
             {
-              "format": "short",
+              "format": "percent",
               "label": null,
               "logBase": 1,
-              "max": null,
+              "max": "100",
               "min": "0",
               "show": true
             },
@@ -13928,8 +13960,7 @@
               "format": "short",
               "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
+              "min": "0",
               "show": true
             }
           ],
