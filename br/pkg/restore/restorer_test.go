@@ -148,19 +148,20 @@ func TestMultiTablesRestorerRestoreSuccess(t *testing.T) {
 
 	var progress int64
 	fileSets := createSampleBatchFileSets()
+	fileSets2 := createSampleBatchFileSets()
 
 	var mu sync.Mutex
 	restorer.GoRestore(func(p int64) {
 		mu.Lock()
 		progress += p
 		mu.Unlock()
-	}, fileSets)
+	}, fileSets, fileSets2)
 	err := restorer.WaitUntilFinish()
 	require.NoError(t, err)
 
 	// Ensure progress was tracked correctly
 	require.Equal(t, int64(2), progress) // Total files group: 2
-	require.Equal(t, 1, importer.unblockCount)
+	require.Equal(t, 2, importer.unblockCount)
 }
 
 func TestMultiTablesRestorerRestoreWithImportError(t *testing.T) {

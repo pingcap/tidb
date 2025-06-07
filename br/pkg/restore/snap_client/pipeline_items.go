@@ -19,18 +19,20 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pdhttp "github.com/tikv/pd/client/http"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -41,31 +43,142 @@ const defaultChannelSize = 1024
 // checksum tasks.
 const defaultChecksumConcurrency = 64
 
-// CreatedTable is a table created on restore process,
-// but not yet filled with data.
-type CreatedTable struct {
-	RewriteRule *restoreutils.RewriteRules
-	Table       *model.TableInfo
-	OldTable    *metautil.Table
-}
-
 type PhysicalTable struct {
 	NewPhysicalID int64
 	OldPhysicalID int64
 	RewriteRules  *restoreutils.RewriteRules
+	Files         []*backuppb.File
 }
 
-func defaultOutputTableChan() chan *CreatedTable {
-	return make(chan *CreatedTable, defaultChannelSize)
+func defaultOutputTableChan() chan *restoreutils.CreatedTable {
+	return make(chan *restoreutils.CreatedTable, defaultChannelSize)
+}
+
+// ExhaustErrors drains all remaining errors in the channel, into a slice of errors.
+func ExhaustErrors(ec <-chan error) []error {
+	out := make([]error, 0, len(ec))
+	for {
+		select {
+		case err := <-ec:
+			out = append(out, err)
+		default:
+			// errCh will NEVER be closed(ya see, it has multi sender-part),
+			// so we just consume the current backlog of this channel, then return.
+			return out
+		}
+	}
+}
+
+type PipelineContext struct {
+	// pipeline item switch
+	Checksum         bool
+	LoadStats        bool
+	WaitTiflashReady bool
+
+	// pipeline item configuration
+	LogProgress         bool
+	ChecksumConcurrency uint
+	StatsConcurrency    uint
+
+	// pipeline item tool client
+	KvClient   kv.Client
+	ExtStorage storage.ExternalStorage
+	Glue       glue.Glue
+}
+
+// RestorePipeline does checksum, load stats and wait for tiflash to be ready.
+func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext, createdTables []*restoreutils.CreatedTable) (err error) {
+	start := time.Now()
+	defer func() {
+		summary.CollectDuration("restore pipeline", time.Since(start))
+	}()
+	// We make bigger errCh so we won't block on multi-part failed.
+	errCh := make(chan error, 32)
+	postHandleCh := afterTableRestoredCh(ctx, createdTables)
+	progressLen := int64(0)
+	if plCtx.Checksum {
+		progressLen += int64(len(createdTables))
+	}
+	progressLen += int64(len(createdTables)) // for pipeline item - update stats meta
+	if plCtx.WaitTiflashReady {
+		progressLen += int64(len(createdTables))
+	}
+
+	// Redirect to log if there is no log file to avoid unreadable output.
+	updateCh := plCtx.Glue.StartProgress(ctx, "Restore Pipeline", progressLen, !plCtx.LogProgress)
+	defer updateCh.Close()
+	// pipeline checksum
+	if plCtx.Checksum {
+		postHandleCh = rc.GoValidateChecksum(ctx, postHandleCh, plCtx.KvClient, errCh, updateCh, plCtx.ChecksumConcurrency)
+	}
+
+	// pipeline update meta and load stats
+	postHandleCh = rc.GoUpdateMetaAndLoadStats(ctx, plCtx.ExtStorage, postHandleCh, errCh, updateCh, plCtx.StatsConcurrency, plCtx.LoadStats)
+
+	// pipeline wait Tiflash synced
+	if plCtx.WaitTiflashReady {
+		postHandleCh = rc.GoWaitTiFlashReady(ctx, postHandleCh, updateCh, errCh)
+	}
+
+	finish := dropToBlackhole(ctx, postHandleCh, errCh)
+
+	select {
+	case err = <-errCh:
+		err = multierr.Append(err, multierr.Combine(ExhaustErrors(errCh)...))
+	case <-finish:
+	}
+
+	return errors.Trace(err)
+}
+
+func afterTableRestoredCh(ctx context.Context, createdTables []*restoreutils.CreatedTable) <-chan *restoreutils.CreatedTable {
+	outCh := make(chan *restoreutils.CreatedTable)
+
+	go func() {
+		defer close(outCh)
+
+		for _, createdTable := range createdTables {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				outCh <- createdTable
+			}
+		}
+	}()
+	return outCh
+}
+
+// dropToBlackhole drop all incoming tables into black hole,
+// i.e. don't execute checksum, just increase the process anyhow.
+func dropToBlackhole(ctx context.Context, inCh <-chan *restoreutils.CreatedTable, errCh chan<- error) <-chan struct{} {
+	outCh := make(chan struct{}, 1)
+	go func() {
+		defer func() {
+			close(outCh)
+		}()
+		for {
+			select {
+			case <-ctx.Done():
+				errCh <- ctx.Err()
+				return
+			case _, ok := <-inCh:
+				if !ok {
+					return
+				}
+			}
+		}
+	}()
+	return outCh
 }
 
 func concurrentHandleTablesCh(
 	ctx context.Context,
-	inCh <-chan *CreatedTable,
-	outCh chan<- *CreatedTable,
+	inCh <-chan *restoreutils.CreatedTable,
+	outCh chan<- *restoreutils.CreatedTable,
 	errCh chan<- error,
 	workers *tidbutil.WorkerPool,
-	processFun func(context.Context, *CreatedTable) error,
+	processFun func(context.Context, *restoreutils.CreatedTable) error,
 	deferFun func()) {
 	eg, ectx := errgroup.WithContext(ctx)
 	defer func() {
@@ -104,21 +217,16 @@ func concurrentHandleTablesCh(
 // it returns a channel fires a struct{} when all things get done.
 func (rc *SnapClient) GoValidateChecksum(
 	ctx context.Context,
-	inCh <-chan *CreatedTable,
+	inCh <-chan *restoreutils.CreatedTable,
 	kvClient kv.Client,
 	errCh chan<- error,
 	updateCh glue.Progress,
 	concurrency uint,
-) chan *CreatedTable {
+) chan *restoreutils.CreatedTable {
 	log.Info("Start to validate checksum")
 	outCh := defaultOutputTableChan()
 	workers := tidbutil.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
-	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
-		start := time.Now()
-		defer func() {
-			elapsed := time.Since(start)
-			summary.CollectSuccessUnit("table checksum", 1, elapsed)
-		}()
+	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *restoreutils.CreatedTable) error {
 		err := rc.execAndValidateChecksum(c, tbl, kvClient, concurrency)
 		if err != nil {
 			return errors.Trace(err)
@@ -134,17 +242,18 @@ func (rc *SnapClient) GoValidateChecksum(
 func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 	ctx context.Context,
 	s storage.ExternalStorage,
-	inCh <-chan *CreatedTable,
+	inCh <-chan *restoreutils.CreatedTable,
 	errCh chan<- error,
+	updateCh glue.Progress,
 	statsConcurrency uint,
 	loadStats bool,
-) chan *CreatedTable {
+) chan *restoreutils.CreatedTable {
 	log.Info("Start to update meta then load stats")
 	outCh := defaultOutputTableChan()
 	workers := tidbutil.NewWorkerPool(statsConcurrency, "UpdateStats")
 	statsHandler := rc.dom.StatsHandle()
 
-	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *restoreutils.CreatedTable) error {
 		oldTable := tbl.OldTable
 		var statsErr error = nil
 		if loadStats && oldTable.Stats != nil {
@@ -180,12 +289,41 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 		if statsErr != nil || !loadStats || (oldTable.Stats == nil && len(oldTable.StatsFileIndexes) == 0) {
 			// Not need to return err when failed because of update analysis-meta
 			log.Info("start update metas", zap.Stringer("table", oldTable.Info.Name), zap.Stringer("db", oldTable.DB.Name))
+			// get the the number of rows of each partition
+			if tbl.OldTable.Info.Partition != nil {
+				for _, oldDef := range tbl.OldTable.Info.Partition.Definitions {
+					files := tbl.OldTable.FilesOfPhysicals[oldDef.ID]
+					if len(files) > 0 {
+						totalKvs := uint64(0)
+						for _, file := range files {
+							totalKvs += file.TotalKvs
+						}
+						// the total kvs contains the index kvs, but the stats meta needs the count of rows
+						count := int64(totalKvs / uint64(len(oldTable.Info.Indices)+1))
+						newDefID, err := utils.GetPartitionByName(tbl.Table, oldDef.Name)
+						if err != nil {
+							log.Error("failed to get the partition by name",
+								zap.String("db name", tbl.OldTable.DB.Name.O),
+								zap.String("table name", tbl.Table.Name.O),
+								zap.String("partition name", oldDef.Name.O),
+								zap.Int64("downstream table id", tbl.Table.ID),
+								zap.Int64("upstream partition id", oldDef.ID),
+							)
+							return errors.Trace(err)
+						}
+						if statsErr = statsHandler.SaveMetaToStorage(newDefID, count, 0, "br restore"); statsErr != nil {
+							log.Error("update stats meta failed", zap.Int64("downstream table id", tbl.Table.ID), zap.Int64("downstream partition id", newDefID), zap.Error(statsErr))
+						}
+					}
+				}
+			}
 			// the total kvs contains the index kvs, but the stats meta needs the count of rows
 			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
 			if statsErr = statsHandler.SaveMetaToStorage(tbl.Table.ID, count, 0, "br restore"); statsErr != nil {
-				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(statsErr))
+				log.Error("update stats meta failed", zap.Int64("downstream table id", tbl.Table.ID), zap.Error(statsErr))
 			}
 		}
+		updateCh.Inc()
 		return nil
 	}, func() {
 		log.Info("all stats updated")
@@ -195,10 +333,10 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 
 func (rc *SnapClient) GoWaitTiFlashReady(
 	ctx context.Context,
-	inCh <-chan *CreatedTable,
+	inCh <-chan *restoreutils.CreatedTable,
 	updateCh glue.Progress,
 	errCh chan<- error,
-) chan *CreatedTable {
+) chan *restoreutils.CreatedTable {
 	log.Info("Start to wait tiflash replica sync")
 	outCh := defaultOutputTableChan()
 	workers := tidbutil.NewWorkerPool(4, "WaitForTiflashReady")
@@ -213,7 +351,7 @@ func (rc *SnapClient) GoWaitTiFlashReady(
 			tiFlashStores[store.Store.ID] = store
 		}
 	}
-	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *restoreutils.CreatedTable) error {
 		if tbl.Table != nil && tbl.Table.TiFlashReplica == nil {
 			log.Info("table has no tiflash replica",
 				zap.Stringer("table", tbl.OldTable.Info.Name),
