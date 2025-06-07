@@ -645,5 +645,93 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestNullRejected",
+    "Cases": [
+      {
+        "SQL": "SELECT subq_0.c_0 AS c_0, subq_0.c_1 AS c_1, subq_0.c_2 AS c_2 FROM (SELECT ref_1.c0 AS c_0, ref_0.c2 AS c_1, ref_0.c2 AS c_2 FROM t1 AS ref_0 RIGHT JOIN t0 AS ref_1 ON ref_0.c1 = ref_1.c0) AS subq_0 WHERE ((('' = (SELECT ' n1' AS c_0 FROM t2 AS ref_3 LEFT JOIN t2 AS ref_4 ON ref_3.c4 = ref_4.c3 WHERE (subq_0.c_1 <> subq_0.c_2) OR (true) ORDER BY c_0 DESC LIMIT 1)) IS NULL));",
+        "Plan": [
+          "Projection 9990.00 root  test.t0.c0, test.t1.c2, test.t1.c2",
+          "└─Selection 9990.00 root  isnull(eq(\"\", Column#12))",
+          "  └─Apply 12487.50 root  CARTESIAN left outer join, left side:HashJoin",
+          "    ├─HashJoin(Build) 12487.50 root  right outer join, left side:TableReader, equal:[eq(test.t1.c1, test.t0.c0)]",
+          "    │ ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ │ └─TableFullScan 10000.00 cop[tikv] table:ref_1 keep order:false, stats:pseudo",
+          "    │ └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.c1))",
+          "    │     └─TableFullScan 10000.00 cop[tikv] table:ref_0 keep order:false, stats:pseudo",
+          "    └─Projection(Probe) 12487.50 root   n1->Column#12",
+          "      └─Limit 12487.50 root  offset:0, count:1",
+          "        └─HashJoin 12487.50 root  left outer join, left side:Limit, equal:[eq(test.t2.c4, test.t2.c3)]",
+          "          ├─Limit(Build) 12487.50 root  offset:0, count:1",
+          "          │ └─TableReader 12487.50 root  data:Limit",
+          "          │   └─Limit 12487.50 cop[tikv]  offset:0, count:1",
+          "          │     └─TableFullScan 12487.50 cop[tikv] table:ref_3 keep order:false, stats:pseudo",
+          "          └─TableReader(Probe) 124750125.00 root  data:Selection",
+          "            └─Selection 124750125.00 cop[tikv]  not(isnull(test.t2.c3))",
+          "              └─TableFullScan 124875000.00 cop[tikv] table:ref_4 keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from (select null as c1 ) as t1 right outer join (select null as c2) as t2 on 1",
+        "Plan": [
+          "HashJoin 1.00 root  CARTESIAN right outer join, left side:Projection",
+          "├─Projection(Build) 1.00 root  <nil>->Column#2",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection(Probe) 1.00 root  <nil>->Column#1",
+          "  └─TableDual 1.00 root  rows:1"
+        ],
+        "Result": [
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "SQL": "select * from (select null as c1 ) as t1 right outer join (select null as c2) as t2 on 0",
+        "Plan": [
+          "HashJoin 1.00 root  CARTESIAN right outer join, left side:TableDual",
+          "├─Projection(Build) 1.00 root  <nil>->Column#2",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─TableDual(Probe) 0.00 root  rows:0"
+        ],
+        "Result": [
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "SQL": "select * from (select null as c1 ) as t1 right outer join (select null as c2) as t2 on null",
+        "Plan": [
+          "HashJoin 1.00 root  CARTESIAN right outer join, left side:TableDual",
+          "├─Projection(Build) 1.00 root  <nil>->Column#2",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─TableDual(Probe) 0.00 root  rows:0"
+        ],
+        "Result": [
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "SQL": "select * from (select null as c1 ) as t1 right outer join (select null as c2) as t2 on 1 where t2.c2 != null;",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from (select null as c1 ) as t1 right outer join (select null as c2) as t2 on 0 where t2.c2 != null;",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from (select null as c1 ) as t1 right outer join (select null as c2) as t2 on null where t2.c2 != null;",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      }
+    ]
   }
 ]

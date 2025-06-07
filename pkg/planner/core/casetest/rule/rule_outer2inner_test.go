@@ -97,51 +97,23 @@ func TestNullRejected(t *testing.T) {
 	tk.MustExec("INSERT INTO `t1` VALUES (NULL,0);")
 	tk.MustExec(`CREATE TABLE t2 (c3 varchar(100),c4 varchar(100)) ;`)
 	tk.MustExec(`INSERT INTO t2 VALUES (NULL,NULL);`)
-	sql := `select  
-  subq_0.c_0 as c_0, 
-  subq_0.c_1 as c_1, 
-  subq_0.c_2 as c_2
-from 
-  (select  
-        ref_1.c0 as c_0, 
-        ref_0.c2 as c_1,  
-        ref_0.c2 as c_2
-      from 
-        (t1 as ref_0
-          right join (t0 as ref_1
-            )
-          on (ref_0.c1 = ref_1.c0 ))
-       ) as subq_0
-where ((('' = ( 
-      select  
-          (' n1')  as c_0
-        from 
-          (t2 as ref_3
-            left join t2 as ref_4
-            on (ref_3.c4 = ref_4.c3 ))
-        where ((subq_0.c_1) <> (subq_0.c_2)) 
-          or (true)
-        order by c_0 desc
-         limit 1)) is null)) `
-	tk.MustQuery(`explain format='brief' ` + sql).Check(testkit.Rows(
-		"Projection 9990.00 root  test.t0.c0, test.t1.c2, test.t1.c2",
-		`└─Selection 9990.00 root  isnull(eq("", Column#12))`,
-		"  └─Apply 12487.50 root  CARTESIAN left outer join, left side:HashJoin",
-		"    ├─HashJoin(Build) 12487.50 root  right outer join, left side:TableReader, equal:[eq(test.t1.c1, test.t0.c0)]",
-		"    │ ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-		"    │ │ └─TableFullScan 10000.00 cop[tikv] table:ref_1 keep order:false, stats:pseudo",
-		"    │ └─TableReader(Probe) 9990.00 root  data:Selection",
-		"    │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.c1))",
-		"    │     └─TableFullScan 10000.00 cop[tikv] table:ref_0 keep order:false, stats:pseudo",
-		"    └─Projection(Probe) 12487.50 root   n1->Column#12",
-		"      └─Limit 12487.50 root  offset:0, count:1",
-		"        └─HashJoin 12487.50 root  left outer join, left side:Limit, equal:[eq(test.t2.c4, test.t2.c3)]",
-		"          ├─Limit(Build) 12487.50 root  offset:0, count:1",
-		"          │ └─TableReader 12487.50 root  data:Limit",
-		"          │   └─Limit 12487.50 cop[tikv]  offset:0, count:1",
-		"          │     └─TableFullScan 12487.50 cop[tikv] table:ref_3 keep order:false, stats:pseudo",
-		"          └─TableReader(Probe) 124750125.00 root  data:Selection",
-		"            └─Selection 124750125.00 cop[tikv]  not(isnull(test.t2.c3))",
-		"              └─TableFullScan 124875000.00 cop[tikv] table:ref_4 keep order:false, stats:pseudo"))
-	tk.MustQuery(sql).Check(testkit.Rows())
+	var input Input
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	suiteData := GetOuter2InnerSuiteData()
+	suiteData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		plan := tk.MustQuery("explain format = 'brief' " + sql)
+		testdata.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			result := tk.MustQuery(sql)
+			output[i].Result = testdata.ConvertRowsToStrings(result.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+	}
 }
