@@ -5012,9 +5012,26 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 		return nil, err
 	}
 
+<<<<<<< HEAD
 	targetPlan, _, err := OptimizeAstNode(ctx, sctx, explain.Stmt, b.is)
 	if err != nil {
 		return nil, err
+=======
+	var targetPlan base.Plan
+	if explain.Stmt != nil && !explain.Explore {
+		if strings.EqualFold(explain.Format, types.ExplainFormatCostTrace) {
+			origin := sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace
+			sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+			defer func() {
+				sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = origin
+			}()
+		}
+		nodeW := resolve.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
+		targetPlan, _, err = OptimizeAstNode(ctx, sctx, nodeW, b.is)
+		if err != nil {
+			return nil, err
+		}
+>>>>>>> e3478a5c15e (planner: fix get wrong cost with cost tracer (#61196))
 	}
 
 	return b.buildExplainPlan(targetPlan, explain.Format, nil, explain.Analyze, explain.Stmt, nil)
