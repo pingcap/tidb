@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
-	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // allConstants checks if only the expression has only constants.
@@ -110,6 +109,11 @@ func isNullRejectedInternal(ctx base.PlanContext, innerSchema *expression.Schema
 		}
 		return isNullRejectedSimpleExpr(ctx, innerSchema, expr, skipPlanCacheCheck)
 	case *expression.Constant:
+		if expr.Value.IsNull() {
+			return true
+		} else if isTrue, err := expr.Value.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtxOrDefault()); err == nil && isTrue == 0 {
+			return true
+		}
 		return false
 	default:
 		return isNullRejectedSimpleExpr(ctx, innerSchema, predicate, skipPlanCacheCheck)
@@ -122,10 +126,6 @@ func isNullRejectedInternal(ctx base.PlanContext, innerSchema *expression.Schema
 // to UNKNOWN or FALSE when one of its arguments is NULL.
 func isNullRejectedSimpleExpr(ctx planctx.PlanContext, schema *expression.Schema, expr expression.Expression,
 	skipPlanCacheCheck bool) bool {
-	intest.AssertFunc(func() bool {
-		_, ok := expr.(*expression.Constant)
-		return !ok
-	}, "isNullRejectedSimpleExpr should not be called with a constant expression")
 	// The expression should reference at least one field in innerSchema or all constants.
 	if !expression.ExprReferenceSchema(expr, schema) && !allConstants(ctx.GetExprCtx(), expr) {
 		return false
