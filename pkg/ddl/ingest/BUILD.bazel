@@ -67,7 +67,11 @@ go_test(
     embed = [":ingest"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 18,
+=======
+    shard_count = 25,
+>>>>>>> a5f888b2cc3 (ddl: fix cancelling stuck issue during adding index (#61544))
     deps = [
         "//pkg/config",
         "//pkg/ddl",

@@ -229,6 +229,36 @@ func (c *testCallback) OnJobRunBefore(job *model.Job) {
 	}
 }
 
+func TestAddIndexGetChunkCancel(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := range 100 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
+	}
+	tk.MustExec("split table t between (0) and (1000000) regions 10;")
+	jobID := int64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if jobID == 0 && job.Type == model.ActionAddIndex {
+			jobID = job.ID
+		}
+	})
+	cancelled := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeGetChunk", func() {
+		if !cancelled {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", jobID))
+			cancelled = true
+		}
+	})
+	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrCancelledDDLJob)
+	require.True(t, cancelled)
+	tk.MustExec("admin check table t;")
+}
+
 func TestIngestPartitionRowCount(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
