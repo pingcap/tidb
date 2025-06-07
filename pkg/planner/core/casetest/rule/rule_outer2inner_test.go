@@ -85,7 +85,7 @@ func TestOuter2InnerIssue55886(t *testing.T) {
 	}
 }
 
-func TestNullRejected(t *testing.T) {
+func TestJoinNullRejected(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// https://github.com/pingcap/tidb/issues/60080
