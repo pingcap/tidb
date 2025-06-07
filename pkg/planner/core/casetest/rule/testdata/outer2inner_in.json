@@ -56,7 +56,7 @@
     ]
   },
   {
-    "name": "TestNullRejected",
+    "name": "TestJoinNullRejected",
     "cases": [
       "SELECT subq_0.c_0 AS c_0, subq_0.c_1 AS c_1, subq_0.c_2 AS c_2 FROM (SELECT ref_1.c0 AS c_0, ref_0.c2 AS c_1, ref_0.c2 AS c_2 FROM t1 AS ref_0 RIGHT JOIN t0 AS ref_1 ON ref_0.c1 = ref_1.c0) AS subq_0 WHERE ((('' = (SELECT ' n1' AS c_0 FROM t2 AS ref_3 LEFT JOIN t2 AS ref_4 ON ref_3.c4 = ref_4.c3 WHERE (subq_0.c_1 <> subq_0.c_2) OR (true) ORDER BY c_0 DESC LIMIT 1)) IS NULL));",
       "select * from (select null as c1 ) as t1 right outer join (select null as c2) as t2 on 1",
