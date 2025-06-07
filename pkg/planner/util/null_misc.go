@@ -111,7 +111,8 @@ func isNullRejectedInternal(ctx base.PlanContext, innerSchema *expression.Schema
 	case *expression.Constant:
 		if expr.Value.IsNull() {
 			return true
-		} else if isTrue, err := expr.Value.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtxOrDefault()); err == nil && isTrue == 0 {
+		} else if isTrue, err := expr.Value.ToBool(
+			ctx.GetSessionVars().StmtCtx.TypeCtxOrDefault()); err == nil && isTrue == 0 {
 			return true
 		}
 		return false
