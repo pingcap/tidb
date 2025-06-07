@@ -3556,9 +3556,11 @@ HashJoin	159.84	root		inner join, equal:[eq(planner__core__casetest__physicalpla
   │     └─HashAgg(Probe)	200.00	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.tc.name, funcs:max(planner__core__casetest__physicalplantest__physical_plan.tc.id)->Column#40
   │       └─TableRowIDScan	250.00	cop[tikv]	table:tc	keep order:false, stats:pseudo
   └─HashJoin(Probe)	7976.02	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.code, planner__core__casetest__physicalplantest__physical_plan.tb.code)]
-    ├─TableReader(Build)	249.75	root		data:Selection
-    │ └─Selection	249.75	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tb.name, "chad9%", 92), not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.code))
-    │   └─TableFullScan	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
+    ├─IndexLookUp(Build)	249.75	root		
+    │ ├─Selection(Build)	249.75	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tb.name, "chad9%", 92)
+    │ │ └─IndexRangeScan	250.00	cop[tikv]	table:tb, index:idx_tb_name(name)	range:["chad9","chad:"), keep order:false, stats:pseudo
+    │ └─Selection(Probe)	249.75	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.code))
+    │   └─TableRowIDScan	249.75	cop[tikv]	table:tb	keep order:false, stats:pseudo
     └─TableReader(Probe)	9970.03	root		data:Selection
       └─Selection	9970.03	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.ta.code)), not(isnull(planner__core__casetest__physicalplantest__physical_plan.ta.id)), not(isnull(planner__core__casetest__physicalplantest__physical_plan.ta.name))
         └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
@@ -3573,9 +3575,11 @@ Projection	249.75	root		planner__core__casetest__physicalplantest__physical_plan
   ├─Apply(Build)	249.75	root		CARTESIAN inner join
   │ ├─IndexHashJoin(Build)	249.75	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__physicalplantest__physical_plan.tb.code, inner key:planner__core__casetest__physicalplantest__physical_plan.ta.code, equal cond:eq(planner__core__casetest__physicalplantest__physical_plan.tb.code, planner__core__casetest__physicalplantest__physical_plan.ta.code)
   │ │ ├─HashAgg(Build)	199.80	root		group by:planner__core__casetest__physicalplantest__physical_plan.tb.code, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.tb.code)->planner__core__casetest__physicalplantest__physical_plan.tb.code
-  │ │ │ └─TableReader	249.75	root		data:Selection
-  │ │ │   └─Selection	249.75	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tb.name, "chad9%", 92), not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.code))
-  │ │ │     └─TableFullScan	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
+  │ │ │ └─IndexLookUp	249.75	root		
+  │ │ │   ├─Selection(Build)	249.75	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tb.name, "chad9%", 92)
+  │ │ │   │ └─IndexRangeScan	250.00	cop[tikv]	table:tb, index:idx_tb_name(name)	range:["chad9","chad:"), keep order:false, stats:pseudo
+  │ │ │   └─Selection(Probe)	249.75	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.code))
+  │ │ │     └─TableRowIDScan	249.75	cop[tikv]	table:tb	keep order:false, stats:pseudo
   │ │ └─IndexLookUp(Probe)	249.75	root		
   │ │   ├─Selection(Build)	249.75	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.ta.code))
   │ │   │ └─IndexRangeScan	250.00	cop[tikv]	table:ta, index:idx_ta_code(code)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.ta.code, planner__core__casetest__physicalplantest__physical_plan.tb.code)], keep order:false, stats:pseudo
