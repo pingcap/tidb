@@ -133,7 +133,7 @@ var (
 
 // InitializeGlobalMaxBatchSplitRanges loads the maxBatchSplitRanges value using meta.Meta or sets a default.
 func InitializeGlobalMaxBatchSplitRanges(m *meta.Mutator) error {
-	valInt, isNull, err := m.GetLightningMaxBatchSplitRanges()
+	valInt, isNull, err := m.GetIngestMaxBatchSplitRanges()
 	if err != nil {
 		return errors.Annotate(err, "failed to read maxBatchSplitRanges from meta store")
 	}

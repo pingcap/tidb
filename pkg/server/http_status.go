@@ -262,8 +262,8 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for upgrade operations.
 	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
 
-	// HTTP path for lightning configurations
-	router.Handle("/lightning/max-batch-split-ranges", tikvhandler.NewLightningMaxBatchSplitRangesHandler(tikvHandlerTool)).Name("LightningMaxBatchSplitRanges")
+	// HTTP path for ingest configurations
+	router.Handle("/ingest/max-batch-split-ranges", tikvhandler.NewIngestMaxBatchSplitRangesHandler(tikvHandlerTool)).Name("IngestMaxBatchSplitRanges")
 
 	if s.cfg.Store == config.StoreTypeTiKV {
 		// HTTP path for tikv.

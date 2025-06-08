@@ -98,7 +98,7 @@ var (
 	mSchemaCacheSize     = []byte("SchemaCacheSize")
 	mRequestUnitStats    = []byte("RequestUnitStats")
 
-	mLightningMaxBatchSplitRangesKey = []byte("LightningMaxBatchSplitRanges")
+	mIngestMaxBatchSplitRangesKey = []byte("IngestMaxBatchSplitRanges")
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
 	defaultGroupID = int64(1)
@@ -1876,14 +1876,14 @@ func (m *Mutator) SetRUStats(stats *RUStats) error {
 	return errors.Trace(err)
 }
 
-// SetLightningMaxBatchSplitRanges sets the lightning max_batch_split_ranges.
-func (m *Mutator) SetLightningMaxBatchSplitRanges(val int) error {
-	return errors.Trace(m.txn.Set(mLightningMaxBatchSplitRangesKey, []byte(strconv.Itoa(val))))
+// SetIngestMaxBatchSplitRanges sets the ingest max_batch_split_ranges.
+func (m *Mutator) SetIngestMaxBatchSplitRanges(val int) error {
+	return errors.Trace(m.txn.Set(mIngestMaxBatchSplitRangesKey, []byte(strconv.Itoa(val))))
 }
 
-// GetLightningMaxBatchSplitRanges gets the lightning max_batch_split_ranges.
-func (m *Mutator) GetLightningMaxBatchSplitRanges() (val int, isNull bool, err error) {
-	sVal, err := m.txn.Get(mLightningMaxBatchSplitRangesKey)
+// GetIngestMaxBatchSplitRanges gets the ingest max_batch_split_ranges.
+func (m *Mutator) GetIngestMaxBatchSplitRanges() (val int, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxBatchSplitRangesKey)
 	if err != nil {
 		return 0, false, errors.Trace(err)
 	}

@@ -2024,18 +2024,18 @@ func (LabelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	handler.WriteData(w, config.GetGlobalConfig().Labels)
 }
 
-// LightningMaxBatchSplitRangesHandler is the handler for lightning max_batch_split_ranges.
-type LightningMaxBatchSplitRangesHandler struct {
+// IngestMaxBatchSplitRangesHandler is the handler for lightning max_batch_split_ranges.
+type IngestMaxBatchSplitRangesHandler struct {
 	*handler.TikvHandlerTool
 }
 
-// NewLightningMaxBatchSplitRangesHandler creates a new LightningMaxBatchSplitRangesHandler.
-func NewLightningMaxBatchSplitRangesHandler(tool *handler.TikvHandlerTool) LightningMaxBatchSplitRangesHandler {
-	return LightningMaxBatchSplitRangesHandler{tool}
+// NewIngestMaxBatchSplitRangesHandler creates a new IngestMaxBatchSplitRangesHandler.
+func NewIngestMaxBatchSplitRangesHandler(tool *handler.TikvHandlerTool) IngestMaxBatchSplitRangesHandler {
+	return IngestMaxBatchSplitRangesHandler{tool}
 }
 
 // ServeHTTP handles request of lightning max_batch_split_ranges.
-func (h LightningMaxBatchSplitRangesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h IngestMaxBatchSplitRangesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case http.MethodGet:
 		var respValue int
@@ -2043,7 +2043,7 @@ func (h LightningMaxBatchSplitRangesHandler) ServeHTTP(w http.ResponseWriter, re
 		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), false, func(_ context.Context, txn kv.Transaction) error {
 			mutator := meta.NewMutator(txn)
 			var getErr error
-			respValue, respIsNull, getErr = mutator.GetLightningMaxBatchSplitRanges()
+			respValue, respIsNull, getErr = mutator.GetIngestMaxBatchSplitRanges()
 			return getErr
 		})
 
@@ -2072,7 +2072,7 @@ func (h LightningMaxBatchSplitRangesHandler) ServeHTTP(w http.ResponseWriter, re
 		}
 		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), true, func(_ context.Context, txn kv.Transaction) error {
 			mutator := meta.NewMutator(txn)
-			return mutator.SetLightningMaxBatchSplitRanges(newValue)
+			return mutator.SetIngestMaxBatchSplitRanges(newValue)
 		})
 
 		if err != nil {
