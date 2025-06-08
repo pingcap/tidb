@@ -89,6 +89,7 @@ func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expre
 		return
 	}
 	conditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), conditions)
+	conditions = expression.PropagateConstant(p.SCtx().GetExprCtx(), conditions)
 	if len(conditions) == 0 {
 		p.Children()[chIdx] = child
 		return
