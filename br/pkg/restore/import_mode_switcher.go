@@ -260,7 +260,9 @@ func RestorePostWork(
 	if err := switcher.SwitchToNormalMode(ctx); err != nil {
 		log.Warn("fail to switch to normal mode", zap.Error(err))
 	}
+	log.Info("Finished switch to normal mode")
 	if err := restoreSchedulers(ctx); err != nil {
 		log.Warn("failed to restore PD schedulers", zap.Error(err))
 	}
+	log.Info("Finished restore post work")
 }

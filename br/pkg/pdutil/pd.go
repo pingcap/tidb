@@ -433,9 +433,11 @@ func (p *PdController) doPauseConfigs(ctx context.Context, cfg map[string]any) e
 
 func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg ClusterConfig,
 	configsNeedRestore map[string]pauseConfigGenerator) error {
+	log.Info("resuming schedulers")
 	if err := pd.ResumeSchedulers(ctx, clusterCfg.Schedulers); err != nil {
 		return errors.Annotate(err, "fail to add PD schedulers")
 	}
+	log.Info("resuming label rules")
 	pd.ResumeRegionLabelRule(ctx, clusterCfg.RuleID)
 	log.Info("restoring config", zap.Any("config", clusterCfg.ScheduleCfg))
 	mergeCfg := make(map[string]any)
@@ -642,7 +644,9 @@ func (p *PdController) GetOriginPDConfig(
 // To resume the schedulers, call the cancel function.
 // wait until done is finished to ensure schedulers all resumed
 func (p *PdController) RemoveSchedulersOnRegion(ctx context.Context, keyRange [][2]kv.Key) (string, func(), error) {
-	done, ruleID, err := pauseSchedulerByKeyRangeWithTTL(ctx, p.pdHTTPCli, keyRange, pauseTimeout)
+	log.Info("removing scheduler on region")
+	schedulerCtx, cancelScheduler := context.WithCancel(ctx)
+	done, ruleID, err := pauseSchedulerByKeyRangeWithTTL(schedulerCtx, p.pdHTTPCli, keyRange, pauseTimeout)
 	// Wait for the rule to take effect because the PD operator is processed asynchronously.
 	// To synchronize this, checking the operator status may not be enough. For details, see
 	// https://github.com/pingcap/tidb/issues/49477.
@@ -653,7 +657,13 @@ func (p *PdController) RemoveSchedulersOnRegion(ctx context.Context, keyRange []
 		if done == nil {
 			return
 		}
+
+		// Cancel the context - this will cause the goroutine to exit
+		cancelScheduler()
+
+		// Wait for the goroutine to finish cleanup and close the done channel
 		<-done
+		log.Info("scheduler pause cancelled and cleaned up")
 	}
 
 	return ruleID, waitPauseSchedulerDone, errors.Trace(err)
