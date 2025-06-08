@@ -470,7 +470,7 @@ a	b	c
 1	2	2
 explain format='brief' select * from t where a = 1 and (b = 1 or b = 2) and b = 3 and c > 1;
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableDual	1.00	root		rows:0
 select * from t where a = 1 and (b = 1 or b = 2) and b = 3 and c > 1;
 a	b	c
 explain format='brief' select * from t where a = 1 and (b is null or b = 2);
@@ -496,14 +496,13 @@ select * from t where a = 1 and b is null and c > 1;
 a	b	c
 explain format='brief' select * from t where a = 1 and b is null and b is null and c > 1;
 id	estRows	task	access object	operator info
-IndexReader	1.00	root		index:Selection
-└─Selection	1.00	cop[tikv]		gt(util__ranger.t.c, 1)
-  └─IndexRangeScan	1.25	cop[tikv]	table:t, index:a(a, b, c)	range:[1 NULL,1 NULL], keep order:false, stats:pseudo
+IndexReader	1.25	root		index:IndexRangeScan
+└─IndexRangeScan	1.25	cop[tikv]	table:t, index:a(a, b, c)	range:(1 NULL 1,1 NULL +inf], keep order:false, stats:pseudo
 select * from t where a = 1 and b is null and b is null and c > 1;
 a	b	c
 explain format='brief' select * from t where a = 1 and b is null and b = 1 and c > 1;
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableDual	1.00	root		rows:0
 select * from t where a = 1 and b is null and b = 1 and c > 1;
 a	b	c
 set @@session.tidb_regard_null_as_point=default;
