@@ -247,7 +247,7 @@ func TestExplainDotForExplainPlan(t *testing.T) {
 
 	err := tk.ExecToErr(fmt.Sprintf("explain format=\"dot\" for connection %s", connID))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "explain format 'dot' is not supported now")
+	require.Contains(t, err.Error(), "explain format 'dot' for connection is not supported now")
 }
 
 func TestExplainDotForQuery(t *testing.T) {
@@ -268,7 +268,7 @@ func TestExplainDotForQuery(t *testing.T) {
 	))
 	err := tk.ExecToErr(fmt.Sprintf("explain format=\"dot\" for connection %s", connID))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "explain format 'dot' is not supported now")
+	require.Contains(t, err.Error(), "explain format 'dot' for connection is not supported now")
 }
 
 func TestPointGetUserVarPlanCache(t *testing.T) {
