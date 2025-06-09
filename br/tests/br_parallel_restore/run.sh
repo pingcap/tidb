@@ -545,10 +545,10 @@ test_auto_restored_ts_conflict() {
 
 setup_test_environment
 
-# test_mixed_parallel_restores
-# test_concurrent_restore_table_conflicts
-# test_restore_with_different_systable_settings
+test_mixed_parallel_restores
+test_concurrent_restore_table_conflicts
+test_restore_with_different_systable_settings
 test_stale_task_cleanup
-# test_auto_restored_ts_conflict
+test_auto_restored_ts_conflict
 
 echo "Parallel restore tests completed successfully"
