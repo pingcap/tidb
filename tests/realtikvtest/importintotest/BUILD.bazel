@@ -27,6 +27,7 @@ go_test(
         "//pkg/disttask/importinto",
         "//pkg/domain/infosync",
         "//pkg/executor/importer",
+        "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/lightning/backend/local",
         "//pkg/parser/auth",
