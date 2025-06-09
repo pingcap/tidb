@@ -126,7 +126,7 @@ func (l *ownerListener) OnBecomeOwner() {
 
 	if err := kv.RunInNewTxn(l.ddl.ctx, l.ddl.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
-		return local.InitializeGlobalMaxBatchSplitRanges(t)
+		return local.InitializeGlobalMaxBatchSplitRanges(t, logutil.DDLLogger())
 	}); err != nil {
 		logutil.DDLLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
 	}

@@ -132,7 +132,7 @@ var (
 )
 
 // InitializeGlobalMaxBatchSplitRanges loads the maxBatchSplitRanges value using meta.Meta or sets a default.
-func InitializeGlobalMaxBatchSplitRanges(m *meta.Mutator) error {
+func InitializeGlobalMaxBatchSplitRanges(m *meta.Mutator, logger *zap.Logger) error {
 	valInt, isNull, err := m.GetIngestMaxBatchSplitRanges()
 	if err != nil {
 		return errors.Annotate(err, "failed to read maxBatchSplitRanges from meta store")
@@ -140,10 +140,10 @@ func InitializeGlobalMaxBatchSplitRanges(m *meta.Mutator) error {
 
 	if isNull || valInt <= 0 {
 		valInt = defaultMaxBatchSplitRanges
-		log.L().Info("maxBatchSplitRanges not found in meta store, initialized to default and persisted",
+		logger.Info("maxBatchSplitRanges not found in meta store, initialized to default and persisted",
 			zap.Int("value", defaultMaxBatchSplitRanges))
 	} else {
-		log.L().Info("loaded maxBatchSplitRanges from meta store", zap.Int("value", valInt))
+		logger.Info("loaded maxBatchSplitRanges from meta store", zap.Int("value", valInt))
 	}
 
 	CurrentMaxBatchSplitRanges.Store(int64(valInt))
