@@ -1355,8 +1355,6 @@ func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, brie
 
 		for i, op := range ops {
 			operators[i].BriefName = op.Origin.ExplainID().String()
-
-			// Also handle BriefOperatorInfo for specific operator types
 			switch op.Origin.(type) {
 			case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalHashJoin, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalMergeJoin:
 				operators[i].BriefOperatorInfo = op.Origin.ExplainInfo()
@@ -1372,7 +1370,6 @@ func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, brie
 			operators[i].Children = append(operators[i].Children, &operators[idx])
 		}
 	}
-
 	return &operators[0]
 }
 
