@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
@@ -42,11 +43,13 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -1294,19 +1297,74 @@ func (s *mockGCSSuite) TestImportIntoWithFK() {
 	s.tk.MustQuery("SELECT * FROM import_into.child;").Check(testkit.Rows("1 1", "2 2"))
 }
 
-func (s *mockGCSSuite) TestTableMode() {
-	content := []byte("1,test1,11\n2,test2,22")
+func (s *mockGCSSuite) TestTableMode2() {
+	content := []byte(`1,1
+	2,2`)
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "table-mode-test",
-			Name:       "db.tbl.001.csv",
+			Name:       "data.csv",
 		},
 		Content: content,
 	})
 	s.prepareAndUseDB("import_into")
-	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
+	s.tk.MustExec("create table table_mode (id int primary key, fk int);")
+	sql := fmt.Sprintf(`IMPORT INTO import_into.table_mode
+		FROM 'gs://table-mode-test/data.csv?endpoint=%s'`, gcsEndpoint)
 
-	// Test import into will alter table mode to Import and reset to Normal.
+	// it should success even if the parent table is empty
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("NotEmpty")`)
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM import_into.table_mode;").Check(testkit.Rows("1 1", "2 2"))
+}
+func (s *mockGCSSuite) TestTableMode() {
+	content := []byte(`1,1
+	2,2`)
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "table-mode-test",
+			Name:       "data.csv",
+		},
+		Content: content,
+	})
+	s.prepareAndUseDB("import_into")
+	s.tk.MustExec("create table table_mode (id int primary key, fk int);")
+	loadDataSql := fmt.Sprintf(`IMPORT INTO import_into.table_mode
+		FROM 'gs://table-mode-test/data.csv?endpoint=%s'`, gcsEndpoint)
+
+	//Test check table is not empty after alter table mode to Import
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("NotEmpty")`)
+	err := s.tk.QueryToErr(loadDataSql)
+	require.ErrorContains(s.T(), err, "PreCheck failed: target table is not empty")
+	addRepairTable(s.T(), s.tk, "import_into", "table_mode")
+	s.tk.MustExec("admin repair table table_mode create table table_mode (id int primary key, fk int);")
+	s.tk.MustQuery("SELECT * FROM import_into.table_mode;").Check(testkit.Rows())
+	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty")
+	//Test check table is not empty failure after alter table mode to Import
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("Error")`)
+	err = s.tk.QueryToErr(loadDataSql)
+	require.ErrorContains(s.T(), err, "check if table is empty failed")
+	addRepairTable(s.T(), s.tk, "import_into", "table_mode")
+	s.tk.MustExec("admin repair table table_mode create table table_mode (id int primary key, fk int);")
+	s.tk.MustQuery("SELECT * FROM import_into.table_mode;").Check(testkit.Rows())
+	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty")
+
+	// Test import into clean up can alter table mode to Normal finally.
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenResetTableMode", `return`)
+	err = s.tk.QueryToErr(loadDataSql)
+	require.ErrorContains(s.T(), err, "occur an error when reset table mode to normal")
+	require.Eventually(s.T(), func() bool {
+		err := s.tk.QueryToErr("SELECT * FROM import_into.table_mode;")
+		if err != nil {
+			require.ErrorContains(s.T(), err, "Table table_mode is in mode Import")
+			return false
+		}
+		return true
+	}, 5*time.Second, 100*time.Millisecond)
+	s.tk.EventuallyMustQueryAndCheck("SELECT * FROM import_into.table_mode;", nil, testkit.Rows("1 1", "2 2"), 5*time.Second, 100*time.Millisecond)
+	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenResetTableMode")
+
+	// Test import into post process will alter table mode to Import and reset to Normal.
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -1315,33 +1373,30 @@ func (s *mockGCSSuite) TestTableMode() {
 			wg.Done()
 			testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/beforeResetTableMode")
 		}()
-		sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://table-mode-test/db.tbl.001.csv?endpoint=%s'`, gcsEndpoint)
-		s.tk.MustExec(sql)
+		s.tk.MustExec(loadDataSql)
 	}()
 	go func() {
 		defer wg.Done()
 		require.Eventually(s.T(), func() bool {
-			err := s.tk.QueryToErr("SELECT * FROM import_into.t;")
-			return strings.Contains(err.Error(), "is in mode Import")
+			err := s.tk.QueryToErr("SELECT * FROM import_into.table_mode;")
+			if err != nil {
+				require.ErrorContains(s.T(), err, "Table table_mode is in mode Import")
+				return false
+			}
+			return true
 		}, 5*time.Second, 100*time.Millisecond)
-		s.tk.EventuallyMustQueryAndCheck("SELECT * FROM import_into.t;", nil, testkit.Rows("1 test1 11", "2 test2 22"), 5*time.Second, 100*time.Millisecond)
+		s.tk.EventuallyMustQueryAndCheck("SELECT * FROM import_into.table_mode;", nil, testkit.Rows("1 1", "2 2"), 5*time.Second, 100*time.Millisecond)
 	}()
 	wg.Wait()
+}
 
-	// Test check import into target table is empty or get error.
-	s.tk.MustExec("truncate table t;")
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("NotEmpty")`)
-	sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://table-mode-test/db.tbl.001.csv?endpoint=%s'`, gcsEndpoint)
-	s.tk.MustGetErrMsg(sql, "PreCheck failed: target table is not empty")
-	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty")
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("Error")`)
-	sql = fmt.Sprintf(`IMPORT INTO t FROM 'gs://table-mode-test/db.tbl.001.csv?endpoint=%s'`, gcsEndpoint)
-	s.tk.MustGetErrMsg(sql, "PreCheck failed: check if table is empty failed")
-	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty")
-	// Test import into clean up can alter table mode to Normal finally.
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenResetTableMode", `return`)
-	sql = fmt.Sprintf(`IMPORT INTO t FROM 'gs://table-mode-test/db.tbl.001.csv?endpoint=%s'`, gcsEndpoint)
-	s.tk.MustGetErrMsg(sql, "occur an error when reset table mode to normal")
-	s.tk.EventuallyMustQueryAndCheck("SELECT * FROM import_into.t;", nil, testkit.Rows("1 test1 11", "2 test2 22"), 5*time.Second, 100*time.Millisecond)
-	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenResetTableMode")
+func addRepairTable(t *testing.T, tk *testkit.TestKit, dbName, tblName string) {
+	domainutil.RepairInfo.SetRepairMode(true)
+	domainutil.RepairInfo.SetRepairTableList([]string{dbName + "." + tblName})
+	is := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
+	dbInfo, ok := is.SchemaByName(ast.NewCIStr(dbName))
+	require.True(t, ok)
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tblName))
+	require.Nil(t, err)
+	domainutil.RepairInfo.CheckAndFetchRepairedTable(dbInfo, tblInfo.Meta())
 }
