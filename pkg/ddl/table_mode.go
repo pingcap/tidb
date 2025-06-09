@@ -96,9 +96,5 @@ func CreateAlterTableModeJob(de Executor, sctx sessionctx.Context, mode model.Ta
 		SchemaID:  schemaID,
 		TableID:   tableID,
 	}
-	err := de.AlterTableMode(sctx, args)
-	if err != nil {
-		return err
-	}
-	return nil
+	return de.AlterTableMode(sctx, args)
 }
