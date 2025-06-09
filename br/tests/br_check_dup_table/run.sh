@@ -56,11 +56,11 @@ echo "restore start..."
 LOG_OUTPUT=$(run_br restore db --db "$DB" -s "local://$TEST_DIR/$DB" --pd "$PD_ADDR" 2>&1 || true)
 
 # Check if the log contains 'ErrTableAlreadyExisted'
-if ! echo "$LOG_OUTPUT" | grep -q "table already exists"; then
+if ! echo "$LOG_OUTPUT" | grep -q "ErrTablesAlreadyExisted"; then
     echo "Error: 'ErrTableAlreadyExisted' not found in logs."
     echo "Log output:"
     echo "$LOG_OUTPUT"
-    exit 1
+    exit 1 
 else
     echo "restore failed as expect" 
 fi
@@ -70,7 +70,7 @@ echo "restore full start with -f option..."
 LOG_OUTPUT=$(run_br restore full -f "$DB.*" -s "local://$TEST_DIR/$DB" --pd "$PD_ADDR" 2>&1 || true)
 
 # Check if the log contains 'ErrTableAlreadyExisted'
-if ! echo "$LOG_OUTPUT" | grep -q "table already exists"; then
+if ! echo "$LOG_OUTPUT" | grep -q "ErrTablesAlreadyExisted"; then
     echo "Error: 'ErrTableAlreadyExisted' not found in logs."
     echo "Log output:"
     echo "$LOG_OUTPUT"
