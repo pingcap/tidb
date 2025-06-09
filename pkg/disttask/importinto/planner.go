@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"math"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -355,6 +356,7 @@ func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
 
 func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
 	result := make([]planner.PipelineSpec, 0, 16)
+	startTime := time.Now()
 
 	ctx := planCtx.Ctx
 	controller, err := buildControllerForPlan(p)
@@ -367,9 +369,11 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 	}
 
 	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.Ctx, planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort], controller.GlobalSortStore)
+	decodeDur := time.Since(startTime)
 	if err != nil {
 		return nil, err
 	}
+	var fileNum []int
 	for kvGroup, kvMeta := range kvMetas {
 		if !p.Plan.ForceMergeStep && skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
 			logutil.Logger(planCtx.Ctx).Info("skip merge sort for kv group",
@@ -390,8 +394,17 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 					DataFiles: files,
 				},
 			})
+			fileNum = append(fileNum, len(files))
 		}
 	}
+	divideDur := time.Since(startTime) - decodeDur
+	logutil.BgLogger().Info("generate merge sort plan duration",
+		zap.Duration("decode-duration", decodeDur),
+		zap.Duration("divide-duration", divideDur),
+		zap.Duration("total-duration", time.Since(startTime)),
+		zap.Int("subtask-count", len(result)),
+		zap.Ints("subtask-file-num", fileNum),
+	)
 	return result, nil
 }
 
