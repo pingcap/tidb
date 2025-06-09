@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -1717,8 +1718,14 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	prevWarns := sc.GetWarnings()
 	var stmts []ast.StmtNode
 	cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
+
+	warnCountBeforeParse := len(sc.GetWarnings())
 	if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
 		cc.onExtensionSQLParseFailed(sql, err)
+
+		// If an error happened, we'll need to remove the warnings in previous execution because the `ResetContextOfStmt` will not be called.
+		// Ref https://github.com/pingcap/tidb/issues/59132
+		sc.SetWarnings(sc.GetWarnings()[warnCountBeforeParse:])
 		return err
 	}
 
@@ -2003,7 +2010,7 @@ func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls strin
 	normalized, digest := parser.NormalizeDigest(sqls)
 	topsql.AttachAndRegisterSQLInfo(context.Background(), normalized, digest, false)
 	if len(normalized) != 0 {
-		snapshot.SetOption(kv.ResourceGroupTagger, kv.NewResourceGroupTagBuilder().SetSQLDigest(digest))
+		snapshot.SetOption(kv.ResourceGroupTagger, kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).SetSQLDigest(digest))
 	}
 }
 

@@ -385,7 +385,7 @@ func (e *ShowExec) fetchPlanForSQL() error {
 	bindingHandle := domain.GetDomain(e.Ctx()).BindingHandle()
 	charset, collation := e.Ctx().GetSessionVars().GetCharsetInfo()
 	currentDB := e.Ctx().GetSessionVars().CurrentDB
-	plans, err := bindingHandle.ShowPlansForSQL(currentDB, e.SQLOrDigest, charset, collation)
+	plans, err := bindingHandle.ExplorePlansForSQL(currentDB, e.SQLOrDigest, charset, collation)
 	if err != nil {
 		return err
 	}
@@ -2137,7 +2137,7 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	physicalIDs := []int64{}
-	partitonNames := make([]string, 0)
+	partitionNames := make([]string, 0)
 	if pi := tb.Meta().GetPartitionInfo(); pi != nil {
 		for _, name := range e.Table.PartitionNames {
 			pid, err := tables.FindPartitionByName(tb.Meta(), name.L)
@@ -2145,12 +2145,12 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 				return err
 			}
 			physicalIDs = append(physicalIDs, pid)
-			partitonNames = append(partitonNames, name.L)
+			partitionNames = append(partitionNames, name.L)
 		}
 		if len(physicalIDs) == 0 {
 			for _, p := range pi.Definitions {
 				physicalIDs = append(physicalIDs, p.ID)
-				partitonNames = append(partitonNames, p.Name.L)
+				partitionNames = append(partitionNames, p.Name.L)
 			}
 		}
 	} else {
@@ -2158,11 +2158,11 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 			return plannererrors.ErrPartitionClauseOnNonpartitioned
 		}
 		physicalIDs = append(physicalIDs, tb.Meta().ID)
-		partitonNames = append(partitonNames, tb.Meta().Name.L)
+		partitionNames = append(partitionNames, tb.Meta().Name.L)
 	}
 	distributions := make([]*pdHttp.RegionDistribution, 0)
 	var resp *pdHttp.RegionDistributions
-	for _, pid := range physicalIDs {
+	for idx, pid := range physicalIDs {
 		startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
 		endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
 		// todo： support engine type
@@ -2170,9 +2170,9 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		e.fillDistributionsToChunk(partitionNames[idx], resp.RegionDistributions)
 		distributions = append(distributions, resp.RegionDistributions...)
 	}
-	e.fillDistributionsToChunk(partitonNames, distributions)
 	return nil
 }
 
@@ -2333,9 +2333,9 @@ func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvS
 	return regions, nil
 }
 
-func (e *ShowExec) fillDistributionsToChunk(partitionNams []string, distributions []*pdHttp.RegionDistribution) {
-	for idx, dis := range distributions {
-		e.result.AppendString(0, partitionNams[idx])
+func (e *ShowExec) fillDistributionsToChunk(partitionName string, distributions []*pdHttp.RegionDistribution) {
+	for _, dis := range distributions {
+		e.result.AppendString(0, partitionName)
 		e.result.AppendUint64(1, dis.StoreID)
 		e.result.AppendString(2, dis.EngineType)
 		e.result.AppendInt64(3, int64(dis.RegionLeaderCount))
@@ -2543,34 +2543,37 @@ func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result 
 	result.AppendString(4, job["engine"].(string))
 	result.AppendString(5, job["rule"].(string))
 	result.AppendString(6, job["status"].(string))
-	layout := "2006-01-02T15:04:05.999999-07:00" // RFC3339 with microseconds
+	timeout := uint64(job["timeout"].(float64))
+	result.AppendString(7, time.Duration(timeout).String())
 	if create, ok := job["create"]; ok {
-		logutil.Logger(ctx).Info("fillDistributionJobToChunk", zap.String("create", create.(string)))
-		creatTime, err := time.Parse(layout, create.(string))
+		createTime := &time.Time{}
+		err := createTime.UnmarshalText([]byte(create.(string)))
 		if err != nil {
 			return err
 		}
-		result.AppendTime(7, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
-	} else {
-		result.AppendNull(7)
-	}
-	if start, ok := job["start"]; ok {
-		creatTime, err := time.Parse(layout, start.(string))
-		if err != nil {
-			return err
-		}
-		result.AppendTime(8, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
+		result.AppendTime(8, types.NewTime(types.FromGoTime(*createTime), mysql.TypeDatetime, types.DefaultFsp))
 	} else {
 		result.AppendNull(8)
 	}
-	if finish, ok := job["finish"]; ok {
-		creatTime, err := time.Parse(layout, finish.(string))
+	if start, ok := job["start"]; ok {
+		startTime := &time.Time{}
+		err := startTime.UnmarshalText([]byte(start.(string)))
 		if err != nil {
 			return err
 		}
-		result.AppendTime(9, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
+		result.AppendTime(9, types.NewTime(types.FromGoTime(*startTime), mysql.TypeDatetime, types.DefaultFsp))
 	} else {
 		result.AppendNull(9)
+	}
+	if finish, ok := job["finish"]; ok {
+		finishedTime := &time.Time{}
+		err := finishedTime.UnmarshalText([]byte(finish.(string)))
+		if err != nil {
+			return err
+		}
+		result.AppendTime(10, types.NewTime(types.FromGoTime(*finishedTime), mysql.TypeDatetime, types.DefaultFsp))
+	} else {
+		result.AppendNull(10)
 	}
 	return nil
 }

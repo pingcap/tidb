@@ -132,7 +132,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
 		return generateReadIndexPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs), logger)
 	case proto.BackfillStepMergeSort:
-		return generateMergePlan(ctx, taskHandle, task, backfillMeta.CloudStorageURI, logger)
+		return generateMergePlan(ctx, taskHandle, task, len(execIDs), backfillMeta.CloudStorageURI, logger)
 	case proto.BackfillStepWriteAndIngest:
 		if sch.GlobalSort {
 			failpoint.Inject("mockWriteIngest", func() {
@@ -242,7 +242,7 @@ func generateReadIndexPlan(
 	tblInfo *model.TableInfo,
 	job *model.Job,
 	useCloud bool,
-	instanceCnt int,
+	nodeCnt int,
 	logger *zap.Logger,
 ) (metas [][]byte, err error) {
 	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
@@ -250,12 +250,12 @@ func generateReadIndexPlan(
 		return nil, err
 	}
 	if tblInfo.Partition == nil {
-		return generatePlanForPhysicalTable(ctx, d, tbl.(table.PhysicalTable), job, useCloud, instanceCnt, logger)
+		return generatePlanForPhysicalTable(ctx, d, tbl.(table.PhysicalTable), job, useCloud, nodeCnt, logger)
 	}
 	defs := tblInfo.Partition.Definitions
 	for _, def := range defs {
 		partTbl := tbl.GetPartitionedTable().GetPartition(def.ID)
-		partMeta, err := generatePlanForPhysicalTable(ctx, d, partTbl, job, useCloud, instanceCnt, logger)
+		partMeta, err := generatePlanForPhysicalTable(ctx, d, partTbl, job, useCloud, nodeCnt, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -270,7 +270,7 @@ func generatePlanForPhysicalTable(
 	tbl table.PhysicalTable,
 	job *model.Job,
 	useCloud bool,
-	instanceCnt int,
+	nodeCnt int,
 	logger *zap.Logger,
 ) (metas [][]byte, err error) {
 	ver, err := getValidCurrentVersion(d.store)
@@ -314,11 +314,11 @@ func generatePlanForPhysicalTable(
 			return true, nil
 		}
 
-		regionBatch := CalculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
+		regionBatch := CalculateRegionBatch(len(recordRegionMetas), nodeCnt, !useCloud)
 		logger.Info("calculate region batch",
 			zap.Int("totalRegionCnt", len(recordRegionMetas)),
 			zap.Int("regionBatch", regionBatch),
-			zap.Int("instanceCnt", instanceCnt),
+			zap.Int("instanceCnt", nodeCnt),
 			zap.Bool("useCloud", useCloud),
 		)
 
@@ -360,12 +360,12 @@ func generatePlanForPhysicalTable(
 }
 
 // CalculateRegionBatch is exported for test.
-func CalculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
+func CalculateRegionBatch(totalRegionCnt int, nodeCnt int, useLocalDisk bool) int {
 	failpoint.Inject("mockRegionBatch", func(val failpoint.Value) {
 		failpoint.Return(val.(int))
 	})
 	var regionBatch int
-	avgTasksPerInstance := (totalRegionCnt + instanceCnt - 1) / instanceCnt // ceiling
+	avgTasksPerInstance := (totalRegionCnt + nodeCnt - 1) / nodeCnt // ceiling
 	if useLocalDisk {
 		regionBatch = avgTasksPerInstance
 	} else {
@@ -556,6 +556,7 @@ func generateMergePlan(
 	ctx context.Context,
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
+	nodeCnt int,
 	cloudStorageURI string,
 	logger *zap.Logger,
 ) ([][]byte, error) {
@@ -615,16 +616,16 @@ func generateMergePlan(
 		if i < len(eleIDs) {
 			eleID = []int64{eleIDs[i]}
 		}
-		start := 0
-		step := external.MergeSortFileCountStep
-		for start < len(dataFiles) {
-			end := min(start+step, len(dataFiles))
+		dataFilesGroup, err := external.DivideMergeSortDataFiles(dataFiles, nodeCnt, task.Concurrency)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, files := range dataFilesGroup {
 			m := &BackfillSubTaskMeta{
-				DataFiles: dataFiles[start:end],
+				DataFiles: files,
 				EleIDs:    eleID,
 			}
 			metaArr = append(metaArr, m)
-			start = end
 		}
 	}
 

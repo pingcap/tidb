@@ -252,13 +252,7 @@ func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []
 		newKeys = append(newKeys, oldJoinKeys[offset])
 	}
 	for pos, key := range oldJoinKeys {
-		isExist := false
-		for _, p := range offsets {
-			if p == pos {
-				isExist = true
-				break
-			}
-		}
+		isExist := slices.Contains(offsets, pos)
 		if !isExist {
 			newKeys = append(newKeys, key)
 		}
@@ -272,13 +266,7 @@ func getNewNullEQByOffsets(oldNullEQ []bool, offsets []int) []bool {
 		newNullEQ = append(newNullEQ, oldNullEQ[offset])
 	}
 	for pos, key := range oldNullEQ {
-		isExist := false
-		for _, p := range offsets {
-			if p == pos {
-				isExist = true
-				break
-			}
-		}
+		isExist := slices.Contains(offsets, pos)
 		if !isExist {
 			newNullEQ = append(newNullEQ, key)
 		}
@@ -301,7 +289,7 @@ func getEnforcedMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalPrope
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	for _, item := range prop.SortItems {
 		isExist, hasLeftColInProp, hasRightColInProp := false, false, false
-		for joinKeyPos := 0; joinKeyPos < len(leftJoinKeys); joinKeyPos++ {
+		for joinKeyPos := range leftJoinKeys {
 			var key *expression.Column
 			if item.Col.Equal(evalCtx, leftJoinKeys[joinKeyPos]) {
 				key = leftJoinKeys[joinKeyPos]
@@ -314,7 +302,7 @@ func getEnforcedMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalPrope
 			if key == nil {
 				continue
 			}
-			for i := 0; i < len(offsets); i++ {
+			for i := range offsets {
 				if offsets[i] == joinKeyPos {
 					isExist = true
 					break
@@ -723,7 +711,7 @@ func completePhysicalIndexJoin(physic *PhysicalIndexJoin, rt *RootTask, innerS, 
 						innerHashKeys = append(innerHashKeys, lhs) // nozero
 					}
 					// if not, this EQ function is useless, keep it in new other conditions.
-					newOtherConds = append(newOtherConds[:i], newOtherConds[i+1:]...)
+					newOtherConds = slices.Delete(newOtherConds, i, i+1)
 				}
 			}
 		default:
@@ -832,7 +820,7 @@ func constructIndexJoin(
 						outerHashKeys = append(outerHashKeys, rhs) // nozero
 						innerHashKeys = append(innerHashKeys, lhs) // nozero
 					}
-					newOtherConds = append(newOtherConds[:i], newOtherConds[i+1:]...)
+					newOtherConds = slices.Delete(newOtherConds, i, i+1)
 				}
 			}
 		default:
@@ -1215,7 +1203,7 @@ func buildDataSource2IndexScanByIndexJoinProp(
 	// here we don't need to construct physical index join here anymore, because we will encapsulate it bottom-up.
 	// chosenPath and lastColManager of indexJoinResult should be returned to the caller (seen by index join to keep
 	// index join aware of indexColLens and compareFilters).
-	completeIndexJoinFeedBackInfo(innerTask.(*CopTask), indexJoinResult, indexJoinResult.chosenRanges.Range(), keyOff2IdxOff)
+	completeIndexJoinFeedBackInfo(innerTask.(*CopTask), indexJoinResult, indexJoinResult.chosenRanges, keyOff2IdxOff)
 	return innerTask
 }
 
@@ -1553,7 +1541,7 @@ func constructDS2TableScanTask(
 	}
 	ts.PlanPartInfo = copTask.physPlanPartInfo
 	selStats := ts.StatsInfo().Scale(selectivity)
-	ts.addPushedDownSelection(copTask, selStats)
+	ts.addPushedDownSelection(copTask, selStats, ds.AstIndexHints)
 	return copTask
 }
 
@@ -1755,11 +1743,11 @@ func constructDS2IndexScanTask(
 			tblCols:         ds.TblCols,
 			tblColHists:     ds.TblColHists,
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
-		ts.schema = is.dataSourceSchema.Clone()
+		ts.SetSchema(is.dataSourceSchema.Clone())
 		if ds.TableInfo.IsCommonHandle {
 			commonHandle := ds.HandleCols.(*util.CommonHandleCols)
 			for _, col := range commonHandle.GetColumns() {
-				if ts.schema.ColumnIndex(col) == -1 {
+				if ts.Schema().ColumnIndex(col) == -1 {
 					ts.Schema().Append(col)
 					ts.Columns = append(ts.Columns, col.ToInfo())
 					cop.needExtraProj = true
@@ -1798,6 +1786,7 @@ func constructDS2IndexScanTask(
 	// We can calculate the lower bound of the NDV therefore we can get an upper bound of the row count here.
 	rowCountUpperBound := -1.0
 	fixControlOK := fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44855, false)
+	ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix44855)
 	if fixControlOK && ds.TableStats != nil {
 		usedColIDs := make([]int64, 0)
 		// We only consider columns in this index that (1) are used to probe as join key,
@@ -2029,12 +2018,10 @@ func filterIndexJoinBySessionVars(sc base.PlanContext, indexJoins []base.Physica
 	if sc.GetSessionVars().EnableIndexMergeJoin {
 		return indexJoins
 	}
-	for i := len(indexJoins) - 1; i >= 0; i-- {
-		if _, ok := indexJoins[i].(*PhysicalIndexMergeJoin); ok {
-			indexJoins = append(indexJoins[:i], indexJoins[i+1:]...)
-		}
-	}
-	return indexJoins
+	return slices.DeleteFunc(indexJoins, func(indexJoin base.PhysicalPlan) bool {
+		_, ok := indexJoin.(*PhysicalIndexMergeJoin)
+		return ok
+	})
 }
 
 const (
@@ -2156,6 +2143,13 @@ func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty
 	return filterIndexJoinBySessionVars(p.SCtx(), candidates), false
 }
 
+func enumerationContainIndexJoin(candidates []base.PhysicalPlan) bool {
+	return slices.ContainsFunc(candidates, func(candidate base.PhysicalPlan) bool {
+		_, _, ok := getIndexJoinSideAndMethod(candidate)
+		return ok
+	})
+}
+
 // handleFilterIndexJoinHints is trying to avoid generating index join or index hash join when no-index-join related
 // hint is specified in the query. So we can do it in physic enumeration phase.
 func handleFilterIndexJoinHints(p *logicalop.LogicalJoin, candidates []base.PhysicalPlan) []base.PhysicalPlan {
@@ -2180,16 +2174,24 @@ func handleFilterIndexJoinHints(p *logicalop.LogicalJoin, candidates []base.Phys
 
 // recordIndexJoinHintWarnings records the warnings msg if no valid preferred physic are picked.
 // todo: extend recordIndexJoinHintWarnings to support all kind of operator's warnings handling.
-func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalProperty) error {
+func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalProperty, inEnforce bool) error {
 	p, ok := lp.(*logicalop.LogicalJoin)
 	if !ok {
 		return nil
+	}
+	if !p.PreferAny(h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
+		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner) {
+		return nil // no force index join hints
 	}
 	// Cannot find any valid index join plan with these force hints.
 	// Print warning message if any hints cannot work.
 	// If the required property is not empty, we will enforce it and try the hint again.
 	// So we only need to generate warning message when the property is empty.
-	if prop.IsSortItemEmpty() {
+	//
+	// but for warnings handle inside findBestTask here, even the not-empty prop
+	// will be reset to get the planNeedEnforce plans, but the prop passed down here will
+	// still be the same, so here we change the admission to both.
+	if prop.IsSortItemEmpty() || inEnforce {
 		var indexJoinTables, indexHashJoinTables, indexMergeJoinTables []h.HintedTable
 		if p.HintInfo != nil {
 			t := p.HintInfo.IndexJoin
@@ -2767,12 +2769,28 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 		}
 		joins = append(joins, mergeJoins...)
 
-		// todo: feel vars.EnhanceIndexJoinBuildV2 and tryToEnumerateIndexJoin(p, prop)
-		indexJoins, forced := tryToGetIndexJoin(p, prop)
-		if forced {
-			return indexJoins, true, nil
+		if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
+			indexJoins := tryToEnumerateIndexJoin(p, prop)
+			joins = append(joins, indexJoins...)
+
+			failpoint.Inject("MockOnlyEnableIndexHashJoinV2", func(val failpoint.Value) {
+				if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
+					indexHashJoin := make([]base.PhysicalPlan, 0, len(indexJoins))
+					for _, one := range indexJoins {
+						if _, ok := one.(*PhysicalIndexHashJoin); ok {
+							indexHashJoin = append(indexHashJoin, one)
+						}
+					}
+					failpoint.Return(indexHashJoin, true, nil)
+				}
+			})
+		} else {
+			indexJoins, forced := tryToGetIndexJoin(p, prop)
+			if forced {
+				return indexJoins, true, nil
+			}
+			joins = append(joins, indexJoins...)
 		}
-		joins = append(joins, indexJoins...)
 	}
 
 	hashJoins, forced := getHashJoins(p, prop)
@@ -3218,6 +3236,11 @@ func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.Phys
 	if prop.IsFlashProp() {
 		return nil
 	}
+	if prop.IndexJoinProp != nil {
+		// since this stream agg is in the inner side of an index join, the
+		// enforced sort operator couldn't be built by executor layer now.
+		return nil
+	}
 	_, desc := prop.AllSameOrder()
 	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
 	enforcedAggs := make([]base.PhysicalPlan, 0, len(allTaskTypes))
@@ -3298,7 +3321,6 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 	if childProp == nil {
 		return nil
 	}
-
 	for _, possibleChildProperty := range la.PossibleProperties {
 		childProp.SortItems = property.SortItemsFromCols(possibleChildProperty[:len(groupByCols)], desc)
 		if !prop.IsPrefix(childProp) {
@@ -3625,11 +3647,11 @@ func exhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property
 	}
 	preferHash, preferStream := la.ResetHintIfConflicted()
 	hashAggs := getHashAggs(la, prop)
-	if hashAggs != nil && preferHash {
+	if len(hashAggs) > 0 && preferHash {
 		return hashAggs, true, nil
 	}
 	streamAggs := getStreamAggs(la, prop)
-	if streamAggs != nil && preferStream {
+	if len(streamAggs) > 0 && preferStream {
 		return streamAggs, true, nil
 	}
 	aggs := append(hashAggs, streamAggs...)
@@ -3927,7 +3949,7 @@ func exhaustPhysicalPlans4LogicalSequence(lp base.LogicalPlan, prop *property.Ph
 	seqs := make([]base.PhysicalPlan, 0, 2)
 	for _, propChoice := range possibleChildrenProps {
 		childReqs := make([]*property.PhysicalProperty, 0, p.ChildLen())
-		for i := 0; i < p.ChildLen()-1; i++ {
+		for range p.ChildLen() - 1 {
 			childReqs = append(childReqs, propChoice[0].CloneEssentialFields())
 		}
 		childReqs = append(childReqs, propChoice[1])

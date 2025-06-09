@@ -34,7 +34,7 @@ go_library(
 
 go_test(
     name = "storage_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "table_test.go",
         "task_state_test.go",
@@ -43,7 +43,7 @@ go_test(
     embed = [":storage"],
     flaky = True,
     race = "on",
-    shard_count = 24,
+    shard_count = 25,
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/proto",

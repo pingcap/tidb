@@ -523,7 +523,7 @@ func getListPartitionDef(expr string, useColumns bool) string {
 	for partID, i := range ranges {
 		vals := 256
 		partVals := make([]string, 0, vals)
-		for j := 0; j < vals; j++ {
+		for j := range vals {
 			partVals = append(partVals, strconv.Itoa(i+j))
 		}
 		if expr != "" && i == 1 {

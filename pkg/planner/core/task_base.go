@@ -37,8 +37,6 @@ var (
 	_ base.Task = &CopTask{}
 )
 
-var _ context.WarnGetterAppender = &simpleWarnings{}
-
 type simpleWarnings struct {
 	warnings []*context.SQLWarn
 }
@@ -189,6 +187,11 @@ func (t *RootTask) MemoryUsage() (sum int64) {
 	return sum
 }
 
+// AppendWarning appends a warning
+func (t *RootTask) AppendWarning(err error) {
+	t.warnings.AppendWarning(err)
+}
+
 // ************************************* RootTask End ******************************************
 
 // ************************************* MPPTask Start ******************************************
@@ -261,6 +264,11 @@ func (t *MppTask) MemoryUsage() (sum int64) {
 		sum += t.p.MemoryUsage()
 	}
 	return
+}
+
+// AppendWarning appends a warning
+func (t *MppTask) AppendWarning(err error) {
+	t.warnings.AppendWarning(err)
 }
 
 // ConvertToRootTaskImpl implements Task interface.
@@ -367,6 +375,11 @@ type CopTask struct {
 	warnings simpleWarnings
 }
 
+// AppendWarning appends a warning
+func (t *CopTask) AppendWarning(err error) {
+	t.warnings.AppendWarning(err)
+}
+
 // Invalid implements Task interface.
 func (t *CopTask) Invalid() bool {
 	return t.tablePlan == nil && t.indexPlan == nil && len(t.idxMergePartPlans) == 0
@@ -460,17 +473,12 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	if t.tablePlan != nil {
 		tp := t.tablePlan
 		for len(tp.Children()) > 0 {
-			if len(tp.Children()) == 1 {
-				tp = tp.Children()[0]
-			} else {
-				join := tp.(*PhysicalHashJoin)
-				tp = join.Children()[1-join.InnerChildIdx]
-			}
+			tp = tp.Children()[0]
 		}
 		ts := tp.(*PhysicalTableScan)
 		prevColumnLen := len(ts.Columns)
-		prevSchema := ts.schema.Clone()
-		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+		prevSchema := ts.Schema().Clone()
+		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
 		if !t.needExtraProj && len(ts.Columns) > prevColumnLen {
 			// Add a projection to make sure not to output extract columns.
 			t.needExtraProj = true
@@ -509,12 +517,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	} else {
 		tp := t.tablePlan
 		for len(tp.Children()) > 0 {
-			if len(tp.Children()) == 1 {
-				tp = tp.Children()[0]
-			} else {
-				join := tp.(*PhysicalHashJoin)
-				tp = join.Children()[1-join.InnerChildIdx]
-			}
+			tp = tp.Children()[0]
 		}
 		ts := tp.(*PhysicalTableScan)
 		p := PhysicalTableReader{

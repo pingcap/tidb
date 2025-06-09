@@ -651,6 +651,11 @@ func (w *GCWorker) calcNewTxnSafePoint(ctx context.Context, now time.Time) (*tim
 
 	newTxnSafePoint, err := w.advanceTxnSafePoint(ctx, target)
 	if err != nil {
+		// Temporary solution. This code should be refactored when errors returned by PD client can be typed.
+		if strings.Contains(err.Error(), "PD:gc:ErrDecreasingTxnSafePoint") {
+			logutil.BgLogger().Info("set gc worker service safe point is causing decreasing, the GC will be skipped", zap.Error(err))
+			return nil, 0, nil
+		}
 		return nil, 0, errors.Trace(err)
 	}
 	if newTxnSafePoint == 0 {

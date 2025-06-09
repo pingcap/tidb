@@ -485,9 +485,9 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx *base.BuildPBContext, _ kv.StoreType
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.Executor, error) {
-	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
+	columns := make([]*model.ColumnInfo, 0, p.Schema().Len())
 	tableColumns := p.Table.Cols()
-	for _, col := range p.schema.Columns {
+	for _, col := range p.Schema().Columns {
 		if col.ID == model.ExtraHandleID {
 			columns = append(columns, model.NewExtraHandleColInfo())
 		} else if col.ID == model.ExtraPhysTblID {

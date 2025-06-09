@@ -1018,17 +1018,12 @@ func containOuterNot(expr Expression, not bool) bool {
 
 // Contains tests if `exprs` contains `e`.
 func Contains(ectx EvalContext, exprs []Expression, e Expression) bool {
-	for _, expr := range exprs {
-		// Check string equivalence if one of the expressions is a clone.
-		sameString := false
-		if e != nil && expr != nil {
-			sameString = (e.StringWithCtx(ectx, errors.RedactLogDisable) == expr.StringWithCtx(ectx, errors.RedactLogDisable))
+	return slices.ContainsFunc(exprs, func(expr Expression) bool {
+		if expr == nil {
+			return e == nil
 		}
-		if e == expr || sameString {
-			return true
-		}
-	}
-	return false
+		return e == expr || expr.Equal(ectx, e)
+	})
 }
 
 // ExtractFiltersFromDNFs checks whether the cond is DNF. If so, it will get the extracted part and the remained part.
@@ -1553,7 +1548,7 @@ func ProjectionBenefitsFromPushedDown(exprs []Expression, inputSchemaLen int) bo
 // 2. Whether the statement can be cached.
 // 3. Whether the expressions contain a lazy constant.
 // TODO: Do more careful check here.
-func MaybeOverOptimized4PlanCache(ctx BuildContext, exprs []Expression) bool {
+func MaybeOverOptimized4PlanCache(ctx BuildContext, exprs ...Expression) bool {
 	// If we do not enable plan cache, all the optimization can work correctly.
 	if !ctx.IsUseCache() {
 		return false
@@ -1579,7 +1574,7 @@ func containMutableConst(ctx EvalContext, exprs []Expression) bool {
 }
 
 // RemoveMutableConst used to remove the `ParamMarker` and `DeferredExpr` in the `Constant` expr.
-func RemoveMutableConst(ctx BuildContext, exprs []Expression) (err error) {
+func RemoveMutableConst(ctx BuildContext, exprs ...Expression) (err error) {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:
@@ -1594,7 +1589,7 @@ func RemoveMutableConst(ctx BuildContext, exprs []Expression) (err error) {
 			}
 			v.DeferredExpr = nil // do nothing since v.Value has already been evaluated in this case.
 		case *ScalarFunction:
-			return RemoveMutableConst(ctx, v.GetArgs())
+			return RemoveMutableConst(ctx, v.GetArgs()...)
 		}
 	}
 	return nil

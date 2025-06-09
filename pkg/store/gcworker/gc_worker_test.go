@@ -48,6 +48,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 )
 
 type mockGCWorkerLockResolver struct {
@@ -1260,7 +1261,12 @@ func TestRunGCJob(t *testing.T) {
 	useDistributedGC := s.gcWorker.checkUseDistributedGC()
 	require.True(t, useDistributedGC)
 	safePoint := s.mustAllocTs(t)
-	err := s.gcWorker.runGCJob(gcContext(), safePoint, gcConcurrency{1, false})
+	ctl := s.pdClient.GetGCInternalController(constants.NullKeyspaceID)
+	// runGCJob doesn't contain the AdvanceTxnSafePoint step. Do it explicitly.
+	res, err := ctl.AdvanceTxnSafePoint(gcContext(), safePoint)
+	require.NoError(t, err)
+	require.Equal(t, safePoint, res.NewTxnSafePoint)
+	err = s.gcWorker.runGCJob(gcContext(), safePoint, gcConcurrency{1, false})
 	require.NoError(t, err)
 
 	pdSafePoint := s.mustGetSafePointFromPd(t)
@@ -1286,6 +1292,9 @@ func TestRunGCJob(t *testing.T) {
 
 	p := s.createGCProbe(t, "k1")
 	safePoint = s.mustAllocTs(t)
+	res, err = ctl.AdvanceTxnSafePoint(gcContext(), safePoint)
+	require.NoError(t, err)
+	require.Equal(t, safePoint, res.NewTxnSafePoint)
 	err = s.gcWorker.runGCJob(gcContext(), safePoint, gcConcurrency{1, false})
 	require.NoError(t, err)
 	s.checkCollected(t, p)
@@ -1322,8 +1331,14 @@ func TestSetServiceSafePoint(t *testing.T) {
 	require.Equal(t, safePoint-10, s.mustGetMinServiceSafePointFromPd(t))
 
 	// Test removing the minimum service safe point.
-	s.mustRemoveServiceGCSafePoint(t, "svc1", safePoint-10, safePoint)
-	require.Equal(t, safePoint, s.mustGetMinServiceSafePointFromPd(t))
+	// As UpdateServiceGCSafePoint in unistore has become the compatible wrapper around GC barrier interface, this
+	// behavior has changed: the simulated service safe point for "gc_worker" will be blocked at `safePoint-10`.
+	// s.mustRemoveServiceGCSafePoint(t, "svc1", safePoint-10, safePoint)
+	// require.Equal(t, safePoint, s.mustGetMinServiceSafePointFromPd(t))
+	s.mustRemoveServiceGCSafePoint(t, "svc1", safePoint-10, safePoint-10)
+	require.Equal(t, safePoint-10, s.mustGetMinServiceSafePointFromPd(t))
+	// Advance it to `safePoint.
+	s.mustSetTiDBServiceSafePoint(t, safePoint, safePoint)
 
 	// Test the case when there are many safePoints.
 	safePoint += 100
@@ -1510,7 +1525,7 @@ func TestGCWithPendingTxn(t *testing.T) {
 	spkv := s.tikvStore.GetSafePointKV()
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(txn.StartTS(), 10))
 	require.NoError(t, err)
-	s.mustSetTiDBServiceSafePoint(t, txn.StartTS(), txn.StartTS())
+	//s.mustSetTiDBServiceSafePoint(t, txn.StartTS(), txn.StartTS())
 	veryLong := gcDefaultLifeTime * 100
 	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
 	require.NoError(t, err)
@@ -1553,7 +1568,7 @@ func TestGCWithPendingTxn2(t *testing.T) {
 	spkv := s.tikvStore.GetSafePointKV()
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(now, 10))
 	require.NoError(t, err)
-	s.mustSetTiDBServiceSafePoint(t, now, now)
+	//s.mustSetTiDBServiceSafePoint(t, now, now)
 	veryLong := gcDefaultLifeTime * 100
 	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
 	require.NoError(t, err)

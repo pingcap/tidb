@@ -1442,6 +1442,11 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if command != mysql.ComSleep || s.GetSessionVars().InTxn() {
 		curTxnStartTS = s.sessionVars.TxnCtx.StartTS
 		curTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
+
+		// For stale read and autocommit path, the `TxnCtx.StartTS` is 0.
+		if curTxnStartTS == 0 {
+			curTxnStartTS = s.sessionVars.TxnCtx.StaleReadTs
+		}
 	}
 	// Set curTxnStartTS to SnapshotTS directly when the session is trying to historic read.
 	// It will avoid the session meet GC lifetime too short error.
@@ -1530,6 +1535,10 @@ func (s *session) UpdateProcessInfo() {
 	shallowCP := pi.Clone()
 	// Update the current transaction start timestamp.
 	shallowCP.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
+	if shallowCP.CurTxnStartTS == 0 {
+		// For stale read and autocommit path, the `TxnCtx.StartTS` is 0.
+		shallowCP.CurTxnStartTS = s.sessionVars.TxnCtx.StaleReadTs
+	}
 	shallowCP.CurTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
 	s.processInfo.Store(shallowCP)
 }
@@ -3632,7 +3641,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			Handle: dom.PrivilegeHandle(),
 		}
 		privilege.BindPrivilegeManager(ses[9], pm)
-		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.InTest {
+		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.EnableInternalCheck {
 			failToLoadOrParseSQLFile = true
 		}
 	}
@@ -3691,7 +3700,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 
 	// This only happens in testing, since the failure of loading or parsing sql file
 	// would panic the bootstrapping.
-	if intest.InTest && failToLoadOrParseSQLFile {
+	if intest.EnableInternalCheck && failToLoadOrParseSQLFile {
 		dom.Close()
 		return nil, errors.New("Fail to load or parse sql file")
 	}
@@ -4537,7 +4546,7 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 	}
 	// panic in test mode in case there are requests without source in the future.
 	// log warnings in production mode.
-	if intest.InTest {
+	if intest.EnableInternalCheck {
 		panic("unexpected no source type context, if you see this error, " +
 			"the `RequestSourceTypeKey` is missing in your context")
 	}

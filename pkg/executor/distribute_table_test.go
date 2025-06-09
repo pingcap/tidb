@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -32,6 +33,8 @@ import (
 	"github.com/stretchr/testify/require"
 	pdhttp "github.com/tikv/pd/client/http"
 )
+
+var schedulerName = "balance-range-scheduler"
 
 type MockDistributePDCli struct {
 	pdhttp.Client
@@ -45,6 +48,19 @@ func (cli *MockDistributePDCli) GetSchedulerConfig(ctx context.Context, schedule
 	var jobList any
 	json.Unmarshal(data, &jobList)
 	return jobList, args.Error(1)
+}
+
+func (cli *MockDistributePDCli) CancelSchedulerJob(ctx context.Context, schedulerName string, jobID uint64) error {
+	args := cli.Called(ctx, schedulerName, jobID)
+	if args.Error(0) != nil {
+		return args.Error(0)
+	}
+	for _, job := range cli.jobs {
+		if job["job-id"] == float64(jobID) {
+			return nil
+		}
+	}
+	return errors.New("job not found")
 }
 
 func (cli *MockDistributePDCli) CreateSchedulerWithInput(ctx context.Context, name string, input map[string]any) error {
@@ -68,29 +84,29 @@ func TestShowDistributionJobs(t *testing.T) {
 	cli := &MockDistributePDCli{}
 	recoverCli := infosync.SetPDHttpCliForTest(cli)
 	defer recoverCli()
-	mockGetSchedulerConfig := func(schedulerName string) *mock.Call {
+	mockGetSchedulerConfig := func() *mock.Call {
 		return cli.On("GetSchedulerConfig", mock.Anything, schedulerName).
 			Return(nil, nil)
 	}
-	mockGetSchedulerConfig("balance-range-scheduler")
+	mockGetSchedulerConfig()
 	require.Empty(t, tk.MustQuery("show distribution jobs").Rows())
 
 	job := map[string]any{}
 	job["job-id"] = float64(1)
 	job["alias"] = strings.Join([]string{"test", "test", "partition(P0,P1)"}, ".")
 	job["engine"] = "tikv"
-	job["rule"] = "leader"
+	job["rule"] = "leader-scatter"
 	now := time.Now()
-	layout := "2006-01-02T15:04:05.999999-07:00"
-	job["create"] = now.Add(-time.Minute).Format(layout)
-	job["start"] = now.Add(-time.Second * 30).Format(layout)
-	job["status"] = "finish"
+	job["create"] = now.Add(-time.Minute)
+	job["start"] = now.Add(-time.Second * 30)
+	job["status"] = "finished"
+	job["timeout"] = 30 * time.Minute
 	jobs := make([]map[string]any, 0)
 	jobs = append(jobs, job)
 	cli.jobs = jobs
 
 	tk.MustQuery("show distribution jobs").Check(testkit.Rows(
-		fmt.Sprintf("1 test test partition(P0,P1) tikv leader finish %s %s <nil>",
+		fmt.Sprintf("1 test test partition(P0,P1) tikv leader-scatter finished 30m0s %s %s <nil>",
 			now.Add(-time.Minute).Format("2006-01-02 15:04:05"),
 			now.Add(-time.Second*30).Format("2006-01-02 15:04:05"))))
 
@@ -108,7 +124,7 @@ func TestDistributeTable(t *testing.T) {
 	cli := &MockDistributePDCli{}
 	recoverCli := infosync.SetPDHttpCliForTest(cli)
 	defer recoverCli()
-	mockCreateSchedulerWithInput := func(tblName, partition string, schedulerName string, config map[string]any) *mock.Call {
+	mockCreateSchedulerWithInput := func(tblName, partition string, config map[string]any) *mock.Call {
 		is := tk.Session().GetDomainInfoSchema()
 		tbl, err := is.TableInfoByName(ast.NewCIStr(database), ast.NewCIStr(tblName))
 		require.NoError(t, err)
@@ -135,23 +151,28 @@ func TestDistributeTable(t *testing.T) {
 	config := map[string]any{
 		"alias":  alias,
 		"engine": "tikv",
-		"rule":   "leader",
+		"rule":   "leader-scatter",
 	}
 	tk.MustExec("create table t1(a int)")
 	mockGetSchedulerConfig("balance-range-scheduler")
-	mockCreateSchedulerWithInput(table, partition, "balance-range-scheduler", config)
-	tk.MustQuery(fmt.Sprintf("distribute table %s rule=leader engine=tikv", table)).Check(testkit.Rows("1"))
+	mockCreateSchedulerWithInput(table, partition, config)
+	tk.MustQuery(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=tikv", table)).Check(testkit.Rows("1"))
 	// create new scheduler with the same inputs
-	mockCreateSchedulerWithInput(table, partition, "balance-range-scheduler", config)
-	tk.MustQuery(fmt.Sprintf("distribute table %s rule=leader engine=tikv", table)).Check(testkit.Rows("2"))
+	mockCreateSchedulerWithInput(table, partition, config)
+	tk.MustQuery(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=tikv", table)).Check(testkit.Rows("2"))
+
+	// test for timeout
+	config["timeout"] = "30m"
+	mockCreateSchedulerWithInput(table, partition, config)
+	tk.MustQuery(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=tikv timeout=`30m`", table)).Check(testkit.Rows("3"))
 
 	// test for incorrect arguments
-	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=leader engine=tiflash", table),
-		"[planner:1210]Incorrect arguments to the rule of tiflash must be learner")
-	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=leader engine=titan", table),
+	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=tiflash", table),
+		"[planner:1210]Incorrect arguments to the rule of tiflash must be learner-scatter")
+	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=titan", table),
 		"[planner:1210]Incorrect arguments to engine must be tikv or tiflash")
-	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=witness engine=tikv", table),
-		"[planner:1210]Incorrect arguments to rule must be leader, follower or learner")
+	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=`witness` engine=tikv", table),
+		"[planner:1210]Incorrect arguments to rule must be leader-scatter, follower-scatter or learner-scatter")
 }
 
 func TestShowTableDistributions(t *testing.T) {
@@ -177,25 +198,28 @@ func TestShowTableDistributions(t *testing.T) {
 			Return(distributions, nil)
 	}
 	distributions := &pdhttp.RegionDistributions{}
-	distributions.RegionDistributions = append(distributions.RegionDistributions, &pdhttp.RegionDistribution{
-		StoreID:               1,
-		EngineType:            "tikv",
-		RegionLeaderCount:     1,
-		RegionPeerCount:       3,
-		RegionWriteBytes:      100,
-		RegionWriteKeys:       10,
-		RegionWriteQuery:      1,
-		RegionLeaderReadBytes: 1000,
-		RegionLeaderReadKeys:  100,
-		RegionLeaderReadQuery: 10,
-		RegionPeerReadKeys:    10000,
-		RegionPeerReadBytes:   1000,
-		RegionPeerReadQuery:   100,
-	})
+	mockDistribution := func(storeID uint64) *pdhttp.RegionDistribution {
+		return &pdhttp.RegionDistribution{
+			StoreID:               storeID,
+			EngineType:            "tikv",
+			RegionLeaderCount:     1,
+			RegionPeerCount:       3,
+			RegionWriteBytes:      100,
+			RegionWriteKeys:       10,
+			RegionWriteQuery:      1,
+			RegionLeaderReadBytes: 1000,
+			RegionLeaderReadKeys:  100,
+			RegionLeaderReadQuery: 10,
+			RegionPeerReadKeys:    10000,
+			RegionPeerReadBytes:   1000,
+			RegionPeerReadQuery:   100,
+		}
+	}
+	distributions.RegionDistributions = append(distributions.RegionDistributions, mockDistribution(1), mockDistribution(2))
 	tk.MustExec("create table t1(a int)")
 	mockGetDistributions("t1", "", distributions)
-	tk.MustQuery("show table t1 distributions").Check(testkit.Rows("t1 1 tikv 1 3 100 10 1 " +
-		"1000 100 10 1000 10000 100"))
+	tk.MustQuery("show table t1 distributions").Check(testkit.Rows("t1 1 tikv 1 3 100 10 1 "+
+		"1000 100 10 1000 10000 100", "t1 2 tikv 1 3 100 10 1 1000 100 10 1000 10000 100"))
 
 	// test for partition table distributions
 	tk.MustExec("create table tp1 (id int) PARTITION BY RANGE (id) (" +
@@ -205,8 +229,35 @@ func TestShowTableDistributions(t *testing.T) {
 		")")
 	mockGetDistributions("tp1", "p0", distributions)
 	mockGetDistributions("tp1", "p1", distributions)
-	tk.MustQuery("show table tp1 partition(p0) distributions").Check(testkit.Rows("p0 1 tikv 1 3 100 10 1 " +
-		"1000 100 10 1000 10000 100"))
+	tk.MustQuery("show table tp1 partition(p0) distributions").Check(testkit.Rows("p0 1 tikv 1 3 100 10 1 "+
+		"1000 100 10 1000 10000 100", "p0 2 tikv 1 3 100 10 1 1000 100 10 1000 10000 100"))
 	tk.MustQuery("show table tp1 partition(p0,p1) distributions").Check(testkit.Rows("p0 1 tikv 1 3 100 10 1 "+
-		"1000 100 10 1000 10000 100", "p1 1 tikv 1 3 100 10 1 1000 100 10 1000 10000 100"))
+		"1000 100 10 1000 10000 100", "p0 2 tikv 1 3 100 10 1 1000 100 10 1000 10000 100",
+		"p1 1 tikv 1 3 100 10 1 1000 100 10 1000 10000 100", "p1 2 tikv 1 3 100 10 1 1000 100 10 1000 10000 100",
+	))
+}
+
+func TestCancelDistributionJob(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	cli := &MockDistributePDCli{}
+	recoverCli := infosync.SetPDHttpCliForTest(cli)
+	defer recoverCli()
+	mockCancelJobID := func(jobID uint64) *mock.Call {
+		return cli.On("CancelSchedulerJob", mock.Anything, schedulerName, jobID).
+			Return(nil)
+	}
+	mockCancelJobID(1)
+	// cancel job failed because job not found
+	_, err := tk.Exec("cancel distribution job 1")
+	require.ErrorContains(t, err, "job not found")
+
+	// cancel job successfully
+	job := map[string]any{
+		"job-id": float64(1),
+	}
+	cli.jobs = append(cli.jobs, job)
+	_, err = tk.Exec("cancel distribution job 1")
+	require.NoError(t, err)
 }

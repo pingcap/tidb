@@ -42,6 +42,7 @@ type DistributeTableExec struct {
 	partitionNames []ast.CIStr
 	rule           ast.CIStr
 	engine         ast.CIStr
+	timeout        ast.CIStr
 
 	done      bool
 	keyRanges []*pdhttp.KeyRange
@@ -107,6 +108,9 @@ func (e *DistributeTableExec) distributeTable(ctx context.Context) error {
 	input["alias"] = e.getAlias()
 	input["engine"] = e.engine.String()
 	input["rule"] = e.rule.String()
+	if len(e.timeout.L) > 0 {
+		input["timeout"] = e.timeout.String()
+	}
 	startKeys := make([]string, 0, len(e.keyRanges))
 	endKeys := make([]string, 0, len(e.keyRanges))
 	for _, r := range e.keyRanges {
@@ -163,4 +167,24 @@ func (e *DistributeTableExec) getKeyRanges() ([]*pdhttp.KeyRange, error) {
 		ranges = append(ranges, r)
 	}
 	return ranges, nil
+}
+
+// CancelDistributionJobExec represents a cancel distribution job executor.
+type CancelDistributionJobExec struct {
+	exec.BaseExecutor
+	jobID uint64
+	done  bool
+}
+
+var (
+	_ exec.Executor = (*CancelDistributionJobExec)(nil)
+)
+
+// Next implements the Executor Next interface.
+func (e *CancelDistributionJobExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+	if e.done {
+		return nil
+	}
+	e.done = true
+	return infosync.CancelSchedulerJob(ctx, schedulerName, e.jobID)
 }
