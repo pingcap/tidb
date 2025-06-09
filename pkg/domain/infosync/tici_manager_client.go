@@ -40,7 +40,7 @@ type TiCIManagerCtx struct {
 
 // MetaServiceEelectionKey is the election path used for meta service leader election.
 // The same as https://github.com/pingcap-inc/tici/blob/master/src/servicediscovery/mod.rs#L4
-const MetaServiceEelectionKey = "/tici/metaserivce/election/"
+const MetaServiceEelectionKey = "/tici/metaserivce/election"
 
 // NewTiCIManager creates a new TiCI manager.
 func NewTiCIManager(client *clientv3.Client) (*TiCIManagerCtx, error) {
