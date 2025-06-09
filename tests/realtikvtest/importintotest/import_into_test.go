@@ -1303,9 +1303,6 @@ func (s *mockGCSSuite) TestTableMode() {
 		},
 		Content: content,
 	})
-	tempDir := s.T().TempDir()
-	filePath := path.Join(tempDir, "file.csv")
-	s.NoError(os.WriteFile(filePath, content, 0644))
 	s.prepareAndUseDB("import_into")
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
 
