@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "backup",
     srcs = [
-        "check.go",
         "client.go",
         "metrics.go",
         "schema.go",
@@ -33,6 +32,7 @@ go_library(
         "//pkg/meta/model",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/util",
+        "//pkg/tablecodec",
         "//pkg/util",
         "//pkg/util/table-filter",
         "@com_github_google_btree//:btree",
