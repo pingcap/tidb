@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -126,25 +127,9 @@ func (ctx *OperatorCtx) OperatorErr() error {
 }
 
 var (
-	_ RowCountListener = (*EmptyRowCntListener)(nil)
-	_ RowCountListener = (*distTaskRowCntListener)(nil)
-	_ RowCountListener = (*localRowCntListener)(nil)
+	_ execute.Collector = (*distTaskRowCntCollector)(nil)
+	_ execute.Collector = (*localRowCntCollector)(nil)
 )
-
-// RowCountListener is invoked when some index records are flushed to disk or imported to TiKV.
-type RowCountListener interface {
-	Written(rowCnt int)
-	SetTotal(total int)
-}
-
-// EmptyRowCntListener implements a noop RowCountListener.
-type EmptyRowCntListener struct{}
-
-// Written implements RowCountListener.
-func (*EmptyRowCntListener) Written(_ int) {}
-
-// SetTotal implements RowCountListener.
-func (*EmptyRowCntListener) SetTotal(_ int) {}
 
 // MockDMLExecutionBeforeScan is only used for test.
 var MockDMLExecutionBeforeScan func()
@@ -163,7 +148,7 @@ func NewAddIndexIngestPipeline(
 	reorgMeta *model.DDLReorgMeta,
 	avgRowSize int,
 	concurrency int,
-	rowCntListener RowCountListener,
+	collector execute.Collector,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
@@ -190,7 +175,7 @@ func NewAddIndexIngestPipeline(
 		reorgMeta.GetBatchSize(), reorgMeta, backendCtx)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool,
 		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta)
-	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, rowCntListener)
+	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, collector)
 
 	operator.Compose(srcOp, scanOp)
 	operator.Compose(scanOp, ingestOp)
@@ -222,7 +207,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	avgRowSize int,
 	concurrency int,
 	resource *proto.StepResource,
-	rowCntListener RowCountListener,
+	collector execute.Collector,
 	tikvCodec tikv.Codec,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
@@ -262,7 +247,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		tbl, indexes, extStore, srcChkPool, writerCnt,
 		onClose, memSizePerIndex, reorgMeta, tikvCodec,
 	)
-	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, rowCntListener)
+	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, collector)
 
 	operator.Compose(srcOp, scanOp)
 	operator.Compose(scanOp, writeOp)
@@ -878,7 +863,7 @@ type indexWriteResultSink struct {
 	tbl        table.PhysicalTable
 	indexes    []table.Index
 
-	rowCntListener RowCountListener
+	collector execute.Collector
 
 	errGroup errgroup.Group
 	source   operator.DataChannel[IndexWriteResult]
@@ -889,15 +874,15 @@ func newIndexWriteResultSink(
 	backendCtx ingest.BackendCtx,
 	tbl table.PhysicalTable,
 	indexes []table.Index,
-	rowCntListener RowCountListener,
+	collector execute.Collector,
 ) *indexWriteResultSink {
 	return &indexWriteResultSink{
-		ctx:            ctx,
-		backendCtx:     backendCtx,
-		tbl:            tbl,
-		indexes:        indexes,
-		errGroup:       errgroup.Group{},
-		rowCntListener: rowCntListener,
+		ctx:        ctx,
+		backendCtx: backendCtx,
+		tbl:        tbl,
+		indexes:    indexes,
+		errGroup:   errgroup.Group{},
+		collector:  collector,
 	}
 }
 
@@ -924,12 +909,14 @@ func (s *indexWriteResultSink) collectResult() error {
 				if s.backendCtx != nil { // for local sort only
 					total := s.backendCtx.TotalKeyCount()
 					if total > 0 {
-						s.rowCntListener.SetTotal(total)
+						if lc, ok := s.collector.(*localRowCntCollector); ok {
+							lc.SetTotal(total)
+						}
 					}
 				}
 				return err
 			}
-			s.rowCntListener.Written(rs.Added)
+			s.collector.Add(0, int64(rs.Added))
 			if s.backendCtx != nil { // for local sort only
 				err := s.backendCtx.IngestIfQuotaExceeded(s.ctx, rs.ID, rs.Added)
 				if err != nil {
