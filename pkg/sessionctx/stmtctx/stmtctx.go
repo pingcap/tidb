@@ -1487,8 +1487,3 @@ func (r StatsLoadResult) ErrorMsg() string {
 	b.WriteString(r.Error.Error())
 	return b.String()
 }
-
-// SetIgnoreExplainIDSuffix sets the ignore explain id suffix.
-func (sc *StatementContext) SetIgnoreExplainIDSuffix(ignore bool) {
-	sc.IgnoreExplainIDSuffix = ignore
-}
