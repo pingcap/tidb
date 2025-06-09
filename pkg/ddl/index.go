@@ -1301,10 +1301,7 @@ func checkIfTableIsEmpty(
 	}
 	//nolint:forcetypeassert
 	plainTbl := tbl.(table.PhysicalTable)
-	if isEmpty, err := checkIfPhysicalTableIsEmpty(ctx, store, plainTbl, startTS); err != nil || !isEmpty {
-		return false, err
-	}
-	return true, nil
+	return checkIfPhysicalTableIsEmpty(ctx, store, plainTbl, startTS)
 }
 
 func checkIfPhysicalTableIsEmpty(
