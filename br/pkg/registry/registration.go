@@ -155,7 +155,6 @@ type Registry struct {
 	se               glue.Session
 	heartbeatSession glue.Session
 	heartbeatManager *HeartbeatManager
-	dom              *domain.Domain
 }
 
 // NewRestoreRegistry creates a new registry using TiDB's session
@@ -172,7 +171,6 @@ func NewRestoreRegistry(g glue.Glue, dom *domain.Domain) (*Registry, error) {
 	return &Registry{
 		se:               se,
 		heartbeatSession: heartbeatSession,
-		dom:              dom,
 	}, nil
 }
 
@@ -646,7 +644,7 @@ func (r *Registry) CleanupStaleRunningTasks(ctx context.Context) error {
 			}
 
 			// also cleanup checkpoint data for this stale task
-			if err := checkpoint.RemoveAllCheckpointDataForRestoreID(ctx, r.dom, r.se, candidate.id); err != nil {
+			if err := checkpoint.RemoveAllCheckpointDataForRestoreID(ctx, r.se, candidate.id); err != nil {
 				log.Warn("failed to cleanup checkpoint data for stale task",
 					zap.Uint64("task_id", candidate.id),
 					zap.Error(err))
@@ -704,7 +702,7 @@ func (r *Registry) checkForAutoRestoredTSConflict(ctx context.Context, info Regi
 				"(existing: %d, requested: %d). This commonly happens when retrying PiTR without "+
 				"specifying an explicit restore timestamp, causing the system to auto-detect a "+
 				"different value from log backup. Please specify an explicit --restored-ts "+
-				"parameter from the exisitng task and try again",
+				"parameter from the existing task and try again",
 			conflictingTaskID, conflictingRestoredTS, info.RestoredTS)
 	}
 

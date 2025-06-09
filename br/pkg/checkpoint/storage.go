@@ -350,7 +350,7 @@ func dropCheckpointTables(
 // RemoveAllCheckpointDataForRestoreID removes all table-based checkpoint data for a given restore ID
 // by dropping the entire checkpoint databases. Each restore task uses dedicated databases with the
 // restore ID as a suffix, so we can safely drop the entire database.
-func RemoveAllCheckpointDataForRestoreID(ctx context.Context, dom *domain.Domain, se glue.Session, restoreID uint64) error {
+func RemoveAllCheckpointDataForRestoreID(ctx context.Context, se glue.Session, restoreID uint64) error {
 	// construct database names for all checkpoint types with the restore ID suffix
 	checkpointDBNames := []string{
 		fmt.Sprintf("%s_%d", LogRestoreCheckpointDatabaseName, restoreID),
