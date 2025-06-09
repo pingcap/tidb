@@ -876,11 +876,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			if err = client.CheckTargetClusterFresh(ctx); err != nil {
 				return errors.Trace(err)
 			}
-		} else {
-			if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
-				schedulersRemovable = true
-				return errors.Trace(err)
-			}
+		} else if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
+			schedulersRemovable = true
+			return errors.Trace(err)
 		}
 		// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
 		// to avoid import cycle problem which we won't do it in this pr, then refactor this
