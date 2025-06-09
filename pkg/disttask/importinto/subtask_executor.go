@@ -137,10 +137,10 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
 		err = importer.VerifyChecksum(ctx, &taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
 		failpoint.Inject("beforeResetTableMode", func() {})
-		err2 := ddl.CreateAlterTableModeJob(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
 		failpoint.Inject("errorWhenResetTableMode", func() {
-			err2 = errors.New("occur an error when reset table mode to normal")
+			failpoint.Return(errors.New("occur an error when reset table mode to normal"))
 		})
+		err2 := ddl.CreateAlterTableModeJob(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
 		if err2 != nil {
 			callLog.Warn("alter table mode to normal failure", zap.Error(err2))
 		}
