@@ -21,10 +21,12 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -975,23 +977,25 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 	tk.MustExec("prepare stmt from 'select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);';")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComStmtExecute, 0)
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	res = tk.MustQuery("explain analyze select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);")
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Contains(t, res.Rows()[1][0], "Apply")
 	require.Contains(t, res.Rows()[1][5], "Concurrency")
 
 	tk.MustExec("set tidb_enable_parallel_apply=false")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComStmtExecute, 0)
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	res = tk.MustQuery("explain analyze select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);")
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Contains(t, res.Rows()[1][0], "Apply")
-	executionInfo := fmt.Sprintf("%v", res.Rows()[1][5])
+	executionInfo := fmt.Sprintf("%v", res.Rows()[1][4])
 	// Do not use the parallel apply.
-	require.True(t, strings.Contains(executionInfo, "concurrency:OFF"))
+	require.False(t, strings.Contains(executionInfo, "Concurrency"))
 	tk.MustExec("execute stmt;")
 	// The subquery plan with PhysicalApply can't be cached.
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
@@ -1007,19 +1011,21 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 
 	tk.MustExec("prepare stmt from 'select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);';")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComStmtExecute, 0)
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	res = tk.MustQuery("explain analyze select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);")
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Contains(t, res.Rows()[1][0], "Apply")
 	require.Contains(t, res.Rows()[1][5], "cache:ON")
 
 	tk.MustExec("set tidb_mem_quota_apply_cache=0")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComStmtExecute, 0)
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	res = tk.MustQuery("explain analyze select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);")
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Contains(t, res.Rows()[1][0], "Apply")
 	executionInfo = fmt.Sprintf("%v", res.Rows()[1][5])
 	// Do not use the apply cache.
