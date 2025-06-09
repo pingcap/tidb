@@ -155,6 +155,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 		var done bool
 		startTime := time.Now()
 		for !done {
+			failpoint.InjectCall("beforeGetChunk")
 			srcChk := p.getChunk()
 			if srcChk == nil {
 				terror.Call(rs.Close)
