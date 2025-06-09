@@ -119,10 +119,11 @@ func DecodeBinaryPlan4Connection(binaryPlan string, format string) ([][]string, 
 	if pb.DiscardedDueToTooLong {
 		return nil, nil
 	}
+	isBrief := format == types.ExplainFormatBrief
 	// decode the protobuf into strings
-	rows := decodeBinaryOperator(pb.Main, "", true, pb.WithRuntimeStats, nil, true)
+	rows := decodeBinaryOperator(pb.Main, "", true, pb.WithRuntimeStats, nil, isBrief)
 	for _, cte := range pb.Ctes {
-		rows = decodeBinaryOperator(cte, "", true, pb.WithRuntimeStats, rows, true)
+		rows = decodeBinaryOperator(cte, "", true, pb.WithRuntimeStats, rows, isBrief)
 	}
 	if len(rows) == 0 {
 		return nil, nil
@@ -132,21 +133,17 @@ func DecodeBinaryPlan4Connection(binaryPlan string, format string) ([][]string, 
 	var columnIndices []int
 	if pb.WithRuntimeStats {
 		switch format {
-		case types.ExplainFormatBrief:
-			columnIndices = []int{1, 2, 4, 5, 6, 7, 9, 10, 11}
-		case types.ExplainFormatROW, types.ExplainFormatPlanCache:
-			columnIndices = []int{0, 2, 4, 5, 6, 7, 8, 10, 11}
+		case types.ExplainFormatBrief, types.ExplainFormatROW, types.ExplainFormatPlanCache:
+			columnIndices = []int{0, 1, 3, 4, 5, 6, 7, 8, 9}
 		case types.ExplainFormatVerbose:
-			columnIndices = []int{0, 2, 3, 4, 5, 6, 7, 8, 10, 11}
+			columnIndices = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 		}
 	} else {
 		switch format {
-		case types.ExplainFormatBrief:
-			columnIndices = []int{1, 2, 4, 5, 7}
-		case types.ExplainFormatROW, types.ExplainFormatPlanCache:
-			columnIndices = []int{0, 2, 4, 5, 6}
+		case types.ExplainFormatBrief, types.ExplainFormatROW, types.ExplainFormatPlanCache:
+			columnIndices = []int{0, 1, 3, 4, 5}
 		case types.ExplainFormatVerbose:
-			columnIndices = []int{0, 2, 3, 4, 5, 6}
+			columnIndices = []int{0, 1, 2, 3, 4, 5}
 		}
 	}
 	// Extract specified columns
@@ -202,10 +199,11 @@ func calculateMaxFieldLens(rows [][]string, hasRuntimeStats bool) (runeLens, byt
 func decodeBinaryOperator(op *tipb.ExplainOperator, indent string, isLastChild, hasRuntimeStats bool, out [][]string, isBrief bool) [][]string {
 	row := make([]string, 0, 10)
 	// 1. extract the information and turn them into strings for display
-	explainID := texttree.PrettyIdentifier(op.Name+printDriverSide(op.Labels), indent, isLastChild)
-	var briefExplainID string
+	var explainID string
 	if isBrief {
-		briefExplainID = texttree.PrettyIdentifier(op.BriefName+printDriverSide(op.Labels), indent, isLastChild)
+		explainID = texttree.PrettyIdentifier(op.BriefName+printDriverSide(op.Labels), indent, isLastChild)
+	} else {
+		explainID = texttree.PrettyIdentifier(op.Name+printDriverSide(op.Labels), indent, isLastChild)
 	}
 	estRows := strconv.FormatFloat(op.EstRows, 'f', 2, 64)
 	cost := strconv.FormatFloat(op.Cost, 'f', 2, 64)
@@ -244,11 +242,7 @@ func decodeBinaryOperator(op *tipb.ExplainOperator, indent string, isLastChild, 
 	accessObject := printAccessObject(op.AccessObjects)
 
 	// 2. append the strings to the slice
-	row = append(row, explainID)
-	if isBrief {
-		row = append(row, briefExplainID)
-	}
-	row = append(row, estRows, cost)
+	row = append(row, explainID, estRows, cost)
 	if hasRuntimeStats {
 		row = append(row, actRows)
 	}
@@ -256,14 +250,13 @@ func decodeBinaryOperator(op *tipb.ExplainOperator, indent string, isLastChild, 
 	if hasRuntimeStats {
 		row = append(row, execInfo)
 	}
-	row = append(row, op.OperatorInfo)
-	if isBrief {
-		if op.BriefOperatorInfo != "" {
-			row = append(row, op.BriefOperatorInfo)
-		} else {
-			row = append(row, op.OperatorInfo)
-		}
+	// Choose the appropriate operator info based on isBrief flag
+	operatorInfo := op.OperatorInfo
+	if isBrief && op.BriefOperatorInfo != "" {
+		operatorInfo = op.BriefOperatorInfo
 	}
+	row = append(row, operatorInfo)
+
 	if hasRuntimeStats {
 		row = append(row, memInfo, diskInfo)
 	}

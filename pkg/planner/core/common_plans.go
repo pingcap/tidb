@@ -903,24 +903,22 @@ func (e *Explain) prepareSchema() error {
 	case format == types.ExplainFormatTrueCardCost:
 		fieldNames = []string{"id", "estRows", "estCost", "costFormula", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == types.ExplainFormatCostTrace:
-		if e.BriefBinaryPlan == "" {
-			if e.Analyze || e.RuntimeStatsColl != nil {
-				fieldNames = []string{"id", "estRows", "estCost", "costFormula", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
-			} else {
-				fieldNames = []string{"id", "estRows", "estCost", "costFormula", "task", "access object", "operator info"}
-			}
+		if e.Analyze || e.RuntimeStatsColl != nil {
+			fieldNames = []string{"id", "estRows", "estCost", "costFormula", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
+		} else {
+			fieldNames = []string{"id", "estRows", "estCost", "costFormula", "task", "access object", "operator info"}
 		}
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
-	case format == types.ExplainFormatDOT && e.BriefBinaryPlan == "":
+	case format == types.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
-	case format == types.ExplainFormatHint && e.BriefBinaryPlan == "":
+	case format == types.ExplainFormatHint:
 		fieldNames = []string{"hint"}
-	case format == types.ExplainFormatBinary && e.BriefBinaryPlan == "":
+	case format == types.ExplainFormatBinary:
 		fieldNames = []string{"binary plan"}
-	case format == types.ExplainFormatTiDBJSON && e.BriefBinaryPlan == "":
+	case format == types.ExplainFormatTiDBJSON:
 		fieldNames = []string{"TiDB_JSON"}
-	case e.Explore && e.BriefBinaryPlan == "":
+	case e.Explore:
 		fieldNames = []string{"statement", "binding_hint", "plan", "plan_digest", "avg_latency", "exec_times", "avg_scan_rows",
 			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason"}
 	default:
@@ -1027,6 +1025,9 @@ func (e *Explain) RenderResult() error {
 	}
 	// For explain for connection, we can directly decode the binary plan to get the explain rows.
 	if e.BriefBinaryPlan != "" {
+		if strings.ToLower(e.Format) != types.ExplainFormatBrief && strings.ToLower(e.Format) != types.ExplainFormatROW && strings.ToLower(e.Format) != types.ExplainFormatPlanCache && strings.ToLower(e.Format) != types.ExplainFormatVerbose {
+			return errors.Errorf("explain format '%s' for connection is not supported now", e.Format)
+		}
 		rows, err := plancodec.DecodeBinaryPlan4Connection(e.BriefBinaryPlan, strings.ToLower(e.Format))
 		if err != nil {
 			return err
