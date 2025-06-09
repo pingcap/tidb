@@ -43,6 +43,9 @@ const (
 	// Using ASCII Unit Separator (US) character which never appears in SQL identifiers or expressions.
 	FilterSeparator = "\x1F"
 
+	// StaleTaskThresholdMinutes is the threshold in minutes to consider a running task as potentially stale
+	StaleTaskThresholdMinutes = 5
+
 	// lookupRegistrationSQLTemplate is the SQL template for looking up a registration by its parameters
 	lookupRegistrationSQLTemplate = `
 		SELECT id, status FROM %s.%s
@@ -83,6 +86,20 @@ const (
 		(filter_strings, filter_hash, start_ts, restored_ts, upstream_cluster_id,
 		 with_sys_table, status, cmd, task_start_time, last_heartbeat_time)
 		VALUES (%%?, MD5(%%?), %%?, %%?, %%?, %%?, 'running', %%?, %%?, %%?)`
+
+	// selectStaleRunningTasksSQLTemplate is the SQL template for finding potentially stale running tasks
+	selectStaleRunningTasksSQLTemplate = `
+		SELECT id, last_heartbeat_time
+		FROM %s.%s
+		WHERE status = 'running'
+		AND last_heartbeat_time < DATE_SUB(NOW(), INTERVAL %%? MINUTE)
+		ORDER BY id ASC`
+
+	// selectTaskHeartbeatSQLTemplate is the SQL template for getting a specific task's heartbeat time
+	selectTaskHeartbeatSQLTemplate = `
+		SELECT last_heartbeat_time
+		FROM %s.%s
+		WHERE id = %%?`
 )
 
 // TaskStatus represents the current state of a restore task
@@ -195,6 +212,12 @@ func (r *Registry) executeInTransaction(ctx context.Context, fn func(context.Con
 // ResumeOrCreateRegistration first looks for an existing registration with the given parameters.
 // If found and paused, it tries to resume it. Otherwise, it creates a new registration.
 func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info RegistrationInfo) (uint64, error) {
+	// clean up stale tasks first
+	if err := r.CleanupStaleRunningTasks(ctx); err != nil {
+		log.Warn("failed to cleanup stale tasks", zap.Error(err))
+		// continue anyway - don't fail the registration due to cleanup issues
+	}
+
 	filterStrings := strings.Join(info.FilterStrings, FilterSeparator)
 
 	log.Info("attempting to resume or create registration",
@@ -497,4 +520,125 @@ func (r *Registry) StopHeartbeatManager() {
 		r.heartbeatManager = nil
 		log.Info("stopped heartbeat manager for restore task")
 	}
+}
+
+// CleanupStaleRunningTasks removes tasks that are marked as "running" but haven't sent heartbeats
+// within the stale threshold. It performs a double-check by waiting and verifying heartbeats haven't updated.
+func (r *Registry) CleanupStaleRunningTasks(ctx context.Context) error {
+	log.Info("starting cleanup of stale running tasks")
+
+	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+
+	// step 1: find potentially stale running tasks
+	selectStaleSQL := fmt.Sprintf(selectStaleRunningTasksSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+	rows, _, err := execCtx.ExecRestrictedSQL(ctx, nil, selectStaleSQL, StaleTaskThresholdMinutes)
+	if err != nil {
+		return errors.Annotate(err, "failed to query potentially stale tasks")
+	}
+
+	if len(rows) == 0 {
+		log.Info("no potentially stale running tasks found")
+		return nil
+	}
+
+	// step 2: record current heartbeat times for double-checking
+	type staleCandidate struct {
+		id                uint64
+		lastHeartbeatTime string
+	}
+
+	candidates := make([]staleCandidate, 0, len(rows))
+	for _, row := range rows {
+		taskID := row.GetUint64(0)
+		heartbeatTime := row.GetTime(1).String()
+
+		candidates = append(candidates, staleCandidate{
+			id:                taskID,
+			lastHeartbeatTime: heartbeatTime,
+		})
+
+		log.Info("found potentially stale task",
+			zap.Uint64("task_id", taskID),
+			zap.String("last_heartbeat", heartbeatTime))
+	}
+
+	// step 3: wait for 5 minutes to double-check
+	log.Info("waiting 5 minutes before double-checking stale tasks to ensure they are truly orphaned",
+		zap.Int("candidate_count", len(candidates)))
+
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+
+	remainingMinutes := StaleTaskThresholdMinutes
+	startTime := time.Now()
+
+	for remainingMinutes > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			remainingMinutes--
+			if remainingMinutes > 0 {
+				log.Info("still waiting to confirm stale tasks are orphaned",
+					zap.Int("remaining_minutes", remainingMinutes),
+					zap.Int("candidate_count", len(candidates)))
+			}
+		}
+	}
+
+	elapsed := time.Since(startTime)
+	log.Info("completed waiting period, proceeding with stale task cleanup",
+		zap.Duration("elapsed", elapsed),
+		zap.Int("candidate_count", len(candidates)))
+
+	// step 4: double-check and clean up tasks whose heartbeats haven't updated
+	selectHeartbeatSQL := fmt.Sprintf(selectTaskHeartbeatSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+	deleteSQL := fmt.Sprintf(deleteRegistrationSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+
+	cleanedCount := 0
+	for _, candidate := range candidates {
+		// check if heartbeat time has changed
+		heartbeatRows, _, err := execCtx.ExecRestrictedSQL(ctx, nil, selectHeartbeatSQL, candidate.id)
+		if err != nil {
+			log.Warn("failed to check heartbeat for task, skipping",
+				zap.Uint64("task_id", candidate.id),
+				zap.Error(err))
+			continue
+		}
+
+		if len(heartbeatRows) == 0 {
+			log.Warn("task not found during heartbeat check, may have been cleaned up already",
+				zap.Uint64("task_id", candidate.id))
+			continue
+		}
+
+		currentHeartbeatTime := heartbeatRows[0].GetTime(0).String()
+
+		// if heartbeat time hasn't changed, this task is truly stale
+		if currentHeartbeatTime == candidate.lastHeartbeatTime {
+			if err := r.se.ExecuteInternal(ctx, deleteSQL, candidate.id); err != nil {
+				log.Error("failed to delete stale task",
+					zap.Uint64("task_id", candidate.id),
+					zap.Error(err))
+				continue
+			}
+
+			log.Warn("cleaned up stale running task",
+				zap.Uint64("task_id", candidate.id),
+				zap.String("last_heartbeat", candidate.lastHeartbeatTime))
+			cleanedCount++
+		} else {
+			log.Info("task heartbeat updated during wait period, keeping task",
+				zap.Uint64("task_id", candidate.id),
+				zap.String("old_heartbeat", candidate.lastHeartbeatTime),
+				zap.String("new_heartbeat", currentHeartbeatTime))
+		}
+	}
+
+	log.Info("completed cleanup of stale running tasks",
+		zap.Int("candidates_checked", len(candidates)),
+		zap.Int("tasks_cleaned", cleanedCount))
+
+	return nil
 }
