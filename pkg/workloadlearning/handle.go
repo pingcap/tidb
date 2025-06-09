@@ -143,16 +143,16 @@ func (handle *Handle) analyzeBasedOnStatementStats(infoSchema infoschema.InfoSch
 		return nil, startTime, startTime
 	}
 	sql := `select summary_end.DIGEST, summary_end.DIGEST_TEXT, summary_end.BINARY_PLAN,
-            ifNULL(summary_start.EXEC_COUNT, summary_end.EXEC_COUNT, summary_end.EXEC_COUNT - summary_start.EXEC_COUNT) as EXEC_COUNT
+            if(summary_start.EXEC_COUNT is NULL, summary_end.EXEC_COUNT, summary_end.EXEC_COUNT - summary_start.EXEC_COUNT) as EXEC_COUNT
             FROM
             (SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT
 	        FROM ` + mysql.WorkloadSchema + `.HIST_TIDB_STATEMENTS_STATS
-            WHERE LOWER(STMT_TYPE) = 'Select'
+            WHERE STMT_TYPE = 'Select'
 	        AND SNAP_ID = '%?') summary_end
             left join
             (SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT
 	        FROM ` + mysql.WorkloadSchema + `.HIST_TIDB_STATEMENTS_STATS
-	        WHERE LOWER(STMT_TYPE) = 'Select'
+	        WHERE STMT_TYPE = 'Select'
 	        AND SNAP_ID = '%?') summary_start on summary_end.DIGEST = summary_start.DIGEST`
 	// Step2.1: get statements stats record from ClusterTableTiDBStatementsStats
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, endSnapshotId, startSnapshotId)
