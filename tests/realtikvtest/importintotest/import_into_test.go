@@ -40,12 +40,12 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
@@ -1022,9 +1022,9 @@ func (s *mockGCSSuite) TestRegisterTask() {
 		func() {
 			// cannot run 2 import job to the same target table.
 			tk2 := testkit.NewTestKit(s.T(), s.store)
-			err = tk2.QueryToErr(sql)
-			s.ErrorIs(err, exeerrors.ErrLoadDataPreCheckFailed)
-			s.ErrorContains(err, "there is active job on the target table already")
+			err = tk2.ExecToErr(sql)
+			s.ErrorIs(err, infoschema.ErrProtectedTableMode)
+			s.ErrorContains(err, "Table register_task is in mode Import")
 			etcdKey = fmt.Sprintf("/tidb/brie/import/import-into/%d", storage.TestLastTaskID.Load())
 			s.Eventually(func() bool {
 				resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
