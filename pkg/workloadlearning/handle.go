@@ -331,7 +331,7 @@ func checkCrossDB(sql string) (bool, error) {
 		return false, err
 	}
 
-	extractor := &TableNameExtractor{}
+	extractor := &DBNameExtractor{}
 	if len(stmtNodes) != 1 {
 		// TODO: support multi-statement in one single statement_record
 		return false, nil
@@ -658,6 +658,10 @@ func extractPartialMetricsFromChildrenIndexMerge(op *tipb.ExplainOperator) ([]*T
 	}
 }
 
+// extractOperatorTypeFromName extracts the operator type from the operator name.
+// The operator name pattern seems to be like "OperatorType_ID"
+// For example, "TableReader_1", "IndexLookUp_2", "PointGet_3", etc.
+// The function will return the operator type part, such as "TableReader", "IndexLookUp", "PointGet", etc.
 func extractOperatorTypeFromName(name string) (string, error) {
 	names := strings.Split(name, "_")
 	if len(names) != 2 {
@@ -683,6 +687,10 @@ func extractScanTimeFromExecutionInfo(op *tipb.ExplainOperator) (time.Duration, 
 	return scanTime, err
 }
 
+// extractScanTimeFromString extracts the scan time from execution info string that contains "time: <duration>,"
+// The execution info string pattern seems to be like:
+// "time:274.5µs, loops:1, cop_task:......"
+// We need the duration after "time:" and before the first comma.
 func extractScanTimeFromString(input string) (time.Duration, error) {
 	start := strings.Index(input, "time:")
 	if start == -1 {
@@ -707,11 +715,11 @@ func extractScanTimeFromString(input string) (time.Duration, error) {
 	return duration, nil
 }
 
-type TableNameExtractor struct {
+type DBNameExtractor struct {
 	DBs map[string]struct{}
 }
 
-func (e *TableNameExtractor) Enter(n ast.Node) (ast.Node, bool) {
+func (e *DBNameExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	if table, ok := n.(*ast.TableName); ok {
 		if e.DBs == nil {
 			e.DBs = make(map[string]struct{})
@@ -721,6 +729,6 @@ func (e *TableNameExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	return n, false
 }
 
-func (e *TableNameExtractor) Leave(n ast.Node) (ast.Node, bool) {
+func (e *DBNameExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	return n, true
 }
