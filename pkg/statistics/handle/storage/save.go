@@ -90,7 +90,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 				count -= hg.Buckets[j-1].Count
 			}
 			var upperBound types.Datum
-			upperBound, err = hg.GetUpper(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+			upperBound, err = convertBoundToBlob(sc.TypeCtx(), *hg.GetUpper(j))
 			if err != nil {
 				return
 			}
@@ -98,7 +98,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 				lastAnalyzePos = upperBound.GetBytes()
 			}
 			var lowerBound types.Datum
-			lowerBound, err = hg.GetLower(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+			lowerBound, err = convertBoundToBlob(sc.TypeCtx(), *hg.GetLower(j))
 			if err != nil {
 				return
 			}
@@ -409,3 +409,150 @@ func SaveMetaToStorage(
 	cache.TableRowStatsCache.Invalidate(tableID)
 	return
 }
+<<<<<<< HEAD
+=======
+
+// InsertColStats2KV insert a record to stats_histograms with distinct_count 1
+// and insert a bucket to stats_buckets with default value. This operation also
+// updates version.
+func InsertColStats2KV(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	physicalID int64,
+	colInfos []*model.ColumnInfo,
+) (uint64, error) {
+	startTS, err := util.GetStartTS(sctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	// First of all, we update the version.
+	_, err = util.ExecWithCtx(
+		ctx, sctx,
+		"update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %?",
+		startTS, startTS, physicalID,
+	)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	// If we didn't update anything by last SQL, it means the stats of this table does not exist.
+	if sctx.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+		return startTS, nil
+	}
+
+	// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
+	var rs sqlexec.RecordSet
+	rs, err = util.ExecWithCtx(
+		ctx, sctx,
+		"select count from mysql.stats_meta where table_id = %?",
+		physicalID,
+	)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer terror.Call(rs.Close)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	count := req.GetRow(0).GetInt64(0)
+	for _, colInfo := range colInfos {
+		value, err := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if value.IsNull() {
+			// If the adding column has default value null, all the existing rows have null value on the newly added column.
+			if _, err = util.ExecWithCtx(
+				ctx, sctx,
+				`insert into mysql.stats_histograms
+					(version, table_id, is_index, hist_id, distinct_count, null_count)
+				values (%?, %?, 0, %?, 0, %?)`,
+				startTS, physicalID, colInfo.ID, count,
+			); err != nil {
+				return 0, errors.Trace(err)
+			}
+			continue
+		}
+
+		// If this stats doest not exist, we insert histogram meta first, the distinct_count will always be one.
+		if _, err = util.ExecWithCtx(
+			ctx, sctx,
+			`insert into mysql.stats_histograms
+				(version, table_id, is_index, hist_id, distinct_count, tot_col_size)
+			values (%?, %?, 0, %?, 1, GREATEST(%?, 0))`,
+			startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count,
+		); err != nil {
+			return 0, errors.Trace(err)
+		}
+		value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		// There must be only one bucket for this new column and the value is the default value.
+		if _, err = util.ExecWithCtx(
+			ctx, sctx,
+			`insert into mysql.stats_buckets
+				(table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound)
+			values (%?, 0, %?, 0, %?, %?, %?, %?)`,
+			physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes(),
+		); err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+	return startTS, nil
+}
+
+// InsertTableStats2KV inserts a record standing for a new table to stats_meta
+// and inserts some records standing for the new columns and indices which belong
+// to this table.
+func InsertTableStats2KV(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	info *model.TableInfo,
+	physicalID int64,
+) (uint64, error) {
+	startTS, err := util.GetStartTS(sctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if _, err = util.ExecWithCtx(
+		ctx, sctx,
+		"insert ignore into mysql.stats_meta (version, table_id, last_stats_histograms_version) values(%?, %?, %?)",
+		startTS, physicalID, startTS,
+	); err != nil {
+		return 0, errors.Trace(err)
+	}
+	for _, col := range info.Columns {
+		if _, err = util.ExecWithCtx(
+			ctx, sctx,
+			`insert ignore into mysql.stats_histograms
+				(table_id, is_index, hist_id, distinct_count, version)
+			values (%?, 0, %?, 0, %?)`,
+			physicalID, col.ID, startTS,
+		); err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+	for _, idx := range info.Indices {
+		if _, err = util.ExecWithCtx(
+			ctx, sctx,
+			`insert ignore into mysql.stats_histograms
+				(table_id, is_index, hist_id, distinct_count, version)
+			values(%?, 1, %?, 0, %?)`,
+			physicalID, idx.ID, startTS,
+		); err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+	return startTS, nil
+}
+
+// convertBoundToBlob converts the bound to blob. The `blob` will be used to store in the `mysql.stats_buckets` table.
+// The `convertBoundFromBlob(convertBoundToBlob(a))` should be equal to `a`.
+// TODO: add a test to make sure that this assumption is correct.
+func convertBoundToBlob(ctx types.Context, d types.Datum) (types.Datum, error) {
+	return d.ConvertTo(ctx, types.NewFieldType(mysql.TypeBlob))
+}
+>>>>>>> 25dde1c45d1 (stats: use an alternative function to read the bound from `BLOB` stored in `mysql.stats_buckets`. (#59791))
