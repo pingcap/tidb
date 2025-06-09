@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -155,18 +156,19 @@ func (ds *DataSource) ExplainInfo() string {
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+	predicates = expression.PropagateConstant(ds.SCtx().GetExprCtx(), predicates)
+	predicates = constraint.DeleteTrueExprs(ds, predicates)
+	predicates = utilfuncp.ApplyPredicateSimplification(ds.SCtx(), predicates)
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
 	// TODO: remove it to the place building logical plan
 	predicates = utilfuncp.AddPrefix4ShardIndexes(ds, ds.SCtx(), predicates)
 	ds.AllConds = predicates
-	ds.AllConds = utilfuncp.ApplyPredicateSimplification(ds.SCtx(), ds.AllConds)
 	dual := Conds2TableDual(ds, ds.AllConds)
 	if dual != nil {
 		AppendTableDualTraceStep(ds, dual, predicates, opt)
 		return nil, dual
 	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
-	ds.PushedDownConds = utilfuncp.ApplyPredicateSimplification(ds.SCtx(), ds.PushedDownConds)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
 	return predicates, ds
 }
