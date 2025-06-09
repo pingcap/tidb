@@ -366,3 +366,9 @@ func HasRestoreIDColumn(dom *domain.Domain) bool {
 	}
 	return false
 }
+
+// HasRestoreRegistryTable checks if the tidb_restore_registry table exists
+func HasRestoreRegistryTable(dom *domain.Domain) bool {
+	_, err := GetTableSchema(dom, ast.NewCIStr("mysql"), ast.NewCIStr("tidb_restore_registry"))
+	return err == nil
+}
