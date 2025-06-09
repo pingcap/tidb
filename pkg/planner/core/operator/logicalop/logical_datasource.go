@@ -169,6 +169,8 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 		return nil, dual
 	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
+	ds.PushedDownConds = utilfuncp.ApplyPredicateSimplification(ds.SCtx(), ds.PushedDownConds)
+
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
 	return predicates, ds
 }

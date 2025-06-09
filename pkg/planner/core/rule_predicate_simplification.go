@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -187,6 +188,9 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	pruneEmptyORBranches(sctx, simplifiedPredicate)
+	exprCtx := sctx.GetExprCtx()
+	predicates = expression.PropagateConstant(exprCtx, predicates)
+	predicates = constraint.DeleteTrueExprsSimple(exprCtx, sctx.GetSessionVars().StmtCtx, predicates)
 	simplifiedPredicate = splitCNF(simplifiedPredicate)
 	return simplifiedPredicate
 }
