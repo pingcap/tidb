@@ -174,7 +174,7 @@ const (
 	tidbGCSafePoint   = "tidb_gc_safe_point"
 )
 
-var txnSafePointSyncWaitTime = tikv.GcSafePointCacheInterval
+var txnSafePointSyncWaitTime = tikv.GcStateCacheInterval
 
 var gcVariableComments = map[string]string{
 	gcLeaderUUIDKey:      "Current GC worker leader UUID. (DO NOT EDIT)",

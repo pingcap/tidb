@@ -60,15 +60,15 @@ func TestSelectCheckVisibility(t *testing.T) {
 		require.True(t, expectErr.Equal(err))
 	}
 	// Test point get.
-	checkSelectResultError("select * from t where a='1'", storeerr.ErrGCTooEarly)
+	checkSelectResultError("select * from t where a='1'", storeerr.ErrTxnAbortedByGC)
 	// Test batch point get.
-	checkSelectResultError("select * from t where a in ('1','2')", storeerr.ErrGCTooEarly)
+	checkSelectResultError("select * from t where a in ('1','2')", storeerr.ErrTxnAbortedByGC)
 	// Test Index look up read.
-	checkSelectResultError("select * from t where b > 0 ", storeerr.ErrGCTooEarly)
+	checkSelectResultError("select * from t where b > 0 ", storeerr.ErrTxnAbortedByGC)
 	// Test Index read.
-	checkSelectResultError("select b from t where b > 0 ", storeerr.ErrGCTooEarly)
+	checkSelectResultError("select b from t where b > 0 ", storeerr.ErrTxnAbortedByGC)
 	// Test table read.
-	checkSelectResultError("select * from t", storeerr.ErrGCTooEarly)
+	checkSelectResultError("select * from t", storeerr.ErrTxnAbortedByGC)
 }
 
 func TestReturnValues(t *testing.T) {
