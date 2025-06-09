@@ -190,8 +190,7 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	pruneEmptyORBranches(sctx, simplifiedPredicate)
 	exprCtx := sctx.GetExprCtx()
 	simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate)
-	simplifiedPredicate = constraint.DeleteTrueExprsSimple(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
-	simplifiedPredicate = splitCNF(simplifiedPredicate)
+	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
 	return simplifiedPredicate
 }
 
