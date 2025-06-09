@@ -1331,29 +1331,59 @@ func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan,
 			break
 		}
 	}
-	res.Main = binaryOpTreeFromFlatOps(explainCtx, flat.Main, briefBinaryPlan)
+	mainOps := binaryOpTreeFromFlatOps(explainCtx, flat.Main, briefBinaryPlan)
+	if len(mainOps) > 0 {
+		res.Main = mainOps[0]
+	}
 	for _, explainedCTE := range flat.CTEs {
-		res.Ctes = append(res.Ctes, binaryOpTreeFromFlatOps(explainCtx, explainedCTE, briefBinaryPlan))
+		cteOps := binaryOpTreeFromFlatOps(explainCtx, explainedCTE, briefBinaryPlan)
+		if len(cteOps) > 0 {
+			res.Ctes = append(res.Ctes, cteOps[0])
+		}
 	}
 	return res
 }
 
-func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, briefBinaryPlan bool) *tipb.ExplainOperator {
-	s := make([]tipb.ExplainOperator, len(ops))
+func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, briefBinaryPlan bool) []*tipb.ExplainOperator {
+	operators := make([]*tipb.ExplainOperator, len(ops))
+
+	// First phase: Generate all operators with normal processing (including ID suffix)
 	for i, op := range ops {
-		binaryOpFromFlatOp(explainCtx, op, &s[i], briefBinaryPlan)
+		operators[i] = &tipb.ExplainOperator{}
+		binaryOpFromFlatOp(explainCtx, op, operators[i])
+	}
+
+	// Second phase: If briefBinaryPlan is true, set IgnoreExplainIDSuffix and generate BriefName
+	if briefBinaryPlan && len(ops) > 0 && ops[0].Origin.SCtx() != nil {
+		stmtCtx := ops[0].Origin.SCtx().GetSessionVars().StmtCtx
+		originalIgnore := stmtCtx.IgnoreExplainIDSuffix
+		stmtCtx.IgnoreExplainIDSuffix = true
+
+		for i, op := range ops {
+			operators[i].BriefName = op.Origin.ExplainID().String()
+			// Also handle BriefOperatorInfo for specific operator types
+			switch op.Origin.(type) {
+			case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalHashJoin, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalMergeJoin:
+				operators[i].BriefOperatorInfo = op.Origin.ExplainInfo()
+			}
+		}
+
+		stmtCtx.IgnoreExplainIDSuffix = originalIgnore
+	}
+
+	// Build the tree structure
+	for i, op := range ops {
 		for _, idx := range op.ChildrenIdx {
-			s[i].Children = append(s[i].Children, &s[idx])
+			operators[i].Children = append(operators[i].Children, operators[idx])
 		}
 	}
-	return &s[0]
+
+	return operators
 }
 
-func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tipb.ExplainOperator, briefBinaryPlan bool) {
+func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tipb.ExplainOperator) {
 	out.Name = fop.Origin.ExplainID().String()
-	if briefBinaryPlan {
-		out.BriefName = fop.Origin.TP()
-	}
+
 	switch fop.Label {
 	case BuildSide:
 		out.Labels = []tipb.OperatorLabel{tipb.OperatorLabel_buildSide}
@@ -1424,8 +1454,11 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 	}
 
 	// Operator info
-	fillOperatorInfo(fop, out, briefBinaryPlan)
-
+	if plan, ok := fop.Origin.(dataAccesser); ok {
+		out.OperatorInfo = plan.OperatorInfo(false)
+	} else {
+		out.OperatorInfo = fop.Origin.ExplainInfo()
+	}
 	// Access object
 	switch p := fop.Origin.(type) {
 	case dataAccesser:
@@ -1439,41 +1472,6 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 			ao.SetIntoPB(out)
 		}
 	}
-}
-
-func fillOperatorInfo(fop *FlatOperator, out *tipb.ExplainOperator, briefBinaryPlan bool) {
-	if plan, ok := fop.Origin.(dataAccesser); ok {
-		out.OperatorInfo = plan.OperatorInfo(false)
-		return
-	}
-
-	if briefBinaryPlan {
-		// Handle brief binary plan cases with a unified approach
-		if briefInfo := getBriefOperatorInfo(fop.Origin); briefInfo != "" {
-			out.BriefOperatorInfo = briefInfo
-		}
-	}
-
-	out.OperatorInfo = fop.Origin.ExplainInfo()
-}
-
-// getBriefOperatorInfo handles brief operator information extraction in a unified way
-func getBriefOperatorInfo(origin base.Plan) string {
-	switch p := origin.(type) {
-	case *PhysicalTableReader:
-		return p.BriefOperatorInfo()
-	case *PhysicalIndexReader:
-		return p.ExplainNormalizedInfo()
-	case *PhysicalHashJoin:
-		return p.ExplainNormalizedInfo()
-	case *PhysicalIndexJoin:
-		return p.ExplainNormalizedInfo()
-	case *PhysicalIndexHashJoin:
-		return p.ExplainNormalizedInfo()
-	case *PhysicalMergeJoin:
-		return p.ExplainNormalizedInfo()
-	}
-	return ""
 }
 
 func (e *Explain) prepareDotInfo(p base.PhysicalPlan) {
