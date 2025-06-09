@@ -977,7 +977,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 	tk.MustExec("prepare stmt from 'select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);';")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
-	tk.Session().SetProcessInfo("", time.Now(), mysql.ComStmtExecute, 0)
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
@@ -987,7 +987,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 
 	tk.MustExec("set tidb_enable_parallel_apply=false")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
-	tk.Session().SetProcessInfo("", time.Now(), mysql.ComStmtExecute, 0)
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
@@ -1011,7 +1011,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 
 	tk.MustExec("prepare stmt from 'select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);';")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
-	tk.Session().SetProcessInfo("", time.Now(), mysql.ComStmtExecute, 0)
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
@@ -1021,7 +1021,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 
 	tk.MustExec("set tidb_mem_quota_apply_cache=0")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
-	tk.Session().SetProcessInfo("", time.Now(), mysql.ComStmtExecute, 0)
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
