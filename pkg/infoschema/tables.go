@@ -1983,23 +1983,23 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			return nil, err
 		}
 
-		//Limit concurrency to number of CPU cores
-		concurrencyLimit := runtime.GOMAXPROCS(0)
-		sem := make(chan struct{}, concurrencyLimit)
+		// Create an error group with Panic recovery and concurrency limit
+		resolveGroup := util.NewErrorGroupWithRecover()
+		resolveGroup.SetLimit(runtime.GOMAXPROCS(0)) //Limit concurrency to number of CPU cores
 
-		//concurrently resolve addresses
-		var wg sync.WaitGroup
+		// Resolve loopback addresses concurrently for each node
 		for i := range nodes {
-			wg.Add(1)
 			node := &nodes[i] //copy pointer for goroutine
-			sem <- struct{}{} //acquire slot
-			go func(n *ServerInfo) {
-				defer wg.Done()
-				defer func() { <-sem }() //release slot
-				n.ResolveLoopBackAddr()
-			}(node)
+			resolveGroup.Go(func() error {
+				node.ResolveLoopBackAddr()
+				return nil
+			})
 		}
-		wg.Wait()
+
+		// Wait for all address resolutions to complete and check for errors
+		if err := resolveGroup.Wait(); err != nil {
+			return nil, err
+		}
 		servers = append(servers, nodes...)
 	}
 	return servers, nil
