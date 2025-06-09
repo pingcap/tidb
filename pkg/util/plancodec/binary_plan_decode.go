@@ -133,14 +133,14 @@ func DecodeBinaryPlan4Connection(binaryPlan string, format string) ([][]string, 
 	var columnIndices []int
 	if pb.WithRuntimeStats {
 		switch format {
-		case types.ExplainFormatBrief, types.ExplainFormatROW, types.ExplainFormatPlanCache:
+		case types.ExplainFormatBrief, types.ExplainFormatROW:
 			columnIndices = []int{0, 1, 3, 4, 5, 6, 7, 8, 9}
 		case types.ExplainFormatVerbose:
 			columnIndices = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 		}
 	} else {
 		switch format {
-		case types.ExplainFormatBrief, types.ExplainFormatROW, types.ExplainFormatPlanCache:
+		case types.ExplainFormatBrief, types.ExplainFormatROW:
 			columnIndices = []int{0, 1, 3, 4, 5}
 		case types.ExplainFormatVerbose:
 			columnIndices = []int{0, 1, 2, 3, 4, 5}
@@ -149,13 +149,10 @@ func DecodeBinaryPlan4Connection(binaryPlan string, format string) ([][]string, 
 	// Extract specified columns
 	result := make([][]string, len(rows))
 	for i, row := range rows {
-		newRow := make([]string, len(columnIndices))
+		result[i] = make([]string, len(columnIndices))
 		for j, idx := range columnIndices {
-			if idx < len(row) {
-				newRow[j] = row[idx]
-			}
+			result[i][j] = row[idx]
 		}
-		result[i] = newRow
 	}
 
 	return result, nil

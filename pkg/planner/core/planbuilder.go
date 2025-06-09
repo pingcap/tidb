@@ -5554,7 +5554,7 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (base.Plan
 		return &Explain{Format: explainForFormat}, nil
 	}
 	// TODO: support other explain formats for connection
-	if explainForFormat != types.ExplainFormatBrief && explainForFormat != types.ExplainFormatROW && explainForFormat != types.ExplainFormatPlanCache && explainForFormat != types.ExplainFormatVerbose {
+	if explainForFormat != types.ExplainFormatBrief && explainForFormat != types.ExplainFormatROW && explainForFormat != types.ExplainFormatVerbose {
 		return nil, errors.Errorf("explain format '%s' for connection is not supported now", explainForFormat)
 	}
 	return b.buildExplainPlan(targetPlan, explainForFormat, processInfo.BriefBinaryPlan, false, false, nil, processInfo.RuntimeStatsColl, "")

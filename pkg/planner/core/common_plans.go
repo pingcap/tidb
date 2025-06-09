@@ -1025,7 +1025,7 @@ func (e *Explain) RenderResult() error {
 	}
 	// For explain for connection, we can directly decode the binary plan to get the explain rows.
 	if e.BriefBinaryPlan != "" {
-		if strings.ToLower(e.Format) != types.ExplainFormatBrief && strings.ToLower(e.Format) != types.ExplainFormatROW && strings.ToLower(e.Format) != types.ExplainFormatPlanCache && strings.ToLower(e.Format) != types.ExplainFormatVerbose {
+		if strings.ToLower(e.Format) != types.ExplainFormatBrief && strings.ToLower(e.Format) != types.ExplainFormatROW && strings.ToLower(e.Format) != types.ExplainFormatVerbose {
 			return errors.Errorf("explain format '%s' for connection is not supported now", e.Format)
 		}
 		rows, err := plancodec.DecodeBinaryPlan4Connection(e.BriefBinaryPlan, strings.ToLower(e.Format))
@@ -1331,26 +1331,20 @@ func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan,
 			break
 		}
 	}
-	mainOps := binaryOpTreeFromFlatOps(explainCtx, flat.Main, briefBinaryPlan)
-	if len(mainOps) > 0 {
-		res.Main = mainOps[0]
-	}
+	res.Main = binaryOpTreeFromFlatOps(explainCtx, flat.Main, briefBinaryPlan)
 	for _, explainedCTE := range flat.CTEs {
-		cteOps := binaryOpTreeFromFlatOps(explainCtx, explainedCTE, briefBinaryPlan)
-		if len(cteOps) > 0 {
-			res.Ctes = append(res.Ctes, cteOps[0])
-		}
+		res.Ctes = append(res.Ctes, binaryOpTreeFromFlatOps(explainCtx, explainedCTE, briefBinaryPlan))
 	}
 	return res
 }
 
-func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, briefBinaryPlan bool) []*tipb.ExplainOperator {
-	operators := make([]*tipb.ExplainOperator, len(ops))
+func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, briefBinaryPlan bool) *tipb.ExplainOperator {
+	operators := make([]tipb.ExplainOperator, len(ops))
 
 	// First phase: Generate all operators with normal processing (including ID suffix)
 	for i, op := range ops {
-		operators[i] = &tipb.ExplainOperator{}
-		binaryOpFromFlatOp(explainCtx, op, operators[i])
+		operators[i] = tipb.ExplainOperator{}
+		binaryOpFromFlatOp(explainCtx, op, &operators[i])
 	}
 
 	// Second phase: If briefBinaryPlan is true, set IgnoreExplainIDSuffix and generate BriefName
@@ -1361,6 +1355,7 @@ func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, brie
 
 		for i, op := range ops {
 			operators[i].BriefName = op.Origin.ExplainID().String()
+
 			// Also handle BriefOperatorInfo for specific operator types
 			switch op.Origin.(type) {
 			case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalHashJoin, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalMergeJoin:
@@ -1374,11 +1369,11 @@ func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, brie
 	// Build the tree structure
 	for i, op := range ops {
 		for _, idx := range op.ChildrenIdx {
-			operators[i].Children = append(operators[i].Children, operators[idx])
+			operators[i].Children = append(operators[i].Children, &operators[idx])
 		}
 	}
 
-	return operators
+	return &operators[0]
 }
 
 func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tipb.ExplainOperator) {
