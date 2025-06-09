@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -100,6 +101,19 @@ const (
 		SELECT last_heartbeat_time
 		FROM %s.%s
 		WHERE id = %%?`
+
+	// selectConflictingTaskSQLTemplate is the SQL template for finding tasks with same parameters except restoredTS
+	selectConflictingTaskSQLTemplate = `
+		SELECT id, restored_ts FROM %s.%s
+		WHERE filter_hash = MD5(%%?)
+		AND start_ts = %%?
+		AND upstream_cluster_id = %%?
+		AND with_sys_table = %%?
+		AND cmd = %%?
+		AND restored_ts != %%?
+		AND status IN ('running', 'paused')
+		ORDER BY id DESC
+		LIMIT 1`
 )
 
 // TaskStatus represents the current state of a restore task
@@ -141,6 +155,7 @@ type Registry struct {
 	se               glue.Session
 	heartbeatSession glue.Session
 	heartbeatManager *HeartbeatManager
+	dom              *domain.Domain
 }
 
 // NewRestoreRegistry creates a new registry using TiDB's session
@@ -157,6 +172,7 @@ func NewRestoreRegistry(g glue.Glue, dom *domain.Domain) (*Registry, error) {
 	return &Registry{
 		se:               se,
 		heartbeatSession: heartbeatSession,
+		dom:              dom,
 	}, nil
 }
 
@@ -212,6 +228,11 @@ func (r *Registry) executeInTransaction(ctx context.Context, fn func(context.Con
 // ResumeOrCreateRegistration first looks for an existing registration with the given parameters.
 // If found and paused, it tries to resume it. Otherwise, it creates a new registration.
 func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info RegistrationInfo) (uint64, error) {
+	// check for tasks with same parameters except restoredTS (common PiTR auto-detection issue)
+	if err := r.checkForAutoRestoredTSConflict(ctx, info); err != nil {
+		return 0, err
+	}
+
 	// clean up stale tasks first
 	if err := r.CleanupStaleRunningTasks(ctx); err != nil {
 		log.Warn("failed to cleanup stale tasks", zap.Error(err))
@@ -624,6 +645,13 @@ func (r *Registry) CleanupStaleRunningTasks(ctx context.Context) error {
 				continue
 			}
 
+			// also cleanup checkpoint data for this stale task
+			if err := checkpoint.RemoveAllCheckpointDataForRestoreID(ctx, r.dom, r.se, candidate.id); err != nil {
+				log.Warn("failed to cleanup checkpoint data for stale task",
+					zap.Uint64("task_id", candidate.id),
+					zap.Error(err))
+			}
+
 			log.Warn("cleaned up stale running task",
 				zap.Uint64("task_id", candidate.id),
 				zap.String("last_heartbeat", candidate.lastHeartbeatTime))
@@ -639,6 +667,46 @@ func (r *Registry) CleanupStaleRunningTasks(ctx context.Context) error {
 	log.Info("completed cleanup of stale running tasks",
 		zap.Int("candidates_checked", len(candidates)),
 		zap.Int("tasks_cleaned", cleanedCount))
+
+	return nil
+}
+
+// checkForAutoRestoredTSConflict checks if there's an existing task with the same parameters
+// except for restoredTS, which commonly happens when users retry PiTR without specifying
+// explicit restoredTS and the system auto-detects a different value from log backup maxTS
+func (r *Registry) checkForAutoRestoredTSConflict(ctx context.Context, info RegistrationInfo) error {
+	filterStrings := strings.Join(info.FilterStrings, FilterSeparator)
+
+	// look for tasks with same filter, startTS, cluster, sysTable, cmd but different restoredTS
+	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+
+	checkSQL := fmt.Sprintf(selectConflictingTaskSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+	rows, _, err := execCtx.ExecRestrictedSQL(ctx, nil, checkSQL,
+		filterStrings, info.StartTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd, info.RestoredTS)
+	if err != nil {
+		return errors.Annotate(err, "failed to check for auto-restoredTS conflicts")
+	}
+
+	if len(rows) > 0 {
+		conflictingTaskID := rows[0].GetUint64(0)
+		conflictingRestoredTS := rows[0].GetUint64(1)
+
+		log.Warn("found existing task with same parameters but different restoredTS",
+			zap.Uint64("conflicting_task_id", conflictingTaskID),
+			zap.Uint64("existing_restored_ts", conflictingRestoredTS),
+			zap.Uint64("requested_restored_ts", info.RestoredTS),
+			zap.Strings("filters", info.FilterStrings),
+			zap.Uint64("start_ts", info.StartTS))
+
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"Found existing restore task (ID: %d) with the same parameters except restoredTS "+
+				"(existing: %d, requested: %d). This commonly happens when retrying PiTR without "+
+				"specifying an explicit restore timestamp, causing the system to auto-detect a "+
+				"different value from log backup. Please specify an explicit --restored-ts "+
+				"parameter from the exisitng task and try again",
+			conflictingTaskID, conflictingRestoredTS, info.RestoredTS)
+	}
 
 	return nil
 }

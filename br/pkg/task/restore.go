@@ -951,6 +951,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// unregister restore task
 	failpoint.Inject("fail-at-end-of-restore", func() {
 		log.Info("failpoint fail-at-end-of-restore injected, failing at the end of restore task")
+		log.Info("previous error", zap.Error(restoreErr))
 		restoreErr = errors.New("failpoint: fail-at-end-of-restore")
 	})
 

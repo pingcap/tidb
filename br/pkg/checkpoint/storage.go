@@ -346,3 +346,47 @@ func dropCheckpointTables(
 	}
 	return nil
 }
+
+// RemoveAllCheckpointDataForRestoreID removes all table-based checkpoint data for a given restore ID
+// by dropping the entire checkpoint databases. Each restore task uses dedicated databases with the
+// restore ID as a suffix, so we can safely drop the entire database.
+func RemoveAllCheckpointDataForRestoreID(ctx context.Context, dom *domain.Domain, se glue.Session, restoreID uint64) error {
+	// construct database names for all checkpoint types with the restore ID suffix
+	checkpointDBNames := []string{
+		fmt.Sprintf("%s_%d", LogRestoreCheckpointDatabaseName, restoreID),
+		fmt.Sprintf("%s_%d", SnapshotRestoreCheckpointDatabaseName, restoreID),
+		fmt.Sprintf("%s_%d", CustomSSTRestoreCheckpointDatabaseName, restoreID),
+	}
+
+	var cleanupErrors []error
+
+	// drop each checkpoint database entirely
+	for _, dbName := range checkpointDBNames {
+		if err := se.ExecuteInternal(ctx, "DROP DATABASE IF EXISTS %n;", dbName); err != nil {
+			log.Warn("failed to drop checkpoint database",
+				zap.String("db_name", dbName),
+				zap.Uint64("restore_id", restoreID),
+				zap.Error(err))
+			cleanupErrors = append(cleanupErrors, errors.Annotatef(err,
+				"failed to drop checkpoint database %s", dbName))
+		} else {
+			log.Info("successfully dropped checkpoint database",
+				zap.String("db_name", dbName),
+				zap.Uint64("restore_id", restoreID))
+		}
+	}
+
+	// return combined errors if any occurred
+	if len(cleanupErrors) > 0 {
+		var errorMsgs []string
+		for _, err := range cleanupErrors {
+			errorMsgs = append(errorMsgs, err.Error())
+		}
+		return errors.Errorf("checkpoint database cleanup partially failed: %s", strings.Join(errorMsgs, "; "))
+	}
+
+	log.Info("successfully completed checkpoint database cleanup",
+		zap.Uint64("restore_id", restoreID))
+
+	return nil
+}
