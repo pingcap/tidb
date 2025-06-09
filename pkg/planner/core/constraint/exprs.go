@@ -28,7 +28,7 @@ func DeleteTrueExprs(p base.LogicalPlan, conds []expression.Expression) []expres
 			newConds = append(newConds, cond)
 			continue
 		}
-		if expression.MaybeOverOptimized4PlanCache(p.SCtx().GetExprCtx(), []expression.Expression{con}) {
+		if expression.MaybeOverOptimized4PlanCache(p.SCtx().GetExprCtx(), con) {
 			newConds = append(newConds, cond)
 			continue
 		}

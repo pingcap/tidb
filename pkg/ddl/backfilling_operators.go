@@ -587,6 +587,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		}
 		var done bool
 		for !done {
+			failpoint.InjectCall("beforeGetChunk")
 			srcChk := w.getChunk()
 			done, err = fetchTableScanResult(w.ctx, w.copCtx.GetBase(), rs, srcChk)
 			if err != nil || w.ctx.Err() != nil {
@@ -656,7 +657,7 @@ func NewWriteExternalStoreOperator(
 	})
 
 	totalCount := new(atomic.Int64)
-	blockSize := external.GetAdjustedBlockSize(memoryQuota)
+	blockSize := external.GetAdjustedBlockSize(memoryQuota, external.DefaultBlockSize)
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,

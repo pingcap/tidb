@@ -303,7 +303,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 }
 
 func (s *propConstSolver) setConds2ConstFalse() {
-	if MaybeOverOptimized4PlanCache(s.ctx, s.conditions) {
+	if MaybeOverOptimized4PlanCache(s.ctx, s.conditions...) {
 		s.ctx.SetSkipPlanCache("some parameters may be overwritten when constant propagation")
 	}
 	s.conditions = []Expression{&Constant{
@@ -419,7 +419,7 @@ func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Const
 		if err != nil {
 			return nil, false
 		}
-		if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
+		if MaybeOverOptimized4PlanCache(s.ctx, con) {
 			s.ctx.SetSkipPlanCache("Skip plan cache since mutable constant is restored and propagated")
 		}
 		switch d.Kind() {

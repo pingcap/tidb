@@ -524,6 +524,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildLoadData(ctx, x)
 	case *ast.LoadStatsStmt:
 		return b.buildLoadStats(x), nil
+	case *ast.RefreshStatsStmt:
+		return b.buildRefreshStats(x), nil
 	case *ast.LockStatsStmt:
 		return b.buildLockStats(x), nil
 	case *ast.UnlockStatsStmt:
@@ -4517,10 +4519,10 @@ var (
 
 var (
 	distributionJobsSchemaNames = []string{"Job_ID", "Database", "Table", "Partition_List", "Engine", "Rule", "Status",
-		"Create_Time", "Start_Time", "Finish_Time"}
+		"Timeout", "Create_Time", "Start_Time", "Finish_Time"}
 	distributionJobsSchedulerFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeString,
-		mysql.TypeString,
-		mysql.TypeString, mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp}
+		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+		mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp}
 )
 
 // importIntoCollAssignmentChecker implements ast.Visitor interface.
@@ -4767,6 +4769,16 @@ func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) base.Plan {
 	return p
 }
 
+func (b *PlanBuilder) buildRefreshStats(rs *ast.RefreshStatsStmt) base.Plan {
+	// TODO: We need to check the select privilege here.
+	p := &Simple{
+		Statement:    rs,
+		IsFromRemote: false,
+		ResolveCtx:   b.resolveCtx,
+	}
+	return p
+}
+
 // buildLockStats requires INSERT and SELECT privilege for the tables same as buildAnalyze.
 func (b *PlanBuilder) buildLockStats(ld *ast.LockStatsStmt) base.Plan {
 	p := &LockStats{
@@ -4823,6 +4835,7 @@ func (b *PlanBuilder) buildDistributeTable(node *ast.DistributeTableStmt) (base.
 		PartitionNames: node.PartitionNames,
 		Engine:         node.Engine,
 		Rule:           node.Rule,
+		Timeout:        node.Timeout,
 	}
 	plan.setSchemaAndNames(buildDistributeTableSchema())
 	return plan, nil
