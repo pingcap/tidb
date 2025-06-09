@@ -117,7 +117,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 // RuntimeInfo is the runtime information of the task for corresponding job.
 type RuntimeInfo struct {
 	Status     proto.TaskState
-	ImportRows uint64
+	ImportRows int64
 	ErrorMsg   string
 }
 
@@ -137,32 +137,22 @@ func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error
 	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
 	}
-	var importedRows uint64
-	if taskMeta.Plan.CloudStorageURI == "" {
-		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepImport)
-		if err != nil {
-			return nil, err
-		}
-		for _, subtask := range subtasks {
-			var subtaskMeta ImportStepMeta
-			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return nil, errors.Trace(err2)
-			}
-			importedRows += subtaskMeta.Result.LoadedRowCnt
-		}
-	} else {
-		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepWriteAndIngest)
-		if err != nil {
-			return nil, err
-		}
-		for _, subtask := range subtasks {
-			var subtaskMeta WriteIngestStepMeta
-			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return nil, errors.Trace(err2)
-			}
-			importedRows += subtaskMeta.Result.LoadedRowCnt
-		}
+
+	step := proto.ImportStepImport
+	if taskMeta.Plan.CloudStorageURI != "" {
+		step = proto.ImportStepWriteAndIngest
 	}
+
+	_, summaries, _, err := taskManager.GetSubtaskSummaries(ctx, task.ID, step)
+	if err != nil {
+		return nil, err
+	}
+
+	var importedRows int64
+	for _, summary := range summaries {
+		importedRows += summary.RowCnt.Load()
+	}
+
 	var errMsg string
 	if task.Error != nil {
 		errMsg = task.Error.Error()

@@ -101,6 +101,16 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 	testReadAndCompare(ctx, t, kvs, memStore, lastStepDatas, lastStepStats, startKey, memSizeLimit)
 }
 
+type testCollector struct {
+	rowCnt *int64
+	bytes  *int64
+}
+
+func (c *testCollector) Add(bytes, rows int64) {
+	*c.rowCnt += rows
+	*c.bytes += bytes
+}
+
 func TestGlobalSortLocalWithMerge(t *testing.T) {
 	changePropDist(t, 100, 2)
 	// 1. write data step
@@ -118,11 +128,15 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 
 	writer := NewEngineWriter(w)
 	kvCnt := rand.Intn(10) + 10000
+	kvSize := 0
 	kvs := make([]common.KvPair, kvCnt)
 	for i := range kvCnt {
+		key := []byte(uuid.New().String())
+		val := []byte("56789")
+		kvSize += len(key) + len(val)
 		kvs[i] = common.KvPair{
-			Key: []byte(uuid.New().String()),
-			Val: []byte("56789"),
+			Key: key,
+			Val: val,
 		}
 	}
 
@@ -143,6 +157,12 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	lastStepDatas := make([]string, 0, 10)
 	lastStepStats := make([]string, 0, 10)
 	var startKey, endKey dbkv.Key
+
+	readRows, readBytes := int64(0), int64(0)
+	collector := &testCollector{
+		rowCnt: &readRows,
+		bytes:  &readBytes,
+	}
 
 	closeFn := func(s *WriterSummary) {
 		for _, stat := range s.MultipleFilesStats {
@@ -179,11 +199,15 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			"/test2",
 			mergeMemSize,
 			closeFn,
+			collector,
 			1,
 			true,
 			engineapi.OnDuplicateKeyIgnore,
 		))
 	}
+
+	require.EqualValues(t, kvCnt, readRows)
+	require.EqualValues(t, kvSize, readBytes)
 
 	// 3. read and sort step
 	testReadAndCompare(ctx, t, kvs, memStore, lastStepDatas, lastStepStats, startKey, memSizeLimit)

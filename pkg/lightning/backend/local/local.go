@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
@@ -518,6 +519,8 @@ type Backend struct {
 	tls       *common.TLS
 	tikvCodec tikvclient.Codec
 
+	collector execute.Collector
+
 	BackendConfig
 	engineMgr *engineManager
 
@@ -693,6 +696,11 @@ func NewBackendForTest(ctx context.Context, config BackendConfig, storeHelper St
 	}
 
 	return local, nil
+}
+
+// SetCollector sets the collector for the local backend
+func (local *Backend) SetCollector(c execute.Collector) {
+	local.collector = c
 }
 
 // TotalMemoryConsume returns the total memory usage of the local backend.

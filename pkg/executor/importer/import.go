@@ -306,6 +306,40 @@ type ASTArgs struct {
 	LinesInfo          *ast.LinesClause
 }
 
+// StepSummary records the number of data involved in each step.
+type StepSummary struct {
+	Bytes  int64 `json:"input-bytes,omitempty"`
+	RowCnt int64 `json:"input-rows,omitempty"`
+}
+
+// Summary records the metrics information, which is stored in the TaskMeta.
+// And this information will be stored into tidb_import_jobs table after the job is done/failed.
+// Rows and size of each step may be different.
+type Summary struct {
+	// bytes and rows to encode
+	// Note that this is not the same as the number of rows in the table,
+	// since this value is get from chunk info.
+	EncodeSummary StepSummary `json:"encode-summary,omitempty"`
+
+	// bytes and rows to merge
+	MergeSummary StepSummary `json:"merge-summary,omitempty"`
+
+	// bytes and rows to ingest
+	IngestSummary StepSummary `json:"ingest-summary,omitempty"`
+
+	// bytes and rows to check
+	PostProcessSummary StepSummary `json:"post-process-summary,omitempty"`
+}
+
+// MockSummary creates a mock summary for testing.
+func MockSummary(rowCnt int64) *Summary {
+	return &Summary{
+		PostProcessSummary: StepSummary{
+			RowCnt: rowCnt,
+		},
+	}
+}
+
 // LoadDataController load data controller.
 // todo: need a better name
 type LoadDataController struct {
@@ -1520,12 +1554,6 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 		return DataSourceTypeQuery
 	}
 	return DataSourceTypeFile
-}
-
-// JobImportResult is the result of the job import.
-type JobImportResult struct {
-	Affected uint64
-	Warnings []contextutil.SQLWarn
 }
 
 // GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.

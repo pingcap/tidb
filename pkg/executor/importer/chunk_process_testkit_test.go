@@ -18,6 +18,7 @@ import (
 	"context"
 	"os"
 	"path"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -53,6 +54,16 @@ func getCSVParser(ctx context.Context, t *testing.T, fileName string) mydump.Par
 		file, importer.LoadDataReadBlockSize, nil, false, nil)
 	require.NoError(t, err)
 	return csvParser
+}
+
+type testCollector struct {
+	rowCnt *atomic.Int64
+	bytes  *atomic.Int64
+}
+
+func (c *testCollector) Add(bytes, rowCnt int64) {
+	c.rowCnt.Add(rowCnt)
+	c.bytes.Add(bytes)
 }
 
 func TestFileChunkProcess(t *testing.T) {
@@ -100,6 +111,15 @@ func TestFileChunkProcess(t *testing.T) {
 	diskQuotaLock := &syncutil.RWMutex{}
 
 	t.Run("process success", func(t *testing.T) {
+		var (
+			readRowCnt atomic.Int64
+			readBytes  atomic.Int64
+		)
+		collector := &testCollector{
+			rowCnt: &readRowCnt,
+			bytes:  &readBytes,
+		}
+
 		var dataKVCnt, indexKVCnt int
 		fileName := path.Join(tempDir, "test.csv")
 		sourceData := []byte("1,2,3\n4,5,6\n7,8,9\n")
@@ -144,7 +164,7 @@ func TestFileChunkProcess(t *testing.T) {
 		checksum := verify.NewKVGroupChecksumWithKeyspace(nil)
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, checksum,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, checksum, collector,
 		)
 		require.NoError(t, processor.Process(ctx))
 		require.True(t, ctrl.Satisfied())
@@ -153,8 +173,10 @@ func TestFileChunkProcess(t *testing.T) {
 		require.Equal(t, uint64(6), checksumIndexKVCnt)
 		dataKVSize, indexKVSize := checksum.DataAndIndexSumSize()
 		require.Equal(t, uint64(348), dataKVSize+indexKVSize)
-		require.Equal(t, 3, dataKVCnt)
-		require.Equal(t, 6, indexKVCnt)
+		require.EqualValues(t, 3, checksumDataKVCnt)
+		require.EqualValues(t, 6, checksumIndexKVCnt)
+		require.EqualValues(t, 3, readRowCnt.Load())
+		require.EqualValues(t, len(sourceData), readBytes.Load())
 		require.Equal(t, float64(len(sourceData)), metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateRestored)))
 		require.Equal(t, float64(3), metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.StateRestored, "")))
 		require.Equal(t, uint64(2), *metric.ReadHistogram(metrics.RowEncodeSecondsHistogram).Histogram.SampleCount)
@@ -180,7 +202,7 @@ func TestFileChunkProcess(t *testing.T) {
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil,
 		)
 		require.ErrorIs(t, processor.Process(ctx), common.ErrEncodeKV)
 		require.True(t, ctrl.Satisfied())
@@ -205,7 +227,7 @@ func TestFileChunkProcess(t *testing.T) {
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil,
 		)
 		require.ErrorIs(t, processor.Process(ctx), common.ErrEncodeKV)
 		require.True(t, ctrl.Satisfied())
@@ -229,7 +251,7 @@ func TestFileChunkProcess(t *testing.T) {
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil,
 		)
 		require.ErrorContains(t, processor.Process(ctx), "data write error")
 		require.True(t, ctrl.Satisfied())
@@ -254,7 +276,7 @@ func TestFileChunkProcess(t *testing.T) {
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil,
 		)
 		require.ErrorContains(t, processor.Process(ctx), "index write error")
 		require.True(t, ctrl.Satisfied())

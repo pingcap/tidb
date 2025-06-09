@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -114,6 +115,10 @@ type SessionExecutor interface {
 type TaskHandle interface {
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(taskID int64, step proto.Step) ([][]byte, error)
+
+	// GetPreviousSubtaskSummary gets previous subtask metas.
+	GetPreviousSubtaskSummary(taskID int64, step proto.Step) ([]*execute.SubtaskSummary, error)
+
 	SessionExecutor
 }
 
@@ -583,6 +588,34 @@ func (mgr *TaskManager) GetAllSubtasksByStepAndState(ctx context.Context, taskID
 	return subtasks, nil
 }
 
+// GetAllSubtaskSummaryByStepAndState gets the subtask summaries by step and state.
+func (mgr *TaskManager) GetAllSubtaskSummaryByStepAndState(
+	ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState,
+) ([]*execute.SubtaskSummary, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		`select summary from mysql.tidb_background_subtask
+		where task_key = %? and state = %? and step = %?`,
+		taskID, state, step)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+	summaries := make([]*execute.SubtaskSummary, 0, len(rs))
+	for _, r := range rs {
+		summary := &execute.SubtaskSummary{}
+		if err := json.Unmarshal(hack.Slice(r.GetJSON(0).String()), summary); err != nil {
+			return nil, errors.Trace(err)
+		}
+		summaries = append(summaries, summary)
+	}
+	return summaries, nil
+}
+
 // GetSubtaskRowCount gets the subtask row count.
 func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, step proto.Step) (int64, error) {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
@@ -911,6 +944,45 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 		subtasks = append(subtasks, Row2SubTask(r))
 	}
 	return subtasks, nil
+}
+
+// GetSubtaskSummaries gets summaries from tidb_background_subtask.
+func (mgr *TaskManager) GetSubtaskSummaries(
+	ctx context.Context, taskID int64, step proto.Step,
+) ([]string, []*execute.SubtaskSummary, int64, error) {
+	var (
+		rs  []chunk.Row
+		err error
+	)
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, nil, -1, err
+	}
+	err = mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`select state, summary, unix_timestamp() - start_time from mysql.tidb_background_subtask where task_key = %? and step = %?`,
+			taskID, step,
+		)
+		return err
+	})
+
+	if err != nil {
+		return nil, nil, -1, err
+	}
+	summaries := make([]*execute.SubtaskSummary, 0, len(rs))
+	states := make([]string, 0, len(rs))
+	duration := int64(0)
+
+	for _, r := range rs {
+		subtaskSummary := &execute.SubtaskSummary{}
+		if err := json.Unmarshal([]byte(r.GetJSON(1).String()), subtaskSummary); err != nil {
+			return nil, nil, -1, errors.Trace(err)
+		}
+
+		summaries = append(summaries, subtaskSummary)
+		states = append(states, r.GetString(0))
+		duration = max(duration, r.GetInt64(2))
+	}
+	return states, summaries, duration, nil
 }
 
 // GetAllTasks gets all tasks with basic columns.
