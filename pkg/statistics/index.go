@@ -142,8 +142,27 @@ func (idx *Index) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
+<<<<<<< HEAD
 	totalCount = idx.TotalRowCount()
 	return (collPseudo) || totalCount == 0
+=======
+	// If the given index statistics is nil or we found that the index's statistics hasn't been fully loaded, we add this index to NeededItems.
+	// Also, we need to check that this HistColl has its physical ID and it is permitted to trigger the stats loading.
+	if (idxStats == nil || !idxStats.IsFullLoad()) && !coll.CanNotTriggerLoad && !sctx.GetSessionVars().InRestrictedSQL {
+		asyncload.AsyncLoadHistogramNeededItems.Insert(model.TableItemID{
+			TableID:          coll.PhysicalID,
+			ID:               cid,
+			IsIndex:          true,
+			IsSyncLoadFailed: sctx.GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
+		}, true)
+		// TODO: we can return true here. But need to fix some tests first.
+	}
+	if idxStats == nil {
+		return true
+	}
+	totalCount = idxStats.TotalRowCount()
+	return coll.Pseudo || totalCount == 0
+>>>>>>> 64a25c795b7 (statistics: internal sql must have invalid stats (#61603))
 }
 
 // EvictAllStats evicts all stats

@@ -164,6 +164,10 @@ func (c *Column) IsInvalid(
 		}()
 	}
 	if sctx != nil {
+		if sctx.GetSessionVars().InRestrictedSQL {
+			inValidForCollPseudo = true
+			return true
+		}
 		stmtctx := sctx.GetSessionVars().StmtCtx
 		if (!c.IsStatsInitialized() || c.IsLoadNeeded()) && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
