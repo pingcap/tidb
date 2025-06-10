@@ -36,12 +36,9 @@ type ingestLimiter struct {
 }
 
 type ingestLimiterPerStore struct {
-	parent  *ingestLimiter
 	sem     *semaphore.Weighted
 	limiter *rate.Limiter
 }
-
-const maxIngestReqInFlight = 5
 
 func newIngestLimiter(ctx context.Context, maxReqInFlight, maxReqPerSec int) *ingestLimiter {
 	if maxReqInFlight == 0 || maxReqPerSec == 0 {
@@ -60,7 +57,6 @@ func (l *ingestLimiter) Acquire(storeID uint64, n uint) error {
 		return nil
 	}
 	v, _ := l.limiters.LoadOrStore(storeID, &ingestLimiterPerStore{
-		parent:  l,
 		sem:     semaphore.NewWeighted(int64(l.maxReqInFlight)),
 		limiter: rate.NewLimiter(rate.Limit(l.maxReqPerSec), l.maxReqPerSec),
 	})
