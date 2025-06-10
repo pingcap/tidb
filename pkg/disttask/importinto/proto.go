@@ -31,13 +31,10 @@ import (
 // All the field should be serializable.
 type TaskMeta struct {
 	// IMPORT INTO job id, see mysql.tidb_import_jobs.
-	JobID int64
-	Plan  importer.Plan
-	Stmt  string
-
-	// TaskResult stores the marshalled results
-	TaskResult []byte
-
+	JobID  int64
+	Plan   importer.Plan
+	Stmt   string
+	Result Result
 	// eligible instances to run this task, we run on all instances if it's empty.
 	// we only need this when run IMPORT INTO without distributed option now, i.e.
 	// running on the instance that initiate the IMPORT INTO.
@@ -180,4 +177,10 @@ type Checksum struct {
 	Sum  uint64
 	KVs  uint64
 	Size uint64
+}
+
+// Result records the metrics information.
+// This portion of the code may be implemented uniformly in the framework in the future.
+type Result struct {
+	LoadedRowCnt uint64
 }

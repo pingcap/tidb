@@ -143,7 +143,7 @@ func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error
 		step = proto.ImportStepWriteAndIngest
 	}
 
-	_, summaries, _, err := taskManager.GetSubtaskSummaries(ctx, task.ID, step)
+	summaries, err := taskManager.GetAllSubtaskSummaryByStep(ctx, task.ID, step)
 	if err != nil {
 		return nil, err
 	}

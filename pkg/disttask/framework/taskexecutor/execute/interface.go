@@ -81,17 +81,16 @@ type Collector interface {
 	Add(bytes, rows int64)
 }
 
-// dummyCollector is a dummy implementation of Collector that does nothing.
-type dummyCollector struct {
+// TestCollector is an implementation used for test.
+type TestCollector struct {
+	Bytes atomic.Int64
+	Rows  atomic.Int64
 }
 
-// NewDummyCollector returns a new DummyCollector.
-func NewDummyCollector() *dummyCollector {
-	return &dummyCollector{}
-}
-
-// Add does nothing.
-func (*dummyCollector) Add(_, _ int64) {
+// Add implements Collector.Add
+func (c *TestCollector) Add(bytes, rows int64) {
+	c.Bytes.Add(bytes)
+	c.Rows.Add(rows)
 }
 
 // StepExecFrameworkInfo is an interface that should be embedded into the

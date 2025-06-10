@@ -689,7 +689,7 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		return 0, err
 	}
 	failpoint.Inject("mockImportFromSelectErr", func() {
-		failpoint.Return(nil, errors.New("mock import from select error"))
+		failpoint.Return(0, errors.New("mock import from select error"))
 	})
 	if err = closedDataEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {

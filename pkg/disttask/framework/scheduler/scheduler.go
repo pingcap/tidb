@@ -659,7 +659,7 @@ func (s *BaseScheduler) GetPreviousSubtaskMetas(taskID int64, step proto.Step) (
 
 // GetPreviousSubtaskSummary gets previous subtask metas.
 func (s *BaseScheduler) GetPreviousSubtaskSummary(taskID int64, step proto.Step) ([]*execute.SubtaskSummary, error) {
-	return s.taskMgr.GetAllSubtaskSummaryByStepAndState(s.ctx, taskID, step, proto.SubtaskStateSucceed)
+	return s.taskMgr.GetAllSubtaskSummaryByStep(s.ctx, taskID, step)
 }
 
 // WithNewSession executes the function with a new session.

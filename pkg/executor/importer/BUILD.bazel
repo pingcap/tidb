@@ -111,6 +111,7 @@ go_test(
         "//br/pkg/streamhelper",
         "//pkg/config",
         "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/disttask/framework/testutil",
         "//pkg/expression",
         "//pkg/infoschema",

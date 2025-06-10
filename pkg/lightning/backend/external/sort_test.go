@@ -25,6 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -101,16 +102,6 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 	testReadAndCompare(ctx, t, kvs, memStore, lastStepDatas, lastStepStats, startKey, memSizeLimit)
 }
 
-type testCollector struct {
-	rowCnt *int64
-	bytes  *int64
-}
-
-func (c *testCollector) Add(bytes, rows int64) {
-	*c.rowCnt += rows
-	*c.bytes += bytes
-}
-
 func TestGlobalSortLocalWithMerge(t *testing.T) {
 	changePropDist(t, 100, 2)
 	// 1. write data step
@@ -158,11 +149,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	lastStepStats := make([]string, 0, 10)
 	var startKey, endKey dbkv.Key
 
-	readRows, readBytes := int64(0), int64(0)
-	collector := &testCollector{
-		rowCnt: &readRows,
-		bytes:  &readBytes,
-	}
+	collector := &execute.TestCollector{}
 
 	closeFn := func(s *WriterSummary) {
 		for _, stat := range s.MultipleFilesStats {
@@ -206,8 +193,8 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 		))
 	}
 
-	require.EqualValues(t, kvCnt, readRows)
-	require.EqualValues(t, kvSize, readBytes)
+	require.EqualValues(t, kvCnt, collector.Rows.Load())
+	require.EqualValues(t, kvSize, collector.Bytes.Load())
 
 	// 3. read and sort step
 	testReadAndCompare(ctx, t, kvs, memStore, lastStepDatas, lastStepStats, startKey, memSizeLimit)

@@ -188,9 +188,6 @@ func mergeOverlappingFilesInternal(
 		}
 	}()
 
-	bytes := int64(0)
-	rowCnt := int64(0)
-
 	// currently use same goroutine to do read and write. The main advantage is
 	// there's no KV copy and iter can reuse the buffer.
 	for iter.Next() {
@@ -200,16 +197,9 @@ func mergeOverlappingFilesInternal(
 			return err
 		}
 
-		bytes += int64(len(key) + len(value))
-		rowCnt++
-		if bytes > 104857600 && collector != nil { // update metrics every 100MB
-			collector.Add(bytes, rowCnt)
-			bytes = 0
-			rowCnt = 0
+		if collector != nil {
+			collector.Add(int64(len(key)+len(value)), 1)
 		}
-	}
-	if collector != nil {
-		collector.Add(bytes, rowCnt)
 	}
 	return iter.Error()
 }

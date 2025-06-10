@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -204,11 +205,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	defaultReadBufferSize = 100
 	defaultOneWriterMemSizeLimit = 1000
 
-	readRows, readBytes := int64(0), int64(0)
-	collector := &testCollector{
-		rowCnt: &readRows,
-		bytes:  &readBytes,
-	}
+	collector := &execute.TestCollector{}
 
 	require.NoError(t, mergeOverlappingFilesInternal(
 		ctx,
@@ -224,8 +221,8 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		engineapi.OnDuplicateKeyIgnore,
 	))
 
-	require.EqualValues(t, kvCount, readRows)
-	require.EqualValues(t, kvSize, readBytes)
+	require.EqualValues(t, kvCount, collector.Rows.Load())
+	require.EqualValues(t, kvSize, collector.Bytes.Load())
 
 	kvs := make([]kvPair, 0, kvCount)
 

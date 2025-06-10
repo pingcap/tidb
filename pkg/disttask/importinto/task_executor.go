@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -303,16 +304,28 @@ func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 	return s.tableImporter.Close()
 }
 
+// mergeCollector collects the bytes and row count in merge step.
 type mergeCollector struct {
 	summary *execute.SubtaskSummary
-	ctx     context.Context
+	counter prometheus.Counter
+}
+
+func newMergeCollector(ctx context.Context, summary *execute.SubtaskSummary) *mergeCollector {
+	var counter prometheus.Counter
+	if me, ok := metric.GetCommonMetric(ctx); ok {
+		counter = me.BytesCounter.WithLabelValues(metric.StateMerged)
+	}
+	return &mergeCollector{
+		summary: summary,
+		counter: counter,
+	}
 }
 
 func (c *mergeCollector) Add(bytes, rowCnt int64) {
 	c.summary.Bytes.Add(bytes)
 	c.summary.RowCnt.Add(rowCnt)
-	if me, ok := metric.GetCommonMetric(c.ctx); ok {
-		me.BytesCounter.WithLabelValues(metric.StateMerged).Add(float64(bytes))
+	if c.counter != nil {
+		c.counter.Add(float64(bytes))
 	}
 }
 
@@ -386,10 +399,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
 
-	collector := &mergeCollector{
-		summary: m.SubtaskSummary,
-		ctx:     ctx,
-	}
+	collector := newMergeCollector(ctx, m.SubtaskSummary)
 
 	partSize := m.dataKVPartSize
 	if sm.KVGroup != dataKVGroup {

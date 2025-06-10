@@ -121,7 +121,7 @@ type JobInfo struct {
 	Step string
 	// the summary info of the job, it's updated only when the job is finished.
 	// for running job, we should query the progress from the distributed framework.
-	Summary      *Summary
+	Summary      *JobSummary
 	ErrorMessage string
 }
 
@@ -251,43 +251,29 @@ func Job2Step(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, step s
 	return err
 }
 
-// FinishJob tries to finish a running job with jobID, change its status to finished, clear its step and update summary.
+// FinishJob tries to finish a running job with jobID, change its status to finished, clear its step.
 // It will not return error when there's no matched job.
-func FinishJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, summary *Summary) error {
-	summaryStr := "{}"
-	if summary != nil {
-		bytes, err := json.Marshal(summary)
-		if err != nil {
-			return err
-		}
-		summaryStr = string(bytes)
+func FinishJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, summary *JobSummary) error {
+	bytes, err := json.Marshal(summary)
+	if err != nil {
+		return err
 	}
-
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
+	_, err = conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
 		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, step = %?, summary = %?
 		WHERE id = %? AND status = %?;`,
-		jobStatusFinished, jobStepNone, summaryStr, jobID, JobStatusRunning)
+		jobStatusFinished, jobStepNone, bytes, jobID, JobStatusRunning)
 	return err
 }
 
 // FailJob fails import into job. A job can only be failed once.
 // It will not return error when there's no matched job.
-func FailJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, errorMsg string, summary *Summary) error {
-	summaryStr := "{}"
-	if summary != nil {
-		bytes, err := json.Marshal(summary)
-		if err != nil {
-			return err
-		}
-		summaryStr = string(bytes)
-	}
-
+func FailJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, errorMsg string) error {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
-		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, error_message = %?, summary = %?
+		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, error_message = %?
 		WHERE id = %? AND status = %?;`,
-		jobStatusFailed, errorMsg, summaryStr, jobID, JobStatusRunning)
+		jobStatusFailed, errorMsg, jobID, JobStatusRunning)
 	return err
 }
 
@@ -307,13 +293,13 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 		return nil, errors.Trace(err)
 	}
 
-	var summary *Summary
+	var summary *JobSummary
 	var summaryStr string
 	if !row.IsNull(12) {
 		summaryStr = row.GetString(12)
 	}
 	if len(summaryStr) > 0 {
-		summary = &Summary{}
+		summary = &JobSummary{}
 		if err := json.Unmarshal([]byte(summaryStr), summary); err != nil {
 			return nil, errors.Trace(err)
 		}

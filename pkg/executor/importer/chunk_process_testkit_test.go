@@ -18,13 +18,13 @@ import (
 	"context"
 	"os"
 	"path"
-	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -54,16 +54,6 @@ func getCSVParser(ctx context.Context, t *testing.T, fileName string) mydump.Par
 		file, importer.LoadDataReadBlockSize, nil, false, nil)
 	require.NoError(t, err)
 	return csvParser
-}
-
-type testCollector struct {
-	rowCnt *atomic.Int64
-	bytes  *atomic.Int64
-}
-
-func (c *testCollector) Add(bytes, rowCnt int64) {
-	c.rowCnt.Add(rowCnt)
-	c.bytes.Add(bytes)
 }
 
 func TestFileChunkProcess(t *testing.T) {
@@ -111,14 +101,7 @@ func TestFileChunkProcess(t *testing.T) {
 	diskQuotaLock := &syncutil.RWMutex{}
 
 	t.Run("process success", func(t *testing.T) {
-		var (
-			readRowCnt atomic.Int64
-			readBytes  atomic.Int64
-		)
-		collector := &testCollector{
-			rowCnt: &readRowCnt,
-			bytes:  &readBytes,
-		}
+		collector := &execute.TestCollector{}
 
 		var dataKVCnt, indexKVCnt int
 		fileName := path.Join(tempDir, "test.csv")
@@ -175,8 +158,8 @@ func TestFileChunkProcess(t *testing.T) {
 		require.Equal(t, uint64(348), dataKVSize+indexKVSize)
 		require.EqualValues(t, 3, checksumDataKVCnt)
 		require.EqualValues(t, 6, checksumIndexKVCnt)
-		require.EqualValues(t, 3, readRowCnt.Load())
-		require.EqualValues(t, len(sourceData), readBytes.Load())
+		require.EqualValues(t, 3, collector.Rows.Load())
+		require.EqualValues(t, len(sourceData), collector.Bytes.Load())
 		require.Equal(t, float64(len(sourceData)), metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateRestored)))
 		require.Equal(t, float64(3), metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.StateRestored, "")))
 		require.Equal(t, uint64(2), *metric.ReadHistogram(metrics.RowEncodeSecondsHistogram).Histogram.SampleCount)

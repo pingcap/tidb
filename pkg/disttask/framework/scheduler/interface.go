@@ -92,8 +92,8 @@ type TaskManager interface {
 	// GetAllSubtasksByStepAndState gets all subtasks by given states for one step.
 	GetAllSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error)
 
-	// GetAllSubtasksByStepAndState gets all subtasks by given states for one step.
-	GetAllSubtaskSummaryByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState) ([]*execute.SubtaskSummary, error)
+	// GetAllSubtasksByStep gets all subtasks by given states for one step.
+	GetAllSubtaskSummaryByStep(ctx context.Context, taskID int64, step proto.Step) ([]*execute.SubtaskSummary, error)
 
 	WithNewSession(fn func(se sessionctx.Context) error) error
 	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error

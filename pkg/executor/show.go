@@ -2444,7 +2444,7 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, importedR
 	result.AppendString(5, info.Status)
 	result.AppendString(6, units.BytesSize(float64(info.SourceFileSize)))
 	if info.Summary != nil {
-		result.AppendUint64(7, uint64(info.Summary.PostProcessSummary.RowCnt))
+		result.AppendUint64(7, info.Summary.ImportedRows)
 	} else if importedRowCount >= 0 {
 		result.AppendUint64(7, uint64(importedRowCount))
 	} else {
@@ -2473,7 +2473,7 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 		if err != nil {
 			return err
 		}
-		importedRowCount = int64(runInfo.ImportRows)
+		importedRowCount = runInfo.ImportRows
 		if runInfo.Status == proto.TaskStateAwaitingResolution {
 			info.Status = string(runInfo.Status)
 			info.ErrorMessage = runInfo.ErrorMsg
