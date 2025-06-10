@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/paging"
 )
 
@@ -110,8 +111,14 @@ func (p *PhysicalProjection) GetCost(count float64) float64 {
 	return cpuCost + concurrencyCost
 }
 
+<<<<<<< HEAD
 // getPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalProjection) getPlanCostVer1(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+=======
+// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalProjection) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	intest.Assert(p.SCtx().GetSessionVars().CostModelVersion != 0)
+>>>>>>> 1ef4c269cd7 (planner: set the default of the tidb_cost_model_version correctly (#61608))
 	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
