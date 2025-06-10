@@ -113,7 +113,7 @@ const (
 		create_time timestamp,
 		start_time bigint,
 		state_update_time bigint,
-		summary_update_time timestamp default null on update current_timestamp,
+		summary_update_time timestamp default null,
 		end_time TIMESTAMP,
 		meta longblob,
 		ordinal int,
