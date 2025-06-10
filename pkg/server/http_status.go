@@ -262,6 +262,8 @@ func (s *Server) startHTTPServer() {
 		tikvHandlerTool, tikvhandler.IngestParamMaxBatchSplitRanges)).Name("IngestMaxBatchSplitRanges")
 	router.Handle("/ingest/max-ingest-concurrency", tikvhandler.NewIngestConcurrencyHandler(
 		tikvHandlerTool, tikvhandler.IngestParamMaxConcurrency)).Name("IngestMaxConcurrency")
+	router.Handle("/ingest/max-ingest-per-sec", tikvhandler.NewIngestConcurrencyHandler(
+		tikvHandlerTool, tikvhandler.IngestParamMaxPerSecond)).Name("IngestMaxPerSec")
 
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.
