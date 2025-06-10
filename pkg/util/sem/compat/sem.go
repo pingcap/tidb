@@ -16,6 +16,11 @@
 package compat
 
 import (
+<<<<<<< HEAD
+=======
+	"strings"
+
+>>>>>>> 5f3648b86b (add SEM configuration)
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
