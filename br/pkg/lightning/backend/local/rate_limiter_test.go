@@ -49,6 +49,7 @@ func TestConcurrencyLimit(t *testing.T) {
 	}
 	l.Release(0, 1000)
 
+	acquired = make(chan struct{})
 	l.Acquire(1, 1000)
 	go func() {
 		require.NoError(t, l.Acquire(2, 1))
