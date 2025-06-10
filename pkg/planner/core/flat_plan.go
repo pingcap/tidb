@@ -376,7 +376,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		}
 		childCtx.label = ProbeSide
 		childCtx.isLastChild = true
-		// set the index lookup child signal.
+		// set the index merge child signal.
 		childCtx.isINLProbeChild = true
 		target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
