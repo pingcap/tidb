@@ -176,8 +176,8 @@ func GetMaxBatchSplitRanges() int {
 	return int(val)
 }
 
-// GestMaxIngestConcurrency returns the current maximum number of concurrent ingest requests.
-func GestMaxIngestConcurrency() int {
+// GetMaxIngestConcurrency returns the current maximum number of concurrent ingest requests.
+func GetMaxIngestConcurrency() int {
 	val := CurrentMaxIngestConcurrency.Load()
 	if val == 0 {
 		return defaultMaxIngestConcurrency
@@ -1240,7 +1240,10 @@ func (local *Backend) prepareAndSendJob(
 	jobWg *sync.WaitGroup,
 ) error {
 	lfTotalSize, lfLength := engine.KVStatistics()
-	log.FromContext(ctx).Info("import engine ranges", zap.Int("count", len(initialSplitRanges)))
+	splitRangesBatch := GetMaxBatchSplitRanges()
+	log.FromContext(ctx).Info("import engine ranges",
+		zap.Int("count", len(initialSplitRanges)),
+		zap.Int("splitRangesBatch", splitRangesBatch))
 	if len(initialSplitRanges) == 0 {
 		return nil
 	}
@@ -1260,8 +1263,7 @@ func (local *Backend) prepareAndSendJob(
 		failpoint.Inject("skipSplitAndScatter", func() {
 			failpoint.Break()
 		})
-
-		err = local.SplitAndScatterRegionInBatches(ctx, initialSplitRanges, needSplit, GetMaxBatchSplitRanges())
+		err = local.SplitAndScatterRegionInBatches(ctx, initialSplitRanges, needSplit, splitRangesBatch)
 		if err == nil || common.IsContextCanceledError(err) {
 			break
 		}
@@ -1688,12 +1690,16 @@ func (local *Backend) ImportEngine(
 			<-done
 		}()
 	}
+	ingestConc := GetMaxIngestConcurrency()
+	local.ingestLimiter.Store(newIngestLimiter(ctx, ingestConc))
 
 	log.FromContext(ctx).Info("start import engine",
 		zap.Stringer("uuid", engineUUID),
 		zap.Int("region ranges", len(regionRanges)),
 		zap.Int64("count", lfLength),
-		zap.Int64("size", lfTotalSize))
+		zap.Int64("size", lfTotalSize),
+		zap.Int("ingestConcurrency", ingestConc),
+	)
 
 	failpoint.Inject("ReadyForImportEngine", func() {})
 
@@ -1751,7 +1757,6 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 	})
 
 	retryer := startRegionJobRetryer(workerCtx, jobToWorkerCh, &jobWg)
-	local.ingestLimiter.Store(newIngestLimiter(workerCtx, GestMaxIngestConcurrency()))
 
 	// dispatchJobGoroutine handles processed job from worker, it will only exit
 	// when jobFromWorkerCh is closed to avoid worker is blocked on sending to

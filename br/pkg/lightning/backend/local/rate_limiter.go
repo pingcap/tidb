@@ -33,13 +33,15 @@ type ingestLimiter struct {
 	limiter *rate.Limiter
 }
 
+const maxIngestReqInFlight = 5
+
 func newIngestLimiter(ctx context.Context, n int) *ingestLimiter {
 	if n == 0 {
 		return &ingestLimiter{}
 	}
 	return &ingestLimiter{
 		ctx:     ctx,
-		sem:     semaphore.NewWeighted(int64(n)),
+		sem:     semaphore.NewWeighted(maxIngestReqInFlight),
 		limiter: rate.NewLimiter(rate.Limit(n), n),
 	}
 }
@@ -65,5 +67,5 @@ func (l *ingestLimiter) Burst() int {
 	if l.ctx == nil {
 		return math.MaxInt
 	}
-	return l.limiter.Burst()
+	return min(l.limiter.Burst(), maxIngestReqInFlight)
 }
