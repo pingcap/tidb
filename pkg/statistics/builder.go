@@ -419,9 +419,9 @@ func BuildHistAndTopN(
 	topn := &TopN{TopN: topNList}
 	lenTopN := int64(len(topn.TopN))
 
-	// Step2: exclude TopN from samples if there are are values that are NOT in the TopN list.
+	// Step2: exclude TopN from samples if the NDV is larger than the number of topN items.
 	lenSamples := int64(len(samples))
-	if lenTopN > hg.NDV && lenSamples > 0 {
+	if lenTopN > 0 && lenTopN < hg.NDV && lenSamples > 0 {
 		for i := int64(0); i < lenSamples; i++ {
 			sampleBytes, err := getComparedBytes(samples[i].Value)
 			if err != nil {
