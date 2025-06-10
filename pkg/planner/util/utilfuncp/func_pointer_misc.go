@@ -179,7 +179,8 @@ var WindowIsTopN func(p base.LogicalPlan) (bool, uint64)
 var GetTaskPlanCost func(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float64, bool, error)
 
 // CompareTaskCost export the compareTaskCost from core pkg for cascades usage.
-var CompareTaskCost func(curTask, bestTask base.Task, op *optimizetrace.PhysicalOptimizeOp) (curIsBetter bool, err error)
+var CompareTaskCost func(curTask, bestTask base.Task, op *optimizetrace.PhysicalOptimizeOp) (
+	curIsBetter bool, err error)
 
 // ****************************************** optimize portal *********************************************
 
