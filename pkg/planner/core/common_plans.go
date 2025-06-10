@@ -1343,7 +1343,6 @@ func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, brie
 
 	// First phase: Generate all operators with normal processing (including ID suffix)
 	for i, op := range ops {
-		operators[i] = tipb.ExplainOperator{}
 		binaryOpFromFlatOp(explainCtx, op, &operators[i])
 	}
 

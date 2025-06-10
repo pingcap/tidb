@@ -3,7 +3,7 @@
     "Name": "TestRuntimeFilterGenerator",
     "Cases": [
       {
-        "SQL": "format='brief' select /*+ hash_join_build(t1) */ * from t1, t2 where t1.k1=t2.k1 and t2.k2 = 1",
+        "SQL": "select /*+ hash_join_build(t1) */ * from t1, t2 where t1.k1=t2.k1 and t2.k2 = 1",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -31,7 +31,7 @@
         ]
       },
       {
-        "SQL": "format='brief' select /*+ shuffle_join(t1, t2) */ * from t1, t2 where t1.k1=t2.k1; -- Global doesn't support",
+        "SQL": "select /*+ shuffle_join(t1, t2) */ * from t1, t2 where t1.k1=t2.k1; -- Global doesn't support",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -47,7 +47,7 @@
         ]
       },
       {
-        "SQL": "format='brief' select /*+ broadcast_join(t2, t1), hash_join_build(t2) */ * from t2, (select k1 from t1 group by k1) t1 where t1.k1=t2.k1; -- Global doesn't support",
+        "SQL": "select /*+ broadcast_join(t2, t1), hash_join_build(t2) */ * from t2, (select k1 from t1 group by k1) t1 where t1.k1=t2.k1; -- Global doesn't support",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -65,7 +65,7 @@
         ]
       },
       {
-        "SQL": "format='brief' select /*+ broadcast_join(t1, t2), hash_join_build(t1) */ * from t1, t2 where t1.k1=t2.k1; -- t1 is build side",
+        "SQL": "select /*+ broadcast_join(t1, t2), hash_join_build(t1) */ * from t1, t2 where t1.k1=t2.k1; -- t1 is build side",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -79,7 +79,7 @@
         ]
       },
       {
-        "SQL": "format='brief' select * from t1_tikv as t1, t2 where t1.k1=t2.k1; -- Doesn't support hash join in root",
+        "SQL": "select * from t1_tikv as t1, t2 where t1.k1=t2.k1; -- Doesn't support hash join in root",
         "Plan": [
           "HashJoin 1.25 root  inner join, equal:[eq(test.t1_tikv.k1, test.t2.k1)]",
           "├─TableReader(Build) 1.00 root  MppVersion: 3, data:ExchangeSender",
@@ -121,7 +121,7 @@
         ]
       },
       {
-        "SQL": "format='brief' select /*+ hash_join_build(t2) */ * from t2, (select k1, k1+1 as k11 from t1) t1 where t1.k11=t2.k1; -- Doesn't support transform column k11",
+        "SQL": "select /*+ hash_join_build(t2) */ * from t2, (select k1, k1+1 as k11 from t1) t1 where t1.k11=t2.k1; -- Doesn't support transform column k11",
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -163,7 +163,7 @@
         ]
       },
       {
-        "SQL": "format='brief' select /*+ hash_join_build(t1) */ * from t1, t2 where t1.k1<=>t2.k1; -- Doesn't support null safe eq predicate",
+        "SQL": "select /*+ hash_join_build(t1) */ * from t1, t2 where t1.k1<=>t2.k1; -- Doesn't support null safe eq predicate",
         "Plan": [
           "HashJoin 1.00 root  inner join, equal:[nulleq(test.t1.k1, test.t2.k1)]",
           "├─TableReader(Build) 1.00 root  MppVersion: 3, data:ExchangeSender",
