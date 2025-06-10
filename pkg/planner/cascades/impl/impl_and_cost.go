@@ -143,10 +143,9 @@ func ImplementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, c
 		if taskCost <= costLimit {
 			// the optimized group has a valid cost plan according to this physical prop.
 			return task, 1, nil
-		} else {
-			// the optimized task from this group is out of aimed cost limit, quite fall over.
-			return nil, 0, nil
 		}
+		// the optimized task from this group is out of aimed cost limit, quite fall over.
+		return nil, 0, nil
 	}
 
 	// the group hasn't been optimized, physic it.
