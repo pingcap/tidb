@@ -132,6 +132,7 @@ type FlatOperator struct {
 	IsLastChild    bool
 
 	// IsINLProbeChild will change the underlying tableScan to rowIDScan for example.
+	// IsINLProbeChild indicates whether this operator is in indexLookupReader or indexMergeReader inner side.
 	IsINLProbeChild bool
 
 	IsPhysicalPlan bool
@@ -171,13 +172,14 @@ func (d OperatorLabel) String() string {
 }
 
 type operatorCtx struct {
-	depth           uint32
-	label           OperatorLabel
-	isRoot          bool
-	storeType       kv.StoreType
-	reqType         ReadReqType
-	indent          string
-	isLastChild     bool
+	depth       uint32
+	label       OperatorLabel
+	isRoot      bool
+	storeType   kv.StoreType
+	reqType     ReadReqType
+	indent      string
+	isLastChild bool
+	// IsINLProbeChild indicates whether this operator is in indexLookupReader or indexMergeReader inner side.
 	isINLProbeChild bool
 }
 
