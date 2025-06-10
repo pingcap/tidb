@@ -18,10 +18,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-=======
->>>>>>> 5f3648b86b (add SEM configuration)
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
