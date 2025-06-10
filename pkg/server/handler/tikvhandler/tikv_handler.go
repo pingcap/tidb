@@ -2028,11 +2028,14 @@ func (LabelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	writeData(w, config.GetGlobalConfig().Labels)
 }
 
+// IngestParam is the type for lightning ingest parameters.
 type IngestParam string
 
 const (
+	// IngestParamMaxBatchSplitRanges is the parameter for lightning max_batch_split_ranges.
 	IngestParamMaxBatchSplitRanges IngestParam = "max_batch_split_ranges"
-	IngestParamMaxConcurrency      IngestParam = "max_concurrency"
+	// IngestParamMaxConcurrency is the parameter for lightning max_concurrency.
+	IngestParamMaxConcurrency IngestParam = "max_concurrency"
 )
 
 // IngestConcurrencyHandler is the handler for lightning max_batch_split_ranges and max_concurrency.
