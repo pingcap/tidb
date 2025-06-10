@@ -6,7 +6,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/autoid_service",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/lightning/backend/local",
         "//pkg/config",
         "//pkg/keyspace",
         "//pkg/kv",

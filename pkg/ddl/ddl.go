@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
@@ -763,6 +764,17 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		}
 		d.reorgCtx.setOwnerTS(time.Now().Unix())
 		d.runningJobs.clear()
+
+		if err := kv.RunInNewTxn(d.ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
+			m := meta.NewMeta(txn)
+			err := local.InitializeGlobalMaxBatchSplitRanges(m, logutil.BgLogger())
+			if err != nil {
+				return err
+			}
+			return local.InitializeGlobalIngestConcurrency(m, logutil.BgLogger())
+		}); err != nil {
+			logutil.BgLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
+		}
 	})
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
