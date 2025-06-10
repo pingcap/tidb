@@ -1297,7 +1297,7 @@ func (s *mockGCSSuite) TestImportIntoWithFK() {
 	s.tk.MustQuery("SELECT * FROM import_into.child;").Check(testkit.Rows("1 1", "2 2"))
 }
 
-func (s *mockGCSSuite) TestTableMode2() {
+func (s *mockGCSSuite) TestTableMode() {
 	content := []byte(`1,1
 	2,2`)
 	s.server.CreateObject(fakestorage.Object{
@@ -1329,12 +1329,12 @@ func (s *mockGCSSuite) TestTableMode() {
 	})
 	s.prepareAndUseDB("import_into")
 	s.tk.MustExec("create table table_mode (id int primary key, fk int);")
-	loadDataSql := fmt.Sprintf(`IMPORT INTO import_into.table_mode
+	loadDataSQL := fmt.Sprintf(`IMPORT INTO import_into.table_mode
 		FROM 'gs://table-mode-test/data.csv?endpoint=%s'`, gcsEndpoint)
 
 	//Test check table is not empty after alter table mode to Import
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("NotEmpty")`)
-	err := s.tk.QueryToErr(loadDataSql)
+	err := s.tk.QueryToErr(loadDataSQL)
 	require.ErrorContains(s.T(), err, "PreCheck failed: target table is not empty")
 	addRepairTable(s.T(), s.tk, "import_into", "table_mode")
 	s.tk.MustExec("admin repair table table_mode create table table_mode (id int primary key, fk int);")
@@ -1342,7 +1342,7 @@ func (s *mockGCSSuite) TestTableMode() {
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty")
 	//Test check table is not empty failure after alter table mode to Import
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("Error")`)
-	err = s.tk.QueryToErr(loadDataSql)
+	err = s.tk.QueryToErr(loadDataSQL)
 	require.ErrorContains(s.T(), err, "check if table is empty failed")
 	addRepairTable(s.T(), s.tk, "import_into", "table_mode")
 	s.tk.MustExec("admin repair table table_mode create table table_mode (id int primary key, fk int);")
@@ -1351,7 +1351,7 @@ func (s *mockGCSSuite) TestTableMode() {
 
 	// Test import into clean up can alter table mode to Normal finally.
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenResetTableMode", `return`)
-	err = s.tk.QueryToErr(loadDataSql)
+	err = s.tk.QueryToErr(loadDataSQL)
 	require.ErrorContains(s.T(), err, "occur an error when reset table mode to normal")
 	require.Eventually(s.T(), func() bool {
 		err := s.tk.QueryToErr("SELECT * FROM import_into.table_mode;")
@@ -1373,7 +1373,7 @@ func (s *mockGCSSuite) TestTableMode() {
 			wg.Done()
 			testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/beforeResetTableMode")
 		}()
-		s.tk.MustExec(loadDataSql)
+		s.tk.MustExec(loadDataSQL)
 	}()
 	go func() {
 		defer wg.Done()
