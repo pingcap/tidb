@@ -126,7 +126,7 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
 		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:
-		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl, cloudStorageURI)
+		return newMergeSortExecutor(jobMeta.ID, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
@@ -149,7 +149,7 @@ func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 
 	return ingest.LitBackCtxMgr.Register(
 		s.BaseTaskExecutor.Ctx(),
-		job.ID, hasUnique,
+		job, hasUnique,
 		ddlObj.etcdCli,
 		discovery,
 		job.ReorgMeta.ResourceGroupName,
