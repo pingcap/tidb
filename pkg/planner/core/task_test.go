@@ -15,7 +15,6 @@
 package core
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPhysicalUnionScanAttach2Task(t *testing.T) {
