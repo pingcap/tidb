@@ -143,17 +143,12 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 		err2 := ddl.CreateAlterTableModeJob(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
 		if err2 != nil {
 			callLog.Warn("alter table mode to normal failure", zap.Error(err2))
+		} else {
+			addResetTableModeTask(taskMeta.JobID)
 		}
 		if err != nil {
-			if err2 == nil {
-				addResetTableModeTask(taskMeta.JobID)
-			}
 			return err
 		}
-		if err2 != nil {
-			return err2
-		}
-		addResetTableModeTask(taskMeta.JobID)
-		return nil
+		return err2
 	})
 }
