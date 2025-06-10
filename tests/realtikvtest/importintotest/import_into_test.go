@@ -1309,26 +1309,6 @@ func (s *mockGCSSuite) TestTableMode() {
 	})
 	s.prepareAndUseDB("import_into")
 	s.tk.MustExec("create table table_mode (id int primary key, fk int);")
-	sql := fmt.Sprintf(`IMPORT INTO import_into.table_mode
-		FROM 'gs://table-mode-test/data.csv?endpoint=%s'`, gcsEndpoint)
-
-	// it should success even if the parent table is empty
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("NotEmpty")`)
-	s.tk.MustQuery(sql)
-	s.tk.MustQuery("SELECT * FROM import_into.table_mode;").Check(testkit.Rows("1 1", "2 2"))
-}
-func (s *mockGCSSuite) TestTableMode() {
-	content := []byte(`1,1
-	2,2`)
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "table-mode-test",
-			Name:       "data.csv",
-		},
-		Content: content,
-	})
-	s.prepareAndUseDB("import_into")
-	s.tk.MustExec("create table table_mode (id int primary key, fk int);")
 	loadDataSQL := fmt.Sprintf(`IMPORT INTO import_into.table_mode
 		FROM 'gs://table-mode-test/data.csv?endpoint=%s'`, gcsEndpoint)
 
