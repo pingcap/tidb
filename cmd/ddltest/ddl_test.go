@@ -21,9 +21,11 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
+	"net"
 	"os"
 	"os/exec"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -297,7 +299,7 @@ func (s *ddlSuite) startServer(i int, fp *os.File) (*server, error) {
 
 	// Open database.
 	var db *sql.DB
-	addr := fmt.Sprintf("%s:%d", *tidbIP, *startPort+i)
+	addr := net.JoinHostPort(*tidbIP, strconv.FormatUint(uint64(*startPort+i), 10))
 	sleepTime := time.Millisecond * 250
 	startTime := time.Now()
 	for i := range s.retryCount {

@@ -224,9 +224,3 @@ func TestGetWriterMemorySizeLimit(t *testing.T) {
 		})
 	}
 }
-
-func TestGetKVGroupBlockSize(t *testing.T) {
-	require.Equal(t, 32*units.MiB, getKVGroupBlockSize(dataKVGroup))
-	require.Equal(t, 16*units.MiB, getKVGroupBlockSize(""))
-	require.Equal(t, 16*units.MiB, getKVGroupBlockSize("1"))
-}

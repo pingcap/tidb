@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/atomic"
 )
 
 func checkTaskStateStep(t *testing.T, task *proto.Task, state proto.TaskState, step proto.Step) {
@@ -575,10 +577,10 @@ func TestSubTaskTable(t *testing.T) {
 	rowCount, err := sm.GetSubtaskRowCount(ctx, 2, proto.StepOne)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), rowCount)
-	require.NoError(t, sm.UpdateSubtaskRowCount(ctx, subtaskID, 100))
+	require.NoError(t, sm.UpdateSubtaskSummary(ctx, subtaskID, &execute.SubtaskSummary{RowCnt: *atomic.NewInt64(100)}))
 	rowCount, err = sm.GetSubtaskRowCount(ctx, 2, proto.StepOne)
 	require.NoError(t, err)
-	require.Equal(t, int64(100), rowCount)
+	require.EqualValues(t, 100, rowCount)
 
 	getSubtaskBaseSlice := func(sts []*proto.Subtask) []*proto.SubtaskBase {
 		res := make([]*proto.SubtaskBase, 0, len(sts))

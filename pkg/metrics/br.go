@@ -14,7 +14,10 @@
 
 package metrics
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 var (
 	// RestoreImportFileSeconds records the time cost for importing a file.
@@ -53,13 +56,13 @@ var (
 
 // InitBRMetrics initializes all metrics in BR.
 func InitBRMetrics() {
-	RestoreTableCreatedCount = prometheus.NewCounter(prometheus.CounterOpts{
+	RestoreTableCreatedCount = metricscommon.NewCounter(prometheus.CounterOpts{
 		Namespace: "BR",
 		Name:      "table_created",
 		Help:      "The count of tables have been created.",
 	})
 
-	RestoreImportFileSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+	RestoreImportFileSeconds = metricscommon.NewHistogram(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "br",
 		Name:      "restore_import_file_seconds",
@@ -69,7 +72,7 @@ func InitBRMetrics() {
 		Buckets: prometheus.ExponentialBuckets(0.01, 4, 14),
 	})
 
-	RestoreUploadSSTForPiTRSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+	RestoreUploadSSTForPiTRSeconds = metricscommon.NewHistogram(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "br",
 		Name:      "restore_upload_sst_for_pitr_seconds",
@@ -79,7 +82,7 @@ func InitBRMetrics() {
 		Buckets: prometheus.DefBuckets,
 	})
 
-	RestoreUploadSSTMetaForPiTRSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+	RestoreUploadSSTMetaForPiTRSeconds = metricscommon.NewHistogram(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "br",
 		Name:      "restore_upload_sst_meta_for_pitr_seconds",
@@ -88,7 +91,7 @@ func InitBRMetrics() {
 		Buckets: prometheus.ExponentialBuckets(0.01, 2, 14),
 	})
 
-	MetaKVBatchFiles = prometheus.NewHistogramVec(
+	MetaKVBatchFiles = metricscommon.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
@@ -96,7 +99,7 @@ func InitBRMetrics() {
 			Help:      "The number of meta KV files in the batch",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 12), // 1 ~ 2048
 		}, []string{"cf"})
-	MetaKVBatchFilteredKeys = prometheus.NewHistogramVec(
+	MetaKVBatchFilteredKeys = metricscommon.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
@@ -104,7 +107,7 @@ func InitBRMetrics() {
 			Help:      "The number of filtered meta KV entries from the batch",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 18), // 1 ~ 128Ki
 		}, []string{"cf"})
-	MetaKVBatchKeys = prometheus.NewHistogramVec(
+	MetaKVBatchKeys = metricscommon.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
@@ -112,7 +115,7 @@ func InitBRMetrics() {
 			Help:      "The number of meta KV entries in the batch",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 18), // 1 ~ 128Ki
 		}, []string{"cf"})
-	MetaKVBatchSize = prometheus.NewHistogramVec(
+	MetaKVBatchSize = metricscommon.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
@@ -121,7 +124,7 @@ func InitBRMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(256, 2, 20), // 256 ~ 128Mi
 		}, []string{"cf"})
 
-	KVApplyBatchDuration = prometheus.NewHistogram(
+	KVApplyBatchDuration = metricscommon.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
@@ -129,7 +132,7 @@ func InitBRMetrics() {
 			Help:      "The duration to apply the batch of KV files",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 21), // 1ms ~ 15min
 		})
-	KVApplyBatchFiles = prometheus.NewHistogram(
+	KVApplyBatchFiles = metricscommon.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
@@ -137,7 +140,7 @@ func InitBRMetrics() {
 			Help:      "The number of KV files in the batch",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 11), // 1 ~ 1024
 		})
-	KVApplyBatchRegions = prometheus.NewHistogram(
+	KVApplyBatchRegions = metricscommon.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
@@ -145,7 +148,7 @@ func InitBRMetrics() {
 			Help:      "The number of regions in the range of entries in the batch of KV files",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 12), // 1 ~ 2048
 		})
-	KVApplyBatchSize = prometheus.NewHistogram(
+	KVApplyBatchSize = metricscommon.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
@@ -153,7 +156,7 @@ func InitBRMetrics() {
 			Help:      "The number of KV files in the batch",
 			Buckets:   prometheus.ExponentialBuckets(1024, 2, 21), // 1KiB ~ 1GiB
 		})
-	KVApplyRegionFiles = prometheus.NewHistogram(
+	KVApplyRegionFiles = metricscommon.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
