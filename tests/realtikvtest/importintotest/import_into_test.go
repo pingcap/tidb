@@ -1344,7 +1344,7 @@ func (s *mockGCSSuite) TestTableMode() {
 	s.tk.EventuallyMustQueryAndCheck("SELECT * FROM import_into.table_mode;", nil, testkit.Rows("1 1", "2 2"), 5*time.Second, 100*time.Millisecond)
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenResetTableMode")
 
-	// Test import into post process will alter table mode to Import and reset to Normal.
+	// Test import into post process will alter table mode to Normal.
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
