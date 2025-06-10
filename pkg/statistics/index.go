@@ -143,8 +143,13 @@ func IndexStatsIsInvalid(sctx context.PlanContext, idxStats *Index, coll *HistCo
 	}
 	// If the given index statistics is nil or we found that the index's statistics hasn't been fully loaded, we add this index to NeededItems.
 	// Also, we need to check that this HistColl has its physical ID and it is permitted to trigger the stats loading.
+<<<<<<< HEAD
 	if (idxStats == nil || !idxStats.IsFullLoad()) && !coll.CanNotTriggerLoad {
 		HistogramNeededItems.Insert(model.TableItemID{
+=======
+	if (idxStats == nil || !idxStats.IsFullLoad()) && !coll.CanNotTriggerLoad && !sctx.GetSessionVars().InRestrictedSQL {
+		asyncload.AsyncLoadHistogramNeededItems.Insert(model.TableItemID{
+>>>>>>> 64a25c795b7 (statistics: internal sql must have invalid stats (#61603))
 			TableID:          coll.PhysicalID,
 			ID:               cid,
 			IsIndex:          true,

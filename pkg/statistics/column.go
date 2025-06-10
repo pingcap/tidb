@@ -157,6 +157,10 @@ func ColumnStatsIsInvalid(colStats *Column, sctx context.PlanContext, histColl *
 		}()
 	}
 	if sctx != nil {
+		if sctx.GetSessionVars().InRestrictedSQL {
+			inValidForCollPseudo = true
+			return true
+		}
 		stmtctx := sctx.GetSessionVars().StmtCtx
 		if (colStats == nil || !colStats.IsStatsInitialized() || colStats.IsLoadNeeded()) &&
 			stmtctx != nil &&
