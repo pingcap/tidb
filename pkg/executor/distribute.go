@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -55,6 +56,9 @@ func (e *DistributeTableExec) Open(context.Context) error {
 		return err
 	}
 	e.keyRanges = ranges
+	sort.Slice(e.partitionNames, func(i, j int) bool {
+		return e.partitionNames[i].L < e.partitionNames[j].L
+	})
 	return nil
 }
 
@@ -159,12 +163,19 @@ func (e *DistributeTableExec) getKeyRanges() ([]*pdhttp.KeyRange, error) {
 		}
 	}
 
+	sort.Slice(physicalIDs, func(i, j int) bool {
+		return physicalIDs[i] < physicalIDs[j]
+	})
 	ranges := make([]*pdhttp.KeyRange, 0, len(physicalIDs))
-	for _, pid := range physicalIDs {
-		startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
-		endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
-		r := pdhttp.NewKeyRange(startKey, endKey)
-		ranges = append(ranges, r)
+	for i, pid := range physicalIDs {
+		if i == 0 || physicalIDs[i] != physicalIDs[i-1]+1 {
+			startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
+			endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
+			r := pdhttp.NewKeyRange(startKey, endKey)
+			ranges = append(ranges, r)
+		} else {
+			ranges[len(ranges)-1].EndKey = codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
+		}
 	}
 	return ranges, nil
 }
