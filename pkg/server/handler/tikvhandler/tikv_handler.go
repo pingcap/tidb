@@ -2036,6 +2036,8 @@ const (
 	IngestParamMaxBatchSplitRanges IngestParam = "max_batch_split_ranges"
 	// IngestParamMaxConcurrency is the parameter for lightning max_concurrency.
 	IngestParamMaxConcurrency IngestParam = "max_concurrency"
+	// IngestParamMaxPerSecond is the parameter for lightning max_per_second.
+	IngestParamMaxPerSecond IngestParam = "max_per_second"
 )
 
 // IngestConcurrencyHandler is the handler for lightning max_batch_split_ranges and max_concurrency.
@@ -2060,6 +2062,13 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		}
 		setter = func(m *meta.Meta, value int) error {
 			return m.SetIngestMaxBatchSplitRanges(value)
+		}
+	case IngestParamMaxPerSecond:
+		getter = func(m *meta.Meta) (int, bool, error) {
+			return m.GetIngestMaxPerSec()
+		}
+		setter = func(m *meta.Meta, value int) error {
+			return m.SetIngestMaxPerSec(value)
 		}
 	case IngestParamMaxConcurrency:
 		getter = func(m *meta.Meta) (int, bool, error) {
@@ -2119,6 +2128,8 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			local.CurrentMaxBatchSplitRanges.Store(int64(newValue))
 		case IngestParamMaxConcurrency:
 			local.CurrentMaxIngestConcurrency.Store(int64(newValue))
+		case IngestParamMaxPerSecond:
+			local.CurrentMaxIngestPerSec.Store(int64(newValue))
 		}
 		handler.WriteData(w, map[string]string{"message": "success"})
 	default:

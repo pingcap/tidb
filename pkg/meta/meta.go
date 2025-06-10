@@ -82,6 +82,7 @@ var (
 
 	mIngestMaxBatchSplitRangesKey = []byte("IngestMaxBatchSplitRanges")
 	mIngestMaxReqConcurrencyKey   = []byte("IngestMaxReqConcurrency")
+	mIngestMaxReqPerSecKey        = []byte("IngestMaxReqPerSec")
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
 	defaultGroupID = int64(1)
@@ -1388,6 +1389,24 @@ func (m *Meta) SetIngestMaxConcurrency(val int) error {
 // GetIngestMaxConcurrency gets the max_ingest_concurrency.
 func (m *Meta) GetIngestMaxConcurrency() (val int, isNull bool, err error) {
 	sVal, err := m.txn.Get(mIngestMaxReqConcurrencyKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.Atoi(string(sVal))
+	return val, false, errors.Trace(err)
+}
+
+// SetIngestMaxPerSec sets the max_ingest_per_sec.
+func (m *Meta) SetIngestMaxPerSec(val int) error {
+	return errors.Trace(m.txn.Set(mIngestMaxReqPerSecKey, []byte(strconv.Itoa(val))))
+}
+
+// GetIngestMaxPerSec gets the max_ingest_per_sec.
+func (m *Meta) GetIngestMaxPerSec() (val int, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxReqPerSecKey)
 	if err != nil {
 		return 0, false, errors.Trace(err)
 	}

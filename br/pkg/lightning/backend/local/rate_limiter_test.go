@@ -24,13 +24,13 @@ import (
 
 func TestConcurrencyLimit(t *testing.T) {
 	const interval = 100 * time.Millisecond
-	l := newIngestLimiter(context.Background(), 1000)
+	l := newIngestLimiter(context.Background(), 1000, 1000)
 
-	err := l.Acquire(1000)
+	err := l.Acquire(0, 1000)
 	require.NoError(t, err)
 	acquired := make(chan struct{})
 	go func() {
-		require.NoError(t, l.Acquire(1))
+		require.NoError(t, l.Acquire(0, 1))
 		close(acquired)
 	}()
 
@@ -40,43 +40,65 @@ func TestConcurrencyLimit(t *testing.T) {
 	case <-time.After(interval):
 	}
 
-	l.Release(1)
+	l.Release(0, 1)
 
 	select {
 	case <-acquired:
 	case <-time.After(interval):
 		t.Fatal("should acquire after release")
 	}
-	l.Release(1000)
+	l.Release(0, 1000)
+
+	l.Acquire(1, 1000)
+	go func() {
+		require.NoError(t, l.Acquire(2, 1))
+		close(acquired)
+	}()
+	select {
+	case <-acquired:
+	case <-time.After(interval):
+		t.Fatal("should acquire for different storeID")
+	}
+
+	l.Release(1, 1000)
+	l.Release(2, 1)
 }
 
 func TestRateLimit(t *testing.T) {
-	l := newIngestLimiter(context.Background(), 10)
+	l := newIngestLimiter(context.Background(), 10, 10)
 
 	start := time.Now()
 	for i := 0; i < 10; i++ {
-		require.NoError(t, l.Acquire(1))
+		require.NoError(t, l.Acquire(0, 1))
 	}
 	burstDuration := time.Since(start)
 	require.Less(t, burstDuration, 50*time.Millisecond, "burst should be immediate")
 
-	l.Release(10)
+	l.Release(0, 10)
 	start = time.Now()
-	require.NoError(t, l.Acquire(1))
+	require.NoError(t, l.Acquire(0, 1))
 	elapsed := time.Since(start)
 	require.GreaterOrEqual(t, elapsed, 90*time.Millisecond, "should respect rate limit")
 	require.Less(t, elapsed, 150*time.Millisecond, "within tolerance")
+
+	require.NoError(t, l.Acquire(1, 10))
+	l.Release(1, 10)
+	start = time.Now()
+	require.NoError(t, l.Acquire(2, 10))
+	burstDuration = time.Since(start)
+	require.Less(t, burstDuration, 50*time.Millisecond, "acquire for different storeID should be immediate")
+	l.Release(2, 10)
 }
 
 func TestContextCancelDuringConcurrencyWait(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	l := newIngestLimiter(ctx, 1)
+	l := newIngestLimiter(ctx, 1, 1)
 
-	require.NoError(t, l.Acquire(1))
+	require.NoError(t, l.Acquire(0, 1))
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- l.Acquire(1)
+		errCh <- l.Acquire(0, 1)
 	}()
 
 	cancel()
@@ -87,18 +109,18 @@ func TestContextCancelDuringConcurrencyWait(t *testing.T) {
 		t.Fatal("timed out waiting for error")
 	}
 
-	l.Release(1)
+	l.Release(0, 1)
 }
 
 func TestContextCancelDuringRateWait(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	l := newIngestLimiter(ctx, 100)
+	l := newIngestLimiter(ctx, 100, 100)
 
-	require.NoError(t, l.Acquire(100))
+	require.NoError(t, l.Acquire(0, 100))
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- l.Acquire(1)
+		errCh <- l.Acquire(0, 1)
 	}()
 
 	cancel()

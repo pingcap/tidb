@@ -17,6 +17,7 @@ package local
 import (
 	"context"
 	"math"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"golang.org/x/sync/semaphore"
@@ -28,44 +29,63 @@ import (
 // - limit the max ingest requests in flight.
 // - limit the ingest requests number per second.
 type ingestLimiter struct {
-	ctx     context.Context
+	ctx            context.Context
+	maxReqInFlight int
+	maxReqPerSec   int
+	limiters       sync.Map // storeID(uint64) -> *ingestLimiterPerStore
+}
+
+type ingestLimiterPerStore struct {
+	parent  *ingestLimiter
 	sem     *semaphore.Weighted
 	limiter *rate.Limiter
 }
 
 const maxIngestReqInFlight = 5
 
-func newIngestLimiter(ctx context.Context, n int) *ingestLimiter {
-	if n == 0 {
+func newIngestLimiter(ctx context.Context, maxReqInFlight, maxReqPerSec int) *ingestLimiter {
+	if maxReqInFlight == 0 || maxReqPerSec == 0 {
 		return &ingestLimiter{}
 	}
 	return &ingestLimiter{
-		ctx:     ctx,
-		sem:     semaphore.NewWeighted(maxIngestReqInFlight),
-		limiter: rate.NewLimiter(rate.Limit(n), n),
+		ctx:            ctx,
+		maxReqInFlight: maxReqInFlight,
+		maxReqPerSec:   maxReqPerSec,
+		limiters:       sync.Map{},
 	}
 }
 
-func (l *ingestLimiter) Acquire(n int) error {
+func (l *ingestLimiter) Acquire(storeID uint64, n uint) error {
 	if l.ctx == nil {
 		return nil
 	}
-	if err := l.limiter.WaitN(l.ctx, n); err != nil {
+	v, _ := l.limiters.LoadOrStore(storeID, &ingestLimiterPerStore{
+		parent:  l,
+		sem:     semaphore.NewWeighted(int64(l.maxReqInFlight)),
+		limiter: rate.NewLimiter(rate.Limit(l.maxReqPerSec), l.maxReqPerSec),
+	})
+	ilps := v.(*ingestLimiterPerStore)
+	if err := ilps.limiter.WaitN(l.ctx, int(n)); err != nil {
 		return errors.Trace(err)
 	}
-	return l.sem.Acquire(l.ctx, int64(n))
+	return ilps.sem.Acquire(l.ctx, int64(n))
 }
 
-func (l *ingestLimiter) Release(n int) {
+func (l *ingestLimiter) Release(storeID uint64, n uint) {
 	if l.ctx == nil {
 		return
 	}
-	l.sem.Release(int64(n))
+	v, ok := l.limiters.Load(storeID)
+	if !ok {
+		return
+	}
+	ilps := v.(*ingestLimiterPerStore)
+	ilps.sem.Release(int64(n))
 }
 
 func (l *ingestLimiter) Burst() int {
 	if l.ctx == nil {
 		return math.MaxInt
 	}
-	return min(l.limiter.Burst(), maxIngestReqInFlight)
+	return min(l.maxReqPerSec, l.maxReqInFlight)
 }

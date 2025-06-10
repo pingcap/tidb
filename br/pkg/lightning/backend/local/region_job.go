@@ -608,7 +608,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 	for start := 0; start < len(j.writeResult.sstMeta); start += batch {
 		end := mathutil.Min(start+batch, len(j.writeResult.sstMeta))
 		ingestMetas := j.writeResult.sstMeta[start:end]
-		weight := len(ingestMetas)
+		weight := uint(len(ingestMetas))
 
 		log.FromContext(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))
 
@@ -658,7 +658,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
 		}
 
-		err = limiter.Acquire(weight)
+		err = limiter.Acquire(leader.StoreId, weight)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -675,7 +675,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			}
 			resp, err = cli.Ingest(ctx, req)
 		}
-		limiter.Release(weight)
+		limiter.Release(leader.StoreId, weight)
 		if resp.GetError() != nil || err != nil {
 			// remove finished sstMetas
 			j.writeResult.sstMeta = j.writeResult.sstMeta[start:]

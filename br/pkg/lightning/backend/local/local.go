@@ -119,7 +119,8 @@ var (
 
 	// defaultMaxBatchSplitRanges is the default max ranges count in a batch to split and scatter.
 	defaultMaxBatchSplitRanges  = 4096
-	defaultMaxIngestConcurrency = 5
+	defaultMaxIngestConcurrency = 2
+	defaultMaxIngestPerSec      = 5
 
 	// Unlimited RPC receive message size for TiKV importer
 	unlimitedRPCRecvMsgSize = math.MaxInt32
@@ -130,6 +131,8 @@ var (
 	CurrentMaxBatchSplitRanges atomic.Int64
 	// CurrentMaxIngestConcurrency stores the current limit for concurrent ingest requests.
 	CurrentMaxIngestConcurrency atomic.Int64
+	// CurrentMaxIngestPerSec stores the current limit for maximum ingest requests per second.
+	CurrentMaxIngestPerSec atomic.Int64
 )
 
 // InitializeGlobalMaxBatchSplitRanges loads the maxBatchSplitRanges value using meta.Meta or sets a default.
@@ -158,12 +161,28 @@ func InitializeGlobalIngestConcurrency(m *meta.Meta, logger *zap.Logger) error {
 	if isNull || valInt <= 0 {
 		valInt = defaultMaxIngestConcurrency
 		logger.Info("maxIngestConcurrency not found in meta store, initialized to default and persisted",
-
 			zap.Int("value", defaultMaxIngestConcurrency))
 	} else {
 		logger.Info("loaded maxIngestConcurrency from meta store", zap.Int("value", valInt))
 	}
 	CurrentMaxIngestConcurrency.Store(int64(valInt))
+	return nil
+}
+
+// InitializeGlobalIngestPerSec loads the maxIngestPerSec value using meta.Meta or sets a default.
+func InitializeGlobalIngestPerSec(m *meta.Meta, logger *zap.Logger) error {
+	valInt, isNull, err := m.GetIngestMaxPerSec()
+	if err != nil {
+		return errors.Annotate(err, "failed to read maxIngestPerSec from meta store")
+	}
+	if isNull || valInt <= 0 {
+		valInt = defaultMaxIngestPerSec
+		logger.Info("maxIngestPerSec not found in meta store, initialized to default and persisted",
+			zap.Int("value", defaultMaxIngestPerSec))
+	} else {
+		logger.Info("loaded maxIngestPerSec from meta store", zap.Int("value", valInt))
+	}
+	CurrentMaxIngestPerSec.Store(int64(valInt))
 	return nil
 }
 
@@ -181,6 +200,15 @@ func GetMaxIngestConcurrency() int {
 	val := CurrentMaxIngestConcurrency.Load()
 	if val == 0 {
 		return defaultMaxIngestConcurrency
+	}
+	return int(val)
+}
+
+// GetMaxIngestPerSec returns the current maximum number of ingest requests per second.
+func GetMaxIngestPerSec() int {
+	val := CurrentMaxIngestPerSec.Load()
+	if val == 0 {
+		return defaultMaxIngestPerSec
 	}
 	return int(val)
 }
@@ -1690,15 +1718,17 @@ func (local *Backend) ImportEngine(
 			<-done
 		}()
 	}
-	ingestConc := GetMaxIngestConcurrency()
-	local.ingestLimiter.Store(newIngestLimiter(ctx, ingestConc))
+	maxReqInFlight := GetMaxIngestConcurrency()
+	maxReqPerSec := GetMaxIngestPerSec()
+	local.ingestLimiter.Store(newIngestLimiter(ctx, maxReqInFlight, maxReqPerSec))
 
 	log.FromContext(ctx).Info("start import engine",
 		zap.Stringer("uuid", engineUUID),
 		zap.Int("region ranges", len(regionRanges)),
 		zap.Int64("count", lfLength),
 		zap.Int64("size", lfTotalSize),
-		zap.Int("ingestConcurrency", ingestConc),
+		zap.Int("maxReqInFlight", maxReqInFlight),
+		zap.Int("maxReqPerSec", maxReqPerSec),
 	)
 
 	failpoint.Inject("ReadyForImportEngine", func() {})

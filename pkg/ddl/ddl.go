@@ -771,7 +771,11 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			if err != nil {
 				return err
 			}
-			return local.InitializeGlobalIngestConcurrency(m, logutil.BgLogger())
+			err = local.InitializeGlobalIngestConcurrency(m, logutil.BgLogger())
+			if err != nil {
+				return err
+			}
+			return local.InitializeGlobalIngestPerSec(m, logutil.BgLogger())
 		}); err != nil {
 			logutil.BgLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
 		}
