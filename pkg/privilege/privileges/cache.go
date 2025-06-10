@@ -1166,6 +1166,8 @@ func (record *tablesPrivRecord) match(user, host, db, table string) bool {
 }
 
 func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
+	// `SELECT COUNT(*) ...` requires a column-level SELECT privilege of any column,
+	// so we add a special case "*" here
 	return record.baseRecord.match(user, host) &&
 		strings.EqualFold(record.DB, db) &&
 		strings.EqualFold(record.TableName, table) &&
