@@ -724,6 +724,15 @@ func (w *GCWorker) setGCWorkerServiceSafePoint(ctx context.Context, safePoint ui
 }
 
 func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency gcConcurrency) error {
+	// During GC, the parameter `safePoint` will be used as the new txn safe point and the new GC safe point
+	// respectively. Note that here the term "safe point" is divided into two different sub-concepts:
+	// * Txn safe point / transaction safe point: All transactions whose start_ts is greater than or equal to the txn
+	//   safe point should be guaranteed to be safe to proceed; otherwise it won't be guaranteed.
+	// * GC safe point: When GC clean data, all snapshots whose ts is greater than or equal to the GC safe point should
+	//   be guaranteed to be consistent; older snapshots can be safely discarded by GC.
+	// For details of the terms and concepts, refer to:
+	// https://github.com/tikv/pd/blob/53805884a0162f4186d1a933eb28479a269c7d2c/pkg/gc/gc_state_manager.go#L39
+
 	failpoint.Inject("mockRunGCJobFail", func() {
 		failpoint.Return(errors.New("mock failure of runGCJoB"))
 	})
