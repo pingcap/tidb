@@ -258,6 +258,7 @@ go_test(
         "rule_join_reorder_dp_test.go",
         "runtime_filter_generator_test.go",
         "stringer_test.go",
+        "task_test.go",
         "util_test.go",
     ],
     data = glob([
