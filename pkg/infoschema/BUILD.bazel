@@ -56,7 +56,7 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/mock",
-        "//pkg/util/sem",
+        "//pkg/util/sem/compat",
         "//pkg/util/set",
         "//pkg/util/size",
         "//pkg/util/stmtsummary",
