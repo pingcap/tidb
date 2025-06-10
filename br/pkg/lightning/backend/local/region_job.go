@@ -592,7 +592,12 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 		}
 	}
 
-	limiter := local.ingestLimiter.Load().(*ingestLimiter)
+	var limiter *ingestLimiter
+	if x := local.ingestLimiter.Load(); x != nil {
+		limiter = x.(*ingestLimiter)
+	} else {
+		limiter = &ingestLimiter{}
+	}
 	batch := 1
 	if supportMultiIngest {
 		batch = len(j.writeResult.sstMeta)
