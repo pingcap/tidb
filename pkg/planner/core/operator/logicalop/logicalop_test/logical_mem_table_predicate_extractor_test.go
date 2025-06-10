@@ -43,7 +43,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) *logicalop.LogicalMemTable {
+func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool) {
 	stmt, err := parser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 
@@ -61,9 +61,13 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 	for len(leafPlan.Children()) > 0 {
 		leafPlan = leafPlan.Children()[0]
 	}
-
-	logicalMemTable := leafPlan.(*logicalop.LogicalMemTable)
-	return logicalMemTable
+	switch lg := leafPlan.(type) {
+	case *logicalop.LogicalMemTable:
+		return lg, true
+	case *logicalop.LogicalTableDual:
+		return nil, false
+	}
+	panic("unreachable")
 }
 
 func TestClusterConfigTableExtractor(t *testing.T) {
@@ -78,6 +82,7 @@ func TestClusterConfigTableExtractor(t *testing.T) {
 		nodeTypes   set.StringSet
 		instances   set.StringSet
 		skipRequest bool
+		dual        bool
 	}{
 		{
 			sql:       "select * from information_schema.cluster_config",
@@ -164,6 +169,7 @@ func TestClusterConfigTableExtractor(t *testing.T) {
 			nodeTypes:   set.NewStringSet(),
 			instances:   set.NewStringSet(),
 			skipRequest: true,
+			dual:        true,
 		},
 		{
 			sql:       "select * from information_schema.cluster_config where type='tikv' and type in ('pd', 'tikv')",
@@ -175,6 +181,7 @@ func TestClusterConfigTableExtractor(t *testing.T) {
 			nodeTypes:   set.NewStringSet(),
 			instances:   set.NewStringSet(),
 			skipRequest: true,
+			dual:        true,
 		},
 		{
 			sql:       "select * from information_schema.cluster_config where type in ('tikv', 'tidb') and type in ('pd', 'tidb')",
@@ -186,6 +193,7 @@ func TestClusterConfigTableExtractor(t *testing.T) {
 			nodeTypes:   set.NewStringSet(),
 			instances:   set.NewStringSet(),
 			skipRequest: true,
+			dual:        true,
 		},
 		{
 			sql:       "select * from information_schema.cluster_config where instance='123.1.1.4:1234' and instance in ('123.1.1.5:1234', '123.1.1.4:1234')",
@@ -197,6 +205,7 @@ func TestClusterConfigTableExtractor(t *testing.T) {
 			nodeTypes:   set.NewStringSet(),
 			instances:   set.NewStringSet(),
 			skipRequest: true,
+			dual:        true,
 		},
 		{
 			sql:       "select * from information_schema.cluster_config where instance in ('123.1.1.5:1234', '123.1.1.4:1234') and instance in ('123.1.1.5:1234', '123.1.1.6:1234')",
@@ -224,13 +233,18 @@ func TestClusterConfigTableExtractor(t *testing.T) {
 		},
 	}
 	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
-		require.NotNil(t, logicalMemTable.Extractor)
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		if ca.dual {
+			require.False(t, ok, ca.sql)
+		} else {
+			require.True(t, ok, ca.sql)
+			require.NotNil(t, logicalMemTable.Extractor)
+			clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterTableExtractor)
+			require.EqualValues(t, ca.nodeTypes, clusterConfigExtractor.NodeTypes, "SQL: %v", ca.sql)
+			require.EqualValues(t, ca.instances, clusterConfigExtractor.Instances, "SQL: %v", ca.sql)
+			require.EqualValues(t, ca.skipRequest, clusterConfigExtractor.SkipRequest, "SQL: %v", ca.sql)
+		}
 
-		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterTableExtractor)
-		require.EqualValues(t, ca.nodeTypes, clusterConfigExtractor.NodeTypes, "SQL: %v", ca.sql)
-		require.EqualValues(t, ca.instances, clusterConfigExtractor.Instances, "SQL: %v", ca.sql)
-		require.EqualValues(t, ca.skipRequest, clusterConfigExtractor.SkipRequest, "SQL: %v", ca.sql)
 	}
 }
 
@@ -521,7 +535,7 @@ func TestClusterLogTableExtractor(t *testing.T) {
 		},
 	}
 	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
 
 		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterLogTableExtractor)
@@ -642,7 +656,7 @@ func TestMetricTableExtractor(t *testing.T) {
 	se.GetSessionVars().TimeZone = time.Local
 	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
 	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
 		metricTableExtractor := logicalMemTable.Extractor.(*plannercore.MetricTableExtractor)
 		if len(ca.labelConditions) > 0 {
@@ -753,7 +767,7 @@ func TestMetricsSummaryTableExtractor(t *testing.T) {
 	for _, ca := range cases {
 		sort.Float64s(ca.quantiles)
 
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
 
 		extractor := logicalMemTable.Extractor.(*plannercore.MetricSummaryTableExtractor)
@@ -894,7 +908,7 @@ func TestInspectionResultTableExtractor(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
 
 		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionResultTableExtractor)
@@ -995,7 +1009,7 @@ func TestInspectionSummaryTableExtractor(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
 
 		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionSummaryTableExtractor)
@@ -1038,7 +1052,7 @@ func TestInspectionRuleTableExtractor(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
 
 		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionRuleTableExtractor)
@@ -1393,7 +1407,7 @@ func TestTiDBHotRegionsHistoryTableExtractor(t *testing.T) {
 
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor, "SQL: %v", ca.sql)
 
 		hotRegionsHistoryExtractor := logicalMemTable.Extractor.(*plannercore.HotRegionsHistoryTableExtractor)
@@ -1546,7 +1560,7 @@ func TestTikvRegionPeersExtractor(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
 
 		tikvRegionPeersExtractor := logicalMemTable.Extractor.(*plannercore.TikvRegionPeersExtractor)
@@ -1631,7 +1645,7 @@ func TestColumns(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
 
 		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaColumnsExtractor)
@@ -1708,7 +1722,7 @@ PARTITION BY RANGE COLUMNS ( id ) (
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
 		rse := logicalMemTable.Extractor.(*plannercore.TiKVRegionStatusExtractor)
 		tableids := rse.GetTablesID()
@@ -1837,6 +1851,7 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 		sql           string
 		skipRequest   bool
 		colPredicates map[string]set.StringSet
+		dual          bool
 	}{
 		{
 			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_schema='test';`,
@@ -1973,11 +1988,13 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 			sql:           "select * from information_schema.STATISTICS where table_name ='t' and table_name ='A'",
 			skipRequest:   true,
 			colPredicates: map[string]set.StringSet{},
+			dual:          true,
 		},
 		{
 			sql:           "select * from information_schema.STATISTICS where table_name ='t' and table_schema ='A' and table_schema = 'b'",
 			skipRequest:   true,
 			colPredicates: map[string]set.StringSet{},
+			dual:          true,
 		},
 		{
 			sql:           "select * from information_schema.STATISTICS where table_schema ='A' or lower(table_schema) = 'a'",
@@ -2061,13 +2078,18 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
-		require.NotNil(t, logicalMemTable.Extractor)
-		ex, ok := logicalMemTable.Extractor.(interface {
-			GetBase() *plannercore.InfoSchemaBaseExtractor
-		})
-		require.True(t, ok)
-		require.Equal(t, ca.skipRequest, ex.GetBase().SkipRequest, "SQL: %v", ca.sql)
-		require.Equal(t, ca.colPredicates, ex.GetBase().ColPredicates, "SQL: %v", ca.sql)
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		if ca.dual {
+			require.False(t, ok, ca.sql)
+		} else {
+			require.True(t, ok, ca.sql)
+			require.NotNil(t, logicalMemTable.Extractor)
+			ex, ok := logicalMemTable.Extractor.(interface {
+				GetBase() *plannercore.InfoSchemaBaseExtractor
+			})
+			require.True(t, ok)
+			require.Equal(t, ca.skipRequest, ex.GetBase().SkipRequest, "SQL: %v", ca.sql)
+			require.Equal(t, ca.colPredicates, ex.GetBase().ColPredicates, "SQL: %v", ca.sql)
+		}
 	}
 }
