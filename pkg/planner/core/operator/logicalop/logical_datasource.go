@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -292,8 +293,32 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 // PredicateSimplification implements the base.LogicalPlan.<7th> interface.
 func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	p := ds.Self().(*DataSource)
-	p.PushedDownConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds)
-	p.AllConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.AllConds)
+	intest.AssertFunc(func() bool {
+		origins := make([]expression.Expression, 0, len(p.PushedDownConds))
+		for _, item := range p.PushedDownConds {
+			origins = append(origins, item.Clone())
+		}
+		actual := utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds)
+		for _, origin := range origins {
+			if !expression.Contains(ds.SCtx().GetExprCtx().GetEvalCtx(), actual, origin) {
+				return false
+			}
+		}
+		return true
+	})
+	intest.AssertFunc(func() bool {
+		origins := make([]expression.Expression, 0, len(p.AllConds))
+		for _, item := range p.AllConds {
+			origins = append(origins, item.Clone())
+		}
+		actual := utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.AllConds)
+		for _, origin := range origins {
+			if !expression.Contains(ds.SCtx().GetExprCtx().GetEvalCtx(), actual, origin) {
+				return false
+			}
+		}
+		return true
+	})
 	return p
 }
 
