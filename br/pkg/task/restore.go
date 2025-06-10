@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
@@ -281,6 +282,8 @@ type RestoreConfig struct {
 	snapshotCheckpointMetaManager checkpoint.SnapshotMetaManagerT `json:"-" toml:"-"`
 	logCheckpointMetaManager      checkpoint.LogMetaManagerT      `json:"-" toml:"-"`
 	sstCheckpointMetaManager      checkpoint.SnapshotMetaManagerT `json:"-" toml:"-"`
+	RestoreID                     uint64                          `json:"-" toml:"-"`
+	RestoreRegistry               *registry.Registry              `json:"-" toml:"-"`
 
 	WaitTiflashReady bool `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
 
@@ -609,25 +612,39 @@ func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 func (cfg *RestoreConfig) newStorageCheckpointMetaManagerPITR(
 	ctx context.Context,
 	downstreamClusterID uint64,
+	restoreID uint64,
 ) error {
+	log.Info("creating storage checkpoint meta managers for PiTR",
+		zap.Uint64("restoreID", restoreID),
+		zap.Uint64("downstreamClusterID", downstreamClusterID),
+		zap.String("checkpointStorage", cfg.CheckpointStorage),
+		zap.Bool("hasFullBackupStorage", len(cfg.FullBackupStorage) > 0))
+
 	_, checkpointStorage, err := GetStorage(ctx, cfg.CheckpointStorage, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if len(cfg.FullBackupStorage) > 0 {
 		cfg.snapshotCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
-			checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "snapshot")
+			checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "snapshot", restoreID)
+		log.Info("created snapshot checkpoint meta manager",
+			zap.Uint64("restoreID", restoreID))
 	}
 	cfg.logCheckpointMetaManager = checkpoint.NewLogStorageMetaManager(
-		checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "log")
+		checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "log", restoreID)
+	log.Info("created log checkpoint meta manager",
+		zap.Uint64("restoreID", restoreID))
 	cfg.sstCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
-		checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "sst")
+		checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "sst", restoreID)
+	log.Info("created sst checkpoint meta manager",
+		zap.Uint64("restoreID", restoreID))
 	return nil
 }
 
 func (cfg *RestoreConfig) newStorageCheckpointMetaManagerSnapshot(
 	ctx context.Context,
 	downstreamClusterID uint64,
+	restoreID uint64,
 ) error {
 	if cfg.snapshotCheckpointMetaManager != nil {
 		return nil
@@ -637,37 +654,47 @@ func (cfg *RestoreConfig) newStorageCheckpointMetaManagerSnapshot(
 		return errors.Trace(err)
 	}
 	cfg.snapshotCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
-		checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "snapshot")
+		checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "snapshot", restoreID)
 	return nil
 }
 
-func (cfg *RestoreConfig) newTableCheckpointMetaManagerPITR(g glue.Glue, dom *domain.Domain) (err error) {
+func (cfg *RestoreConfig) newTableCheckpointMetaManagerPITR(g glue.Glue, dom *domain.Domain, id uint64) (err error) {
+	log.Info("creating table checkpoint meta managers for PiTR",
+		zap.Uint64("restoreID", id),
+		zap.Bool("hasFullBackupStorage", len(cfg.FullBackupStorage) > 0))
+
 	if len(cfg.FullBackupStorage) > 0 {
 		if cfg.snapshotCheckpointMetaManager, err = checkpoint.NewSnapshotTableMetaManager(
-			g, dom, checkpoint.SnapshotRestoreCheckpointDatabaseName,
+			g, dom, checkpoint.SnapshotRestoreCheckpointDatabaseName, id,
 		); err != nil {
 			return errors.Trace(err)
 		}
+		log.Info("created snapshot table checkpoint meta manager",
+			zap.Uint64("restoreID", id))
 	}
 	if cfg.logCheckpointMetaManager, err = checkpoint.NewLogTableMetaManager(
-		g, dom, checkpoint.LogRestoreCheckpointDatabaseName,
+		g, dom, checkpoint.LogRestoreCheckpointDatabaseName, id,
 	); err != nil {
 		return errors.Trace(err)
 	}
+	log.Info("created log table checkpoint meta manager",
+		zap.Uint64("restoreID", id))
 	if cfg.sstCheckpointMetaManager, err = checkpoint.NewSnapshotTableMetaManager(
-		g, dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName,
+		g, dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName, id,
 	); err != nil {
 		return errors.Trace(err)
 	}
+	log.Info("created sst table checkpoint meta manager",
+		zap.Uint64("restoreID", id))
 	return nil
 }
 
-func (cfg *RestoreConfig) newTableCheckpointMetaManagerSnapshot(g glue.Glue, dom *domain.Domain) (err error) {
+func (cfg *RestoreConfig) newTableCheckpointMetaManagerSnapshot(g glue.Glue, dom *domain.Domain, id uint64) (err error) {
 	if cfg.snapshotCheckpointMetaManager != nil {
 		return nil
 	}
 	if cfg.snapshotCheckpointMetaManager, err = checkpoint.NewSnapshotTableMetaManager(
-		g, dom, checkpoint.SnapshotRestoreCheckpointDatabaseName,
+		g, dom, checkpoint.SnapshotRestoreCheckpointDatabaseName, id,
 	); err != nil {
 		return errors.Trace(err)
 	}
@@ -898,6 +925,14 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	defer printRestoreMetrics()
 
+	// build restore registry
+	restoreRegistry, err := registry.NewRestoreRegistry(g, mgr.GetDomain())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer restoreRegistry.Close()
+	cfg.RestoreRegistry = restoreRegistry
+
 	if IsStreamRestore(cmdName) {
 		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBRPiTR); err != nil {
 			return errors.Trace(err)
@@ -912,39 +947,119 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 		restoreErr = runSnapshotRestore(c, mgr, g, cmdName, &snapshotRestoreConfig)
 	}
+
+	// unregister restore task
+	failpoint.Inject("fail-at-end-of-restore", func() {
+		log.Info("failpoint fail-at-end-of-restore injected, failing at the end of restore task")
+		restoreErr = errors.New("failpoint: fail-at-end-of-restore")
+	})
+
 	if restoreErr != nil {
+		// if err happens at register phase no restoreID will be generated and default is 0, or this is an old TiDB
+		// that we didn't register the task. Either way we don't need to do any extra work.
+		if cfg.RestoreID == 0 {
+			return errors.Trace(restoreErr)
+		}
+		// if checkpoint is not persisted, let's just unregister the task since we don't need it
+		checkpointPersisted, err := hasCheckpointPersisted(c, cfg)
+		if err != nil {
+			log.Error("failed to check if checkpoint is persisted", zap.Error(err))
+			// on error, assume checkpoint is not persisted and unregister the task
+			checkpointPersisted = false
+		}
+		if checkpointPersisted {
+			log.Info("pausing restore task from registry",
+				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(restoreErr))
+			if err := restoreRegistry.PauseTask(c, cfg.RestoreID); err != nil {
+				log.Error("failed to pause restore task from registry",
+					zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
+			}
+		} else {
+			log.Info("unregistering restore task from registry",
+				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(restoreErr))
+			if err := restoreRegistry.Unregister(c, cfg.RestoreID); err != nil {
+				log.Error("failed to unregister restore task from registry",
+					zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
+			}
+		}
+
 		return errors.Trace(restoreErr)
 	}
-	// Clear the checkpoint data
+
+	// unregister if restore id is not 0
+	if cfg.RestoreID != 0 {
+		// unregister restore task
+		if err := restoreRegistry.Unregister(c, cfg.RestoreID); err != nil {
+			log.Warn("failed to unregister restore task from registry",
+				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
+		}
+	}
+
+	// Clear the checkpoint data if needed
+	cleanUpCheckpoints(c, cfg)
+	return nil
+}
+
+func cleanUpCheckpoints(ctx context.Context, cfg *RestoreConfig) {
 	if cfg.UseCheckpoint {
-		if IsStreamRestore(cmdName) {
-			log.Info("start to remove checkpoint data for PITR restore")
-			err = cfg.logCheckpointMetaManager.RemoveCheckpointData(c)
+		log.Info("start to remove checkpoint data restore")
+		if cfg.logCheckpointMetaManager != nil {
+			err := cfg.logCheckpointMetaManager.RemoveCheckpointData(ctx)
 			if err != nil {
 				log.Warn("failed to remove checkpoint data for log restore", zap.Error(err))
 			}
-			err = cfg.sstCheckpointMetaManager.RemoveCheckpointData(c)
+		}
+		if cfg.sstCheckpointMetaManager != nil {
+			err := cfg.sstCheckpointMetaManager.RemoveCheckpointData(ctx)
 			if err != nil {
 				log.Warn("failed to remove checkpoint data for compacted restore", zap.Error(err))
 			}
-			// Skip removing snapshot checkpoint data if this is a pure log restore
-			// (i.e. restoring only from log backup without a base snapshot backup),
-			// since snapshotCheckpointMetaManager would be nil in that case
-			if cfg.snapshotCheckpointMetaManager != nil {
-				err = cfg.snapshotCheckpointMetaManager.RemoveCheckpointData(c)
-				if err != nil {
-					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
-				}
-			}
-		} else {
-			err = cfg.snapshotCheckpointMetaManager.RemoveCheckpointData(c)
+		}
+		// Skip removing snapshot checkpoint data if this is a pure log restore
+		// (i.e. restoring only from log backup without a base snapshot backup),
+		// since snapshotCheckpointMetaManager would be nil in that case
+		if cfg.snapshotCheckpointMetaManager != nil {
+			err := cfg.snapshotCheckpointMetaManager.RemoveCheckpointData(ctx)
 			if err != nil {
 				log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 			}
 		}
-		log.Info("all the checkpoint data is removed.")
+		log.Info("all checkpoint data removed.")
+	} else {
+		log.Info("checkpoint not enabled, skip to remove checkpoint data")
 	}
-	return nil
+}
+
+// hasCheckpointPersisted checks if there are any checkpoint data persisted in storage or tables
+func hasCheckpointPersisted(ctx context.Context, cfg *RestoreConfig) (bool, error) {
+	if cfg.snapshotCheckpointMetaManager != nil {
+		exists, err := cfg.snapshotCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if exists {
+			return true, nil
+		}
+	}
+	if cfg.logCheckpointMetaManager != nil {
+		exists, err := cfg.logCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if exists {
+			return true, nil
+		}
+	}
+	if cfg.sstCheckpointMetaManager != nil {
+		exists, err := cfg.sstCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if exists {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 type SnapshotRestoreConfig struct {
@@ -1002,6 +1117,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 	if backupMeta.IsRawKv || backupMeta.IsTxnKv {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
+	}
+	if cfg.UpstreamClusterID == 0 {
+		cfg.UpstreamClusterID = backupMeta.ClusterId
 	}
 	schemaVersionPair := snapclient.SchemaVersionPairT{}
 	if loadStatsPhysical || loadSysTablePhysical {
@@ -1080,6 +1198,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	keepaliveCfg.PermitWithoutStream = true
 	client := snapclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	defer client.Close()
+
 	// set to cfg so that restoreStream can use it.
 	cfg.ConcurrencyPerStore = kvConfigs.ImportGoroutines
 	// using tikv config to set the concurrency-per-store for client.
@@ -1090,6 +1209,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 	// InitConnections DB connection sessions
 	err = client.InitConnections(g, mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// register restore task if needed
+	err = RegisterRestoreIfNeeded(ctx, cfg.RestoreConfig, cmdName, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1123,7 +1248,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
-	reusePreallocIDs, err := checkPreallocIDReusable(ctx, mgr, g, cfg, hash, cpEnabledAndExists)
+	reusePreallocIDs, err := checkPreallocIDReusable(ctx, cfg, hash, cpEnabledAndExists)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1206,6 +1331,17 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	tables := utils.Values(tableMap)
 	dbs := utils.Values(dbMap)
 
+	// check if tables and dbs are valid to continue
+	if cfg.RestoreRegistry != nil && cfg.RestoreID != 0 {
+		log.Info("checking ongoing conflicting restore task using restore registry",
+			zap.Int("tables_count", len(tables)),
+			zap.Uint64("current_restore_id", cfg.RestoreID))
+		err := cfg.RestoreRegistry.CheckTablesWithRegisteredTasks(ctx, cfg.RestoreID, cfg.PiTRTableTracker, tables)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	setTablesRestoreModeIfNeeded(tables, cfg, isPiTR)
 
 	archiveSize := metautil.ArchiveTablesSize(tables)
@@ -1229,7 +1365,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
-	if userTableIDNotReusedWhenNeedCheck, err := client.AllocTableIDs(ctx, tables, loadStatsPhysical && !cpEnabledAndExists, reusePreallocIDs); err != nil {
+	if userTableIDNotReusedWhenNeedCheck, err := client.AllocTableIDs(ctx, tables, loadStatsPhysical, loadSysTablePhysical, reusePreallocIDs); err != nil {
 		return errors.Trace(err)
 	} else if userTableIDNotReusedWhenNeedCheck {
 		log.Warn("Cannot load stats physically because not all table ids are reused. Fallback to logically load stats.")
@@ -1237,6 +1373,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		tables = fallbackStatsTables(tables)
 		loadStatsPhysical = false
 	}
+	tables = client.CleanTablesIfTemporarySystemTablesRenamed(loadStatsPhysical, loadSysTablePhysical, tables)
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
 	var restoreSchedulersFunc pdutil.UndoFunc
@@ -1392,13 +1529,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// TODO: after ID preallocation supports checkpoint, we can remove this check
-	if loadStatsPhysical && cpEnabledAndExists {
-		if err := checkAllUserTableIDsReused(createdTables); err != nil {
-			log.Warn("Cannot load stats physically because not all table ids are reused. Fallback to logically load stats.", zap.Error(err))
-			loadStatsPhysical = false
-		}
-	}
 
 	/* failpoint */
 	failpoint.Inject("sleep_for_check_scheduler_status", func(val failpoint.Value) {
@@ -1540,13 +1670,13 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	canRestoreSchedulers = true
-
+	log.Info("snapshot restore success")
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
 	return nil
 }
 
-func checkPreallocIDReusable(ctx context.Context, mgr *conn.Mgr, g glue.Glue, cfg *SnapshotRestoreConfig, hash []byte, checkpointExist bool) (prealloc *checkpoint.PreallocIDs, err error) {
+func checkPreallocIDReusable(ctx context.Context, cfg *SnapshotRestoreConfig, hash []byte, checkpointExist bool) (prealloc *checkpoint.PreallocIDs, err error) {
 	if !checkpointExist {
 		return nil, nil
 	}
@@ -1710,38 +1840,6 @@ func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.
 	return nil
 }
 
-func checkAllUserTableIDsReused(createdTables []*restoreutils.CreatedTable) error {
-	for _, createdTable := range createdTables {
-		if createdTable.OldTable.Info.ID != createdTable.Table.ID {
-			return errors.Errorf("cannot load stats physically because not all table ids are reused, "+
-				"upstream table ID is %d and downstream table ID is %d",
-				createdTable.OldTable.Info.ID,
-				createdTable.Table.ID,
-			)
-		}
-		if createdTable.OldTable.Info.Partition != nil && createdTable.OldTable.Info.Partition.Definitions != nil {
-			if createdTable.Table.Partition == nil || createdTable.Table.Partition.Definitions == nil {
-				return errors.Errorf("the created table has partitions but the origin table does not, "+
-					"table ID is %d", createdTable.Table.ID,
-				)
-			}
-			downstreamTableIDSet := make(map[int64]struct{})
-			for _, def := range createdTable.Table.Partition.Definitions {
-				downstreamTableIDSet[def.ID] = struct{}{}
-			}
-			for _, def := range createdTable.OldTable.Info.Partition.Definitions {
-				if _, exists := downstreamTableIDSet[def.ID]; !exists {
-					return errors.Errorf("the origin table has the partition but the created table does not, "+
-						"table ID is %d and upstream partition ID is %d",
-						createdTable.Table.ID, def.ID,
-					)
-				}
-			}
-		}
-	}
-	return nil
-}
-
 func getAnyFileKeyFromTables(tables []*metautil.Table) []byte {
 	for _, table := range tables {
 		for _, files := range table.FilesOfPhysicals {
@@ -1777,7 +1875,7 @@ func filterRestoreFiles(
 
 	for _, db := range client.GetDatabases() {
 		dbName := db.Info.Name.O
-		if checkpoint.IsCheckpointDB(db.Info.Name) {
+		if checkpoint.IsCheckpointDB(dbName) {
 			continue
 		}
 		if !utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) {
@@ -2031,6 +2129,7 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	// track all snapshot tables that's going to restore in PiTR tracker
 	for tableID, table := range tableMap {
 		piTRIdTracker.TrackTableId(table.DB.ID, tableID)
+		piTRIdTracker.TrackTableName(table.DB.Name.O, table.Info.Name.O)
 	}
 
 	// handle partition exchange after all tables are tracked
@@ -2296,11 +2395,11 @@ func checkpointEnabledAndExists(
 	if cfg.UseCheckpoint {
 		if len(cfg.CheckpointStorage) > 0 {
 			clusterID := mgr.PDClient().GetClusterID(ctx)
-			if err := cfg.newStorageCheckpointMetaManagerSnapshot(ctx, clusterID); err != nil {
+			if err := cfg.newStorageCheckpointMetaManagerSnapshot(ctx, clusterID, cfg.RestoreID); err != nil {
 				return false, errors.Trace(err)
 			}
 		} else {
-			if err := cfg.newTableCheckpointMetaManagerSnapshot(g, mgr.GetDomain()); err != nil {
+			if err := cfg.newTableCheckpointMetaManagerSnapshot(g, mgr.GetDomain(), cfg.RestoreID); err != nil {
 				return false, errors.Trace(err)
 			}
 		}
@@ -2423,6 +2522,10 @@ func createDBsAndTables(
 func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestoreConfig, isPiTR bool) {
 	if cfg.ExplicitFilter && isPiTR {
 		for i, table := range tables {
+			// skip sequence as there is extra steps need to do after creation and restoreMode will block it
+			if table.Info.IsSequence() {
+				continue
+			}
 			tableCopy := *table
 			tableCopy.Info = table.Info.Clone()
 			tableCopy.Info.Mode = model.TableModeRestore

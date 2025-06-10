@@ -812,11 +812,11 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			logBackupTableHistory := stream.NewTableHistoryManager()
 
 			for _, h := range tc.logBackupHistory {
-				logBackupTableHistory.AddTableHistory(h.tableID, h.tableName, h.dbID)
+				logBackupTableHistory.AddTableHistory(h.tableID, h.tableName, h.dbID, 1)
 			}
 
 			for dbID, dbName := range tc.dbIDToName {
-				logBackupTableHistory.RecordDBIdToName(dbID, dbName)
+				logBackupTableHistory.RecordDBIdToName(dbID, dbName, 1)
 			}
 
 			testFilter, err := filter.Parse(tc.filterPattern)

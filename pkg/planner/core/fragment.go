@@ -477,7 +477,7 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 	cteReader.SetChildren(receiver)
 	receiver.SetChildren(group.CTEStorage.Children()[0])
 	inconsistenceNullable := false
-	for i, col := range cteReader.schema.Columns {
+	for i, col := range cteReader.Schema().Columns {
 		if mysql.HasNotNullFlag(col.RetType.GetFlag()) != mysql.HasNotNullFlag(group.CTEStorage.Children()[0].Schema().Columns[i].RetType.GetFlag()) {
 			inconsistenceNullable = true
 			break
@@ -489,7 +489,7 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 			col.Index = i
 		}
 		proj := PhysicalProjection{Exprs: expression.Column2Exprs(cols)}.Init(cteReader.SCtx(), cteReader.StatsInfo(), 0, nil)
-		proj.SetSchema(cteReader.schema.Clone())
+		proj.SetSchema(cteReader.Schema().Clone())
 		proj.SetChildren(receiver)
 		cteReader.SetChildren(proj)
 	}

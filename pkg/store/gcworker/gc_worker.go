@@ -694,6 +694,11 @@ func (w *GCWorker) calcNewSafePoint(ctx context.Context, now time.Time) (*time.T
 	safePointValue := w.calcSafePointByMinStartTS(ctx, oracle.GoTimeToTS(now.Add(-*lifeTime)))
 	safePointValue, err = w.setGCWorkerServiceSafePoint(ctx, safePointValue)
 	if err != nil {
+		// Temporary solution. This code should be refactored when errors returned by PD client can be typed.
+		if strings.Contains(err.Error(), "PD:gc:ErrDecreasingTxnSafePoint") {
+			logutil.BgLogger().Info("set gc worker service safe point is causing decreasing, the GC will be skipped", zap.Error(err))
+			return nil, 9, nil
+		}
 		return nil, 0, errors.Trace(err)
 	}
 

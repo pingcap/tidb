@@ -534,5 +534,36 @@
         "Warn": null
       }
     ]
+  },
+  {
+    "Name": "TestIssue61389",
+    "Cases": [
+      {
+        "SQL": "EXPLAIN format=brief select /*+ nth_plan(5) */ * from `t19f3e4f1`  where  `colc864` in ( select  `colc864`     from  `t19f3e4f1`  where       `colaadb` in (      select     `colf2af`\n from   `t0da79f8d`  where  not ( `t19f3e4f1`.`colc864` <> null )  )  ) limit 2837;",
+        "Plan": [
+          "Limit 2.00 root  offset:0, count:2837",
+          "└─HashJoin 2.00 root  inner join, equal:[eq(test.t19f3e4f1.colc864, test.t19f3e4f1.colc864)]",
+          "  ├─StreamAgg(Build) 1.60 root  group by:test.t19f3e4f1.colc864, funcs:firstrow(test.t19f3e4f1.colc864)->test.t19f3e4f1.colc864",
+          "  │ └─Apply 2.00 root  semi join, left side:Projection, equal:[eq(test.t19f3e4f1.colaadb, test.t0da79f8d.colf2af)]",
+          "  │   ├─Projection(Build) 2.00 root  test.t19f3e4f1.colc864, test.t19f3e4f1.colaadb",
+          "  │   │ └─IndexLookUp 2.00 root  ",
+          "  │   │   ├─IndexFullScan(Build) 2.00 cop[tikv] table:t19f3e4f1, index:ee56e6aa(colc864) keep order:true, stats:pseudo",
+          "  │   │   └─Selection(Probe) 2.00 cop[tikv]  not(isnull(test.t19f3e4f1.colaadb))",
+          "  │   │     └─TableRowIDScan 2.00 cop[tikv] table:t19f3e4f1 keep order:false, stats:pseudo",
+          "  │   └─TableReader(Probe) 2.00 root  data:Selection",
+          "  │     └─Selection 2.00 cop[tikv]  eq(test.t19f3e4f1.colc864, NULL), not(isnull(test.t0da79f8d.colf2af))",
+          "  │       └─TableFullScan 2.00 cop[tikv] table:t0da79f8d keep order:false, stats:pseudo",
+          "  └─IndexLookUp(Probe) 2.00 root  ",
+          "    ├─IndexFullScan(Build) 2.00 cop[tikv] table:t19f3e4f1, index:ee56e6aa(colc864) keep order:false, stats:pseudo",
+          "    └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t19f3e4f1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "select /*+ nth_plan(5) */ * from `t19f3e4f1`  where  `colc864` in ( select  `colc864`     from  `t19f3e4f1`  where       `colaadb` in (      select     `colf2af`\n from   `t0da79f8d`  where  not ( `t19f3e4f1`.`colc864` <> null )  )  ) limit 2837;",
+        "Plan": null,
+        "Warn": null
+      }
+    ]
   }
 ]

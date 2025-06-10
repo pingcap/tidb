@@ -91,7 +91,7 @@ func newEncodeAndSortOperator(
 		concurrency,
 		func() workerpool.Worker[*importStepMinimalTask, workerpool.None] {
 			return newChunkWorker(ctx, op, executor.dataKVMemSizePerCon,
-				executor.perIndexKVMemSizePerCon, executor.indexBlockSize)
+				executor.perIndexKVMemSizePerCon, executor.dataBlockSize, executor.indexBlockSize)
 		},
 	)
 	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
@@ -150,7 +150,7 @@ type chunkWorker struct {
 }
 
 func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSizePerCon,
-	perIndexKVMemSizePerCon uint64, indexBlockSize int) *chunkWorker {
+	perIndexKVMemSizePerCon uint64, dataBlockSize, indexBlockSize int) *chunkWorker {
 	w := &chunkWorker{
 		ctx: ctx,
 		op:  op,
@@ -178,7 +178,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(op.sharedVars.mergeDataSummary).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
-			SetBlockSize(getKVGroupBlockSize(dataKVGroup)).
+			SetBlockSize(dataBlockSize).
 			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
@@ -273,11 +273,4 @@ func getIndicesGenKV(tblInfo *model.TableInfo) map[int64]genKVIndex {
 		}
 	}
 	return res
-}
-
-func getKVGroupBlockSize(group string) int {
-	if group == dataKVGroup {
-		return dataKVGroupBlockSize
-	}
-	return external.DefaultBlockSize
 }
