@@ -925,11 +925,14 @@ func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, ski
 	if skipPlanCacheCheck && MaybeOverOptimized4PlanCache(ctx, expr) {
 		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
 	}
+	// it is possible that the expression will be changed in the following evaluation,
+	// so we need to clone it to avoid modifying the original expression.
+	newExpr := expr.Clone()
 	if ctx.IsInNullRejectCheck() {
-		res, _, err := evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
+		res, _, err := evaluateExprWithNullInNullRejectCheck(ctx, schema, newExpr)
 		return res, err
 	}
-	return evaluateExprWithNull(ctx, schema, expr, skipPlanCacheCheck)
+	return evaluateExprWithNull(ctx, schema, newExpr, skipPlanCacheCheck)
 }
 
 func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, skipPlanCache bool) (Expression, error) {

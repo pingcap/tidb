@@ -761,7 +761,8 @@ func (p *LogicalJoin) ExtractFDForSemiJoin(equivFromApply [][]intset.FastIntSet)
 
 // ExtractFDForInnerJoin extracts FD for inner join.
 func (p *LogicalJoin) ExtractFDForInnerJoin(equivFromApply [][]intset.FastIntSet) *funcdep.FDSet {
-	leftFD, rightFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
+	leftFD := p.Children()[0].ExtractFD()
+	rightFD := p.Children()[1].ExtractFD()
 	fds := leftFD
 	fds.MakeCartesianProduct(rightFD)
 
