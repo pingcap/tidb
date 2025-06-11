@@ -15,8 +15,9 @@
 package executor
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -56,8 +57,8 @@ func (e *DistributeTableExec) Open(context.Context) error {
 		return err
 	}
 	e.keyRanges = ranges
-	sort.Slice(e.partitionNames, func(i, j int) bool {
-		return e.partitionNames[i].L < e.partitionNames[j].L
+	slices.SortFunc(e.partitionNames, func(i, j ast.CIStr) int {
+		return cmp.Compare(i.L, j.L)
 	})
 	return nil
 }
@@ -162,10 +163,10 @@ func (e *DistributeTableExec) getKeyRanges() ([]*pdhttp.KeyRange, error) {
 			}
 		}
 	}
-
-	sort.Slice(physicalIDs, func(i, j int) bool {
-		return physicalIDs[i] < physicalIDs[j]
+	slices.SortFunc(physicalIDs, func(i, j int64) int {
+		return cmp.Compare(i, j)
 	})
+
 	ranges := make([]*pdhttp.KeyRange, 0, len(physicalIDs))
 	for i, pid := range physicalIDs {
 		if i == 0 || physicalIDs[i] != physicalIDs[i-1]+1 {

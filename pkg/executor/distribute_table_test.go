@@ -217,7 +217,7 @@ func TestDistributeTable(t *testing.T) {
 	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=titan", table),
 		"[planner:1210]Incorrect arguments to engine must be tikv or tiflash")
 	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=`witness` engine=tikv", table),
-		"[planner:1210]Incorrect arguments to rule must be leader-scatter, follower-scatter or learner-scatter")
+		"[planner:1210]Incorrect arguments to rule must be leader-scatter, peer-scatter or learner-scatter")
 }
 
 func TestShowTableDistributions(t *testing.T) {
