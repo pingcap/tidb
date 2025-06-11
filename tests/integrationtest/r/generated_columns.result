@@ -252,11 +252,11 @@ CREATE TABLE tu (a INT, b INT, c INT GENERATED ALWAYS AS (a + b) VIRTUAL, primar
 INSERT INTO tu(a, b) VALUES(1, 2);
 EXPLAIN format = 'brief' SELECT * FROM tu WHERE c = 1;
 id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:tu, index:uk(c)	
+Point_Get	1.00	root	table:tu, index:uk(c)	condition: [eq(generated_columns.tu.c, 1)]
 EXPLAIN format = 'brief' SELECT a, c FROM tu WHERE c = 1;
 id	estRows	task	access object	operator info
 Projection	1.00	root		generated_columns.tu.a, generated_columns.tu.c
-└─Point_Get	1.00	root	table:tu, index:uk(c)	
+└─Point_Get	1.00	root	table:tu, index:uk(c)	condition: [eq(generated_columns.tu.c, 1)]
 EXPLAIN format = 'brief' SELECT * FROM tu WHERE c in(1, 2, 3);
 id	estRows	task	access object	operator info
 Batch_Point_Get	3.00	root	table:tu, index:uk(c)	keep order:false, desc:false

@@ -15,7 +15,7 @@ Error 1062 (23000): Duplicate entry 'c' for key 't.idx'
 explain format='brief' select * from t use index(idx) where lower(b) = 'c';
 id	estRows	task	access object	operator info
 Projection	1.00	root		globalindex__expression_index.t.a, globalindex__expression_index.t.b
-└─Point_Get	1.00	root	table:t, index:idx(lower(`b`))	
+└─Point_Get	1.00	root	table:t, index:idx(lower(`b`))	condition: [eq(lower(globalindex__expression_index.t.b), c)]
 select * from t use index(idx) where lower(b) = 'c';
 a	b
 3	C
