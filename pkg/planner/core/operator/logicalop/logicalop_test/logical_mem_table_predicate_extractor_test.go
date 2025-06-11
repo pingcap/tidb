@@ -659,27 +659,31 @@ func TestMetricTableExtractor(t *testing.T) {
 	se.GetSessionVars().TimeZone = time.Local
 	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
 	for _, ca := range cases {
-		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
-		require.NotNil(t, logicalMemTable.Extractor)
-		metricTableExtractor := logicalMemTable.Extractor.(*plannercore.MetricTableExtractor)
-		if len(ca.labelConditions) > 0 {
-			require.EqualValues(t, ca.labelConditions, metricTableExtractor.LabelConditions, "SQL: %v", ca.sql)
-		}
-		require.EqualValues(t, ca.skipRequest, metricTableExtractor.SkipRequest, "SQL: %v", ca.sql)
-		if len(metricTableExtractor.Quantiles) > 0 {
-			require.EqualValues(t, ca.quantiles, metricTableExtractor.Quantiles)
-		}
-		if !ca.skipRequest {
-			promQL := metricTableExtractor.GetMetricTablePromQL(se.GetPlanCtx(), "tidb_query_duration")
-			require.EqualValues(t, promQL, ca.promQL, "SQL: %v", ca.sql)
-			start, end := metricTableExtractor.StartTime, metricTableExtractor.EndTime
-			require.GreaterOrEqual(t, end.UnixNano(), start.UnixNano())
-			if ca.startTime.Unix() > 0 {
-				require.EqualValues(t, ca.startTime, metricTableExtractor.StartTime, "SQL: %v, start_time: %v", ca.sql, metricTableExtractor.StartTime)
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		if ok {
+			require.NotNil(t, logicalMemTable.Extractor)
+			metricTableExtractor := logicalMemTable.Extractor.(*plannercore.MetricTableExtractor)
+			if len(ca.labelConditions) > 0 {
+				require.EqualValues(t, ca.labelConditions, metricTableExtractor.LabelConditions, "SQL: %v", ca.sql)
 			}
-			if ca.endTime.Unix() > 0 {
-				require.EqualValues(t, ca.endTime, metricTableExtractor.EndTime, "SQL: %v, end_time: %v", ca.sql, metricTableExtractor.EndTime)
+			require.EqualValues(t, ca.skipRequest, metricTableExtractor.SkipRequest, "SQL: %v", ca.sql)
+			if len(metricTableExtractor.Quantiles) > 0 {
+				require.EqualValues(t, ca.quantiles, metricTableExtractor.Quantiles)
 			}
+			if !ca.skipRequest {
+				promQL := metricTableExtractor.GetMetricTablePromQL(se.GetPlanCtx(), "tidb_query_duration")
+				require.EqualValues(t, promQL, ca.promQL, "SQL: %v", ca.sql)
+				start, end := metricTableExtractor.StartTime, metricTableExtractor.EndTime
+				require.GreaterOrEqual(t, end.UnixNano(), start.UnixNano())
+				if ca.startTime.Unix() > 0 {
+					require.EqualValues(t, ca.startTime, metricTableExtractor.StartTime, "SQL: %v, start_time: %v", ca.sql, metricTableExtractor.StartTime)
+				}
+				if ca.endTime.Unix() > 0 {
+					require.EqualValues(t, ca.endTime, metricTableExtractor.EndTime, "SQL: %v, end_time: %v", ca.sql, metricTableExtractor.EndTime)
+				}
+			}
+		} else {
+			require.True(t, ca.skipRequest, ca.sql)
 		}
 	}
 }
@@ -770,17 +774,22 @@ func TestMetricsSummaryTableExtractor(t *testing.T) {
 	for _, ca := range cases {
 		sort.Float64s(ca.quantiles)
 
-		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
-		require.NotNil(t, logicalMemTable.Extractor)
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		if ok {
+			require.NotNil(t, logicalMemTable.Extractor)
 
-		extractor := logicalMemTable.Extractor.(*plannercore.MetricSummaryTableExtractor)
-		if len(ca.quantiles) > 0 {
-			require.EqualValues(t, ca.quantiles, extractor.Quantiles, "SQL: %v", ca.sql)
+			extractor := logicalMemTable.Extractor.(*plannercore.MetricSummaryTableExtractor)
+			if len(ca.quantiles) > 0 {
+				require.EqualValues(t, ca.quantiles, extractor.Quantiles, "SQL: %v", ca.sql)
+			}
+			if len(ca.names) > 0 {
+				require.EqualValues(t, ca.names, extractor.MetricsNames, "SQL: %v", ca.sql)
+			}
+			require.Equal(t, ca.skipRequest, extractor.SkipRequest, "SQL: %v", ca.sql)
+		} else {
+			require.True(t, ca.skipRequest, "SQL: %v", ca.sql)
 		}
-		if len(ca.names) > 0 {
-			require.EqualValues(t, ca.names, extractor.MetricsNames, "SQL: %v", ca.sql)
-		}
-		require.Equal(t, ca.skipRequest, extractor.SkipRequest, "SQL: %v", ca.sql)
+
 	}
 }
 
@@ -911,17 +920,22 @@ func TestInspectionResultTableExtractor(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
-		require.NotNil(t, logicalMemTable.Extractor)
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		if ok {
+			require.NotNil(t, logicalMemTable.Extractor)
 
-		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionResultTableExtractor)
-		if len(ca.rules) > 0 {
-			require.EqualValues(t, ca.rules, clusterConfigExtractor.Rules, "SQL: %v", ca.sql)
+			clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionResultTableExtractor)
+			if len(ca.rules) > 0 {
+				require.EqualValues(t, ca.rules, clusterConfigExtractor.Rules, "SQL: %v", ca.sql)
+			}
+			if len(ca.items) > 0 {
+				require.EqualValues(t, ca.items, clusterConfigExtractor.Items, "SQL: %v", ca.sql)
+			}
+			require.Equal(t, ca.skipInspection, clusterConfigExtractor.SkipInspection, "SQL: %v", ca.sql)
+		} else {
+			require.True(t, ca.skipInspection, "SQL: %v", ca.sql)
 		}
-		if len(ca.items) > 0 {
-			require.EqualValues(t, ca.items, clusterConfigExtractor.Items, "SQL: %v", ca.sql)
-		}
-		require.Equal(t, ca.skipInspection, clusterConfigExtractor.SkipInspection, "SQL: %v", ca.sql)
+
 	}
 }
 
@@ -1012,17 +1026,21 @@ func TestInspectionSummaryTableExtractor(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
-		require.NotNil(t, logicalMemTable.Extractor)
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		if ok {
+			require.NotNil(t, logicalMemTable.Extractor)
 
-		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionSummaryTableExtractor)
-		if len(ca.rules) > 0 {
-			require.EqualValues(t, ca.rules, clusterConfigExtractor.Rules, "SQL: %v", ca.sql)
+			clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionSummaryTableExtractor)
+			if len(ca.rules) > 0 {
+				require.EqualValues(t, ca.rules, clusterConfigExtractor.Rules, "SQL: %v", ca.sql)
+			}
+			if len(ca.names) > 0 {
+				require.EqualValues(t, ca.names, clusterConfigExtractor.MetricNames, "SQL: %v", ca.sql)
+			}
+			require.Equal(t, ca.skipInspection, clusterConfigExtractor.SkipInspection, "SQL: %v", ca.sql)
+		} else {
+			require.True(t, ca.skipInspection, "SQL: %v", ca.sql)
 		}
-		if len(ca.names) > 0 {
-			require.EqualValues(t, ca.names, clusterConfigExtractor.MetricNames, "SQL: %v", ca.sql)
-		}
-		require.Equal(t, ca.skipInspection, clusterConfigExtractor.SkipInspection, "SQL: %v", ca.sql)
 	}
 }
 
@@ -1659,36 +1677,40 @@ func TestColumns(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
-		require.NotNil(t, logicalMemTable.Extractor)
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		if ok {
+			require.NotNil(t, logicalMemTable.Extractor)
 
-		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaColumnsExtractor)
-		require.Equal(t, ca.skipRequest, columnsTableExtractor.SkipRequest, "SQL: %v", ca.sql)
+			columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaColumnsExtractor)
+			require.Equal(t, ca.skipRequest, columnsTableExtractor.SkipRequest, "SQL: %v", ca.sql)
 
-		require.Equal(t, ca.columnName.Count(), columnsTableExtractor.ColPredicates["column_name"].Count())
-		if ca.columnName.Count() > 0 && columnsTableExtractor.ColPredicates["column_name"].Count() > 0 {
-			require.EqualValues(t, ca.columnName, columnsTableExtractor.ColPredicates["column_name"], "SQL: %v", ca.sql)
-		}
+			require.Equal(t, ca.columnName.Count(), columnsTableExtractor.ColPredicates["column_name"].Count())
+			if ca.columnName.Count() > 0 && columnsTableExtractor.ColPredicates["column_name"].Count() > 0 {
+				require.EqualValues(t, ca.columnName, columnsTableExtractor.ColPredicates["column_name"], "SQL: %v", ca.sql)
+			}
 
-		require.Equal(t, ca.tableSchema.Count(), columnsTableExtractor.ColPredicates["table_schema"].Count())
-		if ca.tableSchema.Count() > 0 && columnsTableExtractor.ColPredicates["table_schema"].Count() > 0 {
-			require.EqualValues(t, ca.tableSchema, columnsTableExtractor.ColPredicates["table_schema"], "SQL: %v", ca.sql)
-		}
-		require.Equal(t, ca.tableName.Count(), columnsTableExtractor.ColPredicates["table_name"].Count())
-		if ca.tableName.Count() > 0 && columnsTableExtractor.ColPredicates["table_name"].Count() > 0 {
-			require.EqualValues(t, ca.tableName, columnsTableExtractor.ColPredicates["table_name"], "SQL: %v", ca.sql)
-		}
-		require.Equal(t, len(ca.tableNamePattern), len(columnsTableExtractor.LikePatterns["table_name"]))
-		if len(ca.tableNamePattern) > 0 && len(columnsTableExtractor.LikePatterns["table_name"]) > 0 {
-			require.EqualValues(t, ca.tableNamePattern, columnsTableExtractor.LikePatterns["table_name"], "SQL: %v", ca.sql)
-		}
-		require.Equal(t, len(ca.columnNamePattern), len(columnsTableExtractor.LikePatterns["column_name"]))
-		if len(ca.columnNamePattern) > 0 && len(columnsTableExtractor.LikePatterns["column_name"]) > 0 {
-			require.EqualValues(t, ca.columnNamePattern, columnsTableExtractor.LikePatterns["column_name"], "SQL: %v", ca.sql)
-		}
-		require.Equal(t, len(ca.tableSchemaPattern), len(columnsTableExtractor.LikePatterns["table_schema"]))
-		if len(ca.tableSchemaPattern) > 0 && len(columnsTableExtractor.LikePatterns["table_schema"]) > 0 {
-			require.EqualValues(t, ca.tableSchemaPattern, columnsTableExtractor.LikePatterns["table_schema"], "SQL: %v", ca.sql)
+			require.Equal(t, ca.tableSchema.Count(), columnsTableExtractor.ColPredicates["table_schema"].Count())
+			if ca.tableSchema.Count() > 0 && columnsTableExtractor.ColPredicates["table_schema"].Count() > 0 {
+				require.EqualValues(t, ca.tableSchema, columnsTableExtractor.ColPredicates["table_schema"], "SQL: %v", ca.sql)
+			}
+			require.Equal(t, ca.tableName.Count(), columnsTableExtractor.ColPredicates["table_name"].Count())
+			if ca.tableName.Count() > 0 && columnsTableExtractor.ColPredicates["table_name"].Count() > 0 {
+				require.EqualValues(t, ca.tableName, columnsTableExtractor.ColPredicates["table_name"], "SQL: %v", ca.sql)
+			}
+			require.Equal(t, len(ca.tableNamePattern), len(columnsTableExtractor.LikePatterns["table_name"]))
+			if len(ca.tableNamePattern) > 0 && len(columnsTableExtractor.LikePatterns["table_name"]) > 0 {
+				require.EqualValues(t, ca.tableNamePattern, columnsTableExtractor.LikePatterns["table_name"], "SQL: %v", ca.sql)
+			}
+			require.Equal(t, len(ca.columnNamePattern), len(columnsTableExtractor.LikePatterns["column_name"]))
+			if len(ca.columnNamePattern) > 0 && len(columnsTableExtractor.LikePatterns["column_name"]) > 0 {
+				require.EqualValues(t, ca.columnNamePattern, columnsTableExtractor.LikePatterns["column_name"], "SQL: %v", ca.sql)
+			}
+			require.Equal(t, len(ca.tableSchemaPattern), len(columnsTableExtractor.LikePatterns["table_schema"]))
+			if len(ca.tableSchemaPattern) > 0 && len(columnsTableExtractor.LikePatterns["table_schema"]) > 0 {
+				require.EqualValues(t, ca.tableSchemaPattern, columnsTableExtractor.LikePatterns["table_schema"], "SQL: %v", ca.sql)
+			}
+		} else {
+			require.True(t, ca.skipRequest, "SQL: %v", ca.sql)
 		}
 	}
 }
