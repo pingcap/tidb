@@ -974,7 +974,7 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 			if err != nil {
 				return nil, false, err
 			}
-			args[i], nullFromSets[i] = res, nullFromSet
+			args[i], nullFromSets[i] = res.Clone(), nullFromSet
 		}
 		allArgsNullFromSet := true
 		for i := range args {
