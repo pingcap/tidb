@@ -10,15 +10,15 @@ KEY a9af33a4 (57fd8d09,b80b3746,43b06e99),
 KEY 464b386e (b80b3746),
 KEY 19dc3c2d (57fd8d09)
 ) ENGINE=InnoDB DEFAULT CHARSET=ascii COLLATE=ascii_bin COMMENT='320f8401';
-explain select  /*+ use_index_merge( `aa311c3c` ) */   `aa311c3c`.`43b06e99` as r0 , `aa311c3c`.`6302d8ac` as r1 from `aa311c3c` where IsNull( `aa311c3c`.`b80b3746` ) or not( `aa311c3c`.`57fd8d09` >= '2008' )   order by r0,r1 limit 95;
+explain select  /*+ use_index_merge( `aa311c3c` ) */   `aa311c3c`.`43b06e99` as r0 , `aa311c3c`.`6302d8ac` as r1 from `aa311c3c` where `aa311c3c`.`b80b3746` = 3 or not( `aa311c3c`.`57fd8d09` >= '2008' )   order by r0,r1 limit 95;
 id	estRows	task	access object	operator info
 Projection_7	95.00	root		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac
 └─TopN_9	95.00	root		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac, offset:0, count:95
   └─IndexMerge_17	95.00	root		type: union
-    ├─TableFullScan_13(Build)	0.00	cop[tikv]	table:aa311c3c	keep order:false, stats:pseudo
+    ├─IndexRangeScan_13(Build)	10.00	cop[tikv]	table:aa311c3c, index:464b386e(b80b3746)	range:[3,3], keep order:false, stats:pseudo
     ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:aa311c3c, index:3080c821(57fd8d09, 43b06e99, b80b3746)	range:[-inf,2008), keep order:false, stats:pseudo
     └─TopN_16(Probe)	95.00	cop[tikv]		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac, offset:0, count:95
-      └─TableRowIDScan_15	3323.33	cop[tikv]	table:aa311c3c	keep order:false, stats:pseudo
+      └─TableRowIDScan_15	3330.01	cop[tikv]	table:aa311c3c	keep order:false, stats:pseudo
 CREATE TABLE t1(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));
 CREATE TABLE t2(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));
 INSERT INTO t1 values(1,NULL,NULL,null),(2,NULL,NULL,null),(3,NULL,NULL,null);
