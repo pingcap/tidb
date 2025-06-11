@@ -29,8 +29,15 @@ function main() {
 }
 
 function cleanup() {
-    killall -9 -r -q tikv-server
-    killall -9 -r -q pd-server
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS: no -r option
+        killall -9 -q tikv-server || true
+        killall -9 -q pd-server || true
+    else
+        # Linux: supports -r for regex
+        killall -9 -r -q tikv-server || true
+        killall -9 -r -q pd-server || true
+    fi
 }
 
 exit_code=0

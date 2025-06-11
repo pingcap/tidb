@@ -17,6 +17,10 @@ function main() {
         exit 1
     fi
 
+    # init a bucket "next-gen-test", the bucket will be used for testing, do not change it.
+    mkdir -pv ${data_base_dir}/minio/data/next-gen-test
+    start_minio ${data_base_dir}/minio/data
+
     # start the servers.
     bin/pd-server --name=pd-0 --config=${config_dir}/pd.toml --data-dir=${data_base_dir}/pd-0/data --peer-urls=http://127.0.0.1:2380 --advertise-peer-urls=http://127.0.0.1:2380 --client-urls=http://127.0.0.1:2379 --advertise-client-urls=http://127.0.0.1:2379 --initial-cluster=pd-0=http://127.0.0.1:2380,pd-1=http://127.0.0.1:2381,pd-2=http://127.0.0.1:2383 --force-new-cluster --log-file=pd0.log &
     bin/pd-server --name=pd-1 --config=${config_dir}/pd.toml --data-dir=${data_base_dir}/pd-1/data --peer-urls=http://127.0.0.1:2381 --advertise-peer-urls=http://127.0.0.1:2381 --client-urls=http://127.0.0.1:2382 --advertise-client-urls=http://127.0.0.1:2382 --initial-cluster=pd-0=http://127.0.0.1:2380,pd-1=http://127.0.0.1:2381,pd-2=http://127.0.0.1:2383 --force-new-cluster --log-file=pd1.log &
@@ -30,11 +34,61 @@ function main() {
     NEXT_GEN=1 make ${make_test_task}
 }
 
+function start_minio() {
+    local data_base_dir="$1"
+
+    # Ensure MinIO binary exists, download if not exists.
+    MINIO_BIN_PATH=${MINIO_BIN_PATH:-$(which minio)}
+    if [[ -z "$MINIO_BIN_PATH" || ! -x "$MINIO_BIN_PATH" ]]; then
+        echo "MinIO binary not found, downloading..."
+        MINIO_BIN_PATH="bin/minio"
+        # Determine OS and ARCH for MinIO download URL
+        OS=$(uname | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+        case "$ARCH" in
+            x86_64) ARCH="amd64" ;;
+            aarch64 | arm64) ARCH="arm64" ;;
+            *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
+        esac
+        curl -sSL -o "$MINIO_BIN_PATH" "https://dl.min.io/server/minio/release/${OS}-${ARCH}/minio"
+        chmod +x "$MINIO_BIN_PATH"
+    fi
+
+    MINIO_PORT=${MINIO_PORT:-9000}
+    MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+    MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+
+    # Start MinIO server in background
+    export MINIO_ROOT_USER="$MINIO_ACCESS_KEY"
+    export MINIO_ROOT_PASSWORD="$MINIO_SECRET_KEY"
+    echo "🚀 Starting MinIO server..."
+    "$MINIO_BIN_PATH" server "$data_base_dir" --address ":$MINIO_PORT" > minio.log 2>&1 &
+    MINIO_PID=$!
+
+    # Wait for MinIO to be ready (simple check)
+    for i in {1..10}; do
+        if curl -s "http://127.0.0.1:$MINIO_PORT/minio/health/ready" | grep -q "OK"; then
+            echo "MinIO is up"
+            break
+        fi
+        sleep 1
+    done
+    echo "🎉 MinIO server started successfully"
+}
+
 
 function cleanup() {
-    killall -9 -r -q tikv-worker
-    killall -9 -r -q tikv-server
-    killall -9 -r -q pd-server
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS: no -r option
+        killall -9 -q tikv-worker || true
+        killall -9 -q tikv-server || true
+        killall -9 -q pd-server || true
+    else
+        # Linux: supports -r for regex
+        killall -9 -r -q tikv-worker || true
+        killall -9 -r -q tikv-server || true
+        killall -9 -r -q pd-server || true
+    fi
 }
 
 exit_code=0
