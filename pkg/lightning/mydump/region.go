@@ -390,6 +390,61 @@ func makeParquetFileRegion(
 	return []*TableRegion{region}, []float64{float64(dataFile.FileMeta.FileSize)}, nil
 }
 
+func openCSVParser(
+	ctx context.Context,
+	cfg *DataDivideConfig,
+	path string,
+	offset int64,
+) (*CSVParser, error) {
+	r, err := cfg.Store.Open(ctx, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
+	charsetConvertor, err := NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
+	if err != nil {
+		_ = r.Close()
+		return nil, err
+	}
+
+	parser, err := NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, true, charsetConvertor)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = parser.SetPos(offset, 0); err != nil {
+		_ = parser.Close()
+		return nil, err
+	}
+
+	return parser, nil
+}
+
+func getHeaderColumn(
+	ctx context.Context,
+	cfg *DataDivideConfig,
+	path string,
+) ([]string, error) {
+	if !cfg.CSV.Header || !cfg.CSV.HeaderSchemaMatch {
+		return nil, nil
+	}
+
+	parser, err := openCSVParser(ctx, cfg, path, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		_ = parser.Close()
+	}()
+
+	if err = parser.ReadColumns(); err != nil {
+		return nil, err
+	}
+	return parser.Columns(), nil
+}
+
 // SplitLargeCSV splits a large csv file into multiple regions, the size of
 // each regions is specified by `config.MaxRegionSize`.
 // Note: We split the file coarsely, thus the format of csv file is needed to be
@@ -403,73 +458,67 @@ func SplitLargeCSV(
 	dataFile FileInfo,
 ) (regions []*TableRegion, dataFileSizes []float64, err error) {
 	maxRegionSize := cfg.MaxChunkSize
-	dataFileSizes = make([]float64, 0, dataFile.FileMeta.FileSize/maxRegionSize+1)
-	startOffset, endOffset := int64(0), maxRegionSize
-	var columns []string
-	var prevRowIdxMax int64
-	if cfg.CSV.Header {
-		r, err := cfg.Store.Open(ctx, dataFile.FileMeta.Path, nil)
-		if err != nil {
-			return nil, nil, err
-		}
-		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
-		charsetConvertor, err := NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
-		if err != nil {
-			_ = r.Close()
-			return nil, nil, err
-		}
-		parser, err := NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, true, charsetConvertor)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err = parser.ReadColumns(); err != nil {
-			_ = parser.Close()
-			return nil, nil, err
-		}
-		if cfg.CSV.HeaderSchemaMatch {
-			columns = parser.Columns()
-		}
-		startOffset, _ = parser.Pos()
-		endOffset = min(startOffset+maxRegionSize, dataFile.FileMeta.FileSize)
-		_ = parser.Close()
+	regionCnt := dataFile.FileMeta.FileSize/maxRegionSize + 1
+	dataFileSizes = make([]float64, 0, regionCnt)
+
+	headerColumns, err := getHeaderColumn(ctx, cfg, dataFile.FileMeta.Path)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
 	}
-	divisor := int64(cfg.ColumnCnt)
-	for {
-		curRowsCnt := (endOffset - startOffset) / divisor
-		rowIDMax := prevRowIdxMax + curRowsCnt
-		if endOffset != dataFile.FileMeta.FileSize {
-			r, err := cfg.Store.Open(ctx, dataFile.FileMeta.Path, nil)
+
+	// Here we don't consider the existence of header, because we assume the header is small enough
+	splitEndOffsets := make([]int64, 0, regionCnt)
+	endOffset := maxRegionSize
+	for endOffset < dataFile.FileMeta.FileSize {
+		splitEndOffsets = append(splitEndOffsets, endOffset)
+		endOffset += maxRegionSize
+	}
+
+	concurrency := cfg.Concurrency * 2
+	eg, _ := errgroup.WithContext(ctx)
+	eg.SetLimit(concurrency)
+	for i, endOffset := range splitEndOffsets {
+		eg.Go(func() error {
+			parser, err := openCSVParser(ctx, cfg, dataFile.FileMeta.Path, endOffset)
 			if err != nil {
-				return nil, nil, err
+				return errors.Trace(err)
 			}
-			// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
-			charsetConvertor, err := NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
-			if err != nil {
-				_ = r.Close()
-				return nil, nil, err
-			}
-			parser, err := NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, false, charsetConvertor)
-			if err != nil {
-				return nil, nil, err
-			}
-			if err = parser.SetPos(endOffset, 0); err != nil {
+			defer func() {
 				_ = parser.Close()
-				return nil, nil, err
-			}
+			}()
 			_, pos, err := parser.ReadUntilTerminator()
 			if err != nil {
 				if !errors.ErrorEqual(err, io.EOF) {
-					_ = parser.Close()
-					return nil, nil, err
+					return err
 				}
 				log.FromContext(ctx).Warn("file contains no terminator at end",
 					zap.String("path", dataFile.FileMeta.Path),
 					zap.String("terminator", cfg.CSV.LinesTerminatedBy))
 				pos = dataFile.FileMeta.FileSize
 			}
-			endOffset = pos
-			_ = parser.Close()
+
+			splitEndOffsets[i] = pos
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, nil, err
+	}
+
+	if splitEndOffsets[len(splitEndOffsets)-1] != dataFile.FileMeta.FileSize {
+		splitEndOffsets = append(splitEndOffsets, dataFile.FileMeta.FileSize)
+	}
+
+	divisor := int64(cfg.ColumnCnt)
+	prevRowIdxMax := int64(0)
+	for i := range len(splitEndOffsets) {
+		startOffset := int64(0)
+		if i > 0 {
+			startOffset = splitEndOffsets[i-1]
 		}
+		endOffset := splitEndOffsets[i]
+		curRowsCnt := (endOffset - startOffset) / divisor
+		rowIDMax := prevRowIdxMax + curRowsCnt
 		regions = append(regions,
 			&TableRegion{
 				DB:       cfg.TableMeta.DB,
@@ -480,18 +529,12 @@ func SplitLargeCSV(
 					EndOffset:    endOffset,
 					PrevRowIDMax: prevRowIdxMax,
 					RowIDMax:     rowIDMax,
-					Columns:      columns,
+					Columns:      headerColumns,
 				},
 			})
 		dataFileSizes = append(dataFileSizes, float64(endOffset-startOffset))
 		prevRowIdxMax = rowIDMax
-		if endOffset == dataFile.FileMeta.FileSize {
-			break
-		}
-		startOffset = endOffset
-		if endOffset += maxRegionSize; endOffset > dataFile.FileMeta.FileSize {
-			endOffset = dataFile.FileMeta.FileSize
-		}
 	}
+
 	return regions, dataFileSizes, nil
 }
