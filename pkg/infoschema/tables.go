@@ -1989,9 +1989,8 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 
 		// Resolve loopback addresses concurrently for each node
 		for i := range nodes {
-			node := &nodes[i] //copy pointer for goroutine
 			resolveGroup.Go(func() error {
-				node.ResolveLoopBackAddr()
+				nodes[i].ResolveLoopBackAddr()
 				return nil
 			})
 		}
