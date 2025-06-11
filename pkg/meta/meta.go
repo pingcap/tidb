@@ -80,9 +80,10 @@ var (
 	mDDLTableVersion     = []byte("DDLTableVersion")
 	mMetaDataLock        = []byte("metadataLock")
 
-	mIngestMaxBatchSplitRangesKey = []byte("IngestMaxBatchSplitRanges")
-	mIngestMaxInflightKey         = []byte("IngestMaxInflight")
-	mIngestMaxPerSecKey           = []byte("IngestMaxReqPerSec")
+	mIngestMaxBatchSplitRangesKey  = []byte("IngestMaxBatchSplitRanges")
+	mIngestMaxSplitRangesPerSecKey = []byte("IngestMaxSplitRangesPerSec")
+	mIngestMaxInflightKey          = []byte("IngestMaxInflight")
+	mIngestMaxPerSecKey            = []byte("IngestMaxReqPerSec")
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
 	defaultGroupID = int64(1)
@@ -1371,6 +1372,24 @@ func (m *Meta) SetIngestMaxBatchSplitRanges(val int) error {
 // GetIngestMaxBatchSplitRanges gets the ingest max_batch_split_ranges.
 func (m *Meta) GetIngestMaxBatchSplitRanges() (val int, isNull bool, err error) {
 	sVal, err := m.txn.Get(mIngestMaxBatchSplitRangesKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.Atoi(string(sVal))
+	return val, false, errors.Trace(err)
+}
+
+// SetIngestMaxSplitRangesPerSec sets the max_split_ranges_per_sec.
+func (m *Meta) SetIngestMaxSplitRangesPerSec(val int) error {
+	return errors.Trace(m.txn.Set(mIngestMaxSplitRangesPerSecKey, []byte(strconv.Itoa(val))))
+}
+
+// GetIngestMaxSplitRangesPerSec gets the max_split_ranges_per_sec.
+func (m *Meta) GetIngestMaxSplitRangesPerSec() (val int, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxSplitRangesPerSecKey)
 	if err != nil {
 		return 0, false, errors.Trace(err)
 	}

@@ -771,6 +771,10 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			if err != nil {
 				return err
 			}
+			err = local.InitializeGlobalSplitRangesPerSec(m, logutil.BgLogger())
+			if err != nil {
+				return err
+			}
 			err = local.InitializeGlobalIngestConcurrency(m, logutil.BgLogger())
 			if err != nil {
 				return err

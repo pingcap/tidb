@@ -2035,6 +2035,8 @@ type IngestParam string
 const (
 	// IngestParamMaxBatchSplitRanges is the parameter for lightning max_batch_split_ranges.
 	IngestParamMaxBatchSplitRanges IngestParam = "max_batch_split_ranges"
+	// IngestParamMaxSplitRangesPerSec is the parameter for lightning max_split_ranges_per_sec.
+	IngestParamMaxSplitRangesPerSec IngestParam = "max_split_ranges_per_sec"
 	// IngestParamMaxInflight is the parameter for lightning max_inflight.
 	IngestParamMaxInflight IngestParam = "max_inflight"
 	// IngestParamMaxPerSecond is the parameter for lightning max_per_second.
@@ -2066,6 +2068,14 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			return m.SetIngestMaxBatchSplitRanges(value)
 		}
 		global = &local.CurrentMaxBatchSplitRanges
+	case IngestParamMaxSplitRangesPerSec:
+		getter = func(m *meta.Meta) (int, bool, error) {
+			return m.GetIngestMaxSplitRangesPerSec()
+		}
+		setter = func(m *meta.Meta, value int) error {
+			return m.SetIngestMaxSplitRangesPerSec(value)
+		}
+		global = &local.CurrentMaxSplitRangesPerSec
 	case IngestParamMaxPerSecond:
 		getter = func(m *meta.Meta) (int, bool, error) {
 			return m.GetIngestMaxPerSec()

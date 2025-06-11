@@ -115,11 +115,23 @@ func (local *Backend) SplitAndScatterRegionInBatches(
 	ranges []common.Range,
 	needSplit bool,
 	batchCnt int,
+	maxCntPerSec int,
 ) error {
+	var limiter *rate.Limiter
+	if maxCntPerSec > 0 {
+		limiter = rate.NewLimiter(rate.Limit(maxCntPerSec), maxCntPerSec)
+		batchCnt = min(batchCnt, maxCntPerSec)
+	}
 	for i := 0; i < len(ranges); i += batchCnt {
 		batch := ranges[i:]
 		if len(batch) > batchCnt {
 			batch = batch[:batchCnt]
+		}
+		if limiter != nil {
+			err := limiter.WaitN(ctx, len(batch))
+			if err != nil {
+				return err
+			}
 		}
 		if err := local.SplitAndScatterRegionByRanges(ctx, batch, needSplit); err != nil {
 			return errors.Trace(err)
