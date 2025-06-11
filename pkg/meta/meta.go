@@ -81,8 +81,8 @@ var (
 	mMetaDataLock        = []byte("metadataLock")
 
 	mIngestMaxBatchSplitRangesKey = []byte("IngestMaxBatchSplitRanges")
-	mIngestMaxReqConcurrencyKey   = []byte("IngestMaxReqConcurrency")
-	mIngestMaxReqPerSecKey        = []byte("IngestMaxReqPerSec")
+	mIngestMaxInflightKey         = []byte("IngestMaxInflight")
+	mIngestMaxPerSecKey           = []byte("IngestMaxReqPerSec")
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
 	defaultGroupID = int64(1)
@@ -1381,14 +1381,14 @@ func (m *Meta) GetIngestMaxBatchSplitRanges() (val int, isNull bool, err error) 
 	return val, false, errors.Trace(err)
 }
 
-// SetIngestMaxConcurrency sets the max_ingest_concurrency.
-func (m *Meta) SetIngestMaxConcurrency(val int) error {
-	return errors.Trace(m.txn.Set(mIngestMaxReqConcurrencyKey, []byte(strconv.Itoa(val))))
+// SetIngestMaxInflight sets the max_ingest_concurrency.
+func (m *Meta) SetIngestMaxInflight(val int) error {
+	return errors.Trace(m.txn.Set(mIngestMaxInflightKey, []byte(strconv.Itoa(val))))
 }
 
-// GetIngestMaxConcurrency gets the max_ingest_concurrency.
-func (m *Meta) GetIngestMaxConcurrency() (val int, isNull bool, err error) {
-	sVal, err := m.txn.Get(mIngestMaxReqConcurrencyKey)
+// GetIngestMaxInflight gets the max_ingest_concurrency.
+func (m *Meta) GetIngestMaxInflight() (val int, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxInflightKey)
 	if err != nil {
 		return 0, false, errors.Trace(err)
 	}
@@ -1401,12 +1401,12 @@ func (m *Meta) GetIngestMaxConcurrency() (val int, isNull bool, err error) {
 
 // SetIngestMaxPerSec sets the max_ingest_per_sec.
 func (m *Meta) SetIngestMaxPerSec(val int) error {
-	return errors.Trace(m.txn.Set(mIngestMaxReqPerSecKey, []byte(strconv.Itoa(val))))
+	return errors.Trace(m.txn.Set(mIngestMaxPerSecKey, []byte(strconv.Itoa(val))))
 }
 
 // GetIngestMaxPerSec gets the max_ingest_per_sec.
 func (m *Meta) GetIngestMaxPerSec() (val int, isNull bool, err error) {
-	sVal, err := m.txn.Get(mIngestMaxReqPerSecKey)
+	sVal, err := m.txn.Get(mIngestMaxPerSecKey)
 	if err != nil {
 		return 0, false, errors.Trace(err)
 	}

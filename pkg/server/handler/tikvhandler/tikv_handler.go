@@ -2034,13 +2034,13 @@ type IngestParam string
 const (
 	// IngestParamMaxBatchSplitRanges is the parameter for lightning max_batch_split_ranges.
 	IngestParamMaxBatchSplitRanges IngestParam = "max_batch_split_ranges"
-	// IngestParamMaxConcurrency is the parameter for lightning max_concurrency.
-	IngestParamMaxConcurrency IngestParam = "max_concurrency"
+	// IngestParamMaxInflight is the parameter for lightning max_inflight.
+	IngestParamMaxInflight IngestParam = "max_inflight"
 	// IngestParamMaxPerSecond is the parameter for lightning max_per_second.
 	IngestParamMaxPerSecond IngestParam = "max_per_second"
 )
 
-// IngestConcurrencyHandler is the handler for lightning max_batch_split_ranges and max_concurrency.
+// IngestConcurrencyHandler is the handler for lightning max_batch_split_ranges and max_inflight.
 type IngestConcurrencyHandler struct {
 	*handler.TikvHandlerTool
 	param IngestParam
@@ -2070,12 +2070,12 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		setter = func(m *meta.Meta, value int) error {
 			return m.SetIngestMaxPerSec(value)
 		}
-	case IngestParamMaxConcurrency:
+	case IngestParamMaxInflight:
 		getter = func(m *meta.Meta) (int, bool, error) {
-			return m.GetIngestMaxConcurrency()
+			return m.GetIngestMaxInflight()
 		}
 		setter = func(m *meta.Meta, value int) error {
-			return m.SetIngestMaxConcurrency(value)
+			return m.SetIngestMaxInflight(value)
 		}
 	default:
 		handler.WriteError(w, errors.Errorf("unsupported ingest parameter: %s", h.param))
@@ -2126,8 +2126,8 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		switch h.param {
 		case IngestParamMaxBatchSplitRanges:
 			local.CurrentMaxBatchSplitRanges.Store(int64(newValue))
-		case IngestParamMaxConcurrency:
-			local.CurrentMaxIngestConcurrency.Store(int64(newValue))
+		case IngestParamMaxInflight:
+			local.CurrentMaxIngestInflight.Store(int64(newValue))
 		case IngestParamMaxPerSecond:
 			local.CurrentMaxIngestPerSec.Store(int64(newValue))
 		}

@@ -118,9 +118,9 @@ var (
 	MaxWriteAndIngestRetryTimes = 30
 
 	// defaultMaxBatchSplitRanges is the default max ranges count in a batch to split and scatter.
-	defaultMaxBatchSplitRanges  = 4096
-	defaultMaxIngestConcurrency = 2
-	defaultMaxIngestPerSec      = 5
+	defaultMaxBatchSplitRanges = 2048
+	defaultMaxIngestInflight   = 2
+	defaultMaxIngestPerSec     = 5
 
 	// Unlimited RPC receive message size for TiKV importer
 	unlimitedRPCRecvMsgSize = math.MaxInt32
@@ -129,8 +129,8 @@ var (
 var (
 	// CurrentMaxBatchSplitRanges stores the current limit for batch split ranges.
 	CurrentMaxBatchSplitRanges atomic.Int64
-	// CurrentMaxIngestConcurrency stores the current limit for concurrent ingest requests.
-	CurrentMaxIngestConcurrency atomic.Int64
+	// CurrentMaxIngestInflight stores the current limit for concurrent ingest requests.
+	CurrentMaxIngestInflight atomic.Int64
 	// CurrentMaxIngestPerSec stores the current limit for maximum ingest requests per second.
 	CurrentMaxIngestPerSec atomic.Int64
 )
@@ -154,18 +154,18 @@ func InitializeGlobalMaxBatchSplitRanges(m *meta.Meta, logger *zap.Logger) error
 
 // InitializeGlobalIngestConcurrency loads the maxIngestConcurrency value using meta.Meta or sets a default.
 func InitializeGlobalIngestConcurrency(m *meta.Meta, logger *zap.Logger) error {
-	valInt, isNull, err := m.GetIngestMaxConcurrency()
+	valInt, isNull, err := m.GetIngestMaxInflight()
 	if err != nil {
 		return errors.Annotate(err, "failed to read maxIngestConcurrency from meta store")
 	}
 	if isNull {
-		valInt = defaultMaxIngestConcurrency
+		valInt = defaultMaxIngestInflight
 		logger.Info("maxIngestConcurrency not found in meta store, initialized to default and persisted",
-			zap.Int("value", defaultMaxIngestConcurrency))
+			zap.Int("value", defaultMaxIngestInflight))
 	} else {
 		logger.Info("loaded maxIngestConcurrency from meta store", zap.Int("value", valInt))
 	}
-	CurrentMaxIngestConcurrency.Store(int64(valInt))
+	CurrentMaxIngestInflight.Store(int64(valInt))
 	return nil
 }
 
@@ -197,7 +197,7 @@ func GetMaxBatchSplitRanges() int {
 
 // GetMaxIngestConcurrency returns the current maximum number of concurrent ingest requests.
 func GetMaxIngestConcurrency() int {
-	val := CurrentMaxIngestConcurrency.Load()
+	val := CurrentMaxIngestInflight.Load()
 	return int(val)
 }
 
