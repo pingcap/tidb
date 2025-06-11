@@ -872,6 +872,7 @@ func printInfo() {
 
 func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 	cfg := config.GetGlobalConfig()
+	cfg.TiKVClient.CoprCache.CapacityMB = 0.0
 	driver := server.NewTiDBDriver(storage)
 	svr, err := server.NewServer(cfg, driver)
 	// Both domain and storage have started, so we have to clean them before exiting.

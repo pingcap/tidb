@@ -4227,16 +4227,35 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	}
 
 	dagPB := ret.dagPB
-	if b.ctx.GetSessionVars().SessionAlias == "test" && is.Table.GetPartitionInfo() == nil && !is.Table.IsCommonHandle && !is.KeepOrder {
+	user := b.ctx.GetSessionVars().User
+	if (b.ctx.GetSessionVars().SessionAlias == "test" || (user != nil && user.Username == "test")) && is.Table.GetPartitionInfo() == nil && !is.KeepOrder {
+		var handleLen, extraColCnt int
+		if v.IndexPlans[0].(*plannercore.PhysicalIndexScan).NeedExtraOutputCol() {
+			extraColCnt = 1
+		}
+
+		if len(v.CommonHandleCols) != 0 {
+			handleLen = len(v.CommonHandleCols)
+		} else {
+			handleLen = 1
+		}
+
+		buildSidePrimaryOffsets := make([]uint32, 0, handleLen)
+		for i := handleLen; i > 0; i-- {
+			buildSidePrimaryOffsets = append(buildSidePrimaryOffsets, dagPB.OutputOffsets[len(dagPB.OutputOffsets)-i-extraColCnt])
+		}
+
 		tblInfo := ret.table.Meta()
-		buildSidePrimaryOffsets := []uint32{uint32(len(ret.index.Columns))}
 		position := uint32(len(dagPB.Executors))
+		tblScanExec := ret.tableRequest.Executors[0].TblScan
 		dagPB.Executors = append(dagPB.Executors, &tipb.Executor{
 			Tp: tipb.ExecType_TypeIndexLookup,
 			IndexLookup: &tipb.IndexLookup{
 				TableId:                    tblInfo.ID,
-				Columns:                    ret.tableRequest.Executors[0].TblScan.Columns,
+				Columns:                    tblScanExec.Columns,
 				BuildSidePrimaryKeyOffsets: buildSidePrimaryOffsets,
+				PrimaryColumnIds:           tblScanExec.PrimaryColumnIds,
+				PrimaryPrefixColumnIds:     tblScanExec.PrimaryPrefixColumnIds,
 			},
 		})
 		dagPB.Executors = append(dagPB.Executors, ret.tableRequest.Executors[1:]...)
