@@ -24,6 +24,8 @@ import (
 	"golang.org/x/time/rate"
 )
 
+const ratePerSecMultiplier = 1000
+
 // ingestLimiter is used to limit the concurrency of sending ingest requests.
 // It combines two strategies:
 // - limit the max ingest requests in flight.
@@ -55,15 +57,16 @@ func (l *ingestLimiter) Acquire(storeID uint64, n uint) error {
 	}
 	v, ok := l.limiters.Load(storeID)
 	if !ok {
-		eventLimit := max(1, int(l.maxReqPerSec*1000))
+		eventLimit := max(1, int(l.maxReqPerSec*ratePerSecMultiplier))
+		burst := getRateBurst(l.maxReqPerSec) * ratePerSecMultiplier
 		v, _ = l.limiters.LoadOrStore(storeID, &ingestLimiterPerStore{
 			sem:     semaphore.NewWeighted(int64(l.maxReqInFlight)),
-			limiter: rate.NewLimiter(rate.Limit(eventLimit), eventLimit),
+			limiter: rate.NewLimiter(rate.Limit(eventLimit), burst),
 		})
 	}
 	ilps := v.(*ingestLimiterPerStore)
 	if l.maxReqPerSec > 0 {
-		if err := ilps.limiter.WaitN(l.ctx, int(n*1000)); err != nil {
+		if err := ilps.limiter.WaitN(l.ctx, int(n*ratePerSecMultiplier)); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -89,10 +92,17 @@ func (l *ingestLimiter) Burst() int {
 		return math.MaxInt
 	}
 	if l.maxReqInFlight == 0 {
-		return max(1, int(l.maxReqPerSec))
+		return getRateBurst(l.maxReqPerSec)
 	}
 	if l.maxReqPerSec == 0 {
 		return l.maxReqInFlight
 	}
-	return min(max(1, int(l.maxReqPerSec)), l.maxReqInFlight)
+	return min(getRateBurst(l.maxReqPerSec), l.maxReqInFlight)
+}
+
+func getRateBurst(ratePerSec float64) int {
+	// we allow set the rate per second be smaller than 1, such as 0.5, it means
+	// 1 request every 2 seconds, but we need to ensure that the burst of rate per
+	// second is at least 1 to make sure RateLimiter works.
+	return max(1, int(math.Ceil(ratePerSec)))
 }

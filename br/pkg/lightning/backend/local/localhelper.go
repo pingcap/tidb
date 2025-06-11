@@ -119,9 +119,10 @@ func (local *Backend) SplitAndScatterRegionInBatches(
 ) error {
 	var limiter *rate.Limiter
 	if maxCntPerSec > 0 {
-		eventLimit := max(1, int(maxCntPerSec*1000))
-		limiter = rate.NewLimiter(rate.Limit(eventLimit), eventLimit)
-		batchCnt = min(batchCnt, eventLimit)
+		eventLimit := max(1, int(maxCntPerSec*ratePerSecMultiplier))
+		burstPerSec := getRateBurst(maxCntPerSec)
+		limiter = rate.NewLimiter(rate.Limit(eventLimit), burstPerSec*ratePerSecMultiplier)
+		batchCnt = min(batchCnt, burstPerSec)
 	}
 	for i := 0; i < len(ranges); i += batchCnt {
 		batch := ranges[i:]
@@ -129,7 +130,7 @@ func (local *Backend) SplitAndScatterRegionInBatches(
 			batch = batch[:batchCnt]
 		}
 		if limiter != nil {
-			err := limiter.WaitN(ctx, len(batch)*1000)
+			err := limiter.WaitN(ctx, len(batch)*ratePerSecMultiplier)
 			if err != nil {
 				return err
 			}
