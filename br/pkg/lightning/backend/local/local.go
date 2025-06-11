@@ -133,7 +133,7 @@ var (
 var (
 	// CurrentMaxBatchSplitRanges stores the current limit for batch split ranges.
 	CurrentMaxBatchSplitRanges atomic.Int64
-	// CurrentSplitRangesPerSec stores the current limit for split ranges per second.
+	// CurrentMaxSplitRangesPerSec stores the current limit for split ranges per second.
 	CurrentMaxSplitRangesPerSec atomic.Int64
 	// CurrentMaxIngestInflight stores the current limit for concurrent ingest requests.
 	CurrentMaxIngestInflight atomic.Int64
