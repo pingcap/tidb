@@ -933,7 +933,7 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		//nolint:forcetypeassert
 		discovery = d.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 	}
-	bc, err = ingest.LitBackCtxMgr.Register(ctx, job.ID, allIndexInfos[0].Unique, nil, discovery, job.ReorgMeta.ResourceGroupName)
+	bc, err = ingest.LitBackCtxMgr.Register(ctx, job, allIndexInfos[0].Unique, nil, discovery, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
 		return false, ver, errors.Trace(err)
@@ -1715,8 +1715,8 @@ func (w *addIndexIngestWorker) WriteLocal(rs *IndexRecordChunk) (count int, next
 	oprStartTime := time.Now()
 	copCtx := w.copReqSenderPool.copCtx
 	vars := w.sessCtx.GetSessionVars()
-	cnt, lastHandle, err := writeChunkToLocal(
-		w.ctx, w.writers, w.indexes, copCtx, vars, rs.Chunk)
+	cnt, lastHandle, err := writeChunk(
+		w.ctx, w.writers, w.indexes, copCtx, vars, rs.Chunk, w.tbl.Meta())
 	if err != nil || cnt == 0 {
 		return 0, nil, err
 	}
@@ -1726,13 +1726,14 @@ func (w *addIndexIngestWorker) WriteLocal(rs *IndexRecordChunk) (count int, next
 	return cnt, nextKey, nil
 }
 
-func writeChunkToLocal(
+func writeChunk(
 	ctx context.Context,
 	writers []ingest.Writer,
 	indexes []table.Index,
 	copCtx copr.CopContext,
 	vars *variable.SessionVars,
 	copChunk *chunk.Chunk,
+	tblInfo *model.TableInfo,
 ) (int, kv.Handle, error) {
 	sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
 	iter := chunk.NewIterator4Chunk(copChunk)
@@ -1789,8 +1790,11 @@ func writeChunkToLocal(
 			if needRestoreForIndexes[i] {
 				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
 			}
-			err = writeOneKVToLocal(ctx, writers[i], index, sCtx, writeBufs, idxData, rsData, h)
+			err = writeOneKV(ctx, writers[i], index, sCtx, writeBufs, idxData, rsData, h)
 			if err != nil {
+				if common.ErrFoundDuplicateKeys.Equal(err) {
+					err = convertToKeyExistsErr(err, index.Meta(), tblInfo)
+				}
 				return 0, nil, errors.Trace(err)
 			}
 		}
@@ -1811,7 +1815,7 @@ func maxIndexColumnCount(indexes []table.Index) int {
 	return maxCnt
 }
 
-func writeOneKVToLocal(
+func writeOneKV(
 	ctx context.Context,
 	writer ingest.Writer,
 	index table.Index,
@@ -1957,8 +1961,8 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			//nolint:forcetypeassert
 			discovery := w.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 			if reorgInfo.ReorgMeta.UseCloudStorage {
-				// When adding unique index by global sort, it detects duplicate keys in CLOUD IMPORT step,
-				// so we can skip the check bellow.
+				// When adding unique index by global sort, it detects duplicate keys in each step.
+				// A duplicate key must be detected before, so we can skip the check bellow.
 				return nil
 			}
 			return checkDuplicateForUniqueIndex(w.ctx, t, reorgInfo, discovery)
@@ -2014,7 +2018,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 		if indexInfo.Unique {
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if bc == nil {
-				bc, err = ingest.LitBackCtxMgr.Register(ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName)
+				bc, err = ingest.LitBackCtxMgr.Register(ctx, reorgInfo.Job, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName)
 				if err != nil {
 					return err
 				}

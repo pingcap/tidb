@@ -34,6 +34,7 @@ go_library(
         "//pkg/lightning/errormanager",
         "//pkg/lightning/log",
         "//pkg/meta",
+        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/sessionctx",

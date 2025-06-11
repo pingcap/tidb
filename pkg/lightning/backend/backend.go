@@ -124,6 +124,8 @@ type ExternalEngineConfig struct {
 	// TotalKVCount can be an estimated value.
 	TotalKVCount int64
 	CheckHotspot bool
+	// OnDup is the action when a duplicate key is found during global sort.
+	OnDup common.OnDuplicateKey
 }
 
 // CheckCtx contains all parameters used in CheckRequirements

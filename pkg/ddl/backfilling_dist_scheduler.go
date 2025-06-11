@@ -488,13 +488,17 @@ func generateMergePlan(
 ) ([][]byte, error) {
 	// check data files overlaps,
 	// if data files overlaps too much, we need a merge step.
-	var multiStatsGroup [][]external.MultipleFilesStat
-	var kvMetaGroups []*external.SortedKVMeta
+	var (
+		multiStatsGroup [][]external.MultipleFilesStat
+		kvMetaGroups    []*external.SortedKVMeta
+		eleIDs          []int64
+	)
 	err := forEachBackfillSubtaskMeta(taskHandle, task.ID, proto.BackfillStepReadIndex,
 		func(subtask *BackfillSubTaskMeta) {
 			if kvMetaGroups == nil {
 				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
 				multiStatsGroup = make([][]external.MultipleFilesStat, len(subtask.MetaGroups))
+				eleIDs = subtask.EleIDs
 			}
 			for i, g := range subtask.MetaGroups {
 				if kvMetaGroups[i] == nil {
@@ -534,6 +538,10 @@ func generateMergePlan(
 				dataFiles = append(dataFiles, filePair[0])
 			}
 		}
+		var eleID []int64
+		if i < len(eleIDs) {
+			eleID = []int64{eleIDs[i]}
+		}
 		start := 0
 		step := external.MergeSortFileCountStep
 		for start < len(dataFiles) {
@@ -543,6 +551,7 @@ func generateMergePlan(
 			}
 			m := &BackfillSubTaskMeta{
 				DataFiles: dataFiles[start:end],
+				EleIDs:    eleID,
 			}
 			metaBytes, err := json.Marshal(m)
 			if err != nil {

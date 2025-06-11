@@ -48,6 +48,7 @@ func genConfig(
 	memRoot MemRoot,
 	unique bool,
 	resourceGroup string,
+	globalSort bool,
 ) (*litConfig, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	cfg := lightning.NewConfig()
@@ -66,11 +67,9 @@ func genConfig(
 	}
 	adjustImportMemory(ctx, memRoot, cfg)
 	cfg.Checkpoint.Enable = true
-	if unique {
+	if unique && !globalSort {
 		cfg.Conflict.Strategy = lightning.ErrorOnDup
 		cfg.Conflict.Threshold = lightning.DefaultRecordDuplicateThreshold
-	} else {
-		cfg.Conflict.Strategy = lightning.NoneOnDup
 	}
 	cfg.TiDB.Host = "127.0.0.1"
 	cfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)

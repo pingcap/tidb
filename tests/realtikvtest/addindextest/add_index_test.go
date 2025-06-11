@@ -184,9 +184,9 @@ func TestLitBackendCtxMgr(t *testing.T) {
 	require.NoDirExists(t, staleJobDir)
 	require.DirExists(t, staleJobDir2)
 
-	jobID := int64(102)
+	job := &model.Job{ID: 102, ReorgMeta: &model.DDLReorgMeta{}}
 	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	backendCtx, err := mgr.Register(ctx, jobID, false, nil, discovery, "TestLitBackendCtxMgr")
+	backendCtx, err := mgr.Register(ctx, job, false, nil, discovery, "TestLitBackendCtxMgr")
 	require.NoError(t, err)
 	require.NotNil(t, backendCtx)
 
@@ -194,15 +194,15 @@ func TestLitBackendCtxMgr(t *testing.T) {
 	require.DirExists(t, staleJobDir2)
 	require.DirExists(t, expectedDir)
 
-	bc, ok := mgr.Load(jobID)
+	bc, ok := mgr.Load(job.ID)
 	require.True(t, ok)
 	require.Equal(t, backendCtx, bc)
 	_, ok = mgr.Load(101)
 	require.False(t, ok)
 
-	mgr.Unregister(jobID)
+	mgr.Unregister(job.ID)
 	require.NoDirExists(t, expectedDir)
-	_, ok = mgr.Load(jobID)
+	_, ok = mgr.Load(job.ID)
 	require.False(t, ok)
 }
 

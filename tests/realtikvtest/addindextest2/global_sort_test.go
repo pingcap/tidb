@@ -327,6 +327,19 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 		},
 	}
 
+	checkSubtaskStepAndReset := func(t *testing.T, expectedStep proto.Step) {
+		errorSubtask := taskexecutor.GetErrorSubtask4Test.Swap(nil)
+		require.NotEmpty(t, errorSubtask)
+		require.Equal(t, expectedStep, errorSubtask.Step)
+	}
+
+	checkRedactMsgAndReset := func(addUniqueKeySQL string) {
+		tk.MustExec("set session tidb_redact_log = on;")
+		tk.MustContainErrMsg(addUniqueKeySQL, "[kv:1062]Duplicate entry '?' for key 't.idx'")
+		tk.MustExec("set session tidb_redact_log = off;")
+		taskexecutor.GetErrorSubtask4Test.Store(nil)
+	}
+
 	for _, tc := range testcases {
 		t.Run(tc.caseName, func(tt *testing.T) {
 			// init
@@ -338,22 +351,30 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			})
 
 			// pre-check
-			if len(tc.splitTableSQL) > 0 {
+			multipleRegions := len(tc.splitTableSQL) > 0
+			if multipleRegions {
 				tk.MustQuery(tc.splitTableSQL).Check(testkit.Rows("3 1"))
 			}
-			if strings.Contains(tc.createTableSQL, "partition") {
-				rs := tk.MustQuery("show table t regions")
-				require.Len(tt, rs.Rows(), 2)
-			}
 
+			// 1. read index
 			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
-			errorSubtask := taskexecutor.GetErrorSubtask4Test.Swap(nil)
-			require.NotEmpty(tt, errorSubtask)
-			require.Equal(tt, proto.BackfillStepWriteAndIngest, errorSubtask.Step)
+			if multipleRegions {
+				checkSubtaskStepAndReset(tt, proto.BackfillStepWriteAndIngest)
+			} else {
+				checkSubtaskStepAndReset(tt, proto.BackfillStepReadIndex)
+			}
+			checkRedactMsgAndReset(tc.addUniqueKeySQL)
 
-			tk.MustExec("set session tidb_redact_log = on;")
-			tk.MustContainErrMsg(tc.addUniqueKeySQL, "[kv:1062]Duplicate entry '?' for key 't.idx'")
-			tk.MustExec("set session tidb_redact_log = off;")
+			// 2. merge sort
+			testfailpoint.Enable(tt, "github.com/pingcap/tidb/pkg/ddl/ignoreReadIndexDupKey", `return(true)`)
+			require.NoError(tt, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()"))
+			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
+			checkSubtaskStepAndReset(tt, proto.BackfillStepMergeSort)
+
+			// 3. cloud import
+			require.NoError(tt, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
+			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
+			checkSubtaskStepAndReset(tt, proto.BackfillStepWriteAndIngest)
 		})
 	}
 }

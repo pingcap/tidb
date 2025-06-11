@@ -63,6 +63,11 @@ type BackfillSubTaskMeta struct {
 	TS             uint64   `json:"ts,omitempty"`
 	// Each group of MetaGroups represents a different index kvs meta.
 	MetaGroups []*external.SortedKVMeta `json:"meta_groups,omitempty"`
+	// EleIDs stands for the index/column IDs to backfill with distributed framework.
+	// After the subtask is finished, EleIDs should have the same length as
+	// MetaGroups, and they are in the same order.
+	EleIDs []int64 `json:"ele_ids,omitempty" external:"true"`
+
 	// Only used for adding one single index.
 	// Keep this for compatibility with v7.5.
 	external.SortedKVMeta `json:",inline"`
@@ -120,7 +125,7 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
 		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:
-		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl, cloudStorageURI)
+		return newMergeSortExecutor(jobMeta.ID, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
@@ -141,7 +146,7 @@ func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 	ddlObj := s.d
 	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 
-	return ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), job.ID, unique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
+	return ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), job, unique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
 }
 
 func decodeIndexUniqueness(job *model.Job) (bool, error) {

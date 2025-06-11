@@ -517,18 +517,22 @@ func NewWriteExternalStoreOperator(
 	memoryQuota uint64,
 	reorgMeta *model.DDLReorgMeta,
 ) *WriteExternalStoreOperator {
+	onDuplicateKey := common.OnDuplicateKeyError
+	failpoint.Inject("ignoreReadIndexDupKey", func() {
+		onDuplicateKey = common.OnDuplicateKeyIgnore
+	})
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
 			writers := make([]ingest.Writer, 0, len(indexes))
-			for i, index := range indexes {
+			for i := range indexes {
 				builder := external.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
-					SetKeyDuplicationEncoding(index.Meta().Unique).
 					SetMemorySizeLimit(memoryQuota).
-					SetGroupOffset(i)
+					SetGroupOffset(i).
+					SetOnDup(onDuplicateKey)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
 				writer := builder.Build(store, prefix, writerID)
@@ -727,9 +731,12 @@ func (w *indexIngestBaseWorker) initSessCtx() {
 }
 
 func (w *indexIngestBaseWorker) Close() {
-	for _, writer := range w.writers {
+	for i, writer := range w.writers {
 		err := writer.Close(w.ctx)
 		if err != nil {
+			if common.ErrFoundDuplicateKeys.Equal(err) {
+				err = convertToKeyExistsErr(err, w.indexes[i].Meta(), w.tbl.Meta())
+			}
 			w.ctx.onError(err)
 		}
 	}
@@ -752,11 +759,11 @@ func (w *indexIngestBaseWorker) WriteChunk(rs *IndexRecordChunk) (count int, nex
 
 	oprStartTime := time.Now()
 	vars := w.se.GetSessionVars()
-	cnt, lastHandle, err := writeChunkToLocal(w.ctx, w.writers, w.indexes, w.copCtx, vars, rs.Chunk)
+	cnt, lastHandle, err := writeChunk(w.ctx, w.writers, w.indexes, w.copCtx, vars, rs.Chunk, w.tbl.Meta())
 	if err != nil || cnt == 0 {
 		return 0, nil, err
 	}
-	logSlowOperations(time.Since(oprStartTime), "writeChunkToLocal", 3000)
+	logSlowOperations(time.Since(oprStartTime), "writeChunk", 3000)
 	nextKey = tablecodec.EncodeRecordKey(w.tbl.RecordPrefix(), lastHandle)
 	return cnt, nextKey, nil
 }

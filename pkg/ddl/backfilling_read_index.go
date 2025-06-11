@@ -180,6 +180,10 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 		all.Merge(g)
 	}
 	sm.MetaGroups = s.metaGroups
+	sm.EleIDs = make([]int64, 0, len(r.indexes))
+	for _, index := range r.indexes {
+		sm.EleIDs = append(sm.EleIDs, index.ID)
+	}
 
 	tidblogutil.Logger(ctx).Info("get key boundary on subtask finished",
 		zap.String("start", hex.EncodeToString(all.StartKey)),

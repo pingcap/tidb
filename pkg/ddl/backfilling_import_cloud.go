@@ -100,6 +100,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			TotalFileSize: int64(all.TotalKVSize),
 			TotalKVCount:  0,
 			CheckHotspot:  true,
+			OnDup:         common.OnDuplicateKeyError,
 		},
 		TS: sm.TS,
 	}, engineUUID)
