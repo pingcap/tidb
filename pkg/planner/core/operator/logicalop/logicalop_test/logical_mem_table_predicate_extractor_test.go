@@ -534,22 +534,26 @@ func TestClusterLogTableExtractor(t *testing.T) {
 		},
 	}
 	for _, ca := range cases {
-		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
-		require.NotNil(t, logicalMemTable.Extractor)
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		if ok {
+			require.NotNil(t, logicalMemTable.Extractor, ca.sql)
 
-		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterLogTableExtractor)
-		require.EqualValues(t, ca.nodeTypes, clusterConfigExtractor.NodeTypes, "SQL: %v", ca.sql)
-		require.EqualValues(t, ca.instances, clusterConfigExtractor.Instances, "SQL: %v", ca.sql)
-		require.EqualValues(t, ca.skipRequest, clusterConfigExtractor.SkipRequest, "SQL: %v", ca.sql)
-		if ca.startTime > 0 {
-			require.Equal(t, ca.startTime, clusterConfigExtractor.StartTime, "SQL: %v", ca.sql)
-		}
-		if ca.endTime > 0 {
-			require.Equal(t, ca.endTime, clusterConfigExtractor.EndTime, "SQL: %v", ca.sql)
-		}
-		require.EqualValues(t, ca.patterns, clusterConfigExtractor.Patterns, "SQL: %v", ca.sql)
-		if len(ca.level) > 0 {
-			require.EqualValues(t, ca.level, clusterConfigExtractor.LogLevels, "SQL: %v", ca.sql)
+			clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterLogTableExtractor)
+			require.EqualValues(t, ca.nodeTypes, clusterConfigExtractor.NodeTypes, "SQL: %v", ca.sql)
+			require.EqualValues(t, ca.instances, clusterConfigExtractor.Instances, "SQL: %v", ca.sql)
+			require.EqualValues(t, ca.skipRequest, clusterConfigExtractor.SkipRequest, "SQL: %v", ca.sql)
+			if ca.startTime > 0 {
+				require.Equal(t, ca.startTime, clusterConfigExtractor.StartTime, "SQL: %v", ca.sql)
+			}
+			if ca.endTime > 0 {
+				require.Equal(t, ca.endTime, clusterConfigExtractor.EndTime, "SQL: %v", ca.sql)
+			}
+			require.EqualValues(t, ca.patterns, clusterConfigExtractor.Patterns, "SQL: %v", ca.sql)
+			if len(ca.level) > 0 {
+				require.EqualValues(t, ca.level, clusterConfigExtractor.LogLevels, "SQL: %v", ca.sql)
+			}
+		} else {
+			require.True(t, ca.skipRequest, ca.sql)
 		}
 	}
 }
