@@ -1593,10 +1593,7 @@ func (p *rangePruner) extractDataForPrune(sctx PlanContext, expr expression.Expr
 	if !expression.ConstExprConsiderPlanCache(constExpr, sctx.GetSessionVars().StmtCtx.UseCache) {
 		return ret, false
 	}
-<<<<<<< HEAD
 	c, isNull, err := constExpr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-	if err == nil && !isNull {
-=======
 	if err != nil {
 		return ret, false
 	}
@@ -1604,7 +1601,6 @@ func (p *rangePruner) extractDataForPrune(sctx PlanContext, expr expression.Expr
 		if ret.op == ast.NullEQ {
 			ret.op = ast.EQ
 		}
->>>>>>> fd839b95229 (planner: Handle NullEQ <=> in range columns partition pruning (#61187))
 		ret.c = c
 		ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType().GetFlag())
 		return ret, true
