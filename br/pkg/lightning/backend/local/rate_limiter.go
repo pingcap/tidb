@@ -31,7 +31,7 @@ import (
 type ingestLimiter struct {
 	ctx            context.Context
 	maxReqInFlight int
-	maxReqPerSec   int
+	maxReqPerSec   float64
 	limiters       sync.Map // storeID(uint64) -> *ingestLimiterPerStore
 }
 
@@ -40,7 +40,7 @@ type ingestLimiterPerStore struct {
 	limiter *rate.Limiter
 }
 
-func newIngestLimiter(ctx context.Context, maxReqInFlight, maxReqPerSec int) *ingestLimiter {
+func newIngestLimiter(ctx context.Context, maxReqInFlight int, maxReqPerSec float64) *ingestLimiter {
 	return &ingestLimiter{
 		ctx:            ctx,
 		maxReqInFlight: maxReqInFlight,
@@ -55,14 +55,15 @@ func (l *ingestLimiter) Acquire(storeID uint64, n uint) error {
 	}
 	v, ok := l.limiters.Load(storeID)
 	if !ok {
+		eventLimit := max(1, int(l.maxReqPerSec*1000))
 		v, _ = l.limiters.LoadOrStore(storeID, &ingestLimiterPerStore{
 			sem:     semaphore.NewWeighted(int64(l.maxReqInFlight)),
-			limiter: rate.NewLimiter(rate.Limit(l.maxReqPerSec), l.maxReqPerSec),
+			limiter: rate.NewLimiter(rate.Limit(eventLimit), eventLimit),
 		})
 	}
 	ilps := v.(*ingestLimiterPerStore)
 	if l.maxReqPerSec > 0 {
-		if err := ilps.limiter.WaitN(l.ctx, int(n)); err != nil {
+		if err := ilps.limiter.WaitN(l.ctx, int(n*1000)); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -88,10 +89,10 @@ func (l *ingestLimiter) Burst() int {
 		return math.MaxInt
 	}
 	if l.maxReqInFlight == 0 {
-		return l.maxReqPerSec
+		return max(1, int(l.maxReqPerSec))
 	}
 	if l.maxReqPerSec == 0 {
 		return l.maxReqInFlight
 	}
-	return min(l.maxReqPerSec, l.maxReqInFlight)
+	return min(max(1, int(l.maxReqPerSec)), l.maxReqInFlight)
 }

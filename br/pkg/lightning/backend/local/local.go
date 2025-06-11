@@ -1754,7 +1754,7 @@ func (local *Backend) ImportEngine(
 		zap.Int64("count", lfLength),
 		zap.Int64("size", lfTotalSize),
 		zap.Int("maxReqInFlight", maxReqInFlight),
-		zap.Int("maxReqPerSec", maxReqPerSec),
+		zap.Float64("maxReqPerSec", maxReqPerSec),
 	)
 
 	failpoint.Inject("ReadyForImportEngine", func() {})
