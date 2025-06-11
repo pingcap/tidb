@@ -789,7 +789,6 @@ func TestMetricsSummaryTableExtractor(t *testing.T) {
 		} else {
 			require.True(t, ca.skipRequest, "SQL: %v", ca.sql)
 		}
-
 	}
 }
 
@@ -935,7 +934,6 @@ func TestInspectionResultTableExtractor(t *testing.T) {
 		} else {
 			require.True(t, ca.skipInspection, "SQL: %v", ca.sql)
 		}
-
 	}
 }
 
