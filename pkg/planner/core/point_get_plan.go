@@ -197,16 +197,16 @@ func (p *PointGetPlan) ExplainNormalizedInfo() string {
 
 // OperatorInfo implements dataAccesser interface.
 func (p *PointGetPlan) OperatorInfo(normalized bool) string {
-	if p.Handle == nil && !p.Lock {
+	if p.Handle == nil && !p.Lock && p.AccessConditions == nil {
 		return ""
 	}
 	var buffer strings.Builder
+	redactMode := p.SCtx().GetSessionVars().EnableRedactLog
+	redactOn := redactMode == errors.RedactLogEnable
 	if p.Handle != nil {
 		if normalized {
 			buffer.WriteString("handle:?")
 		} else {
-			redactMode := p.SCtx().GetSessionVars().EnableRedactLog
-			redactOn := redactMode == errors.RedactLogEnable
 			buffer.WriteString("handle:")
 			if redactOn {
 				buffer.WriteString("?")
@@ -217,8 +217,28 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 			}
 		}
 	}
-	if p.Lock {
+	if p.AccessConditions != nil {
 		if p.Handle != nil {
+			buffer.WriteString(", ")
+		}
+		evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+		if normalized {
+			buffer.WriteString("condition: ")
+			buffer.Write(expression.SortedExplainNormalizedExpressionList(p.AccessConditions))
+			buffer.WriteString(", ")
+		} else {
+			buffer.WriteString("condition: [")
+			for i, expr := range p.AccessConditions {
+				if i != 0 {
+					buffer.WriteString(" ")
+				}
+				buffer.WriteString(expr.StringWithCtx(evalCtx, redactMode))
+			}
+			buffer.WriteString("], ")
+		}
+	}
+	if p.Lock {
+		if p.AccessConditions != nil {
 			buffer.WriteString(", lock")
 		} else {
 			buffer.WriteString("lock")
