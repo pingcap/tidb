@@ -156,8 +156,9 @@ type Parser interface {
 	// TODO: replace pos with a new structure to specify position offset and rows offset
 	Pos() (pos int64, rowID int64)
 	SetPos(pos int64, rowID int64) error
-	// ScannedPos always returns the current file reader pointer's location
-	ScannedPos() (int64, error)
+	// ScannedPos always returns the current file reader pointer's location.
+	// It's used to track the progress of the reader.
+	ScannedPos() int64
 	Close() error
 	ReadRow() error
 	LastRow() Row
@@ -218,8 +219,8 @@ func (parser *blockParser) SetPos(pos int64, rowID int64) error {
 
 // ScannedPos gets the read position of current reader.
 // this always returns the position of the underlying file, either compressed or not.
-func (parser *blockParser) ScannedPos() (int64, error) {
-	return parser.reader.Seek(0, io.SeekCurrent)
+func (parser *blockParser) ScannedPos() int64 {
+	return parser.pos
 }
 
 // Pos returns the current file offset.
