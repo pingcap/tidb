@@ -1383,12 +1383,12 @@ func (m *Meta) GetIngestMaxBatchSplitRanges() (val int, isNull bool, err error) 
 }
 
 // SetIngestMaxSplitRangesPerSec sets the max_split_ranges_per_sec.
-func (m *Meta) SetIngestMaxSplitRangesPerSec(val int) error {
-	return errors.Trace(m.txn.Set(mIngestMaxSplitRangesPerSecKey, []byte(strconv.Itoa(val))))
+func (m *Meta) SetIngestMaxSplitRangesPerSec(val float64) error {
+	return errors.Trace(m.txn.Set(mIngestMaxSplitRangesPerSecKey, []byte(strconv.FormatFloat(val, 'f', 2, 64))))
 }
 
 // GetIngestMaxSplitRangesPerSec gets the max_split_ranges_per_sec.
-func (m *Meta) GetIngestMaxSplitRangesPerSec() (val int, isNull bool, err error) {
+func (m *Meta) GetIngestMaxSplitRangesPerSec() (val float64, isNull bool, err error) {
 	sVal, err := m.txn.Get(mIngestMaxSplitRangesPerSecKey)
 	if err != nil {
 		return 0, false, errors.Trace(err)
@@ -1396,7 +1396,7 @@ func (m *Meta) GetIngestMaxSplitRangesPerSec() (val int, isNull bool, err error)
 	if sVal == nil {
 		return 0, true, nil
 	}
-	val, err = strconv.Atoi(string(sVal))
+	val, err = strconv.ParseFloat(string(sVal), 64)
 	return val, false, errors.Trace(err)
 }
 
@@ -1419,12 +1419,12 @@ func (m *Meta) GetIngestMaxInflight() (val int, isNull bool, err error) {
 }
 
 // SetIngestMaxPerSec sets the max_ingest_per_sec.
-func (m *Meta) SetIngestMaxPerSec(val int) error {
-	return errors.Trace(m.txn.Set(mIngestMaxPerSecKey, []byte(strconv.Itoa(val))))
+func (m *Meta) SetIngestMaxPerSec(val float64) error {
+	return errors.Trace(m.txn.Set(mIngestMaxPerSecKey, []byte(strconv.FormatFloat(val, 'f', 2, 64))))
 }
 
 // GetIngestMaxPerSec gets the max_ingest_per_sec.
-func (m *Meta) GetIngestMaxPerSec() (val int, isNull bool, err error) {
+func (m *Meta) GetIngestMaxPerSec() (val float64, isNull bool, err error) {
 	sVal, err := m.txn.Get(mIngestMaxPerSecKey)
 	if err != nil {
 		return 0, false, errors.Trace(err)
@@ -1432,7 +1432,7 @@ func (m *Meta) GetIngestMaxPerSec() (val int, isNull bool, err error) {
 	if sVal == nil {
 		return 0, true, nil
 	}
-	val, err = strconv.Atoi(string(sVal))
+	val, err = strconv.ParseFloat(string(sVal), 64)
 	return val, false, errors.Trace(err)
 }
 

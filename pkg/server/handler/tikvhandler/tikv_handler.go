@@ -64,7 +64,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
-	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -2056,48 +2055,66 @@ func NewIngestConcurrencyHandler(tool *handler.TikvHandlerTool, param IngestPara
 
 // ServeHTTP handles request of lightning max_batch_split_ranges.
 func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	var getter func(*meta.Meta) (int, bool, error)
-	var setter func(*meta.Meta, int) error
-	var global *atomicutil.Int64
+	var getter func(*meta.Meta) (float64, bool, error)
+	var setter func(*meta.Meta, float64) error
+	var updateGlobal func(v float64) float64
 	switch h.param {
 	case IngestParamMaxBatchSplitRanges:
-		getter = func(m *meta.Meta) (int, bool, error) {
-			return m.GetIngestMaxBatchSplitRanges()
+		getter = func(m *meta.Meta) (float64, bool, error) {
+			v, isNull, err := m.GetIngestMaxBatchSplitRanges()
+			return float64(v), isNull, err
 		}
-		setter = func(m *meta.Meta, value int) error {
-			return m.SetIngestMaxBatchSplitRanges(value)
+		setter = func(m *meta.Meta, value float64) error {
+			return m.SetIngestMaxBatchSplitRanges(int(value))
 		}
-		global = &local.CurrentMaxBatchSplitRanges
+		updateGlobal = func(v float64) float64 {
+			old := local.CurrentMaxBatchSplitRanges.Load()
+			local.CurrentMaxBatchSplitRanges.Store(int64(v))
+			return float64(old)
+		}
 	case IngestParamMaxSplitRangesPerSec:
-		getter = func(m *meta.Meta) (int, bool, error) {
+		getter = func(m *meta.Meta) (float64, bool, error) {
 			return m.GetIngestMaxSplitRangesPerSec()
 		}
-		setter = func(m *meta.Meta, value int) error {
+		setter = func(m *meta.Meta, value float64) error {
 			return m.SetIngestMaxSplitRangesPerSec(value)
 		}
-		global = &local.CurrentMaxSplitRangesPerSec
+		updateGlobal = func(v float64) float64 {
+			old := local.CurrentMaxSplitRangesPerSec.Load()
+			local.CurrentMaxSplitRangesPerSec.Store(v)
+			return old
+		}
 	case IngestParamMaxPerSecond:
-		getter = func(m *meta.Meta) (int, bool, error) {
+		getter = func(m *meta.Meta) (float64, bool, error) {
 			return m.GetIngestMaxPerSec()
 		}
-		setter = func(m *meta.Meta, value int) error {
+		setter = func(m *meta.Meta, value float64) error {
 			return m.SetIngestMaxPerSec(value)
 		}
-		global = &local.CurrentMaxIngestPerSec
+		updateGlobal = func(v float64) float64 {
+			old := local.CurrentMaxIngestPerSec.Load()
+			local.CurrentMaxIngestPerSec.Store(v)
+			return old
+		}
 	case IngestParamMaxInflight:
-		getter = func(m *meta.Meta) (int, bool, error) {
-			return m.GetIngestMaxInflight()
+		getter = func(m *meta.Meta) (float64, bool, error) {
+			v, isNull, err := m.GetIngestMaxInflight()
+			return float64(v), isNull, err
 		}
-		setter = func(m *meta.Meta, value int) error {
-			return m.SetIngestMaxInflight(value)
+		setter = func(m *meta.Meta, value float64) error {
+			return m.SetIngestMaxInflight(int(value))
 		}
-		global = &local.CurrentMaxIngestInflight
+		updateGlobal = func(v float64) float64 {
+			old := local.CurrentMaxIngestInflight.Load()
+			local.CurrentMaxIngestInflight.Store(int64(v))
+			return float64(old)
+		}
 	default:
 		handler.WriteError(w, errors.Errorf("unsupported ingest parameter: %s", h.param))
 	}
 	switch req.Method {
 	case http.MethodGet:
-		var respValue int
+		var respValue float64
 		var respIsNull bool
 		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), false, func(_ context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
@@ -2118,7 +2135,7 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		handler.WriteData(w, data)
 	case http.MethodPost:
 		var payload struct {
-			Value int `json:"value"`
+			Value float64 `json:"value"`
 		}
 		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
 			handler.WriteError(w, err)
@@ -2138,12 +2155,11 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			handler.WriteError(w, err)
 			return
 		}
-		oldVal := global.Load()
-		global.Store(int64(newValue))
+		oldVal := updateGlobal(float64(newValue))
 		logutil.BgLogger().Info("set ingest concurrency",
 			zap.String("param", string(h.param)),
-			zap.Int("oldValue", int(oldVal)),
-			zap.Int("newValue", newValue))
+			zap.Float64("oldValue", float64(oldVal)),
+			zap.Float64("newValue", newValue))
 		handler.WriteData(w, map[string]string{"message": "success"})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
