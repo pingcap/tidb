@@ -35,13 +35,13 @@ const (
 	FlagCollectPredicateColumnsPoint
 	FlagPushDownAgg
 	FlagDeriveTopNFromWindow
+	FlagPredicateSimplification
 	FlagPushDownTopN
 	FlagSyncWaitStatsLoadPoint
 	FlagJoinReOrder
 	FlagPruneColumnsAgain
 	FlagPushDownSequence
 	FlagResolveExpand
-	FlagPredicateSimplification
 )
 
 func setPredicatePushDownFlag(u uint64) uint64 {
