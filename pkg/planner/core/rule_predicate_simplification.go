@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // PredicateSimplification consolidates different predcicates on a column and its equivalence classes.  Initial out is for
@@ -132,7 +133,10 @@ func FindPredicateType(bc base.PlanContext, expr expression.Expression) (*expres
 // Optimize implements base.LogicalOptRule.<0th> interface.
 func (*PredicateSimplification) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	return p.PredicateSimplification(opt), planChanged, nil
+	if intest.InTest {
+		return p.PredicateSimplification(opt), planChanged, nil
+	}
+	return p, planChanged, nil
 }
 
 // updateInPredicate applies intersection of an in list with <> value. It returns updated In list and a flag for

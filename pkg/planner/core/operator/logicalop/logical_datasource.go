@@ -292,6 +292,7 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 
 // PredicateSimplification implements the base.LogicalPlan.<7th> interface.
 func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	// it is only for test.
 	p := ds.Self().(*DataSource)
 	intest.AssertFunc(func() bool {
 		origins := make([]expression.Expression, 0, len(p.PushedDownConds))

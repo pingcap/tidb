@@ -101,13 +101,13 @@ var optRuleList = []base.LogicalOptRule{
 	&CollectPredicateColumnsPoint{},
 	&AggregationPushDownSolver{},
 	&DeriveTopNFromWindow{},
-	&PredicateSimplification{},
 	&PushDownTopNOptimizer{},
 	&SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
 	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
 	&ResolveExpand{},
+	&PredicateSimplification{},
 }
 
 // Interaction Rule List
