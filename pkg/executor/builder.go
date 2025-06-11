@@ -4227,7 +4227,8 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	}
 
 	dagPB := ret.dagPB
-	if b.ctx.GetSessionVars().SessionAlias == "test" && is.Table.GetPartitionInfo() == nil && !is.Table.IsCommonHandle && !is.KeepOrder {
+	user := b.ctx.GetSessionVars().User
+	if (b.ctx.GetSessionVars().SessionAlias == "test" || (user != nil && user.Username == "test")) && is.Table.GetPartitionInfo() == nil && !is.Table.IsCommonHandle && !is.KeepOrder {
 		tblInfo := ret.table.Meta()
 		buildSidePrimaryOffsets := []uint32{uint32(len(ret.index.Columns))}
 		position := uint32(len(dagPB.Executors))
