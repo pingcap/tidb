@@ -2321,3 +2321,118 @@ func TestNestedVirtualGeneratedColumnUpdate(t *testing.T) {
 	tk.MustExec("UPDATE test1 SET col7 = '{\"col10\":\"DDDDD\",\"col9\":[\"abcdefg\"]}';\n")
 	tk.MustExec("DELETE FROM test1 WHERE col1 < 0;\n")
 }
+<<<<<<< HEAD
+=======
+
+func TestIssue58829(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t1 (id varchar(64) not null,  key(id))`)
+	tk.MustExec(`create table t2 (id bigint(20), k int)`)
+
+	// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
+	tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
+}
+
+func TestIssue61669(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`
+CREATE TABLE B (
+  ROW_NO bigint NOT NULL AUTO_INCREMENT,
+  RCRD_NO varchar(20) NOT NULL,
+  FILE_NO varchar(20) DEFAULT NULL,
+  BSTPRTFL_NO varchar(20) DEFAULT NULL,
+  MDL_DT date DEFAULT NULL,
+  TS varchar(19) DEFAULT NULL,
+  LD varchar(19) DEFAULT NULL,
+  MDL_NO varchar(50) DEFAULT NULL,
+  TXN_NO varchar(90) DEFAULT NULL,
+  SCR_NO varchar(20) DEFAULT NULL,
+  DAM decimal(25, 8) DEFAULT NULL,
+  DT date DEFAULT NULL,
+  PRIMARY KEY (ROW_NO),
+  KEY IDX1_ETF_FLR_PRCHRDMP_TXN_DTL (BSTPRTFL_NO, DT, MDL_DT, TS, LD),
+  KEY IDX2_ETF_FLR_PRCHRDMP_TXN_DTL (BSTPRTFL_NO, MDL_DT, SCR_NO, TXN_NO),
+  KEY IDX1_ETF_FLR_PRCHRDMP_TXNDTL (FILE_NO, BSTPRTFL_NO),
+  KEY IDX_ETF_FLR_PRCHRDMP_TXN_FIX (MDL_NO, BSTPRTFL_NO, MDL_DT),
+  UNIQUE UI_ETF_FLR_PRCHRDMP_TXN_DTLTB (RCRD_NO),
+  KEY IDX3_ETF_FLR_PRCHRDMP_TXN_DTL (DT)
+) ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_bin AUTO_INCREMENT = 2085290754;`)
+	tk.MustExec(`
+CREATE TABLE A (
+  ROW_NO bigint NOT NULL AUTO_INCREMENT,
+  TEMP_NO varchar(20) NOT NULL,
+  VCHR_TPCD varchar(19) DEFAULT NULL,
+  LD varchar(19) DEFAULT NULL,
+  BSTPRTFL_NO varchar(20) DEFAULT NULL,
+  DAM decimal(25, 8) DEFAULT NULL,
+  DT date DEFAULT NULL,
+  CASH_RPLC_AMT decimal(19, 2) DEFAULT NULL,
+  PCSG_BTNO_NO varchar(20) DEFAULT NULL,
+  KEY INX_TEMP_NO (TEMP_NO),
+  PRIMARY KEY (ROW_NO),
+  KEY idx2_ETF_FNDTA_SALE_PA (PCSG_BTNO_NO, DT, VCHR_TPCD)
+) ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_bin AUTO_INCREMENT = 900006;`)
+	tk.MustExec(`set tidb_opt_index_join_build_v2=off`)
+	r := tk.MustQuery(`
+explain SELECT *
+FROM A A
+JOIN
+    (SELECT CASH_RPLC_AMT,
+         S.BSTPRTFL_NO
+    FROM
+        (SELECT BSTPRTFL_NO,
+         SUM(CASE
+            WHEN LD IN ('03') THEN
+            DAM
+            ELSE 0 END) AS CASH_RPLC_AMT
+        FROM
+            (SELECT B.LD,
+         SUM(B.DAM) DAM,
+         B.BSTPRTFL_NO
+            FROM B B
+            GROUP BY  B.LD, B.BSTPRTFL_NO) ff
+            GROUP BY  BSTPRTFL_NO) S ) f
+            ON A.BSTPRTFL_NO = f.BSTPRTFL_NO
+    WHERE A.PCSG_BTNO_NO = 'MXUU2022123043502318'`)
+	require.True(t, len(r.Rows()) > 0) // no error
+}
+
+func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.t;")
+	tk.MustExec("create table test.t (p int, o int, v int not null);")
+	tk.MustExec("insert into test.t values (0, 0, -1), (1, 0, -1), (1, 1, 0), (1, 3, 4), (1, 6, 6), (1, 7, -5), (1, 8, 3), (1, 18, 1), (1, 30, 30), (2, 0, 2), (2, 1, 0), (2, 4, -4), (2, 7, -2), (2, 8, 1), (2, 15, 2), (2, 30, -11), (3, 0, 7), (3, 4, -3), (3, 6, 9), (3, 10, -9), (3, 20, -3), (3, 40, 2), (3, 41, 1), (4, 0, 4), (5, 0, -5), (6, 0, 2), (6, 10, 5), (6, 30, 0), (7, 0, 3), (7, 1, 3), (7, 2, 2), (7, 3, -4), (7, 4, 9);")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
+
+	rows := [][]any{
+		{"TableReader_24", "root", "MppVersion: 3, data:ExchangeSender_23"},
+		{"└─ExchangeSender_23", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_8", "mpp[tiflash]", "Column#10->Column#15, Column#11->Column#16, Column#12->Column#17, Column#13->Column#18, Column#14->Column#19, stream_count: 8"},
+		{"    └─Window_22", "mpp[tiflash]", "sum(cast(test.t.v, decimal(10,0) BINARY))->Column#10, count(test.t.v)->Column#11, avg(cast(test.t.v, decimal(10,0) BINARY))->Column#12, min(test.t.v)->Column#13, max(test.t.v)->Column#14 over(partition by test.t.p order by test.t.o range between unbounded preceding and current row), stream_count: 8"},
+		{"      └─Sort_14", "mpp[tiflash]", "test.t.p, test.t.o, stream_count: 8"},
+		{"        └─ExchangeReceiver_13", "mpp[tiflash]", "stream_count: 8"},
+		{"          └─ExchangeSender_12", "mpp[tiflash]", "ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.p, collate: binary], stream_count: 8"},
+		{"            └─TableFullScan_11", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select sum(v) over w as res1, count(v) over w as res2, avg(v) over w as res3, min(v) over w as res4, max(v) over w as res5 from t window w as (partition by p order by o);").CheckAt([]int{0, 2, 4}, rows)
+}
+>>>>>>> 1da95c72d05 (planner: fix the issue that invalid column error when building IndexJoin for sub-query with multiple Agg (#61672))
