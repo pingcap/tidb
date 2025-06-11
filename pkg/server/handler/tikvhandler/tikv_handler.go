@@ -2155,10 +2155,10 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			handler.WriteError(w, err)
 			return
 		}
-		oldVal := updateGlobal(float64(newValue))
+		oldVal := updateGlobal(newValue)
 		logutil.BgLogger().Info("set ingest concurrency",
 			zap.String("param", string(h.param)),
-			zap.Float64("oldValue", float64(oldVal)),
+			zap.Float64("oldValue", oldVal),
 			zap.Float64("newValue", newValue))
 		handler.WriteData(w, map[string]string{"message": "success"})
 	default:
