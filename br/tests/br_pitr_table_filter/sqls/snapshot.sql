@@ -1,3 +1,4 @@
+SET GLOBAL tidb_enable_check_constraint = ON;
 -- ActionDropSchema
 create database test_snapshot_db_to_be_deleted;
 create table test_snapshot_db_to_be_deleted.t1 (id int);
@@ -74,7 +75,6 @@ create view test_snapshot_db_create.v_view_to_be_dropped as select id, name from
 -- ActionModifyTableCharsetAndCollate
 create table test_snapshot_db_create.t_modify_charset (id int, name varchar(50)) charset=utf8mb4 collate=utf8mb4_bin;
 
-
 -- ActionAddPrimaryKey
 create table test_snapshot_db_create.t_add_primary_key (id int);
 
@@ -97,6 +97,9 @@ create table test_snapshot_db_create.t_add_check (id int, age int);
 -- ActionDropCheckConstraint
 create table test_snapshot_db_create.t_drop_check (id int, age int, constraint chk_age_to_be_dropped check (age >= 0 and age <= 120));
 
+-- ActionAlterCheckConstraint
+create table test_snapshot_db_create.t_alter_check (id int, age int, constraint t_alter_check_chk_age check (age >= 0 and age <= 120));
+
 -- ActionModifySchemaCharsetAndCollate
 create database test_snapshot_db_charset default character set = utf8mb4 collate = utf8mb4_bin;
 
@@ -115,42 +118,77 @@ create table test_snapshot_db_create.t_to_be_locked (id int, data varchar(100));
 -- ActionAlterIndexVisibility
 create table test_snapshot_db_create.t_index_visibility (id int, name varchar(50), index idx_name (name));
 
+-- ActionRebaseAutoID
+create table test_snapshot_db_create.t_rebase_auto_id (id int primary key auto_increment, c int);
+
+-- ActionModifyTableAutoIDCache
+create table test_snapshot_db_create.t_auto_id_cache (id int primary key auto_increment, c int);
+
+-- ActionShardRowID
+create table test_snapshot_db_create.t_shard_row (id int primary key nonclustered);
+
+-- ActionRebaseAutoRandomBase
+create table test_snapshot_db_create.t_auto_random (id int auto_random primary key);
+
+-- ActionSetTiFlashReplica
+create table test_snapshot_db_create.t_set_tiflash (id int);
+
+-- ActionExchangeTablePartition
+create table test_snapshot_db_create.t_exchange_partition (id int) partition by range (id) (
+    partition p0 values less than (100),
+    partition p_to_be_exchanged values less than (200)
+);
+insert into test_snapshot_db_create.t_exchange_partition (id) values (105);
+create table test_snapshot_db_create.t_non_partitioned_table (id int);
+insert into test_snapshot_db_create.t_non_partitioned_table (id) values (115);
+
+-- ActionAlterTableAttributes
+create table test_snapshot_db_create.t_alter_table_attributes (id int);
+
+-- ActionAlterTablePartitionAttributes
+create table test_snapshot_db_create.t_alter_table_partition_attributes (id int, name varchar(50)) partition by range (id) (partition p0 values less than (100));
+
+-- ActionReorganizePartition
+create table test_snapshot_db_create.t_reorganize_partition (id int) partition by range (id) (
+    partition p0 values less than (100),
+    partition p1 values less than (200),
+    partition p_to_be_dropped values less than (300)
+);
+insert into test_snapshot_db_create.t_reorganize_partition (id) values (50), (150), (250);
+
+-- ActionAlterTablePartitioning
+create table test_snapshot_db_create.t_alter_table_partitioning (id int);
+
+-- ActionRemovePartitioning
+create table test_snapshot_db_create.t_remove_partitioning (id int) partition by range columns (id) (partition p0 values less than (5), partition p1 values less than (10));
+
+-- === CREATE POLICY ===
+CREATE PLACEMENT POLICY p1 PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-west-1" FOLLOWERS=4;
+-- ActionAlterTablePartitionPlacement
+-- ActionAlterTablePlacement
+
 -- === UNIMPLEMENTED DDL OPERATIONS ===
 -- The following DDL operations are not yet implemented in this test:
 
 -- ActionCreateTables
--- ActionRebaseAutoID  
--- ActionShardRowID
 -- ActionRecoverTable
 -- ActionRepairTable
--- ActionSetTiFlashReplica
 -- ActionUpdateTiFlashReplicaStatus
--- ActionModifyTableAutoIDCache
--- ActionRebaseAutoRandomBase
--- ActionExchangeTablePartition
--- ActionAlterCheckConstraint
--- ActionAlterTableAttributes
--- ActionAlterTablePartitionPlacement
--- ActionAlterTablePartitionAttributes
--- ActionCreatePlacementPolicy
--- ActionAlterPlacementPolicy
--- ActionDropPlacementPolicy
--- ActionModifySchemaDefaultPlacement
--- ActionAlterTablePlacement
 -- ActionAlterCacheTable
 -- ActionAlterNoCacheTable
 -- ActionAlterTableStatsOptions
 -- ActionMultiSchemaChange
 -- ActionFlashbackCluster
 -- ActionRecoverSchema
--- ActionReorganizePartition
+-- ActionCreatePlacementPolicy
+-- ActionAlterPlacementPolicy
+-- ActionDropPlacementPolicy
+-- ActionModifySchemaDefaultPlacement
 -- ActionAlterTTLInfo
 -- ActionAlterTTLRemove
 -- ActionCreateResourceGroup
 -- ActionAlterResourceGroup
 -- ActionDropResourceGroup
--- ActionAlterTablePartitioning
--- ActionRemovePartitioning
 -- ActionAddVectorIndex
 -- ActionAlterTableMode
 -- ActionRefreshMeta

@@ -1,3 +1,4 @@
+SET GLOBAL tidb_enable_check_constraint = ON;
 -- ActionCreateSchema
 create database test_log_db_create;
 
@@ -155,6 +156,11 @@ alter table test_snapshot_db_create.t_drop_check drop constraint chk_age_to_be_d
 create table test_log_db_create.t_drop_check (id int, age int, constraint chk_age_to_be_dropped check (age >= 0 and age <= 120));
 alter table test_log_db_create.t_drop_check drop constraint chk_age_to_be_dropped;
 
+-- ActionAlterCheckConstraint
+alter table test_snapshot_db_create.t_alter_check alter constraint t_alter_check_chk_age not enforced;
+create table test_log_db_create.t_alter_check (id int, age int, constraint t_alter_check_chk_age check (age >= 0 and age <= 120));create table test_snapshot_db_create.t_alter_check (id int, age int, constraint t_alter_check_chk_age check (age >= 0 and age <= 120));
+alter table test_log_db_create.t_alter_check alter constraint t_alter_check_chk_age not enforced;
+
 -- ActionModifySchemaCharsetAndCollate
 alter database test_snapshot_db_charset default character set = utf8mb4 collate = utf8mb4_unicode_ci;
 create database test_log_db_charset default character set = utf8mb4 collate = utf8mb4_bin;
@@ -182,42 +188,98 @@ alter table test_snapshot_db_create.t_index_visibility alter index idx_name invi
 create table test_log_db_create.t_index_visibility (id int, name varchar(50), index idx_name (name));
 alter table test_log_db_create.t_index_visibility alter index idx_name invisible;
 
+-- ActionRebaseAutoID
+alter table test_snapshot_db_create.t_rebase_auto_id auto_increment = 60000;
+create table test_log_db_create.t_rebase_auto_id (id int primary key auto_increment, c int);
+alter table test_log_db_create.t_rebase_auto_id auto_increment = 60000;
+
+-- ActionModifyTableAutoIDCache
+alter table test_snapshot_db_create.t_auto_id_cache auto_id_cache = 60000;
+create table test_log_db_create.t_auto_id_cache (id int primary key auto_increment, c int);
+alter table test_log_db_create.t_auto_id_cache auto_id_cache = 60000;
+
+-- ActionShardRowID
+alter table test_snapshot_db_create.t_shard_row SHARD_ROW_ID_BITS=4;
+create table test_log_db_create.t_shard_row (id int primary key nonclustered);
+alter table test_log_db_create.t_shard_row SHARD_ROW_ID_BITS=4;
+
+-- ActionRebaseAutoRandomBase
+alter table test_snapshot_db_create.t_auto_random force auto_random_base=60000;
+create table test_log_db_create.t_auto_random (id bigint auto_random primary key);
+alter table test_log_db_create.t_auto_random force auto_random_base=60000;
+
+-- ActionSetTiFlashReplica
+alter table test_snapshot_db_create.t_set_tiflash set tiflash replica 1;
+create table test_log_db_create.t_set_tiflash (id int);
+alter table test_log_db_create.t_set_tiflash set tiflash replica 1;
+
+-- ActionExchangeTablePartition
+alter table test_snapshot_db_create.t_exchange_partition exchange partition p_to_be_exchanged with table test_snapshot_db_create.t_non_partitioned_table;
+create table test_log_db_create.t_exchange_partition (id int) partition by range (id) (
+    partition p0 values less than (100),
+    partition p_to_be_exchanged values less than (200)
+);
+insert into test_log_db_create.t_exchange_partition (id) values (105);
+create table test_log_db_create.t_non_partitioned_table (id int);
+insert into test_kig_db_create.t_non_partitioned_table (id) values (115);
+alter table test_log_db_create.t_exchange_partition exchange partition p_to_be_exchanged with table test_log_db_create.t_non_partitioned_table;
+
+-- ActionAlterTableAttributes
+alter table test_snapshot_db_create.t_alter_table_attributes attributes "merge_option=allow";
+create table test_log_db_create.t_alter_table_attributes (id int);
+alter table test_log_db_create.t_alter_table_attributes attributes "merge_option=allow";
+
+-- ActionAlterTablePartitionAttributes
+alter table test_snapshot_db_create.t_alter_table_partition_attributes partition p0 attributes "merge_option=allow";
+create table test_log_db_create.t_alter_table_partition_attributes (id int, name varchar(50)) partition by range (id) (partition p0 values less than (100));
+alter table test_log_db_create.t_alter_table_partition_attributes partition p0 attributes "merge_option=allow";
+
+-- ActionReorganizePartition
+alter table test_snapshot_db_create.t_reorganize_partition reorganize partition p0,p1 INTO (partition pnew values less than (200));
+create table test_log_db_create.t_reorganize_partition (id int) partition by range (id) (
+    partition p0 values less than (100),
+    partition p1 values less than (200),
+    partition p_to_be_dropped values less than (300)
+);
+insert into test_log_db_create.t_reorganize_partition (id) values (50), (150), (250);
+alter table test_log_db_create.t_reorganize_partition reorganize partition p0,p1 INTO (partition pnew values less than (200));
+
+-- ActionAlterTablePartitioning
+alter table test_snapshot_db_create.t_alter_table_partitioning partition by range columns (id) (partition p0 values less than (5), partition p1 values less than (10));
+create table test_log_db_create.t_alter_table_partitioning (id int);
+alter table test_log_db_create.t_alter_table_partitioning partition by range columns (id) (partition p0 values less than (5), partition p1 values less than (10));
+
+-- ActionRemovePartitioning
+alter table test_snapshot_db_create.t_remove_partitioning remove partitioning;
+create table test_log_db_create.t_remove_partitioning (id int) partition by range columns (id) (partition p0 values less than (5), partition p1 values less than (10));
+alter table test_log_db_create.t_remove_partitioning remove partitioning;
+
+
+
 -- === UNIMPLEMENTED DDL OPERATIONS ===
 -- The following DDL operations are not yet implemented in this test:
 
 -- ActionCreateTables
--- ActionRebaseAutoID  
--- ActionShardRowID
 -- ActionRecoverTable
 -- ActionRepairTable
--- ActionSetTiFlashReplica
 -- ActionUpdateTiFlashReplicaStatus
--- ActionModifyTableAutoIDCache
--- ActionRebaseAutoRandomBase
--- ActionExchangeTablePartition
--- ActionAlterCheckConstraint
--- ActionAlterTableAttributes
--- ActionAlterTablePartitionPlacement
--- ActionAlterTablePartitionAttributes
--- ActionCreatePlacementPolicy
--- ActionAlterPlacementPolicy
--- ActionDropPlacementPolicy
--- ActionModifySchemaDefaultPlacement
--- ActionAlterTablePlacement
 -- ActionAlterCacheTable
 -- ActionAlterNoCacheTable
 -- ActionAlterTableStatsOptions
 -- ActionMultiSchemaChange
 -- ActionFlashbackCluster
 -- ActionRecoverSchema
--- ActionReorganizePartition
+-- ActionAlterTablePartitionPlacement
+-- ActionCreatePlacementPolicy
+-- ActionAlterPlacementPolicy
+-- ActionDropPlacementPolicy
+-- ActionModifySchemaDefaultPlacement
+-- ActionAlterTablePlacement
 -- ActionAlterTTLInfo
 -- ActionAlterTTLRemove
 -- ActionCreateResourceGroup
 -- ActionAlterResourceGroup
 -- ActionDropResourceGroup
--- ActionAlterTablePartitioning
--- ActionRemovePartitioning
 -- ActionAddVectorIndex
 -- ActionAlterTableMode
 -- ActionRefreshMeta

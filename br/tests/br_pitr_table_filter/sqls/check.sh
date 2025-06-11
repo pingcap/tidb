@@ -209,6 +209,21 @@ check_index_visibility() {
     }
 }
 
+check_tiflash_replica_count() {
+    run_sql "SELECT REPLICA_COUNT FROM INFORMATION_SCHEMA.TIFLASH_REPLICA WHERE TABLE_SCHEMA = '$1' AND TABLE_NAME = '$2'"
+    check_contains "REPLICA_COUNT: $3"
+}
+
+row_must_exist() {
+    run_sql "select count(*) from $1 where $2"
+    check_contains "count(*): 1"
+}
+
+attributes_must_exist() {
+    run_sql "select count(*) from information_schema.attributes where ID like '%$1%' where ATTRIBUTES = '$2'"
+    check_contains "count(*): 1"
+}
+
 # ActionCreateSchema
 schema_must_exist "test_log_db_create"
 
@@ -341,6 +356,10 @@ check_constraint_must_exist test_log_db_create t_add_check chk_age_added
 check_constraint_must_not_exist "test_snapshot_db_create" "t_drop_check" "chk_age_to_be_dropped"
 check_constraint_must_not_exist "test_log_db_create" "t_drop_check" "chk_age_to_be_dropped"
 
+# ActionAlterCheckConstraint
+check_create_table_contains "test_snapshot_db_create.t_alter_check" "80016 NOT ENFORCED"
+check_create_table_contains "test_log_db_create.t_alter_check" "80016 NOT ENFORCED"
+
 # ActionSetDefaultValue
 check_table_default_value "test_snapshot_db_create" "t_set_default" "status" "active"
 check_table_default_value "test_log_db_create" "t_set_default" "status" "active"
@@ -368,3 +387,60 @@ index_must_exist "test_snapshot_db_create.t_index_visibility" "idx_name"
 index_must_exist "test_log_db_create.t_index_visibility" "idx_name"
 check_index_visibility "test_snapshot_db_create" "t_index_visibility" "idx_name" "NO"
 check_index_visibility "test_log_db_create" "t_index_visibility" "idx_name" "NO"
+
+# ActionRebaseAutoID
+check_create_table_contains "test_snapshot_db_create.t_rebase_auto_id" "AUTO_INCREMENT=60000"
+check_create_table_contains "test_log_db_create.t_rebase_auto_id" "AUTO_INCREMENT=60000"
+
+# ActionModifyTableAutoIDCache
+check_create_table_contains "test_snapshot_db_create.t_auto_id_cache" "AUTO_ID_CACHE=60000"
+check_create_table_contains "test_log_db_create.t_auto_id_cache" "AUTO_ID_CACHE=60000"
+
+# ActionShardRowID
+check_create_table_contains "test_snapshot_db_create.t_shard_row" "SHARD_ROW_ID_BITS=4"
+check_create_table_contains "test_log_db_create.t_shard_row" "SHARD_ROW_ID_BITS=4"
+
+# ActionRebaseAutoRandomBase
+check_create_table_contains "test_snapshot_db_create.t_auto_random" "AUTO_RANDOM_BASE=60000"
+check_create_table_contains "test_log_db_create.t_auto_random" "AUTO_RANDOM_BASE=60000"
+
+# ActionSetTiFlashReplica
+check_tiflash_replica_count "test_snapshot_db_create" "t_set_tiflash" 1
+check_tiflash_replica_count "test_log_db_create" "t_set_tiflash" 1
+
+# ActionExchangeTablePartition
+row_must_exist "test_snapshot_db_create.t_exchange_partition" "id = 115"
+row_must_exist "test_snapshot_db_create.t_non_partitioned_table" "id = 105"
+row_must_exist "test_log_db_create.t_exchange_partition" "id = 115"
+row_must_exist "test_log_db_create.t_non_partitioned_table" "id = 105"
+
+# ActionAlterTableAttributes
+attributes_must_exist "test_snapshot_db_create/t_alter_table_attributes" "merge_option=allow"
+attributes_must_exist "test_log_db_create/t_alter_table_attributes" "merge_option=allow"
+
+# ActionAlterTablePartitionAttributes
+attributes_must_exist "test_snapshot_db_create/t_alter_table_partition_attributes/p0" "merge_option=allow"
+attributes_must_exist "test_log_db_create/t_alter_table_partition_attributes/p0" "merge_option=allow"
+
+# ActionReorganizePartition
+check_create_table_contains "test_snapshot_db_create.t_reorganize_partition" "pnew"
+check_create_table_contains "test_log_db_create.t_reorganize_partition" "pnew"
+row_must_exist "test_snapshot_db_create.t_reorganize_partition" "id=50"
+row_must_exist "test_snapshot_db_create.t_reorganize_partition" "id=150"
+row_must_exist "test_snapshot_db_create.t_reorganize_partition" "id=250"
+row_must_exist "test_log_db_create.t_reorganize_partition" "id=50"
+row_must_exist "test_log_db_create.t_reorganize_partition" "id=150"
+row_must_exist "test_log_db_create.t_reorganize_partition" "id=250"
+
+# ActionAlterTablePartitioning
+check_create_table_contains "test_snapshot_db_create.t_alter_table_partitioning" "p0"
+check_create_table_contains "test_snapshot_db_create.t_alter_table_partitioning" "p1"
+check_create_table_contains "test_log_db_create.t_alter_table_partitioning" "p0"
+check_create_table_contains "test_log_db_create.t_alter_table_partitioning" "p1"
+
+# ActionRemovePartitioning
+partition_must_not_exist "test_snapshot_db_create" "t_remove_partitioning" "p0"
+partition_must_not_exist "test_snapshot_db_create" "t_remove_partitioning" "p1"
+partition_must_not_exist "test_log_db_create" "t_remove_partitioning" "p0"
+partition_must_not_exist "test_log_db_create" "t_remove_partitioning" "p1"
+
