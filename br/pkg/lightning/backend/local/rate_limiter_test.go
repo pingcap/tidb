@@ -93,7 +93,7 @@ func TestRateLimit(t *testing.T) {
 
 func TestContextCancelDuringConcurrencyWait(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	l := newIngestLimiter(ctx, 1, 1)
+	l := newIngestLimiter(ctx, 1, 100)
 
 	require.NoError(t, l.Acquire(0, 1))
 
@@ -115,9 +115,9 @@ func TestContextCancelDuringConcurrencyWait(t *testing.T) {
 
 func TestContextCancelDuringRateWait(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	l := newIngestLimiter(ctx, 100, 100)
+	l := newIngestLimiter(ctx, 100, 1)
 
-	require.NoError(t, l.Acquire(0, 100))
+	require.NoError(t, l.Acquire(0, 1))
 
 	errCh := make(chan error, 1)
 	go func() {

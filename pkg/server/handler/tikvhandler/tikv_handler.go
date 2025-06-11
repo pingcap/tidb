@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -2055,6 +2056,7 @@ func NewIngestConcurrencyHandler(tool *handler.TikvHandlerTool, param IngestPara
 func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var getter func(*meta.Meta) (int, bool, error)
 	var setter func(*meta.Meta, int) error
+	var global *atomicutil.Int64
 	switch h.param {
 	case IngestParamMaxBatchSplitRanges:
 		getter = func(m *meta.Meta) (int, bool, error) {
@@ -2063,6 +2065,7 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		setter = func(m *meta.Meta, value int) error {
 			return m.SetIngestMaxBatchSplitRanges(value)
 		}
+		global = &local.CurrentMaxBatchSplitRanges
 	case IngestParamMaxPerSecond:
 		getter = func(m *meta.Meta) (int, bool, error) {
 			return m.GetIngestMaxPerSec()
@@ -2070,6 +2073,7 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		setter = func(m *meta.Meta, value int) error {
 			return m.SetIngestMaxPerSec(value)
 		}
+		global = &local.CurrentMaxIngestPerSec
 	case IngestParamMaxInflight:
 		getter = func(m *meta.Meta) (int, bool, error) {
 			return m.GetIngestMaxInflight()
@@ -2077,6 +2081,7 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		setter = func(m *meta.Meta, value int) error {
 			return m.SetIngestMaxInflight(value)
 		}
+		global = &local.CurrentMaxIngestInflight
 	default:
 		handler.WriteError(w, errors.Errorf("unsupported ingest parameter: %s", h.param))
 	}
@@ -2085,9 +2090,9 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		var respValue int
 		var respIsNull bool
 		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), false, func(_ context.Context, txn kv.Transaction) error {
-			mutator := meta.NewMeta(txn)
+			m := meta.NewMeta(txn)
 			var getErr error
-			respValue, respIsNull, getErr = getter(mutator)
+			respValue, respIsNull, getErr = getter(m)
 			return getErr
 		})
 
@@ -2115,22 +2120,20 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			return
 		}
 		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), true, func(_ context.Context, txn kv.Transaction) error {
-			mutator := meta.NewMeta(txn)
-			return setter(mutator, newValue)
+			m := meta.NewMeta(txn)
+			return setter(m, newValue)
 		})
 
 		if err != nil {
 			handler.WriteError(w, err)
 			return
 		}
-		switch h.param {
-		case IngestParamMaxBatchSplitRanges:
-			local.CurrentMaxBatchSplitRanges.Store(int64(newValue))
-		case IngestParamMaxInflight:
-			local.CurrentMaxIngestInflight.Store(int64(newValue))
-		case IngestParamMaxPerSecond:
-			local.CurrentMaxIngestPerSec.Store(int64(newValue))
-		}
+		oldVal := global.Load()
+		global.Store(int64(newValue))
+		logutil.BgLogger().Info("set ingest concurrency",
+			zap.String("param", string(h.param)),
+			zap.Int("oldValue", int(oldVal)),
+			zap.Int("newValue", newValue))
 		handler.WriteData(w, map[string]string{"message": "success"})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)

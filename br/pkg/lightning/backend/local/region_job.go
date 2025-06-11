@@ -594,7 +594,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 
 	var limiter *ingestLimiter
 	if x := local.ingestLimiter.Load(); x != nil {
-		limiter = x.(*ingestLimiter)
+		limiter = x
 	} else {
 		limiter = &ingestLimiter{}
 	}

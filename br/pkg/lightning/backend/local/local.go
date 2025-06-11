@@ -568,7 +568,7 @@ type Backend struct {
 	tls              *common.TLS
 	regionSizeGetter TableRegionSizeGetter
 	tikvCodec        tikvclient.Codec
-	ingestLimiter    atomic.Value // *ingestLimiter
+	ingestLimiter    atomic.Pointer[ingestLimiter]
 
 	BackendConfig
 
