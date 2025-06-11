@@ -103,16 +103,20 @@ func AdjustRowCountForIndexScanByLimit(sctx planctx.PlanContext,
 	// Such plans have high risk since we cannot estimate when rows will be found.
 	orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
-	rowsToMeetFirst := 0.0
 	if path.CountAfterAccess > rowCount && orderRatio >= 0 {
+		rowsToMeetFirst := 0.0
 		if len(path.IndexFilters) > 0 && path.CountAfterIndex > 0 && path.CountAfterAccess > path.CountAfterIndex {
 			rowsToMeetFirst = (path.CountAfterAccess - path.CountAfterIndex) + (path.CountAfterIndex - min(dsStatsInfo.RowCount, expectedCnt))
 		} else if !path.IsSingleScan && path.CountAfterAccess > expectedCnt {
 			rowsToMeetFirst = (path.CountAfterAccess - expectedCnt)
 		}
 		rowsToMeetFirst = max(0, (rowsToMeetFirst-rowCount)) * orderRatio
+		rowCount += rowsToMeetFirst
+	} else if orderRatio == 0 {
+		// If the order ratio is 0, it means that we expect to find the rows immediately.
+		rowCount = min(rowCount, expectedCnt)
 	}
-	return rowCount + rowsToMeetFirst
+	return rowCount
 }
 
 // crossEstimateIndexRowCount estimates row count of index scan using histogram of another column which is in TableFilters/IndexFilters
