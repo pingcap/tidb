@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -147,9 +147,7 @@ func TestDistributeTable(t *testing.T) {
 		}
 		starts := make([]string, 0)
 		ends := make([]string, 0)
-		sort.Slice(pids, func(i, j int) bool {
-			return pids[i] < pids[j]
-		})
+		slices.Sort(pids)
 		for i, pid := range pids {
 			if i == 0 || pid != pids[i-1]+1 {
 				startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))

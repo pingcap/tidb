@@ -163,9 +163,7 @@ func (e *DistributeTableExec) getKeyRanges() ([]*pdhttp.KeyRange, error) {
 			}
 		}
 	}
-	slices.SortFunc(physicalIDs, func(i, j int64) int {
-		return cmp.Compare(i, j)
-	})
+	slices.Sort(physicalIDs)
 
 	ranges := make([]*pdhttp.KeyRange, 0, len(physicalIDs))
 	for i, pid := range physicalIDs {
