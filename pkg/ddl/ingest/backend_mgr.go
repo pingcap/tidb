@@ -28,6 +28,7 @@ import (
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -47,7 +48,7 @@ type BackendCtxMgr interface {
 	// BackendCtx will be created and returned.
 	Register(
 		ctx context.Context,
-		jobID int64,
+		job *model.Job,
 		unique bool,
 		etcdClient *clientv3.Client,
 		pdSvcDiscovery pd.ServiceDiscovery,
@@ -118,13 +119,13 @@ var ResignOwnerForTest = atomic.NewBool(false)
 // Register creates a new backend and registers it to the backend context.
 func (m *litBackendCtxMgr) Register(
 	ctx context.Context,
-	jobID int64,
+	job *model.Job,
 	unique bool,
 	etcdClient *clientv3.Client,
 	pdSvcDiscovery pd.ServiceDiscovery,
 	resourceGroupName string,
 ) (BackendCtx, error) {
-	bc, exist := m.Load(jobID)
+	bc, exist := m.Load(job.ID)
 	if exist {
 		return bc, nil
 	}
@@ -132,11 +133,11 @@ func (m *litBackendCtxMgr) Register(
 	m.memRoot.RefreshConsumption()
 	ok := m.memRoot.CheckConsume(StructSizeBackendCtx)
 	if !ok {
-		return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, jobID)
+		return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, job.ID)
 	}
-	cfg, err := genConfig(ctx, m.encodeJobSortPath(jobID), m.memRoot, unique, resourceGroupName)
+	cfg, err := genConfig(ctx, m.encodeJobSortPath(job.ID), m.memRoot, unique, resourceGroupName, job.ReorgMeta.UseCloudStorage)
 	if err != nil {
-		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
+		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", job.ID), zap.Error(err))
 		return nil, err
 	}
 	failpoint.Inject("beforeCreateLocalBackend", func() {
@@ -149,16 +150,16 @@ func (m *litBackendCtxMgr) Register(
 	bd, err := createLocalBackend(ctx, cfg, pdSvcDiscovery)
 	if err != nil {
 		m.backends.mu.Unlock()
-		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
+		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", job.ID), zap.Error(err))
 		return nil, err
 	}
 
-	bcCtx := newBackendContext(ctx, jobID, bd, cfg.lightning, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient)
-	m.backends.m[jobID] = bcCtx
+	bcCtx := newBackendContext(ctx, job.ID, bd, cfg.lightning, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient)
+	m.backends.m[job.ID] = bcCtx
 	m.memRoot.Consume(StructSizeBackendCtx)
 	m.backends.mu.Unlock()
 
-	logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", jobID),
+	logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", job.ID),
 		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()),
 		zap.Bool("is unique index", unique))

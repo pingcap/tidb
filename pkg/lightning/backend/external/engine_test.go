@@ -17,13 +17,10 @@ package external
 import (
 	"context"
 	"fmt"
-	"path"
+	"slices"
 	"testing"
 
-	"github.com/cockroachdb/pebble"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,10 +41,9 @@ func testNewIter(
 	data common.IngestData,
 	lowerBound, upperBound []byte,
 	expectedKeys, expectedValues [][]byte,
-	bufPool *membuf.Pool,
 ) {
 	ctx := context.Background()
-	iter := data.NewIter(ctx, lowerBound, upperBound, bufPool)
+	iter := data.NewIter(ctx, lowerBound, upperBound, nil)
 	var (
 		keys, values [][]byte
 	)
@@ -60,26 +56,6 @@ func testNewIter(
 	require.NoError(t, iter.Close())
 	require.Equal(t, expectedKeys, keys)
 	require.Equal(t, expectedValues, values)
-}
-
-func checkDupDB(t *testing.T, db *pebble.DB, expectedKeys, expectedValues [][]byte) {
-	iter, _ := db.NewIter(nil)
-	var (
-		gotKeys, gotValues [][]byte
-	)
-	for iter.First(); iter.Valid(); iter.Next() {
-		key := make([]byte, len(iter.Key()))
-		copy(key, iter.Key())
-		gotKeys = append(gotKeys, key)
-		value := make([]byte, len(iter.Value()))
-		copy(value, iter.Value())
-		gotValues = append(gotValues, value)
-	}
-	require.NoError(t, iter.Close())
-	require.Equal(t, expectedKeys, gotKeys)
-	require.Equal(t, expectedValues, gotValues)
-	err := db.DeleteRange([]byte{0}, []byte{255}, nil)
-	require.NoError(t, err)
 }
 
 func TestMemoryIngestData(t *testing.T) {
@@ -98,10 +74,9 @@ func TestMemoryIngestData(t *testing.T) {
 		[]byte("value5"),
 	}
 	data := &MemoryIngestData{
-		keyAdapter: common.NoopKeyAdapter{},
-		keys:       keys,
-		values:     values,
-		ts:         123,
+		keys:   keys,
+		values: values,
+		ts:     123,
 	}
 
 	require.EqualValues(t, 123, data.GetTS())
@@ -113,34 +88,24 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key0"), []byte("key1"), nil, nil)
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
 
-	// MemoryIngestData without duplicate detection feature does not need pool
-	testNewIter(t, data, nil, nil, keys, values, nil)
-	testNewIter(t, data, []byte("key1"), []byte("key6"), keys, values, nil)
-	testNewIter(t, data, []byte("key2"), []byte("key5"), keys[1:4], values[1:4], nil)
-	testNewIter(t, data, []byte("key25"), []byte("key35"), keys[2:3], values[2:3], nil)
-	testNewIter(t, data, []byte("key25"), []byte("key26"), nil, nil, nil)
-	testNewIter(t, data, []byte("key0"), []byte("key1"), nil, nil, nil)
-	testNewIter(t, data, []byte("key6"), []byte("key9"), nil, nil, nil)
+	testNewIter(t, data, nil, nil, keys, values)
+	testNewIter(t, data, []byte("key1"), []byte("key6"), keys, values)
+	testNewIter(t, data, []byte("key2"), []byte("key5"), keys[1:4], values[1:4])
+	testNewIter(t, data, []byte("key25"), []byte("key35"), keys[2:3], values[2:3])
+	testNewIter(t, data, []byte("key25"), []byte("key26"), nil, nil)
+	testNewIter(t, data, []byte("key0"), []byte("key1"), nil, nil)
+	testNewIter(t, data, []byte("key6"), []byte("key9"), nil, nil)
 
-	dir := t.TempDir()
-	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
-	require.NoError(t, err)
-	keyAdapter := common.DupDetectKeyAdapter{}
 	data = &MemoryIngestData{
-		keyAdapter:         keyAdapter,
-		duplicateDetection: true,
-		duplicateDB:        db,
-		ts:                 234,
+		ts: 234,
 	}
 	encodedKeys := make([][]byte, 0, len(keys)*2)
 	encodedValues := make([][]byte, 0, len(values)*2)
-	encodedZero := codec.EncodeInt(nil, 0)
-	encodedOne := codec.EncodeInt(nil, 1)
 	duplicatedKeys := make([][]byte, 0, len(keys)*2)
 	duplicatedValues := make([][]byte, 0, len(values)*2)
 
 	for i := range keys {
-		encodedKey := keyAdapter.Encode(nil, keys[i], encodedZero)
+		encodedKey := slices.Clone(keys[i])
 		encodedKeys = append(encodedKeys, encodedKey)
 		encodedValues = append(encodedValues, values[i])
 		if i%2 == 0 {
@@ -151,7 +116,7 @@ func TestMemoryIngestData(t *testing.T) {
 		duplicatedKeys = append(duplicatedKeys, encodedKey)
 		duplicatedValues = append(duplicatedValues, values[i])
 
-		encodedKey = keyAdapter.Encode(nil, keys[i], encodedOne)
+		encodedKey = slices.Clone(keys[i])
 		encodedKeys = append(encodedKeys, encodedKey)
 		newValues := make([]byte, len(values[i])+1)
 		copy(newValues, values[i])
@@ -171,25 +136,6 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key25"), []byte("key26"), nil, nil)
 	testGetFirstAndLastKey(t, data, []byte("key0"), []byte("key1"), nil, nil)
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
-
-	pool := membuf.NewPool()
-	defer pool.Destroy()
-	testNewIter(t, data, nil, nil, keys, values, pool)
-	checkDupDB(t, db, duplicatedKeys, duplicatedValues)
-	testNewIter(t, data, []byte("key1"), []byte("key6"), keys, values, pool)
-	checkDupDB(t, db, duplicatedKeys, duplicatedValues)
-	testNewIter(t, data, []byte("key1"), []byte("key3"), keys[:2], values[:2], pool)
-	checkDupDB(t, db, duplicatedKeys[:2], duplicatedValues[:2])
-	testNewIter(t, data, []byte("key2"), []byte("key5"), keys[1:4], values[1:4], pool)
-	checkDupDB(t, db, duplicatedKeys, duplicatedValues)
-	testNewIter(t, data, []byte("key25"), []byte("key35"), keys[2:3], values[2:3], pool)
-	checkDupDB(t, db, nil, nil)
-	testNewIter(t, data, []byte("key25"), []byte("key26"), nil, nil, pool)
-	checkDupDB(t, db, nil, nil)
-	testNewIter(t, data, []byte("key0"), []byte("key1"), nil, nil, pool)
-	checkDupDB(t, db, nil, nil)
-	testNewIter(t, data, []byte("key6"), []byte("key9"), nil, nil, pool)
-	checkDupDB(t, db, nil, nil)
 }
 
 func TestSplit(t *testing.T) {

@@ -295,10 +295,7 @@ func generateNonPartitionPlan(
 		regionBatch := calculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
 
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
-			end := i + regionBatch
-			if end > len(recordRegionMetas) {
-				end = len(recordRegionMetas)
-			}
+			end := min(i+regionBatch, len(recordRegionMetas))
 			batch := recordRegionMetas[i:end]
 			subTaskMeta := &BackfillSubTaskMeta{
 				RowStart: batch[0].StartKey(),
@@ -328,6 +325,9 @@ func generateNonPartitionPlan(
 }
 
 func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
+	failpoint.Inject("mockRegionBatch", func(val failpoint.Value) {
+		failpoint.Return(val.(int))
+	})
 	var regionBatch int
 	avgTasksPerInstance := (totalRegionCnt + instanceCnt - 1) / instanceCnt // ceiling
 	if useLocalDisk {
@@ -488,13 +488,17 @@ func generateMergePlan(
 ) ([][]byte, error) {
 	// check data files overlaps,
 	// if data files overlaps too much, we need a merge step.
-	var multiStatsGroup [][]external.MultipleFilesStat
-	var kvMetaGroups []*external.SortedKVMeta
+	var (
+		multiStatsGroup [][]external.MultipleFilesStat
+		kvMetaGroups    []*external.SortedKVMeta
+		eleIDs          []int64
+	)
 	err := forEachBackfillSubtaskMeta(taskHandle, task.ID, proto.BackfillStepReadIndex,
 		func(subtask *BackfillSubTaskMeta) {
 			if kvMetaGroups == nil {
 				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
 				multiStatsGroup = make([][]external.MultipleFilesStat, len(subtask.MetaGroups))
+				eleIDs = subtask.EleIDs
 			}
 			for i, g := range subtask.MetaGroups {
 				if kvMetaGroups[i] == nil {
@@ -534,6 +538,10 @@ func generateMergePlan(
 				dataFiles = append(dataFiles, filePair[0])
 			}
 		}
+		var eleID []int64
+		if i < len(eleIDs) {
+			eleID = []int64{eleIDs[i]}
+		}
 		start := 0
 		step := external.MergeSortFileCountStep
 		for start < len(dataFiles) {
@@ -543,6 +551,7 @@ func generateMergePlan(
 			}
 			m := &BackfillSubTaskMeta{
 				DataFiles: dataFiles[start:end],
+				EleIDs:    eleID,
 			}
 			metaBytes, err := json.Marshal(m)
 			if err != nil {

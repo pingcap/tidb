@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	pd "github.com/tikv/pd/client"
@@ -52,18 +53,18 @@ func (m *MockBackendCtxMgr) CheckMoreTasksAvailable(context.Context) (bool, erro
 }
 
 // Register implements BackendCtxMgr.Register interface.
-func (m *MockBackendCtxMgr) Register(ctx context.Context, jobID int64, unique bool, etcdClient *clientv3.Client, pdSvcDiscovery pd.ServiceDiscovery, resourceGroupName string) (BackendCtx, error) {
-	logutil.DDLIngestLogger().Info("mock backend mgr register", zap.Int64("jobID", jobID))
-	if mockCtx, ok := m.runningJobs[jobID]; ok {
+func (m *MockBackendCtxMgr) Register(ctx context.Context, job *model.Job, unique bool, etcdClient *clientv3.Client, pdSvcDiscovery pd.ServiceDiscovery, resourceGroupName string) (BackendCtx, error) {
+	logutil.DDLIngestLogger().Info("mock backend mgr register", zap.Int64("jobID", job.ID))
+	if mockCtx, ok := m.runningJobs[job.ID]; ok {
 		return mockCtx, nil
 	}
 	sessCtx := m.sessCtxProvider()
 	mockCtx := &MockBackendCtx{
 		mu:      sync.Mutex{},
 		sessCtx: sessCtx,
-		jobID:   jobID,
+		jobID:   job.ID,
 	}
-	m.runningJobs[jobID] = mockCtx
+	m.runningJobs[job.ID] = mockCtx
 	return mockCtx, nil
 }
 
