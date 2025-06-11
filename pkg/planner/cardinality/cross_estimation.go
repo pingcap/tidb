@@ -105,9 +105,9 @@ func AdjustRowCountForIndexScanByLimit(sctx planctx.PlanContext,
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
 	rowsToMeetFirst := 0.0
 	if path.CountAfterAccess > rowCount && orderRatio >= 0 {
-		if path.CountAfterIndex > 0 && path.CountAfterAccess > path.CountAfterIndex {
+		if len(path.IndexFilters) > 0 && path.CountAfterIndex > 0 && path.CountAfterAccess > path.CountAfterIndex {
 			rowsToMeetFirst = (path.CountAfterAccess - path.CountAfterIndex) + (path.CountAfterIndex - min(dsStatsInfo.RowCount, expectedCnt))
-		} else if path.CountAfterAccess > expectedCnt {
+		} else if !path.IsSingleScan && path.CountAfterAccess > expectedCnt {
 			rowsToMeetFirst = (path.CountAfterAccess - expectedCnt)
 		}
 		rowsToMeetFirst = max(0, (rowsToMeetFirst-rowCount)) * orderRatio
