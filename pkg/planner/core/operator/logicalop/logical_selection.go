@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -187,6 +188,23 @@ func (p *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base
 }
 
 // PredicateSimplification inherits BaseLogicalPlan.<7th> implementation.
+func (p *LogicalSelection) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	// it is only test
+	intest.AssertFunc(func() bool {
+		origins := make([]expression.Expression, 0, len(p.Conditions))
+		for _, item := range p.Conditions {
+			origins = append(origins, item.Clone())
+		}
+		actual := utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.Conditions)
+		for _, origin := range origins {
+			if !expression.Contains(p.SCtx().GetExprCtx().GetEvalCtx(), actual, origin) {
+				return false
+			}
+		}
+		return true
+	})
+	return p
+}
 
 // ConstantPropagation inherits BaseLogicalPlan.<8th> implementation.
 
