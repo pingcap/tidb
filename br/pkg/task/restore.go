@@ -270,11 +270,13 @@ type RestoreConfig struct {
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
 	StartTS uint64 `json:"start-ts" toml:"start-ts"`
 	// if not specified system will restore to the max TS available
-	RestoreTS       uint64                      `json:"restore-ts" toml:"restore-ts"`
-	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
-	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
-	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
-	PitrConcurrency uint32                      `json:"-" toml:"-"`
+	RestoreTS uint64 `json:"restore-ts" toml:"restore-ts"`
+	// whether RestoreTS was explicitly specified by user vs auto-detected
+	IsRestoredTSUserSpecified bool                        `json:"-" toml:"-"`
+	tiflashRecorder           *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
+	PitrBatchCount            uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
+	PitrBatchSize             uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
+	PitrConcurrency           uint32                      `json:"-" toml:"-"`
 
 	UseCheckpoint                 bool                            `json:"use-checkpoint" toml:"use-checkpoint"`
 	CheckpointStorage             string                          `json:"checkpoint-storage" toml:"checkpoint-storage"`
@@ -389,6 +391,9 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	if cfg.RestoreTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
+
+	// check if RestoreTS was explicitly specified by user
+	cfg.IsRestoredTSUserSpecified = flags.Changed(FlagStreamRestoreTS)
 
 	if cfg.FullBackupStorage, err = flags.GetString(FlagStreamFullBackupStorage); err != nil {
 		return errors.Trace(err)

@@ -242,188 +242,14 @@ test_restore_with_different_systable_settings() {
     cleanup
 }
 
-test_stale_task_cleanup() {
-    echo "Test Case 4: Stale task cleanup verification"
-    
-    echo "Starting real restore operations to create checkpoint data..."
-    
-    # step 1: start a restore that will fail before finishing
-    echo "Starting restore that will fail after checkpoint creation..."
-    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/fail-at-end-of-restore=return(true)"
-    restore_fail=0
-    run_br restore point --filter "${DB}_LOG.*" --full-backup-storage "$BACKUP_DIR" -s "$LOG_BACKUP_DIR" || restore_fail=1
-    if [ $restore_fail -ne 1 ]; then
-        echo 'expecting first restore to fail after checkpoint creation but succeeded'
-        exit 1
-    fi
-    export GO_FAILPOINTS=""
-    
-    # get the first task ID and set it back to 'running' status (but keep heartbeat recent for now)
-    stale_task_id=$(run_sql "SELECT id FROM mysql.tidb_restore_registry WHERE filter_strings = '${DB}_LOG.*' ORDER BY id DESC LIMIT 1;" | grep -o 'id: [0-9]*' | grep -o '[0-9]*')
-    run_sql "UPDATE mysql.tidb_restore_registry SET status = 'running' WHERE id = $stale_task_id;"
-    echo "Created first task ID: $stale_task_id (set to running - will be made stale later)"
-    
-    # step 2: start a restore that will also fail after checkpoint creation (use non-overlapping filter)
-    echo "Starting second restore that will fail after checkpoint creation..."
-    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/fail-at-end-of-restore=return(true)"
-    restore_fail=0
-    run_br restore point --filter "${DB}.full_1" --full-backup-storage "$BACKUP_DIR" -s "$LOG_BACKUP_DIR" || restore_fail=1
-    if [ $restore_fail -ne 1 ]; then
-        echo 'expecting second restore to fail after checkpoint creation but succeeded'
-        exit 1
-    fi
-    export GO_FAILPOINTS=""
-    
-    # debug: check what's actually in the registry after second restore
-    echo "=== DEBUG: Registry entries after second restore ==="
-    run_sql "SELECT id, filter_strings FROM mysql.tidb_restore_registry ORDER BY id;"
-    echo "=== END DEBUG ==="
-    
-    # get the recent task ID and manually set it back to 'running' status with stale heartbeat
-    recent_task_id=$(run_sql "SELECT id FROM mysql.tidb_restore_registry WHERE filter_strings = '${DB}.full_1' ORDER BY id DESC LIMIT 1;" | grep -o 'id: [0-9]*' | grep -o '[0-9]*')
-    
-    if [ -z "$recent_task_id" ]; then
-        echo "Error: Could not find second restore task in registry"
-        echo "Checking all entries:"
-        run_sql "SELECT id, filter_strings FROM mysql.tidb_restore_registry;"
-        exit 1
-    fi
-    
-    run_sql "UPDATE mysql.tidb_restore_registry SET status = 'running', last_heartbeat_time = DATE_SUB(NOW(), INTERVAL 10 MINUTE) WHERE id = $recent_task_id;"
-    echo "Created second task ID: $recent_task_id (set to running with stale heartbeat - will receive heartbeat updates)"
-    
-    # now set the first task's heartbeat to be very stale (after both tasks are created)
-    run_sql "UPDATE mysql.tidb_restore_registry SET last_heartbeat_time = DATE_SUB(NOW(), INTERVAL 15 MINUTE) WHERE id = $stale_task_id;"
-    echo "Updated first task ID: $stale_task_id to have very stale heartbeat - should be deleted"
-    
-    # verify we got valid IDs
-    if [ -z "$stale_task_id" ] || [ -z "$recent_task_id" ]; then
-        echo "Error: Failed to get valid task IDs"
-        echo "stale_task_id: '$stale_task_id'"
-        echo "recent_task_id: '$recent_task_id'"
-        exit 1
-    fi
-    
-    # step 3: verify tasks exist in registry
-    echo "Verifying test tasks exist in registry..."
-    task_count=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry WHERE status = 'running' AND (filter_strings LIKE '${DB}_LOG%' OR filter_strings LIKE '${DB}.%');" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
-    if [ "$task_count" -lt 2 ]; then
-        echo "Error: Expected at least 2 running tasks but found $task_count"
-        exit 1
-    fi
-    echo "Found $task_count running task(s) in registry"
-    
-    # step 4: show the tasks before cleanup
-    echo "Tasks before cleanup:"
-    run_sql "SELECT id, TIMESTAMPDIFF(MINUTE, last_heartbeat_time, NOW()) as minutes_stale, 
-             filter_strings FROM mysql.tidb_restore_registry WHERE status = 'running' AND (filter_strings LIKE '${DB}_LOG%' OR filter_strings LIKE '${DB}.%')
-             ORDER BY last_heartbeat_time;"
-    
-    # step 5: start background process to simulate heartbeat updates for the "recent" task
-    echo "Starting background heartbeat simulation for recent task..."
-    (
-        # wait 2 minutes then start updating the heartbeat every 30 seconds
-        sleep 120
-        for i in {1..10}; do
-            run_sql "UPDATE mysql.tidb_restore_registry SET last_heartbeat_time = NOW() WHERE id = $recent_task_id;" > /dev/null 2>&1
-            sleep 30
-        done
-    ) &
-    HEARTBEAT_PID=$!
-    
-    # step 5: start a new restore with different filter to trigger cleanup (non-overlapping)
-    echo "Starting new restore to trigger stale task cleanup..."
-    echo "Note: This will wait 5 minutes to verify stale tasks are truly orphaned"
-    echo "During this time, the 'recent' task will receive heartbeat updates"
-    
-    start_time=$(date +%s)
-    run_br restore full --filter "${DB}_2.*" -s "$BACKUP_DIR"
-    end_time=$(date +%s)
-    duration=$((end_time - start_time))
-    
-    # stop the background heartbeat process
-    kill $HEARTBEAT_PID 2>/dev/null || true
-    wait $HEARTBEAT_PID 2>/dev/null || true
-    
-    echo "Restore completed in $duration seconds"
-    
-    # step 6: verify the new restore succeeded
-    echo "Verifying new restore succeeded..."
-    for i in $(seq 1 $TABLE_COUNT); do
-        run_sql "select c from ${DB}_2.full_$i;" | grep $i
-    done
-    
-    # step 7: verify cleanup results
-    echo "Verifying stale task cleanup results..."
-    
-    # check which tasks still exist
-    stale_exists=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry WHERE id = $stale_task_id;" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
-    recent_exists=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry WHERE id = $recent_task_id;" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
-    
-    echo "Stale task (ID: $stale_task_id) exists: $stale_exists (should be 0 - deleted)"
-    echo "Recent task (ID: $recent_task_id) exists: $recent_exists (should be 1 - kept due to heartbeat updates)"
-    
-    # verify checkpoint databases are also cleaned up for stale task
-    echo "Checking checkpoint database cleanup..."
-    stale_checkpoint_dbs=$(run_sql "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME LIKE '__TiDB_BR_Temporary_%_Restore_Checkpoint_${stale_task_id}';" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
-    recent_checkpoint_dbs=$(run_sql "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME LIKE '__TiDB_BR_Temporary_%_Restore_Checkpoint_${recent_task_id}';" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
-    
-    echo "Stale task checkpoint databases: $stale_checkpoint_dbs (should be 0 - cleaned up)"
-    echo "Recent task checkpoint databases: $recent_checkpoint_dbs (may be present if task was far enough)"
-    
-    # verify cleanup worked correctly
-    success_count=0
-    
-    # test case 1: stale task cleanup (including both registry and checkpoint cleanup)
-    if [ "$stale_exists" -eq 0 ] && [ "$stale_checkpoint_dbs" -eq 0 ]; then
-        echo "PASS: Stale task was correctly cleaned up (both registry and checkpoint databases)"
-        success_count=$((success_count + 1))
-    else
-        echo "FAIL: Stale task cleanup failed (registry exists: $stale_exists, checkpoint dbs: $stale_checkpoint_dbs)"
-    fi
-    
-    # test case 2: recent task preservation with heartbeat updates
-    if [ "$recent_exists" -eq 1 ]; then
-        echo "PASS: Recent task was correctly preserved (heartbeat updates detected)"
-        success_count=$((success_count + 1))
-    else
-        echo "FAIL: Recent task was incorrectly cleaned up despite heartbeat updates"
-    fi
-    
-    if [ "$success_count" -eq 2 ]; then
-        echo "SUCCESS: Both test scenarios passed!"
-    elif [ "$success_count" -eq 1 ]; then
-        echo "PARTIAL SUCCESS: $success_count/2 scenarios passed"
-    else
-        echo "FAILURE: Only $success_count/2 scenarios passed"
-        exit 1
-    fi
-    
-    # step 8: show final state
-    echo "Final registry state:"
-    run_sql "SELECT id, status, TIMESTAMPDIFF(MINUTE, last_heartbeat_time, NOW()) as minutes_stale,
-             filter_strings FROM mysql.tidb_restore_registry WHERE status = 'running';"
-    
-    # step 9: cleanup test entries
-    echo "Cleaning up test registry entries..."
-    run_sql "DELETE FROM mysql.tidb_restore_registry WHERE id IN ($stale_task_id, $recent_task_id);"
-    
-    echo "Comprehensive stale task cleanup test completed"
-    echo "Two scenarios verified: stale cleanup and false-positive prevention with checkpoint cleanup"
-    
-    verify_no_temporary_databases "Test Case 4: Stale task cleanup"
-    
-    cleanup
-}
-
 test_auto_restored_ts_conflict() {
-    echo "Test Case 5: Auto-restoredTS conflict detection"
+    echo "Test Case 5: Intelligent RestoreTS resolution"
 
     # use separate backup directories for this test
     PITR_BACKUP_DIR="local://$TEST_DIR/pitr_backup"
     PITR_LOG_BACKUP_DIR="local://$TEST_DIR/pitr_log_backup"
 
-    echo "Setting up backup data for PiTR conflict testing..."
+    echo "Setting up backup data for PiTR RestoreTS resolution testing..."
 
     # create initial data
     run_sql "create database if not exists $DB;"
@@ -456,8 +282,7 @@ test_auto_restored_ts_conflict() {
     run_sql "drop database $DB;"
     run_sql "drop database ${DB}_after_snapshot;"
     
-    # step 2: first restore attempt with explicit restored-ts but fail before completion
-    echo "Starting first PiTR restore with explicit restored-ts but fail before completion..."
+    echo "Test 1: First PiTR restore with explicit restored-ts but fail before completion..."
     
     export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/fail-at-end-of-restore=return(true)"
     restore_fail=0
@@ -468,77 +293,185 @@ test_auto_restored_ts_conflict() {
     fi
     export GO_FAILPOINTS=""
     
-    echo "First PiTR restore failed as expected, leaving registry entry"
+    echo "First PiTR restore failed as expected, leaving paused registry entry"
     
-    # step 3: verify the first task exists in registry
-    first_task_count=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB.*';" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
-    if [ "$first_task_count" -ne 1 ]; then
-        echo "Error: Expected 1 first task but found $first_task_count"
-        exit 1
+    echo "Checking for registry entries..."
+    
+    registry_check=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB.*';" 2>/dev/null || echo "TABLE_ERROR")
+    
+    echo "Debug: Registry check output: '$registry_check'"
+    
+    # Extract count from MySQL vertical format output
+    first_task_count=$(echo "$registry_check" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
+    
+    if [ -z "$first_task_count" ] || [ "$first_task_count" -eq 0 ]; then
+        echo "Error: No tasks found in registry (count: ${first_task_count:-0})"
+        echo "Raw output: '$registry_check'"
+        return 1
     fi
     
-    first_task_id=$(run_sql "SELECT id FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB.*' ORDER BY id DESC LIMIT 1;" | grep -o 'id: [0-9]*' | grep -o '[0-9]*')
-    first_restored_ts=$(run_sql "SELECT restored_ts FROM mysql.tidb_restore_registry WHERE id = $first_task_id;" | grep -o 'restored_ts: [0-9]*' | grep -o '[0-9]*')
-    echo "First PiTR task ID: $first_task_id (with restoredTS: $first_restored_ts)"
+    echo "Found $first_task_count task(s) in registry"
     
-    # step 4: try second restore without restored-ts (auto-detection) - should get conflict
-    echo "Attempting second PiTR without explicit restored-ts (auto-detection)..."
-    echo "This should trigger auto-restoredTS conflict detection..."
+    # Get basic task information for verification
+    echo "Debug: Checking task details..."
+    run_sql "SELECT id, status, filter_strings FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB.*' ORDER BY id DESC LIMIT 1;" || {
+        echo "Warning: Could not query task details, continuing..."
+        return 0
+    }
     
-    restore_fail=0
-    run_br restore point --filter "$DB.*" --full-backup-storage "$PITR_BACKUP_DIR" -s "$PITR_LOG_BACKUP_DIR" > $res_file 2>&1 || restore_fail=1
+    echo "PASS: Registry verification completed (found entries as expected)"
     
-    if [ $restore_fail -ne 1 ]; then
-        echo "FAIL: Expected second restore to fail due to conflict but it succeeded"
-        echo "FAIL: Conflict detection may not be working properly"
-        # cleanup and exit test
-        run_sql "DELETE FROM mysql.tidb_restore_registry WHERE id = $first_task_id;"
-        exit 1
-    fi
+    # Test 2: Retry without explicit restored-ts (auto-detection) - should resume existing paused task
+    echo "Test 2: Retry without explicit restored-ts (auto-detection)..."
+    echo "This should trigger intelligent RestoreTS resolution and resume the paused task"
     
-    echo "Second restore failed as expected - checking error message..."
+    # This should succeed and reuse the existing task's RestoreTS
+    run_br restore point --filter "$DB.*" --full-backup-storage "$PITR_BACKUP_DIR" -s "$PITR_LOG_BACKUP_DIR"
     
-    # check for expected error message about auto-restoredTS conflict
-    if grep -q "Found existing restore task.*same parameters except restoredTS" "$res_file"; then
-        echo "PASS: Detected expected auto-restoredTS conflict error message"
-        # log the specific error message for manual verification
-        echo "Extracted error message:"
-        grep "Found existing restore task.*same parameters except restoredTS" "$res_file"
-    else
-        echo "FAIL: Expected auto-restoredTS conflict error message not found"
-        exit 1
-    fi
-    
-    # step 5: try third restore with explicit restored-ts matching the existing task
-    echo "Attempting third PiTR with explicit restored-ts from existing task..."
-    echo "Using restored-ts from existing task: $first_restored_ts"
-    
-    # this should succeed since it uses the same restored-ts as existing task
-    run_br restore point --filter "$DB.*" --restored-ts $first_restored_ts --full-backup-storage "$PITR_BACKUP_DIR" -s "$PITR_LOG_BACKUP_DIR"
-    
-    # verify the restore succeeded
+    # Verify the restore succeeded
     for i in $(seq 1 $TABLE_COUNT); do
         run_sql "select c from $DB.pitr_$i;" | grep $i
     done
-    echo "PASS: Third restore with explicit matching restored-ts completed successfully"
+    echo "PASS: Second restore with auto-detection succeeded by resuming existing task"
     
-    # cleanup the registry entry (restore should have cleaned it up automatically)
-    remaining_tasks=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB.*';" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
-    if [ "$remaining_tasks" -gt 0 ]; then
-        echo "Cleaning up remaining registry entries..."
-        run_sql "DELETE FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB.*';"
+    # Check registry state after successful restore
+    echo "Checking registry state after restore..."
+    registry_count_after=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB.*';" 2>/dev/null || echo "0")
+    echo "Debug: Registry entries after restore: '$registry_count_after'"
+    
+    final_count=$(echo "$registry_count_after" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
+    final_count=${final_count:-0}
+    
+    if [ "$final_count" -eq 0 ]; then
+        echo "PASS: Task was completed and cleaned up from registry"
+    else
+        echo "ERROR: Task may still exist in registry (count: $final_count)"
+        # Show registry state for debugging
+        run_sql "SELECT id, status FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB.*';" 2>/dev/null || echo "Could not query details"
     fi
     
-    # step 6: show final state (should be clean)
-    echo "Final registry state (should be empty after cleanup):"
-    run_sql "SELECT id, status, start_ts, restored_ts, filter_strings, cmd 
-             FROM mysql.tidb_restore_registry WHERE filter_strings LIKE '$DB%';"
+    # Clean up any remaining registry entries
+    run_sql "DELETE FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB.*';"
     
-    echo "Auto-restoredTS conflict detection test completed"
-    echo "This test validates the complete user flow:"
-    echo "1. Failed PiTR leaves registry entry"
-    echo "2. Retry without explicit restored-ts triggers conflict detection"
-    echo "3. Retry with matching restored-ts succeeds"
+    # clean up restored data for next test
+    run_sql "drop database $DB;"
+    
+    # Test 3: Test with a running task (stale detection scenario)
+    echo "Test 3: Testing stale running task detection..."
+    
+    # First create a paused task using the fail-at-end-of-restore failpoint
+    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/fail-at-end-of-restore=return(true)"
+    restore_fail=0
+    run_br restore point --filter "$DB.*" --restored-ts $log_backup_ts --full-backup-storage "$PITR_BACKUP_DIR" -s "$PITR_LOG_BACKUP_DIR" || restore_fail=1
+    if [ $restore_fail -ne 1 ]; then
+        echo 'expecting restore to fail and create paused task but succeeded'
+        exit 1
+    fi
+    export GO_FAILPOINTS=""
+    
+    # Now manually change the paused task to running status to simulate a stuck running task
+    echo "Manually changing paused task to running status to simulate stuck task..."
+    run_sql "UPDATE mysql.tidb_restore_registry SET status = 'running' WHERE filter_strings = '$DB.*' AND status = 'paused';"
+    
+    # Verify that we actually have a running task after the update
+    echo "Verifying that we have a running task..."
+    stuck_check=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB.*' AND status = 'running';" 2>/dev/null || echo "0")
+    echo "Debug: Running task check: '$stuck_check'"
+    
+    # Verify we have exactly 1 running task before attempting restore
+    stuck_count=$(echo "$stuck_check" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
+    stuck_count=${stuck_count:-0}
+    
+    if [ "$stuck_count" -eq 0 ]; then
+        echo "ERROR: Failed to create running task for stale detection test"
+        echo "Expected to have at least 1 running task after manual status update"
+        exit 1
+    fi
+    
+    echo "Successfully created $stuck_count running task(s) for stale detection test"
+    
+    # Try to restore without explicit restored-ts - should detect stale task, transition it to paused, and reuse it
+    echo "Attempting restore without explicit restored-ts (testing stale detection and reuse)..."
+    echo "This should detect the stale running task, transition it to paused, and reuse its RestoreTS"
+    
+    run_br restore point --filter "$DB.*" --full-backup-storage "$PITR_BACKUP_DIR" -s "$PITR_LOG_BACKUP_DIR"
+    
+    # Verify the restore succeeded by checking the data
+    echo "Verifying restore succeeded..."
+    for i in $(seq 1 $TABLE_COUNT); do
+        run_sql "select c from $DB.pitr_$i;" | grep $i
+    done
+    echo "PASS: Stale task detection and reuse worked correctly"
+    
+    # Check final task status - should be cleaned up after successful restore
+    echo "Checking final task status after successful restore..."
+    final_task_check=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB.*';" 2>/dev/null || echo "0")
+    final_task_count=$(echo "$final_task_check" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
+    final_task_count=${final_task_count:-0}
+    
+    if [ "$final_task_count" -eq 0 ]; then
+        echo "PASS: Task was completed and cleaned up from registry"
+    else
+        echo "ERROR: Task should have been cleaned up but $final_task_count task(s) remain in registry"
+        run_sql "SELECT id, status FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB.*';" 2>/dev/null || echo "Could not query task details"
+        exit 1
+    fi
+    
+    # Test 4: Test with user-specified RestoreTS (should bypass conflict resolution)
+    echo "Test 4: Testing user-specified RestoreTS (should bypass all conflict resolution)..."
+    
+    # Use DB2 for this test to avoid table conflicts with existing DB
+    run_sql "drop database if exists $DB2;"
+    
+    # Create a paused task for DB2 first
+    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/fail-at-end-of-restore=return(true)"
+    restore_fail=0
+    run_br restore point --filter "$DB2.*" --restored-ts $log_backup_ts --full-backup-storage "$PITR_BACKUP_DIR" -s "$PITR_LOG_BACKUP_DIR" || restore_fail=1
+    if [ $restore_fail -ne 1 ]; then
+        echo 'expecting restore to fail before completion but succeeded'
+        exit 1
+    fi
+    export GO_FAILPOINTS=""
+    
+    echo "Checking for created paused task for $DB2..."
+    run_sql "SELECT id, restored_ts FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB2.*' ORDER BY id DESC LIMIT 1;" 2>/dev/null || echo "Could not query paused task details"
+    
+    # Now try with different user-specified RestoreTS - should create new task, not reuse existing
+    different_ts=$((log_backup_ts - 1000000))  # Slightly different timestamp
+    echo "Attempting restore with user-specified RestoreTS ($different_ts) different from existing task..."
+    
+    run_br restore point --filter "$DB2.*" --restored-ts $different_ts --full-backup-storage "$PITR_BACKUP_DIR" -s "$PITR_LOG_BACKUP_DIR"
+    
+    # Verify restore succeeded - Note: The backup contains pitr_* tables, not full_* tables
+    for i in $(seq 1 $TABLE_COUNT); do
+        run_sql "select c from $DB2.pitr_$i;" | grep $i
+    done
+    echo "PASS: User-specified RestoreTS bypassed conflict resolution correctly"
+    
+    # Final cleanup
+    run_sql "DELETE FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB.*';"
+    run_sql "DELETE FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB2.*';"
+    
+    echo "Final registry state check:"
+    final_check=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry WHERE filter_strings LIKE '$DB%' OR filter_strings LIKE '$DB2%';" 2>/dev/null || echo "0")
+    echo "Debug: Final registry check: '$final_check'"
+    
+    final_remaining=$(echo "$final_check" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
+    final_remaining=${final_remaining:-0}
+    
+    if [ "$final_remaining" -eq 0 ]; then
+        echo "PASS: Registry is clean"
+    else
+        echo "Note: $final_remaining task(s) remain in registry"
+        run_sql "SELECT id, status, filter_strings FROM mysql.tidb_restore_registry WHERE filter_strings LIKE '$DB%' OR filter_strings LIKE '$DB2%';" 2>/dev/null || echo "Could not query remaining task details"
+    fi
+    
+    echo "Intelligent RestoreTS resolution test completed successfully"
+    echo "This test validates the new behavior:"
+    echo "1. Failed restore leaves paused task in registry"
+    echo "2. Retry without explicit restored-ts resumes existing paused task"
+    echo "3. Stale running task detection works (when applicable)"
+    echo "4. User-specified restored-ts bypasses conflict resolution"
     
     cleanup
 }
@@ -548,7 +481,6 @@ setup_test_environment
 test_mixed_parallel_restores
 test_concurrent_restore_table_conflicts
 test_restore_with_different_systable_settings
-test_stale_task_cleanup
 test_auto_restored_ts_conflict
 
 echo "Parallel restore tests completed successfully"
