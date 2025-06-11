@@ -228,7 +228,8 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 
 	// If TiDB_SMJ hint is existed, it should consider enforce merge join,
 	// because we can't trust lhsChildProperty completely.
-	if (p.PreferJoinType & h.PreferMergeJoin) > 0 {
+	if (p.PreferJoinType&h.PreferMergeJoin) > 0 ||
+		shouldSkipHashJoin(p) { // if hash join is not allowed, generate as many other types of join as possible to avoid 'cant-find-plan' error.
 		joins = append(joins, getEnforcedMergeJoin(p, prop, schema, statsInfo)...)
 	}
 
@@ -372,7 +373,7 @@ func shouldSkipHashJoin(p *logicalop.LogicalJoin) bool {
 	return (p.PreferJoinType&h.PreferNoHashJoin) > 0 || (p.SCtx().GetSessionVars().DisableHashJoin)
 }
 
-func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, hasOtherChoices bool) (joins []base.PhysicalPlan, forced bool) {
+func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (joins []base.PhysicalPlan, forced bool) {
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return
 	}
@@ -423,13 +424,6 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, has
 	forced = (p.PreferJoinType&h.PreferHashJoin > 0) || forceLeftToBuild || forceRightToBuild
 	shouldSkipHashJoin := shouldSkipHashJoin(p)
 	if !forced && shouldSkipHashJoin {
-		if !hasOtherChoices {
-			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
-				"NO_HASH_JOIN hint or tidb_opt_enable_hash_join system variable is set, " +
-					"but no other join methods are available, so HASH_JOIN is used.")
-			joins = append(joins, getHashJoin(p, prop, 1, false))
-			return
-		}
 		return nil, false
 	} else if forced && shouldSkipHashJoin {
 		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
@@ -2074,7 +2068,7 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 		joins = append(joins, indexJoins...)
 	}
 
-	hashJoins, forced := getHashJoins(p, prop, len(joins) > 0)
+	hashJoins, forced := getHashJoins(p, prop)
 	if forced && len(hashJoins) > 0 {
 		return hashJoins, true, nil
 	}
