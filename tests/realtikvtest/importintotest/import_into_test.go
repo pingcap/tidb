@@ -1298,7 +1298,8 @@ func (s *mockGCSSuite) TestImportIntoWithFK() {
 func (s *mockGCSSuite) TestCancelImportInto() {
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/lightning/mydump/mockSlowMakeTableRegions", "sleep(1000)")
 
-	for i := range 32 {
+	// Create 64 files so that MakeTableRegions will cost about 32 seconds to finish with THREAD=1.
+	for i := range 64 {
 		content := fmt.Appendf(nil, "%d,%d", i, i)
 		s.server.CreateObject(fakestorage.Object{
 			ObjectAttrs: fakestorage.ObjectAttrs{
