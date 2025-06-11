@@ -662,7 +662,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if supportMultiIngest && weight > 1 {
+		if supportMultiIngest {
 			req := &sst.MultiIngestRequest{
 				Context: reqCtx,
 				Ssts:    ingestMetas,
