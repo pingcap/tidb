@@ -112,9 +112,23 @@ func (b *Builder) applyCreateTables(m meta.Reader, diff *model.SchemaDiff) ([]in
 	return b.applyAffectedOpts(m, make([]int64, 0, len(diff.AffectedOpts)), diff, model.ActionCreateTable)
 }
 
+// equalPlacementPolicy compares two placement policy references for equality
+func equalPlacementPolicy(a, b *model.PolicyRefInfo) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.ID == b.ID && a.Name.L == b.Name.L
+}
+
 func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	schemaID := diff.SchemaID
 	tableID := diff.TableID
+	oldSchemaID := diff.OldSchemaID
+	oldTableID := diff.OldTableID
+
 	// Check if schema exists in kv.
 	dbInfo, err := m.GetDatabase(schemaID)
 	if err != nil {
@@ -123,21 +137,56 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 	// Schema doesn't exist in kv, drop it from infoschema.
 	if dbInfo == nil {
 		schemaDiff := &model.SchemaDiff{
-			Version:  diff.Version,
-			Type:     model.ActionDropSchema,
-			SchemaID: schemaID,
+			Version:     diff.Version,
+			Type:        model.ActionDropSchema,
+			SchemaID:    schemaID,
+			OldSchemaID: oldSchemaID,
+			OldTableID:  oldTableID,
 		}
 		return applyDropSchema(b, schemaDiff), nil
 	}
 	// Schema exists in kv but not in infoschema, create it to infoschema.
 	if _, ok := b.SchemaByID(schemaID); !ok {
 		schemaDiff := &model.SchemaDiff{
-			Version:  diff.Version,
-			Type:     model.ActionCreateSchema,
-			SchemaID: schemaID,
+			Version:     diff.Version,
+			Type:        model.ActionCreateSchema,
+			SchemaID:    schemaID,
+			OldSchemaID: oldSchemaID,
+			OldTableID:  oldTableID,
 		}
 		if err := applyCreateSchema(b, m, schemaDiff); err != nil {
 			return nil, errors.Trace(err)
+		}
+	} else {
+		currentSchema, _ := b.SchemaByID(schemaID)
+
+		needsCharsetUpdate := currentSchema.Charset != dbInfo.Charset || currentSchema.Collate != dbInfo.Collate
+		needsPlacementUpdate := !equalPlacementPolicy(currentSchema.PlacementPolicyRef, dbInfo.PlacementPolicyRef)
+
+		if needsCharsetUpdate {
+			charsetDiff := &model.SchemaDiff{
+				Version:     diff.Version,
+				Type:        model.ActionModifySchemaCharsetAndCollate,
+				SchemaID:    schemaID,
+				OldSchemaID: oldSchemaID,
+				OldTableID:  oldTableID,
+			}
+			if err := b.applyModifySchemaCharsetAndCollate(m, charsetDiff); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
+		if needsPlacementUpdate {
+			placementDiff := &model.SchemaDiff{
+				Version:     diff.Version,
+				Type:        model.ActionModifySchemaDefaultPlacement,
+				SchemaID:    schemaID,
+				OldSchemaID: oldSchemaID,
+				OldTableID:  oldTableID,
+			}
+			if err := b.applyModifySchemaDefaultPlacement(m, placementDiff); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 	}
 
@@ -153,19 +202,23 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 	// Table not exists in kv, drop it from infoschema.
 	if tableInfo == nil {
 		schemaDiff := &model.SchemaDiff{
-			Version:  diff.Version,
-			Type:     model.ActionDropTable,
-			SchemaID: schemaID,
-			TableID:  tableID,
+			Version:     diff.Version,
+			Type:        model.ActionDropTable,
+			SchemaID:    schemaID,
+			TableID:     tableID,
+			OldSchemaID: oldSchemaID,
+			OldTableID:  oldTableID,
 		}
 		return applyDropTableOrPartition(b, m, schemaDiff)
 	}
 	// default update table
 	schemaDiff := &model.SchemaDiff{
-		Version:  diff.Version,
-		Type:     model.ActionCreateTable,
-		SchemaID: schemaID,
-		TableID:  tableID,
+		Version:     diff.Version,
+		Type:        model.ActionCreateTable,
+		SchemaID:    schemaID,
+		TableID:     tableID,
+		OldSchemaID: oldSchemaID,
+		OldTableID:  oldTableID,
 	}
 	return applyDefaultAction(b, m, schemaDiff)
 }

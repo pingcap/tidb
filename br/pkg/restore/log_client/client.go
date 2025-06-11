@@ -1897,27 +1897,61 @@ func PutRawKvWithRetry(ctx context.Context, client *rawkv.RawKVBatchClient, key,
 func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *stream.SchemasReplace) error {
 	deletedTablesMap := schemasReplace.GetDeletedTables()
 
-	deletedCount := 0
+	deletedDatabaseCount := 0
+	deletedTableCount := 0
 	for dbID, tableIDsSet := range deletedTablesMap {
-		for tableID := range tableIDsSet {
+		if len(tableIDsSet) == 0 {
+			// handle database deletion
 			args := &model.RefreshMetaArgs{
 				SchemaID: dbID,
-				TableID:  tableID,
+				TableID:  0, // 0 for database-only refresh
 			}
-			log.Info("refreshing deleted table meta", zap.Int64("schemaID", dbID),
-				zap.Any("tableID", tableID))
+			log.Info("refreshing deleted database meta", zap.Int64("schemaID", dbID))
 			if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
-				return errors.Annotatef(err,
-					"failed to refresh meta for deleted table with schemaID=%d, tableID=%d", dbID, tableID)
+				return errors.Annotatef(err, "failed to refresh meta for deleted database with schemaID=%d", dbID)
 			}
-			deletedCount++
+			deletedDatabaseCount++
+		} else {
+			// handle table deletions
+			for tableID := range tableIDsSet {
+				args := &model.RefreshMetaArgs{
+					SchemaID: dbID,
+					TableID:  tableID,
+				}
+				log.Info("refreshing deleted table meta", zap.Int64("schemaID", dbID),
+					zap.Any("tableID", tableID))
+				if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
+					return errors.Annotatef(err,
+						"failed to refresh meta for deleted table with schemaID=%d, tableID=%d", dbID, tableID)
+				}
+				deletedTableCount++
+			}
 		}
 	}
-	log.Info("refreshed metadata for deleted tables", zap.Int("deletedTableCount", deletedCount))
+	log.Info("refreshed metadata for deleted items",
+		zap.Int("deletedDatabaseCount", deletedDatabaseCount),
+		zap.Int("deletedTableCount", deletedTableCount))
 
 	regularCount := 0
+	databaseOnlyCount := 0
+
 	for _, dbReplace := range schemasReplace.DbReplaceMap {
 		if dbReplace.FilteredOut {
+			continue
+		}
+
+		// If database has no tables, refresh database-only metadata
+		if len(dbReplace.TableMap) == 0 {
+			args := &model.RefreshMetaArgs{
+				SchemaID: dbReplace.DbID,
+				TableID:  0, // tableID = 0 for database-only refresh
+			}
+			log.Info("refreshing database-only meta", zap.Int64("schemaID", dbReplace.DbID))
+			if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
+				return errors.Annotatef(err, "failed to refresh meta for database with schemaID=%d",
+					dbReplace.DbID)
+			}
+			databaseOnlyCount++
 			continue
 		}
 
@@ -1948,5 +1982,6 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 	}
 
 	log.Info("refreshed metadata for regular tables", zap.Int("regularTableCount", regularCount))
+	log.Info("refreshed metadata for database-only schemas", zap.Int("databaseOnlyCount", databaseOnlyCount))
 	return nil
 }

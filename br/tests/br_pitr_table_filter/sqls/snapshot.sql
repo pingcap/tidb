@@ -5,7 +5,6 @@ create table test_snapshot_db_to_be_deleted.t1 (id int);
 -- ActionCreateTable
 create database test_snapshot_db_create;
 
--- ActionCreateTables
 -- ActionDropTable
 create table test_snapshot_db_create.t_to_be_deleted (id int);
 
@@ -24,14 +23,19 @@ create table test_snapshot_db_create.t_drop_index (id int, key i1(id));
 create table test_snapshot_db_create.t_drop_unique_key (id int, unique key i1(id));
 
 -- ActionAddForeignKey
+-- create table test_snapshot_db_create.t_fk_parent (id int primary key, name varchar(50));
+-- create table test_snapshot_db_create.t_fk_child_add (id int primary key, parent_id int);
+
 -- ActionDropForeignKey
+-- TODO: Known issue - DROP FOREIGN KEY conflicts with auto-created indexes during PITR restore
+-- create table test_snapshot_db_create.t_fk_child_drop (id int primary key, parent_id int, constraint fk_to_be_dropped foreign key (parent_id) references test_snapshot_db_create.t_fk_parent(id));
+
 -- ActionTruncateTable
 create table test_snapshot_db_create.t_to_be_truncated (id int);
 
 -- ActionModifyColumn
 create table test_snapshot_db_create.t_modify_column (id int);
 
--- ActionRebaseAutoID
 -- ActionRenameTable
 create table test_snapshot_db_create.t_rename_a (id int);
 
@@ -42,31 +46,35 @@ create table test_snapshot_db_create.t_renames_aa (id int);
 create table test_snapshot_db_create.t_renames_bb (id int);
 
 -- ActionSetDefaultValue
--- ActionShardRowID
+create table test_snapshot_db_create.t_set_default (id int, status varchar(20));
+
 -- ActionModifyTableComment
-create table test_snapshot_db_create.t_modify_comment (id int) comment='before modify column';
+create table test_snapshot_db_create.t_modify_comment (id int) comment='before modify comment';
 
 -- ActionRenameIndex
 create table test_snapshot_db_create.t_rename_index (id int, index i1 (id));
 
 -- ActionAddTablePartition
+create table test_snapshot_db_create.t_add_partition (id int, name varchar(50)) partition by range (id) (partition p0 values less than (100));
 
 -- ActionDropTablePartition
+create table test_snapshot_db_create.t_drop_partition (id int, name varchar(50)) partition by range (id) (
+    partition p0 values less than (100),
+    partition p1 values less than (200),
+    partition p_to_be_dropped values less than (300)
+);
 
 -- ActionCreateView
--- ActionModifyTableCharsetAndCollate
-
--- ActionTruncateTablePartition
+create table test_snapshot_db_create.t_view_base (id int, name varchar(50));
+create view test_snapshot_db_create.v_view_to_be_dropped as select id, name from test_snapshot_db_create.t_view_base;
 
 -- ActionDropView
--- ActionRecoverTable
--- ActionModifySchemaCharsetAndCollate
+-- (v_view_to_be_dropped will be dropped in log.sql)
 
--- ActionLockTable
--- ActionUnlockTable
--- ActionRepairTable
--- ActionSetTiFlashReplica
--- ActionUpdateTiFlashReplicaStatus
+-- ActionModifyTableCharsetAndCollate
+create table test_snapshot_db_create.t_modify_charset (id int, name varchar(50)) charset=utf8mb4 collate=utf8mb4_bin;
+
+
 -- ActionAddPrimaryKey
 create table test_snapshot_db_create.t_add_primary_key (id int);
 
@@ -74,14 +82,52 @@ create table test_snapshot_db_create.t_add_primary_key (id int);
 create table test_snapshot_db_create.t_drop_primary_key (id int, primary key (id) NONCLUSTERED);
 
 -- ActionCreateSequence
+create sequence test_snapshot_db_create.seq_to_be_dropped start with 1 increment by 1;
+create sequence test_snapshot_db_create.seq_to_be_altered start with 1 increment by 1;
+
 -- ActionAlterSequence
+-- (seq_to_be_altered will be altered in log.sql)
+
 -- ActionDropSequence
+-- (seq_to_be_dropped will be dropped in log.sql)
+
+-- ActionAddCheckConstraint
+create table test_snapshot_db_create.t_add_check (id int, age int);
+
+-- ActionDropCheckConstraint
+create table test_snapshot_db_create.t_drop_check (id int, age int, constraint chk_age_to_be_dropped check (age >= 0 and age <= 120));
+
+-- ActionModifySchemaCharsetAndCollate
+create database test_snapshot_db_charset default character set = utf8mb4 collate = utf8mb4_bin;
+
+-- ActionTruncateTablePartition
+create table test_snapshot_db_create.t_truncate_partition (id int, name varchar(50)) partition by range (id) (
+    partition p0 values less than (100),
+    partition p_to_be_truncated values less than (200)
+);
+
+-- ActionLockTable
+create table test_snapshot_db_create.t_to_be_locked (id int, data varchar(100));
+
+-- ActionUnlockTable
+-- (tables will be unlocked in log.sql)
+
+-- ActionAlterIndexVisibility
+create table test_snapshot_db_create.t_index_visibility (id int, name varchar(50), index idx_name (name));
+
+-- === UNIMPLEMENTED DDL OPERATIONS ===
+-- The following DDL operations are not yet implemented in this test:
+
+-- ActionCreateTables
+-- ActionRebaseAutoID  
+-- ActionShardRowID
+-- ActionRecoverTable
+-- ActionRepairTable
+-- ActionSetTiFlashReplica
+-- ActionUpdateTiFlashReplicaStatus
 -- ActionModifyTableAutoIDCache
 -- ActionRebaseAutoRandomBase
--- ActionAlterIndexVisibility
 -- ActionExchangeTablePartition
--- ActionAddCheckConstraint
--- ActionDropCheckConstraint
 -- ActionAlterCheckConstraint
 -- ActionAlterTableAttributes
 -- ActionAlterTablePartitionPlacement
