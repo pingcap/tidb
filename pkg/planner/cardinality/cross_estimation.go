@@ -90,25 +90,29 @@ func AdjustRowCountForIndexScanByLimit(sctx planctx.PlanContext,
 	if ok {
 		rowCount = count
 	} else if abs := math.Abs(corr); abs < 1 {
-		// If OptOrderingIdxSelRatio is enabled - estimate the difference between index and table filtering, as this represents
-		// the possible scan range when LIMIT rows will be found. orderRatio is the estimated percentage of that range when the first
-		// row is expected to be found. Index filtering applies orderRatio twice. Once found - rows are estimated to be clustered (expectedCnt).
-		// This formula is to bias away from non-filtering (or poorly filtering) indexes that provide order due, where filtering exists
-		// outside of that index. Such plans have high risk since we cannot estimate when rows will be found.
-		orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
-		sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
-		if dsStatsInfo.RowCount < path.CountAfterAccess && orderRatio >= 0 {
-			rowsToMeetFirst := (((path.CountAfterAccess - path.CountAfterIndex) * orderRatio) + (path.CountAfterIndex - dsStatsInfo.RowCount)) * orderRatio
-			rowCount = rowsToMeetFirst + expectedCnt
-		} else {
-			// Assume rows are linearly distributed throughout the range - for example: selectivity 0.1 assumes that a
-			// qualified row is found every 10th row.
-			correlationFactor := math.Pow(1-abs, float64(sctx.GetSessionVars().CorrelationExpFactor))
-			selectivity := dsStatsInfo.RowCount / rowCount
-			rowCount = min(expectedCnt/selectivity/correlationFactor, rowCount)
-		}
+		// Assume rows are linearly distributed throughout the range - for example: selectivity 0.1 assumes that a
+		// qualified row is found every 10th row.
+		correlationFactor := math.Pow(1-abs, float64(sctx.GetSessionVars().CorrelationExpFactor))
+		selectivity := dsStatsInfo.RowCount / rowCount
+		rowCount = min(expectedCnt/selectivity/correlationFactor, rowCount)
 	}
-	return rowCount
+	// Estimate the difference between each stage of filtering, as this represents the possible scan range when
+	// the LIMIT rows will be found. orderRatio is the estimated percentage of that range when the first
+	// row is expected to be found. This formula is to bias away from non-filtering (or poorly filtering)
+	// indexes that provide order, where filtering exists outside of that index or table.
+	// Such plans have high risk since we cannot estimate when rows will be found.
+	orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
+	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
+	rowsToMeetFirst := 0.0
+	if path.CountAfterAccess > rowCount && orderRatio >= 0 {
+		if path.CountAfterIndex > 0 && path.CountAfterAccess > path.CountAfterIndex {
+			rowsToMeetFirst = (path.CountAfterAccess - path.CountAfterIndex) + (path.CountAfterIndex - min(dsStatsInfo.RowCount, expectedCnt))
+		} else if path.CountAfterAccess > expectedCnt {
+			rowsToMeetFirst = (path.CountAfterAccess - expectedCnt)
+		}
+		rowsToMeetFirst = max(0, (rowsToMeetFirst-rowCount)) * orderRatio
+	}
+	return rowCount + rowsToMeetFirst
 }
 
 // crossEstimateIndexRowCount estimates row count of index scan using histogram of another column which is in TableFilters/IndexFilters
