@@ -19,15 +19,11 @@ import (
 	"encoding/json"
 	"strconv"
 
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -88,18 +84,13 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 	callLog := log.BeginTask(logger, "cleanup global sorted data")
 	defer callLog.End(zap.InfoLevel, nil)
 
-	controller, err := buildController(&taskMeta.Plan, taskMeta.Stmt)
+	store, err := importer.GetSortStore(ctx, taskMeta.Plan.CloudStorageURI)
 	if err != nil {
-		logger.Warn("failed to build controller", zap.Error(err))
+		logger.Warn("failed to create store", zap.Error(err))
 		return err
 	}
-	defer controller.Close()
-	if err = controller.InitDataStore(ctx); err != nil {
-		logger.Warn("failed to init data store", zap.Error(err))
-		return err
-	}
-	if err = external.CleanUpFiles(ctx, controller.GlobalSortStore,
-		strconv.Itoa(int(task.ID))); err != nil {
+	defer store.Close()
+	if err = external.CleanUpFiles(ctx, store, strconv.Itoa(int(task.ID))); err != nil {
 		logger.Warn("failed to clean up files of task", zap.Error(err))
 		return err
 	}
