@@ -54,9 +54,10 @@ func (col *CorrelatedColumn) SafeToShareAcrossSession() bool {
 
 // Clone implements Expression interface.
 func (col *CorrelatedColumn) Clone() Expression {
+	expr := col.Column.Clone().(*Column)
 	return &CorrelatedColumn{
-		Column: col.Column,
-		Data:   col.Data,
+		Column: *expr,
+		Data:   col.Data.Clone(),
 	}
 }
 
@@ -637,6 +638,7 @@ func (col *Column) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.Vect
 // Clone implements Expression interface.
 func (col *Column) Clone() Expression {
 	newCol := *col
+	newCol.RetType = col.RetType.Clone()
 	if col.hashcode != nil {
 		newCol.hashcode = make([]byte, len(col.hashcode))
 		copy(newCol.hashcode, col.hashcode)
