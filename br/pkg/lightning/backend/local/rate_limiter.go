@@ -41,9 +41,6 @@ type ingestLimiterPerStore struct {
 }
 
 func newIngestLimiter(ctx context.Context, maxReqInFlight, maxReqPerSec int) *ingestLimiter {
-	if maxReqInFlight == 0 || maxReqPerSec == 0 {
-		return &ingestLimiter{}
-	}
 	return &ingestLimiter{
 		ctx:            ctx,
 		maxReqInFlight: maxReqInFlight,
@@ -53,35 +50,48 @@ func newIngestLimiter(ctx context.Context, maxReqInFlight, maxReqPerSec int) *in
 }
 
 func (l *ingestLimiter) Acquire(storeID uint64, n uint) error {
-	if l.ctx == nil {
+	if l.maxReqInFlight == 0 && l.maxReqPerSec == 0 {
 		return nil
-	}
-	v, _ := l.limiters.LoadOrStore(storeID, &ingestLimiterPerStore{
-		sem:     semaphore.NewWeighted(int64(l.maxReqInFlight)),
-		limiter: rate.NewLimiter(rate.Limit(l.maxReqPerSec), l.maxReqPerSec),
-	})
-	ilps := v.(*ingestLimiterPerStore)
-	if err := ilps.limiter.WaitN(l.ctx, int(n)); err != nil {
-		return errors.Trace(err)
-	}
-	return ilps.sem.Acquire(l.ctx, int64(n))
-}
-
-func (l *ingestLimiter) Release(storeID uint64, n uint) {
-	if l.ctx == nil {
-		return
 	}
 	v, ok := l.limiters.Load(storeID)
 	if !ok {
-		return
+		v, _ = l.limiters.LoadOrStore(storeID, &ingestLimiterPerStore{
+			sem:     semaphore.NewWeighted(int64(l.maxReqInFlight)),
+			limiter: rate.NewLimiter(rate.Limit(l.maxReqPerSec), l.maxReqPerSec),
+		})
 	}
 	ilps := v.(*ingestLimiterPerStore)
-	ilps.sem.Release(int64(n))
+	if l.maxReqPerSec > 0 {
+		if err := ilps.limiter.WaitN(l.ctx, int(n)); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if l.maxReqInFlight > 0 {
+		return ilps.sem.Acquire(l.ctx, int64(n))
+	}
+	return nil
+}
+
+func (l *ingestLimiter) Release(storeID uint64, n uint) {
+	if l.maxReqInFlight > 0 {
+		v, ok := l.limiters.Load(storeID)
+		if !ok {
+			return
+		}
+		ilps := v.(*ingestLimiterPerStore)
+		ilps.sem.Release(int64(n))
+	}
 }
 
 func (l *ingestLimiter) Burst() int {
-	if l.ctx == nil {
+	if l.maxReqInFlight == 0 && l.maxReqPerSec == 0 {
 		return math.MaxInt
+	}
+	if l.maxReqInFlight == 0 {
+		return l.maxReqPerSec
+	}
+	if l.maxReqPerSec == 0 {
+		return l.maxReqInFlight
 	}
 	return min(l.maxReqPerSec, l.maxReqInFlight)
 }

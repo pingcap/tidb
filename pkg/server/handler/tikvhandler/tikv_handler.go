@@ -2110,8 +2110,8 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			return
 		}
 		newValue := payload.Value
-		if newValue <= 0 {
-			handler.WriteError(w, errors.New("value must be greater than 0"))
+		if newValue < 0 {
+			handler.WriteError(w, errors.New("value must be >= 0"))
 			return
 		}
 		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), true, func(_ context.Context, txn kv.Transaction) error {

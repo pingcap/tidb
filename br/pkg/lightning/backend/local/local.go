@@ -158,7 +158,7 @@ func InitializeGlobalIngestConcurrency(m *meta.Meta, logger *zap.Logger) error {
 	if err != nil {
 		return errors.Annotate(err, "failed to read maxIngestConcurrency from meta store")
 	}
-	if isNull || valInt <= 0 {
+	if isNull {
 		valInt = defaultMaxIngestConcurrency
 		logger.Info("maxIngestConcurrency not found in meta store, initialized to default and persisted",
 			zap.Int("value", defaultMaxIngestConcurrency))
@@ -175,7 +175,7 @@ func InitializeGlobalIngestPerSec(m *meta.Meta, logger *zap.Logger) error {
 	if err != nil {
 		return errors.Annotate(err, "failed to read maxIngestPerSec from meta store")
 	}
-	if isNull || valInt <= 0 {
+	if isNull {
 		valInt = defaultMaxIngestPerSec
 		logger.Info("maxIngestPerSec not found in meta store, initialized to default and persisted",
 			zap.Int("value", defaultMaxIngestPerSec))
@@ -198,18 +198,12 @@ func GetMaxBatchSplitRanges() int {
 // GetMaxIngestConcurrency returns the current maximum number of concurrent ingest requests.
 func GetMaxIngestConcurrency() int {
 	val := CurrentMaxIngestConcurrency.Load()
-	if val == 0 {
-		return defaultMaxIngestConcurrency
-	}
 	return int(val)
 }
 
 // GetMaxIngestPerSec returns the current maximum number of ingest requests per second.
 func GetMaxIngestPerSec() int {
 	val := CurrentMaxIngestPerSec.Load()
-	if val == 0 {
-		return defaultMaxIngestPerSec
-	}
 	return int(val)
 }
 
