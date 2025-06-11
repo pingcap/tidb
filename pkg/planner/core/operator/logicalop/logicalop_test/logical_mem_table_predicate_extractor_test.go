@@ -1051,14 +1051,17 @@ func TestInspectionRuleTableExtractor(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
-		require.NotNil(t, logicalMemTable.Extractor)
-
-		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionRuleTableExtractor)
-		if len(ca.tps) > 0 {
-			require.EqualValues(t, ca.tps, clusterConfigExtractor.Types, "SQL: %v", ca.sql)
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		if ok {
+			require.NotNil(t, logicalMemTable.Extractor, ca.sql)
+			clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionRuleTableExtractor)
+			if len(ca.tps) > 0 {
+				require.EqualValues(t, ca.tps, clusterConfigExtractor.Types, "SQL: %v", ca.sql)
+			}
+			require.Equal(t, ca.skip, clusterConfigExtractor.SkipRequest, "SQL: %v", ca.sql)
+		} else {
+			require.True(t, ca.skip, ca.sql)
 		}
-		require.Equal(t, ca.skip, clusterConfigExtractor.SkipRequest, "SQL: %v", ca.sql)
 	}
 }
 
