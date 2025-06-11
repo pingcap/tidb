@@ -192,7 +192,9 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 	timeout := false
 	if e.explain.Analyze {
 		if err = e.executeAnalyzeExec(ctx); err != nil {
-			if strings.Contains(err.Error(), "maximum statement execution time exceeded") {
+			errMsg := strings.ToLower(err.Error())
+			if strings.Contains(errMsg, "maximum statement execution time exceeded") ||
+				strings.Contains(errMsg, "context canceled") {
 				e.Ctx().GetSessionVars().SQLKiller.Reset()
 				timeout = true
 			} else {
