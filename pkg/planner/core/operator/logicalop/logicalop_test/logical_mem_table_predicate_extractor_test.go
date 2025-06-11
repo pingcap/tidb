@@ -1444,7 +1444,7 @@ func TestTiDBHotRegionsHistoryTableExtractor(t *testing.T) {
 				require.EqualValues(t, ca.peerIDs, hotRegionsHistoryExtractor.PeerIDs, "SQL: %v", ca.sql)
 			}
 		} else {
-			require.True(t, ca.skipRequest.ca.sql)
+			require.True(t, ca.skipRequest, ca.sql)
 		}
 	}
 }
