@@ -434,6 +434,7 @@ func Compress(input []byte) string {
 	return base64.StdEncoding.EncodeToString(compressBytes)
 }
 
+// Decompress decodes the input from base64 then decompresses it with snappy.
 func Decompress(str string) ([]byte, error) {
 	decodeBytes, err := base64.StdEncoding.DecodeString(str)
 	if err != nil {
