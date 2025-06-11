@@ -234,11 +234,11 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 				}
 				buffer.WriteString(expr.StringWithCtx(evalCtx, redactMode))
 			}
-			buffer.WriteString("], ")
+			buffer.WriteString("]")
 		}
 	}
 	if p.Lock {
-		if p.AccessConditions != nil {
+		if p.AccessConditions != nil || p.Handle != nil {
 			buffer.WriteString(", lock")
 		} else {
 			buffer.WriteString("lock")
