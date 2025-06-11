@@ -3782,6 +3782,10 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 	if len(v.Schema().Columns) == 0 && len(v.GetTablePlan().Schema().Columns) > 0 {
 		v.SetSchema(v.GetTablePlan().Schema())
 	}
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	if v.StoreType == kv.TiFlash {
+		sctx.IsTiFlash.Store(true)
+	}
 	useMPP := useMPPExecution(b.ctx, v)
 	useTiFlashBatchCop := v.ReadReqType == plannercore.BatchCop
 	useTiFlash := useMPP || useTiFlashBatchCop
@@ -3809,7 +3813,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 	}
 
 	ret.ranges = ts.Ranges
-	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
 	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
@@ -3831,9 +3834,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 	if err != nil {
 		b.err = err
 		return nil
-	}
-	if v.StoreType == kv.TiFlash {
-		sctx.IsTiFlash.Store(true)
 	}
 
 	if len(partitions) == 0 {
