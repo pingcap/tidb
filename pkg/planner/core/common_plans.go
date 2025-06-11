@@ -1131,7 +1131,7 @@ func (e *Explain) explainOpRecursivelyInJSONFormat(flatOp *FlatOperator, flats F
 	} else {
 		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
 	}
-	explainID := flatOp.Origin.ExplainID().String() + flatOp.Label.String()
+	explainID := flatOp.ExplainID().String() + flatOp.Label.String()
 
 	cur := e.prepareOperatorInfoForJSONFormat(flatOp.Origin, taskTp, explainID)
 
@@ -1354,7 +1354,7 @@ func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, brie
 		stmtCtx.IgnoreExplainIDSuffix = true
 
 		for i, op := range ops {
-			operators[i].BriefName = op.Origin.ExplainID().String()
+			operators[i].BriefName = op.ExplainID().String()
 			switch op.Origin.(type) {
 			case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalHashJoin, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalMergeJoin:
 				operators[i].BriefOperatorInfo = op.Origin.ExplainInfo()
