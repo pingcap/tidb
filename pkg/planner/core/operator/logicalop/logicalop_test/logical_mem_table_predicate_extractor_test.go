@@ -244,7 +244,6 @@ func TestClusterConfigTableExtractor(t *testing.T) {
 			require.EqualValues(t, ca.instances, clusterConfigExtractor.Instances, "SQL: %v", ca.sql)
 			require.EqualValues(t, ca.skipRequest, clusterConfigExtractor.SkipRequest, "SQL: %v", ca.sql)
 		}
-
 	}
 }
 
