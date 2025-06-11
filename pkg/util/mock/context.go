@@ -682,7 +682,6 @@ func newContext() *Context {
 	vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	vars.EnablePaging = vardef.DefTiDBEnablePaging
 	vars.MinPagingSize = vardef.DefMinPagingSize
-	vars.CostModelVersion = vardef.DefTiDBCostModelVer
 	vars.EnableChunkRPC = true
 	vars.DivPrecisionIncrement = vardef.DefDivPrecisionIncrement
 	if err := sctx.GetSessionVars().SetSystemVar(vardef.MaxAllowedPacket, "67108864"); err != nil {

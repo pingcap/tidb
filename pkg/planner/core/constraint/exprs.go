@@ -16,11 +16,11 @@ package constraint
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 )
 
 // DeleteTrueExprs deletes the surely true expressions
-func DeleteTrueExprs(p base.LogicalPlan, conds []expression.Expression) []expression.Expression {
+func DeleteTrueExprs(buildCtx expression.BuildContext, stmtCtx *stmtctx.StatementContext, conds []expression.Expression) []expression.Expression {
 	newConds := make([]expression.Expression, 0, len(conds))
 	for _, cond := range conds {
 		con, ok := cond.(*expression.Constant)
@@ -28,12 +28,11 @@ func DeleteTrueExprs(p base.LogicalPlan, conds []expression.Expression) []expres
 			newConds = append(newConds, cond)
 			continue
 		}
-		if expression.MaybeOverOptimized4PlanCache(p.SCtx().GetExprCtx(), con) {
+		if expression.MaybeOverOptimized4PlanCache(buildCtx, con) {
 			newConds = append(newConds, cond)
 			continue
 		}
-		sc := p.SCtx().GetSessionVars().StmtCtx
-		if isTrue, err := con.Value.ToBool(sc.TypeCtx()); err == nil && isTrue == 1 {
+		if isTrue, err := con.Value.ToBool(stmtCtx.TypeCtx()); err == nil && isTrue == 1 {
 			continue
 		}
 		newConds = append(newConds, cond)

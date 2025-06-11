@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -172,22 +173,14 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 	return newPred, specialCase
 }
 
-// splitCNF converts AND to list using SplitCNFItems. It is needed since simplification may lead to AND at the top level.
-// Several optimizations are based on a list of predicates and AND will block those.
-func splitCNF(conditions []expression.Expression) []expression.Expression {
-	newConditions := make([]expression.Expression, 0, len(conditions))
-	for _, cond := range conditions {
-		newConditions = append(newConditions, expression.SplitCNFItems(cond)...)
-	}
-	return newConditions
-}
-
 func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
 	simplifiedPredicate := shortCircuitLogicalConstants(sctx, predicates)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	pruneEmptyORBranches(sctx, simplifiedPredicate)
-	simplifiedPredicate = splitCNF(simplifiedPredicate)
+	exprCtx := sctx.GetExprCtx()
+	simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate)
+	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
 	return simplifiedPredicate
 }
 
