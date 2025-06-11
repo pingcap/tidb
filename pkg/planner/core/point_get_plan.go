@@ -217,7 +217,7 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 			}
 		}
 	}
-	if p.AccessConditions != nil {
+	if p.AccessConditions != nil && p.Handle == nil {
 		if p.Handle != nil {
 			buffer.WriteString(", ")
 		}
