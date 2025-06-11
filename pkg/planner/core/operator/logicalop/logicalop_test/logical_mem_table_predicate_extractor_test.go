@@ -1413,34 +1413,38 @@ func TestTiDBHotRegionsHistoryTableExtractor(t *testing.T) {
 
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
-		require.NotNil(t, logicalMemTable.Extractor, "SQL: %v", ca.sql)
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		if ok {
+			require.NotNil(t, logicalMemTable.Extractor, "SQL: %v", ca.sql)
 
-		hotRegionsHistoryExtractor := logicalMemTable.Extractor.(*plannercore.HotRegionsHistoryTableExtractor)
-		if ca.startTime > 0 {
-			require.Equal(t, ca.startTime, hotRegionsHistoryExtractor.StartTime, "SQL: %v", ca.sql)
-		}
-		if ca.endTime > 0 {
-			require.Equal(t, ca.endTime, hotRegionsHistoryExtractor.EndTime, "SQL: %v", ca.sql)
-		}
-		require.EqualValues(t, ca.skipRequest, hotRegionsHistoryExtractor.SkipRequest, "SQL: %v", ca.sql)
-		if len(ca.isLearners) > 0 {
-			require.EqualValues(t, ca.isLearners, hotRegionsHistoryExtractor.IsLearners, "SQL: %v", ca.sql)
-		}
-		if len(ca.isLeaders) > 0 {
-			require.EqualValues(t, ca.isLeaders, hotRegionsHistoryExtractor.IsLeaders, "SQL: %v", ca.sql)
-		}
-		if ca.hotRegionTypes.Count() > 0 {
-			require.EqualValues(t, ca.hotRegionTypes, hotRegionsHistoryExtractor.HotRegionTypes, "SQL: %v", ca.sql)
-		}
-		if len(ca.regionIDs) > 0 {
-			require.EqualValues(t, ca.regionIDs, hotRegionsHistoryExtractor.RegionIDs, "SQL: %v", ca.sql)
-		}
-		if len(ca.storeIDs) > 0 {
-			require.EqualValues(t, ca.storeIDs, hotRegionsHistoryExtractor.StoreIDs, "SQL: %v", ca.sql)
-		}
-		if len(ca.peerIDs) > 0 {
-			require.EqualValues(t, ca.peerIDs, hotRegionsHistoryExtractor.PeerIDs, "SQL: %v", ca.sql)
+			hotRegionsHistoryExtractor := logicalMemTable.Extractor.(*plannercore.HotRegionsHistoryTableExtractor)
+			if ca.startTime > 0 {
+				require.Equal(t, ca.startTime, hotRegionsHistoryExtractor.StartTime, "SQL: %v", ca.sql)
+			}
+			if ca.endTime > 0 {
+				require.Equal(t, ca.endTime, hotRegionsHistoryExtractor.EndTime, "SQL: %v", ca.sql)
+			}
+			require.EqualValues(t, ca.skipRequest, hotRegionsHistoryExtractor.SkipRequest, "SQL: %v", ca.sql)
+			if len(ca.isLearners) > 0 {
+				require.EqualValues(t, ca.isLearners, hotRegionsHistoryExtractor.IsLearners, "SQL: %v", ca.sql)
+			}
+			if len(ca.isLeaders) > 0 {
+				require.EqualValues(t, ca.isLeaders, hotRegionsHistoryExtractor.IsLeaders, "SQL: %v", ca.sql)
+			}
+			if ca.hotRegionTypes.Count() > 0 {
+				require.EqualValues(t, ca.hotRegionTypes, hotRegionsHistoryExtractor.HotRegionTypes, "SQL: %v", ca.sql)
+			}
+			if len(ca.regionIDs) > 0 {
+				require.EqualValues(t, ca.regionIDs, hotRegionsHistoryExtractor.RegionIDs, "SQL: %v", ca.sql)
+			}
+			if len(ca.storeIDs) > 0 {
+				require.EqualValues(t, ca.storeIDs, hotRegionsHistoryExtractor.StoreIDs, "SQL: %v", ca.sql)
+			}
+			if len(ca.peerIDs) > 0 {
+				require.EqualValues(t, ca.peerIDs, hotRegionsHistoryExtractor.PeerIDs, "SQL: %v", ca.sql)
+			}
+		} else {
+			require.True(t, ca.skipRequest.ca.sql)
 		}
 	}
 }
@@ -1566,15 +1570,19 @@ func TestTikvRegionPeersExtractor(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable, _ := getLogicalMemTable(t, dom, se, parser, ca.sql)
-		require.NotNil(t, logicalMemTable.Extractor)
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		if ok {
+			require.NotNil(t, logicalMemTable.Extractor)
 
-		tikvRegionPeersExtractor := logicalMemTable.Extractor.(*plannercore.TikvRegionPeersExtractor)
-		if len(ca.regionIDs) > 0 {
-			require.EqualValues(t, ca.regionIDs, tikvRegionPeersExtractor.RegionIDs, "SQL: %v", ca.sql)
-		}
-		if len(ca.storeIDs) > 0 {
-			require.EqualValues(t, ca.storeIDs, tikvRegionPeersExtractor.StoreIDs, "SQL: %v", ca.sql)
+			tikvRegionPeersExtractor := logicalMemTable.Extractor.(*plannercore.TikvRegionPeersExtractor)
+			if len(ca.regionIDs) > 0 {
+				require.EqualValues(t, ca.regionIDs, tikvRegionPeersExtractor.RegionIDs, "SQL: %v", ca.sql)
+			}
+			if len(ca.storeIDs) > 0 {
+				require.EqualValues(t, ca.storeIDs, tikvRegionPeersExtractor.StoreIDs, "SQL: %v", ca.sql)
+			}
+		} else {
+			require.True(t, ca.skipRequest)
 		}
 	}
 }
