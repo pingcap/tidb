@@ -800,7 +800,7 @@ func TestIssue29101(t *testing.T) {
 		`Projection_6 1.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
 		`└─HashJoin_19 1.00 root  CARTESIAN inner join`,
 		`  ├─Point_Get_22(Build) 1.00 root table:warehouse handle:936`,
-		`  └─Point_Get_21(Probe) 1.00 root table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) `))
+		`  └─Point_Get_21(Probe) 1.00 root table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) condition: [eq(test.customer.c_w_id, 936) eq(test.customer.c_d_id, 7) eq(test.customer.c_id, 158)]`))
 	tk.MustQuery(`execute s1 using @a,@b,@c`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
 
