@@ -115,7 +115,8 @@ const (
 		ORDER BY id DESC
 		LIMIT 1`
 
-	// transitionStaleTaskToPausedSQLTemplate is the SQL template for atomically transitioning a stale running task to paused
+	// transitionStaleTaskToPausedSQLTemplate is the SQL template for atomically transitioning a
+	// stale running task to paused
 	transitionStaleTaskToPausedSQLTemplate = `
 		UPDATE %s.%s
 		SET status = 'paused'
@@ -654,11 +655,10 @@ func (r *Registry) resolveRestoreTS(ctx context.Context,
 					zap.Uint64("existing_task_id", conflictingTaskID),
 					zap.Uint64("existing_restored_ts", existingRestoredTS))
 				return existingRestoredTS, nil
-			} else {
-				log.Info("task was not transitioned (concurrent update), using current restoredTS",
-					zap.Uint64("existing_task_id", conflictingTaskID))
-				return info.RestoredTS, nil
 			}
+			log.Info("task was not transitioned (concurrent update), using current restoredTS",
+				zap.Uint64("existing_task_id", conflictingTaskID))
+			return info.RestoredTS, nil
 		}
 
 		log.Info("existing running task is active, using current restoredTS",
@@ -757,7 +757,6 @@ func (r *Registry) transitionStaleTaskToPaused(ctx context.Context, taskID uint6
 		zap.String("expected_heartbeat", expectedHeartbeatTime))
 
 	var transitioned bool
-
 	err := r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor,
 		sessionOpts []sqlexec.OptionFuncAlias) error {
 
@@ -777,7 +776,8 @@ func (r *Registry) transitionStaleTaskToPaused(ctx context.Context, taskID uint6
 		}
 
 		// Check if the task was actually transitioned by querying its current status
-		checkTaskSQL := fmt.Sprintf("SELECT status FROM %s.%s WHERE id = %%?", RestoreRegistryDBName, RestoreRegistryTableName)
+		checkTaskSQL := fmt.Sprintf(
+			"SELECT status FROM %s.%s WHERE id = %%?", RestoreRegistryDBName, RestoreRegistryTableName)
 		var statusRows []chunk.Row
 		var checkErr error
 		statusRows, _, checkErr = execCtx.ExecRestrictedSQL(ctx, sessionOpts, checkTaskSQL, taskID)
