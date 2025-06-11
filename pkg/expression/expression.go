@@ -974,7 +974,7 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 			if err != nil {
 				return nil, false, err
 			}
-			args[i], nullFromSets[i] = res.Clone(), nullFromSet
+			args[i], nullFromSets[i] = res, nullFromSet
 		}
 		allArgsNullFromSet := true
 		for i := range args {
@@ -1029,7 +1029,7 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 			return FoldConstant(ctx, x), false, nil
 		}
 	}
-	return expr, false, nil
+	return expr.Clone(), false, nil
 }
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
