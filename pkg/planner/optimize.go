@@ -706,7 +706,7 @@ func genBriefPlanWithSCtx(sctx sessionctx.Context, stmt ast.StmtNode) (planDiges
 	flat := core.FlattenPhysicalPlan(p, false)
 	_, digest := core.NormalizeFlatPlan(flat)
 	sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true // ignore operatorID to make the output simpler
-	plan := core.ExplainFlatPlanInRowFormat(flat, types.ExplainFormatBrief, false, nil, nil)
+	plan := core.ExplainFlatPlanInRowFormat(flat, types.ExplainFormatBrief, false, nil)
 	hints := core.GenHintsFromFlatPlan(flat)
 
 	return digest.String(), hint.RestoreOptimizerHints(hints), plan, nil
