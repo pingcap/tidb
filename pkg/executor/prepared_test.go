@@ -97,7 +97,7 @@ func TestIssue29850(t *testing.T) {
 		`Projection 1.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
 		`└─HashJoin 1.00 root  CARTESIAN inner join`,
 		`  ├─Point_Get(Build) 1.00 root table:warehouse handle:1262`,
-		`  └─Point_Get(Probe) 1.00 root table:customer, clustered index:PRIMARY(c_w_id, c_d_id, c_id) `))
+		`  └─Point_Get(Probe) 1.00 root table:customer, clustered index:PRIMARY(c_w_id, c_d_id, c_id) condition: [eq(test.customer.c_w_id, 1262) eq(test.customer.c_d_id, 7) eq(test.customer.c_id, 1549)]`))
 	tk.MustQuery(`execute stmt using @w_id, @c_d_id, @c_id`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the cached plan
 
