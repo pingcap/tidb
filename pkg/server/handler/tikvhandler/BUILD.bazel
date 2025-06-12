@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/server/handler/tikvhandler",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/lightning/backend/local",
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/domain",
