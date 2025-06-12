@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
