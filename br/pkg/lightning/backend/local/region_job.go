@@ -657,11 +657,12 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			},
 			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
 		}
-
+		startTime := time.Now()
 		err = limiter.Acquire(leader.StoreId, weight)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		waitTime := time.Since(startTime)
 		if supportMultiIngest {
 			req := &sst.MultiIngestRequest{
 				Context: reqCtx,
@@ -681,6 +682,15 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			j.writeResult.sstMeta = j.writeResult.sstMeta[start:]
 			return resp, errors.Trace(err)
 		}
+		log.FromContext(ctx).Info("finish tikv ingest request",
+			zap.Uint64("storeID", j.region.Leader.StoreId),
+			zap.Uint64("regionID", reqCtx.RegionId),
+			zap.Int("limiInflight", limiter.maxReqInFlight),
+			zap.Float64("limiPerSec", limiter.maxReqPerSec),
+			zap.Int("limiterBurst", limiter.Burst()),
+			zap.Stringer("takeTime", time.Since(startTime)),
+			zap.Stringer("waitTime", waitTime),
+		)
 	}
 	return resp, nil
 }
