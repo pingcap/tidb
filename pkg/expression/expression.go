@@ -971,11 +971,7 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 			if err != nil {
 				return nil, false, err
 			}
-			// Next, `NewFunction` will be executed, which means this expression will be evaluated.
-			// To ensure correct execution, the executor will make some modifications,
-			// such as constant folding, which may alter the return type.
-			// In order not to modify the original expression, we need to make a copy here.
-			args[i], nullFromSets[i] = res.Clone(), nullFromSet
+			args[i], nullFromSets[i] = res, nullFromSet
 		}
 		allArgsNullFromSet := true
 		for i := range args {

@@ -248,8 +248,10 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 			ctx.GetEvalCtx().AppendWarning(err)
 		}
 	}
-	funcArgs := make([]Expression, len(args))
-	copy(funcArgs, args)
+	funcArgs := make([]Expression, 0, len(args))
+	for _, arg := range args {
+		funcArgs = append(funcArgs, arg.Clone())
+	}
 	switch funcName {
 	case ast.If, ast.Ifnull, ast.Nullif:
 		// Do nothing. Because it will call InferType4ControlFuncs.
