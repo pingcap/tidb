@@ -116,7 +116,7 @@ type TaskHandle interface {
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(taskID int64, step proto.Step) ([][]byte, error)
 
-	// GetPreviousSubtaskSummary gets previous subtask metas.
+	// GetPreviousSubtaskSummary gets previous subtask summaries.
 	GetPreviousSubtaskSummary(taskID int64, step proto.Step) ([]*execute.SubtaskSummary, error)
 
 	SessionExecutor
@@ -588,7 +588,7 @@ func (mgr *TaskManager) GetAllSubtasksByStepAndState(ctx context.Context, taskID
 	return subtasks, nil
 }
 
-// GetAllSubtaskSummaryByStep gets the subtask summaries by step and state.
+// GetAllSubtaskSummaryByStep gets the subtask summaries by step
 func (mgr *TaskManager) GetAllSubtaskSummaryByStep(
 	ctx context.Context, taskID int64, step proto.Step,
 ) ([]*execute.SubtaskSummary, error) {

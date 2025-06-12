@@ -657,7 +657,7 @@ func (s *BaseScheduler) GetPreviousSubtaskMetas(taskID int64, step proto.Step) (
 	return previousSubtaskMetas, nil
 }
 
-// GetPreviousSubtaskSummary gets previous subtask metas.
+// GetPreviousSubtaskSummary gets previous subtask summaries.
 func (s *BaseScheduler) GetPreviousSubtaskSummary(taskID int64, step proto.Step) ([]*execute.SubtaskSummary, error) {
 	return s.taskMgr.GetAllSubtaskSummaryByStep(s.ctx, taskID, step)
 }
