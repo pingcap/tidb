@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -136,6 +137,9 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 	}
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
 		err = importer.VerifyChecksum(ctx, &taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
+		if common.IsRetryableError(err) {
+			return err
+		}
 		failpoint.Inject("beforeResetTableMode", func() {})
 		failpoint.Inject("errorWhenResetTableMode", func() {
 			failpoint.Return(errors.New("occur an error when reset table mode to normal"))

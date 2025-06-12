@@ -38,11 +38,13 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -1348,11 +1350,11 @@ func (s *mockGCSSuite) TestTableMode() {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
-		testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/beforeResetTableMode", "sleep(3000)")
 		defer func() {
+			testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforePostProcess")
 			wg.Done()
-			testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/beforeResetTableMode")
 		}()
+		testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforePostProcess", "return")
 		s.tk.MustExec(loadDataSQL)
 	}()
 	go func() {
@@ -1364,10 +1366,23 @@ func (s *mockGCSSuite) TestTableMode() {
 				return false
 			}
 			return true
-		}, 5*time.Second, 100*time.Millisecond)
+		}, 10*time.Second, 100*time.Millisecond)
 		s.tk.EventuallyMustQueryAndCheck("SELECT * FROM import_into.table_mode;", nil, testkit.Rows("1 1", "2 2"), 5*time.Second, 100*time.Millisecond)
 	}()
 	wg.Wait()
+
+	// Test occur retryable error when checksum
+	s.tk.MustExec("truncate table table_mode")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/retryableError", `return`)
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterRunSubtask",
+		func(e taskexecutor.TaskExecutor, errP *error, _ context.Context) {
+			if err != nil && *errP == common.ErrWriteTooSlow {
+				testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/retryableError")
+			}
+		},
+	)
+	s.tk.MustQuery(loadDataSQL)
+	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{"1 1", "2 2"}...))
 }
 
 func addRepairTable(t *testing.T, tk *testkit.TestKit, dbName, tblName string) {
