@@ -440,7 +440,7 @@ func BuildHistAndTopN(
 				// If the sample is the same as the previous one, we can skip it.
 				continue
 			}
-			
+
 			// If current sample value is less frequent than the least frequent topn value, then it cannot
 			// be a topn value.
 			if i+int64(minTopNCnt-1) >= lenSamples {
