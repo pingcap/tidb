@@ -16,6 +16,7 @@ package importer_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path"
 	"testing"
@@ -48,11 +49,11 @@ import (
 	"go.uber.org/zap"
 )
 
-func getCSVParser(ctx context.Context, t *testing.T, fileName string) mydump.Parser {
+func getCSVParser(ctx context.Context, t *testing.T, fileName string, csvHeaderOption mydump.CSVHeaderOption) mydump.Parser {
 	file, err := os.Open(fileName)
 	require.NoError(t, err)
 	csvParser, err := mydump.NewCSVParser(ctx, &config.CSVConfig{FieldsTerminatedBy: `,`, FieldsEnclosedBy: `"`},
-		file, importer.LoadDataReadBlockSize, nil, false, nil)
+		file, importer.LoadDataReadBlockSize, nil, csvHeaderOption, nil)
 	require.NoError(t, err)
 	return csvParser
 }
@@ -101,73 +102,102 @@ func TestFileChunkProcess(t *testing.T) {
 	require.NoError(t, err)
 	diskQuotaLock := &syncutil.RWMutex{}
 
-	t.Run("process success", func(t *testing.T) {
-		var dataKVCnt, indexKVCnt int
+	for _, opt := range []mydump.CSVHeaderOption{mydump.CSVHeaderAuto, mydump.CSVHeaderTrue} {
+		t.Run(fmt.Sprintf("process success with %s", opt), func(t *testing.T) {
+			var dataKVCnt, indexKVCnt int
+			fileName := path.Join(tempDir, "test.csv")
+			sourceData := []byte("a,b,c\n1,2,3\n4,5,6\n7,8,9\n")
+			require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
+			csvParser := getCSVParser(ctx, t, fileName, opt)
+			csvParser.SetColumns([]string{"a", "b", "c"})
+			defer func() {
+				require.NoError(t, csvParser.Close())
+			}()
+			metrics := tidbmetrics.GetRegisteredImportMetrics(promutil.NewDefaultFactory(),
+				prometheus.Labels{
+					proto.TaskIDLabelName: uuid.New().String(),
+				})
+			ctx = metric.WithCommonMetric(ctx, metrics)
+			defer func() {
+				tidbmetrics.UnregisterImportMetrics(metrics)
+			}()
+			bak := importer.MinDeliverRowCnt
+			importer.MinDeliverRowCnt = 2
+			defer func() {
+				importer.MinDeliverRowCnt = bak
+			}()
+
+			dataWriter := mock.NewMockEngineWriter(ctrl)
+			indexWriter := mock.NewMockEngineWriter(ctrl)
+			dataWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+				func(ctx context.Context, columnNames []string, rows encode.Rows) error {
+					dataKVCnt += len(rows.(*kv.Pairs).Pairs)
+					return nil
+				}).AnyTimes()
+			indexWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+				func(ctx context.Context, columnNames []string, rows encode.Rows) error {
+					group := rows.(kv.GroupedPairs)
+					for _, pairs := range group {
+						indexKVCnt += len(pairs)
+					}
+					return nil
+				}).AnyTimes()
+
+			chunkInfo := &checkpoints.ChunkCheckpoint{
+				Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
+			}
+			checksum := verify.NewKVGroupChecksumWithKeyspace(nil)
+			processor := importer.NewFileChunkProcessor(
+				csvParser, encoder, nil,
+				chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, checksum,
+			)
+			require.NoError(t, processor.Process(ctx))
+			require.True(t, ctrl.Satisfied())
+			checksumDataKVCnt, checksumIndexKVCnt := checksum.DataAndIndexSumKVS()
+			require.Equal(t, uint64(3), checksumDataKVCnt)
+			require.Equal(t, uint64(6), checksumIndexKVCnt)
+			dataKVSize, indexKVSize := checksum.DataAndIndexSumSize()
+			require.Equal(t, uint64(348), dataKVSize+indexKVSize)
+			require.Equal(t, 3, dataKVCnt)
+			require.Equal(t, 6, indexKVCnt)
+			require.Equal(t, float64(len(sourceData)), metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateRestored)))
+			require.Equal(t, float64(3), metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.StateRestored, "")))
+			require.Equal(t, uint64(2), *metric.ReadHistogram(metrics.RowEncodeSecondsHistogram).Histogram.SampleCount)
+			require.Equal(t, uint64(2), *metric.ReadHistogram(metrics.RowReadSecondsHistogram).Histogram.SampleCount)
+		})
+	}
+
+	t.Run("wrong header", func(t *testing.T) {
 		fileName := path.Join(tempDir, "test.csv")
-		sourceData := []byte("1,2,3\n4,5,6\n7,8,9\n")
+		sourceData := []byte(`a,b,d\n4,5,6\n7,8,9\n`)
 		require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
-		csvParser := getCSVParser(ctx, t, fileName)
+		csvParser := getCSVParser(ctx, t, fileName, mydump.CSVHeaderAuto)
+		csvParser.SetColumns([]string{"a", "b", "c"})
 		defer func() {
 			require.NoError(t, csvParser.Close())
-		}()
-		metrics := tidbmetrics.GetRegisteredImportMetrics(promutil.NewDefaultFactory(),
-			prometheus.Labels{
-				proto.TaskIDLabelName: uuid.New().String(),
-			})
-		ctx = metric.WithCommonMetric(ctx, metrics)
-		defer func() {
-			tidbmetrics.UnregisterImportMetrics(metrics)
-		}()
-		bak := importer.MinDeliverRowCnt
-		importer.MinDeliverRowCnt = 2
-		defer func() {
-			importer.MinDeliverRowCnt = bak
 		}()
 
 		dataWriter := mock.NewMockEngineWriter(ctrl)
 		indexWriter := mock.NewMockEngineWriter(ctrl)
-		dataWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-			func(ctx context.Context, columnNames []string, rows encode.Rows) error {
-				dataKVCnt += len(rows.(*kv.Pairs).Pairs)
-				return nil
-			}).AnyTimes()
-		indexWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-			func(ctx context.Context, columnNames []string, rows encode.Rows) error {
-				group := rows.(kv.GroupedPairs)
-				for _, pairs := range group {
-					indexKVCnt += len(pairs)
-				}
-				return nil
-			}).AnyTimes()
+		dataWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+		indexWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 		chunkInfo := &checkpoints.ChunkCheckpoint{
 			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
-		checksum := verify.NewKVGroupChecksumWithKeyspace(nil)
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, checksum,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
 		)
-		require.NoError(t, processor.Process(ctx))
+		require.ErrorIs(t, processor.Process(ctx), common.ErrEncodeKV)
 		require.True(t, ctrl.Satisfied())
-		checksumDataKVCnt, checksumIndexKVCnt := checksum.DataAndIndexSumKVS()
-		require.Equal(t, uint64(3), checksumDataKVCnt)
-		require.Equal(t, uint64(6), checksumIndexKVCnt)
-		dataKVSize, indexKVSize := checksum.DataAndIndexSumSize()
-		require.Equal(t, uint64(348), dataKVSize+indexKVSize)
-		require.Equal(t, 3, dataKVCnt)
-		require.Equal(t, 6, indexKVCnt)
-		require.Equal(t, float64(len(sourceData)), metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateRestored)))
-		require.Equal(t, float64(3), metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.StateRestored, "")))
-		require.Equal(t, uint64(2), *metric.ReadHistogram(metrics.RowEncodeSecondsHistogram).Histogram.SampleCount)
-		require.Equal(t, uint64(2), *metric.ReadHistogram(metrics.RowReadSecondsHistogram).Histogram.SampleCount)
 	})
 
 	t.Run("encode error", func(t *testing.T) {
 		fileName := path.Join(tempDir, "test.csv")
 		sourceData := []byte(`1,2,3\n4,aa,6\n7,8,9\n`)
 		require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
-		csvParser := getCSVParser(ctx, t, fileName)
+		csvParser := getCSVParser(ctx, t, fileName, mydump.CSVHeaderFalse)
 		defer func() {
 			require.NoError(t, csvParser.Close())
 		}()
@@ -192,7 +222,7 @@ func TestFileChunkProcess(t *testing.T) {
 		fileName := path.Join(tempDir, "test.csv")
 		sourceData := []byte(`1,"`)
 		require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
-		csvParser := getCSVParser(ctx, t, fileName)
+		csvParser := getCSVParser(ctx, t, fileName, mydump.CSVHeaderFalse)
 		defer func() {
 			require.NoError(t, csvParser.Close())
 		}()
@@ -217,7 +247,7 @@ func TestFileChunkProcess(t *testing.T) {
 		fileName := path.Join(tempDir, "test.csv")
 		sourceData := []byte("1,2,3\n4,5,6\n7,8,9\n")
 		require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
-		csvParser := getCSVParser(ctx, t, fileName)
+		csvParser := getCSVParser(ctx, t, fileName, mydump.CSVHeaderFalse)
 		defer func() {
 			require.NoError(t, csvParser.Close())
 		}()
@@ -241,7 +271,7 @@ func TestFileChunkProcess(t *testing.T) {
 		fileName := path.Join(tempDir, "test.csv")
 		sourceData := []byte("1,2,3\n4,5,6\n7,8,9\n")
 		require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
-		csvParser := getCSVParser(ctx, t, fileName)
+		csvParser := getCSVParser(ctx, t, fileName, mydump.CSVHeaderFalse)
 		defer func() {
 			require.NoError(t, csvParser.Close())
 		}()
