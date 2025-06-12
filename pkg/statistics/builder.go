@@ -426,6 +426,7 @@ func BuildHistAndTopN(
 	// Step2: exclude topn from samples
 	lenSamples := int64(len(samples))
 	if lenTopN > 0 && lenSamples > 0 {
+		minTopNCnt := topNList[len(topNList)-1].Count
 		for i := int64(0); i < lenSamples; i++ {
 			sampleBytes, err := getComparedBytes(samples[i].Value)
 			if err != nil {
@@ -439,6 +440,20 @@ func BuildHistAndTopN(
 				// If the sample is the same as the previous one, we can skip it.
 				continue
 			}
+			
+			// If current sample value is less frequent than the least frequent topn value, then it cannot
+			// be a topn value.
+			if i+int64(minTopNCnt-1) >= lenSamples {
+				continue
+			}
+			nextBytes, err := getComparedBytes(samples[i+int64(minTopNCnt-1)].Value)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			if !bytes.Equal(sampleBytes, nextBytes) {
+				continue
+			}
+
 			// For debugging invalid sample data.
 			var (
 				foundTwice      bool
