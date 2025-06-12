@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"fmt"
 	goatomic "sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -49,20 +48,6 @@ type collationInfo struct {
 	collation string
 
 	isExplicitCharset bool
-}
-
-func (c *collationInfo) Clone() collationInfo {
-	// We don't need to clone the atomic value, because it is not used in the optimizer.
-	n := collationInfo{
-		coer:              c.coer,
-		coerInit:          c.coerInit,
-		repertoire:        c.repertoire,
-		charset:           c.charset,
-		collation:         c.collation,
-		isExplicitCharset: c.isExplicitCharset,
-	}
-	n.coerInit.Store(c.coerInit.Load())
-	return n
 }
 
 // Hash64 implements the base.Hasher.<0th> interface.
@@ -368,9 +353,6 @@ func deriveCollation(ctx BuildContext, funcName string, args []Expression, retTy
 
 // CheckAndDeriveCollationFromExprs derives collation information from these expressions, return error if derives collation error.
 func CheckAndDeriveCollationFromExprs(ctx BuildContext, funcName string, evalType types.EvalType, args ...Expression) (et *ExprCollation, err error) {
-	if ctx.ConnectionID() > 0 {
-		fmt.Println("wwz")
-	}
 	ec := inferCollation(ctx.GetEvalCtx(), args...)
 	if ec == nil {
 		return nil, illegalMixCollationErr(ctx.GetEvalCtx(), funcName, args)

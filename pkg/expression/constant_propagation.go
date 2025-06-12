@@ -184,10 +184,8 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 			}
 			replaced = true
 			if args == nil {
-				args = make([]Expression, 0, len(sf.GetArgs()))
-				for _, arg := range sf.GetArgs() {
-					args = append(args, arg.Clone())
-				}
+				args = make([]Expression, len(sf.GetArgs()))
+				copy(args, sf.GetArgs())
 			}
 			args[idx] = tgt
 		} else {
@@ -196,9 +194,9 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 				return false, true, cond
 			} else if subReplaced {
 				replaced = true
-				args = make([]Expression, 0, len(sf.GetArgs()))
-				for _, arg := range sf.GetArgs() {
-					args = append(args, arg.Clone())
+				if args == nil {
+					args = make([]Expression, len(sf.GetArgs()))
+					copy(args, sf.GetArgs())
 				}
 				args[idx] = subExpr
 			}
