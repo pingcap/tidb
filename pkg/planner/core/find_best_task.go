@@ -111,7 +111,6 @@ func findBestTask4LogicalTableDual(lp base.LogicalPlan, prop *property.PhysicalP
 	appendCandidate4PhysicalOptimizeOp(opt, p, dual, prop)
 	rt := &RootTask{}
 	rt.SetPlan(dual)
-	rt.SetEmpty(p.RowCount == 0)
 	return rt, 1, nil
 }
 
@@ -3182,7 +3181,6 @@ func findBestTask4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalPropert
 	} else {
 		rt := &RootTask{}
 		rt.SetPlan(pcte)
-		rt.SetEmpty(false)
 		t = rt
 	}
 	if prop.CanAddEnforcer {

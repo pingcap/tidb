@@ -103,3 +103,50 @@ func genExpand(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.L
 	}
 	return p, nil
 }
+
+type EliminateUnionAllDualItem struct {
+}
+
+func (i *EliminateUnionAllDualItem) Name() string {
+	return "union_all_eliminate_dual_item"
+}
+
+func (*EliminateUnionAllDualItem) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+	planChanged := false
+	p, planChanged = unionAllEliminateDualItem(p)
+	return p, planChanged, nil
+}
+
+func unionAllEliminateDualItem(p base.LogicalPlan) (base.LogicalPlan, bool) {
+	if unionAll, ok := p.(*logicalop.LogicalUnionAll); ok {
+		newChildren := make([]base.LogicalPlan, 0, len(unionAll.Children()))
+		for _, child := range unionAll.Children() {
+			// case 1: direct table dual child item.
+			if dual, ok := child.(*logicalop.LogicalTableDual); ok && dual.RowCount == 0 {
+				continue
+			}
+			// case 2: indirect projection + table dual item.
+			if proj, ok := child.(*logicalop.LogicalProjection); ok {
+				if dual, ok := proj.Children()[0].(*logicalop.LogicalTableDual); ok && dual.RowCount == 0 {
+					continue
+				}
+			}
+			newChildren = append(newChildren, child)
+		}
+		if len(newChildren) == 0 {
+			dual := logicalop.LogicalTableDual{}.Init(unionAll.SCtx(), 0)
+			dual.SetSchema(unionAll.Schema())
+			return dual, true
+		}
+		unionAll.SetChildren(newChildren...)
+	}
+	flag := false
+	for i, child := range p.Children() {
+		c, changed := unionAllEliminateDualItem(child)
+		if changed {
+			p.Children()[i] = c
+		}
+		flag = flag || changed
+	}
+	return p, flag
+}
