@@ -1,4 +1,3 @@
-SET GLOBAL tidb_enable_check_constraint = ON;
 -- ActionCreateSchema
 create database test_log_db_create;
 
@@ -58,6 +57,7 @@ alter table test_log_db_create.t_drop_unique_key drop index i1;
 -- ActionTruncateTable
 truncate table test_snapshot_db_create.t_to_be_truncated;
 create table test_log_db_create.t_to_be_truncated (id int);
+insert into test_log_db_create.t_to_be_truncated values (1);
 truncate table test_log_db_create.t_to_be_truncated;
 
 -- ActionModifyColumn
@@ -172,6 +172,7 @@ create table test_log_db_create.t_truncate_partition (id int, name varchar(50)) 
     partition p0 values less than (100),
     partition p_to_be_truncated values less than (200)
 );
+insert into test_log_db_create.t_truncate_partition (id, name) values (150, "150");
 alter table test_log_db_create.t_truncate_partition truncate partition p_to_be_truncated;
 
 -- ActionLockTable
@@ -287,4 +288,22 @@ drop table test_snapshot_db_create.t_fk_child_cleanup;
 drop table test_snapshot_db_create.t_fk_parent_cleanup;
 SET foreign_key_checks = ON;
 SET GLOBAL tidb_enable_foreign_key = OFF;
+
+-- ActionAddVectorIndex
+alter table test_snapshot_db_create.t_add_vector_index set tiflash replica 1;
+insert into test_snapshot_db_create.t_add_vector_index values (1, '[1,2.1,3.3]');
+alter table test_snapshot_db_create.t_add_vector_index add vector index idx((VEC_COSINE_DISTANCE(v))) USING HNSW;
+create table test_log_db_create.t_add_vector_index (id int, v vector(3));
+alter table test_log_db_create.t_add_vector_index set tiflash replica 1;
+insert into test_log_db_create.t_add_vector_index values (1, '[1,2.1,3.3]');
+alter table test_log_db_create.t_add_vector_index add vector index idx((VEC_COSINE_DISTANCE(v))) USING HNSW;
+
+-- ActionDropSchema + ActionDropTable
+drop table test_snapshot_multi_drop_schema.t_to_be_dropped;
+drop database test_snapshot_multi_drop_schema;
+create database test_log_multi_drop_schema;
+create table test_log_multi_drop_schema.t_to_be_dropped (id int);
+create table test_log_multi_drop_schema.t_not_to_be_dropped (id int);
+drop table test_log_multi_drop_schema.t_to_be_dropped;
+drop database test_log_multi_drop_schema;
 

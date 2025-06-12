@@ -1,4 +1,3 @@
-SET GLOBAL tidb_enable_check_constraint = ON;
 -- ActionDropSchema
 create database test_snapshot_db_to_be_deleted;
 create table test_snapshot_db_to_be_deleted.t1 (id int);
@@ -34,6 +33,7 @@ create table test_snapshot_db_create.t_drop_unique_key (id int, unique key i1(id
 
 -- ActionTruncateTable
 create table test_snapshot_db_create.t_to_be_truncated (id int);
+insert into test_snapshot_db_create.t_to_be_truncated values (1);
 
 -- ActionModifyColumn
 create table test_snapshot_db_create.t_modify_column (id int);
@@ -109,6 +109,7 @@ create table test_snapshot_db_create.t_truncate_partition (id int, name varchar(
     partition p0 values less than (100),
     partition p_to_be_truncated values less than (200)
 );
+insert into test_snapshot_db_create.t_truncate_partition (id, name) values (150, "150");
 
 -- ActionLockTable
 create table test_snapshot_db_create.t_to_be_locked (id int, data varchar(100));
@@ -186,4 +187,10 @@ alter table test_snapshot_db_create.t_fk_parent_cleanup add column child_id int;
 alter table test_snapshot_db_create.t_fk_parent_cleanup add constraint fk_cleanup_parent foreign key (child_id) references test_snapshot_db_create.t_fk_child_cleanup(id);
 SET GLOBAL tidb_enable_foreign_key = OFF;
 
+-- ActionAddVectorIndex
+create table test_snapshot_db_create.t_add_vector_index (id int, v vector(3));
 
+-- ActionDropSchema + ActionDropTable
+create database test_snapshot_multi_drop_schema;
+create table test_snapshot_multi_drop_schema.t_to_be_dropped (id int);
+create table test_snapshot_multi_drop_schema.t_not_to_be_dropped (id int);

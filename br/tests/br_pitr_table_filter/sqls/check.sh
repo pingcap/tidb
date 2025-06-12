@@ -150,6 +150,11 @@ row_must_exist() {
     check_contains "COUNT(*): 1"
 }
 
+row_must_not_exist() {
+    run_sql "select count(*) from $1 where $2"
+    check_contains "count(*): 0"
+}
+
 attributes_must_exist() {
     run_sql "SELECT COUNT(*) FROM information_schema.attributes WHERE ID LIKE '%$1%' AND ATTRIBUTES = '$2'"
     check_contains "COUNT(*): 1"
@@ -256,6 +261,8 @@ index_must_not_exist "test_log_db_create.t_drop_unique_key" "i1"
 # ActionTruncateTable
 table_must_exist "test_snapshot_db_create.t_to_be_truncated"
 table_must_exist "test_log_db_create.t_to_be_truncated"
+row_must_not_exist "test_snapshot_db_create.t_to_be_truncated" "id = 1"
+row_must_not_exist "test_log_db_create.t_to_be_truncated" "id = 1"
 
 # ActionModifyColumn
 check_create_table_contains "test_snapshot_db_create.t_modify_column" "bigint"
@@ -366,6 +373,8 @@ table_must_exist "test_snapshot_db_create.t_truncate_partition"
 table_must_exist "test_log_db_create.t_truncate_partition"
 partition_must_exist "test_snapshot_db_create" "t_truncate_partition" "p_to_be_truncated"
 partition_must_exist "test_log_db_create" "t_truncate_partition" "p_to_be_truncated"
+row_must_not_exist "test_snapshot_db_create.t_truncate_partition" "id = 150"
+row_must_not_exist "test_log_db_create.t_truncate_partition" "id = 150"
 
 # ActionLockTable & ActionUnlockTable
 table_must_exist "test_snapshot_db_create.t_to_be_locked"
@@ -465,5 +474,16 @@ run_sql "DROP TABLE test_snapshot_db_create.t_fk_child_cleanup"
 run_sql "DROP TABLE test_snapshot_db_create.t_fk_parent_cleanup"
 run_sql "SET GLOBAL tidb_enable_foreign_key = OFF"
 
+# ActionAddVectorIndex
+check_create_table_contains "test_snapshot_db_create.t_add_vector_index" "VEC_COSINE_DISTANCE"
+check_create_table_contains "test_snapshot_db_create.t_add_vector_index" "VEC_COSINE_DISTANCE"
+index_must_exist "test_snapshot_db_create.t_add_vector_index" "idx"
+index_must_exist "test_log_db_create.t_add_vector_index" "idx"
 
-
+# ActionDropSchema + ActionDropTable
+table_must_not_exist "test_snapshot_multi_drop_schema.t_to_be_dropped"
+table_must_not_exist "test_snapshot_multi_drop_schema.t_not_to_be_dropped"
+schema_must_not_exist "test_snapshot_multi_drop_schema"
+table_must_not_exist "test_log_multi_drop_schema.t_to_be_dropped"
+table_must_not_exist "test_log_multi_drop_schema.t_not_to_be_dropped"
+schema_must_not_exist "test_log_multi_drop_schema"
