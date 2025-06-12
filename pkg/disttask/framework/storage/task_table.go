@@ -589,6 +589,7 @@ func (mgr *TaskManager) GetAllSubtasksByStepAndState(ctx context.Context, taskID
 }
 
 // GetAllSubtaskSummaryByStep gets the subtask summaries by step
+// Since it's only used for running jobs, we don't need to read from history table.
 func (mgr *TaskManager) GetAllSubtaskSummaryByStep(
 	ctx context.Context, taskID int64, step proto.Step,
 ) ([]*execute.SubtaskSummary, error) {
