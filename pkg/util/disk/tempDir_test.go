@@ -25,10 +25,9 @@ import (
 
 func TestRemoveDir(t *testing.T) {
 	path := t.TempDir()
-	defer config.RestoreFunc()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = path
-	})
+	})()
 	err := os.RemoveAll(path) // clean the uncleared temp file during the last run.
 	require.NoError(t, err)
 	err = os.MkdirAll(path, 0755)
