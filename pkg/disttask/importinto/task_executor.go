@@ -71,7 +71,7 @@ type importStepExecutor struct {
 	importCancel context.CancelFunc
 	wg           sync.WaitGroup
 
-	*execute.SubtaskSummary
+	summary execute.SubtaskSummary
 }
 
 func getTableImporter(
@@ -132,8 +132,8 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 
 // Add implements Collector.Add interface.
 func (s *importStepExecutor) Add(bytes, rowCnt int64) {
-	s.Bytes.Add(bytes)
-	s.RowCnt.Add(rowCnt)
+	s.summary.Bytes.Add(bytes)
+	s.summary.RowCnt.Add(rowCnt)
 }
 
 func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
@@ -143,7 +143,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		task.End(zapcore.ErrorLevel, err)
 	}()
 
-	s.Reset()
+	s.summary.Reset()
 
 	bs := subtask.Meta
 	var subtaskMeta ImportStepMeta
@@ -223,7 +223,7 @@ outer:
 }
 
 func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	return s.SubtaskSummary
+	return &s.summary
 }
 
 func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
@@ -343,7 +343,7 @@ type mergeSortStepExecutor struct {
 	dataKVPartSize  int64
 	indexKVPartSize int64
 
-	*execute.SubtaskSummary
+	summary execute.SubtaskSummary
 }
 
 var _ execute.StepExecutor = &mergeSortStepExecutor{}
@@ -375,7 +375,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		return errors.Trace(err)
 	}
 
-	m.Reset()
+	m.summary.Reset()
 
 	// read merge sort step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {
@@ -399,7 +399,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
 
-	collector := newMergeCollector(ctx, m.SubtaskSummary)
+	collector := newMergeCollector(ctx, &m.summary)
 
 	partSize := m.dataKVPartSize
 	if sm.KVGroup != dataKVGroup {
@@ -460,12 +460,11 @@ func (m *mergeSortStepExecutor) Cleanup(ctx context.Context) (err error) {
 }
 
 func (m *mergeSortStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	return m.SubtaskSummary
+	return &m.summary
 }
 
 type ingestCollector struct {
 	summary *execute.SubtaskSummary
-
 	kvGroup string
 }
 
@@ -485,7 +484,7 @@ type writeAndIngestStepExecutor struct {
 	tableImporter *importer.TableImporter
 	store         tidbkv.Storage
 
-	*execute.SubtaskSummary
+	summary execute.SubtaskSummary
 }
 
 var _ execute.StepExecutor = &writeAndIngestStepExecutor{}
@@ -529,7 +528,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	}
 
 	collector := &ingestCollector{
-		summary: e.SubtaskSummary,
+		summary: &e.summary,
 		kvGroup: sm.KVGroup,
 	}
 	localBackend.SetCollector(collector)
@@ -561,7 +560,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 }
 
 func (e *writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	return e.SubtaskSummary
+	return &e.summary
 }
 
 func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
@@ -677,26 +676,23 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 	switch task.Step {
 	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
 		return &importStepExecutor{
-			taskID:         task.ID,
-			taskMeta:       &taskMeta,
-			logger:         logger,
-			store:          e.store,
-			SubtaskSummary: &execute.SubtaskSummary{},
+			taskID:   task.ID,
+			taskMeta: &taskMeta,
+			logger:   logger,
+			store:    e.store,
 		}, nil
 	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{
-			taskID:         task.ID,
-			taskMeta:       &taskMeta,
-			logger:         logger,
-			SubtaskSummary: &execute.SubtaskSummary{},
+			taskID:   task.ID,
+			taskMeta: &taskMeta,
+			logger:   logger,
 		}, nil
 	case proto.ImportStepWriteAndIngest:
 		return &writeAndIngestStepExecutor{
-			taskID:         task.ID,
-			taskMeta:       &taskMeta,
-			logger:         logger,
-			store:          e.store,
-			SubtaskSummary: &execute.SubtaskSummary{},
+			taskID:   task.ID,
+			taskMeta: &taskMeta,
+			logger:   logger,
+			store:    e.store,
 		}, nil
 	case proto.ImportStepPostProcess:
 		return NewPostProcessStepExecutor(task.ID, e.store, &taskMeta, logger), nil
