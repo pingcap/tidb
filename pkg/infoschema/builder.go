@@ -216,22 +216,11 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 
 	// Check if table exists in kv
 	tableInfo, err := m.GetTable(schemaID, tableID)
-	if err != nil {
-		if meta.ErrDBNotExists.Equal(err) {
-			// Database doesn't exist in TiKV but still exists in infoschema
-			// Just call the appropriate drop table function directly (same as schema drop does)
-			if dbInfo, ok := b.SchemaByID(schemaID); ok {
-				if b.enableV2 {
-					b.applyDropTableV2(diff, dbInfo, tableID, nil)
-				} else {
-					b.applyDropTable(diff, dbInfo, tableID, nil)
-				}
-			}
-			return nil, nil
-		}
+	if err != nil && !meta.ErrDBNotExists.Equal(err) {
 		return nil, errors.Trace(err)
 	}
-	// Table not exists in kv, drop it from infoschema
+
+	// Table not exists in kv (either due to ErrDBNotExists or tableInfo == nil), drop it from infoschema
 	if tableInfo == nil {
 		schemaDiff := &model.SchemaDiff{
 			Version:     diff.Version,
