@@ -16,6 +16,7 @@ package expression
 
 import (
 	"bytes"
+	"fmt"
 	"slices"
 	"unsafe"
 
@@ -188,7 +189,7 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 	}
 	for _, arg := range args {
 		if isNull(arg) {
-			*arg.GetType(ctx) = *retFieldTp
+			*arg.GetType(ctx) = *retFieldTp.Clone()
 			arg.GetType(ctx).DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
 		}
 	}
@@ -247,6 +248,9 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 			// NoopFuncsMode is Warn, append an error
 			ctx.GetEvalCtx().AppendWarning(err)
 		}
+	}
+	if ctx.ConnectionID() > 0 {
+		fmt.Println("wwz")
 	}
 	funcArgs := make([]Expression, 0, len(args))
 	for _, arg := range args {
