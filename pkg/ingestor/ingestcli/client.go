@@ -19,28 +19,54 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
+
+type jsonByteSlice []byte
+
+// MarshalJSON implements the json.Marshaler interface.
+// nextgen TiKV is using Vector<u8> to store the keys, when marshalling to json,
+// it's a json array, while in golang, it will be a base64 encoded string.
+func (s jsonByteSlice) MarshalJSON() ([]byte, error) {
+	if s == nil {
+		return []byte("null"), nil
+	}
+	tmp := make([]int, 0, len(s))
+	for _, b := range s {
+		tmp = append(tmp, int(b))
+	}
+	return json.Marshal(tmp)
+}
 
 type nextGenResp struct {
 	SstMeta nextGenSSTMeta `json:"sst_meta"`
 }
 
 type nextGenSSTMeta struct {
-	ID         int64 `json:"id"`
-	Smallest   []int `json:"smallest"`
-	Biggest    []int `json:"biggest"`
-	MetaOffset int   `json:"meta-offset"`
-	CommitTs   int   `json:"commit-ts"`
+	ID         int64         `json:"id"`
+	Smallest   jsonByteSlice `json:"smallest"`
+	Biggest    jsonByteSlice `json:"biggest"`
+	MetaOffset int           `json:"meta-offset"`
+	CommitTs   int           `json:"commit-ts"`
+}
+
+func (m *nextGenSSTMeta) String() string {
+	return fmt.Sprintf("{ID: %d, Smallest: %s, Biggest: %s, CommitTs: %d}",
+		m.ID, redact.Key(m.Smallest), redact.Key(m.Biggest), m.CommitTs)
 }
 
 var _ WriteClient = &writeClient{}
@@ -51,7 +77,7 @@ type writeClient struct {
 	httpClient    *http.Client
 	commitTS      uint64
 
-	eg         *util.ErrorGroupWithRecover
+	wg         util.WaitGroupWrapper
 	sendReqErr atomic.Error
 	writer     *io.PipeWriter
 	reader     *io.PipeReader
@@ -70,7 +96,6 @@ func newWriteClient(
 		clusterID:     clusterID,
 		commitTS:      commitTS,
 		httpClient:    httpClient,
-		eg:            util.NewErrorGroupWithRecover(),
 	}
 }
 
@@ -90,40 +115,44 @@ func (w *writeClient) init(ctx context.Context) error {
 }
 
 func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
-	w.eg.Go(func() error {
+	w.wg.RunWithLog(func() {
 		resp, err := w.httpClient.Do(req)
 		if err != nil {
-			w.sendReqErr.Store(err)
-			return errors.Trace(err)
+			w.sendReqErr.Store(errors.Trace(err))
+			return
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			body, err1 := io.ReadAll(resp.Body)
 			if err1 != nil {
-				w.sendReqErr.Store(err1)
-				return fmt.Errorf("failed to readAll response: %s", err1.Error())
+				w.sendReqErr.Store(errors.Annotate(err1, "failed to readAll response"))
+			} else {
+				w.sendReqErr.Store(errors.Errorf("failed to send chunked request: %s", string(body)))
 			}
-			err = fmt.Errorf("failed to send chunked request: %s", string(body))
-			w.sendReqErr.Store(err)
-			return err
+			return
 		}
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
-			w.sendReqErr.Store(err)
-			return errors.Trace(err)
+			w.sendReqErr.Store(errors.Trace(err))
+			return
 		}
 		res := &nextGenResp{}
-		if err := json.Unmarshal(data, res); err != nil {
-			w.sendReqErr.Store(err)
-			return errors.Trace(err)
+		if err = json.Unmarshal(data, res); err != nil {
+			w.sendReqErr.Store(errors.Trace(err))
+			return
 		}
 		w.sstMeta = &res.SstMeta
-		return nil
 	})
 }
 
 func (w *writeClient) cause(err error) error {
+	if goerrors.Is(err, io.ErrClosedPipe) {
+		// we close the writer only on Recv or Close, else this error is caused by
+		// closed Reader, i.e. the request failed. We need to wait the async routine
+		// to finish setting sendReqErr to return the correct error.
+		w.wg.Wait()
+	}
 	if reqErr := w.sendReqErr.Load(); reqErr != nil {
 		return errors.Trace(reqErr)
 	}
@@ -156,25 +185,22 @@ func (w *writeClient) Write(req *WriteRequest) (err error) {
 
 func (w *writeClient) Recv() (*WriteResponse, error) {
 	if err := w.writer.Close(); err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
-	err := w.eg.Wait()
-	if err != nil {
-		return nil, err
-	}
-	return &WriteResponse{nextGenSSTMeta: w.sstMeta}, nil
+	w.wg.Wait()
+	return &WriteResponse{nextGenSSTMeta: w.sstMeta}, w.cause(nil)
 }
 
 func (w *writeClient) Close() {
 	//nolint: errcheck
 	_ = w.writer.Close()
-	//nolint: errcheck
-	_ = w.eg.Wait()
+	w.wg.Wait()
 }
 
 var _ Client = &client{}
 
 type client struct {
+	urlSchema     string
 	tikvWorkerURL string
 	clusterID     uint64
 	httpClient    *http.Client
@@ -182,8 +208,17 @@ type client struct {
 }
 
 // NewClient creates a new Client instance.
-func NewClient(tikvWorkerURL string, clusterID uint64, httpClient *http.Client, splitCli split.SplitClient) Client {
+func NewClient(tikvWorkerURL string, clusterID uint64, isHTTPS bool, httpClient *http.Client, splitCli split.SplitClient) Client {
+	urlSchema := "http://"
+	if isHTTPS {
+		urlSchema = "https://"
+	}
+	// if tikvWorkerURL doesn't contain schema, add it.
+	if !strings.HasPrefix(tikvWorkerURL, "http://") && !strings.HasPrefix(tikvWorkerURL, "https://") {
+		tikvWorkerURL = urlSchema + tikvWorkerURL
+	}
 	return &client{
+		urlSchema:     urlSchema,
 		tikvWorkerURL: tikvWorkerURL,
 		clusterID:     clusterID,
 		httpClient:    httpClient,
@@ -203,10 +238,12 @@ func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	url := fmt.Sprintf("http://%s/ingest_s3?cluster_id=%d&region_id=%d&epoch_version=%d",
-		store.GetStatusAddress(), c.clusterID, ri.Id, ri.RegionEpoch.Version)
+	url := fmt.Sprintf("%s%s/ingest_s3?cluster_id=%d&region_id=%d&epoch_version=%d",
+		c.urlSchema, store.GetStatusAddress(), c.clusterID, ri.Id, ri.RegionEpoch.Version)
 
-	data, err := json.Marshal(&in.WriteResp.nextGenSSTMeta)
+	sstMeta := in.WriteResp.nextGenSSTMeta
+	logutil.BgLogger().Debug("calling ingest", in.Region.ToZapFields(), zap.Stringer("sstMeta", sstMeta))
+	data, err := json.Marshal(sstMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -225,23 +262,15 @@ func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 	if resp.StatusCode != http.StatusOK {
 		body, err1 := io.ReadAll(resp.Body)
 		if err1 != nil {
-			return fmt.Errorf("failed to readAll response: %s", err1.Error())
+			return errors.Annotate(err1, "failed to readAll response")
 		}
 		var pbErr errorpb.Error
 		if err := proto.Unmarshal(body, &pbErr); err != nil {
-			return fmt.Errorf("failed to unmarshal error(%s): %s", string(body), err)
+			return errors.Annotatef(err, "failed to unmarshal error(%s)", string(body))
 		}
-		return &PBError{Err: &pbErr}
+		// we annotate the SST ID to help diagnose.
+		pbErr.Message = fmt.Sprintf("%s(ingest SST ID %d)", pbErr.Message, sstMeta.ID)
+		return NewIngestAPIError(&pbErr, nil)
 	}
 	return nil
-}
-
-// PBError is a implementation of error.
-type PBError struct {
-	Err *errorpb.Error
-}
-
-// Error implements the error.
-func (re *PBError) Error() string {
-	return re.Err.GetMessage()
 }

@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -68,6 +69,10 @@ func (s *mockGCSSuite) TestImportFromSelectBasic() {
 	s.Equal(uint64(count), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 	s.Contains(s.tk.Session().LastMessage(), fmt.Sprintf("Records: %d,", count))
 	s.tk.MustQuery("select * from dst").Sort().Check(testkit.Rows(queryResult...))
+
+	s.tk.MustExec("create table t(id varchar(100));")
+	s.tk.MustExec("import into t from select 1;")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("1"))
 }
 
 func (s *mockGCSSuite) TestImportFromSelectColumnList() {
@@ -166,6 +171,9 @@ func (s *mockGCSSuite) TestCastNegativeToUnsigned() {
 }
 
 func (s *mockGCSSuite) TestDiskFullOnIngestFailFast() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("this test is for classic kernel only, skip it in nextgen")
+	}
 	s.prepareAndUseDB("from_select")
 	s.tk.MustExec("create table dt(id int unsigned)")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/diskFullOnIngest", `return(true)`)

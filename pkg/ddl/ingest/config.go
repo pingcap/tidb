@@ -45,6 +45,7 @@ func genConfig(
 	resourceGroup string,
 	concurrency int,
 	maxWriteSpeed int,
+	globalSort bool,
 ) *local.BackendConfig {
 	cfg := &local.BackendConfig{
 		LocalStoreDir:     jobSortPath,
@@ -76,11 +77,9 @@ func genConfig(
 		cfg.WorkerConcurrency = int(ImporterRangeConcurrencyForTest.Load()) * 2
 	}
 	adjustImportMemory(ctx, memRoot, cfg)
-	if unique {
+	if unique && !globalSort {
 		cfg.DupeDetectEnabled = true
 		cfg.DuplicateDetectOpt = common.DupDetectOpt{ReportErrOnDup: true}
-	} else {
-		cfg.DupeDetectEnabled = false
 	}
 	cfg.TiKVWorkerURL = tidb.GetGlobalConfig().TiKVWorkerURL
 
@@ -95,16 +94,6 @@ func CopReadBatchSize(hintSize int) int {
 		return hintSize
 	}
 	return 10 * int(vardef.GetDDLReorgBatchSize())
-}
-
-// CopReadChunkPoolSize is the size of chunk pool, which
-// represents the max concurrent ongoing coprocessor requests.
-// It multiplies the tidb_ddl_reorg_worker_cnt by 10.
-func CopReadChunkPoolSize(hintConc int) int {
-	if hintConc > 0 {
-		return 10 * hintConc
-	}
-	return 10 * int(vardef.GetDDLReorgWorkerCounter())
 }
 
 // NewDDLTLS creates a common.TLS from the tidb config for DDL.

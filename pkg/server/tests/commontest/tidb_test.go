@@ -31,6 +31,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
@@ -3355,6 +3357,35 @@ func TestAuthSocket(t *testing.T) {
 	})
 }
 
+func TestWarningForParseError(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+
+		assertWarningCount := func() {
+			rows, err := conn.QueryContext(context.Background(), "show warnings")
+			require.NoError(t, err)
+			defer rows.Close()
+
+			count := 0
+			for rows.Next() {
+				count++
+			}
+			require.Equal(t, 1, count)
+		}
+
+		for i := 0; i < 5; i++ {
+			stmt, err := conn.PrepareContext(context.Background(), "VALUES ( ('foo'), ROW('bar') )")
+			require.Error(t, err)
+			require.Nil(t, stmt)
+
+			assertWarningCount()
+		}
+	})
+}
+
 func TestBatchGetTypeForRowExpr(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 
@@ -3396,4 +3427,110 @@ func TestBatchGetTypeForRowExpr(t *testing.T) {
 		require.NoError(t, err)
 		ts.CheckRows(t, rows, "a b\nc d")
 	})
+}
+
+func TestIssue57531(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	var rsCnt int
+	for i := range 2 {
+		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+			var conn *sql.Conn
+			var netConn net.Conn
+			conn, _ = dbt.GetDB().Conn(context.Background())
+
+			// get the TCP connection
+			conn.Raw(func(driverConn any) error {
+				v := reflect.ValueOf(driverConn)
+				if v.Kind() == reflect.Ptr {
+					v = v.Elem()
+				}
+				f := v.FieldByName("netConn")
+				if f.IsValid() && f.Type().Implements(reflect.TypeOf((*net.Conn)(nil)).Elem()) {
+					netConn = *(*net.Conn)(unsafe.Pointer(f.UnsafeAddr()))
+				}
+				return nil
+			})
+
+			// execute `select sleep(300)`
+			go func() {
+				if i == 0 {
+					conn.QueryContext(context.Background(), "select sleep(300)")
+				} else {
+					stmt, err := conn.PrepareContext(context.Background(), "select sleep(?)")
+					require.NoError(t, err)
+					stmt.Exec(300)
+				}
+			}()
+			time.Sleep(200 * time.Millisecond)
+
+			// have two sessions
+			rsCnt = 0
+			rs := dbt.MustQuery("show processlist")
+			for rs.Next() {
+				rsCnt++
+			}
+			require.Equal(t, rsCnt, 2)
+
+			// close tcp connection
+			netConn.Close()
+		})
+
+		time.Sleep(10 * time.Millisecond)
+
+		// the `select sleep(300)` is killed
+		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+			rsCnt = 0
+			rs := dbt.MustQuery("show processlist")
+			for rs.Next() {
+				rsCnt++
+			}
+			require.Equal(t, rsCnt, 1)
+		})
+	}
+}
+
+func TestCloseConnForUndeterminedError(t *testing.T) {
+	cfg := util2.NewTestConfig()
+	cfg.Host = "127.0.0.1" // No network interface listening for mysql traffic
+	cfg.Port = 2333
+	cfg.Status.ReportStatus = false
+
+	ts := servertestkit.CreateTidbTestSuite(t)
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-server2.RunInGoTestChan
+	defer server.Close()
+
+	db, err := sql.Open("mysql", "root@tcp(127.0.0.1:2333)/test")
+	require.NoError(t, err)
+	defer terror.Call(db.Close)
+
+	tk := testkit.NewDBTestKit(t, db)
+	tk.MustExec("create table t(a int)")
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	defer terror.Call(conn.Close)
+
+	_, err = conn.ExecContext(context.Background(), "begin")
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(context.Background(), "insert into t values(1)")
+	require.NoError(t, err)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcCommitResult", `return("undeterminedResult")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcCommitResult"))
+	}()
+
+	_, err = conn.ExecContext(context.Background(), "commit")
+	// because TiKV responses UndeterminedResult, the connection should be disconnected without reporting mysql error.
+	require.EqualError(t, err, "invalid connection")
 }

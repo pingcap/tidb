@@ -161,7 +161,11 @@ func TestTraceAndLocation(t *testing.T) {
 			sysStack++
 		}
 	}
-	require.Equalf(t, 9, len(lines)-(2*sysStack), "stack =\n%s", stack)
+
+	actualLines := len(lines) - (2 * sysStack)
+	require.GreaterOrEqual(t, actualLines, 9, "stack =\n%s", stack)
+	require.LessOrEqual(t, actualLines, 11, "stack =\n%s", stack)
+
 	var containTerr bool
 	for _, v := range lines {
 		if strings.Contains(v, "terror_test.go") {

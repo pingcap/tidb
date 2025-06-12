@@ -221,7 +221,7 @@ type propConstSolver struct {
 func (s *propConstSolver) propagateConstantEQ() {
 	s.eqList = make([]*Constant, len(s.columns))
 	visited := make([]bool, len(s.conditions))
-	for i := 0; i < MaxPropagateColsCnt; i++ {
+	for range MaxPropagateColsCnt {
 		mapper := s.pickNewEQConds(visited)
 		if len(mapper) == 0 {
 			return
@@ -283,7 +283,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 				continue
 			}
 			colj := s.columns[j]
-			for k := 0; k < condsLen; k++ {
+			for k := range condsLen {
 				if visited[k] {
 					// cond_k has been used to retrieve equality relation
 					continue
@@ -303,7 +303,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 }
 
 func (s *propConstSolver) setConds2ConstFalse() {
-	if MaybeOverOptimized4PlanCache(s.ctx, s.conditions) {
+	if MaybeOverOptimized4PlanCache(s.ctx, s.conditions...) {
 		s.ctx.SetSkipPlanCache("some parameters may be overwritten when constant propagation")
 	}
 	s.conditions = []Expression{&Constant{
@@ -419,7 +419,7 @@ func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Const
 		if err != nil {
 			return nil, false
 		}
-		if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
+		if MaybeOverOptimized4PlanCache(s.ctx, con) {
 			s.ctx.SetSkipPlanCache("Skip plan cache since mutable constant is restored and propagated")
 		}
 		switch d.Kind() {
@@ -530,7 +530,7 @@ func (s *propOuterJoinConstSolver) propagateConstantEQ() {
 	s.eqList = make([]*Constant, len(s.columns))
 	lenFilters := len(s.filterConds)
 	visited := make([]bool, lenFilters+len(s.joinConds))
-	for i := 0; i < MaxPropagateColsCnt; i++ {
+	for range MaxPropagateColsCnt {
 		mapper := s.pickNewEQConds(visited)
 		if len(mapper) == 0 {
 			return
@@ -586,7 +586,7 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 		conds = s.joinConds
 		condsLen = fCondsOffset
 	}
-	for k := 0; k < condsLen; k++ {
+	for k := range condsLen {
 		if visited[k+offset] {
 			// condition has been used to retrieve equality relation or contains column beyond children schema.
 			continue

@@ -19,7 +19,10 @@ package testkit
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
+	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -47,6 +50,46 @@ import (
 
 // WithTiKV flag is only used for debugging locally with real tikv cluster.
 var WithTiKV = flag.String("with-tikv", "", "address of tikv cluster, if set, running test with real tikv cluster")
+
+// TestOption is used to customize a special tk for usage.
+type TestOption func(tk *TestKit)
+
+// WithCascades test func body under different planner mode.
+func WithCascades(on bool) TestOption {
+	return func(tk *TestKit) {
+		val := "off"
+		if on {
+			val = "on"
+		}
+		tk.MustExec(fmt.Sprintf("set @@tidb_enable_cascades_planner = %s", val))
+	}
+}
+
+// RunTestUnderCascades run the basic test body among two different planner mode.
+func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit, cascades, caller string)) {
+	options := []struct {
+		name string
+		opt  TestOption
+	}{
+		{"off", WithCascades(false)},
+		{"on", WithCascades(true)},
+	}
+	// get func name
+	pc, _, _, ok := runtime.Caller(1)
+	require.True(t, ok)
+	details := runtime.FuncForPC(pc)
+	funcNameIdx := strings.LastIndex(details.Name(), ".")
+	funcName := details.Name()[funcNameIdx+1:]
+	// iter the options
+	for _, val := range options {
+		t.Run(val.name, func(t *testing.T) {
+			store := CreateMockStore(t)
+			tk := NewTestKit(t, store)
+			val.opt(tk)
+			testFunc(t, tk, val.name, funcName)
+		})
+	}
+}
 
 // CreateMockStore return a new mock kv.Storage.
 func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Storage {
@@ -198,8 +241,8 @@ func NewDistExecutionContextWithLease(t testing.TB, serverNum int, lease time.Du
 	domains := make([]*domain.Domain, 0, serverNum)
 	sm := MockSessionManager{}
 
-	var domInfo []string
-	for i := 0; i < serverNum; i++ {
+	domInfo := make([]string, 0, serverNum)
+	for i := range serverNum {
 		dom := bootstrap4DistExecution(t, store, lease)
 		if i != serverNum-1 {
 			dom.SetOnClose(func() { /* don't delete the store in domain map */ })

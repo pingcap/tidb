@@ -43,6 +43,7 @@ go_library(
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//clients/router",
         "@com_github_tikv_pd_client//clients/tso",
+        "@com_github_tikv_pd_client//constants",
         "@com_github_tikv_pd_client//opt",
         "@com_github_tikv_pd_client//pkg/caller",
         "@com_github_tikv_pd_client//servicediscovery",

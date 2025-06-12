@@ -56,6 +56,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -324,7 +325,7 @@ func (is *InfoSyncer) initPlacementManager() {
 func (is *InfoSyncer) initResourceManagerClient(pdCli pd.Client) {
 	var cli pd.ResourceManagerClient = pdCli
 	if pdCli == nil {
-		cli = NewMockResourceManagerClient()
+		cli = NewMockResourceManagerClient(constants.NullKeyspaceID)
 	}
 	failpoint.Inject("managerAlreadyCreateSomeGroups", func(val failpoint.Value) {
 		if val.(bool) {
@@ -896,6 +897,9 @@ func (is *InfoSyncer) RestartTopology(ctx context.Context) error {
 // GetAllTiDBTopology gets all tidb topology
 func (is *InfoSyncer) GetAllTiDBTopology(ctx context.Context) ([]*TopologyInfo, error) {
 	topos := make([]*TopologyInfo, 0)
+	if is.etcdCli == nil {
+		return topos, nil
+	}
 	response, err := is.etcdCli.Get(ctx, TopologyInformationPath, clientv3.WithPrefix())
 	if err != nil {
 		return nil, err
@@ -1064,7 +1068,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 	var err error
 	var resp *clientv3.GetResponse
 	allInfo := make(map[string]*ServerInfo)
-	for i := 0; i < retryCnt; i++ {
+	for range retryCnt {
 		select {
 		case <-ctx.Done():
 			err = errors.Trace(ctx.Err())
@@ -1477,7 +1481,7 @@ func (is *InfoSyncer) getTiProxyServerInfo(ctx context.Context) (map[string]*TiP
 	var err error
 	var resp *clientv3.GetResponse
 	allInfo := make(map[string]*TiProxyServerInfo)
-	for i := 0; i < keyOpDefaultRetryCnt; i++ {
+	for range keyOpDefaultRetryCnt {
 		if ctx.Err() != nil {
 			return nil, errors.Trace(ctx.Err())
 		}
@@ -1538,7 +1542,7 @@ func (is *InfoSyncer) getTiCDCServerInfo(ctx context.Context) ([]*TiCDCInfo, err
 	var err error
 	var resp *clientv3.GetResponse
 	allInfo := make([]*TiCDCInfo, 0)
-	for i := 0; i < keyOpDefaultRetryCnt; i++ {
+	for range keyOpDefaultRetryCnt {
 		if ctx.Err() != nil {
 			return nil, errors.Trace(ctx.Err())
 		}

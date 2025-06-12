@@ -16,6 +16,7 @@ package testkit
 
 import (
 	"crypto/tls"
+	"maps"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -76,9 +77,7 @@ func (msm *MockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
 	}
 	msm.mu.Unlock()
 	if msm.Dom != nil {
-		for connID, pi := range msm.Dom.SysProcTracker().GetSysProcessList() {
-			ret[connID] = pi
-		}
+		maps.Copy(ret, msm.Dom.SysProcTracker().GetSysProcessList())
 	}
 	return ret
 }

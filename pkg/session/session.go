@@ -128,6 +128,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -589,7 +590,7 @@ func (c *cachedTableRenewLease) stop(_ context.Context) {
 }
 
 func (c *cachedTableRenewLease) commitTSCheck(commitTS uint64) bool {
-	for i := 0; i < len(c.lease); i++ {
+	for i := range c.lease {
 		lease := atomic.LoadUint64(&c.lease[i])
 		if commitTS >= lease {
 			// Txn fails to commit because the write lease is expired.
@@ -919,6 +920,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	r, ctx := tracing.StartRegionEx(ctx, "session.CommitTxn")
 	defer r.End()
 
+	s.setLastTxnInfoBeforeTxnEnd()
 	var commitDetail *tikvutil.CommitDetails
 	ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
 	err := s.doCommitWithRetry(ctx)
@@ -957,6 +959,7 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	r, ctx := tracing.StartRegionEx(ctx, "session.RollbackTxn")
 	defer r.End()
 
+	s.setLastTxnInfoBeforeTxnEnd()
 	if s.txn.Valid() {
 		terror.Log(s.txn.Rollback())
 	}
@@ -968,6 +971,26 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	s.sessionVars.CleanupTxnReadTSIfUsed()
 	s.sessionVars.SetInTxn(false)
 	sessiontxn.GetTxnManager(s).OnTxnEnd()
+}
+
+// setLastTxnInfoBeforeTxnEnd sets the @@last_txn_info variable before commit/rollback the transaction.
+// The `LastTxnInfo` updated with a JSON string that contains start_ts, for_update_ts, etc.
+// The `LastTxnInfo` is updated without the `commit_ts` fields because it is unknown
+// until the commit is done (or do not need to commit for readonly or a rollback transaction).
+// The non-readonly transaction will overwrite the `LastTxnInfo` again after commit to update the `commit_ts` field.
+func (s *session) setLastTxnInfoBeforeTxnEnd() {
+	txnCtx := s.GetSessionVars().TxnCtx
+	if txnCtx.StartTS == 0 {
+		// If the txn is not active, for example, executing "SELECT 1", skip setting the last txn info.
+		return
+	}
+
+	lastTxnInfo, err := json.Marshal(transaction.TxnInfo{
+		TxnScope: txnCtx.TxnScope,
+		StartTS:  txnCtx.StartTS,
+	})
+	terror.Log(err)
+	s.GetSessionVars().LastTxnInfo = string(lastTxnInfo)
 }
 
 func (s *session) GetClient() kv.Client {
@@ -1419,6 +1442,11 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if command != mysql.ComSleep || s.GetSessionVars().InTxn() {
 		curTxnStartTS = s.sessionVars.TxnCtx.StartTS
 		curTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
+
+		// For stale read and autocommit path, the `TxnCtx.StartTS` is 0.
+		if curTxnStartTS == 0 {
+			curTxnStartTS = s.sessionVars.TxnCtx.StaleReadTs
+		}
 	}
 	// Set curTxnStartTS to SnapshotTS directly when the session is trying to historic read.
 	// It will avoid the session meet GC lifetime too short error.
@@ -1442,7 +1470,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		DB:                    s.sessionVars.CurrentDB,
 		Command:               command,
 		Plan:                  p,
-		PlanExplainRows:       plannercore.GetExplainRowsForPlan(p),
+		BriefBinaryPlan:       plannercore.GetBriefBinaryPlan(p),
 		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:                  t,
 		State:                 s.Status(),
@@ -1469,10 +1497,10 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if p == nil {
 		// Store the last valid plan when the current plan is nil.
 		// This is for `explain for connection` statement has the ability to query the last valid plan.
-		if oldPi != nil && oldPi.Plan != nil && len(oldPi.PlanExplainRows) > 0 {
+		if oldPi != nil && oldPi.Plan != nil && len(oldPi.BriefBinaryPlan) > 0 {
 			pi.Plan = oldPi.Plan
-			pi.PlanExplainRows = oldPi.PlanExplainRows
 			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
+			pi.BriefBinaryPlan = oldPi.BriefBinaryPlan
 		}
 	}
 	// We set process info before building plan, so we extended execution time.
@@ -1486,7 +1514,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	_, digest := s.sessionVars.StmtCtx.SQLDigest()
 	pi.Digest = digest.String()
 	// DO NOT reset the currentPlan to nil until this query finishes execution, otherwise reentrant calls
-	// of SetProcessInfo would override Plan and PlanExplainRows to nil.
+	// of SetProcessInfo would override Plan and BriefBinaryPlan to nil.
 	if command == mysql.ComSleep {
 		s.currentPlan = nil
 	}
@@ -1507,6 +1535,10 @@ func (s *session) UpdateProcessInfo() {
 	shallowCP := pi.Clone()
 	// Update the current transaction start timestamp.
 	shallowCP.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
+	if shallowCP.CurTxnStartTS == 0 {
+		// For stale read and autocommit path, the `TxnCtx.StartTS` is 0.
+		shallowCP.CurTxnStartTS = s.sessionVars.TxnCtx.StaleReadTs
+	}
 	shallowCP.CurTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
 	s.processInfo.Store(shallowCP)
 }
@@ -2162,6 +2194,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	var recordSet sqlexec.RecordSet
 	if stmt.PsStmt != nil { // point plan short path
 		recordSet, err = stmt.PointGet(ctx)
+		s.setLastTxnInfoBeforeTxnEnd()
 		s.txn.changeToInvalid()
 	} else {
 		recordSet, err = runStmt(ctx, s, stmt)
@@ -3590,7 +3623,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	for i := 0; i < int(planReplayerWorkerCnt); i++ {
+	for i := range int(planReplayerWorkerCnt) {
 		planReplayerWorkersSctx[i] = pworkerSes[i]
 	}
 	// setup plan replayer handle
@@ -3608,7 +3641,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			Handle: dom.PrivilegeHandle(),
 		}
 		privilege.BindPrivilegeManager(ses[9], pm)
-		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.InTest {
+		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.EnableInternalCheck {
 			failToLoadOrParseSQLFile = true
 		}
 	}
@@ -3667,7 +3700,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 
 	// This only happens in testing, since the failure of loading or parsing sql file
 	// would panic the bootstrapping.
-	if intest.InTest && failToLoadOrParseSQLFile {
+	if intest.EnableInternalCheck && failToLoadOrParseSQLFile {
 		dom.Close()
 		return nil, errors.New("Fail to load or parse sql file")
 	}
@@ -3767,7 +3800,7 @@ func createSessions4DistExecution(store kv.Storage, cnt int) ([]*session, error)
 func createSessionsImpl(store kv.Storage, cnt int, createSessionImpl func(kv.Storage) (*session, error)) ([]*session, error) {
 	// Then we can create new dom
 	ses := make([]*session, cnt)
-	for i := 0; i < cnt; i++ {
+	for i := range cnt {
 		se, err := createSessionImpl(store)
 		if err != nil {
 			return nil, err
@@ -4513,7 +4546,7 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 	}
 	// panic in test mode in case there are requests without source in the future.
 	// log warnings in production mode.
-	if intest.InTest {
+	if intest.EnableInternalCheck {
 		panic("unexpected no source type context, if you see this error, " +
 			"the `RequestSourceTypeKey` is missing in your context")
 	}

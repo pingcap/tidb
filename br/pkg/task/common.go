@@ -663,11 +663,14 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 				Schema: db,
 				Name:   tbl,
 			})
+			cfg.FilterStr = []string{fmt.Sprintf("`%s`.`%s`", db, tbl)}
 		} else {
 			cfg.TableFilter = filter.NewSchemasFilter(db)
+			cfg.FilterStr = []string{fmt.Sprintf("`%s`.*", db)}
 		}
 	} else {
 		cfg.TableFilter, _ = filter.Parse([]string{"*.*"})
+		cfg.FilterStr = []string{"*.*"}
 	}
 	if !caseSensitive {
 		cfg.TableFilter = filter.CaseInsensitive(cfg.TableFilter)
@@ -1002,7 +1005,7 @@ func progressFileWriterRoutine(ctx context.Context, progress glue.Progress, tota
 		cur := progress.GetCurrent()
 		p := float64(cur) / float64(total)
 		p *= 100
-		err := os.WriteFile(progressFile, []byte(fmt.Sprintf("%.2f", p)), 0600)
+		err := os.WriteFile(progressFile, fmt.Appendf(nil, "%.2f", p), 0600)
 		if err != nil {
 			log.Warn("failed to update tmp progress file", zap.Error(err))
 		}

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -154,6 +155,7 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 			// an error, TiKV will take the responsibility to do so.
 			// TODO: let client-go provide a high-level write interface.
 			res, err := w.writeFn(ctx, job)
+			err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 			if err != nil {
 				if !w.isRetryableImportTiKVError(err) {
 					return err
@@ -183,6 +185,7 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 		// if the job is empty, it might go to ingested stage directly.
 		if job.stage == wrote {
 			err := w.ingestFn(ctx, job)
+			err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 			if err != nil {
 				if !w.isRetryableImportTiKVError(err) {
 					return err
@@ -367,22 +370,14 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 	}, nil
 }
 
-func (w *objStoreRegionJobWorker) ingest(ctx context.Context, j *regionJob) error {
+func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) error {
 	in := &ingestcli.IngestRequest{
-		Region:    j.region,
-		WriteResp: j.writeResult.nextGenWriteResp,
+		Region:    job.region,
+		WriteResp: job.writeResult.nextGenWriteResp,
 	}
 	err := w.ingestCli.Ingest(ctx, in)
 	if err != nil {
-		log.FromContext(ctx).Warn("meet error and handle the job later",
-			zap.Stringer("job stage", j.stage),
-			logutil.ShortError(err),
-			j.region.ToZapFields(),
-			logutil.Key("start", j.keyRange.Start),
-			logutil.Key("end", j.keyRange.End))
-
-		// TODO: choose target stage based on error.
-		return &ingestAPIError{err: err}
+		return err
 	}
 	return nil
 }

@@ -306,7 +306,7 @@ func (j *baseJoiner) filterAndCheckOuterRowStatus(
 	if err != nil {
 		return nil, err
 	}
-	for i := 0; i < len(j.selected); i++ {
+	for i := range j.selected {
 		if j.isNull[i] {
 			outerRowStatus[i] = outerRowHasNull
 		} else if !j.selected[i] {
@@ -898,7 +898,7 @@ func (j *leftOuterJoiner) TryToMatchOuters(outers chunk.Iterator, inner chunk.Ro
 		return
 	}
 	outerRowStatus = outerRowStatus[:0]
-	for i := 0; i < cursor; i++ {
+	for range cursor {
 		outerRowStatus = append(outerRowStatus, outerRowMatched)
 	}
 	if len(j.conditions) == 0 {
@@ -977,7 +977,7 @@ func (j *rightOuterJoiner) TryToMatchOuters(outers chunk.Iterator, inner chunk.R
 	}
 
 	outerRowStatus = outerRowStatus[:0]
-	for i := 0; i < cursor; i++ {
+	for range cursor {
 		outerRowStatus = append(outerRowStatus, outerRowMatched)
 	}
 	if len(j.conditions) == 0 {
@@ -1067,7 +1067,7 @@ func (j *innerJoiner) TryToMatchOuters(outers chunk.Iterator, inner chunk.Row, c
 		return
 	}
 	outerRowStatus = outerRowStatus[:0]
-	for i := 0; i < cursor; i++ {
+	for range cursor {
 		outerRowStatus = append(outerRowStatus, outerRowMatched)
 	}
 	if len(j.conditions) == 0 {

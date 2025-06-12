@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -49,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	atomic2 "go.uber.org/atomic"
-	"golang.org/x/exp/maps"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -761,7 +762,7 @@ func (sc *StatementContext) SetBinaryPlan(binaryPlan string) {
 
 // GetResourceGroupTagger returns the implementation of kv.ResourceGroupTagBuilder related to self.
 func (sc *StatementContext) GetResourceGroupTagger() *kv.ResourceGroupTagBuilder {
-	tagger := kv.NewResourceGroupTagBuilder().SetPlanDigest(sc.planDigest)
+	tagger := kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).SetPlanDigest(sc.planDigest)
 	normalized, digest := sc.SQLDigest()
 	if len(normalized) > 0 {
 		tagger.SetSQLDigest(digest)
@@ -1217,7 +1218,10 @@ func (sc *StatementContext) AddSetVarHintRestore(name, val string) {
 	if sc.SetVarHintRestore == nil {
 		sc.SetVarHintRestore = make(map[string]string)
 	}
-	sc.SetVarHintRestore[name] = val
+
+	if _, found := sc.SetVarHintRestore[name]; !found {
+		sc.SetVarHintRestore[name] = val
+	}
 }
 
 // GetUsedStatsInfo returns the map for recording the used stats during query.
@@ -1331,7 +1335,7 @@ func (s *UsedStatsInfoForTable) FormatForExplain() string {
 	b.WriteString(strings.Join(strs, ", "))
 	if len(statusCnt) > 0 {
 		b.WriteString("...(more: ")
-		keys := maps.Keys(statusCnt)
+		keys := slices.Collect(maps.Keys(statusCnt))
 		slices.Sort(keys)
 		var cntStrs []string
 		for _, key := range keys {
@@ -1380,7 +1384,7 @@ func (s *UsedStatsInfoForTable) collectFromColOrIdxStatus(
 	} else {
 		status = s.IndexStatsLoadStatus
 	}
-	keys := maps.Keys(status)
+	keys := slices.Collect(maps.Keys(status))
 	slices.Sort(keys)
 	strs := make([]string, 0, len(status))
 	for _, id := range keys {

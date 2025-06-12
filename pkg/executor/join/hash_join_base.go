@@ -72,13 +72,13 @@ func (fetcher *probeSideTupleFetcherBase) initializeForProbeBase(concurrency uin
 	// ProbeSideExec, it'll be written by probe side worker goroutine, and read by join
 	// workers.
 	fetcher.probeResultChs = make([]chan *chunk.Chunk, concurrency)
-	for i := uint(0); i < concurrency; i++ {
+	for i := range concurrency {
 		fetcher.probeResultChs[i] = make(chan *chunk.Chunk, 1)
 	}
 	// fetcher.probeChkResourceCh is for transmitting the used ProbeSideExec chunks from
 	// join workers to ProbeSideExec worker.
 	fetcher.probeChkResourceCh = make(chan *probeChkResource, concurrency)
-	for i := uint(0); i < concurrency; i++ {
+	for i := range concurrency {
 		fetcher.probeChkResourceCh <- &probeChkResource{
 			chk:  exec.NewFirstChunk(fetcher.ProbeSideExec),
 			dest: fetcher.probeResultChs[i],

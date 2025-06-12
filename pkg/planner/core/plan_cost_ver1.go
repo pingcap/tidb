@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/paging"
 )
 
@@ -87,6 +88,7 @@ func (p *PhysicalProjection) GetCost(count float64) float64 {
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalProjection) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	intest.Assert(p.SCtx().GetSessionVars().CostModelVersion != 0)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
@@ -1056,10 +1058,7 @@ func (p *PhysicalSort) GetPlanCostVer1(taskType property.TaskType, option *optim
 
 // GetCost computes cost of TopN operator itself.
 func (p *PhysicalTopN) GetCost(count float64, isRoot bool) float64 {
-	heapSize := float64(p.Offset + p.Count)
-	if heapSize < 2.0 {
-		heapSize = 2.0
-	}
+	heapSize := max(float64(p.Offset+p.Count), 2.0)
 	sessVars := p.SCtx().GetSessionVars()
 	// Ignore the cost of `doCompaction` in current implementation of `TopNExec`, since it is the
 	// special side-effect of our Chunk format in TiDB layer, which may not exist in coprocessor's

@@ -16,6 +16,7 @@ package ingestcli
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -27,11 +28,19 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
+func TestJsonByteSlice(t *testing.T) {
+	slice := jsonByteSlice("\x03\x02\x00\x02\xff")
+	data, err := json.Marshal(slice)
+	require.NoError(t, err)
+	require.Equal(t, `[3,2,0,2,255]`, string(data))
+}
+
 func TestWriteClientWriteChunk(t *testing.T) {
-	sstMeta := nextGenResp{nextGenSSTMeta{ID: 1, Smallest: []int{0}, Biggest: []int{1}, MetaOffset: 1, CommitTs: 1}}
+	sstMeta := nextGenResp{nextGenSSTMeta{ID: 1, Smallest: []byte{0}, Biggest: []byte{1}, MetaOffset: 1, CommitTs: 1}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
@@ -93,7 +102,7 @@ func TestClientIngest(t *testing.T) {
 	defer server.Close()
 
 	statusAddr := strings.TrimPrefix(server.URL, "http://")
-	client := NewClient(server.URL, 12345, server.Client(), &storeClient{addr: statusAddr})
+	client := NewClient(server.URL, 12345, false, server.Client(), &storeClient{addr: statusAddr})
 	req := &IngestRequest{
 		WriteResp: &WriteResponse{
 			nextGenSSTMeta: &nextGenSSTMeta{
@@ -119,11 +128,11 @@ func TestClientIngestError(t *testing.T) {
 	// serverURL, err := url.Parse(server.URL)
 	// require.NoError(t, err)
 	statusAddr := strings.TrimPrefix(server.URL, "http://")
-	client := NewClient(server.URL, 12345, server.Client(), &storeClient{addr: statusAddr})
+	client := NewClient(server.URL, 12345, false, server.Client(), &storeClient{addr: statusAddr})
 	req := &IngestRequest{
 		WriteResp: &WriteResponse{
 			nextGenSSTMeta: &nextGenSSTMeta{
-				ID: 1,
+				ID: 123456,
 			},
 		},
 		Region: &split.RegionInfo{Region: &metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 1}}},
@@ -131,6 +140,7 @@ func TestClientIngestError(t *testing.T) {
 	err := client.Ingest(context.Background(), req)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "test error")
+	require.Contains(t, err.Error(), "ingest SST ID 123456")
 }
 
 type storeClient struct {
@@ -143,4 +153,24 @@ func (sc *storeClient) GetStore(_ context.Context, _ uint64) (*metapb.Store, err
 		Address:       sc.addr,
 		StatusAddress: sc.addr,
 	}, nil
+}
+
+func TestNextClientURL(t *testing.T) {
+	for _, c := range []struct {
+		inURL    string
+		forHTTP  string
+		forHTTPS string
+	}{
+		{inURL: "localhost:9000", forHTTP: "http://localhost:9000", forHTTPS: "https://localhost:9000"},
+		{inURL: "http://localhost:9000", forHTTP: "http://localhost:9000", forHTTPS: "http://localhost:9000"},
+		{inURL: "https://localhost:9000", forHTTP: "https://localhost:9000", forHTTPS: "https://localhost:9000"},
+	} {
+		cli := NewClient(c.inURL, 1, false, util.ClientWithTLS(nil), nil).(*client)
+		require.Equal(t, "http://", cli.urlSchema)
+		require.Equal(t, c.forHTTP, cli.tikvWorkerURL)
+
+		cli = NewClient(c.inURL, 1, true, util.ClientWithTLS(&tls.Config{}), nil).(*client)
+		require.Equal(t, "https://", cli.urlSchema)
+		require.Equal(t, c.forHTTPS, cli.tikvWorkerURL)
+	}
 }

@@ -20,12 +20,14 @@ import (
 	"context"
 	goerrors "errors"
 	"io"
+	"slices"
 	"sort"
 	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -459,17 +461,21 @@ func (p *kvPair) sortKey() []byte {
 }
 
 func (p *kvPair) cloneInnerFields() {
-	p.key = append([]byte{}, p.key...)
-	p.value = append([]byte{}, p.value...)
+	p.key = slices.Clone(p.key)
+	p.value = slices.Clone(p.value)
 }
 
 func (p *kvPair) len() int {
 	return len(p.key) + len(p.value)
 }
 
+func getPairKey(p *kvPair) []byte {
+	return p.key
+}
+
 type kvReaderProxy struct {
 	p string
-	r *kvReader
+	r *KVReader
 }
 
 func (p kvReaderProxy) path() string {
@@ -525,10 +531,12 @@ func NewMergeKVIter(
 
 	for i := range paths {
 		readerOpeners = append(readerOpeners, func() (*kvReaderProxy, error) {
-			rd, err := newKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
+			rd, err := NewKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
 			if err != nil {
 				return nil, err
 			}
+			rd.byteReader.readDurHist = metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("merge_sort_read")
+			rd.byteReader.readRateHist = metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("merge_sort_read")
 			rd.byteReader.enableConcurrentRead(
 				exStorage,
 				paths[i],
@@ -580,8 +588,8 @@ func (p *rangeProperty) sortKey() []byte {
 }
 
 func (p *rangeProperty) cloneInnerFields() {
-	p.firstKey = append([]byte{}, p.firstKey...)
-	p.lastKey = append([]byte{}, p.lastKey...)
+	p.firstKey = slices.Clone(p.firstKey)
+	p.lastKey = slices.Clone(p.lastKey)
 }
 
 func (p *rangeProperty) len() int {
@@ -706,7 +714,7 @@ func newMergePropBaseIter(
 
 	readerOpeners := make([]readerOpenerFn[*rangeProperty, statReaderProxy], 0, len(multiStat.Filenames))
 	// first `limit` reader will be opened by newLimitSizeMergeIter
-	for i := 0; i < int(limit); i++ {
+	for i := range int(limit) {
 		path := multiStat.Filenames[i][1]
 		readerOpeners = append(readerOpeners, func() (*statReaderProxy, error) {
 			rd, err := newStatsReader(ctx, exStorage, path, 250*1024)

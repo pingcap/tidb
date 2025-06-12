@@ -51,7 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/servicescope"
+	"github.com/pingcap/tidb/pkg/util/naming"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle/oracles"
 	tikvcliutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -1591,6 +1592,16 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{
+		Scope: vardef.ScopeGlobal,
+		Name:  vardef.TiDBEnableTSValidation,
+		Value: BoolToOnOff(vardef.DefTiDBEnableTSValidation),
+		Type:  vardef.TypeBool,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			oracles.EnableTSValidation.Store(TiDBOptOn(val))
+			return nil
+		},
+	},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnablePlanReplayerContinuousCapture, Value: BoolToOnOff(false), Type: vardef.TypeBool,
@@ -2543,6 +2554,10 @@ var defaultSysVars = []*SysVar{
 		s.AnalyzeVersion = tidbOptPositiveInt32(val, vardef.DefTiDBAnalyzeVersion)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexJoinBuild, Value: BoolToOnOff(vardef.DefTiDBOptIndexJoinBuild), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnhanceIndexJoinBuildV2 = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBHashJoinVersion, Value: vardef.DefTiDBHashJoinVersion, Type: vardef.TypeStr,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
 			lowerValue := strings.ToLower(normalizedValue)
@@ -3464,7 +3479,7 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: vardef.ScopeInstance, Name: vardef.TiDBServiceScope, Value: "", Type: vardef.TypeStr,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
-			return normalizedValue, servicescope.CheckServiceScope(originalValue)
+			return normalizedValue, naming.Check(originalValue)
 		},
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			newValue := strings.ToLower(s)
@@ -3548,14 +3563,24 @@ var defaultSysVars = []*SysVar{
 			return (*SetPDClientDynamicOption.Load())(vardef.TiDBTSOClientRPCMode, val)
 		},
 	},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdPct, Value: strconv.Itoa(vardef.DefTiDBCircuitBreakerPDMetaErrorRatePct), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: 100,
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdPct, Value: strconv.FormatFloat(vardef.DefTiDBCircuitBreakerPDMetaErrorRatePct, 'f', -1, 64),
+		Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatFloat(vardef.CircuitBreakerPDMetadataErrorRateThresholdPct.Load(), 'f', -1, 64), nil
+		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			v := tidbOptFloat64(val, vardef.DefTiDBCircuitBreakerPDMetaErrorRatePct)
+			if v < 0 || v > 1 {
+				return errors.Errorf("invalid tidb_cb_pd_metadata_error_rate_threshold_pct value %s", val)
+			}
+			vardef.CircuitBreakerPDMetadataErrorRateThresholdPct.Store(v)
 			if ChangePDMetadataCircuitBreakerErrorRateThresholdPct != nil {
-				ChangePDMetadataCircuitBreakerErrorRateThresholdPct(uint32(tidbOptPositiveInt32(val, vardef.DefTiDBCircuitBreakerPDMetaErrorRatePct)))
+				ChangePDMetadataCircuitBreakerErrorRateThresholdPct(uint32(v * 100))
 			}
 			return nil
 		},
 	},
+
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAccelerateUserCreationUpdate, Value: BoolToOnOff(vardef.DefTiDBAccelerateUserCreationUpdate), Type: vardef.TypeBool,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			vardef.AccelerateUserCreationUpdate.Store(TiDBOptOn(val))

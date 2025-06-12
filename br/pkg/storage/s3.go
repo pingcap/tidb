@@ -35,6 +35,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -43,6 +44,9 @@ import (
 var hardcodedS3ChunkSize = 5 * 1024 * 1024
 
 const (
+	// S3ExternalID is the key for the external ID used in S3 operations.
+	S3ExternalID = "external-id"
+
 	s3EndpointOption     = "s3.endpoint"
 	s3RegionOption       = "s3.region"
 	s3StorageClassOption = "s3.storage-class"
@@ -51,7 +55,7 @@ const (
 	s3ACLOption          = "s3.acl"
 	s3ProviderOption     = "s3.provider"
 	s3RoleARNOption      = "s3.role-arn"
-	s3ExternalIDOption   = "s3.external-id"
+	s3ExternalIDOption   = "s3." + S3ExternalID
 	notFound             = "NotFound"
 	// number of retries to make of operations.
 	maxRetries = 7
@@ -348,7 +352,11 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		request.WithRetryer(awsConfig, defaultS3Retryer())
 	}
 
-	if qs.Endpoint != "" {
+	// ⚠️ Do NOT set a global endpoint in the AWS config.
+	// Setting a global endpoint will break AssumeRoleWithWebIdentity,
+	// as it overrides the STS endpoint and causes authentication to fail.
+	// See: https://github.com/aws/aws-sdk-go/issues/3972
+	if len(qs.Endpoint) != 0 && qs.Provider != "aws" {
 		awsConfig.WithEndpoint(qs.Endpoint)
 	}
 	if opts.HTTPClient != nil {
@@ -398,6 +406,9 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		s3CliConfigs = append(s3CliConfigs,
 			aws.NewConfig().WithCredentials(creds),
 		)
+	}
+	if len(qs.Endpoint) != 0 && qs.Provider == "aws" {
+		s3CliConfigs = append(s3CliConfigs, aws.NewConfig().WithEndpoint(qs.Endpoint))
 	}
 	c := s3.New(ses, s3CliConfigs...)
 
@@ -628,7 +639,7 @@ func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error
 		data    []byte
 		readErr error
 	)
-	for retryCnt := 0; retryCnt < maxErrorRetries; retryCnt += 1 {
+	for retryCnt := range maxErrorRetries {
 		input := &s3.GetObjectInput{
 			Bucket: aws.String(rs.options.Bucket),
 			Key:    aws.String(rs.options.Prefix + file),
@@ -642,6 +653,7 @@ func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error
 		data, readErr = io.ReadAll(result.Body)
 		// close the body of response since data has been already read out
 		result.Body.Close()
+		readErr = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(readErr)
 		// for unit test
 		failpoint.Inject("read-s3-body-failed", func(_ failpoint.Value) {
 			log.Info("original error", zap.Error(readErr))
@@ -983,6 +995,7 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 		maxCnt = int64(len(p))
 	}
 	n, err = r.reader.Read(p[:maxCnt])
+	n, err = injectfailpoint.RandomErrorForReadWithOnePerPercent(n, err)
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
 	for err != nil && errors.Cause(err) != io.EOF && r.ctx.Err() == nil && retryCnt < maxErrorRetries { //nolint:errorlint
