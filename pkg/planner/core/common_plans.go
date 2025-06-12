@@ -1029,7 +1029,7 @@ func (e *Explain) RenderResult() error {
 		if strings.ToLower(e.Format) != types.ExplainFormatBrief && strings.ToLower(e.Format) != types.ExplainFormatROW && strings.ToLower(e.Format) != types.ExplainFormatVerbose {
 			return errors.Errorf("explain format '%s' for connection is not supported now", e.Format)
 		}
-		rows, err := plancodec.DecodeBinaryPlan4Connection(e.BriefBinaryPlan, strings.ToLower(e.Format))
+		rows, err := plancodec.DecodeBinaryPlan4Connection(e.BriefBinaryPlan, strings.ToLower(e.Format), false)
 		if err != nil {
 			return err
 		}
