@@ -16,7 +16,6 @@ package expression
 
 import (
 	"bytes"
-	"fmt"
 	"slices"
 	"unsafe"
 
@@ -250,9 +249,6 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 			// NoopFuncsMode is Warn, append an error
 			ctx.GetEvalCtx().AppendWarning(err)
 		}
-	}
-	if ctx.ConnectionID() > 0 {
-		fmt.Println("wwz")
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
