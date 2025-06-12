@@ -427,11 +427,15 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 	storage, err := kvstore.New(fullPath)
 	terror.MustNil(err)
 	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
-		pdStatus, err := tikvStore.GetPDHTTPClient().GetStatus(context.Background())
-		terror.MustNil(err)
-		if !kerneltype.IsMatch(pdStatus.KernelType) {
-			log.Fatal("kernel type mismatch", zap.String("pd", pdStatus.KernelType),
-				zap.String("tidb", kerneltype.Name()))
+		pdhttpCli := tikvStore.GetPDHTTPClient()
+		// unistore also implements kv.StorageWithPD, but it does not have PD client.
+		if pdhttpCli != nil {
+			pdStatus, err := pdhttpCli.GetStatus(context.Background())
+			terror.MustNil(err)
+			if !kerneltype.IsMatch(pdStatus.KernelType) {
+				log.Fatal("kernel type mismatch", zap.String("pd", pdStatus.KernelType),
+					zap.String("tidb", kerneltype.Name()))
+			}
 		}
 	}
 	copr.GlobalMPPFailedStoreProber.Run()
