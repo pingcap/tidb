@@ -971,7 +971,11 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 			if err != nil {
 				return nil, false, err
 			}
-			args[i], nullFromSets[i] = res, nullFromSet
+			// Next, `NewFunction` will be executed, which means this expression will be evaluated.
+			// To ensure correct execution, the executor will make some modifications,
+			// such as constant folding, which may alter the return type.
+			// In order not to modify the original expression, we need to make a copy here.
+			args[i], nullFromSets[i] = res.Clone(), nullFromSet
 		}
 		allArgsNullFromSet := true
 		for i := range args {
@@ -1026,7 +1030,7 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 			return FoldConstant(ctx, x), false, nil
 		}
 	}
-	return expr.Clone(), false, nil
+	return expr, false, nil
 }
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
