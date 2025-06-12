@@ -32,6 +32,7 @@ go_library(
         "//pkg/ddl/schematracker",
         "//pkg/ddl/systable",
         "//pkg/ddl/util",
+        "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/scheduler",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/taskexecutor",
