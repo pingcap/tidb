@@ -86,7 +86,7 @@ func GetTiDBInfo() string {
 		config.GetGlobalConfig().Store,
 		enterpriseVersion,
 	)
-	info += "Kernel Type: " + kerneltype.Name()
+	info += "\nKernel Type: " + kerneltype.Name()
 	return info
 }
 
