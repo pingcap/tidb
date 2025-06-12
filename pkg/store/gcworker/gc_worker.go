@@ -1384,7 +1384,7 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) 
 
 func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
 	var label string
-	if w.isUnified() {
+	if w.isUnifiedGC() {
 		label = "check_leader"
 	} else {
 		label = "check_leader_keyspace"
