@@ -187,7 +187,8 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 		return
 	}
 	for i, arg := range args {
-		if isNull(arg) {
+		argflags := arg.GetType(ctx)
+		if isNull(arg) && argflags.Equals(retFieldTp) && !mysql.HasNotNullFlag(argflags.GetFlag()) {
 			newarg := arg.Clone()
 			*newarg.GetType(ctx) = *retFieldTp.Clone()
 			newarg.GetType(ctx).DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
