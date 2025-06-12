@@ -2538,12 +2538,10 @@ func WrapWithCastAsInt(ctx BuildContext, expr Expression, targetType *types.Fiel
 		// clone the one out with its field type as well before change the flag inside.
 		if col, ok := expr.(*Column); ok {
 			col = col.Clone().(*Column)
-			col.RetType = col.RetType.Clone()
 			expr = col
 		}
 		if col, ok := expr.(*CorrelatedColumn); ok {
 			col = col.Clone().(*CorrelatedColumn)
-			col.RetType = col.RetType.Clone()
 			expr = col
 		}
 		expr.GetType(ctx.GetEvalCtx()).AddFlag(mysql.EnumSetAsIntFlag)

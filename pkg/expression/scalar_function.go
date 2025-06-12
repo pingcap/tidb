@@ -187,10 +187,12 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 	if !hasNullArg || retFieldTp == nil {
 		return
 	}
-	for _, arg := range args {
+	for i, arg := range args {
 		if isNull(arg) {
-			*arg.GetType(ctx) = *retFieldTp.Clone()
-			arg.GetType(ctx).DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
+			newarg := arg.Clone()
+			*newarg.GetType(ctx) = *retFieldTp.Clone()
+			newarg.GetType(ctx).DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
+			args[i] = newarg
 		}
 	}
 }
@@ -252,10 +254,8 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 	if ctx.ConnectionID() > 0 {
 		fmt.Println("wwz")
 	}
-	funcArgs := make([]Expression, 0, len(args))
-	for _, arg := range args {
-		funcArgs = append(funcArgs, arg.Clone())
-	}
+	funcArgs := make([]Expression, len(args))
+	copy(funcArgs, args)
 	switch funcName {
 	case ast.If, ast.Ifnull, ast.Nullif:
 		// Do nothing. Because it will call InferType4ControlFuncs.
