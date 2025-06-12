@@ -120,6 +120,7 @@ type JobContext struct {
 
 	resourceGroupName string
 	cloudStorageURI   string
+	analyzeDone       chan struct{}
 }
 
 // NewJobContext returns a new ddl job context.

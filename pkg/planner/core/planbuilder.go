@@ -2465,7 +2465,7 @@ func getModifiedIndexesInfoForAnalyze(sctx sessionctx.Context, tblInfo *model.Ta
 	idxsInfo := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	independentIdxsInfo := make([]*model.IndexInfo, 0)
 	for _, originIdx := range tblInfo.Indices {
-		if originIdx.State != model.StatePublic {
+		if originIdx.State != model.StatePublic && !sctx.GetSessionVars().InternalAnalyze {
 			continue
 		}
 		if originIdx.MVIndex {
