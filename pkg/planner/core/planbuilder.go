@@ -102,6 +102,10 @@ func (v *visitInfo) Equals(other *visitInfo) bool {
 		v.dynamicWithGrant == other.dynamicWithGrant
 }
 
+func (v visitInfo) GetValue() (mysql.PrivilegeType, string, string, string, error) {
+	return v.privilege, v.db, v.table, v.column, v.err
+}
+
 // clauseCode indicates in which clause the column is currently.
 type clauseCode int
 
