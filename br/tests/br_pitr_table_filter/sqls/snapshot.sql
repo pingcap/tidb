@@ -24,6 +24,7 @@ create table test_snapshot_db_create.t_drop_index (id int, key i1(id));
 create table test_snapshot_db_create.t_drop_unique_key (id int, unique key i1(id));
 
 -- ActionAddForeignKey
+-- TODO: Known issue - DROP FOREIGN KEY conflicts with auto-created indexes during PITR restore
 -- create table test_snapshot_db_create.t_fk_parent (id int primary key, name varchar(50));
 -- create table test_snapshot_db_create.t_fk_child_add (id int primary key, parent_id int);
 
@@ -128,7 +129,7 @@ create table test_snapshot_db_create.t_auto_id_cache (id int primary key auto_in
 create table test_snapshot_db_create.t_shard_row (id int primary key nonclustered);
 
 -- ActionRebaseAutoRandomBase
-create table test_snapshot_db_create.t_auto_random (id int auto_random primary key);
+create table test_snapshot_db_create.t_auto_random (id bigint auto_random primary key);
 
 -- ActionSetTiFlashReplica
 create table test_snapshot_db_create.t_set_tiflash (id int);
@@ -162,35 +163,27 @@ create table test_snapshot_db_create.t_alter_table_partitioning (id int);
 -- ActionRemovePartitioning
 create table test_snapshot_db_create.t_remove_partitioning (id int) partition by range columns (id) (partition p0 values less than (5), partition p1 values less than (10));
 
--- === CREATE POLICY ===
-CREATE PLACEMENT POLICY p1 PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-west-1" FOLLOWERS=4;
--- ActionAlterTablePartitionPlacement
--- ActionAlterTablePlacement
-
--- === UNIMPLEMENTED DDL OPERATIONS ===
--- The following DDL operations are not yet implemented in this test:
-
--- ActionCreateTables
--- ActionRecoverTable
--- ActionRepairTable
--- ActionUpdateTiFlashReplicaStatus
--- ActionAlterCacheTable
--- ActionAlterNoCacheTable
--- ActionAlterTableStatsOptions
--- ActionMultiSchemaChange
--- ActionFlashbackCluster
--- ActionRecoverSchema
--- ActionCreatePlacementPolicy
--- ActionAlterPlacementPolicy
--- ActionDropPlacementPolicy
--- ActionModifySchemaDefaultPlacement
 -- ActionAlterTTLInfo
+create table test_snapshot_db_create.t_add_ttl (id int, created_at timestamp default current_timestamp);
+
 -- ActionAlterTTLRemove
--- ActionCreateResourceGroup
--- ActionAlterResourceGroup
--- ActionDropResourceGroup
--- ActionAddVectorIndex
--- ActionAlterTableMode
--- ActionRefreshMeta
+create table test_snapshot_db_create.t_remove_ttl (id int, created_at timestamp default current_timestamp) TTL = `created_at` + INTERVAL 30 DAY;
+
+-- ActionAlterCacheTable
+create table test_snapshot_db_create.t_alter_cache (id int, data varchar(100));
+
+-- ActionAlterNoCacheTable
+create table test_snapshot_db_create.t_alter_no_cache (id int, data varchar(100));
+
+-- Foreign Key Cleanup Test
+-- Create two tables with foreign keys to each other at snapshot time
+-- These will be dropped during log backup to test foreign key cleanup
+SET GLOBAL tidb_enable_foreign_key = ON;
+create table test_snapshot_db_create.t_fk_parent_cleanup (id int primary key, name varchar(50));
+create table test_snapshot_db_create.t_fk_child_cleanup (id int primary key, parent_id int, constraint fk_cleanup_child foreign key (parent_id) references test_snapshot_db_create.t_fk_parent_cleanup(id));
+-- Add a reverse foreign key to create circular dependency
+alter table test_snapshot_db_create.t_fk_parent_cleanup add column child_id int;
+alter table test_snapshot_db_create.t_fk_parent_cleanup add constraint fk_cleanup_parent foreign key (child_id) references test_snapshot_db_create.t_fk_child_cleanup(id);
+SET GLOBAL tidb_enable_foreign_key = OFF;
 
 

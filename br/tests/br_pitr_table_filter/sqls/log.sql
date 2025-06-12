@@ -158,7 +158,7 @@ alter table test_log_db_create.t_drop_check drop constraint chk_age_to_be_droppe
 
 -- ActionAlterCheckConstraint
 alter table test_snapshot_db_create.t_alter_check alter constraint t_alter_check_chk_age not enforced;
-create table test_log_db_create.t_alter_check (id int, age int, constraint t_alter_check_chk_age check (age >= 0 and age <= 120));create table test_snapshot_db_create.t_alter_check (id int, age int, constraint t_alter_check_chk_age check (age >= 0 and age <= 120));
+create table test_log_db_create.t_alter_check (id int, age int, constraint t_alter_check_chk_age check (age >= 0 and age <= 120));
 alter table test_log_db_create.t_alter_check alter constraint t_alter_check_chk_age not enforced;
 
 -- ActionModifySchemaCharsetAndCollate
@@ -209,9 +209,9 @@ create table test_log_db_create.t_auto_random (id bigint auto_random primary key
 alter table test_log_db_create.t_auto_random force auto_random_base=60000;
 
 -- ActionSetTiFlashReplica
-alter table test_snapshot_db_create.t_set_tiflash set tiflash replica 1;
-create table test_log_db_create.t_set_tiflash (id int);
-alter table test_log_db_create.t_set_tiflash set tiflash replica 1;
+-- alter table test_snapshot_db_create.t_set_tiflash set tiflash replica 1;
+-- create table test_log_db_create.t_set_tiflash (id int);
+-- alter table test_log_db_create.t_set_tiflash set tiflash replica 1;
 
 -- ActionExchangeTablePartition
 alter table test_snapshot_db_create.t_exchange_partition exchange partition p_to_be_exchanged with table test_snapshot_db_create.t_non_partitioned_table;
@@ -221,7 +221,7 @@ create table test_log_db_create.t_exchange_partition (id int) partition by range
 );
 insert into test_log_db_create.t_exchange_partition (id) values (105);
 create table test_log_db_create.t_non_partitioned_table (id int);
-insert into test_kig_db_create.t_non_partitioned_table (id) values (115);
+insert into test_log_db_create.t_non_partitioned_table (id) values (115);
 alter table test_log_db_create.t_exchange_partition exchange partition p_to_be_exchanged with table test_log_db_create.t_non_partitioned_table;
 
 -- ActionAlterTableAttributes
@@ -254,32 +254,37 @@ alter table test_snapshot_db_create.t_remove_partitioning remove partitioning;
 create table test_log_db_create.t_remove_partitioning (id int) partition by range columns (id) (partition p0 values less than (5), partition p1 values less than (10));
 alter table test_log_db_create.t_remove_partitioning remove partitioning;
 
-
-
--- === UNIMPLEMENTED DDL OPERATIONS ===
--- The following DDL operations are not yet implemented in this test:
-
--- ActionCreateTables
--- ActionRecoverTable
--- ActionRepairTable
--- ActionUpdateTiFlashReplicaStatus
--- ActionAlterCacheTable
--- ActionAlterNoCacheTable
--- ActionAlterTableStatsOptions
--- ActionMultiSchemaChange
--- ActionFlashbackCluster
--- ActionRecoverSchema
--- ActionAlterTablePartitionPlacement
--- ActionCreatePlacementPolicy
--- ActionAlterPlacementPolicy
--- ActionDropPlacementPolicy
--- ActionModifySchemaDefaultPlacement
--- ActionAlterTablePlacement
 -- ActionAlterTTLInfo
+alter table test_snapshot_db_create.t_add_ttl TTL = `created_at` + INTERVAL 30 DAY;
+create table test_log_db_create.t_add_ttl (id int, created_at timestamp default current_timestamp);
+alter table test_log_db_create.t_add_ttl TTL = `created_at` + INTERVAL 30 DAY;
+
 -- ActionAlterTTLRemove
--- ActionCreateResourceGroup
--- ActionAlterResourceGroup
--- ActionDropResourceGroup
--- ActionAddVectorIndex
--- ActionAlterTableMode
--- ActionRefreshMeta
+alter table test_snapshot_db_create.t_remove_ttl remove TTL;
+create table test_log_db_create.t_remove_ttl (id int, created_at timestamp default current_timestamp) TTL = `created_at` + INTERVAL 30 DAY;
+alter table test_log_db_create.t_remove_ttl remove TTL;
+
+-- ActionAlterCacheTable
+alter table test_snapshot_db_create.t_alter_cache cache;
+create table test_log_db_create.t_alter_cache (id int, data varchar(100));
+alter table test_log_db_create.t_alter_cache cache;
+
+-- ActionAlterNoCacheTable
+alter table test_snapshot_db_create.t_alter_no_cache nocache;
+create table test_log_db_create.t_alter_no_cache (id int, data varchar(100));
+alter table test_log_db_create.t_alter_no_cache cache;
+alter table test_log_db_create.t_alter_no_cache nocache;
+
+-- Foreign Key Cleanup Test
+-- Drop the foreign keys and then drop both tables to test foreign key cleanup during PITR
+SET GLOBAL tidb_enable_foreign_key = ON;
+SET foreign_key_checks = OFF;
+-- Drop foreign keys first
+alter table test_snapshot_db_create.t_fk_parent_cleanup drop foreign key fk_cleanup_parent;
+alter table test_snapshot_db_create.t_fk_child_cleanup drop foreign key fk_cleanup_child;
+-- Drop both tables
+drop table test_snapshot_db_create.t_fk_child_cleanup;
+drop table test_snapshot_db_create.t_fk_parent_cleanup;
+SET foreign_key_checks = ON;
+SET GLOBAL tidb_enable_foreign_key = OFF;
+

@@ -123,83 +123,115 @@ func equalPlacementPolicy(a, b *model.PolicyRefInfo) bool {
 	return a.ID == b.ID && a.Name.L == b.Name.L
 }
 
+// applyRefreshMeta handles schema and table operations during PITR restore.
+//
+// IMPORTANT: This function relies on BR (Backup & Restore) to send operations in a specific sequence:
+// 1. Delete tables first
+// 2. Delete schemas second
+// 3. Create/Update new schemas third
+// 4. Create/Update new tables fourth
+//
+// This sequence is critical because:
+//   - If schemas are deleted before their tables, the table deletion operations will fail
+//     since the schema context is needed to properly clean up table metadata
+//   - The order ensures proper cleanup of foreign key references and other dependencies
+//   - Schema creation must happen before table creation to provide the proper context
 func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	schemaID := diff.SchemaID
 	tableID := diff.TableID
-	oldSchemaID := diff.OldSchemaID
-	oldTableID := diff.OldTableID
+	oldSchemaID := diff.SchemaID
+	oldTableID := diff.TableID
 
-	// Check if schema exists in kv.
-	dbInfo, err := m.GetDatabase(schemaID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	// Schema doesn't exist in kv, drop it from infoschema.
-	if dbInfo == nil {
-		schemaDiff := &model.SchemaDiff{
-			Version:     diff.Version,
-			Type:        model.ActionDropSchema,
-			SchemaID:    schemaID,
-			OldSchemaID: oldSchemaID,
-			OldTableID:  oldTableID,
-		}
-		return applyDropSchema(b, schemaDiff), nil
-	}
-	// Schema exists in kv but not in infoschema, create it to infoschema.
-	if _, ok := b.SchemaByID(schemaID); !ok {
-		schemaDiff := &model.SchemaDiff{
-			Version:     diff.Version,
-			Type:        model.ActionCreateSchema,
-			SchemaID:    schemaID,
-			OldSchemaID: oldSchemaID,
-			OldTableID:  oldTableID,
-		}
-		if err := applyCreateSchema(b, m, schemaDiff); err != nil {
+	// Schema operation
+	if tableID == 0 {
+		dbInfo, err := m.GetDatabase(schemaID)
+		if err != nil {
 			return nil, errors.Trace(err)
 		}
-	} else {
-		currentSchema, _ := b.SchemaByID(schemaID)
 
-		needsCharsetUpdate := currentSchema.Charset != dbInfo.Charset || currentSchema.Collate != dbInfo.Collate
-		needsPlacementUpdate := !equalPlacementPolicy(currentSchema.PlacementPolicyRef, dbInfo.PlacementPolicyRef)
-
-		if needsCharsetUpdate {
-			charsetDiff := &model.SchemaDiff{
+		// Schema doesn't exist in kv, drop it from infoschema.
+		if dbInfo == nil {
+			schemaDiff := &model.SchemaDiff{
 				Version:     diff.Version,
-				Type:        model.ActionModifySchemaCharsetAndCollate,
+				Type:        model.ActionDropSchema,
 				SchemaID:    schemaID,
 				OldSchemaID: oldSchemaID,
 				OldTableID:  oldTableID,
 			}
-			if err := b.applyModifySchemaCharsetAndCollate(m, charsetDiff); err != nil {
-				return nil, errors.Trace(err)
-			}
+			return applyDropSchema(b, schemaDiff), nil
 		}
 
-		if needsPlacementUpdate {
-			placementDiff := &model.SchemaDiff{
+		// Schema exists in kv but not in infoschema, create it to infoschema
+		if _, ok := b.SchemaByID(schemaID); !ok {
+			schemaDiff := &model.SchemaDiff{
 				Version:     diff.Version,
-				Type:        model.ActionModifySchemaDefaultPlacement,
+				Type:        model.ActionCreateSchema,
 				SchemaID:    schemaID,
 				OldSchemaID: oldSchemaID,
 				OldTableID:  oldTableID,
 			}
-			if err := b.applyModifySchemaDefaultPlacement(m, placementDiff); err != nil {
+			if err := applyCreateSchema(b, m, schemaDiff); err != nil {
 				return nil, errors.Trace(err)
 			}
-		}
-	}
+		} else {
+			currentSchema, _ := b.SchemaByID(schemaID)
 
-	// If tableID is not specified, skip refresh meta.
-	if tableID <= 0 {
+			needsCharsetUpdate := currentSchema.Charset != dbInfo.Charset || currentSchema.Collate != dbInfo.Collate
+			needsPlacementUpdate := !equalPlacementPolicy(currentSchema.PlacementPolicyRef, dbInfo.PlacementPolicyRef)
+
+			if needsCharsetUpdate {
+				charsetDiff := &model.SchemaDiff{
+					Version:     diff.Version,
+					Type:        model.ActionModifySchemaCharsetAndCollate,
+					SchemaID:    schemaID,
+					OldSchemaID: oldSchemaID,
+					OldTableID:  oldTableID,
+				}
+				if err := applyModifySchemaCharsetAndCollate(b, m, charsetDiff); err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+
+			if needsPlacementUpdate {
+				placementDiff := &model.SchemaDiff{
+					Version:     diff.Version,
+					Type:        model.ActionModifySchemaDefaultPlacement,
+					SchemaID:    schemaID,
+					OldSchemaID: oldSchemaID,
+					OldTableID:  oldTableID,
+				}
+				if err := applyModifySchemaDefaultPlacement(b, m, placementDiff); err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+		}
 		return nil, nil
 	}
-	// Check if table exists in kv.
+
+	// Table operation - check if database exists in infoschema first
+	// if not just return
+	if _, ok := b.SchemaByID(schemaID); !ok {
+		return nil, nil
+	}
+
+	// Check if table exists in kv
 	tableInfo, err := m.GetTable(schemaID, tableID)
 	if err != nil {
+		if meta.ErrDBNotExists.Equal(err) {
+			// Database doesn't exist in TiKV but still exists in infoschema
+			// Just call the appropriate drop table function directly (same as schema drop does)
+			if dbInfo, ok := b.SchemaByID(schemaID); ok {
+				if b.enableV2 {
+					b.applyDropTableV2(diff, dbInfo, tableID, nil)
+				} else {
+					b.applyDropTable(diff, dbInfo, tableID, nil)
+				}
+			}
+			return nil, nil
+		}
 		return nil, errors.Trace(err)
 	}
-	// Table not exists in kv, drop it from infoschema.
+	// Table not exists in kv, drop it from infoschema
 	if tableInfo == nil {
 		schemaDiff := &model.SchemaDiff{
 			Version:     diff.Version,
