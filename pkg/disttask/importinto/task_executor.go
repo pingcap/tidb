@@ -223,6 +223,7 @@ outer:
 }
 
 func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	s.summary.UpdateTime = time.Now()
 	return &s.summary
 }
 
@@ -460,6 +461,7 @@ func (m *mergeSortStepExecutor) Cleanup(ctx context.Context) (err error) {
 }
 
 func (m *mergeSortStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	m.summary.UpdateTime = time.Now()
 	return &m.summary
 }
 
@@ -560,6 +562,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 }
 
 func (e *writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	e.summary.UpdateTime = time.Now()
 	return &e.summary
 }
 

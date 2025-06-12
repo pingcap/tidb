@@ -17,6 +17,7 @@ package execute
 import (
 	"context"
 	"reflect"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"go.uber.org/atomic"
@@ -66,8 +67,9 @@ type StepExecutor interface {
 // SubtaskSummary contains the summary of a subtask
 // These fields represent the number of data/rows inputed to the subtask.
 type SubtaskSummary struct {
-	RowCnt atomic.Int64 `json:"row_count,omitempty"`
-	Bytes  atomic.Int64 `json:"bytes,omitempty"`
+	RowCnt     atomic.Int64 `json:"row_count,omitempty"`
+	Bytes      atomic.Int64 `json:"bytes,omitempty"`
+	UpdateTime time.Time    `json:"update_time,omitempty"`
 }
 
 // Reset resets the summary to the given row count and bytes.

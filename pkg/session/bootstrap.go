@@ -1313,15 +1313,11 @@ const (
 	// Update mysql.tidb_pitr_id_map to add restore_id as a primary key field
 	version248 = 248
 	version249 = 249
-
-	// version 250
-	// Add summary_update_time to mysql.tidb_background_subtask_history and mysql.tidb_background_subtask
-	version250 = 250
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version250
+var currentBootstrapVersion int64 = version249
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1506,7 +1502,6 @@ var (
 		upgradeToVer247,
 		upgradeToVer248,
 		upgradeToVer249,
-		upgradeToVer250,
 	}
 )
 
@@ -3502,14 +3497,6 @@ func upgradeToVer249(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateRestoreRegistryTable)
-}
-
-func upgradeToVer250(s sessiontypes.Session, ver int64) {
-	if ver >= version250 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN summary_update_time timestamp default null on update current_timestamp", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN summary_update_time timestamp default null", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
