@@ -15,6 +15,7 @@
 package cache
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/hex"
@@ -35,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -356,30 +357,18 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 	}
 
 	regionCache := store.GetRegionCache()
-	regions, err := regionCache.LocateKeyRange(
+	regions, err := locateKeyRange(regionCache,
 		tikv.NewBackofferWithVars(ctx, maxSleep, nil), startKey, endKey)
 	if err != nil {
 		return nil, err
 	}
 
-<<<<<<< HEAD
-	regionsPerRange := len(regionIDs) / splitCnt
-	oversizeCnt := len(regionIDs) % splitCnt
-	ranges := make([]kv.KeyRange, 0, mathutil.Min(len(regionIDs), splitCnt))
-	for len(regionIDs) > 0 {
-		startRegion, err := regionCache.LocateRegionByID(tikv.NewBackofferWithVars(ctx, 20000, nil),
-			regionIDs[0])
-		if err != nil {
-			return nil, err
-		}
-=======
 	regionsCnt := len(regions)
 	regionsPerRange := regionsCnt / splitCnt
 	oversizeCnt := regionsCnt % splitCnt
 	ranges := make([]kv.KeyRange, 0, min(regionsCnt, splitCnt))
 	for len(regions) > 0 {
 		startRegion := regions[0]
->>>>>>> fc28ff6fa1b (ttl: fix the issue that TTL cannot start if regions are merged frequently (#61530))
 
 		endRegionIdx := regionsPerRange - 1
 		if oversizeCnt > 0 {
@@ -592,4 +581,56 @@ func GetNextBytesHandleDatum(key kv.Key, recordPrefix []byte) (d types.Datum) {
 	}
 	d.SetBytes(val)
 	return d
+}
+
+// locateKeyRange locates the regions for the given key range [startKey, endKey).
+// It's a workaround for `regionCache.LocateKeyRange` which doesn't exist in release-7.5
+// Ref client-go/internal/locate/region_cache.go `(*RegionCache).LocateKeyRange`
+// TODO: remove or replace this function when `regionCache.LocateKeyRange` is available
+func locateKeyRange(c *tikv.RegionCache, bo *tikv.Backoffer, startKey, endKey []byte) ([]*tikv.KeyLocation, error) {
+	const defaultRegionsPerBatch = 128
+
+	var res []*tikv.KeyLocation
+	for {
+		// 1. find regions from cache
+		for {
+			loc := c.TryLocateKey(startKey)
+			if loc == nil {
+				break
+			}
+			res = append(res, loc)
+			if keyLocationContainsByEnd(loc, endKey) {
+				return res, nil
+			}
+			startKey = loc.EndKey
+		}
+		// 2. load remaining regions from pd client
+		batchRegions, err := c.BatchLoadRegionsWithKeyRange(bo, startKey, endKey, defaultRegionsPerBatch)
+		if err != nil {
+			return nil, err
+		}
+		if len(batchRegions) == 0 {
+			// should never happen
+			err := errors.Errorf("BatchLoadRegionsWithKeyRange return empty batchRegions without err")
+			return nil, err
+		}
+		for _, r := range batchRegions {
+			res = append(res, &tikv.KeyLocation{
+				Region:   r.VerID(),
+				StartKey: r.StartKey(),
+				EndKey:   r.EndKey(),
+			})
+		}
+		endRegion := batchRegions[len(batchRegions)-1]
+		if endRegion.ContainsByEnd(endKey) {
+			break
+		}
+		startKey = endRegion.EndKey()
+	}
+	return res, nil
+}
+
+func keyLocationContainsByEnd(loc *tikv.KeyLocation, key []byte) bool {
+	return bytes.Compare(loc.StartKey, key) < 0 &&
+		(bytes.Compare(key, loc.EndKey) <= 0 || len(loc.EndKey) == 0)
 }
