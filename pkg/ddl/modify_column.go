@@ -106,6 +106,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 
 	if err = checkModifyTypes(oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
