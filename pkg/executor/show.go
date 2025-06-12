@@ -285,6 +285,37 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	return nil
 }
 
+// visibleChecker checks if a stmt is visible for a certain user.
+type visibleChecker struct {
+	defaultDB string
+	ctx       sessionctx.Context
+	is        infoschema.InfoSchema
+	manager   privilege.Manager
+	ok        bool
+}
+
+func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	if x, ok := in.(*ast.TableName); ok {
+		schema := x.Schema.L
+		if schema == "" {
+			schema = v.defaultDB
+		}
+		if !v.is.TableExists(pmodel.NewCIStr(schema), x.Name) {
+			return in, true
+		}
+		activeRoles := v.ctx.GetSessionVars().ActiveRoles
+		if v.manager != nil && !v.manager.RequestVerification(activeRoles, schema, x.Name.L, "", mysql.SelectPriv) {
+			v.ok = false
+		}
+		return in, true
+	}
+	return in, false
+}
+
+func (*visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
 func (e *ShowExec) fetchShowBind() error {
 	var bindings []bindinfo.Binding
 	if !e.GlobalScope {
@@ -304,49 +335,34 @@ func (e *ShowExec) fetchShowBind() error {
 		}
 		return cmpResult > 0
 	})
-	currentDB := e.Ctx().GetSessionVars().CurrentDB
-	defer func() {
-		e.Ctx().GetSessionVars().CurrentDB = currentDB
-	}()
-BindingLoop:
-	for _, binding := range bindings {
-		stmt, err := parser.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
+	for _, hint := range bindings {
+		stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
 		if err != nil {
 			return err
 		}
-		nodeW := resolve.NewNodeW(stmt)
-		e.Ctx().GetSessionVars().CurrentDB = binding.Db
-		err = plannercore.Preprocess(context.Background(), e.Ctx(), nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: e.is}))
-		if err != nil {
-			return err
+		checker := visibleChecker{
+			defaultDB: hint.Db,
+			ctx:       e.Ctx(),
+			is:        e.is,
+			manager:   privilege.GetPrivilegeManager(e.Ctx()),
+			ok:        true,
 		}
-		builder, _ := plannercore.NewPlanBuilder().Init(e.Ctx().GetPlanCtx(), e.is, hint.NewQBHintHandler(nil))
-		_, err = builder.Build(context.Background(), nodeW)
-		if err != nil {
-			return err
+		stmt.Accept(&checker)
+		if !checker.ok {
+			continue
 		}
-
-		if privManager := privilege.GetPrivilegeManager(e.Ctx()); privManager != nil {
-			for _, v := range builder.GetVisitInfo() {
-				priv, db, table, column, _ := v.GetValue()
-				if !privManager.RequestVerification(e.Ctx().GetSessionVars().ActiveRoles, db, table, column, priv) {
-					continue BindingLoop
-				}
-			}
-		}
-
 		e.appendRow([]any{
-			binding.OriginalSQL,
-			binding.BindSQL,
-			binding.Db,
-			binding.Status,
-			binding.CreateTime,
-			binding.UpdateTime,
-			binding.Charset,
-			binding.Collation,
-			binding.Source,
-			binding.SQLDigest,
-			binding.PlanDigest,
+			hint.OriginalSQL,
+			hint.BindSQL,
+			hint.Db,
+			hint.Status,
+			hint.CreateTime,
+			hint.UpdateTime,
+			hint.Charset,
+			hint.Collation,
+			hint.Source,
+			hint.SQLDigest,
+			hint.PlanDigest,
 		})
 	}
 	return nil
