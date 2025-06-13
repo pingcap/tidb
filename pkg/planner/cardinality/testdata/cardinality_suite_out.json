@@ -1345,9 +1345,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 19.89 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 18.90 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 19.89 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 18.90 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1355,9 +1355,9 @@
         "Result": [
           "Limit 10.00 root  offset:0, count:10",
           "└─IndexLookUp 10.00 root  ",
-          "  ├─IndexFullScan(Build) 108.90 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 108.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 108.90 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 108.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1379,9 +1379,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 108.90 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 99.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 108.90 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 99.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1389,9 +1389,9 @@
         "Result": [
           "Limit 10.00 root  offset:0, count:10",
           "└─IndexLookUp 10.00 root  ",
-          "  ├─IndexFullScan(Build) 189.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 180.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 189.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 180.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1413,9 +1413,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 504.50 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 455.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 504.50 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 455.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1423,9 +1423,9 @@
         "Result": [
           "Limit 10.00 root  offset:0, count:10",
           "└─IndexLookUp 10.00 root  ",
-          "  ├─IndexFullScan(Build) 545.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 500.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 545.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 500.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
