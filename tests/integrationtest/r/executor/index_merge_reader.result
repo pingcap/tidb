@@ -471,10 +471,10 @@ insert into t values(1, 1, 1), (2, 2, 2);
 explain format='brief' select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a = 1 or b = 1 limit 1;
 id	estRows	task	access object	operator info
 IndexMerge	1.00	root		type: union, limit embedded(offset:0, count:1)
-├─Limit(Build)	0.50	cop[tikv]		offset:0, count:1
-│ └─IndexRangeScan	0.50	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], keep order:false, stats:pseudo
-├─Limit(Build)	0.50	cop[tikv]		offset:0, count:1
-│ └─IndexRangeScan	0.50	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:false, stats:pseudo
+├─Limit(Build)	0.59	cop[tikv]		offset:0, count:1
+│ └─IndexRangeScan	0.59	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], keep order:false, stats:pseudo
+├─Limit(Build)	0.59	cop[tikv]		offset:0, count:1
+│ └─IndexRangeScan	0.59	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a = 1 or b = 1 limit 1;
 a	b	c
@@ -489,8 +489,8 @@ id	estRows	task	access object	operator info
 Limit_15	2.00	root		offset:0, count:2
 └─UnionScan_21	2.00	root		or(eq(executor__index_merge_reader.t.a, 1), eq(executor__index_merge_reader.t.b, 1))
   └─IndexMerge_25	2.00	root		type: union
-    ├─IndexRangeScan_22(Build)	1.00	cop[tikv]	table:t, index:idx1(a, c)	range:[1,1], keep order:true, stats:pseudo
-    ├─IndexRangeScan_23(Build)	1.00	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:true, stats:pseudo
+    ├─IndexRangeScan_22(Build)	1.07	cop[tikv]	table:t, index:idx1(a, c)	range:[1,1], keep order:true, stats:pseudo
+    ├─IndexRangeScan_23(Build)	1.07	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:true, stats:pseudo
     └─TableRowIDScan_24(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 2;
 a	b	c
@@ -504,8 +504,8 @@ id	estRows	task	access object	operator info
 Limit_15	2.00	root		offset:0, count:2
 └─UnionScan_21	2.00	root		or(eq(executor__index_merge_reader.t.a, 1), eq(executor__index_merge_reader.t.b, 1))
   └─IndexMerge_25	2.00	root		type: union
-    ├─IndexRangeScan_22(Build)	1.00	cop[tikv]	table:t, index:idx1(a, c)	range:[1,1], keep order:true, desc, stats:pseudo
-    ├─IndexRangeScan_23(Build)	1.00	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:true, desc, stats:pseudo
+    ├─IndexRangeScan_22(Build)	1.07	cop[tikv]	table:t, index:idx1(a, c)	range:[1,1], keep order:true, desc, stats:pseudo
+    ├─IndexRangeScan_23(Build)	1.07	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:true, desc, stats:pseudo
     └─TableRowIDScan_24(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c desc limit 2;
 a	b	c
