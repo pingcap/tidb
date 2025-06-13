@@ -351,7 +351,9 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer iter.Close()
+	if iter != nil {
+		defer iter.Close()
+	}
 
 	if firstKey == nil {
 		j.convertStageTo(ingested)
