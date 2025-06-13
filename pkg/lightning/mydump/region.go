@@ -512,7 +512,7 @@ func SplitLargeCSV(
 
 	divisor := int64(cfg.ColumnCnt)
 	prevRowIdxMax := int64(0)
-	for i := range len(splitEndOffsets) {
+	for i := range splitEndOffsets {
 		startOffset := dataStart
 		if i > 0 {
 			startOffset = splitEndOffsets[i-1]

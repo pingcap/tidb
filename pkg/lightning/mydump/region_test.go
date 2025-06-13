@@ -372,7 +372,7 @@ func TestSplitLargeFileNoNewLineAtEOF(t *testing.T) {
 	divideConfig := NewDataDivideConfig(cfg, 2, ioWorker, store, meta)
 	columns := []string{"a", "b"}
 
-	offsets := [][]int64{{4, 13}, {13, 21}}
+	offsets := [][]int64{{4, 13}, {13, 14}, {14, 21}}
 
 	regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo)
 	require.NoError(t, err)
@@ -531,7 +531,7 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 	// in fact this is the wrong result, just to show the bug. pos mismatch with
 	// offsets. and we might read more rows than expected because we use == rather
 	// than >= to stop reading.
-	offsets := [][]int64{{0, 3}, {3, 6}, {6, 9}, {9, 12}}
+	offsets := [][]int64{{0, 3}, {3, 5}, {5, 8}, {8, 9}, {9, 11}, {11, 12}}
 	pos := []int64{2, 5, 8, 11}
 
 	regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo)
@@ -559,7 +559,7 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 	cfg.Mydumper.CSV.LinesTerminatedBy = "\r\n"
 	divideConfig = NewDataDivideConfig(cfg, 1, ioWorker, store, meta)
 	// pos is contained in expectedOffsets
-	expectedOffsets := [][]int64{{0, 6}, {6, 12}}
+	expectedOffsets := [][]int64{{0, 6}, {6, 9}, {9, 12}}
 	pos = []int64{3, 6, 9, 12}
 
 	regions, _, err = SplitLargeCSV(context.Background(), divideConfig, fileInfo)
