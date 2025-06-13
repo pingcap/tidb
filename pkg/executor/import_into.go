@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -276,8 +277,9 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 			logutil.Logger(ctx).Error("close importer failed", zap.Error(err))
 		}
 	}()
-	selectedRowCh := make(chan importer.QueryRow)
-	ti.SetSelectedRowCh(selectedRowCh)
+	selectedChunkCh := make(chan importer.QueryChunk, e.controller.ThreadCnt)
+	ti.SetSelectedChunkCh(selectedChunkCh)
+	ti.SetInputFieldTypes(e.selectExec.RetFieldTypes())
 
 	var importResult *importer.JobImportResult
 	eg, egCtx := errgroup.WithContext(ctx)
@@ -287,32 +289,41 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 		return err
 	})
 	eg.Go(func() error {
-		defer close(selectedRowCh)
+		defer close(selectedChunkCh)
 		fields := exec.RetTypes(e.selectExec)
+		chkSize := e.selectExec.InitCap()
+		maxChkSize := e.selectExec.MaxChunkSize()
 		var idAllocator int64
+		var readDur time.Duration
+		begin := time.Now()
 		for {
 			// rows will be consumed concurrently, we cannot use chunk pool in session ctx.
-			chk := exec.NewFirstChunk(e.selectExec)
-			iter := chunk.NewIterator4Chunk(chk)
+			readBegin := time.Now()
+			chk := chunk.New(e.selectExec.RetFieldTypes(), chkSize, maxChkSize)
 			err := exec.Next(egCtx, e.selectExec, chk)
 			if err != nil {
 				return err
 			}
+			readDur += time.Since(readBegin)
 			if chk.NumRows() == 0 {
 				break
 			}
-			for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
-				idAllocator++
-				select {
-				case selectedRowCh <- importer.QueryRow{
-					ID:   idAllocator,
-					Data: innerChunkRow.GetDatumRow(fields),
-				}:
-				case <-egCtx.Done():
-					return egCtx.Err()
-				}
+			select {
+			case selectedChunkCh <- importer.QueryChunk{
+				Fields: fields,
+				Chk:    chk,
+				Offset: idAllocator,
+			}:
+				idAllocator += int64(chk.NumRows())
+			case <-egCtx.Done():
+				return egCtx.Err()
+			}
+			if chkSize < maxChkSize {
+				chkSize = chkSize * 2
+				chkSize = min(chkSize, maxChkSize)
 			}
 		}
+		logutil.Logger(ctx).Info("read chunk from select statement finish", zap.Duration("read-time", readDur), zap.Duration("total-time", time.Since(begin)))
 		return nil
 	})
 	if err := eg.Wait(); err != nil {
