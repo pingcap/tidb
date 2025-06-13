@@ -514,8 +514,13 @@ o_year;
 id	estRows	task	access object	operator info
 Sort	724.08	root		Column#62
 └─Projection	724.08	root		Column#62, div(Column#64, Column#65)->Column#66
+<<<<<<< HEAD
   └─HashAgg	724.08	root		group by:Column#77, funcs:sum(Column#75)->Column#64, funcs:sum(Column#76)->Column#65, funcs:firstrow(Column#77)->Column#62
     └─Projection	632534.06	root		case(eq(tpch50.nation.n_name, INDIA), mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), 0.0000)->Column#75, mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#76, extract(YEAR, tpch50.orders.o_orderdate)->Column#77
+=======
+  └─HashAgg	724.08	root		group by:Column#74, funcs:sum(Column#72)->Column#64, funcs:sum(Column#73)->Column#65, funcs:firstrow(Column#74)->Column#62
+    └─Projection	632534.06	root		case(eq(tpch50.nation.n_name, INDIA), mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), 0.0000)->Column#72, mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#73, extract(YEAR, tpch50.orders.o_orderdate)->Column#74
+>>>>>>> 35c1e21115c (planner,expression: fix wrong copy args to avoid breaking origin expression when to EvaluateExprWithNull (#61630))
       └─Projection	632534.06	root		tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.orders.o_orderdate, tpch50.nation.n_name
         └─HashJoin	632534.06	root		inner join, equal:[eq(tpch50.supplier.s_nationkey, tpch50.nation.n_nationkey)]
           ├─TableReader(Build)	25.00	root		data:TableFullScan
@@ -590,8 +595,13 @@ o_year desc;
 id	estRows	task	access object	operator info
 Sort	2406.00	root		tpch50.nation.n_name, Column#53:desc
 └─Projection	2406.00	root		tpch50.nation.n_name, Column#53, Column#55
+<<<<<<< HEAD
   └─HashAgg	2406.00	root		group by:Column#65, Column#66, funcs:sum(Column#64)->Column#55, funcs:firstrow(Column#65)->tpch50.nation.n_name, funcs:firstrow(Column#66)->Column#53
     └─Projection	247789900.85	root		minus(mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), mul(tpch50.partsupp.ps_supplycost, tpch50.lineitem.l_quantity))->Column#64, tpch50.nation.n_name->Column#65, extract(YEAR, tpch50.orders.o_orderdate)->Column#66
+=======
+  └─HashAgg	2406.00	root		group by:Column#60, Column#61, funcs:sum(Column#59)->Column#55, funcs:firstrow(Column#60)->tpch50.nation.n_name, funcs:firstrow(Column#61)->Column#53
+    └─Projection	247789900.85	root		minus(mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), mul(tpch50.partsupp.ps_supplycost, tpch50.lineitem.l_quantity))->Column#59, tpch50.nation.n_name->Column#60, extract(YEAR, tpch50.orders.o_orderdate)->Column#61
+>>>>>>> 35c1e21115c (planner,expression: fix wrong copy args to avoid breaking origin expression when to EvaluateExprWithNull (#61630))
       └─Projection	247789900.85	root		tpch50.lineitem.l_quantity, tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.partsupp.ps_supplycost, tpch50.orders.o_orderdate, tpch50.nation.n_name
         └─HashJoin	247789900.85	root		inner join, equal:[eq(tpch50.lineitem.l_orderkey, tpch50.orders.o_orderkey)]
           ├─TableReader(Build)	75000000.00	root		data:TableFullScan
@@ -1292,6 +1302,7 @@ id	estRows	task	access object	operator info
 Sort	1.00	root		Column#31
 └─Projection	1.00	root		Column#31, Column#32, Column#33
   └─HashAgg	1.00	root		group by:Column#36, funcs:count(1)->Column#32, funcs:sum(Column#35)->Column#33, funcs:firstrow(Column#36)->Column#31
+<<<<<<< HEAD
     └─Projection	0.64	root		tpch50.customer.c_acctbal->Column#35, substring(tpch50.customer.c_phone, 1, 2)->Column#36
       └─HashJoin	0.64	root		anti semi join, equal:[eq(tpch50.customer.c_custkey, tpch50.orders.o_custkey)]
         ├─TableReader(Build)	75000000.00	root		data:TableFullScan
@@ -1299,3 +1310,7 @@ Sort	1.00	root		Column#31
         └─TableReader(Probe)	0.80	root		data:Selection
           └─Selection	0.80	cop[tikv]		gt(tpch50.customer.c_acctbal, NULL), in(substring(tpch50.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
             └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
+=======
+    └─Projection	0.00	root		tpch50.customer.c_acctbal->Column#35, substring(tpch50.customer.c_phone, 1, 2)->Column#36
+      └─TableDual	0.00	root		rows:0
+>>>>>>> 35c1e21115c (planner,expression: fix wrong copy args to avoid breaking origin expression when to EvaluateExprWithNull (#61630))

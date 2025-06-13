@@ -747,8 +747,15 @@ func (p *LogicalJoin) ExtractFDForSemiJoin(filtersFromApply []expression.Express
 }
 
 // ExtractFDForInnerJoin extracts FD for inner join.
+<<<<<<< HEAD
 func (p *LogicalJoin) ExtractFDForInnerJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
 	leftFD, rightFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
+=======
+func (p *LogicalJoin) ExtractFDForInnerJoin(equivFromApply [][]intset.FastIntSet) *funcdep.FDSet {
+	child := p.Children()
+	rightFD := child[1].ExtractFD()
+	leftFD := child[0].ExtractFD()
+>>>>>>> 35c1e21115c (planner,expression: fix wrong copy args to avoid breaking origin expression when to EvaluateExprWithNull (#61630))
 	fds := leftFD
 	fds.MakeCartesianProduct(rightFD)
 
