@@ -200,7 +200,7 @@ func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Express
 				sctx.GetExprCtx(),
 				ithPredicate,
 				jthPredicate)
-			if iCol == jCol {
+			if iCol.Equals(jCol) {
 				if iType == notEqualPredicate && jType == inListPredicate {
 					predicates[j], specialCase = updateInPredicate(sctx, jthPredicate, ithPredicate)
 					if maybeOverOptimized4PlanCache {
@@ -245,7 +245,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	var otherPred expression.Expression
 	col1, p1Type := FindPredicateType(ctx, p1)
 	col2, p2Type := FindPredicateType(ctx, p2)
-	if col1 != col2 || col1 == nil {
+	if col1 == nil || !col1.Equals(col2) {
 		return false
 	}
 	if p1Type == equalPredicate {
@@ -385,7 +385,7 @@ func shortCircuitANDORLogicalConstants(sctx base.PlanContext, predicate expressi
 	case secondType == falsePredicate && !orCase:
 		return secondCondition, true
 	default:
-		if firstCondition != args[0] || secondCondition != args[1] {
+		if !firstCondition.Equal(sctx.GetExprCtx().GetEvalCtx(), args[0]) || !secondCondition.Equal(sctx.GetExprCtx().GetEvalCtx(), args[1]) {
 			finalResult := expression.NewFunctionInternal(sctx.GetExprCtx(), con.FuncName.L, con.GetStaticType(), firstCondition, secondCondition)
 			return finalResult, true
 		}
