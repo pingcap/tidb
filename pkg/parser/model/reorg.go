@@ -67,9 +67,12 @@ const (
 )
 
 const (
-	AnalyzeStateNone    = 0
+	// AnalyzeStateNone means the analyze process is not started yet.
+	AnalyzeStateNone = 0
+	// AnalyzeStateRunning means the analyze process is running.
 	AnalyzeStateRunning = 1
-	AnalyzeStateDone    = 2
+	// AnalyzeStateDone means the analyze process is done.
+	AnalyzeStateDone = 2
 )
 
 // NeedMergeProcess means the incremental changes need to be merged.
