@@ -447,6 +447,11 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			exeerrors.ErrMemoryExceedForInstance.Equal(recoverdErr) ||
 			exeerrors.ErrQueryInterrupted.Equal(recoverdErr) ||
 			exeerrors.ErrMaxExecTimeExceeded.Equal(recoverdErr)) {
+			// Not sure why panic again after recover, we need to skip this for test.
+			failpoint.Inject("skipExecPanic", func() {
+				err = errors.Errorf("%v", r)
+				failpoint.Return()
+			})
 			panic(r)
 		}
 		err = recoverdErr
