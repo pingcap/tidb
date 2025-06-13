@@ -305,7 +305,7 @@ func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.Reco
 }
 
 func (tk *TestKit) hasPlan(sql string, plan string, args ...any) (bool, *Result) {
-	rs := tk.MustQuery("explain "+sql, args...)
+	rs := tk.MustQuery("explain format='cost_trace' "+sql, args...)
 	for i := range rs.rows {
 		if strings.Contains(rs.rows[i][0], plan) {
 			return true, rs
