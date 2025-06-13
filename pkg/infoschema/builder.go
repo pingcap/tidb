@@ -134,7 +134,6 @@ func equalPlacementPolicy(a, b *model.PolicyRefInfo) bool {
 // This sequence is critical because:
 //   - If schemas are deleted before their tables, the table deletion operations will fail
 //     since the schema context is needed to properly clean up table metadata
-//   - The order ensures proper cleanup of foreign key references and other dependencies
 //   - Schema creation must happen before table creation to provide the proper context
 func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	schemaID := diff.SchemaID
@@ -209,7 +208,7 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 	}
 
 	// Table operation - check if database exists in infoschema first
-	// if not just return
+	// if not just return, since infoschema is consistent, if schema is gone then all tables must have gone.
 	if _, ok := b.SchemaByID(schemaID); !ok {
 		return nil, nil
 	}
@@ -220,7 +219,7 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 		return nil, errors.Trace(err)
 	}
 
-	// Table not exists in kv (either due to ErrDBNotExists or tableInfo == nil), drop it from infoschema
+	// Table not exists in kv, drop it from infoschema
 	if tableInfo == nil {
 		schemaDiff := &model.SchemaDiff{
 			Version:     diff.Version,

@@ -5,41 +5,63 @@ set -eu
 table_must_exist() {
     run_sql "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)'"
     check_contains "COUNT(*): 1"
+    run_sql "SELECT COUNT(*) FROM $1 LIMIT 0"
 }
 
 table_must_not_exist() {
     run_sql "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)'"
     check_contains "COUNT(*): 0"
+    if run_sql "SELECT COUNT(*) FROM $1 LIMIT 0" 2>/dev/null; then
+        echo "ERROR: Table $1 should not exist but is accessible"
+        exit 1
+    fi
 }
 
 column_must_exist() {
     run_sql "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)' AND COLUMN_NAME = '$2'"
     check_contains "COUNT(*): 1"
+    run_sql "SELECT $2 FROM $1 LIMIT 0"
 }
 
 column_must_not_exist() {
     run_sql "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)' AND COLUMN_NAME = '$2'"
     check_contains "COUNT(*): 0"
+    if run_sql "SELECT $2 FROM $1 LIMIT 0" 2>/dev/null; then
+        echo "ERROR: Column $2 in table $1 should not exist but is accessible"
+        exit 1
+    fi
 }
 
 index_must_exist() {
     run_sql "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)' AND INDEX_NAME = '$2'"
     check_contains "COUNT(*): 1"
+    run_sql "SHOW INDEX FROM $1 WHERE Key_name = '$2'"
+    run_sql "ADMIN CHECK INDEX $1 $2"
+    run_sql "ADMIN CHECK TABLE $1"
 }
 
 index_must_not_exist() {
     run_sql "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)' AND INDEX_NAME = '$2'"
     check_contains "COUNT(*): 0"
+    run_sql "SELECT COUNT(*) FROM (SHOW INDEX FROM $1 WHERE Key_name = '$2') as t"
+    check_contains "COUNT(*): 0"
+    run_sql "ADMIN CHECK TABLE $1"
 }
 
 schema_must_exist() {
     run_sql "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '$1'"
     check_contains "SCHEMA_NAME: $1"
+    run_sql "USE $1; SELECT 1 as success"
+    check_contains "success: 1"
 }
 
 schema_must_not_exist() {
     run_sql "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '$1'"
     check_contains "COUNT(*): 0"
+    if run_sql "USE $1" 2>/dev/null; then
+        echo "ERROR: Schema $1 should not exist but is accessible"
+        exit 1
+    fi
 }
 
 table_not_duplicate() {
@@ -55,89 +77,116 @@ check_create_table_contains() {
 view_must_exist() {
     run_sql "SELECT COUNT(*) FROM information_schema.VIEWS WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)'"
     check_contains "COUNT(*): 1"
+    run_sql "SELECT COUNT(*) FROM $1 LIMIT 0"
 }
 
 view_must_not_exist() {
     run_sql "SELECT COUNT(*) FROM information_schema.VIEWS WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)'"
     check_contains "COUNT(*): 0"
+    if run_sql "SELECT COUNT(*) FROM $1 LIMIT 0" 2>/dev/null; then
+        echo "ERROR: View $1 should not exist but is accessible"
+        exit 1
+    fi
 }
 
 sequence_must_exist() {
     run_sql "SELECT SEQUENCE_NAME FROM information_schema.SEQUENCES WHERE SEQUENCE_SCHEMA = '$1' AND SEQUENCE_NAME = '$2'"
     check_contains "SEQUENCE_NAME: $2"
+    run_sql "SHOW CREATE SEQUENCE $1.$2"
 }
 
 sequence_must_not_exist() {
     run_sql "SELECT COUNT(*) FROM information_schema.SEQUENCES WHERE SEQUENCE_SCHEMA = '$1' AND SEQUENCE_NAME = '$2'"
     check_contains "COUNT(*): 0"
+    if run_sql "SHOW CREATE SEQUENCE $1.$2" 2>/dev/null; then
+        echo "ERROR: Sequence $1.$2 should not exist but is accessible"
+        exit 1
+    fi
 }
 
 foreign_key_must_exist() {
     run_sql "SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = '$1' AND TABLE_NAME = '$2' AND CONSTRAINT_TYPE = 'FOREIGN KEY' AND CONSTRAINT_NAME = '$3'"
     check_contains "CONSTRAINT_NAME: $3"
+    run_sql "SHOW CREATE TABLE $1.$2"
+    check_contains "CONSTRAINT \`$3\`"
 }
 
 foreign_key_must_not_exist() {
     run_sql "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = '$1' AND TABLE_NAME = '$2' AND CONSTRAINT_TYPE = 'FOREIGN KEY' AND CONSTRAINT_NAME = '$3'"
     check_contains "COUNT(*): 0"
+    run_sql "SHOW CREATE TABLE $1.$2"
+    check_not_contains "CONSTRAINT \`$3\`"
 }
 
-# Function to check if a check constraint exists
 check_constraint_must_exist() {
     local schema_name="$1"
     local table_name="$2"
     local constraint_name="$3"
-    
     run_sql "SELECT COUNT(*) FROM information_schema.CHECK_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = '$schema_name' AND CONSTRAINT_NAME = '$constraint_name'"
     check_contains "COUNT(*): 1"
+    run_sql "SHOW CREATE TABLE $schema_name.$table_name"
+    check_contains "CONSTRAINT \`$constraint_name\`"
 }
 
-# Function to check if a check constraint does not exist
 check_constraint_must_not_exist() {
     local schema_name="$1"
     local table_name="$2"
     local constraint_name="$3"
-    
     run_sql "SELECT COUNT(*) FROM information_schema.CHECK_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = '$schema_name' AND CONSTRAINT_NAME = '$constraint_name'"
     check_contains "COUNT(*): 0"
+    run_sql "SHOW CREATE TABLE $schema_name.$table_name"
+    check_not_contains "CONSTRAINT \`$constraint_name\`"
 }
 
 partition_must_exist() {
     run_sql "SELECT PARTITION_NAME FROM information_schema.PARTITIONS WHERE TABLE_SCHEMA = '$1' AND TABLE_NAME = '$2' AND PARTITION_NAME = '$3'"
     check_contains "PARTITION_NAME: $3"
+    run_sql "SELECT COUNT(*) FROM $1.$2 PARTITION($3) LIMIT 0"
 }
 
 partition_must_not_exist() {
     run_sql "SELECT COUNT(*) FROM information_schema.PARTITIONS WHERE TABLE_SCHEMA = '$1' AND TABLE_NAME = '$2' AND PARTITION_NAME = '$3'"
     check_contains "COUNT(*): 0"
+    run_sql "SHOW CREATE TABLE $1.$2"
+    check_not_contains "PARTITION \`$3\`"
 }
 
 check_table_default_value() {
     run_sql "SELECT COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '$1' AND TABLE_NAME = '$2' AND COLUMN_NAME = '$3'"
     check_contains "COLUMN_DEFAULT: $4"
+    run_sql "SHOW CREATE TABLE $1.$2"
+    check_contains "$3.*DEFAULT '$4'"
 }
 
 check_table_charset() {
     run_sql "SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$1' AND TABLE_NAME = '$2'"
     check_contains "$3"
+    run_sql "SHOW CREATE TABLE $1.$2"
+    check_contains "COLLATE=$3"
 }
 
 check_schema_charset() {
     local schema_name="$1"
     local expected_collation="$2"
-    
     run_sql "SELECT DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '$schema_name'"
     check_contains "$expected_collation"
+    run_sql "SHOW CREATE DATABASE $schema_name"
+    check_contains "COLLATE=$expected_collation"
 }
 
 check_index_visibility() {
     local schema="$1"
     local table="$2"
     local index="$3"
-    local visibility="$4"  # 'YES' for visible, 'NO' for invisible
-    
+    local visibility="$4"
     run_sql "SELECT IS_VISIBLE FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$table' AND INDEX_NAME = '$index'"
     check_contains "IS_VISIBLE: $visibility"
+    run_sql "SHOW INDEX FROM $schema.$table WHERE Key_name = '$index'"
+    if [ "$visibility" = "YES" ]; then
+        check_not_contains "INVISIBLE"
+    else
+        check_contains "INVISIBLE"
+    fi
 }
 
 check_tiflash_replica_count() {
@@ -148,26 +197,12 @@ check_tiflash_replica_count() {
 row_must_exist() {
     run_sql "SELECT COUNT(*) FROM $1 WHERE $2"
     check_contains "COUNT(*): 1"
+    run_sql "SELECT * FROM $1 WHERE $2 LIMIT 1"
 }
 
 row_must_not_exist() {
     run_sql "select count(*) from $1 where $2"
     check_contains "count(*): 0"
-}
-
-attributes_must_exist() {
-    run_sql "SELECT COUNT(*) FROM information_schema.attributes WHERE ID LIKE '%$1%' AND ATTRIBUTES = '$2'"
-    check_contains "COUNT(*): 1"
-}
-
-placement_policy_must_exist() {
-    run_sql "SELECT POLICY_NAME FROM information_schema.PLACEMENT_POLICIES WHERE POLICY_NAME = '$1'"
-    check_contains "POLICY_NAME: $1"
-}
-
-placement_policy_must_not_exist() {
-    run_sql "SELECT COUNT(*) FROM information_schema.PLACEMENT_POLICIES WHERE POLICY_NAME = '$1'"
-    check_contains "COUNT(*): 0"
 }
 
 check_table_stats_options() {
@@ -178,44 +213,30 @@ check_table_stats_options() {
 check_table_ttl() {
     run_sql "SHOW CREATE TABLE $1"
     check_contains "TTL="
+    run_sql "SELECT COUNT(*) > 0 as has_ttl FROM information_schema.TIDB_TABLE_TTL_INFO WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)'"
+    check_contains "has_ttl: 1"
 }
 
 check_table_no_ttl() {
     run_sql "SHOW CREATE TABLE $1"
     check_not_contains "TTL="
+    run_sql "SELECT COUNT(*) FROM information_schema.TIDB_TABLE_TTL_INFO WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)'"
+    check_contains "COUNT(*): 0"
 }
 
 check_table_cache_status() {
     local table_name="$1"
     local expected_status="$2"
-    
     run_sql "SHOW CREATE TABLE $table_name"
-    
     if [ "$expected_status" = "ENABLE" ]; then
         check_contains "CACHED ON"
+        run_sql "SELECT TABLE_CACHED FROM information_schema.tables WHERE TABLE_SCHEMA = '$(echo $table_name | cut -d. -f1)' AND TABLE_NAME = '$(echo $table_name | cut -d. -f2)'"
+        check_contains "TABLE_CACHED: YES"
     else
         check_not_contains "CACHED ON"
+        run_sql "SELECT TABLE_CACHED FROM information_schema.tables WHERE TABLE_SCHEMA = '$(echo $table_name | cut -d. -f1)' AND TABLE_NAME = '$(echo $table_name | cut -d. -f2)'"
+        check_contains "TABLE_CACHED: NO"
     fi
-}
-
-check_table_recovered() {
-    run_sql "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)'"
-    check_contains "COUNT(*): 1"
-}
-
-resource_group_must_exist() {
-    run_sql "SELECT RESOURCE_GROUP_NAME FROM information_schema.RESOURCE_GROUPS WHERE RESOURCE_GROUP_NAME = '$1'"
-    check_contains "RESOURCE_GROUP_NAME: $1"
-}
-
-resource_group_must_not_exist() {
-    run_sql "SELECT COUNT(*) FROM information_schema.RESOURCE_GROUPS WHERE RESOURCE_GROUP_NAME = '$1'"
-    check_contains "COUNT(*): 0"
-}
-
-check_resource_group_ru_per_sec() {
-    run_sql "SELECT RU_PER_SEC FROM information_schema.RESOURCE_GROUPS WHERE RESOURCE_GROUP_NAME = '$1'"
-    check_contains "RU_PER_SEC: $2"
 }
 
 # ActionCreateSchema
@@ -230,8 +251,6 @@ table_must_not_exist "test_snapshot_db_to_be_deleted.t1"
 # ActionCreateTable
 table_must_exist "test_log_db_create.t1";
 table_must_exist "test_snapshot_db_create.t1";
-
-# ActionCreateTables
 
 # ActionDropTable
 table_must_not_exist "test_snapshot_db_create.t_to_be_deleted";
@@ -412,15 +431,6 @@ row_must_exist "test_snapshot_db_create.t_exchange_partition" "id = 115"
 row_must_exist "test_snapshot_db_create.t_non_partitioned_table" "id = 105"
 row_must_exist "test_log_db_create.t_exchange_partition" "id = 115"
 row_must_exist "test_log_db_create.t_non_partitioned_table" "id = 105"
-
-# ActionAlterTableAttributes
-# attributes stored in PD
-# attributes_must_exist "test_snapshot_db_create/t_alter_table_attributes" "merge_option=allow"
-# attributes_must_exist "test_log_db_create/t_alter_table_attributes" "merge_option=allow"
-
-# # ActionAlterTablePartitionAttributes
-# attributes_must_exist "test_snapshot_db_create/t_alter_table_partition_attributes/p0" "merge_option=allow"
-# attributes_must_exist "test_log_db_create/t_alter_table_partition_attributes/p0" "merge_option=allow"
 
 # ActionReorganizePartition
 check_create_table_contains "test_snapshot_db_create.t_reorganize_partition" "pnew"
