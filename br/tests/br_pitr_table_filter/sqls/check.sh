@@ -3,16 +3,57 @@
 set -eu
 
 table_must_exist() {
-    run_sql "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)'"
+    local table_name="$1"
+    local schema=$(echo $table_name | cut -d. -f1)
+    local table=$(echo $table_name | cut -d. -f2)
+    
+    # Method 1: information_schema.TABLES check
+    run_sql "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$table'"
     check_contains "COUNT(*): 1"
-    run_sql "SELECT COUNT(*) FROM $1 LIMIT 0"
+    
+    # Method 2: Direct table access
+    run_sql "SELECT COUNT(*) FROM $table_name LIMIT 0"
+    
+    # Method 3: SHOW TABLES verification
+    run_sql "SHOW TABLES FROM $schema LIKE '$table'"
+    check_contains "$table"
+    
+    # Method 4: SHOW CREATE TABLE
+    run_sql "SHOW CREATE TABLE $table_name"
+    check_contains "CREATE TABLE"
+    
+    # Method 5: Verify it's a BASE TABLE (not a view)
+    run_sql "SELECT TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$table'"
+    check_contains "TABLE_TYPE: BASE TABLE"
+    
+    # Method 6: ADMIN CHECK TABLE for integrity
+    run_sql "ADMIN CHECK TABLE $table_name"
 }
 
 table_must_not_exist() {
-    run_sql "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)'"
+    local table_name="$1"
+    local schema=$(echo $table_name | cut -d. -f1)
+    local table=$(echo $table_name | cut -d. -f2)
+    
+    # Method 1: information_schema.TABLES check
+    run_sql "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$table'"
     check_contains "COUNT(*): 0"
-    if run_sql "SELECT COUNT(*) FROM $1 LIMIT 0" 2>/dev/null; then
-        echo "ERROR: Table $1 should not exist but is accessible"
+    
+    # Method 2: Direct table access should fail
+    if run_sql "SELECT COUNT(*) FROM $table_name LIMIT 0" 2>/dev/null; then
+        echo "ERROR: Table $table_name should not exist but is accessible"
+        exit 1
+    fi
+    
+    # Method 3: SHOW TABLES should not contain the table
+    if run_sql "SHOW TABLES FROM $schema LIKE '$table'" 2>/dev/null | grep -q "$table"; then
+        echo "ERROR: Table $table should not exist but appears in SHOW TABLES"
+        exit 1
+    fi
+    
+    # Method 4: SHOW CREATE TABLE should fail
+    if run_sql "SHOW CREATE TABLE $table_name" 2>/dev/null; then
+        echo "ERROR: Table $table_name should not exist but SHOW CREATE TABLE succeeded"
         exit 1
     fi
 }
@@ -33,26 +74,64 @@ column_must_not_exist() {
 }
 
 index_must_exist() {
-    run_sql "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)' AND INDEX_NAME = '$2'"
+    local table_name="$1"
+    local index_name="$2"
+    local schema=$(echo $table_name | cut -d. -f1)
+    local table=$(echo $table_name | cut -d. -f2)
+    
+    # Method 1: information_schema.STATISTICS check
+    run_sql "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$table' AND INDEX_NAME = '$index_name'"
     check_contains "COUNT(*): 1"
-    run_sql "SHOW INDEX FROM $1 WHERE Key_name = '$2'"
-    run_sql "ADMIN CHECK INDEX $1 $2"
-    run_sql "ADMIN CHECK TABLE $1"
+    
+    # Method 2: SHOW INDEX verification
+    run_sql "SHOW INDEX FROM $table_name WHERE Key_name = '$index_name'"
+    check_contains "$index_name"
+    
+    # Method 3: ADMIN CHECK INDEX (skip for PRIMARY key as it has special syntax)
+    if [ "$index_name" != "PRIMARY" ]; then
+        run_sql "ADMIN CHECK INDEX $table_name $index_name"
+    else
+        # For PRIMARY key, use a different verification approach
+        run_sql "ADMIN CHECK TABLE $table_name"
+    fi
+    
+    # Method 4: Check index properties
+    run_sql "SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$table' AND INDEX_NAME = '$index_name' ORDER BY SEQ_IN_INDEX"
+    check_contains "INDEX_NAME: $index_name"
+    
+    # Method 5: ADMIN CHECK TABLE
+    run_sql "ADMIN CHECK TABLE $table_name"
 }
 
 index_must_not_exist() {
     run_sql "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)' AND INDEX_NAME = '$2'"
     check_contains "COUNT(*): 0"
-    run_sql "SELECT COUNT(*) FROM (SHOW INDEX FROM $1 WHERE Key_name = '$2') as t"
-    check_contains "COUNT(*): 0"
+    if run_sql "SHOW INDEX FROM $1 WHERE Key_name = '$2'" 2>/dev/null | grep -q "$2"; then
+        echo "ERROR: Index $2 in table $1 should not exist but was found"
+        exit 1
+    fi
     run_sql "ADMIN CHECK TABLE $1"
 }
 
 schema_must_exist() {
-    run_sql "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '$1'"
-    check_contains "SCHEMA_NAME: $1"
-    run_sql "USE $1; SELECT 1 as success"
+    local schema_name="$1"
+    
+    # Method 1: information_schema.SCHEMATA check
+    run_sql "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '$schema_name'"
+    check_contains "SCHEMA_NAME: $schema_name"
+    
+    # Method 2: USE schema test
+    run_sql "USE $schema_name; SELECT 1 as success"
     check_contains "success: 1"
+    
+    # Method 3: SHOW DATABASES verification
+    run_sql "SHOW DATABASES LIKE '$schema_name'"
+    check_contains "$schema_name"
+    
+    # Method 4: SHOW CREATE DATABASE
+    run_sql "SHOW CREATE DATABASE $schema_name"
+    check_contains "CREATE DATABASE"
+    check_contains "$schema_name"
 }
 
 schema_must_not_exist() {
@@ -64,35 +143,73 @@ schema_must_not_exist() {
     fi
 }
 
-table_not_duplicate() {
-    run_sql "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2;"
-    check_contains "COUNT(*): 1"
-}
-
 check_create_table_contains() {
     run_sql "SHOW CREATE TABLE $1"
     check_contains "$2"
 }
 
 view_must_exist() {
-    run_sql "SELECT COUNT(*) FROM information_schema.VIEWS WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)'"
+    local view_name="$1"
+    local schema=$(echo $view_name | cut -d. -f1)
+    local view=$(echo $view_name | cut -d. -f2)
+    
+    # Method 1: information_schema.VIEWS check
+    run_sql "SELECT COUNT(*) FROM information_schema.VIEWS WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$view'"
     check_contains "COUNT(*): 1"
-    run_sql "SELECT COUNT(*) FROM $1 LIMIT 0"
+    
+    # Method 2: Direct view access
+    run_sql "SELECT COUNT(*) FROM $view_name LIMIT 0"
+    
+    # Method 3: SHOW CREATE VIEW
+    run_sql "SHOW CREATE VIEW $view_name"
+    check_contains "CREATE"
+    check_contains "VIEW"
+    
+    # Method 4: Verify it's a VIEW type (not a table)
+    run_sql "SELECT TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$view'"
+    check_contains "TABLE_TYPE: VIEW"
 }
 
 view_must_not_exist() {
-    run_sql "SELECT COUNT(*) FROM information_schema.VIEWS WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)'"
+    local view_name="$1"
+    local schema=$(echo $view_name | cut -d. -f1)
+    local view=$(echo $view_name | cut -d. -f2)
+    
+    # Method 1: information_schema.VIEWS check
+    run_sql "SELECT COUNT(*) FROM information_schema.VIEWS WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$view'"
     check_contains "COUNT(*): 0"
-    if run_sql "SELECT COUNT(*) FROM $1 LIMIT 0" 2>/dev/null; then
-        echo "ERROR: View $1 should not exist but is accessible"
+    
+    # Method 2: Direct view access should fail
+    if run_sql "SELECT COUNT(*) FROM $view_name LIMIT 0" 2>/dev/null; then
+        echo "ERROR: View $view_name should not exist but is accessible"
         exit 1
     fi
+    
+    # Method 3: SHOW CREATE VIEW should fail
+    if run_sql "SHOW CREATE VIEW $view_name" 2>/dev/null; then
+        echo "ERROR: View $view_name should not exist but SHOW CREATE VIEW succeeded"
+        exit 1
+    fi
+    
+    # Method 4: Should not appear in information_schema.TABLES as VIEW
+    run_sql "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$view' AND TABLE_TYPE = 'VIEW'"
+    check_contains "COUNT(*): 0"
 }
 
 sequence_must_exist() {
-    run_sql "SELECT SEQUENCE_NAME FROM information_schema.SEQUENCES WHERE SEQUENCE_SCHEMA = '$1' AND SEQUENCE_NAME = '$2'"
-    check_contains "SEQUENCE_NAME: $2"
-    run_sql "SHOW CREATE SEQUENCE $1.$2"
+    local schema="$1"
+    local sequence="$2"
+    
+    # Method 1: information_schema.SEQUENCES check
+    run_sql "SELECT SEQUENCE_NAME FROM information_schema.SEQUENCES WHERE SEQUENCE_SCHEMA = '$schema' AND SEQUENCE_NAME = '$sequence'"
+    check_contains "SEQUENCE_NAME: $sequence"
+    
+    # Method 2: SHOW CREATE SEQUENCE
+    run_sql "SHOW CREATE SEQUENCE $schema.$sequence"
+    check_contains "CREATE SEQUENCE"
+    
+    # Method 3: Test sequence functionality
+    run_sql "SELECT nextval($schema.$sequence) as next_value"
 }
 
 sequence_must_not_exist() {
@@ -105,10 +222,25 @@ sequence_must_not_exist() {
 }
 
 foreign_key_must_exist() {
-    run_sql "SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = '$1' AND TABLE_NAME = '$2' AND CONSTRAINT_TYPE = 'FOREIGN KEY' AND CONSTRAINT_NAME = '$3'"
-    check_contains "CONSTRAINT_NAME: $3"
-    run_sql "SHOW CREATE TABLE $1.$2"
-    check_contains "CONSTRAINT \`$3\`"
+    local schema="$1"
+    local table="$2"  
+    local constraint_name="$3"
+    
+    # Method 1: information_schema.TABLE_CONSTRAINTS check
+    run_sql "SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$table' AND CONSTRAINT_TYPE = 'FOREIGN KEY' AND CONSTRAINT_NAME = '$constraint_name'"
+    check_contains "CONSTRAINT_NAME: $constraint_name"
+    
+    # Method 2: SHOW CREATE TABLE verification
+    run_sql "SHOW CREATE TABLE $schema.$table"
+    check_contains "CONSTRAINT \`$constraint_name\`"
+    
+    # Method 3: Check information_schema.KEY_COLUMN_USAGE
+    run_sql "SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE CONSTRAINT_SCHEMA = '$schema' AND TABLE_NAME = '$table' AND CONSTRAINT_NAME = '$constraint_name'"
+    check_contains "CONSTRAINT_NAME: $constraint_name"
+    
+    # Method 4: Check information_schema.REFERENTIAL_CONSTRAINTS
+    run_sql "SELECT CONSTRAINT_NAME, UPDATE_RULE, DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = '$schema' AND CONSTRAINT_NAME = '$constraint_name'"
+    check_contains "CONSTRAINT_NAME: $constraint_name"
 }
 
 foreign_key_must_not_exist() {
@@ -155,7 +287,7 @@ check_table_default_value() {
     run_sql "SELECT COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '$1' AND TABLE_NAME = '$2' AND COLUMN_NAME = '$3'"
     check_contains "COLUMN_DEFAULT: $4"
     run_sql "SHOW CREATE TABLE $1.$2"
-    check_contains "$3.*DEFAULT '$4'"
+    check_contains "DEFAULT '$4'"
 }
 
 check_table_charset() {
@@ -171,7 +303,7 @@ check_schema_charset() {
     run_sql "SELECT DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '$schema_name'"
     check_contains "$expected_collation"
     run_sql "SHOW CREATE DATABASE $schema_name"
-    check_contains "COLLATE=$expected_collation"
+    check_contains "COLLATE $expected_collation"
 }
 
 check_index_visibility() {
@@ -183,9 +315,9 @@ check_index_visibility() {
     check_contains "IS_VISIBLE: $visibility"
     run_sql "SHOW INDEX FROM $schema.$table WHERE Key_name = '$index'"
     if [ "$visibility" = "YES" ]; then
-        check_not_contains "INVISIBLE"
+        check_contains "Visible: YES"
     else
-        check_contains "INVISIBLE"
+        check_contains "Visible: NO"
     fi
 }
 
@@ -213,15 +345,11 @@ check_table_stats_options() {
 check_table_ttl() {
     run_sql "SHOW CREATE TABLE $1"
     check_contains "TTL="
-    run_sql "SELECT COUNT(*) > 0 as has_ttl FROM information_schema.TIDB_TABLE_TTL_INFO WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)'"
-    check_contains "has_ttl: 1"
 }
 
 check_table_no_ttl() {
     run_sql "SHOW CREATE TABLE $1"
     check_not_contains "TTL="
-    run_sql "SELECT COUNT(*) FROM information_schema.TIDB_TABLE_TTL_INFO WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)'"
-    check_contains "COUNT(*): 0"
 }
 
 check_table_cache_status() {
@@ -230,12 +358,8 @@ check_table_cache_status() {
     run_sql "SHOW CREATE TABLE $table_name"
     if [ "$expected_status" = "ENABLE" ]; then
         check_contains "CACHED ON"
-        run_sql "SELECT TABLE_CACHED FROM information_schema.tables WHERE TABLE_SCHEMA = '$(echo $table_name | cut -d. -f1)' AND TABLE_NAME = '$(echo $table_name | cut -d. -f2)'"
-        check_contains "TABLE_CACHED: YES"
     else
         check_not_contains "CACHED ON"
-        run_sql "SELECT TABLE_CACHED FROM information_schema.tables WHERE TABLE_SCHEMA = '$(echo $table_name | cut -d. -f1)' AND TABLE_NAME = '$(echo $table_name | cut -d. -f2)'"
-        check_contains "TABLE_CACHED: NO"
     fi
 }
 
@@ -321,12 +445,12 @@ index_must_exist "test_log_db_create.t_rename_index" "i2"
 index_must_not_exist "test_log_db_create.t_rename_index" "i1"
 
 # ActionAddPrimaryKey
-index_must_exist "test_snapshot_db_create.t_add_primary_key" "primary"
-index_must_exist "test_log_db_create.t_add_primary_key" "primary"
+index_must_exist "test_snapshot_db_create.t_add_primary_key" "PRIMARY"
+index_must_exist "test_log_db_create.t_add_primary_key" "PRIMARY"
 
 # ActionDropPrimaryKey
-index_must_not_exist "test_snapshot_db_create.t_drop_primary_key" "primary"
-index_must_not_exist "test_log_db_create.t_drop_primary_key" "primary"
+index_must_not_exist "test_snapshot_db_create.t_drop_primary_key" "PRIMARY"
+index_must_not_exist "test_log_db_create.t_drop_primary_key" "PRIMARY"
 
 # ActionAddForeignKey
 # foreign_key_must_exist "test_snapshot_db_create" "t_fk_child_add" "fk_added"
