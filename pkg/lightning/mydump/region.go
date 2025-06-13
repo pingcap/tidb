@@ -425,14 +425,14 @@ func getHeaderColumn(
 	ctx context.Context,
 	cfg *DataDivideConfig,
 	path string,
-) ([]string, error) {
+) ([]string, int64, error) {
 	if !cfg.CSV.Header || !cfg.CSV.HeaderSchemaMatch {
-		return nil, nil
+		return nil, 0, nil
 	}
 
 	parser, err := openCSVParser(ctx, cfg, path, 0)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	defer func() {
@@ -440,9 +440,10 @@ func getHeaderColumn(
 	}()
 
 	if err = parser.ReadColumns(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return parser.Columns(), nil
+	startOffset, _ := parser.Pos()
+	return parser.Columns(), startOffset, nil
 }
 
 // SplitLargeCSV splits a large csv file into multiple regions, the size of
@@ -461,20 +462,20 @@ func SplitLargeCSV(
 	regionCnt := dataFile.FileMeta.FileSize/maxRegionSize + 1
 	dataFileSizes = make([]float64, 0, regionCnt)
 
-	headerColumns, err := getHeaderColumn(ctx, cfg, dataFile.FileMeta.Path)
+	headerColumns, dataStart, err := getHeaderColumn(ctx, cfg, dataFile.FileMeta.Path)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 
-	// Here we don't consider the existence of header, because we assume the header is small enough
 	splitEndOffsets := make([]int64, 0, regionCnt)
-	endOffset := maxRegionSize
+	endOffset := dataStart + maxRegionSize
 	for endOffset < dataFile.FileMeta.FileSize {
 		splitEndOffsets = append(splitEndOffsets, endOffset)
 		endOffset += maxRegionSize
 	}
 
-	concurrency := cfg.Concurrency * 2
+	// In some tests, cfg.Concurrency is 0
+	concurrency := max(cfg.Concurrency, 1) * 2
 	eg, _ := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
 	for i, endOffset := range splitEndOffsets {
@@ -505,18 +506,23 @@ func SplitLargeCSV(
 		return nil, nil, err
 	}
 
-	if splitEndOffsets[len(splitEndOffsets)-1] != dataFile.FileMeta.FileSize {
+	if len(splitEndOffsets) == 0 || splitEndOffsets[len(splitEndOffsets)-1] != dataFile.FileMeta.FileSize {
 		splitEndOffsets = append(splitEndOffsets, dataFile.FileMeta.FileSize)
 	}
 
 	divisor := int64(cfg.ColumnCnt)
 	prevRowIdxMax := int64(0)
 	for i := range len(splitEndOffsets) {
-		startOffset := int64(0)
+		startOffset := dataStart
 		if i > 0 {
 			startOffset = splitEndOffsets[i-1]
 		}
 		endOffset := splitEndOffsets[i]
+
+		if startOffset == endOffset {
+			continue
+		}
+
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
 		regions = append(regions,
