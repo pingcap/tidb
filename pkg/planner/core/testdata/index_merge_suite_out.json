@@ -101,11 +101,11 @@
         "SQL": "select /*+ use_index_merge(t3, ia, ibc, id, ie) */ * from t3 where a > 10 and b = 20 and c < 35 and d < 45 and e = 100",
         "Plan": [
           "IndexMerge 1.00 root partition:p0 type: intersection",
-          "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t3, index:ia(a) range:(10,+inf], keep order:false",
-          "├─IndexRangeScan(Build) 2.00 cop[tikv] table:t3, index:ibc(b, c) range:[20 -inf,20 35), keep order:false",
-          "├─IndexRangeScan(Build) 3.00 cop[tikv] table:t3, index:id(d) range:[-inf,45), keep order:false",
-          "├─IndexRangeScan(Build) 2.00 cop[tikv] table:t3, index:ie(e) range:[100,100], keep order:false",
-          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t3 keep order:false"
+          "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t3, partition:p0, index:ia(a) range:(10,+inf], keep order:false",
+          "├─IndexRangeScan(Build) 2.00 cop[tikv] table:t3, partition:p0, index:ibc(b, c) range:[20 -inf,20 35), keep order:false",
+          "├─IndexRangeScan(Build) 3.00 cop[tikv] table:t3, partition:p0, index:id(d) range:[-inf,45), keep order:false",
+          "├─IndexRangeScan(Build) 2.00 cop[tikv] table:t3, partition:p0, index:ie(e) range:[100,100], keep order:false",
+          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t3, partition:p0 keep order:false"
         ],
         "Result": [
           "20 20 20 5 100"
