@@ -407,7 +407,7 @@ func setCPUAffinity() {
 }
 
 func registerStores() {
-	err := kvstore.Register(config.StoreTypeTiKV, driver.TiKVDriver{})
+	err := kvstore.Register(config.StoreTypeTiKV, &driver.TiKVDriver{})
 	terror.MustNil(err)
 	err = kvstore.Register(config.StoreTypeMockTiKV, mockstore.MockTiKVDriver{})
 	terror.MustNil(err)
@@ -416,16 +416,7 @@ func registerStores() {
 }
 
 func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
-	cfg := config.GetGlobalConfig()
-	var fullPath string
-	if keyspaceName == "" {
-		fullPath = fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
-	} else {
-		fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", cfg.Store, cfg.Path, keyspaceName)
-	}
-	var err error
-	storage, err := kvstore.New(fullPath)
-	terror.MustNil(err)
+	storage := kvstore.MustInitStorage(keyspaceName)
 	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
 		pdhttpCli := tikvStore.GetPDHTTPClient()
 		// unistore also implements kv.StorageWithPD, but it does not have PD client.
@@ -441,7 +432,7 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 	copr.GlobalMPPFailedStoreProber.Run()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.
-	err = ddl.StartOwnerManager(context.Background(), storage)
+	err := ddl.StartOwnerManager(context.Background(), storage)
 	terror.MustNil(err)
 	dom, err := session.BootstrapSession(storage)
 	terror.MustNil(err)
@@ -934,6 +925,8 @@ func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	mppcoordmanager.InstanceMPPCoordinatorManager.Stop()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
+	err = kvstore.GetSystemStorage().Close()
+	terror.Log(errors.Annotate(err, "close system storage"))
 }
 
 // The amount of time we wait for the ongoing txt to finished.

@@ -27,6 +27,10 @@ import (
 )
 
 const (
+	// System is the keyspace name for SYSTEM keyspace.
+	// SYSTEM keyspace is reserved for nextgen kernel to store system level data
+	// and run system level services. currently, only DXF service use this keyspace.
+	System = "SYSTEM"
 	// tidbKeyspaceEtcdPathPrefix is the keyspace prefix for etcd namespace
 	tidbKeyspaceEtcdPathPrefix = "/keyspaces/tidb/"
 )
