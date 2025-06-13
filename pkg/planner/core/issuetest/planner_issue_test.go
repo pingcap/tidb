@@ -281,3 +281,12 @@ func TestIssue61118(t *testing.T) {
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk2.MustExec("admin check table t;")
 }
+
+func TestIssue57284(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`CREATE  TABLE  t0(c0 INT);`)
+	tk.MustQuery(`SELECT * FROM t0 RIGHT  JOIN  (SELECT BIT_OR(1970) FROM t0) AS sub0  ON true WHERE (CASE 1 WHEN NULL THEN true END );`).Check(
+		testkit.Rows())
+}
