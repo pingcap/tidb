@@ -36,7 +36,7 @@ const (
 	defSnapshotInterval = 3600
 	defRententionDays   = 7
 
-	histSnapshotsTable = "HIST_SNAPSHOTS"
+	HistSnapshotsTable = "HIST_SNAPSHOTS"
 )
 
 var (
