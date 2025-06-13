@@ -27,7 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -443,4 +445,47 @@ func TestWarningsInSlowQuery(t *testing.T) {
 		})
 		require.Equal(t, output[i].Result, res[0])
 	}
+}
+
+func TestStorageEnginesInSlowQuery(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+		require.NoError(t, f.Close())
+		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
+	}()
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+	tk.MustExec("set tidb_slow_log_threshold=0;")
+	defer func() {
+		tk.MustExec("set tidb_slow_log_threshold=300;")
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t_tikv (a int)")
+	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ a from t_tikv")
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query like 'select%t_tikv;'").
+		Check(testkit.Rows("1 0"))
+
+	tk.MustExec("create table t_tiflash (a int)")
+	tk.MustExec("alter table t_tiflash set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t_tiflash")
+	require.NoError(t, dom.DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true))
+	tk.MustExec("select /*+ read_from_storage(tiflash[t_tiflash]) */ a from t_tiflash;")
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query like 'select%t_tiflash;'").
+		Check(testkit.Rows("0 1"))
+
+	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ t_tikv.a, /*+ read_from_storage(tiflash[t_tiflash]) */ t_tiflash.a from t_tikv, t_tiflash")
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query like 'select%t_tikv, t_tiflash;'").
+		Check(testkit.Rows("1 1"))
 }
