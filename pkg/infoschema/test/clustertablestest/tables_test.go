@@ -1159,6 +1159,13 @@ func TestStorageEnginesInStmtSummary(t *testing.T) {
 	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
 		"where query_sample_text like 'select%t_tikv, t_tiflash'").
 		Check(testkit.Rows("1 1"))
+
+	// Test that point get queries register as reading from TiKV
+	tk.MustExec("create table t_pointget (a int primary key)")
+	tk.MustExec("select a from t_pointget where a = 1")
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
+		"where query_sample_text like 'select%t_pointget%'").
+		Check(testkit.Rows("1 0"))
 }
 
 func TestServerInfoResolveLoopBackAddr(t *testing.T) {

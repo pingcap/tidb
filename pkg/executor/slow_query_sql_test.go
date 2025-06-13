@@ -488,4 +488,11 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
 		"where query like 'select%t_tikv, t_tiflash;'").
 		Check(testkit.Rows("1 1"))
+
+	// Test that point get queries register as reading from TiKV
+	tk.MustExec("create table t_pointget (a int primary key)")
+	tk.MustExec("select a from t_pointget where a = 1")
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query like 'select%t_pointget%;'").
+		Check(testkit.Rows("1 0"))
 }
