@@ -341,7 +341,6 @@ func (cr *chunkProcessor) encodeLoop(
 		var newOffset, rowID, newScannedOffset int64
 		var scannedOffset int64 = -1
 		var kvSize uint64
-		var scannedOffsetErr error
 	outLoop:
 		for !canDeliver {
 			readDurStart := time.Now()
@@ -349,11 +348,7 @@ func (cr *chunkProcessor) encodeLoop(
 			columnNames := cr.parser.Columns()
 			newOffset, rowID = cr.parser.Pos()
 			if cr.chunk.FileMeta.Compression != mydump.CompressionNone || cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
-				newScannedOffset, scannedOffsetErr = cr.parser.ScannedPos()
-				if scannedOffsetErr != nil {
-					logger.Warn("fail to get data engine ScannedPos, progress may not be accurate",
-						log.ShortError(scannedOffsetErr), zap.String("file", cr.chunk.FileMeta.Path))
-				}
+				newScannedOffset = cr.parser.ScannedPos()
 				if scannedOffset == -1 {
 					scannedOffset = newScannedOffset
 				}

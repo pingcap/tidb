@@ -62,6 +62,8 @@ type ParquetParser struct {
 	lastRow     Row
 	logger      log.Logger
 
+	totalReadBytes int64
+
 	readSeekCloser ReadSeekCloser
 }
 
@@ -373,9 +375,10 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 }
 
 // ScannedPos implements the Parser interface.
-// For parquet it's parquet file's reader current position.
-func (pp *ParquetParser) ScannedPos() (int64, error) {
-	return pp.readSeekCloser.Seek(0, io.SeekCurrent)
+// For parquet file, we can't get the exact position of each column reader,
+// so we just return the total read bytes of the parquet file.
+func (pp *ParquetParser) ScannedPos() int64 {
+	return pp.totalReadBytes
 }
 
 // Close closes the parquet file of the parser.
@@ -425,6 +428,7 @@ func (pp *ParquetParser) ReadRow() error {
 			return err
 		}
 	}
+	pp.totalReadBytes += int64(pp.lastRow.Length)
 	return nil
 }
 
