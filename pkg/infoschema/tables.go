@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -1981,8 +1982,22 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		// Create an error group with Panic recovery and concurrency limit
+		resolveGroup := util.NewErrorGroupWithRecover()
+		resolveGroup.SetLimit(runtime.GOMAXPROCS(0)) //Limit concurrency to number of CPU cores
+
+		// Resolve loopback addresses concurrently for each node
 		for i := range nodes {
-			nodes[i].ResolveLoopBackAddr()
+			resolveGroup.Go(func() error {
+				nodes[i].ResolveLoopBackAddr()
+				return nil
+			})
+		}
+
+		// Wait for all address resolutions to complete and check for errors
+		if err := resolveGroup.Wait(); err != nil {
+			return nil, err
 		}
 		servers = append(servers, nodes...)
 	}
