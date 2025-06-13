@@ -17,9 +17,8 @@ package executor_test
 import (
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 )
 
 func TestChangePumpAndDrainer(t *testing.T) {
@@ -51,12 +50,9 @@ func TestAdminCheckPanic(t *testing.T) {
 	tk.MustExec("CREATE INDEX t_idx_created_at ON t (created_at)")
 
 	// Some versions may have fixed this bug, so we also manually inject panic.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockFastAdminCheckPanic", "return"))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockFastAdminCheckPanic")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockAdminCheckPanic", "return"))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockAdminCheckPanic")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/skipExecPanic", "return"))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/skipExecPanic")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockFastAdminCheckPanic", "return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockAdminCheckPanic", "return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/skipExecPanic", "return")
 
 	// When there are some bugs in the executor/optimizeradmin check should
 	// return error no matter whether fast admin check is enabled or not.
