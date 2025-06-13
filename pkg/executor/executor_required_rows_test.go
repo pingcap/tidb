@@ -741,7 +741,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType logicalop.JoinType, inn
 		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(ctx.GetExprCtx(), j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(ctx, nil, nil)
 	return b.build(j)
 }
 

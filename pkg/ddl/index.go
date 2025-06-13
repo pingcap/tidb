@@ -92,6 +92,8 @@ const (
 	MaxCommentLength = 1024
 )
 
+var telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
+
 func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
@@ -1097,6 +1099,8 @@ SwitchIndexState:
 		}
 		loadCloudStorageURI(w, job)
 		if reorgTp.NeedMergeProcess() {
+			// Increase telemetryAddIndexIngestUsage
+			telemetryAddIndexIngestUsage.Inc()
 			for _, indexInfo := range allIndexInfos {
 				indexInfo.BackfillState = model.BackfillStateRunning
 			}

@@ -1646,6 +1646,9 @@ func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *type
 	if err != nil {
 		return
 	}
+	if scalarFunc, ok := ret.(*expression.ScalarFunction); ok {
+		er.planCtx.builder.ctx.BuiltinFunctionUsageInc(scalarFunc.Function.PbCode().String())
+	}
 	return
 }
 

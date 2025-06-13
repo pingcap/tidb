@@ -1332,7 +1332,7 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk.MustExec("SET GLOBAL tidb_enable_telemetry = ON")
 
 	tk.MustQuery(`SELECT @@global.tidb_force_priority`).Check(testkit.Rows("NO_PRIORITY"))
-	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("1"))
 
 	tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(vardef.DefHostname))
 	sem.Disable()
