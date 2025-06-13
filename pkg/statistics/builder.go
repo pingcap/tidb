@@ -421,12 +421,8 @@ func BuildHistAndTopN(
 
 	// Step2: exclude TopN from samples if the NDV is larger than the number of topN items.
 	lenSamples := int64(len(samples))
-<<<<<<< minTopnCount
-	if lenTopN > 0 && lenSamples > 0 {
-		minTopNCnt := topNList[len(topNList)-1].Count
-=======
 	if lenTopN > 0 && lenTopN < hg.NDV && lenSamples > 0 {
->>>>>>> master
+		minTopNCnt := topNList[len(topNList)-1].Count
 		for i := int64(0); i < lenSamples; i++ {
 			sampleBytes, err := getComparedBytes(samples[i].Value)
 			if err != nil {
