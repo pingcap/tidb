@@ -17,6 +17,7 @@ package execute
 import (
 	"context"
 	"reflect"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"go.uber.org/atomic"
@@ -66,8 +67,9 @@ type StepExecutor interface {
 // SubtaskSummary contains the summary of a subtask
 // These fields represent the number of data/rows inputed to the subtask.
 type SubtaskSummary struct {
-	RowCnt atomic.Int64 `json:"row_count,omitempty"`
-	Bytes  atomic.Int64 `json:"bytes,omitempty"`
+	RowCnt     atomic.Int64 `json:"row_count,omitempty"`
+	Bytes      atomic.Int64 `json:"bytes,omitempty"`
+	UpdateTime time.Time    `json:"update_time,omitempty"`
 }
 
 // Reset resets the summary to the given row count and bytes.
@@ -81,17 +83,16 @@ type Collector interface {
 	Add(bytes, rows int64)
 }
 
-// dummyCollector is a dummy implementation of Collector that does nothing.
-type dummyCollector struct {
+// TestCollector is an implementation used for test.
+type TestCollector struct {
+	Bytes atomic.Int64
+	Rows  atomic.Int64
 }
 
-// NewDummyCollector returns a new DummyCollector.
-func NewDummyCollector() *dummyCollector {
-	return &dummyCollector{}
-}
-
-// Add does nothing.
-func (*dummyCollector) Add(_, _ int64) {
+// Add implements Collector.Add
+func (c *TestCollector) Add(bytes, rows int64) {
+	c.Bytes.Add(bytes)
+	c.Rows.Add(rows)
 }
 
 // StepExecFrameworkInfo is an interface that should be embedded into the
