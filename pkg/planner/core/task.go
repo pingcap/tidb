@@ -1451,6 +1451,7 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...base.Task) base.Task {
 	for _, tk := range tasks {
 		if mpp, ok := tk.(*MppTask); ok && !tk.Invalid() {
 			childPlans = append(childPlans, mpp.Plan())
+			continue
 		}
 		return base.InvalidTask
 	}
