@@ -170,6 +170,20 @@ func (c *Constant) MarshalJSON() ([]byte, error) {
 // Clone implements Expression interface.
 func (c *Constant) Clone() Expression {
 	con := *c
+<<<<<<< HEAD
+=======
+	con.RetType = c.RetType.Clone()
+	if c.ParamMarker != nil {
+		con.ParamMarker = &ParamMarker{order: c.ParamMarker.order}
+	}
+	if c.DeferredExpr != nil {
+		con.DeferredExpr = c.DeferredExpr.Clone()
+	}
+	if c.hashcode != nil {
+		con.hashcode = make([]byte, len(c.hashcode))
+		copy(con.hashcode, c.hashcode)
+	}
+>>>>>>> 35c1e21115c (planner,expression: fix wrong copy args to avoid breaking origin expression when to EvaluateExprWithNull (#61630))
 	return &con
 }
 
