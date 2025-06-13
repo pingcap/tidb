@@ -59,6 +59,7 @@ type regionJobBaseWorker struct {
 		ctx context.Context, data engineapi.IngestData, sortedJobRanges []engineapi.Range,
 		regionSplitSize, regionSplitKeys int64,
 	) ([]*regionJob, error)
+	ingestLimiter *ingestLimiter
 }
 
 // run get jobs from the job channel and process them.
@@ -184,7 +185,7 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 
 		// if the job is empty, it might go to ingested stage directly.
 		if job.stage == wrote {
-			err := w.ingestFn(ctx, job)
+			err := w.runIngestFn(ctx, job)
 			err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 			if err != nil {
 				if !w.isRetryableImportTiKVError(err) {
@@ -221,6 +222,19 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 		job.keyRange.Start = job.writeResult.remainingStartKey
 		job.convertStageTo(regionScanned)
 	}
+}
+
+func (w *regionJobBaseWorker) runIngestFn(ctx context.Context, job *regionJob) error {
+	if w.ingestLimiter != nil {
+		err := w.ingestLimiter.Acquire()
+		if err != nil {
+			return err
+		}
+		err = w.ingestFn(ctx, job)
+		w.ingestLimiter.Release()
+		return err
+	}
+	return w.ingestFn(ctx, job)
 }
 
 func (*regionJobBaseWorker) isRetryableImportTiKVError(err error) bool {

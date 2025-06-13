@@ -97,6 +97,10 @@ var (
 	mMetaDataLock        = []byte("metadataLock")
 	mSchemaCacheSize     = []byte("SchemaCacheSize")
 	mRequestUnitStats    = []byte("RequestUnitStats")
+
+	mIngestMaxBatchSplitRangesKey = []byte("IngestMaxBatchSplitRanges")
+	mIngestMaxReqPerSecondKey     = []byte("IngestMaxReqPerSecond")
+	mIngestMaxReqConcurrencyKey   = []byte("IngestMaxReqConcurrency")
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
 	defaultGroupID = int64(1)
@@ -1872,6 +1876,60 @@ func (m *Mutator) SetRUStats(stats *RUStats) error {
 
 	err = m.txn.Set(mRequestUnitStats, data)
 	return errors.Trace(err)
+}
+
+// SetIngestMaxBatchSplitRanges sets the ingest max_batch_split_ranges.
+func (m *Mutator) SetIngestMaxBatchSplitRanges(val int) error {
+	return errors.Trace(m.txn.Set(mIngestMaxBatchSplitRangesKey, []byte(strconv.Itoa(val))))
+}
+
+// GetIngestMaxBatchSplitRanges gets the ingest max_batch_split_ranges.
+func (m *Mutator) GetIngestMaxBatchSplitRanges() (val int, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxBatchSplitRangesKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.Atoi(string(sVal))
+	return val, false, errors.Trace(err)
+}
+
+// SetIngestMaxReqPerSecond sets the max_ingest_req_per_second.
+func (m *Mutator) SetIngestMaxReqPerSecond(val int) error {
+	return errors.Trace(m.txn.Set(mIngestMaxReqPerSecondKey, []byte(strconv.Itoa(val))))
+}
+
+// GetIngestMaxReqPerSecond gets the max_ingest_req_per_second.
+func (m *Mutator) GetIngestMaxReqPerSecond() (val int, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxReqPerSecondKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.Atoi(string(sVal))
+	return val, false, errors.Trace(err)
+}
+
+// SetIngestMaxConcurrency sets the max_ingest_concurrency.
+func (m *Mutator) SetIngestMaxConcurrency(val int) error {
+	return errors.Trace(m.txn.Set(mIngestMaxReqConcurrencyKey, []byte(strconv.Itoa(val))))
+}
+
+// GetIngestMaxConcurrency gets the max_ingest_concurrency.
+func (m *Mutator) GetIngestMaxConcurrency() (val int, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxReqConcurrencyKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.Atoi(string(sVal))
+	return val, false, errors.Trace(err)
 }
 
 // GetOldestSchemaVersion gets the oldest schema version at the GC safe point.
