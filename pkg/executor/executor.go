@@ -907,6 +907,11 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, src *IndexLookUpE
 			e.retCh <- errors.Trace(err)
 			break
 		}
+
+		failpoint.Inject("mockAdminCheckPanic", func() {
+			panic("mock admin check panic")
+		})
+
 		if chk.NumRows() == 0 {
 			break
 		}
@@ -2298,6 +2303,7 @@ func (e *FastCheckTableExec) Open(ctx context.Context) error {
 
 type checkIndexTask struct {
 	indexOffset int
+	err         *atomic.Pointer[error]
 }
 
 type checkIndexWorker struct {
@@ -2352,6 +2358,11 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 
 // HandleTask implements the Worker interface.
 func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) {
+	defer util.Recover("fast_check_table", "handleTableScanTaskWithRecover", func() {
+		err := errors.Errorf("checkIndexTask panicked, indexOffset: %d", task.indexOffset)
+		task.err.CompareAndSwap(nil, &err)
+	}, false)
+
 	defer w.e.wg.Done()
 	idxInfo := w.indexInfos[task.indexOffset]
 	bucketSize := int(CheckTableFastBucketSize.Load())
@@ -2488,6 +2499,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		}
 		slices.SortFunc(indexChecksum, func(i, j groupByChecksum) int {
 			return cmp.Compare(i.bucket, j.bucket)
+		})
+
+		// mock query panic for fast admin check.
+		failpoint.Inject("mockFastAdminCheckPanic", func() {
+			panic("mock fast admin check panic")
 		})
 
 		currentOffset := 0
@@ -2717,7 +2733,7 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	e.wg.Add(len(e.indexInfos))
 	for i := range e.indexInfos {
-		workerPool.AddTask(checkIndexTask{indexOffset: i})
+		workerPool.AddTask(checkIndexTask{indexOffset: i, err: e.err})
 	}
 
 	e.wg.Wait()
