@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
 type ImportModeSwitcher struct {
@@ -99,8 +100,10 @@ func (switcher *ImportModeSwitcher) switchTiKVMode(
 					grpc.WithBlock(),
 					grpc.FailOnNonTempDialError(true),
 					grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
-					// we don't need to set keepalive timeout here, because the connection lives
-					// at most 5s. (shorter than minimal value for keepalive time!)
+					grpc.WithKeepaliveParams(keepalive.ClientParameters{
+						Time:    10 * time.Second,
+						Timeout: 20 * time.Second,
+					}),
 				)
 				cancel()
 				if err != nil {
