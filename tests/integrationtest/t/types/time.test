@@ -150,3 +150,50 @@ SELECT { t '14:00:00' };
 SELECT { d '2024-01-01 01:12:31' };
 
 # TODO: Also test if there are difference between explicitly give the timestamp/datetime as literal/string or having it from a varchar in a table
+
+# Test DST transition to normal time
+--enable_warnings
+set @old_sql_mode = @@sql_mode;
+set @@sql_mode = '';
+create table t (id int not null auto_increment primary key, ts timestamp, tz varchar(255));
+set time_zone = 'Europe/Amsterdam';
+insert into t values (NULL, '2024-10-27 02:30:00', @@time_zone);
+insert into t values (NULL, '2024-10-27 02:30:00+01:00', @@time_zone);
+insert into t values (NULL, '2024-10-27 02:30:00+02:00', @@time_zone);
+insert into t values (NULL, '2025-10-26 02:30:00', @@time_zone);
+insert into t values (NULL, '2025-10-26 02:30:00+01:00', @@time_zone);
+insert into t values (NULL, '2025-10-26 02:30:00+02:00', @@time_zone);
+# Last transition before signed 32 bit epoch. May be changed in the future!
+insert into t values (NULL, '2037-10-25 02:30:00', @@time_zone);
+insert into t values (NULL, '2037-10-25 02:30:00+01:00', @@time_zone);
+insert into t values (NULL, '2037-10-25 02:30:00+02:00', @@time_zone);
+set time_zone = 'Australia/Lord_Howe';
+insert into t values (NULL, '2024-04-07 01:45:00', @@time_zone);
+insert into t values (NULL, '2024-04-07 01:45:00+11:00', @@time_zone);
+insert into t values (NULL, '2024-04-07 01:45:00+10:30', @@time_zone);
+insert into t values (NULL, '2025-04-06 01:45:00', @@time_zone);
+insert into t values (NULL, '2025-04-06 01:45:00+11:00', @@time_zone);
+insert into t values (NULL, '2025-04-06 01:45:00+10:30', @@time_zone);
+set time_zone = 'Canada/Newfoundland';
+insert into t values (NULL, '1998-04-03 00:00:59', @@time_zone);
+insert into t values (NULL, '1998-04-03 00:01:00', @@time_zone);
+insert into t values (NULL, '1998-04-03 02:00:59', @@time_zone);
+insert into t values (NULL, '1998-04-03 02:01:00', @@time_zone);
+insert into t values (NULL, '1998-10-29 23:30:00', @@time_zone);
+insert into t values (NULL, '1998-10-29 23:30:00-01:30', @@time_zone);
+insert into t values (NULL, '1998-10-29 23:30:00-03:30', @@time_zone);
+insert into t values (NULL, '1998-10-29 22:00:59', @@time_zone);
+insert into t values (NULL, '1998-10-29 22:01:00', @@time_zone);
+insert into t values (NULL, '1998-10-30 00:00:59', @@time_zone);
+insert into t values (NULL, '1998-10-30 00:01:00', @@time_zone);
+# For fun, also test DST "leap" 24 forward (Samoa)
+set time_zone = 'Pacific/Apia';
+insert into t values (NULL, '2011-12-29 23:59:59', @@time_zone);
+insert into t values (NULL, '2011-12-30 00:00:00', @@time_zone);
+insert into t values (NULL, '2011-12-30 23:59:59', @@time_zone);
+insert into t values (NULL, '2011-12-31 00:00:00', @@time_zone);
+select * from t where tz = @@time_zone order by id;
+set time_zone = 'UTC';
+select * from t order by id;
+set @@sql_mode = @old_sql_mode;
+--disable_warnings
