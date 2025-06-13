@@ -190,7 +190,7 @@ func (c *pdClient) scatterRegions(ctx context.Context, newRegions []*RegionInfo)
 	log.Info("scatter regions", zap.Int("regions", len(newRegions)))
 	// the retry is for the temporary network errors during sending request.
 	return utils.WithRetry(ctx, func() error {
-		err := c.tryScatterRegions(ctx, newRegions)
+		failedRegionsID, err := c.tryScatterRegions(ctx, newRegions)
 		if isUnsupportedError(err) {
 			log.Warn("batch scatter isn't supported, rollback to old method", logutil.ShortError(err))
 			c.scatterRegionsSequentially(
@@ -199,11 +199,22 @@ func (c *pdClient) scatterRegions(ctx context.Context, newRegions []*RegionInfo)
 				utils.NewBackoffRetryAllErrorStrategy(7, 100*time.Millisecond, 2*time.Second))
 			return nil
 		}
+		// If there are failed regions, retry them
+		if len(failedRegionsID) > 0 {
+			failedRegions := make([]*RegionInfo, 0, len(failedRegionsID))
+			for _, region := range newRegions {
+				if _, exists := failedRegionsID[region.Region.Id]; exists {
+					failedRegions = append(failedRegions, region)
+				}
+			}
+			newRegions = failedRegions
+			return errors.Errorf("pd returns error during batch scattering: %d regions failed to scatter", len(failedRegionsID))
+		}
 		return err
 	}, utils.NewBackoffRetryAllErrorStrategy(3, 500*time.Millisecond, 2*time.Second))
 }
 
-func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error {
+func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionInfo) (map[uint64]struct{}, error) {
 	regionsID := make([]uint64, 0, len(regionInfo))
 	for _, v := range regionInfo {
 		regionsID = append(regionsID, v.Region.Id)
@@ -213,13 +224,19 @@ func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionIn
 	}
 	resp, err := c.client.ScatterRegions(ctx, regionsID, opt.WithSkipStoreLimit())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if pbErr := resp.GetHeader().GetError(); pbErr.GetType() != pdpb.ErrorType_OK {
-		return errors.Annotatef(berrors.ErrPDInvalidResponse,
+		return nil, errors.Annotatef(berrors.ErrPDInvalidResponse,
 			"pd returns error during batch scattering: %s", pbErr)
 	}
-	return nil
+
+	failedRegionsID := make(map[uint64]struct{})
+	for _, id := range resp.FailedRegionsId {
+		failedRegionsID[id] = struct{}{}
+	}
+
+	return failedRegionsID, nil
 }
 
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
