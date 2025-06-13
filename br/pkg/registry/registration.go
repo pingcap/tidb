@@ -759,7 +759,6 @@ func (r *Registry) transitionStaleTaskToPaused(ctx context.Context, taskID uint6
 	var transitioned bool
 	err := r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor,
 		sessionOpts []sqlexec.OptionFuncAlias) error {
-
 		// atomically update task to paused only if it's still running with the same heartbeat time
 		updateSQL := fmt.Sprintf(transitionStaleTaskToPausedSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 
