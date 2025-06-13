@@ -1977,8 +1977,13 @@ func BuildCastFunctionWithCheck(ctx sessionctx.Context, expr Expression, tp *typ
 	// We do not fold CAST if the eval type of this scalar function is ETJson
 	// since we may reset the flag of the field type of CastAsJson later which
 	// would affect the evaluation of it.
+<<<<<<< HEAD:expression/builtin_cast.go
 	if tp.EvalType() != types.ETJson {
 		res = FoldConstant(res)
+=======
+	if tp.EvalType() != types.ETJson && err == nil {
+		return FoldConstant(ctx, res), nil
+>>>>>>> 35c1e21115c (planner,expression: fix wrong copy args to avoid breaking origin expression when to EvaluateExprWithNull (#61630)):pkg/expression/builtin_cast.go
 	}
 	return res, err
 }
