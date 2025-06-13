@@ -23,7 +23,7 @@ git clone https://github.com/nolouch/grafonnet-lib.git
 
 export JSONNET_PATH=grafonnet-lib
 jsonnet tidb_summary.jsonnet > tidb_summary.json
-jsonnet tidb_summary_non_keyspace_name.jsonnet > tidb_summary_non_keyspace_name.json
-jsonnet tidb_resource_control.jsonnet > tidb_resource_control.json
+jsonnet tidb_summary_with_keyspace_name.jsonnet > tidb_summary_with_keyspace_name.json
+jsonnet tidb_resource_control_with_keyspace_name.jsonnet > tidb_resource_control_with_keyspace_name.json
 rm -rf $JSONNET_PATH
 
