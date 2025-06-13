@@ -925,8 +925,10 @@ func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	mppcoordmanager.InstanceMPPCoordinatorManager.Stop()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
-	err = kvstore.GetSystemStorage().Close()
-	terror.Log(errors.Annotate(err, "close system storage"))
+	if kerneltype.IsNextGen() {
+		err = kvstore.GetSystemStorage().Close()
+		terror.Log(errors.Annotate(err, "close system storage"))
+	}
 }
 
 // The amount of time we wait for the ongoing txt to finished.
