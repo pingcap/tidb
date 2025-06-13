@@ -28,6 +28,11 @@ table_must_exist() {
     
     # Method 6: ADMIN CHECK TABLE for integrity
     run_sql "ADMIN CHECK TABLE $table_name"
+    
+    # Method 7: Table ID round-trip verification (name -> ID -> name)
+    run_sql "SELECT TABLE_SCHEMA, TABLE_NAME FROM information_schema.TABLES WHERE TIDB_TABLE_ID = (SELECT TIDB_TABLE_ID FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$table')"
+    check_contains "TABLE_SCHEMA: $schema"
+    check_contains "TABLE_NAME: $table"
 }
 
 table_must_not_exist() {
@@ -168,6 +173,11 @@ view_must_exist() {
     # Method 4: Verify it's a VIEW type (not a table)
     run_sql "SELECT TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$view'"
     check_contains "TABLE_TYPE: VIEW"
+    
+    # Method 5: Table ID round-trip verification (views have table IDs in TiDB)
+    run_sql "SELECT TABLE_SCHEMA, TABLE_NAME FROM information_schema.TABLES WHERE TIDB_TABLE_ID = (SELECT TIDB_TABLE_ID FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$view')"
+    check_contains "TABLE_SCHEMA: $schema"
+    check_contains "TABLE_NAME: $view"
 }
 
 view_must_not_exist() {
@@ -271,9 +281,26 @@ check_constraint_must_not_exist() {
 }
 
 partition_must_exist() {
-    run_sql "SELECT PARTITION_NAME FROM information_schema.PARTITIONS WHERE TABLE_SCHEMA = '$1' AND TABLE_NAME = '$2' AND PARTITION_NAME = '$3'"
-    check_contains "PARTITION_NAME: $3"
-    run_sql "SELECT COUNT(*) FROM $1.$2 PARTITION($3) LIMIT 0"
+    local schema="$1"
+    local table="$2"
+    local partition="$3"
+    
+    # Method 1: information_schema.PARTITIONS check
+    run_sql "SELECT PARTITION_NAME FROM information_schema.PARTITIONS WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$table' AND PARTITION_NAME = '$partition'"
+    check_contains "PARTITION_NAME: $partition"
+    
+    # Method 2: Direct partition access
+    run_sql "SELECT COUNT(*) FROM $schema.$table PARTITION($partition) LIMIT 0"
+    
+    # Method 3: Partition properties verification
+    run_sql "SELECT TABLE_SCHEMA, TABLE_NAME, PARTITION_NAME, PARTITION_ORDINAL_POSITION FROM information_schema.PARTITIONS WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$table' AND PARTITION_NAME = '$partition'"
+    check_contains "TABLE_SCHEMA: $schema"
+    check_contains "TABLE_NAME: $table"
+    check_contains "PARTITION_NAME: $partition"
+    
+    # Method 4: SHOW CREATE TABLE should contain partition
+    run_sql "SHOW CREATE TABLE $schema.$table"
+    check_contains "PARTITION \`$partition\`"
 }
 
 partition_must_not_exist() {
