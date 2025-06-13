@@ -27,12 +27,12 @@ type EliminateUnionAllDualItem struct {
 }
 
 // Name implement the LogicalOptRule's name.
-func (i *EliminateUnionAllDualItem) Name() string {
+func (*EliminateUnionAllDualItem) Name() string {
 	return "union_all_eliminate_dual_item"
 }
 
 // Optimize implement LogicalOptRule's Optimize.
-func (*EliminateUnionAllDualItem) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (*EliminateUnionAllDualItem) Optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	p, planChanged = unionAllEliminateDualItem(p)
 	return p, planChanged, nil
