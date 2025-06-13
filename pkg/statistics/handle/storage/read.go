@@ -559,7 +559,123 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCa
 		statistics.HistogramNeededItems.Delete(col)
 		return nil
 	}
+<<<<<<< HEAD
 	hg, err := HistogramFromStorage(sctx, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+=======
+	tblInfo := tbl.Meta()
+	colInfo := tblInfo.GetColumnByID(col.ID)
+	if colInfo == nil {
+		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+		return nil
+	}
+
+	_, loadNeeded, analyzed := statsTbl.ColumnIsLoadNeeded(col.ID, true)
+	if !loadNeeded || !analyzed {
+		// If this column is not analyzed yet and we don't have it in memory.
+		// We create a fake one for the pseudo estimation.
+		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
+		if loadNeeded && !analyzed {
+			fakeCol := statistics.EmptyColumn(tblInfo.ID, tblInfo.PKIsHandle, colInfo)
+			statsTbl.SetCol(col.ID, fakeCol)
+			statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+				Updated: []*statistics.Table{statsTbl},
+			})
+		}
+		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+		return nil
+	}
+
+	hg, _, statsVer, _, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)
+	if hg == nil || err != nil {
+		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+		return err
+	}
+	var (
+		cms  *statistics.CMSketch
+		topN *statistics.TopN
+		fms  *statistics.FMSketch
+	)
+	if fullLoad {
+		hg, err = HistogramFromStorageWithPriority(sctx, col.TableID, col.ID, &colInfo.FieldType, hg.NDV, 0, hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation, kv.PriorityHigh)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cms, topN, err = CMSketchAndTopNFromStorageWithHighPriority(sctx, col.TableID, 0, col.ID, statsVer)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if loadFMSketch {
+			fms, err = FMSketchFromStorage(sctx, col.TableID, 0, col.ID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	colHist := &statistics.Column{
+		PhysicalID: col.TableID,
+		Histogram:  *hg,
+		Info:       colInfo,
+		CMSketch:   cms,
+		TopN:       topN,
+		FMSketch:   fms,
+		IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+		StatsVer:   statsVer,
+	}
+	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
+	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
+	statsTbl, ok = statsHandle.Get(col.TableID)
+	if !ok {
+		return nil
+	}
+	statsTbl = statsTbl.Copy()
+	if colHist.StatsAvailable() {
+		if fullLoad {
+			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+		} else {
+			colHist.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+		}
+		if statsVer != statistics.Version0 {
+			statsTbl.LastAnalyzeVersion = max(statsTbl.LastAnalyzeVersion, colHist.LastUpdateVersion)
+			statsTbl.StatsVer = int(statsVer)
+		}
+	}
+	statsTbl.SetCol(col.ID, colHist)
+	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{statsTbl},
+	})
+	asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+	if col.IsSyncLoadFailed {
+		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
+			zap.Int64("table_id", colHist.PhysicalID),
+			zap.Int64("column_id", colHist.Info.ID),
+			zap.String("column_name", colHist.Info.Name.O))
+	}
+	return nil
+}
+
+func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, idx model.TableItemID, loadFMSketch bool) (err error) {
+	tbl, ok := statsHandle.Get(idx.TableID)
+	if !ok {
+		return nil
+	}
+	_, loadNeeded := tbl.IndexIsLoadNeeded(idx.ID)
+	if !loadNeeded {
+		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
+		return nil
+	}
+	hgMeta, lastAnalyzePos, statsVer, flag, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
+	if hgMeta == nil || err != nil {
+		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
+		return err
+	}
+	tblInfo, ok := statsHandle.TableInfoByID(is, idx.TableID)
+	if !ok {
+		return nil
+	}
+	idxInfo := tblInfo.Meta().FindIndexByID(idx.ID)
+	hg, err := HistogramFromStorageWithPriority(sctx, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation, kv.PriorityHigh)
+>>>>>>> f585f5d1d48 (statistics: avoid stats meta full load after table analysis (#57756))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -662,9 +778,27 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCac
 		return nil
 	}
 	tbl = tbl.Copy()
+<<<<<<< HEAD
 	tbl.Indices[idx.ID] = idxHist
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	statistics.HistogramNeededItems.Delete(idx)
+=======
+	if idxHist.StatsVer != statistics.Version0 {
+		tbl.StatsVer = int(idxHist.StatsVer)
+		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
+	}
+	tbl.SetIdx(idx.ID, idxHist)
+	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{tbl},
+	})
+	if idx.IsSyncLoadFailed {
+		logutil.BgLogger().Warn("Hist for index should already be loaded as sync but not found.",
+			zap.Int64("table_id", idx.TableID),
+			zap.Int64("index_id", idxHist.Info.ID),
+			zap.String("index_name", idxHist.Info.Name.O))
+	}
+	asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
+>>>>>>> f585f5d1d48 (statistics: avoid stats meta full load after table analysis (#57756))
 	return nil
 }
 
