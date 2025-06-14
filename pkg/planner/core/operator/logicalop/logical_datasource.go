@@ -302,7 +302,7 @@ func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) 
 			expected = append(expected, cond.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
 		actualExprs := utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds)
-		actual := make([]string, 0, len(p.PushedDownConds))
+		actual := make([]string, 0, len(actualExprs))
 		for _, cond := range actualExprs {
 			actual = append(actual, cond.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
@@ -314,7 +314,7 @@ func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) 
 			expected = append(expected, cond.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
 		actualExprs := utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.AllConds)
-		actual := make([]string, 0, len(p.AllConds))
+		actual := make([]string, 0, len(actualExprs))
 		for _, cond := range actualExprs {
 			actual = append(actual, cond.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
