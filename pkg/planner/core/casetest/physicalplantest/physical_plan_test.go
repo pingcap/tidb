@@ -123,10 +123,36 @@ func TestAggEliminator(t *testing.T) {
 func TestRuleColumnPruningLogicalApply(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+  a int(11) DEFAULT NULL,
+  b int(11) DEFAULT NULL,
+  c int(11) DEFAULT NULL,
+  KEY idx_a (a)
+);`)
+	tk.MustExec(`CREATE TABLE t1 (
+  a int(11) DEFAULT NULL,
+  b int(11) DEFAULT NULL,
+  c int(11) DEFAULT NULL,
+  KEY idx_a (a)
+);`)
+	tk.MustExec(`CREATE TABLE t2 (
+  a int(11) DEFAULT NULL,
+  b int(11) DEFAULT NULL,
+  c int(11) DEFAULT NULL,
+  KEY idx_a (a)
+);`)
+	tk.MustExec(`CREATE TABLE t3 (
+  a int(11) DEFAULT NULL,
+  b int(11) DEFAULT NULL,
+  c int(11) DEFAULT NULL,
+  KEY idx_a (a)
+);`)
 	var input []string
 	var output []struct {
 		SQL  string
 		Best string
+		Plan []string
 	}
 	planSuiteData := GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
@@ -140,12 +166,15 @@ func TestRuleColumnPruningLogicalApply(t *testing.T) {
 		require.NoError(t, err, comment)
 		nodeW := resolve.NewNodeW(stmt)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
+		row := tk.MustQuery("explain format = 'brief' " + tt)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Best = core.ToString(p)
+			output[i].Plan = testdata.ConvertRowsToStrings(row.Rows())
 		})
 		require.Equal(t, output[i].Best, core.ToString(p), fmt.Sprintf("input: %s", tt))
+		row.Check(testkit.Rows(output[i].Plan...))
 	}
 }
 
