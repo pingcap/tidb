@@ -190,18 +190,18 @@ func (p *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base
 // PredicateSimplification inherits BaseLogicalPlan.<7th> implementation.
 func (p *LogicalSelection) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	// it is only test
+	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	intest.AssertFunc(func() bool {
-		origins := make([]expression.Expression, 0, len(p.Conditions))
-		for _, item := range p.Conditions {
-			origins = append(origins, item.Clone())
+		expected := make([]string, 0, len(p.Conditions))
+		for _, cond := range p.Conditions {
+			expected = append(expected, cond.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
-		actual := utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.Conditions)
-		for _, origin := range origins {
-			if !expression.Contains(p.SCtx().GetExprCtx().GetEvalCtx(), actual, origin) {
-				return false
-			}
+		actualExprs := utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.Conditions)
+		actual := make([]string, 0, len(p.Conditions))
+		for _, cond := range actualExprs {
+			actual = append(actual, cond.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
-		return true
+		return slices.Equal(expected, actual)
 	})
 	return p
 }

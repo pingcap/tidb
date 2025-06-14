@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -294,31 +295,30 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	// it is only for test.
 	p := ds.Self().(*DataSource)
+	ectx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	intest.AssertFunc(func() bool {
-		origins := make([]expression.Expression, 0, len(p.PushedDownConds))
-		for _, item := range p.PushedDownConds {
-			origins = append(origins, item.Clone())
+		expected := make([]string, 0, len(p.PushedDownConds))
+		for _, cond := range p.PushedDownConds {
+			expected = append(expected, cond.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
-		actual := utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds)
-		for _, origin := range origins {
-			if !expression.Contains(ds.SCtx().GetExprCtx().GetEvalCtx(), actual, origin) {
-				return false
-			}
+		actualExprs := utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds)
+		actual := make([]string, 0, len(p.PushedDownConds))
+		for _, cond := range actualExprs {
+			actual = append(actual, cond.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
-		return true
+		return slices.Equal(expected, actual)
 	})
 	intest.AssertFunc(func() bool {
-		origins := make([]expression.Expression, 0, len(p.AllConds))
-		for _, item := range p.AllConds {
-			origins = append(origins, item.Clone())
+		expected := make([]string, 0, len(p.AllConds))
+		for _, cond := range p.AllConds {
+			expected = append(expected, cond.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
-		actual := utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.AllConds)
-		for _, origin := range origins {
-			if !expression.Contains(ds.SCtx().GetExprCtx().GetEvalCtx(), actual, origin) {
-				return false
-			}
+		actualExprs := utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.AllConds)
+		actual := make([]string, 0, len(p.AllConds))
+		for _, cond := range actualExprs {
+			actual = append(actual, cond.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
-		return true
+		return slices.Equal(expected, actual)
 	})
 	return p
 }
