@@ -140,6 +140,10 @@ func RemoveLockedPartitions(
 }
 
 func updateDelta(sctx sessionctx.Context, count, modifyCount int64, tid int64) error {
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "update delta"))
+	defer func() {
+		statslogutil.StatsLogger().Info("[stats_meta] end")
+	}()
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return err
