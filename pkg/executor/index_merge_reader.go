@@ -727,9 +727,9 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 				return nil, nil, err1
 			}
 			if ok {
-				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(chunkRowOffset))
+				handle, err = handleCols.BuildPartitionHandleFromIndexRow(w.sc.GetSessionVars().StmtCtx, chk.GetRow(chunkRowOffset))
 			} else {
-				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(chunkRowOffset))
+				handle, err = handleCols.BuildHandleFromIndexRow(w.sc.GetSessionVars().StmtCtx, chk.GetRow(chunkRowOffset))
 			}
 			if err != nil {
 				return nil, nil, err
@@ -1825,9 +1825,9 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 				return nil, nil, err1
 			}
 			if ok {
-				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(chunkRowOffset))
+				handle, err = handleCols.BuildPartitionHandleFromIndexRow(w.sc.GetSessionVars().StmtCtx, chk.GetRow(chunkRowOffset))
 			} else {
-				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(chunkRowOffset))
+				handle, err = handleCols.BuildHandleFromIndexRow(w.sc.GetSessionVars().StmtCtx, chk.GetRow(chunkRowOffset))
 			}
 			if err != nil {
 				return nil, nil, err
@@ -1981,7 +1981,7 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 		}
 		task.rowIdx = make([]int, 0, len(task.rows))
 		for _, row := range task.rows {
-			handle, err := w.indexMergeExec.handleCols.BuildHandle(row)
+			handle, err := w.indexMergeExec.handleCols.BuildHandle(w.indexMergeExec.Ctx().GetSessionVars().StmtCtx, row)
 			if err != nil {
 				return err
 			}
