@@ -263,3 +263,31 @@ func TestTruncateLogRestoreTableIDsBlocklistFiles(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, filesCount(ctx, stg))
 }
+
+func TestHasRestoreRegistryTable(t *testing.T) {
+	// Test with mock cluster that should have the table
+	m, err := mock.NewCluster()
+	require.NoError(t, err)
+	defer m.Stop()
+	dom := m.Domain
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
+	se, err := session.CreateSession(dom.Store())
+	require.NoError(t, err)
+
+	hasTable := restore.HasRestoreRegistryTable(dom)
+	require.True(t, hasTable, "HasRestoreRegistryTable should return true when the table exists")
+
+	_, err = se.ExecuteInternal(ctx, "SELECT * FROM mysql.tidb_restore_registry LIMIT 1")
+	require.NoError(t, err, "Should be able to query the tidb_restore_registry table")
+
+	// drop and verify not exist
+	_, err = se.ExecuteInternal(ctx, "DROP TABLE mysql.tidb_restore_registry")
+	require.NoError(t, err)
+
+	hasTable = restore.HasRestoreRegistryTable(dom)
+	require.False(t, hasTable, "HasRestoreRegistryTable should return false when the table doesn't exist")
+
+	_, err = se.ExecuteInternal(ctx, "SELECT * FROM mysql.tidb_restore_registry LIMIT 1")
+	require.Error(t, err, "Should get an error when querying the dropped table")
+}
