@@ -149,6 +149,10 @@ func (m *memBuffer) BatchGet(ctx context.Context, keys [][]byte) (map[string][]b
 	return data, derr.ToTiDBErr(err)
 }
 
+func (m *memBuffer) GetSnapshot() kv.MemBufferSnapshot {
+	return &MemBufferSnapshot{m.MemBuffer.GetSnapshot()}
+}
+
 type tikvGetter struct {
 	tikv.Getter
 }
@@ -193,6 +197,44 @@ func getTiDBKeyFlags(flag tikvstore.KeyFlags) kv.KeyFlags {
 	}
 
 	return v
+}
+
+// MemBufferSnapshot wraps tikv.MemBufferSnapshot
+type MemBufferSnapshot struct {
+	tikv.MemBufferSnapshot
+}
+
+// Get a single key from MemBufferSnapshot
+func (s *MemBufferSnapshot) Get(ctx context.Context, key kv.Key) ([]byte, error) {
+	data, err := s.MemBufferSnapshot.Get(ctx, key)
+	return data, derr.ToTiDBErr(err)
+}
+
+// Len implements the BatchBufferGetter interface
+func (s *MemBufferSnapshot) Len() int {
+	// return 1 to avoid some code treat it as an empty snapshot.
+	return 1
+}
+
+// BatchGet gets multiple keys from MemBufferSnapshot
+func (s *MemBufferSnapshot) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+	ret := make(map[string][]byte, len(keys))
+	for _, key := range keys {
+		val, err := s.Get(ctx, key)
+		if kv.IsErrNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		ret[string(key)] = val
+	}
+	return ret, nil
+}
+
+// BatchedSnapshotIter returns an Iterator for a snapshot of MemBufferSnapshot.
+func (s *MemBufferSnapshot) BatchedSnapshotIter(lower, upper []byte, reverse bool) kv.Iterator {
+	return &tikvIterator{Iterator: s.MemBufferSnapshot.BatchedSnapshotIter(lower, upper, reverse)}
 }
 
 func getTiKVFlagsOp(op kv.FlagsOp) tikvstore.FlagsOp {

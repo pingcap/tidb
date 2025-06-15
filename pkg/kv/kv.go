@@ -147,14 +147,6 @@ type RetrieverMutator interface {
 type MemBuffer interface {
 	RetrieverMutator
 
-	// RLock locks the MemBuffer for shared read.
-	// In the most case, MemBuffer will only used by single goroutine,
-	// but it will be read by multiple goroutine when combined with executor.UnionScanExec.
-	// To avoid race introduced by executor.UnionScanExec, MemBuffer expose read lock for it.
-	RLock()
-	// RUnlock unlocks the MemBuffer.
-	RUnlock()
-
 	// GetFlags returns the latest flags associated with key.
 	GetFlags(Key) (KeyFlags, error)
 	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
@@ -179,8 +171,10 @@ type MemBuffer interface {
 	// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 	SnapshotGetter() Getter
 	// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
+	// Deprecated: use GetSnapshot instead.
 	SnapshotIter(k, upperbound Key) Iterator
 	// SnapshotIterReverse returns a reverse Iterator for a snapshot of MemBuffer.
+	// Deprecated: use GetSnapshot instead.
 	SnapshotIterReverse(k, lowerBound Key) Iterator
 
 	// Len returns the number of entries in the DB.
@@ -197,6 +191,12 @@ type MemBuffer interface {
 
 	// BatchGet gets values from the memory buffer.
 	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
+
+	// GetSnapshot returns a snapshot of the MemBuffer, used to read a txn's self written data while avoid seeing the current statement's mutations.
+	// The MemBufferSnapshot is thread safe so you can write to MemBuffer while read from the snapshot in other threads,
+	// it's valid until the current statement is finished.
+	// More details: https://github.com/tikv/client-go/blob/183817ac811590a022df5ae14ad2beecf4e91855/internal/unionstore/union_store.go#L254-L287
+	GetSnapshot() MemBufferSnapshot
 }
 
 // FindKeysInStage returns all keys in the given stage that satisfies the given condition.
@@ -853,4 +853,34 @@ func decodeTableID(key Key) int64 {
 		return DecodeTableIDFunc(key)
 	}
 	return 0
+}
+
+// MemBufferSnapshot is a snapshot of MemBuffer, used for in-txn read.
+type MemBufferSnapshot interface {
+	Getter
+
+	// ForEachInSnapshotRange scans the key-value pairs in the state[0] snapshot if it exists,
+	// otherwise it uses the current checkpoint as snapshot.
+	//
+	// NOTE: returned kv-pairs are only valid during the iteration. If you want to use them after the iteration,
+	// you need to make a copy.
+	//
+	// The method is protected by a RWLock to prevent potential iterator invalidation, i.e.
+	// You cannot modify the MemBuffer during the iteration.
+	//
+	// Use it when you need to scan the whole range, otherwise consider using BatchedSnapshotIter.
+	ForEachInSnapshotRange(lower []byte, upper []byte, f func(k, v []byte) (stop bool, err error), reverse bool) error
+
+	// BatchedSnapshotIter returns an iterator of the "snapshot", namely stage[0].
+	// It iterates in batches and prevents iterator invalidation.
+	//
+	// Use it when you need on-demand "next", otherwise consider using ForEachInSnapshotRange.
+	// NOTE: you should never use it when there are no stages.
+	//
+	// The iterator becomes invalid when any operation that may modify the "snapshot",
+	// e.g. RevertToCheckpoint or releasing stage[0].
+	BatchedSnapshotIter(lower, upper []byte, reverse bool) Iterator
+
+	// Close releases the snapshot.
+	Close()
 }
