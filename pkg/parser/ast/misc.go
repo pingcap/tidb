@@ -2838,6 +2838,8 @@ type PrivElem struct {
 
 	Priv mysql.PrivilegeType
 	Cols []*ColumnName
+
+	// Name stores the extended privilege like dynamic privilege.
 	Name string
 }
 
@@ -2927,7 +2929,7 @@ const (
 	GrantLevelGlobal
 	// GrantLevelDB means the privileges apply to all objects in a given database.
 	GrantLevelDB
-	// GrantLevelTable means the privileges apply to all columns in a given table.
+	// GrantLevelTable means the privileges apply to some or all columns in a given table.
 	GrantLevelTable
 )
 
