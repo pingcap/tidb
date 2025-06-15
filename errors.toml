@@ -931,6 +931,11 @@ error = '''
 MAXVALUE can only be used in last partition definition
 '''
 
+["ddl:1485"]
+error = '''
+Wrong number of subpartitions defined, mismatch with previous setting
+'''
+
 ["ddl:1486"]
 error = '''
 Constant, random or timezone-dependent expressions in (sub)partitioning function are not allowed
