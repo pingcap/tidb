@@ -26,7 +26,7 @@ import (
 
 // DecodeBinaryPlan decode the binary plan and display it similar to EXPLAIN ANALYZE statement.
 func DecodeBinaryPlan(binaryPlan string) (string, error) {
-	protoBytes, err := decompress(binaryPlan)
+	protoBytes, err := Decompress(binaryPlan)
 	if err != nil {
 		return "", err
 	}
