@@ -544,7 +544,7 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 
 	file, err := os.Open(filePath)
 	require.NoError(t, err)
-	parser, err := NewCSVParser(ctx, &cfg.Mydumper.CSV, file, 128, ioWorker, false, nil)
+	parser, err := NewCSVParser(ctx, &cfg.Mydumper.CSV, file, 128, ioWorker, CSVHeaderFalse, nil)
 	require.NoError(t, err)
 
 	for parser.ReadRow() == nil {
@@ -572,7 +572,7 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 
 	file, err = os.Open(filePath)
 	require.NoError(t, err)
-	parser, err = NewCSVParser(ctx, &cfg.Mydumper.CSV, file, 128, ioWorker, false, nil)
+	parser, err = NewCSVParser(ctx, &cfg.Mydumper.CSV, file, 128, ioWorker, CSVHeaderFalse, nil)
 	require.NoError(t, err)
 
 	for parser.ReadRow() == nil {
