@@ -41,16 +41,17 @@ import (
 //	   └─────────►│cancelling├────┘
 //	              └──────────┘
 const (
-	TaskStatePending    TaskState = "pending"
-	TaskStateRunning    TaskState = "running"
-	TaskStateSucceed    TaskState = "succeed"
-	TaskStateFailed     TaskState = "failed"
-	TaskStateReverting  TaskState = "reverting"
-	TaskStateReverted   TaskState = "reverted"
-	TaskStateCancelling TaskState = "cancelling"
-	TaskStatePausing    TaskState = "pausing"
-	TaskStatePaused     TaskState = "paused"
-	TaskStateResuming   TaskState = "resuming"
+	TaskStatePending            TaskState = "pending"
+	TaskStateRunning            TaskState = "running"
+	TaskStateSucceed            TaskState = "succeed"
+	TaskStateFailed             TaskState = "failed"
+	TaskStateReverting          TaskState = "reverting"
+	TaskStateAwaitingResolution TaskState = "awaiting-resolution"
+	TaskStateReverted           TaskState = "reverted"
+	TaskStateCancelling         TaskState = "cancelling"
+	TaskStatePausing            TaskState = "pausing"
+	TaskStatePaused             TaskState = "paused"
+	TaskStateResuming           TaskState = "resuming"
 )
 
 type (
