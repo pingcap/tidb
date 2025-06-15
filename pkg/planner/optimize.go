@@ -236,9 +236,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			return fp, fp.OutputNames(), nil
 		}
 	}
-	if err := pctx.AdviseTxnWarmup(); err != nil {
-		return nil, nil, err
-	}
 
 	enableUseBinding := sessVars.UsePlanBaselines
 	stmtNode, isStmtNode := node.Node.(ast.StmtNode)
@@ -480,6 +477,10 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer debugtrace.LeaveContextCommon(sctx)
+	}
+
+	if err := sctx.AdviseTxnWarmup(); err != nil {
+		return nil, nil, 0, err
 	}
 
 	// build logical plan

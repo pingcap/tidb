@@ -229,7 +229,7 @@ type TableImporter struct {
 	diskQuota       int64
 	diskQuotaLock   *syncutil.RWMutex
 
-	rowCh chan QueryRow
+	chunkCh chan QueryChunk
 }
 
 // NewTableImporterForTest creates a new table importer for test.
@@ -604,9 +604,9 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 	}
 }
 
-// SetSelectedRowCh sets the channel to receive selected rows.
-func (ti *TableImporter) SetSelectedRowCh(ch chan QueryRow) {
-	ti.rowCh = ch
+// SetSelectedChunkCh sets the channel to receive selected rows.
+func (ti *TableImporter) SetSelectedChunkCh(ch chan QueryChunk) {
+	ti.chunkCh = ch
 }
 
 func (ti *TableImporter) closeAndCleanupEngine(engine *backend.OpenedEngine) {
@@ -662,12 +662,17 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 	for i := 0; i < ti.ThreadCnt; i++ {
 		eg.Go(func() error {
 			chunkCheckpoint := checkpoints.ChunkCheckpoint{}
-			chunkChecksum := verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
+			var chunkChecksum *verify.KVGroupChecksum
+			if ti.Checksum != config.OpLevelOff {
+				chunkChecksum = verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
+			}
 			progress := NewProgress()
 			defer func() {
 				mu.Lock()
 				defer mu.Unlock()
-				checksum.Add(chunkChecksum)
+				if chunkChecksum != nil {
+					checksum.Add(chunkChecksum)
+				}
 				for k, v := range progress.GetColSize() {
 					colSizeMap[k] += v
 				}

@@ -106,13 +106,13 @@ func TestImportFromSelectCleanup(t *testing.T) {
 		&storeHelper{kvStore: store},
 	)
 	require.NoError(t, err)
-	ch := make(chan importer.QueryRow)
-	ti.SetSelectedRowCh(ch)
+	ch := make(chan importer.QueryChunk)
+	ti.SetSelectedChunkCh(ch)
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {
 		defer close(ch)
 		for i := 1; i <= 3; i++ {
-			ch <- importer.QueryRow{
+			ch <- importer.QueryChunk{
 				ID: int64(i),
 				Data: []types.Datum{
 					types.NewIntDatum(int64(i)),
