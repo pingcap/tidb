@@ -91,6 +91,9 @@ func (j jobStageTp) String() string {
 	return string(j)
 }
 
+// CancelRegionPauseFunc is to cancel region pause for specific ranges
+type CancelRegionPauseFunc func()
+
 // regionJob is dedicated to import the data in [keyRange.start, keyRange.end)
 // to a region. The keyRange may be changed when processing because of writing
 // partial data to TiKV or region split.
@@ -114,6 +117,9 @@ type regionJob struct {
 
 	// injected is used in test to set the behaviour
 	injected []injectedBehaviour
+
+	// cancel pausing region scheduling
+	cancelRegionPauseFunc CancelRegionPauseFunc
 }
 
 type tikvWriteResult struct {
@@ -174,6 +180,9 @@ func (j *regionJob) ref(wg *sync.WaitGroup) {
 func (j *regionJob) done(wg *sync.WaitGroup) {
 	if j.ingestData != nil {
 		j.ingestData.DecRef()
+	}
+	if j.cancelRegionPauseFunc != nil {
+		j.cancelRegionPauseFunc()
 	}
 	if wg != nil {
 		wg.Done()

@@ -1287,6 +1287,17 @@ func (local *Backend) generateJobForRange(
 
 	startKey := codec.EncodeBytes([]byte{}, pairStart)
 	endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
+
+	var cancelRegionPause func()
+	if local.PausePDSchedulerScope == config.PausePdSchedulerScopeInAction {
+		// stop region schedule before region scan
+		cancelRegionPause, err = local.StopRegionScheduling(ctx, []common.Range{{Start: startKey, End: endKey}})
+		if err != nil {
+			cancelRegionPause()
+			return nil, errors.Trace(err)
+		}
+	}
+
 	regions, err := split.PaginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
 	if err != nil {
 		log.FromContext(ctx).Error("scan region failed",
@@ -1317,6 +1328,12 @@ func (local *Backend) generateJobForRange(
 			metrics:         local.metrics,
 		})
 	}
+
+	// the last job will cancel region pause. For simplicity, not considering the corner case that the last job may not be the last one to finish since the job can be retry
+	if local.PausePDSchedulerScope == config.PausePdSchedulerScopeInAction && cancelRegionPause != nil && len(jobs) > 0 {
+		jobs[len(jobs)-1].cancelRegionPauseFunc = cancelRegionPause
+	}
+
 	return jobs, nil
 }
 
@@ -1516,24 +1533,11 @@ func (local *Backend) ImportEngine(
 
 	if len(regionRanges) > 0 && local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
 		log.FromContext(ctx).Info("pause pd scheduler of table scope")
-		subCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
-
-		var startKey, endKey []byte
-		if len(regionRanges[0].Start) > 0 {
-			startKey = codec.EncodeBytes(nil, regionRanges[0].Start)
-		}
-		if len(regionRanges[len(regionRanges)-1].End) > 0 {
-			endKey = codec.EncodeBytes(nil, regionRanges[len(regionRanges)-1].End)
-		}
-		done, err := local.pdCtl.PauseSchedulersByKeyRange(subCtx, startKey, endKey)
+		cancel, err := local.StopRegionScheduling(ctx, regionRanges)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		defer func() {
-			cancel()
-			<-done
-		}()
+		defer cancel()
 	}
 
 	if len(regionRanges) > 0 && local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
@@ -1572,6 +1576,26 @@ func (local *Backend) ImportEngine(
 			zap.Int64("importedCount", importedLength))
 	}
 	return err
+}
+
+// StopRegionScheduling pauses region scheduling in PD for specific ranges
+func (local *Backend) StopRegionScheduling(ctx context.Context, ranges []common.Range) (func(), error) {
+	subCtx, cancel := context.WithCancel(ctx)
+	var startKey, endKey []byte
+	if len(ranges[0].Start) > 0 {
+		startKey = codec.EncodeBytes(nil, ranges[0].Start)
+	}
+	if len(ranges[len(ranges)-1].End) > 0 {
+		endKey = codec.EncodeBytes(nil, ranges[len(ranges)-1].End)
+	}
+	done, err := local.pdCtl.PauseSchedulersByKeyRange(subCtx, startKey, endKey)
+	if err != nil {
+		return cancel, errors.Trace(err)
+	}
+	return func() {
+		cancel()
+		<-done
+	}, nil
 }
 
 // expose these variables to unit test.
