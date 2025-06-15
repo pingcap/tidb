@@ -414,6 +414,38 @@ func MockView() *model.TableInfo {
 	return table
 }
 
+// MockViewInvoker is only used for plan related tests.
+func MockViewInvoker() *model.TableInfo {
+	selectStmt := "select b,c,d from t"
+	col0 := &model.ColumnInfo{
+		State:  model.StatePublic,
+		Offset: 0,
+		Name:   pmodel.NewCIStr("b"),
+		ID:     1,
+	}
+	col1 := &model.ColumnInfo{
+		State:  model.StatePublic,
+		Offset: 1,
+		Name:   pmodel.NewCIStr("c"),
+		ID:     2,
+	}
+	col2 := &model.ColumnInfo{
+		State:  model.StatePublic,
+		Offset: 2,
+		Name:   pmodel.NewCIStr("d"),
+		ID:     3,
+	}
+	view := &model.ViewInfo{SelectStmt: selectStmt, Security: pmodel.SecurityInvoker, Definer: &auth.UserIdentity{Username: "root", Hostname: ""}, Cols: []pmodel.CIStr{col0.Name, col1.Name, col2.Name}}
+	table := &model.TableInfo{
+		ID:      4,
+		Name:    pmodel.NewCIStr("v2"),
+		Columns: []*model.ColumnInfo{col0, col1, col2},
+		View:    view,
+		State:   model.StatePublic,
+	}
+	return table
+}
+
 // MockContext is only used for plan related tests.
 func MockContext() *mock.Context {
 	ctx := mock.NewContext()

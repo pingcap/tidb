@@ -2698,7 +2698,20 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 
 func (b *PlanBuilder) appendColumnsToVisitedInfo(columnVisited []*ast.ColumnName) {
 	user, host := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
-	if b.checkColPriv == reportTableErrOption {
+	views := b.ctx.GetSessionVars().StmtCtx.SavedViews
+	switch {
+	case len(views) > 0:
+		view := views[len(views)-1]
+		for _, colName := range columnVisited {
+			b.visitInfo = appendVisitInfo(b.visitInfo,
+				mysql.SelectPriv,
+				colName.Schema.L,
+				colName.Table.L,
+				colName.Name.L,
+				plannererrors.ErrViewInvalid.GenWithStackByArgs(view.Schema.O, view.Name.O),
+			)
+		}
+	case b.checkColPriv == reportTableErrOption:
 		for _, colName := range columnVisited {
 			b.visitInfo = appendVisitInfo(b.visitInfo,
 				mysql.SelectPriv,
@@ -2708,7 +2721,7 @@ func (b *PlanBuilder) appendColumnsToVisitedInfo(columnVisited []*ast.ColumnName
 				plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", user, host, colName.Table.L),
 			)
 		}
-	} else {
+	default:
 		for _, colName := range columnVisited {
 			b.visitInfo = appendVisitInfo(b.visitInfo,
 				mysql.SelectPriv,

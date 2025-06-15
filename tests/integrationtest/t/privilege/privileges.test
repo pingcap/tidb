@@ -900,6 +900,8 @@ disconnect u53490;
 connection default;
 
 # Test DEFINER/INVOKER of view
+
+## Case1: test some users lack column-privileges of the internal table
 connection default;
 create user view_definer_u, view_invoker_u1, view_invoker_u2;
 create database test_view_db;
@@ -933,6 +935,7 @@ GRANT SELECT ON test_view_db.definer_view TO 'view_invoker_u2';
 connection view_definer_u;
 SHOW CREATE VIEW definer_view;
 
+--echo view_definer_u has all required privileges, so view_invoker_u1 and view_invoker_u2 can access all columns.
 connect (view_invoker_u1, localhost, view_invoker_u1, , test_view_db);
 SELECT id, public_col, sensitive_col FROM definer_view;
 connect (view_invoker_u2, localhost, view_invoker_u2, , test_view_db);
@@ -947,25 +950,105 @@ connection default;
 GRANT SELECT ON test_view_db.invoker_view TO 'view_definer_u';
 GRANT SELECT ON test_view_db.invoker_view TO 'view_invoker_u1';
 GRANT SELECT ON test_view_db.invoker_view TO 'view_invoker_u2';
+--echo revoke one columns privilege, so view_definer_u can not access definer_view;
+REVOKE SELECT(sensitive_col) ON `test_view_db`.`sensitive_data` FROM 'view_definer_u'@'%';
 
 connection view_definer_u;
 SHOW CREATE VIEW invoker_view;
 
+--echo view_invoker_u1 lacks the SELECT privilege of sensitive_col
 connection view_invoker_u1;
---error 1143
+--error 1356
 SELECT id, public_col, sensitive_col FROM invoker_view;
+--error 1356
+SELECT * FROM invoker_view;
 connection default;
 GRANT SELECT(sensitive_col) on test_view_db.sensitive_data to view_invoker_u1;
 connection view_invoker_u1;
-SELECT id, public_col, sensitive_col FROM invoker_view;
+SELECT * FROM invoker_view;
+--error 1356
+SELECT id, public_col, sensitive_col FROM definer_view;
+--error 1356
+SELECT * FROM definer_view;
 
+--echo view_invoker_u2 lacks all columns' SELECT privilege
 connection view_invoker_u2;
---error 1143
+--error 1356
 SELECT id, public_col, sensitive_col FROM invoker_view;
+--error 1356
+SELECT * FROM invoker_view;
+
 connection default;
 GRANT SELECT on test_view_db.sensitive_data to view_invoker_u2;
 connection view_invoker_u2;
-SELECT id, public_col, sensitive_col FROM invoker_view;
+SELECT * FROM invoker_view;
+--error 1356
+SELECT id, public_col, sensitive_col FROM definer_view;
+--error 1356
+SELECT * FROM definer_view;
+
+connection default;
+
+## Case2: test some users lack column-privileges of the view
+REVOKE SELECT ON `test_view_db`.`definer_view` FROM 'view_definer_u'@'%';
+REVOKE SELECT ON `test_view_db`.`invoker_view` FROM 'view_definer_u'@'%';
+REVOKE SELECT ON `test_view_db`.`definer_view` FROM 'view_invoker_u1'@'%';
+REVOKE SELECT ON `test_view_db`.`invoker_view` FROM 'view_invoker_u1'@'%';
+REVOKE SELECT ON `test_view_db`.`definer_view` FROM 'view_invoker_u2'@'%';
+REVOKE SELECT ON `test_view_db`.`invoker_view` FROM 'view_invoker_u2'@'%';
+GRANT SELECT(sensitive_col) ON  `test_view_db`.`sensitive_data` TO 'view_definer_u'@'%';
+REVOKE SELECT(sensitive_col) ON  `test_view_db`.`sensitive_data` FROM 'view_invoker_u1'@'%';
+SHOW GRANTS FOR view_definer_u;
+SHOW GRANTS FOR view_invoker_u1;
+SHOW GRANTS FOR view_invoker_u2;
+
+--echo test view_definer_u
+GRANT SELECT(id, public_col) ON `test_view_db`.`invoker_view` TO 'view_definer_u'@'%';
+GRANT SELECT(id, public_col) ON `test_view_db`.`definer_view` TO 'view_definer_u'@'%';
+connection view_definer_u;
+--error 1142
+SELECT * FROM invoker_view;
+--error 1142
+SELECT * FROM definer_view;
+SELECT id, public_col FROM invoker_view;
+SELECT id, public_col FROM definer_view;
+--error 1143
+SELECT sensitive_col FROM invoker_view;
+--error 1143
+SELECT sensitive_col FROM definer_view;
+
+--echo test view_invoker_u1
+connection default;
+GRANT SELECT(id, public_col) ON `test_view_db`.`invoker_view` TO 'view_invoker_u1'@'%';
+GRANT SELECT(id, public_col) ON `test_view_db`.`definer_view` TO 'view_invoker_u1'@'%'; 
+connection view_invoker_u1;
+--error 1356
+SELECT * FROM invoker_view;
+--error 1142
+SELECT * FROM definer_view;
+--error 1356
+SELECT id, public_col FROM invoker_view;
+SELECT id, public_col FROM definer_view;
+--error 1356
+SELECT sensitive_col FROM invoker_view;
+--error 1143
+SELECT sensitive_col FROM definer_view;
+
+--echo test view_invoker_u2
+connection default;
+GRANT SELECT(id, public_col) ON `test_view_db`.`invoker_view` TO 'view_invoker_u2'@'%';
+GRANT SELECT(id, public_col) ON `test_view_db`.`definer_view` TO 'view_invoker_u2'@'%'; 
+connection view_invoker_u2;
+--error 1142
+SELECT * FROM invoker_view;
+--error 1142
+SELECT * FROM definer_view;
+SELECT id, public_col FROM invoker_view;
+SELECT id, public_col FROM definer_view;
+--error 1143
+SELECT sensitive_col FROM invoker_view;
+--error 1143
+SELECT sensitive_col FROM definer_view;
 
 connection default;
 drop user view_definer_u, view_invoker_u1, view_invoker_u2;

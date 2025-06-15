@@ -4943,10 +4943,10 @@ func (b *PlanBuilder) checkRecursiveView(dbName pmodel.CIStr, tableName pmodel.C
 // viewHints group the view hints based on the view's query block name.
 func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel.CIStr, tableInfo *model.TableInfo, qbNameMap4View map[string][]ast.HintTable, viewHints map[string][]*ast.TableOptimizerHint) (base.LogicalPlan, error) {
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
-	viewDepth := stmtCtx.ViewDepth
-	stmtCtx.ViewDepth++
+	viewDepth := len(stmtCtx.SavedViews)
+	stmtCtx.SavedViews = append(stmtCtx.SavedViews, &ast.TableName{Schema: dbName, Name: tableInfo.Name})
 	defer func() {
-		stmtCtx.ViewDepth--
+		stmtCtx.SavedViews = stmtCtx.SavedViews[:len(stmtCtx.SavedViews)-1]
 	}()
 	deferFunc, err := b.checkRecursiveView(dbName, tableInfo.Name)
 	if err != nil {

@@ -91,6 +91,7 @@ func createPlannerSuite() (s *plannerSuite) {
 		MockListPartitionTable(),
 		MockStateNoneColumnTable(),
 		MockGlobalIndexHashPartitionTable(),
+		MockViewInvoker(),
 	}
 	id := int64(1)
 	for _, tblInfo := range tblInfos {
@@ -1576,6 +1577,36 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 				{mysql.SelectPriv, "test", "v", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "v"), false, nil, false},
 				{mysql.SelectPriv, "test", "v", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "v"), false, nil, false},
 				{mysql.SelectPriv, "test", "v", "d", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "v"), false, nil, false},
+			},
+		},
+		{
+			sql: `select c,d from v where b = 1`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "v", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "v"), false, nil, false},
+				{mysql.SelectPriv, "test", "v", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "v"), false, nil, false},
+				{mysql.SelectPriv, "test", "v", "d", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "d", "v"), false, nil, false},
+			},
+		},
+		{
+			sql: `select * from v2 where b = 1`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrViewInvalid.FastGenByArgs("", "v2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrViewInvalid.FastGenByArgs("", "v2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "d", plannererrors.ErrViewInvalid.FastGenByArgs("", "v2"), false, nil, false},
+				{mysql.SelectPriv, "test", "v2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "v2"), false, nil, false},
+				{mysql.SelectPriv, "test", "v2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "v2"), false, nil, false},
+				{mysql.SelectPriv, "test", "v2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "v2"), false, nil, false},
+				{mysql.SelectPriv, "test", "v2", "d", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "v2"), false, nil, false},
+			},
+		},
+		{
+			sql: `select c from v2 where b = 1`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrViewInvalid.FastGenByArgs("", "v2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrViewInvalid.FastGenByArgs("", "v2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "d", plannererrors.ErrViewInvalid.FastGenByArgs("", "v2"), false, nil, false},
+				{mysql.SelectPriv, "test", "v2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "v2"), false, nil, false},
+				{mysql.SelectPriv, "test", "v2", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "v2"), false, nil, false},
 			},
 		},
 
