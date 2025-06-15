@@ -169,28 +169,7 @@ func rebuildRange(p base.Plan) error {
 				}
 			}
 		}
-		if x.HandleConstant != nil {
-			dVal, err := convertConstant2Datum(sctx, x.HandleConstant, x.handleFieldType)
-			if err != nil {
-				return err
-			}
-			iv, err := dVal.ToInt64(sc.TypeCtx())
-			if err != nil {
-				return err
-			}
-			x.Handle = kv.IntHandle(iv)
-			return nil
-		}
-		for i, param := range x.IndexConstants {
-			if param != nil {
-				dVal, err := convertConstant2Datum(sctx, param, x.ColsFieldType[i])
-				if err != nil {
-					return err
-				}
-				x.IndexValues[i] = *dVal
-			}
-		}
-		return nil
+		return x.Rebuild(sctx)
 	case *BatchPointGetPlan:
 		if x.TblInfo.GetPartitionInfo() != nil && fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix33031, false) {
 			return errors.NewNoStackError("Fix33031 fix-control set and partitioned table in cached Batch Point Get plan")

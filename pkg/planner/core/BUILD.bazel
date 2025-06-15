@@ -328,6 +328,8 @@ go_test(
         "//tests/realtikvtest",
         "@com_github_docker_go_units//:go-units",
         "@com_github_golang_snappy//:snappy",
+        "@com_github_opentracing_basictracer_go//:basictracer-go",
+        "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
