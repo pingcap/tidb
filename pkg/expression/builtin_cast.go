@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -112,6 +113,14 @@ var (
 	_ builtinFunc = &builtinCastVectorFloat32AsVectorFloat32Sig{}
 	_ builtinFunc = &builtinCastUnsupportedAsVectorFloat32Sig{}
 	_ builtinFunc = &builtinCastVectorFloat32AsUnsupportedSig{}
+)
+
+const (
+	// These two are magic numbers to be compatible with MySQL.
+	// TODO: at least understand how these values came out. They appears to be `MaxBlobSize * 4` and `MaxMediumBlobSize * 4`
+	// but I don't know why it needs to multiply by 4. However, the bigger value is always safer, so we use them here.
+	castBlobFlen       = 262140
+	castMediumBlobFlen = 67108860
 )
 
 type castAsIntFunctionClass struct {
@@ -314,13 +323,14 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 		tp.AddFlag(mysql.BinaryFlag)
 		args[0] = BuildCastFunction(ctx, args[0], tp)
 	}
-	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
+	argFt := args[0].GetType(ctx.GetEvalCtx())
+	argTp := argFt.EvalType()
 	switch argTp {
 	case types.ETInt:
 		if bf.tp.GetFlen() == types.UnspecifiedLength {
 			// check https://github.com/pingcap/tidb/issues/44786
 			// set flen from integers may truncate integers, e.g. char(1) can not display -1[int(1)]
-			switch args[0].GetType(ctx.GetEvalCtx()).GetType() {
+			switch argFt.GetType() {
 			case mysql.TypeTiny:
 				bf.tp.SetFlen(4)
 			case mysql.TypeShort:
@@ -330,31 +340,99 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 			case mysql.TypeLong:
 				// set it to 11 as mysql
 				bf.tp.SetFlen(11)
+			case mysql.TypeLonglong:
+				// set it to 20 as mysql
+				bf.tp.SetFlen(20)
 			default:
-				bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen())
+				intest.Assert(false, "unknown type %d for INT", argFt.GetType())
+				bf.tp.SetFlen(argFt.GetFlen())
+			}
+
+			// to be compatible with MySQL, `bigint unsigned` doesn't remove the space for sign.
+			if mysql.HasUnsignedFlag(argFt.GetFlag()) &&
+				argFt.GetType() != mysql.TypeLonglong {
+				// Remove the space for sign
+				bf.tp.SetFlen(bf.tp.GetFlen() - 1)
 			}
 		}
 		sig = &builtinCastIntAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsString)
 	case types.ETReal:
+		if bf.tp.GetFlen() == types.UnspecifiedLength {
+			switch argFt.GetType() {
+			case mysql.TypeFloat:
+				bf.tp.SetFlen(12)
+			case mysql.TypeDouble:
+				bf.tp.SetFlen(22)
+			}
+		}
 		sig = &builtinCastRealAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsString)
 	case types.ETDecimal:
+		if bf.tp.GetFlen() == types.UnspecifiedLength {
+			bf.tp.SetFlen(decimalPrecisionToLength(argFt))
+		}
 		sig = &builtinCastDecimalAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsString)
 	case types.ETDatetime, types.ETTimestamp:
+		if bf.tp.GetFlen() == types.UnspecifiedLength {
+			bf.tp.SetFlen(mysql.MaxDatetimeWidthNoFsp)
+			if argFt.GetType() == mysql.TypeDate {
+				bf.tp.SetFlen(mysql.MaxDateWidth)
+			}
+
+			// Theoretically, the decimal of `DATE` will never be greater than 0.
+			decimal := argFt.GetDecimal()
+			if decimal > 0 {
+				// If the type is datetime or timestamp with fractional seconds, we need to set the length to
+				// accommodate the fractional seconds part.
+				bf.tp.SetFlen(bf.tp.GetFlen() + (1 + decimal))
+			}
+		}
 		sig = &builtinCastTimeAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsString)
 	case types.ETDuration:
+		if bf.tp.GetFlen() == types.UnspecifiedLength {
+			bf.tp.SetFlen(mysql.MaxDurationWidthNoFsp)
+			decimal := argFt.GetDecimal()
+			if decimal > 0 {
+				// If the type is time with fractional seconds, we need to set the length to
+				// accommodate the fractional seconds part.
+				bf.tp.SetFlen(bf.tp.GetFlen() + 1 + decimal)
+			}
+		}
 		sig = &builtinCastDurationAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsString)
 	case types.ETJson:
+		if bf.tp.GetFlen() == types.UnspecifiedLength {
+			bf.tp.SetFlen(mysql.MaxLongBlobWidth)
+			bf.tp.SetType(mysql.TypeLongBlob)
+		}
 		sig = &builtinCastJSONAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsString)
 	case types.ETVectorFloat32:
 		sig = &builtinCastVectorFloat32AsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastVectorFloat32AsString)
 	case types.ETString:
+		if bf.tp.GetFlen() == types.UnspecifiedLength {
+			flen := types.UnspecifiedLength
+			switch argFt.GetType() {
+			case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
+				if argFt.GetFlen() > 0 {
+					flen = argFt.GetFlen()
+				}
+			case mysql.TypeTinyBlob:
+				flen = mysql.MaxTinyBlobSize
+			case mysql.TypeBlob:
+				flen = castBlobFlen
+			case mysql.TypeMediumBlob:
+				flen = castMediumBlobFlen
+			case mysql.TypeLongBlob:
+				flen = mysql.MaxLongBlobSize
+			}
+			bf.tp.SetFlen(flen)
+		}
+
 		// When cast from binary to some other charsets, we should check if the binary is valid or not.
 		// so we build a from_binary function to do this check.
 		bf.args[0] = HandleBinaryLiteral(ctx, args[0], &ExprCollation{Charset: c.tp.GetCharset(), Collation: c.tp.GetCollate()}, c.funcName, true)
@@ -2846,4 +2924,28 @@ func TryPushCastIntoControlFunctionForHybridType(ctx BuildContext, expr Expressi
 		return expr
 	}
 	return expr
+}
+
+func decimalPrecisionToLength(ft *types.FieldType) int {
+	precision := ft.GetFlen()
+	scale := ft.GetDecimal()
+	unsigned := mysql.HasUnsignedFlag(ft.GetFlag())
+
+	if precision == types.UnspecifiedLength || scale == types.UnspecifiedLength {
+		return types.UnspecifiedLength
+	}
+
+	ret := precision
+	if scale > 0 {
+		ret++
+	}
+
+	if !unsigned && precision > 0 {
+		ret++ // for negative sign
+	}
+
+	if ret == 0 {
+		return 1
+	}
+	return ret
 }
