@@ -229,6 +229,12 @@ func (builder *RequestBuilder) SetKeyRanges(keyRanges []kv.KeyRange) *RequestBui
 	return builder
 }
 
+// SetIndexScanKeyRanges sets "KeyRanges" for "kv.Request".
+func (builder *RequestBuilder) SetIndexScanKeyRanges(keyRanges []kv.KeyRange, hints []int) *RequestBuilder {
+	builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, hints)
+	return builder
+}
+
 // SetKeyRangesWithHints sets "KeyRanges" for "kv.Request" with row count hints.
 func (builder *RequestBuilder) SetKeyRangesWithHints(keyRanges []kv.KeyRange, hints []int) *RequestBuilder {
 	builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, hints)
