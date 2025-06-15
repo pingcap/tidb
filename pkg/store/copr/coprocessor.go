@@ -572,10 +572,17 @@ func (b *batchStoreTaskBuilder) handle(task *copTask) (err error) {
 			// disable paging for batched task.
 			b.tasks[idx].paging = false
 			b.tasks[idx].pagingSize = 0
+			// The task and it's batched can be served only in the store we chose.
+			// If the task is redirected to other replica, the batched task may not meet region-miss or store-not-match error.
+			// So disable busy threshold for the task which carries batched tasks.
+			b.tasks[idx].busyThreshold = 0
 		}
 		if task.RowCountHint > 0 {
 			b.tasks[idx].RowCountHint += task.RowCountHint
 		}
+		batchedTask.task.paging = false
+		batchedTask.task.pagingSize = 0
+		batchedTask.task.busyThreshold = 0
 		b.tasks[idx].batchTaskList[task.taskID] = batchedTask
 	}
 	handled = true

@@ -113,3 +113,14 @@ insert into test values(3,'张三');
 insert into test values(4,'李四');
 select * from test order by cast(update_user as char) desc , id limit 3;
 
+# issue #56494, cast bit as char
+drop table if exists test;
+create table test(a bit(24));
+insert into test values('中');
+select a from test where '中' like convert(a, char);
+select a from test where false not like convert(a, char);
+select a from test where false like convert(a, char);
+truncate table test;
+insert into test values(0xffffff);
+-- error 1105
+select a from test where false not like convert(a, char);

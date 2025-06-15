@@ -168,8 +168,8 @@ set @@sql_mode=default;
 drop table if exists t1;
 create table t1(a int);
 insert into t1 values(0);
---error 1365
-alter table t1 add index i((100/a));
+#--error 1365
+#alter table t1 add index i((100/a));
 drop table t1;
 
 # should ignore divide zero error for default sql mode

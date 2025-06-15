@@ -304,7 +304,17 @@ func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
 func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
 	step := external.MergeSortFileCountStep
 	result := make([]planner.PipelineSpec, 0, 16)
-	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort])
+
+	ctx := planCtx.Ctx
+	controller, err2 := buildControllerForPlan(p)
+	if err2 != nil {
+		return nil, err2
+	}
+	if err2 = controller.InitDataStore(ctx); err2 != nil {
+		return nil, err2
+	}
+
+	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort], controller.GlobalSortStore)
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +355,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	// kvMetas contains data kv meta and all index kv metas.
 	// each kvMeta will be split into multiple range group individually,
 	// i.e. data and index kv will NOT be in the same subtask.
-	kvMetas, err := getSortedKVMetasForIngest(planCtx, p)
+	kvMetas, err := getSortedKVMetasForIngest(planCtx, p, controller.GlobalSortStore)
 	if err != nil {
 		return nil, err
 	}
@@ -456,7 +466,7 @@ func splitForOneSubtask(
 	return ret, nil
 }
 
-func getSortedKVMetasOfEncodeStep(subTaskMetas [][]byte) (map[string]*external.SortedKVMeta, error) {
+func getSortedKVMetasOfEncodeStep(subTaskMetas [][]byte, store storage.ExternalStorage) (map[string]*external.SortedKVMeta, error) {
 	dataKVMeta := &external.SortedKVMeta{}
 	indexKVMetas := make(map[int64]*external.SortedKVMeta)
 	for _, subTaskMeta := range subTaskMetas {
@@ -464,6 +474,14 @@ func getSortedKVMetasOfEncodeStep(subTaskMetas [][]byte) (map[string]*external.S
 		err := json.Unmarshal(subTaskMeta, &stepMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if stepMeta.SortedMetaPath != "" && store != nil {
+			dataMeta, indexMetas, err := external.ReadSortedMetaFromExternalStorage(context.Background(), store, stepMeta.SortedMetaPath)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			stepMeta.SortedDataMeta = dataMeta
+			stepMeta.SortedIndexMetas = indexMetas
 		}
 		dataKVMeta.Merge(stepMeta.SortedDataMeta)
 		for indexID, sortedIndexMeta := range stepMeta.SortedIndexMetas {
@@ -482,13 +500,20 @@ func getSortedKVMetasOfEncodeStep(subTaskMetas [][]byte) (map[string]*external.S
 	return res, nil
 }
 
-func getSortedKVMetasOfMergeStep(subTaskMetas [][]byte) (map[string]*external.SortedKVMeta, error) {
+func getSortedKVMetasOfMergeStep(subTaskMetas [][]byte, store storage.ExternalStorage) (map[string]*external.SortedKVMeta, error) {
 	result := make(map[string]*external.SortedKVMeta, len(subTaskMetas))
 	for _, subTaskMeta := range subTaskMetas {
 		var stepMeta MergeSortStepMeta
 		err := json.Unmarshal(subTaskMeta, &stepMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if stepMeta.SortedMetaPath != "" && store != nil {
+			meta, _, err := external.ReadSortedMetaFromExternalStorage(context.Background(), store, stepMeta.SortedMetaPath)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			stepMeta.SortedKVMeta = *meta
 		}
 		meta, ok := result[stepMeta.KVGroup]
 		if !ok {
@@ -500,12 +525,12 @@ func getSortedKVMetasOfMergeStep(subTaskMetas [][]byte) (map[string]*external.So
 	return result, nil
 }
 
-func getSortedKVMetasForIngest(planCtx planner.PlanCtx, p *LogicalPlan) (map[string]*external.SortedKVMeta, error) {
-	kvMetasOfMergeSort, err := getSortedKVMetasOfMergeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepMergeSort])
+func getSortedKVMetasForIngest(planCtx planner.PlanCtx, p *LogicalPlan, store storage.ExternalStorage) (map[string]*external.SortedKVMeta, error) {
+	kvMetasOfMergeSort, err := getSortedKVMetasOfMergeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepMergeSort], store)
 	if err != nil {
 		return nil, err
 	}
-	kvMetasOfEncodeStep, err := getSortedKVMetasOfEncodeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort])
+	kvMetasOfEncodeStep, err := getSortedKVMetasOfEncodeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort], store)
 	if err != nil {
 		return nil, err
 	}
