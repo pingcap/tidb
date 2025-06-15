@@ -739,7 +739,7 @@ func TestSplitAndScatterRegionInBatches(t *testing.T) {
 		})
 	}
 
-	err := local.SplitAndScatterRegionInBatches(ctx, ranges, true, 4)
+	err := local.SplitAndScatterRegionInBatches(ctx, ranges, true, 4, 0)
 	require.NoError(t, err)
 
 	rangeStart := codec.EncodeBytes([]byte{}, []byte("a"))
