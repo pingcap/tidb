@@ -659,6 +659,10 @@ func (n SelectLockType) String() string {
 type WildCardField struct {
 	node
 
+	// For example:
+	// `SELECT test.t.* FROM t` -> {Schema: "test", Table: "t"}
+	// `SELECT t.* FROM t` -> {Schema: "", Table: "t"}
+	// `SELECT t.a FROM t` -> nil
 	Table  model.CIStr
 	Schema model.CIStr
 }
@@ -707,6 +711,11 @@ type SelectField struct {
 	Auxiliary             bool
 	AuxiliaryColInAgg     bool
 	AuxiliaryColInOrderBy bool
+
+	// IsUnfoldFromWildCard indicates whether this field is unfolded from a wildcard, which can be used in checking privilege.
+	// Although we always check SELECT privilege in column-level, a table-level access deny error will be return if the
+	// column is unfolded from a wildcard.
+	IsUnfoldFromWildCard bool
 }
 
 // Restore implements Node interface.
