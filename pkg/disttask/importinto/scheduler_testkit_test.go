@@ -144,6 +144,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.NoError(t, err)
 	task.Meta = bs
 	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepImporting))
+	task.State = proto.TaskStateReverting
 	task.Error = errors.New("met error")
 	require.NoError(t, ext.OnDone(ctx, d, task))
 	require.NoError(t, err)
@@ -160,6 +161,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.NoError(t, err)
 	task.Meta = bs
 	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepImporting))
+	task.State = proto.TaskStateReverting
 	task.Error = errors.New("cancelled by user")
 	require.NoError(t, ext.OnDone(ctx, d, task))
 	require.NoError(t, err)
