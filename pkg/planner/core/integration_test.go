@@ -1028,7 +1028,7 @@ func TestExplainAnalyzeDML2(t *testing.T) {
 	}
 
 	for _, ca := range cases {
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			tk.MustExec("drop table if exists t")
 			switch i {
 			case 0:
@@ -1448,7 +1448,7 @@ func TestIssue36194(t *testing.T) {
 		"  └─ExchangeSender 100.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"    └─Limit 100.00 mpp[tiflash]  offset:0, count:100",
 		"      └─Selection 100.00 mpp[tiflash]  gt(plus(test.t.a, 1), 20)",
-		"        └─TableFullScan 125.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"))
+		"        └─TableFullScan 125.00 mpp[tiflash] table:t keep order:false, stats:pseudo"))
 }
 
 func TestGetFormatPushDownToTiFlash(t *testing.T) {
@@ -2321,8 +2321,8 @@ func TestIssue46556(t *testing.T) {
 		testkit.Rows(`HashJoin 0.00 root  inner join, equal:[eq(Column#5, test.t0.c0)]`,
 			`├─Projection(Build) 0.00 root  <nil>->Column#5`,
 			`│ └─TableDual 0.00 root  rows:0`,
-			`└─TableReader(Probe) 7992.00 root  data:Selection`,
-			`  └─Selection 7992.00 cop[tikv]  like(test.t0.c0, test.t0.c0, 92), not(isnull(test.t0.c0))`,
+			`└─TableReader(Probe) 9990.00 root  data:Selection`,
+			`  └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.c0))`,
 			`    └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`))
 }
 
@@ -2331,10 +2331,12 @@ func TestIssue41458(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-	tk.MustExec("use test")
+
+	tk.MustExec("create database special")
+	tk.MustExec("use special")
 	tk.MustExec(`create table t (a int, b int, c int, index ia(a));`)
 	tk.MustExec("select  * from t t1 join t t2 on t1.b = t2.b join t t3 on t2.b=t3.b join t t4 on t3.b=t4.b where t3.a=1 and t2.a=2;")
-	rawRows := tk.MustQuery("select plan from information_schema.statements_summary where SCHEMA_NAME = 'test' and STMT_TYPE = 'Select';").Sort().Rows()
+	rawRows := tk.MustQuery("select plan from information_schema.statements_summary where SCHEMA_NAME = 'special' and STMT_TYPE = 'Select';").Sort().Rows()
 	plan := rawRows[0][0].(string)
 	rows := strings.Split(plan, "\n")
 	rows = rows[1:]
@@ -2445,12 +2447,12 @@ func TestIssue54213(t *testing.T) {
   c bigint(20) ,
   PRIMARY KEY (object_id),
   KEY ab (a,b))`)
-	tk.MustQuery(`explain select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
-		testkit.Rows("StreamAgg_11 1.00 root  funcs:count(1)->Column#6",
-			"└─Limit_12 0.10 root  offset:0, count:100",
-			"  └─IndexReader_16 0.10 root  index:Limit_15",
-			"    └─Limit_15 0.10 cop[tikv]  offset:0, count:100",
-			"      └─IndexRangeScan_14 0.10 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
+	tk.MustQuery(`explain format='brief' select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
+		testkit.Rows("StreamAgg 1.00 root  funcs:count(1)->Column#6",
+			"└─Limit 1.00 root  offset:0, count:100",
+			"  └─IndexReader 1.25 root  index:Limit",
+			"    └─Limit 1.25 cop[tikv]  offset:0, count:100",
+			"      └─IndexRangeScan 1.25 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
 }
 
 func TestIssue54870(t *testing.T) {
@@ -2545,6 +2547,73 @@ func TestIssue58829(t *testing.T) {
 
 	// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
 	tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
+}
+
+func TestIssue61669(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`
+CREATE TABLE B (
+  ROW_NO bigint NOT NULL AUTO_INCREMENT,
+  RCRD_NO varchar(20) NOT NULL,
+  FILE_NO varchar(20) DEFAULT NULL,
+  BSTPRTFL_NO varchar(20) DEFAULT NULL,
+  MDL_DT date DEFAULT NULL,
+  TS varchar(19) DEFAULT NULL,
+  LD varchar(19) DEFAULT NULL,
+  MDL_NO varchar(50) DEFAULT NULL,
+  TXN_NO varchar(90) DEFAULT NULL,
+  SCR_NO varchar(20) DEFAULT NULL,
+  DAM decimal(25, 8) DEFAULT NULL,
+  DT date DEFAULT NULL,
+  PRIMARY KEY (ROW_NO),
+  KEY IDX1_ETF_FLR_PRCHRDMP_TXN_DTL (BSTPRTFL_NO, DT, MDL_DT, TS, LD),
+  KEY IDX2_ETF_FLR_PRCHRDMP_TXN_DTL (BSTPRTFL_NO, MDL_DT, SCR_NO, TXN_NO),
+  KEY IDX1_ETF_FLR_PRCHRDMP_TXNDTL (FILE_NO, BSTPRTFL_NO),
+  KEY IDX_ETF_FLR_PRCHRDMP_TXN_FIX (MDL_NO, BSTPRTFL_NO, MDL_DT),
+  UNIQUE UI_ETF_FLR_PRCHRDMP_TXN_DTLTB (RCRD_NO),
+  KEY IDX3_ETF_FLR_PRCHRDMP_TXN_DTL (DT)
+) ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_bin AUTO_INCREMENT = 2085290754;`)
+	tk.MustExec(`
+CREATE TABLE A (
+  ROW_NO bigint NOT NULL AUTO_INCREMENT,
+  TEMP_NO varchar(20) NOT NULL,
+  VCHR_TPCD varchar(19) DEFAULT NULL,
+  LD varchar(19) DEFAULT NULL,
+  BSTPRTFL_NO varchar(20) DEFAULT NULL,
+  DAM decimal(25, 8) DEFAULT NULL,
+  DT date DEFAULT NULL,
+  CASH_RPLC_AMT decimal(19, 2) DEFAULT NULL,
+  PCSG_BTNO_NO varchar(20) DEFAULT NULL,
+  KEY INX_TEMP_NO (TEMP_NO),
+  PRIMARY KEY (ROW_NO),
+  KEY idx2_ETF_FNDTA_SALE_PA (PCSG_BTNO_NO, DT, VCHR_TPCD)
+) ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_bin AUTO_INCREMENT = 900006;`)
+	tk.MustExec(`set tidb_opt_index_join_build_v2=off`)
+	r := tk.MustQuery(`
+explain SELECT *
+FROM A A
+JOIN
+    (SELECT CASH_RPLC_AMT,
+         S.BSTPRTFL_NO
+    FROM
+        (SELECT BSTPRTFL_NO,
+         SUM(CASE
+            WHEN LD IN ('03') THEN
+            DAM
+            ELSE 0 END) AS CASH_RPLC_AMT
+        FROM
+            (SELECT B.LD,
+         SUM(B.DAM) DAM,
+         B.BSTPRTFL_NO
+            FROM B B
+            GROUP BY  B.LD, B.BSTPRTFL_NO) ff
+            GROUP BY  BSTPRTFL_NO) S ) f
+            ON A.BSTPRTFL_NO = f.BSTPRTFL_NO
+    WHERE A.PCSG_BTNO_NO = 'MXUU2022123043502318'`)
+	require.True(t, len(r.Rows()) > 0) // no error
 }
 
 func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {

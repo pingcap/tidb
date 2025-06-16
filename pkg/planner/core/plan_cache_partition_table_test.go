@@ -17,6 +17,7 @@ package core_test
 import (
 	"fmt"
 	"math/rand"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -125,10 +126,10 @@ func TestPreparedPlanCachePartitionIndex(t *testing.T) {
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0}, [][]any{
-		{"IndexLookUp_7"},
-		{"├─IndexRangeScan_5(Build)"},
-		{"└─TableRowIDScan_6(Probe)"}})
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).CheckAt([]int{0}, [][]any{
+		{"IndexLookUp"},
+		{"├─IndexRangeScan(Build)"},
+		{"└─TableRowIDScan(Probe)"}})
 	tk.MustExec(`set @a=2,@b=5,@c=4`)
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Sort().Check(testkit.Rows("AC 4", "BA 5", "abc 2"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
@@ -266,7 +267,7 @@ func TestPreparedStmtIndexLookup(t *testing.T) {
 	tk.MustExec(`create table t (a int, b int, unique key (a))
 partition by hash (a) partitions 3`)
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	tk.MustExec("analyze table t")
@@ -337,7 +338,7 @@ func testPartitionFullCover(t *testing.T, tableDefSQL []partCoverStruct, partiti
 	ids := make([]any, 0, rows)
 	maxRange := 2000000
 	maxID := maxRange + 500000
-	for i := 0; i < rows; i++ {
+	for range rows {
 		var id any
 		var lc any
 		createNew := true
@@ -668,13 +669,7 @@ func getRandCols(seededRand *rand.Rand) ([]string, bool) {
 		allCols[i], allCols[j] = allCols[j], allCols[i]
 	})
 	cols := allCols[:seededRand.Intn(len(allCols)-1)+1]
-	hasSpaceCol := false
-	for _, col := range cols {
-		if col == "space(1)" {
-			hasSpaceCol = true
-			break
-		}
-	}
+	hasSpaceCol := slices.Contains(cols, "space(1)")
 	return cols, hasSpaceCol
 }
 

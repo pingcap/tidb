@@ -57,6 +57,8 @@ var (
 	MergeSortOverlapThreshold int64 = 4000
 	// MergeSortFileCountStep is the step of file count when we split the sorted kv files.
 	MergeSortFileCountStep = 4000
+	// MergeSortMaxSubtaskTargetFiles assumes each merge sort subtask generates 16 files.
+	MergeSortMaxSubtaskTargetFiles = 16
 )
 
 const (
@@ -67,20 +69,17 @@ const (
 )
 
 // GetAdjustedBlockSize gets the block size after alignment.
-func GetAdjustedBlockSize(memSizePerWriter uint64) int {
-	// the buf size is aligned to block size, and the target table might have many
-	// writers, one writer might take much more memory when the buf size
-	// is slightly larger than the N*block-size.
-	// such as when memSizePerWriter = 2M, block-size = 16M, the aligned size
-	// is 16M, it's 8 times larger.
-	// so we adjust the block size when the aligned size is larger than 1.1 times
-	// of memSizePerWriter, to avoid OOM.
-	blockSize := DefaultBlockSize
-	alignedSize := membuf.GetAlignedSize(memSizePerWriter, uint64(blockSize))
-	if float64(alignedSize)/float64(memSizePerWriter) > 1.1 {
-		return int(memSizePerWriter)
+func GetAdjustedBlockSize(totalBufSize uint64, defBlockSize int) int {
+	// In the case of table with many indexes, the buffer size may be much
+	// smaller than the block size, so aligning size to block size will make
+	// the memory size of each writer too large and cause OOM.
+	// So we adjust the block size when the aligned size is 1.1 times larger
+	// than memSizePerWriter to prevent OOM.
+	alignedSize := membuf.GetAlignedSize(totalBufSize, uint64(defBlockSize))
+	if float64(alignedSize)/float64(totalBufSize) > 1.1 {
+		return int(totalBufSize)
 	}
-	return blockSize
+	return defBlockSize
 }
 
 // rangePropertiesCollector collects range properties for each range. The zero
@@ -164,15 +163,14 @@ func dummyOnCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
-	groupOffset     int
-	memSizeLimit    uint64
-	blockSize       int
-	propSizeDist    uint64
-	propKeysDist    uint64
-	onClose         OnCloseFunc
-	keyDupeEncoding bool
-	tikvCodec       tikv.Codec
-	onDup           engineapi.OnDuplicateKey
+	groupOffset  int
+	memSizeLimit uint64
+	blockSize    int
+	propSizeDist uint64
+	propKeysDist uint64
+	onClose      OnCloseFunc
+	tikvCodec    tikv.Codec
+	onDup        engineapi.OnDuplicateKey
 }
 
 // NewWriterBuilder creates a WriterBuilder.
@@ -216,12 +214,6 @@ func (b *WriterBuilder) SetOnCloseFunc(onClose OnCloseFunc) *WriterBuilder {
 	return b
 }
 
-// SetKeyDuplicationEncoding sets if the writer can distinguish duplicate key.
-func (b *WriterBuilder) SetKeyDuplicationEncoding(val bool) *WriterBuilder {
-	b.keyDupeEncoding = val
-	return b
-}
-
 // SetBlockSize sets the block size of pre-allocated buf in the writer.
 func (b *WriterBuilder) SetBlockSize(blockSize int) *WriterBuilder {
 	b.blockSize = blockSize
@@ -243,7 +235,7 @@ func (b *WriterBuilder) SetTiKVCodec(codec tikv.Codec) *WriterBuilder {
 	return b
 }
 
-// SetOnDup set the action when checkDup enabled and a duplicate key is found.
+// SetOnDup sets the action when checkDup enabled and a duplicate key is found.
 func (b *WriterBuilder) SetOnDup(onDup engineapi.OnDuplicateKey) *WriterBuilder {
 	b.onDup = onDup
 	return b
@@ -257,10 +249,6 @@ func (b *WriterBuilder) Build(
 	writerID string,
 ) *Writer {
 	filenamePrefix := filepath.Join(prefix, writerID)
-	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
-	if b.keyDupeEncoding {
-		keyAdapter = common.DupDetectKeyAdapter{}
-	}
 	p := membuf.NewPool(
 		membuf.WithBlockNum(0),
 		membuf.WithBlockSize(b.blockSize),
@@ -277,7 +265,6 @@ func (b *WriterBuilder) Build(
 		kvBuffer:       p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
 		currentSeq:     0,
 		filenamePrefix: filenamePrefix,
-		keyAdapter:     keyAdapter,
 		writerID:       writerID,
 		groupOffset:    b.groupOffset,
 		onClose:        b.onClose,
@@ -400,7 +387,6 @@ type Writer struct {
 	groupOffset    int
 	currentSeq     int
 	filenamePrefix string
-	keyAdapter     common.KeyAdapter
 
 	rc *rangePropertiesCollector
 
@@ -438,14 +424,9 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 	if w.tikvCodec != nil {
 		key = w.tikvCodec.EncodeKey(key)
 	}
-	keyAdapter := w.keyAdapter
 
-	var rowID []byte
-	if handle != nil {
-		rowID = handle.Encoded()
-	}
-	encodedKeyLen := keyAdapter.EncodedLen(key, rowID)
-	length := encodedKeyLen + len(val) + lengthBytes*2
+	keyLen := len(key)
+	length := keyLen + len(val) + lengthBytes*2
 	dataBuf, loc := w.kvBuffer.AllocBytesWithSliceLocation(length)
 	if dataBuf == nil {
 		if err := w.flushKVs(ctx, false); err != nil {
@@ -457,14 +438,14 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 			return errors.Errorf("failed to allocate kv buffer: %d", length)
 		}
 	}
-	binary.BigEndian.AppendUint64(dataBuf[:0], uint64(encodedKeyLen))
+	binary.BigEndian.AppendUint64(dataBuf[:0], uint64(keyLen))
 	binary.BigEndian.AppendUint64(dataBuf[:lengthBytes], uint64(len(val)))
-	keyAdapter.Encode(dataBuf[2*lengthBytes:2*lengthBytes:2*lengthBytes+encodedKeyLen], key, rowID)
-	copy(dataBuf[2*lengthBytes+encodedKeyLen:], val)
+	copy(dataBuf[2*lengthBytes:], key)
+	copy(dataBuf[2*lengthBytes+keyLen:], val)
 
 	w.kvLocations = append(w.kvLocations, loc)
 	// TODO: maybe we can unify the size calculation during write to store.
-	w.kvSize += int64(encodedKeyLen + len(val))
+	w.kvSize += int64(keyLen + len(val))
 	w.batchSize += uint64(length)
 	return nil
 }
@@ -531,11 +512,15 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		zap.Int("sequence-number", w.currentSeq),
 	)
 	sortStart := time.Now()
-	var dupFound bool
+	var (
+		dupFound bool
+		dupLoc   *membuf.SliceLocation
+	)
 	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
 		res := bytes.Compare(w.getKeyByLoc(&i), w.getKeyByLoc(&j))
-		if res == 0 {
+		if res == 0 && !dupFound {
 			dupFound = true
+			dupLoc = &i
 		}
 		return res
 	})
@@ -560,8 +545,9 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
 			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyError:
-			// not implemented yet, same as ignore.
-			// add-index might need this one later.
+			dupKey := slices.Clone(w.getKeyByLoc(dupLoc))
+			dupValue := slices.Clone(w.getValueByLoc(dupLoc))
+			return common.ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupValue)
 		}
 	}
 
@@ -752,6 +738,12 @@ func (w *Writer) getKeyByLoc(loc *membuf.SliceLocation) []byte {
 	block := w.kvBuffer.GetSlice(loc)
 	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
 	return block[2*lengthBytes : 2*lengthBytes+keyLen]
+}
+
+func (w *Writer) getValueByLoc(loc *membuf.SliceLocation) []byte {
+	block := w.kvBuffer.GetSlice(loc)
+	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
+	return block[2*lengthBytes+keyLen:]
 }
 
 func (w *Writer) reCalculateKVSize() int64 {

@@ -94,18 +94,20 @@ func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
 	sql := fmt.Sprintf(`import into t FROM 'gs://privilege-test/db.tbl.*.csv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
-	// works even SEM enabled
-	sem.Enable()
-	s.T().Cleanup(func() {
-		sem.Disable()
-	})
-	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
-	s.tk.MustExec("truncate table t")
-	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
-	s.tk.MustQuery(sql)
-	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
+	if kerneltype.IsClassic() {
+		// works even SEM enabled
+		sem.Enable()
+		s.T().Cleanup(func() {
+			sem.Disable()
+		})
+		s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+		s.tk.MustExec("truncate table t")
+		s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
+		s.tk.MustQuery(sql)
+		s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
 
-	sem.Disable()
+		sem.Disable()
+	}
 	// requires FILE for server file
 	importFromServerSQL := fmt.Sprintf("IMPORT INTO t FROM '%s'", filePath)
 	// NOTE: we must use ExecToErr instead of QueryToErr here, because QueryToErr will cause the case fail always.
@@ -499,18 +501,26 @@ func (s *mockGCSSuite) TestLoadSQLDump() {
 
 	content := `insert into tbl values (1, 'a'), (2, 'b');`
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load-parquet", Name: "p"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load-parquet", Name: "p.sql"},
 		Content:     []byte(content),
 	})
 	tempDir := s.T().TempDir()
 	s.NoError(os.WriteFile(path.Join(tempDir, "test.sql"), []byte(content), 0o644))
 
-	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-parquet/p?endpoint=%s' FORMAT 'SQL';`, gcsEndpoint)
+	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-parquet/p.sql?endpoint=%s' FORMAT 'SQL';`, gcsEndpoint)
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
+	s.tk.MustExec("TRUNCATE TABLE load_csv.t")
+	sql = fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-parquet/p.sql?endpoint=%s';`, gcsEndpoint)
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
 
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 	sql = fmt.Sprintf(`IMPORT INTO load_csv.t FROM '%s' FORMAT 'SQL';`, path.Join(tempDir, "test.sql"))
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
+	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
+	sql = fmt.Sprintf(`IMPORT INTO load_csv.t FROM '%s';`, path.Join(tempDir, "test.sql"))
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
 }

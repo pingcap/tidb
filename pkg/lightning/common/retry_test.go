@@ -27,6 +27,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
@@ -36,6 +37,10 @@ import (
 )
 
 func TestIsRetryableError(t *testing.T) {
+	require.True(t, IsRetryableError(&url.Error{}))
+	require.True(t, IsRetryableError(&url.Error{Err: io.EOF}))
+	require.False(t, IsRetryableError(&url.Error{Err: context.Canceled}))
+
 	require.False(t, IsRetryableError(context.Canceled))
 	require.False(t, IsRetryableError(context.DeadlineExceeded))
 	require.True(t, IsRetryableError(ErrWriteTooSlow))
@@ -43,23 +48,24 @@ func TestIsRetryableError(t *testing.T) {
 	require.False(t, IsRetryableError(&net.AddrError{}))
 	require.False(t, IsRetryableError(&net.DNSError{}))
 	require.True(t, IsRetryableError(&net.DNSError{IsTimeout: true}))
+	require.True(t, IsRetryableError(&net.DNSError{IsTemporary: true}))
 
 	// kv errors
-	require.True(t, IsRetryableError(ErrKVNotLeader))
-	require.True(t, IsRetryableError(ErrKVEpochNotMatch))
-	require.True(t, IsRetryableError(ErrKVServerIsBusy))
-	require.True(t, IsRetryableError(ErrKVRegionNotFound))
-	require.True(t, IsRetryableError(ErrKVReadIndexNotReady))
-	require.True(t, IsRetryableError(ErrKVIngestFailed))
-	require.True(t, IsRetryableError(ErrKVRaftProposalDropped))
-	require.True(t, IsRetryableError(ErrKVNotLeader.GenWithStack("test")))
-	require.True(t, IsRetryableError(ErrKVEpochNotMatch.GenWithStack("test")))
-	require.True(t, IsRetryableError(ErrKVServerIsBusy.GenWithStack("test")))
-	require.True(t, IsRetryableError(ErrKVRegionNotFound.GenWithStack("test")))
-	require.True(t, IsRetryableError(ErrKVReadIndexNotReady.GenWithStack("test")))
-	require.True(t, IsRetryableError(ErrKVIngestFailed.GenWithStack("test")))
-	require.True(t, IsRetryableError(ErrKVRaftProposalDropped.GenWithStack("test")))
-	require.False(t, IsRetryableError(ErrKVDiskFull.GenWithStack("test")))
+	require.True(t, IsRetryableError(errdef.ErrKVNotLeader))
+	require.True(t, IsRetryableError(errdef.ErrKVEpochNotMatch))
+	require.True(t, IsRetryableError(errdef.ErrKVServerIsBusy))
+	require.True(t, IsRetryableError(errdef.ErrKVRegionNotFound))
+	require.True(t, IsRetryableError(errdef.ErrKVReadIndexNotReady))
+	require.True(t, IsRetryableError(errdef.ErrKVIngestFailed))
+	require.True(t, IsRetryableError(errdef.ErrKVRaftProposalDropped))
+	require.True(t, IsRetryableError(errdef.ErrKVNotLeader.GenWithStack("test")))
+	require.True(t, IsRetryableError(errdef.ErrKVEpochNotMatch.GenWithStack("test")))
+	require.True(t, IsRetryableError(errdef.ErrKVServerIsBusy.GenWithStack("test")))
+	require.True(t, IsRetryableError(errdef.ErrKVRegionNotFound.GenWithStack("test")))
+	require.True(t, IsRetryableError(errdef.ErrKVReadIndexNotReady.GenWithStack("test")))
+	require.True(t, IsRetryableError(errdef.ErrKVIngestFailed.GenWithStack("test")))
+	require.True(t, IsRetryableError(errdef.ErrKVRaftProposalDropped.GenWithStack("test")))
+	require.False(t, IsRetryableError(errdef.ErrKVDiskFull.GenWithStack("test")))
 
 	// tidb error
 	require.True(t, IsRetryableError(drivererr.ErrRegionUnavailable))

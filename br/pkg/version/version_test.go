@@ -328,7 +328,7 @@ func TestCheckClusterVersion(t *testing.T) {
 			return []*metapb.Store{{Version: "v8.1.0"}}
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
-		require.Error(t, err)
+		require.NoError(t, err)
 	}
 
 	{

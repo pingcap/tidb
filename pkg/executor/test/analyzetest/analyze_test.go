@@ -371,8 +371,8 @@ func TestDefaultValForAnalyze(t *testing.T) {
 	tk.MustExec("analyze table t with 0 topn, 2 buckets, 10000 samples")
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows("IndexReader 512.00 root  index:IndexRangeScan",
 		"└─IndexRangeScan 512.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
-	tk.MustQuery("explain format = 'brief' select * from t where a = 999").Check(testkit.Rows("IndexReader 0.00 root  index:IndexRangeScan",
-		"└─IndexRangeScan 0.00 cop[tikv] table:t, index:a(a) range:[999,999], keep order:false"))
+	tk.MustQuery("explain format = 'brief' select * from t where a = 999").Check(testkit.Rows("IndexReader 1.25 root  index:IndexRangeScan",
+		"└─IndexRangeScan 1.25 cop[tikv] table:t, index:a(a) range:[999,999], keep order:false"))
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int, key(a));")
@@ -3155,4 +3155,24 @@ func TestIssue55438(t *testing.T) {
 	tk.MustExec("CREATE TABLE t0(c0 NUMERIC , c1 BIGINT UNSIGNED  AS ((CASE 0 WHEN false THEN 1358571571 ELSE TRIM(c0) END )));")
 	tk.MustExec("CREATE INDEX i0 ON t0(c1);")
 	tk.MustExec("analyze table t0")
+}
+
+func TestIssue61609(t *testing.T) {
+	// Analyze table with only 1 sample (of 10 rows) - TopN result should multiply the 1 value by 10.
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (0),(0),(0),(0),(0),(0),(0),(0),(0),(0);")
+
+	tk.MustExec("explain select * from t where a = 0")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
+	tk.MustExec("analyze table t with 1 topn, 1 samples")
+	tk.MustExec("explain select * from t where a = 0")
+
+	h := dom.StatsHandle()
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
+		"test t  a 0 0 10",
+	))
 }

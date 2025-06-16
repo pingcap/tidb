@@ -197,7 +197,7 @@ func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 	curSubtaskID := e.currSubtaskID.Load()
 	update := func() {
 		summary := stepExec.RealtimeSummary()
-		err := taskMgr.UpdateSubtaskRowCount(runStepCtx, curSubtaskID, summary.RowCount)
+		err := taskMgr.UpdateSubtaskSummary(runStepCtx, curSubtaskID, summary)
 		if err != nil {
 			e.logger.Info("update subtask row count failed", zap.Error(err))
 		}
@@ -463,7 +463,6 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	defer subtaskCancel()
 	failpoint.InjectCall("afterRunSubtask", e, &subtaskErr, subtaskCtx)
 	logTask.End2(zap.InfoLevel, subtaskErr)
-
 	failpoint.InjectCall("mockTiDBShutdown", e, e.execID, e.GetTaskBase())
 
 	if subtaskErr != nil {

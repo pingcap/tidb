@@ -107,6 +107,7 @@ func TestScalarFunction(t *testing.T) {
 	sf = NewValuesFunc(ctx, 0, types.NewFieldType(mysql.TypeLonglong))
 	newSf, ok := sf.Clone().(*ScalarFunction)
 	require.True(t, ok)
+	require.True(t, sf.Equal(ctx, newSf))
 	require.Equal(t, "values", newSf.FuncName.O)
 	require.Equal(t, mysql.TypeLonglong, newSf.RetType.GetType())
 	require.Equal(t, sf.Coercibility(), newSf.Coercibility())

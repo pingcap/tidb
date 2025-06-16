@@ -60,7 +60,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 	c.write("func (op *%v) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {", vType.Name())
 	c.write("cloned := new(%v)", vType.Name())
 	c.write("*cloned = *op")
-	for i := 0; i < vType.NumField(); i++ {
+	for i := range vType.NumField() {
 		f := vType.Field(i)
 		if allowShallowClone(f) {
 			continue
@@ -91,12 +91,12 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "[]int", "[]byte", "[]float", "[]bool": // simple slice
 			c.write("cloned.%v = make(%v, len(op.%v))", f.Name, f.Type, f.Name)
 			c.write("copy(cloned.%v, op.%v)", f.Name, f.Name)
-		case "core.physicalSchemaProducer", "core.basePhysicalAgg", "core.basePhysicalJoin":
+		case "core.basePhysicalAgg", "core.basePhysicalJoin":
 			fieldName := strings.Split(f.Type.String(), ".")[1]
 			c.write(`basePlan, baseOK := op.%v.cloneForPlanCacheWithSelf(newCtx, cloned)
 							if !baseOK {return nil, false}
 							cloned.%v = *basePlan`, fieldName, fieldName)
-		case "physicalop.BasePhysicalPlan":
+		case "physicalop.BasePhysicalPlan", "physicalop.PhysicalSchemaProducer":
 			fieldName := strings.Split(f.Type.String(), ".")[1]
 			c.write(`basePlan, baseOK := op.%v.CloneForPlanCacheWithSelf(newCtx, cloned)
 							if !baseOK {return nil, false}
@@ -123,7 +123,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = newCtx", f.Name)
 		case "util.HandleCols":
 			c.write("if op.%v != nil {", f.Name)
-			c.write("cloned.%v = op.%v.Clone(newCtx.GetSessionVars().StmtCtx)", f.Name, f.Name)
+			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
 			c.write("}")
 		case "*core.PushedDownLimit":
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
@@ -167,7 +167,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("if op.%v != nil {", f.Name)
 			c.write("cloned.%v = make(map[int64][]util.HandleCols, len(op.%v))", f.Name, f.Name)
 			c.write("for k, v := range op.%v {", f.Name)
-			c.write("cloned.%v[k] = util.CloneHandleCols(newCtx.GetSessionVars().StmtCtx, v)", f.Name)
+			c.write("cloned.%v[k] = util.CloneHandleCols(v)", f.Name)
 			c.write("}}")
 		case "map[int64]*expression.Column":
 			c.write("if op.%v != nil {", f.Name)
