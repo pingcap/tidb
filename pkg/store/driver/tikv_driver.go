@@ -179,7 +179,8 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 	pdCli = util.InterceptedPDClient{Client: pdCli}
 
 	// FIXME: uuid will be a very long and ugly string, simplify it.
-	uuid := fmt.Sprintf("tikv-%v%s", pdCli.GetClusterID(context.TODO()), keyspaceName)
+	clusterID := pdCli.GetClusterID(context.TODO())
+	uuid := fmt.Sprintf("tikv-%v%s", clusterID, keyspaceName)
 	if store, ok := mc.cache[uuid]; ok {
 		pdCli.Close()
 		return store, nil
@@ -242,6 +243,7 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 		enableGC:  !disableGC,
 		coprStore: coprStore,
 		codec:     codec,
+		clusterID: clusterID,
 	}
 
 	mc.cache[uuid] = store
@@ -258,6 +260,7 @@ type tikvStore struct {
 	coprStore *copr.Store
 	codec     tikv.Codec
 	opts      sync.Map
+	clusterID uint64
 }
 
 // GetOption wraps around sync.Map.
@@ -426,6 +429,10 @@ func (s *tikvStore) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 
 func (s *tikvStore) GetCodec() tikv.Codec {
 	return s.codec
+}
+
+func (s *tikvStore) GetClusterID() uint64 {
+	return s.clusterID
 }
 
 // injectTraceClient injects trace info to the tikv request
