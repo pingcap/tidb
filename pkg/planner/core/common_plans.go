@@ -901,7 +901,7 @@ func (e *Explain) RenderResult() error {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("'explain format=true_card_cost' cannot support this plan"))
 		}
 	}
-	
+
 	switch strings.ToLower(e.Format) {
 	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache:
 		if e.Rows == nil || e.Analyze {
