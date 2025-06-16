@@ -22,7 +22,6 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -67,16 +66,10 @@ type ShardLocation struct {
 	Ranges *KeyRanges
 }
 
-// ShardInfoWithAddr represents a shard of data with local cache addresses.
-type ShardInfoWithAddr struct {
-	coprocessor.ShardInfo
-	localCacheAddrs []string
-}
-
 type shardIndexMu struct {
 	// shardIndex is a map of region ID to shared index.
 	sync.RWMutex
-	sorted SortedShards
+	sorted *SortedShards
 }
 
 // Client is the interface for the TiCI shard cache client.
@@ -156,7 +149,9 @@ type TiCIShardCache struct {
 func NewTiCIShardCache(client Client) *TiCIShardCache {
 	return &TiCIShardCache{
 		client: client,
-		mu:     shardIndexMu{},
+		mu: shardIndexMu{
+			sorted: NewSortedShards(btreeDegree),
+		},
 	}
 }
 
@@ -327,7 +322,7 @@ func (s *TiCIShardCache) BatchLoadShardsWithKeyRanges(
 		s.insertShardToCache(&shard, true)
 	}
 
-	return nil, nil
+	return shards, nil
 }
 
 func (s *TiCIShardCache) insertShardToCache(cachedShard *ShardWithAddr, invalidateOldShard bool) bool {
