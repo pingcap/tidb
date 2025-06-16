@@ -3958,10 +3958,6 @@ func getStoreBootstrapVersionWithCache(store kv.Storage) int64 {
 	return ver
 }
 
-func getSystemStoreBootstrapVersion() int64 {
-	return mustGetStoreBootstrapVersion(kvstore.GetSystemStorage())
-}
-
 func finishBootstrap(store kv.Storage) {
 	store.SetOption(StoreBootstrappedKey, true)
 

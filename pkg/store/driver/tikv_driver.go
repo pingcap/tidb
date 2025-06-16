@@ -180,7 +180,7 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 
 	// FIXME: uuid will be a very long and ugly string, simplify it.
 	clusterID := pdCli.GetClusterID(context.TODO())
-	uuid := fmt.Sprintf("tikv-%v%s", clusterID, keyspaceName)
+	uuid := fmt.Sprintf("tikv-%v/%s", clusterID, keyspaceName)
 	if store, ok := mc.cache[uuid]; ok {
 		pdCli.Close()
 		return store, nil
