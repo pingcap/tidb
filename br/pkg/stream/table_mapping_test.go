@@ -1360,3 +1360,13 @@ func TestTableHistoryManagerOutOfOrderTS(t *testing.T) {
 		})
 	}
 }
+
+func TestReportError(t *testing.T) {
+	manager := NewTableMappingManager()
+	manager.noDefaultKVErrorMap[1] = errors.New("test")
+	require.Error(t, manager.ReportIfError())
+	manager.CleanError(2)
+	require.Error(t, manager.ReportIfError())
+	manager.CleanError(1)
+	require.NoError(t, manager.ReportIfError())
+}

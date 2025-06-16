@@ -104,6 +104,7 @@ func NewTableMappingManager() *TableMappingManager {
 		tempIDCounter:         InitialTempId,
 		tempDefaultKVTableMap: make(map[tableMetaKey]*tableMetaValue),
 		tempDefaultKVDbMap:    make(map[dbMetaKey]*dbMetaValue),
+		noDefaultKVErrorMap:   make(map[uint64]error),
 	}
 }
 
