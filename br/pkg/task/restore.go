@@ -269,6 +269,8 @@ type RestoreConfig struct {
 	StartTS uint64 `json:"start-ts" toml:"start-ts"`
 	// if not specified system will restore to the max TS available
 	RestoreTS uint64 `json:"restore-ts" toml:"restore-ts"`
+	// whether RestoreTS was explicitly specified by user vs auto-detected
+	IsRestoredTSUserSpecified bool `json:"-" toml:"-"`
 	// rewriteTS is the rewritten timestamp of meta kvs.
 	RewriteTS       uint64                      `json:"-" toml:"-"`
 	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
@@ -389,6 +391,9 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	if cfg.RestoreTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
+
+	// check if RestoreTS was explicitly specified by user
+	cfg.IsRestoredTSUserSpecified = flags.Changed(FlagStreamRestoreTS)
 
 	if cfg.FullBackupStorage, err = flags.GetString(FlagStreamFullBackupStorage); err != nil {
 		return errors.Trace(err)
@@ -944,7 +949,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// unregister restore task
 	failpoint.Inject("fail-at-end-of-restore", func() {
-		log.Info("failpoint fail-at-end-of-restore injected, failing at the end of restore task")
+		log.Info("failpoint fail-at-end-of-restore injected, failing at the end of restore task",
+			zap.Error(restoreErr))
 		restoreErr = errors.New("failpoint: fail-at-end-of-restore")
 	})
 

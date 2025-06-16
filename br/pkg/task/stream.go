@@ -1340,6 +1340,7 @@ func RunStreamRestore(
 	}
 
 	// register task if needed
+	// will potentially override restoredTS
 	err = RegisterRestoreIfNeeded(ctx, cfg, PointRestoreCmd, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
@@ -2177,6 +2178,7 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 		return nil
 	}
 
+	originalRestoreTS := cfg.RestoreTS
 	registrationInfo := registry.RegistrationInfo{
 		StartTS:           cfg.StartTS,
 		RestoredTS:        cfg.RestoreTS,
@@ -2187,11 +2189,22 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 	}
 
 	// get current registered (due to failure retry) or create new restore task id
-	restoreID, err := cfg.RestoreRegistry.ResumeOrCreateRegistration(ctx, registrationInfo)
+	restoreID, resolvedRestoreTS, err := cfg.RestoreRegistry.ResumeOrCreateRegistration(
+		ctx, registrationInfo, cfg.IsRestoredTSUserSpecified)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	cfg.RestoreID = restoreID
+
+	// the registry may have resolved a different RestoreTS from existing tasks
+	// if so, we need to apply it to the config for consistency
+	if resolvedRestoreTS != originalRestoreTS {
+		log.Info("registry resolved a different RestoreTS, updating config",
+			zap.Uint64("original_restored_ts", originalRestoreTS),
+			zap.Uint64("resolved_restored_ts", resolvedRestoreTS),
+			zap.Uint64("restore_id", restoreID))
+		cfg.RestoreTS = resolvedRestoreTS
+	}
 
 	log.Info("registered restore task",
 		zap.Uint64("restoreID", restoreID),
