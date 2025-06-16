@@ -1569,6 +1569,6 @@
       ]
    },
    "timezone": "browser",
-   "title": "Test-Cluster-TiDB-Summary",
+   "title": "Test-Cluster-TiDB-Summary-KeyspaceName",
    "version": 0
 }

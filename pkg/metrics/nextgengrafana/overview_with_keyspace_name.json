@@ -1605,7 +1605,7 @@
     ]
   },
   "timezone": "browser",
-  "title": "Test-Cluster-Overview",
+  "title": "Test-Cluster-Overview-KeyspaceName",
   "uid": "eDbRZpnWk",
   "version": 1
 }

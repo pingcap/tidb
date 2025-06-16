@@ -28,7 +28,7 @@ local myDS = "${" + myNameFlag + "}";
 // A new dashboard
 // Add the template variables
 local TiDBResourceControlDash = dashboard.new(
-  title="Test-Cluster-TiDB-Resource-Control",
+  title="Test-Cluster-TiDB-Resource-Control-KeyspaceName",
   editable=true,
   graphTooltip="shared_crosshair",
   refresh="30s",

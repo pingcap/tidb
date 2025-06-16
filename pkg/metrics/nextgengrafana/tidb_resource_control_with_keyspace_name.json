@@ -4084,6 +4084,6 @@
       ]
    },
    "timezone": "browser",
-   "title": "Test-Cluster-TiDB-Resource-Control",
+   "title": "Test-Cluster-TiDB-Resource-Control-KeyspaceName",
    "version": 0
 }
