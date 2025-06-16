@@ -215,7 +215,7 @@ else
 endif
 
 SERVER_BUILD_CMD := \
-	GOEXPERIMENT=greentea CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) $(COVER_FLAG) \
+	GOEXPERIMENT=greenteagc CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) $(COVER_FLAG) \
 	-ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(SERVER_OUT)' ./cmd/tidb-server
 
 server:
