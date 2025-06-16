@@ -16,7 +16,8 @@ syntax = "proto3";
 
 package tici;
 
-option go_package = ".";
+//option go_package = ".";
+option go_package = "github.com/OliverS929/tidb_private/pkg/tici;tici";
 
 import "indexer.proto";
 
@@ -153,6 +154,75 @@ message DebugGetShardManifestResponse {
   repeated FragMeta frag_metas = 1;
 }
 
+// -----------------------------------------------------------------------------
+// TiCI Full-text index data import workflow during Import Into (with DXF):
+// -----------------------------------------------------------------------------
+// 1. TiDB requests a cloud storage object path ("file") from the TiCI Meta
+//    Service. It provides the table info, index info, and key range for the
+//    specific data shard. TiDB import code path expects a unique file path
+//    for each shard to write its key-value pairs. Currently, only S3 is 
+//    supported as the cloud storage backend.
+//
+// 2. After import DXF has uploaded all data shards belonging to a baseline 
+//    full text index, it calls `MarkPartitionUploadFinished`. This allows 
+//    TiCI to mark the shard as complete and make it available to downstream 
+//    consumers.
+// -----------------------------------------------------------------------------
+
+message GetCloudStoragePathRequest {
+  // Detailed schema of the fts being built.
+  indexer.IndexInfo index_info = 1;
+  // Parent table metadata.
+  indexer.TableInfo table_info = 2;
+  // Inclusive lower key bound (encoded handle/rowID), non-empty.
+  bytes lower_bound = 3;
+  // Exclusive upper key bound, non-empty.
+  bytes upper_bound = 4;
+}
+
+message GetCloudStoragePathResponse {
+  // 0 - success
+  // ... other error codes
+  int32 status = 1;
+  // Optional human‑readable diagnostics, only defined when status ≠ 0.
+  string error_message = 2;
+  // Object key inside the bucket that TiDB Import should write to.
+  string s3_path = 3;
+}
+
+message MarkPartitionUploadFinishedRequest {
+  // The same S3 path previously returned by GetCloudStoragePath.
+  // We assume the path is unique for each partition so it can be used to
+  // identify the partition.
+  string s3_path = 1;
+}
+
+// DXF receives this in-band result so callers can
+// inspect the status and customized results.
+message MarkPartitionUploadFinishedResponse {
+  // 0 - success
+  // ... other error codes
+  int32 status = 1;
+  // Optional human‑readable diagnostics, only defined when status ≠ 0.
+  string error_message = 2;
+}
+
+message MarkTableUploadFinishedRequest {
+  // Table ID of the target table.
+  int64 table_id = 1;
+  // Index ID of the target index.
+  int64 index_id = 2;
+}
+
+message MarkTableUploadFinishedResponse {
+  // 0 - success
+  // ... other error codes
+  int32 status = 1;
+  // Optional human‑readable diagnostics, only defined when status ≠ 0.
+  string error_message = 2;
+}
+
+
 service MetaService {
   // Maintains heartbeat from worker nodes(such as writers, compactors) to meta service.
   rpc WorkerNodeHeartbeat(WorkerNodeHeartbeatRequest) returns (WorkerNodeHeartbeatResponse);
@@ -177,4 +247,18 @@ service MetaService {
 
   // Debug usage: get shard manifest from meta service writer
   rpc DebugGetShardManifest(DebugGetShardManifestRequest) returns (DebugGetShardManifestResponse);
+
+  // Returns the cloud storage path where TiDB should upload a baseline shard
+  // for the specified [table_info, index_info, key_range].
+  rpc GetCloudStoragePath(GetCloudStoragePathRequest)
+      returns (GetCloudStoragePathResponse);
+
+  // Called by Import DXF to notify Meta Service after all partitions for 
+  // the given index are uploaded.
+  rpc MarkPartitionUploadFinished(MarkPartitionUploadFinishedRequest)
+      returns (MarkPartitionUploadFinishedResponse);
+
+  // Called to notify Meta Service that the whole table/index upload is finished.
+  rpc MarkTableUploadFinished(MarkTableUploadFinishedRequest)
+      returns (MarkTableUploadFinishedResponse);
 }
