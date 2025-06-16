@@ -10,8 +10,10 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/keyspace",
         "//pkg/kv",
+        "//pkg/parser/terror",
         "//pkg/util",
         "//pkg/util/etcd",
         "//pkg/util/logutil",

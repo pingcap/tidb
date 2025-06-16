@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
@@ -61,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
@@ -96,6 +98,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
+	kvstore "github.com/pingcap/tidb/pkg/store"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -3474,6 +3477,17 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // such as system time zone
 // - start domain and other routines.
 func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
+	ver := getStoreBootstrapVersionWithCache(store)
+	if kerneltype.IsNextGen() && keyspace.IsRunningOnUser() {
+		systemKSVer := mustGetStoreBootstrapVersion(kvstore.GetSystemStorage())
+		if systemKSVer == notBootstrapped {
+			logutil.BgLogger().Fatal("SYSTEM keyspace is not bootstrapped")
+		} else if ver > systemKSVer {
+			logutil.BgLogger().Fatal("bootstrap version of user keyspace must be smaller or equal to that of SYSTEM keyspace",
+				zap.Int64("user", ver), zap.Int64("system", systemKSVer))
+		}
+	}
+
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
 	cfg := config.GetGlobalConfig()
 	if len(cfg.Instance.PluginLoad) > 0 {
@@ -3505,7 +3519,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	ver := getStoreBootstrapVersionWithCache(store)
 	if ver < currentBootstrapVersion {
 		runInBootstrapSession(store, ver)
 	} else {
@@ -3947,6 +3960,10 @@ func getStoreBootstrapVersionWithCache(store kv.Storage) int64 {
 
 	modifyBootstrapVersionForTest(ver)
 	return ver
+}
+
+func getSystemStoreBootstrapVersion() int64 {
+	return mustGetStoreBootstrapVersion(kvstore.GetSystemStorage())
 }
 
 func finishBootstrap(store kv.Storage) {

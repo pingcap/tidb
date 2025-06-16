@@ -28,8 +28,7 @@ import (
 
 const (
 	// System is the keyspace name for SYSTEM keyspace.
-	// SYSTEM keyspace is reserved for nextgen kernel to store system level data
-	// and run system level services. currently, only DXF service use this keyspace.
+	// see doc.go for more detail.
 	System = "SYSTEM"
 	// tidbKeyspaceEtcdPathPrefix is the keyspace prefix for etcd namespace
 	tidbKeyspaceEtcdPathPrefix = "/keyspaces/tidb/"
@@ -90,4 +89,9 @@ func WrapZapcoreWithKeyspace() zap.Option {
 		}
 		return core
 	})
+}
+
+// IsRunningOnUser checks if keyspace of current instance is a user keyspace.
+func IsRunningOnUser() bool {
+	return config.GetGlobalKeyspaceName() != System
 }
