@@ -15,8 +15,11 @@
 package copr
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -27,18 +30,41 @@ import (
 	"google.golang.org/grpc"
 )
 
+const (
+	btreeDegree           = 32
+	defaultShardsPerBatch = 128
+)
+
 // Shard represents a shard of data for tici.
 type Shard struct {
 	ShardID  uint64
-	StartKey string
-	EndKey   string
+	StartKey []byte
+	EndKey   []byte
 	Epoch    uint64
+}
+
+func (s *Shard) Contains(key []byte) bool {
+	return bytes.Compare(s.StartKey, key) <= 0 &&
+		(bytes.Compare(key, s.EndKey) < 0 || len(s.EndKey) == 0)
+}
+
+func (s *Shard) ContainsByEnd(key []byte) bool {
+	if len(key) == 0 {
+		return len(s.EndKey) == 0
+	}
+	return bytes.Compare(s.StartKey, key) < 0 &&
+		(bytes.Compare(key, s.EndKey) <= 0 || len(s.EndKey) == 0)
 }
 
 // ShardWithAddr represents a shard of data with local cache addresses.
 type ShardWithAddr struct {
 	Shard
 	localCacheAddrs []string
+}
+
+type ShardLocation struct {
+	ShardWithAddr
+	Ranges *KeyRanges
 }
 
 // ShardInfoWithAddr represents a shard of data with local cache addresses.
@@ -50,7 +76,7 @@ type ShardInfoWithAddr struct {
 type shardIndexMu struct {
 	// shardIndex is a map of region ID to shared index.
 	sync.RWMutex
-	shareds map[uint64]*ShardWithAddr
+	sorted SortedShards
 }
 
 // Client is the interface for the TiCI shard cache client.
@@ -103,8 +129,8 @@ func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableID int64, in
 			ret = append(ret, ShardWithAddr{
 				Shard{
 					ShardID:  s.Shard.ShardId,
-					StartKey: s.Shard.StartKey,
-					EndKey:   s.Shard.EndKey,
+					StartKey: []byte(s.Shard.StartKey),
+					EndKey:   []byte(s.Shard.EndKey),
 					Epoch:    s.Shard.Epoch,
 				},
 				s.LocalCacheAddrs,
@@ -130,38 +156,314 @@ type TiCIShardCache struct {
 func NewTiCIShardCache(client Client) *TiCIShardCache {
 	return &TiCIShardCache{
 		client: client,
-		mu: shardIndexMu{
-			shareds: make(map[uint64]*ShardWithAddr),
-		},
+		mu:     shardIndexMu{},
 	}
 }
 
-// ScanRanges scans the ranges for a given table and index, and returns the shard information with local cache addresses.
-func (s *TiCIShardCache) ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) ([]ShardInfoWithAddr, error) {
-	shards, err := s.client.ScanRanges(ctx, tableID, indexID, keyRanges, limit)
+func (s *TiCIShardCache) SplitKeyRangesByLocations(
+	ctx context.Context,
+	tableID int64,
+	indexID int64,
+	ranges *KeyRanges,
+	limit int,
+) ([]*ShardLocation, error) {
+	if limit == 0 || ranges.Len() <= 0 {
+		return nil, nil
+	}
+
+	kvRanges := make([]kv.KeyRange, 0, ranges.Len())
+	for i := range ranges.Len() {
+		kvRanges = append(kvRanges, kv.KeyRange{
+			StartKey: ranges.At(i).StartKey,
+			EndKey:   ranges.At(i).EndKey,
+		})
+	}
+	locs, err := s.BatchLocateKeyRanges(ctx, tableID, indexID, kvRanges)
 	if err != nil {
 		return nil, err
 	}
 
+	res := make([]*ShardLocation, 0)
+	nextLocIndex := 0
+	for ranges.Len() > 0 {
+		loc := locs[nextLocIndex]
+		if nextLocIndex == (len(locs) - 1) {
+			res = append(res, &ShardLocation{
+				ShardWithAddr: loc.ShardWithAddr,
+				Ranges:        ranges,
+			})
+			break
+		}
+		nextLocIndex++
+		isBreak := false
+		res, ranges, isBreak = s.splitKeyRangesByLocations(loc.ShardWithAddr, ranges, res)
+		if isBreak {
+			break
+		}
+	}
+	return res, nil
+}
+
+func (s *TiCIShardCache) BatchLocateKeyRanges(
+	ctx context.Context,
+	tableID int64,
+	indexID int64,
+	keyRanges []kv.KeyRange,
+) ([]*ShardLocation, error) {
+	uncachedRanges := make([]kv.KeyRange, 0, len(keyRanges))
+	cachedShards := make([]*ShardWithAddr, 0, len(keyRanges))
+	// 1. find shards from cache
+	var lastShard *ShardWithAddr
+	for _, keyRange := range keyRanges {
+		if lastShard != nil {
+			if lastShard.ContainsByEnd(keyRange.EndKey) {
+				continue
+			} else if lastShard.Contains(keyRange.StartKey) {
+				keyRange.StartKey = kv.Key(lastShard.EndKey)
+			}
+		}
+
+		shard := s.tryFindShardByKey(keyRange.StartKey, false)
+		lastShard = shard
+		if shard == nil {
+			uncachedRanges = append(uncachedRanges, keyRange)
+			continue
+		}
+
+		cachedShards = append(cachedShards, shard)
+		if shard.ContainsByEnd(keyRange.EndKey) {
+			continue
+		}
+
+		keyRange.StartKey = kv.Key(shard.EndKey)
+		containsAll := false
+	outer:
+		for {
+			batchShardInCache, err := s.scanShardsFromCache(ctx, keyRange.StartKey, keyRange.EndKey, defaultShardsPerBatch)
+			if err != nil {
+				return nil, err
+			}
+			for _, shard = range batchShardInCache {
+				if !shard.Contains(keyRange.StartKey) { // uncached hole, load the rest shards
+					break outer
+				}
+				cachedShards = append(cachedShards, shard)
+				lastShard = shard
+				if shard.ContainsByEnd(keyRange.EndKey) {
+					// the range is fully hit in the shard cache.
+					containsAll = true
+					break outer
+				}
+				keyRange.StartKey = kv.Key(shard.EndKey)
+			}
+			if len(batchShardInCache) < defaultShardsPerBatch { // shard cache miss, load the rest shards
+				break
+			}
+		}
+		if !containsAll {
+			uncachedRanges = append(uncachedRanges, keyRange)
+		}
+	}
+
+	merger := newBatchLocateShardsMerger(cachedShards, len(cachedShards)+len(uncachedRanges))
+	// 2. load remaining shards from tici client
+	for len(uncachedRanges) > 0 {
+		shards, err := s.BatchLoadShardsWithKeyRanges(ctx, tableID, indexID, keyRanges, defaultShardsPerBatch)
+		if err != nil {
+			return nil, err
+		}
+		if len(shards) == 0 {
+			return nil, errors.New("TiCIShardCache BatchLoadShardsWithKeyRanges return empty shards without err")
+		}
+		for _, shard := range shards {
+			merger.appendShard(&shard)
+		}
+		uncachedRanges = rangesAfterKey(uncachedRanges, shards[len(shards)-1].EndKey)
+	}
+	return merger.build(), nil
+}
+
+func rangesAfterKey(keyRanges []kv.KeyRange, splitKey []byte) []kv.KeyRange {
+	if len(keyRanges) == 0 {
+		return nil
+	}
+	if len(splitKey) == 0 || len(keyRanges[len(keyRanges)-1].EndKey) > 0 && bytes.Compare(splitKey, keyRanges[len(keyRanges)-1].EndKey) >= 0 {
+		// fast check, if all ranges are loaded from PD, quit the loop.
+		return nil
+	}
+
+	n := sort.Search(len(keyRanges), func(i int) bool {
+		return len(keyRanges[i].EndKey) == 0 || bytes.Compare(keyRanges[i].EndKey, splitKey) > 0
+	})
+
+	keyRanges = keyRanges[n:]
+	if bytes.Compare(splitKey, keyRanges[0].StartKey) > 0 {
+		keyRanges[0].StartKey = splitKey
+	}
+	return keyRanges
+}
+
+func (s *TiCIShardCache) BatchLoadShardsWithKeyRanges(
+	ctx context.Context,
+	tableID int64,
+	indexID int64,
+	keyRanges []kv.KeyRange,
+	limit int,
+) (shards []ShardWithAddr, err error) {
+	if len(keyRanges) == 0 {
+		return nil, nil
+	}
+	shards, err = s.client.ScanRanges(ctx, tableID, indexID, keyRanges, limit)
+	if err != nil {
+		return
+	}
+	if len(shards) == 0 {
+		err = errors.New("no shards found")
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	for _, shard := range shards {
-		s.mu.shareds[shard.ShardID] = &shard
+		s.insertShardToCache(&shard, true)
 	}
 
-	// Mock the local cache addresses for testing purposes
-	ret := make([]ShardInfoWithAddr, 0, len(shards))
-	for _, shard := range shards {
-		ret = append(ret, ShardInfoWithAddr{
-			ShardInfo: coprocessor.ShardInfo{
-				ShardId:    shard.ShardID,
-				ShardEpoch: shard.Epoch,
-				// Ranges: []kv.KeyRange{},
-			},
-			localCacheAddrs: shard.localCacheAddrs,
-		})
+	return nil, nil
+}
+
+func (s *TiCIShardCache) insertShardToCache(cachedShard *ShardWithAddr, invalidateOldShard bool) bool {
+	return s.mu.insertShardToCache(cachedShard, invalidateOldShard)
+}
+
+func (s *TiCIShardCache) tryFindShardByKey(key []byte, isEndKey bool) (r *ShardWithAddr) {
+	var expired bool
+	r, expired = s.searchCachedShardByKey(key, isEndKey)
+	if r == nil || expired {
+		return nil
+	}
+	return r
+}
+
+func (s *TiCIShardCache) searchCachedShardByKey(key []byte, isEndKey bool) (*ShardWithAddr, bool) {
+	s.mu.RLock()
+	shard := s.mu.sorted.SearchByKey(key, isEndKey)
+	defer s.mu.RUnlock()
+	if shard == nil {
+		return nil, false
+	}
+	return shard, false
+}
+
+func (s *TiCIShardCache) scanShardsFromCache(ctx context.Context, startKey, endKey []byte, limit int) ([]*ShardWithAddr, error) {
+	if limit == 0 {
+		return nil, nil
+	}
+	var shards []*ShardWithAddr
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	shards = s.mu.sorted.AscendGreaterOrEqual(startKey, endKey, limit)
+	return shards, nil
+}
+
+func (s *TiCIShardCache) splitKeyRangesByLocations(loc ShardWithAddr, ranges *KeyRanges, res []*ShardLocation) ([]*ShardLocation, *KeyRanges, bool) {
+	var r kv.KeyRange
+	var i int
+	for ; i < ranges.Len(); i++ {
+		r = ranges.At(i)
+		if !(loc.Contains(r.EndKey) || bytes.Equal(loc.EndKey, r.EndKey)) {
+			break
+		}
+	}
+	if i == ranges.Len() {
+		res = append(res, &ShardLocation{ShardWithAddr: loc, Ranges: ranges})
+		return res, ranges, true
+	}
+	if loc.Contains(r.StartKey) {
+		taskRanges := ranges.Slice(0, i)
+		taskRanges.last = &kv.KeyRange{
+			StartKey: r.StartKey,
+			EndKey:   loc.EndKey,
+		}
+		res = append(res, &ShardLocation{ShardWithAddr: loc, Ranges: taskRanges})
+		ranges = ranges.Slice(i+1, ranges.Len())
+		ranges.first = &kv.KeyRange{
+			StartKey: loc.EndKey,
+			EndKey:   r.EndKey,
+		}
+	} else {
+		if i > 0 {
+			taskRanges := ranges.Slice(0, i)
+			res = append(res, &ShardLocation{ShardWithAddr: loc, Ranges: taskRanges})
+			ranges = ranges.Slice(i, ranges.Len())
+		}
+	}
+	return res, ranges, false
+}
+
+type batchLocateShardsMerger struct {
+	lastEndKey      []byte
+	cachedIdx       int
+	cachedShards    []*ShardWithAddr
+	mergedLocations []*ShardLocation
+}
+
+func newBatchLocateShardsMerger(cachedShards []*ShardWithAddr, sizeHint int) *batchLocateShardsMerger {
+	return &batchLocateShardsMerger{
+		lastEndKey:      nil,
+		cachedShards:    cachedShards,
+		mergedLocations: make([]*ShardLocation, 0, sizeHint),
+	}
+}
+
+func (m *batchLocateShardsMerger) appendKeyLocation(shard *ShardWithAddr) {
+	m.mergedLocations = append(m.mergedLocations, &ShardLocation{
+		ShardWithAddr: *shard,
+		Ranges:        NewKeyRanges([]kv.KeyRange{{StartKey: kv.Key(shard.StartKey), EndKey: kv.Key(shard.EndKey)}}),
+	})
+}
+
+func (m *batchLocateShardsMerger) appendShard(uncachedShard *ShardWithAddr) {
+	defer func() {
+		endKey := uncachedShard.EndKey
+		if len(endKey) == 0 {
+			m.cachedIdx = len(m.cachedShards)
+		} else {
+			m.lastEndKey = []byte(uncachedShard.EndKey)
+		}
+	}()
+	if len(uncachedShard.StartKey) == 0 {
+		m.appendKeyLocation(uncachedShard)
+		return
 	}
 
-	return ret, nil
+	if m.lastEndKey != nil && bytes.Compare(m.lastEndKey, kv.Key(uncachedShard.StartKey)) >= 0 {
+		m.appendKeyLocation(uncachedShard)
+		return
+	}
+
+	for ; m.cachedIdx < len(m.cachedShards); m.cachedIdx++ {
+		if m.lastEndKey != nil && bytes.Compare(m.lastEndKey, kv.Key(m.cachedShards[m.cachedIdx].EndKey)) >= 0 {
+			continue
+		}
+		if bytes.Compare(kv.Key(m.cachedShards[m.cachedIdx].StartKey), kv.Key(uncachedShard.StartKey)) >= 0 {
+			break
+		}
+		m.appendKeyLocation(m.cachedShards[m.cachedIdx])
+	}
+	m.appendKeyLocation(uncachedShard)
+}
+
+func (m *batchLocateShardsMerger) build() []*ShardLocation {
+	for ; m.cachedIdx < len(m.cachedShards); m.cachedIdx++ {
+		if m.lastEndKey != nil && bytes.Compare(m.lastEndKey, kv.Key(m.cachedShards[m.cachedIdx].EndKey)) >= 0 {
+			continue
+		}
+		m.appendKeyLocation(m.cachedShards[m.cachedIdx])
+	}
+	return m.mergedLocations
+}
+
+func (mu *shardIndexMu) insertShardToCache(cachedShard *ShardWithAddr, invalidateOldShard bool) bool {
+	_, _ = mu.sorted.removeIntersecting(cachedShard)
+	mu.sorted.ReplaceOrInsert(cachedShard)
+	return true
 }
