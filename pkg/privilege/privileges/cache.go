@@ -631,7 +631,7 @@ func compareHost(x, y string) int {
 		if x == "%" && y == "%" {
 			return 0
 		}
-		if y == `%` {
+		if y == "%" {
 			return -1
 		}
 		// x == '%'
@@ -639,14 +639,14 @@ func compareHost(x, y string) int {
 	}
 
 	// The empty string '' also means “any host” but sorts after '%'.
-	if x == `` || y == `` {
-		if x == `` && y == `` {
+	if x == "" || y == "" {
+		if x == "" && y == "" {
 			return 0
 		}
 		if y == "" {
 			return -1
 		}
-		// x == ``
+		// x == ""
 		return 1
 	}
 
