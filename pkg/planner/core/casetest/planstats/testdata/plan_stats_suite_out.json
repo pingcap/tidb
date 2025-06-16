@@ -120,7 +120,7 @@
           "└─HashJoin 1.00 root  inner join, equal:[eq(test.tp.c, test.t.b)]",
           "  ├─TableReader(Build) 1.00 root partition:p1 data:Selection",
           "  │ └─Selection 1.00 cop[tikv]  eq(test.tp.a, 10), not(isnull(test.tp.c))",
-          "  │   └─TableFullScan 6.00 cop[tikv] table:tp keep order:false, stats:partial[c:allEvicted]",
+          "  │   └─TableFullScan 6.00 cop[tikv] table:tp keep order:false, stats:partial[ic:allEvicted, c:allEvicted]",
           "  └─TableReader(Probe) 3.00 root  data:Selection",
           "    └─Selection 3.00 cop[tikv]  not(isnull(test.t.b))",
           "      └─TableFullScan 3.00 cop[tikv] table:t keep order:false, stats:partial[idx:allEvicted, a:allEvicted, b:allEvicted]"
