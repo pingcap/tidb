@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Import Grafana components
 local grafana = import 'grafonnet/grafana.libsonnet';
 local dashboard = grafana.dashboard;
 local row = grafana.row;
@@ -22,7 +23,7 @@ local template = grafana.template;
 local myNameFlag = 'DS_TEST-CLUSTER';
 local myDS = '${' + myNameFlag + '}';
 
-// A new dashboard
+// A new dashboard, set Dashboard basic configuration
 local newDash = dashboard.new(
   title='Test-Cluster-TiDB-Summary',
   editable=true,
@@ -31,6 +32,7 @@ local newDash = dashboard.new(
   time_from='now-1h',
 )
 .addInput(
+  // Add prometheus as data source
   name=myNameFlag,
   label='test-cluster',
   type='datasource',

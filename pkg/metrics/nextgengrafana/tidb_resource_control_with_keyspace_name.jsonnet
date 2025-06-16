@@ -1,4 +1,4 @@
-// Copyright 2024 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Import Grafana components
 local tableNewPanel = import "grafonnet-7.0/panel/table.libsonnet";
 local grafana = import "grafonnet/grafana.libsonnet";
 local dashboard = grafana.dashboard;
@@ -33,6 +34,7 @@ local TiDBResourceControlDash = dashboard.new(
   refresh="30s",
   time_from="now-1h",
 ).addInput(
+  // Add prometheus as data source
   name=myNameFlag,
   label="test-cluster",
   type="datasource",
