@@ -189,14 +189,14 @@ func (c *pdClient) needScatter(ctx context.Context) bool {
 func (c *pdClient) scatterRegions(ctx context.Context, newRegions []*RegionInfo) error {
 	log.Info("scatter regions", zap.Int("regions", len(newRegions)))
 	// the retry is for the temporary network errors during sending request.
-	return utils.WithRetry(ctx, func() error {
+	err := utils.WithRetry(ctx, func() error {
 		failedRegionsID, err := c.tryScatterRegions(ctx, newRegions)
 		if isUnsupportedError(err) {
 			log.Warn("batch scatter isn't supported, rollback to old method", logutil.ShortError(err))
 			c.scatterRegionsSequentially(
 				ctx, newRegions,
-				// backoff about 6s, or we give up scattering this region.
-				utils.NewBackoffRetryAllErrorStrategy(7, 100*time.Millisecond, 2*time.Second))
+				// backoff about 1h total, or we give up scattering this region.
+				utils.NewBackoffRetryAllErrorStrategy(1800, 100*time.Millisecond, 2*time.Second))
 			return nil
 		}
 		// If there are failed regions, retry them
@@ -208,10 +208,16 @@ func (c *pdClient) scatterRegions(ctx context.Context, newRegions []*RegionInfo)
 				}
 			}
 			newRegions = failedRegions
-			return errors.Errorf("pd returns error during batch scattering: %d regions failed to scatter", len(failedRegionsID))
+			return errors.Annotatef(berrors.ErrPDNotFullyScatter,
+				"pd returns error during batch scattering: %d regions failed to scatter", len(failedRegionsID))
 		}
 		return err
-	}, utils.NewBackoffRetryAllErrorStrategy(3, 500*time.Millisecond, 2*time.Second))
+	}, utils.NewBackoffRetryAllErrorStrategy(1800, 500*time.Millisecond, 2*time.Second))
+	if err != nil && berrors.ErrPDNotFullyScatter.Equal(err) {
+		log.Warn("some regions haven't been scattered", zap.Error(err))
+		return nil
+	}
+	return err
 }
 
 func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionInfo) (map[uint64]struct{}, error) {
@@ -1018,6 +1024,8 @@ func PdErrorCanRetry(err error) bool {
 	// (1) region %d has no leader
 	// (2) region %d is hot
 	// (3) region %d is not fully replicated
+	// (4) operator canceled because cannot add an operator to the execute queue [PD:store-limit]
+	// (5) failed to create scatter region operator [PD:schedule:ErrCreateOperator]
 	//
 	// (2) shouldn't happen in a recently splitted region.
 	// (1) and (3) might happen, and should be retried.
@@ -1026,7 +1034,9 @@ func PdErrorCanRetry(err error) bool {
 		return false
 	}
 	return strings.Contains(grpcErr.Message(), "is not fully replicated") ||
-		strings.Contains(grpcErr.Message(), "has no leader")
+		strings.Contains(grpcErr.Message(), "has no leader") ||
+		strings.Contains(grpcErr.Message(), "cannot add an operator to the execute queue") ||
+		strings.Contains(grpcErr.Message(), "failed to create scatter region operator")
 }
 
 // NextBackoff returns a duration to wait before retrying again.
