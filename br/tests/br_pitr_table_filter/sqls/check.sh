@@ -357,6 +357,7 @@ row_must_exist() {
     run_sql "SELECT COUNT(*) FROM $1 WHERE $2"
     check_contains "COUNT(*): 1"
     run_sql "SELECT * FROM $1 WHERE $2 LIMIT 1"
+    check_contains "1. row"
 }
 
 row_must_not_exist() {
@@ -444,6 +445,8 @@ check_create_table_contains "test_log_db_create.t_modify_column" "bigint"
 # ActionRenameTable
 table_must_exist "test_snapshot_db_create.t_rename_b"
 table_must_exist "test_log_db_create.t_rename_b"
+row_must_exist "test_snapshot_db_create.t_rename_b" "id = 1"
+row_must_exist "test_log_db_create.t_rename_b" "id = 1"
 
 # ActionRenameTables
 table_must_exist "test_snapshot_db_create.t_renames_c"
@@ -460,6 +463,32 @@ table_must_exist "test_log_db_create.t_renames_aaa"
 table_must_exist "test_log_db_create.t_renames_bbb"
 table_must_not_exist "test_log_db_create.t_renames_aa"
 table_must_not_exist "test_log_db_create.t_renames_bb"
+row_must_exist "test_snapshot_db_create.t_renames_c" "id = 1"
+row_must_exist "test_snapshot_db_create.t_renames_a" "id = 2"
+row_must_exist "test_snapshot_db_create.t_renames_aaa" "id = 11"
+row_must_exist "test_snapshot_db_create.t_renames_bbb" "id = 22"
+row_must_exist "test_log_db_create.t_renames_c" "id = 1"
+row_must_exist "test_log_db_create.t_renames_a" "id = 2"
+row_must_exist "test_log_db_create.t_renames_aaa" "id = 11"
+row_must_exist "test_log_db_create.t_renames_bbb" "id = 22"
+
+# ActionRenameTables over different databases
+table_must_exist "test_snapshot_db_rename_2.t_renames_aa"
+table_must_exist "test_snapshot_db_rename_1.t_renames_a"
+table_must_not_exist "test_snapshot_db_rename_2.t_renames_b"
+table_must_not_exist "test_snapshot_db_rename_1.t_renames_c"
+table_must_exist "test_snapshot_db_rename_2.t_renames_c"
+table_must_exist "test_log_db_rename_2.t_renames_aa"
+table_must_exist "test_log_db_rename_1.t_renames_a"
+table_must_not_exist "test_log_db_rename_2.t_renames_b"
+table_must_not_exist "test_log_db_rename_1.t_renames_c"
+table_must_exist "test_log_db_rename_2.t_renames_c"
+row_must_exist "test_snapshot_db_rename_2.t_renames_aa" "id = 1"
+row_must_exist "test_snapshot_db_rename_1.t_renames_a" "id = 2"
+row_must_exist "test_snapshot_db_rename_2.t_renames_c" "id = 3"
+row_must_exist "test_log_db_rename_2.t_renames_aa" "id = 1"
+row_must_exist "test_log_db_rename_1.t_renames_a" "id = 2"
+row_must_exist "test_log_db_rename_2.t_renames_c" "id = 3"
 
 # ActionModifyTableComment
 check_create_table_contains "test_snapshot_db_create.t_modify_comment" "after modify comment"
@@ -574,14 +603,20 @@ check_create_table_contains "test_log_db_create.t_auto_random" "AUTO_RANDOM_BASE
 
 # ActionSetTiFlashReplica
 # TiFlash replica checks commented out since TiFlash may not be available in test environment
-# check_tiflash_replica_count "test_snapshot_db_create" "t_set_tiflash" 1
-# check_tiflash_replica_count "test_log_db_create" "t_set_tiflash" 1
+check_tiflash_replica_count "test_snapshot_db_create" "t_set_tiflash" 1
+check_tiflash_replica_count "test_log_db_create" "t_set_tiflash" 1
 
 # ActionExchangeTablePartition
 row_must_exist "test_snapshot_db_create.t_exchange_partition" "id = 115"
 row_must_exist "test_snapshot_db_create.t_non_partitioned_table" "id = 105"
 row_must_exist "test_log_db_create.t_exchange_partition" "id = 115"
 row_must_exist "test_log_db_create.t_non_partitioned_table" "id = 105"
+
+# ActionExchangeTablePartition over different databases
+row_must_exist "test_snapshot_db_exchange_partition_1.t_exchange_partition" "id = 115"
+row_must_exist "test_snapshot_db_exchange_partition_2.t_non_partitioned_table" "id = 105"
+row_must_exist "test_log_db_exchange_partition_1.t_exchange_partition" "id = 115"
+row_must_exist "test_log_db_exchange_partition_2.t_non_partitioned_table" "id = 105"
 
 # ActionReorganizePartition
 check_create_table_contains "test_snapshot_db_create.t_reorganize_partition" "pnew"
@@ -648,3 +683,9 @@ schema_must_not_exist "test_snapshot_multi_drop_schema"
 table_must_not_exist "test_log_multi_drop_schema.t_to_be_dropped"
 table_must_not_exist "test_log_multi_drop_schema.t_not_to_be_dropped"
 schema_must_not_exist "test_log_multi_drop_schema"
+
+# ActionTruncateTable + ActionDropSchema
+table_must_not_exist "test_snapshot_multi_drop_schema_with_truncate_table.t_to_be_truncated"
+schema_must_not_exist "test_snapshot_multi_drop_schema_with_truncate_table"
+table_must_not_exist "test_log_multi_drop_schema_with_truncate_table.t_to_be_truncated"
+schema_must_not_exist "test_log_multi_drop_schema_with_truncate_table"

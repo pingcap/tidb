@@ -40,12 +40,27 @@ create table test_snapshot_db_create.t_modify_column (id int);
 
 -- ActionRenameTable
 create table test_snapshot_db_create.t_rename_a (id int);
+insert into test_snapshot_db_create.t_rename_a values (1);
 
 -- ActionRenameTables
 create table test_snapshot_db_create.t_renames_a (id int);
 create table test_snapshot_db_create.t_renames_b (id int);
 create table test_snapshot_db_create.t_renames_aa (id int);
 create table test_snapshot_db_create.t_renames_bb (id int);
+insert into test_snapshot_db_create.t_renames_a values (1);
+insert into test_snapshot_db_create.t_renames_b values (2);
+insert into test_snapshot_db_create.t_renames_aa values (11);
+insert into test_snapshot_db_create.t_renames_bb values (22);
+
+-- ActionRenameTables over different databases
+create database test_snapshot_db_rename_1;
+create database test_snapshot_db_rename_2;
+create table test_snapshot_db_rename_1.t_renames_a (id int);
+create table test_snapshot_db_rename_2.t_renames_b (id int);
+create table test_snapshot_db_rename_1.t_renames_c (id int);
+insert into test_snapshot_db_rename_1.t_renames_a values (1);
+insert into test_snapshot_db_rename_2.t_renames_b values (2);
+insert into test_snapshot_db_rename_1.t_renames_c values (3);
 
 -- ActionSetDefaultValue
 create table test_snapshot_db_create.t_set_default (id int, status varchar(20));
@@ -144,6 +159,17 @@ insert into test_snapshot_db_create.t_exchange_partition (id) values (105);
 create table test_snapshot_db_create.t_non_partitioned_table (id int);
 insert into test_snapshot_db_create.t_non_partitioned_table (id) values (115);
 
+-- ActionExchangeTablePartition over different databases
+create database test_snapshot_db_exchange_partition_1;
+create database test_snapshot_db_exchange_partition_2;
+create table test_snapshot_db_exchange_partition_1.t_exchange_partition (id int) partition by range (id) (
+    partition p0 values less than (100),
+    partition p_to_be_exchanged values less than (200)
+);
+insert into test_snapshot_db_exchange_partition_1.t_exchange_partition (id) values (105);
+create table test_snapshot_db_exchange_partition_2.t_non_partitioned_table (id int);
+insert into test_snapshot_db_exchange_partition_2.t_non_partitioned_table (id) values (115);
+
 -- ActionAlterTableAttributes
 create table test_snapshot_db_create.t_alter_table_attributes (id int);
 
@@ -194,3 +220,7 @@ create table test_snapshot_db_create.t_add_vector_index (id int, v vector(3));
 create database test_snapshot_multi_drop_schema;
 create table test_snapshot_multi_drop_schema.t_to_be_dropped (id int);
 create table test_snapshot_multi_drop_schema.t_not_to_be_dropped (id int);
+
+-- ActionTruncateTable + ActionDropSchema
+create database test_snapshot_multi_drop_schema_with_truncate_table;
+create table test_snapshot_multi_drop_schema_with_truncate_table.t_to_be_truncated (id int);

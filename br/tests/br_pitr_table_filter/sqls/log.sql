@@ -68,6 +68,7 @@ alter table test_log_db_create.t_modify_column modify id BIGINT;
 -- ActionRenameTable
 rename table test_snapshot_db_create.t_rename_a to test_snapshot_db_create.t_rename_b;
 create table test_log_db_create.t_rename_a (id int);
+insert into test_log_db_create.t_rename_a values (1);
 rename table test_log_db_create.t_rename_a to test_log_db_create.t_rename_b;
 
 -- ActionRenameTables
@@ -77,8 +78,24 @@ create table test_log_db_create.t_renames_a (id int);
 create table test_log_db_create.t_renames_b (id int);
 create table test_log_db_create.t_renames_aa (id int);
 create table test_log_db_create.t_renames_bb (id int);
+insert into test_log_db_create.t_renames_a values (1);
+insert into test_log_db_create.t_renames_b values (2);
+insert into test_log_db_create.t_renames_aa values (11);
+insert into test_log_db_create.t_renames_bb values (22);
 rename table test_log_db_create.t_renames_a to test_log_db_create.t_renames_c, test_log_db_create.t_renames_b to test_log_db_create.t_renames_a;
 rename table test_log_db_create.t_renames_aa to test_log_db_create.t_renames_aaa, test_log_db_create.t_renames_bb to test_log_db_create.t_renames_bbb;
+
+-- ActionRenameTables over different databases
+rename table test_snapshot_db_rename_1.t_renames_a to test_snapshot_db_rename_2.t_renames_aa, test_snapshot_db_rename_2.t_renames_b to test_snapshot_db_rename_1.t_renames_a, test_snapshot_db_rename_1.t_renames_c to test_snapshot_db_rename_2.t_renames_c;
+create database test_log_db_rename_1;
+create database test_log_db_rename_2;
+create table test_log_db_rename_1.t_renames_a (id int);
+create table test_log_db_rename_2.t_renames_b (id int);
+create table test_log_db_rename_1.t_renames_c (id int);
+insert into test_log_db_rename_1.t_renames_a values (1);
+insert into test_log_db_rename_2.t_renames_b values (2);
+insert into test_log_db_rename_1.t_renames_c values (3);
+rename table test_log_db_rename_1.t_renames_a to test_log_db_rename_2.t_renames_aa, test_log_db_rename_2.t_renames_b to test_log_db_rename_1.t_renames_a, test_log_db_rename_1.t_renames_c to test_log_db_rename_2.t_renames_c;
 
 -- ActionSetDefaultValue
 alter table test_snapshot_db_create.t_set_default alter column status set default 'active';
@@ -210,9 +227,9 @@ create table test_log_db_create.t_auto_random (id bigint auto_random primary key
 alter table test_log_db_create.t_auto_random force auto_random_base=60000;
 
 -- ActionSetTiFlashReplica
--- alter table test_snapshot_db_create.t_set_tiflash set tiflash replica 1;
--- create table test_log_db_create.t_set_tiflash (id int);
--- alter table test_log_db_create.t_set_tiflash set tiflash replica 1;
+alter table test_snapshot_db_create.t_set_tiflash set tiflash replica 1;
+create table test_log_db_create.t_set_tiflash (id int);
+alter table test_log_db_create.t_set_tiflash set tiflash replica 1;
 
 -- ActionExchangeTablePartition
 alter table test_snapshot_db_create.t_exchange_partition exchange partition p_to_be_exchanged with table test_snapshot_db_create.t_non_partitioned_table;
@@ -224,6 +241,19 @@ insert into test_log_db_create.t_exchange_partition (id) values (105);
 create table test_log_db_create.t_non_partitioned_table (id int);
 insert into test_log_db_create.t_non_partitioned_table (id) values (115);
 alter table test_log_db_create.t_exchange_partition exchange partition p_to_be_exchanged with table test_log_db_create.t_non_partitioned_table;
+
+-- ActionExchangeTablePartition over different databases
+alter table test_snapshot_db_exchange_partition_1.t_exchange_partition exchange partition p_to_be_exchanged with table test_snapshot_db_exchange_partition_2.t_non_partitioned_table;
+create database test_log_db_exchange_partition_1;
+create database test_log_db_exchange_partition_2;
+create table test_log_db_exchange_partition_1.t_exchange_partition (id int) partition by range (id) (
+    partition p0 values less than (100),
+    partition p_to_be_exchanged values less than (200)
+);
+insert into test_log_db_exchange_partition_1.t_exchange_partition (id) values (105);
+create table test_log_db_exchange_partition_2.t_non_partitioned_table (id int);
+insert into test_log_db_exchange_partition_2.t_non_partitioned_table (id) values (115);
+alter table test_log_db_exchange_partition_1.t_exchange_partition exchange partition p_to_be_exchanged with table test_log_db_exchange_partition_2.t_non_partitioned_table;
 
 -- ActionAlterTableAttributes
 alter table test_snapshot_db_create.t_alter_table_attributes attributes "merge_option=allow";
@@ -307,3 +337,10 @@ create table test_log_multi_drop_schema.t_not_to_be_dropped (id int);
 drop table test_log_multi_drop_schema.t_to_be_dropped;
 drop database test_log_multi_drop_schema;
 
+-- ActionTruncateTable + ActionDropSchema
+truncate table test_snapshot_multi_drop_schema_with_truncate_table.t_to_be_truncated;
+drop database test_snapshot_multi_drop_schema_with_truncate_table;
+create database test_log_multi_drop_schema_with_truncate_table;
+create table test_log_multi_drop_schema_with_truncate_table.t_to_be_truncated (id int);
+truncate table test_log_multi_drop_schema_with_truncate_table.t_to_be_truncated;
+drop database test_log_multi_drop_schema_with_truncate_table;
