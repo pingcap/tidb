@@ -54,7 +54,6 @@ var (
 	_ functionClass = &isIPv4MappedFunctionClass{}
 	_ functionClass = &isIPv6FunctionClass{}
 	_ functionClass = &isUsedLockFunctionClass{}
-	_ functionClass = &masterPosWaitFunctionClass{}
 	_ functionClass = &nameConstFunctionClass{}
 	_ functionClass = &releaseAllLocksFunctionClass{}
 	_ functionClass = &uuidFunctionClass{}
@@ -1213,14 +1212,6 @@ func (b *builtinIsUUIDSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 		return 0, false, nil
 	}
 	return 1, false, nil
-}
-
-type masterPosWaitFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *masterPosWaitFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "MASTER_POS_WAIT")
 }
 
 type nameConstFunctionClass struct {
