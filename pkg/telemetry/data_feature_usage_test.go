@@ -605,22 +605,22 @@ func TestIndexMergeUsage(t *testing.T) {
 
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, usage.IndexMergeUsageCounter.IndexMergeUsed, int64(0))
+	require.Equal(t, usage.IndexMergeUsageCounter.IndexMergeUsed, int64(1))
 
 	tk.MustExec("select /*+ use_index_merge(t1, idx1, idx2) */ * from t1 where c1 = 1 and c2 = 1")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(1), usage.IndexMergeUsageCounter.IndexMergeUsed)
+	require.Equal(t, int64(2), usage.IndexMergeUsageCounter.IndexMergeUsed)
 
 	tk.MustExec("select /*+ use_index_merge(t1, idx1, idx2) */ * from t1 where c1 = 1 or c2 = 1")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(2), usage.IndexMergeUsageCounter.IndexMergeUsed)
+	require.Equal(t, int64(3), usage.IndexMergeUsageCounter.IndexMergeUsed)
 
 	tk.MustExec("select /*+ no_index_merge() */ * from t1 where c1 = 1 or c2 = 1")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(2), usage.IndexMergeUsageCounter.IndexMergeUsed)
+	require.Equal(t, int64(3), usage.IndexMergeUsageCounter.IndexMergeUsed)
 }
 
 func TestTTLTelemetry(t *testing.T) {
