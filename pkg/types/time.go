@@ -2199,8 +2199,8 @@ func checkTimestampType(t CoreTime, tz *gotime.Location) error {
 		convertTime := NewTime(t, mysql.TypeTimestamp, DefaultFsp)
 		err := convertTime.ConvertTimeZone(tz, BoundTimezone)
 		if err != nil {
-			_, err = adjustTimestampErrForDST(tz, t.String(), mysql.TypeTimestamp, Time{t}, err)
-			return err
+			_, err2 := adjustTimestampErrForDST(tz, t.String(), mysql.TypeTimestamp, Time{t}, err)
+			return err2
 		}
 		checkTime = convertTime.coreTime
 	} else {
