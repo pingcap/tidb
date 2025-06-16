@@ -43,9 +43,13 @@ var (
 	// in the same node as the scheduler manager.
 	// put it here to avoid cyclic import.
 	TaskChangedCh = make(chan struct{}, 1)
+)
+
+const (
+	// NextgenSEMTargetScope is the target scope for new tasks in nextgen kernel.
 	// on nextgen, DXF works as a service and runs only on node with scope 'dxf_service',
 	// so all tasks must be submitted to that scope.
-	nextgenSEMTargetScope = "dxf_service"
+	NextgenSEMTargetScope = "dxf_service"
 )
 
 // NotifyTaskChange is used to notify the scheduler manager that the task is changed,
@@ -263,10 +267,10 @@ func SetNodeResource(rc *proto.NodeResource) {
 // GetTargetScope get target scope for new tasks.
 // in classical kernel, the target scope the new task is the service scope of the
 // TiDB instance that user is currently connecting to.
-// in nextgen kernel, it's always nextgenSEMTargetScope.
+// in nextgen kernel, it's always NextgenSEMTargetScope.
 func GetTargetScope() string {
 	if kerneltype.IsNextGen() {
-		return nextgenSEMTargetScope
+		return NextgenSEMTargetScope
 	}
 	return vardef.ServiceScope.Load()
 }
