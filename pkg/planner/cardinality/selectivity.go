@@ -25,7 +25,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/sessionctx"
+=======
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+>>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -413,6 +417,14 @@ OUTER:
 		// Tracing for the expression estimation results after applying the default selectivity.
 		totalExpr := expression.ComposeCNFCondition(ctx, remainedExprs...)
 		ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.RealtimeCount))
+	}
+	if !fixcontrol.GetBoolWithDefault(
+		ctx.GetSessionVars().GetOptimizerFixControlMap(),
+		fixcontrol.Fix47400,
+		false,
+	) {
+		// Don't allow the result to be less than 1 row
+		ret = max(ret, 1.0/float64(coll.RealtimeCount))
 	}
 	return ret, nodes, nil
 }
