@@ -64,7 +64,7 @@ func ReportUsageData(ctx sessionctx.Context) error {
 		return errors.Trace(err)
 	}
 
-	TelemetryLogger().Info("", zap.ByteString("telemetry data", rawJSON))
+	Logger().Info("", zap.ByteString("telemetry data", rawJSON))
 
 	return nil
 }
@@ -75,11 +75,11 @@ func InitialRun(ctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	TelemetryLogger().Info("Telemetry configuration", zap.Duration("report_interval", ReportInterval), zap.Bool("enabled", enabled))
+	Logger().Info("Telemetry configuration", zap.Duration("report_interval", ReportInterval), zap.Bool("enabled", enabled))
 	return ReportUsageData(ctx)
 }
 
-// TelemetryLogger with category "telemetry" is used to log telemetry related messages.
-func TelemetryLogger() *zap.Logger {
+// Logger with category "telemetry" is used to log telemetry related messages.
+func Logger() *zap.Logger {
 	return logutil.BgLogger().With(zap.String(logutil.LogFieldCategory, "telemetry"))
 }
