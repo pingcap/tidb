@@ -268,7 +268,9 @@ type RestoreConfig struct {
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
 	StartTS uint64 `json:"start-ts" toml:"start-ts"`
 	// if not specified system will restore to the max TS available
-	RestoreTS       uint64                      `json:"restore-ts" toml:"restore-ts"`
+	RestoreTS uint64 `json:"restore-ts" toml:"restore-ts"`
+	// rewriteTS is the rewritten timestamp of meta kvs.
+	RewriteTS       uint64                      `json:"-" toml:"-"`
 	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
 	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
@@ -894,7 +896,11 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		for tableId := range cfg.PiTRTableTracker.PartitionIds {
 			tableIds = append(tableIds, tableId)
 		}
-		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, cfg.StartTS, tableIds)
+		dbIds := make([]int64, 0, len(cfg.PiTRTableTracker.DBIds))
+		for dbId := range cfg.PiTRTableTracker.DBIds {
+			dbIds = append(dbIds, dbId)
+		}
+		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, cfg.StartTS, cfg.RewriteTS, tableIds, dbIds)
 		if err != nil {
 			restoreErr = err
 			return
@@ -1256,13 +1262,14 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 	// only run when this full restore is part of the PiTR
 	if isPiTR {
+		snapshotDbMap := client.GetDatabaseMap()
 		snapshotTableMap := client.GetTableMap()
 		// adjust tables to restore in the snapshot restore phase since it will later be renamed during
 		// log restore and will fall into or out of the filter range.
 		err = AdjustTablesToRestoreAndCreateTableTracker(
 			cfg.logTableHistoryManager,
 			cfg.RestoreConfig,
-			client.GetDatabaseMap(),
+			snapshotDbMap,
 			snapshotTableMap,
 			client.GetPartitionMap(),
 			tableMap,
@@ -1276,16 +1283,16 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			zap.Int("tables", len(tableMap)),
 			zap.Int("db", len(dbMap)))
 
-		tableNameByTableID := func(tableID int64) string {
+		tableNameByTableID := func(tableId int64) string {
 			dbName, tableName, dbID := "", "", int64(0)
 			history := cfg.logTableHistoryManager.GetTableHistory()
-			if locations, exists := history[tableID]; exists {
+			if locations, exists := history[tableId]; exists {
 				if name, exists := cfg.logTableHistoryManager.GetDBNameByID(locations[1].DbID); exists {
 					dbName = name
 				}
 				dbID = locations[1].DbID
 				tableName = locations[1].TableName
-			} else if tableMeta, exists := tableMap[tableID]; exists && tableMeta != nil && tableMeta.Info != nil {
+			} else if tableMeta, exists := tableMap[tableId]; exists && tableMeta != nil && tableMeta.Info != nil {
 				if tableMeta.DB != nil && len(dbName) == 0 {
 					dbName = tableMeta.DB.Name.O
 				}
@@ -1298,7 +1305,16 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			}
 			return fmt.Sprintf("%s.%s", dbName, tableName)
 		}
-		checkTableIDLost := func(tableId int64) bool {
+		dbNameByDbId := func(dbId int64) string {
+			if dbName, ok := cfg.logTableHistoryManager.GetDBNameByID(dbId); ok {
+				return dbName
+			}
+			if dbInfo, ok := dbMap[dbId]; ok && dbInfo != nil && dbInfo.Info != nil {
+				return dbInfo.Info.Name.O
+			}
+			return ""
+		}
+		checkTableIdLost := func(tableId int64) bool {
 			// check whether exists in log backup
 			if _, exists := cfg.logTableHistoryManager.GetTableHistory()[tableId]; exists {
 				return false
@@ -1309,10 +1325,24 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			}
 			return true
 		}
+		checkDbIdLost := func(dbId int64) bool {
+			// check whether exists in log backup
+			if _, exists := cfg.logTableHistoryManager.GetDBNameByID(dbId); exists {
+				return false
+			}
+			// check whether exists in snapshot backup
+			if _, exists := snapshotDbMap[dbId]; exists {
+				return false
+			}
+			return true
+		}
 		if err := restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 			ctx, cfg.logRestoreStorage, cfg.PiTRTableTracker, backupMeta.GetEndVersion(), cfg.piTRTaskInfo.RestoreTS,
-			tableNameByTableID, checkTableIDLost,
+			tableNameByTableID, dbNameByDbId, checkTableIdLost, checkDbIdLost, cfg.tableMappingManager.CleanError,
 		); err != nil {
+			return errors.Trace(err)
+		}
+		if err := cfg.tableMappingManager.ReportIfError(); err != nil {
 			return errors.Trace(err)
 		}
 	}

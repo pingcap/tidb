@@ -92,6 +92,8 @@ type TableMappingManager struct {
 
 	tempDefaultKVTableMap map[tableMetaKey]*tableMetaValue
 	tempDefaultKVDbMap    map[dbMetaKey]*dbMetaValue
+
+	noDefaultKVErrorMap map[uint64]error
 }
 
 func NewTableMappingManager() *TableMappingManager {
@@ -101,6 +103,7 @@ func NewTableMappingManager() *TableMappingManager {
 		tempIDCounter:         InitialTempId,
 		tempDefaultKVTableMap: make(map[tableMetaKey]*tableMetaValue),
 		tempDefaultKVDbMap:    make(map[dbMetaKey]*dbMetaValue),
+		noDefaultKVErrorMap:   make(map[uint64]error),
 	}
 }
 
@@ -317,9 +320,11 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForWriteCf(
 		zap.Uint64("commit-ts", commitTs),
 		zap.String("value", base64.StdEncoding.EncodeToString(value)),
 		zap.Int("temp-default-kv-db-map-size", len(tm.tempDefaultKVDbMap)))
-	return errors.Errorf(errMsgDefaultCFKVLost+"(db id:%d, value %s)",
+	tm.noDefaultKVErrorMap[commitTs] = errors.Errorf(
+		errMsgDefaultCFKVLost+"(db id:%d, value %s)",
 		dbId, base64.StdEncoding.EncodeToString(value),
 	)
+	return nil
 }
 
 func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(
@@ -481,17 +486,18 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMappingForWriteCf(
 		}
 		return tm.parseTableValueAndUpdateIdMapping(dbId, tableId, commitTs, tableValue.info, collector)
 	}
-	log.Error("default cf kv is lost when processing write cf kv for table",
+	log.Warn("default cf kv is lost when processing write cf kv for table",
 		zap.Int64("db-id", dbId),
 		zap.Int64("table-id", tableId),
 		zap.Uint64("start-ts", startTs),
 		zap.Uint64("commit-ts", commitTs),
 		zap.String("value", base64.StdEncoding.EncodeToString(value)),
 		zap.Int("temp-default-kv-table-map-size", len(tm.tempDefaultKVTableMap)))
-	return errors.Errorf(
+	tm.noDefaultKVErrorMap[commitTs] = errors.Errorf(
 		errMsgDefaultCFKVLost+"(db id:%d, table id:%d, value %s)",
 		dbId, tableId, base64.StdEncoding.EncodeToString(value),
 	)
+	return nil
 }
 
 func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(
@@ -522,6 +528,19 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(
 		}
 	}
 	collector.OnTableInfo(dbId, tableId, tableSimpleInfo, commitTs)
+	return nil
+}
+
+func (tm *TableMappingManager) CleanError(rewriteTs uint64) {
+	delete(tm.noDefaultKVErrorMap, rewriteTs)
+}
+
+func (tm *TableMappingManager) ReportIfError() error {
+	for _, err := range tm.noDefaultKVErrorMap {
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 
