@@ -384,6 +384,24 @@ func TestFindAllUserEffectiveRoles(t *testing.T) {
 
 func TestSortUserTable(t *testing.T) {
 	var p privileges.MySQLPrivilege
+
+	p.SetUser([]privileges.UserRecord{
+		privileges.NewUserRecord(`%`, "root"),
+		privileges.NewUserRecord(`localhost`, "root"),
+		privileges.NewUserRecord("h1.example.net", "root"),
+		privileges.NewUserRecord("192.168.%", "root"),
+		privileges.NewUserRecord("192.168.199.%", "root"),
+	})
+	p.SortUserTable()
+	result := []privileges.UserRecord{
+		privileges.NewUserRecord("h1.example.net", "root"),
+		privileges.NewUserRecord(`localhost`, "root"),
+		privileges.NewUserRecord("192.168.199.%", "root"),
+		privileges.NewUserRecord("192.168.%", "root"),
+		privileges.NewUserRecord(`%`, "root"),
+	}
+	checkUserRecord(t, p.User(), result)
+
 	p.SetUser([]privileges.UserRecord{
 		privileges.NewUserRecord(`%`, "root"),
 		privileges.NewUserRecord(`%`, "jeffrey"),
@@ -391,7 +409,7 @@ func TestSortUserTable(t *testing.T) {
 		privileges.NewUserRecord("localhost", ""),
 	})
 	p.SortUserTable()
-	result := []privileges.UserRecord{
+	result = []privileges.UserRecord{
 		privileges.NewUserRecord("localhost", ""),
 		privileges.NewUserRecord("localhost", "root"),
 		privileges.NewUserRecord(`%`, "jeffrey"),
