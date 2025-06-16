@@ -233,7 +233,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 
 	warns = warns[:0]
 	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
-		oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+		oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)
 		if err != nil {
 			sessVars.StmtCtx.AppendWarning(err)
 		}
@@ -317,7 +317,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 				sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL binding")
 			}
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
-				oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+				oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)
 				if err != nil {
 					sessVars.StmtCtx.AppendWarning(err)
 				}
@@ -706,7 +706,7 @@ func genBriefPlanWithSCtx(sctx sessionctx.Context, stmt ast.StmtNode) (planDiges
 	flat := core.FlattenPhysicalPlan(p, false)
 	_, digest := core.NormalizeFlatPlan(flat)
 	sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true // ignore operatorID to make the output simpler
-	plan := core.ExplainFlatPlanInRowFormat(flat, types.ExplainFormatBrief, false, nil, nil)
+	plan := core.ExplainFlatPlanInRowFormat(flat, types.ExplainFormatBrief, false, nil)
 	hints := core.GenHintsFromFlatPlan(flat)
 
 	return digest.String(), hint.RestoreOptimizerHints(hints), plan, nil

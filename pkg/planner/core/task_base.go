@@ -495,7 +495,6 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 			KeepOrder:          t.keepOrder,
 		}.Init(ctx, t.idxMergePartPlans[0].QueryBlockOffset())
 		p.PlanPartInfo = t.physPlanPartInfo
-		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.SetPlan(p)
 		if t.needExtraProj {
 			schema := t.originSchema
