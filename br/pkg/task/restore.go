@@ -271,8 +271,8 @@ type RestoreConfig struct {
 	StartTS uint64 `json:"start-ts" toml:"start-ts"`
 	// if not specified system will restore to the max TS available
 	RestoreTS uint64 `json:"restore-ts" toml:"restore-ts"`
-  // whether RestoreTS was explicitly specified by user vs auto-detected
-  IsRestoredTSUserSpecified bool                        `json:"-" toml:"-"`
+	// whether RestoreTS was explicitly specified by user vs auto-detected
+	IsRestoredTSUserSpecified bool `json:"-" toml:"-"`
 	// rewriteTS is the rewritten timestamp of meta kvs.
 	RewriteTS       uint64                      `json:"-" toml:"-"`
 	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
