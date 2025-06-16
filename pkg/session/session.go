@@ -3186,16 +3186,16 @@ func CreateSession(store kv.Storage) (types.Session, error) {
 // CreateSessionWithOpt creates a new session environment with option.
 // Use default option if opt is nil.
 func CreateSessionWithOpt(store kv.Storage, opt *Opt) (types.Session, error) {
-	do, err := domap.Get(store)
-	if err != nil {
-		return nil, err
-	}
-	s, err := createSessionWithDomainAndOpt(do, store, opt)
+	s, err := createSessionWithOpt(store, opt)
 	if err != nil {
 		return nil, err
 	}
 
 	// Add auth here.
+	do, err := domap.Get(store)
+	if err != nil {
+		return nil, err
+	}
 	extensions, err := extension.GetExtensions()
 	if err != nil {
 		return nil, err
@@ -3829,28 +3829,14 @@ func createSessionsImpl(store kv.Storage, cnt int) ([]*session, error) {
 // This means the min ts reporter is not aware of it and may report a wrong min start ts.
 // In most cases you should use a session pool in domain instead.
 func createSession(store kv.Storage) (*session, error) {
+	return createSessionWithOpt(store, nil)
+}
+
+func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	dom, err := domap.Get(store)
 	if err != nil {
 		return nil, err
 	}
-	return createSessionWithDomainAndOpt(dom, store, nil)
-}
-
-// createSystemStoreSession creates a system store session.
-// this session can only be used to access system tables of the SYSTEM keyspace.
-// and we use the user keyspace domain to provide info schemas for the system
-// store session, as for system table, they share the name, table ID, and schema.
-// TODO: it's a hacky way, but we use this way to keep things simple, will refine
-// this part to use real info schema of SYSTEM keyspace later.
-func createSystemStoreSession(userStore kv.Storage) (*session, error) {
-	dom, err := domap.Get(userStore)
-	if err != nil {
-		return nil, err
-	}
-	return createSessionWithDomainAndOpt(dom, kvstore.GetSystemStorage(), nil)
-}
-
-func createSessionWithDomainAndOpt(dom *domain.Domain, store kv.Storage, opt *Opt) (*session, error) {
 	s := &session{
 		dom:                   dom,
 		store:                 store,

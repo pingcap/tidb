@@ -150,8 +150,8 @@ func NewMockDomain() *Domain {
 	return do
 }
 
-// Domain represents a storage space. Different domains can use the same database name.
-// Multiple domains can be used in parallel without synchronization.
+// Domain manages life cycle of nearly all other components related to SQL execution
+// of a TiDB instance, only one domain can exist at a time.
 type Domain struct {
 	store           kv.Storage
 	infoCache       *infoschema.InfoCache
