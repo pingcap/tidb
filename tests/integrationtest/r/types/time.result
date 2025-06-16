@@ -1,0 +1,342 @@
+set @@time_zone = '+00:00';
+select timestamp '2024-01-01 14:00:00+01:00';
+timestamp '2024-01-01 14:00:00+01:00'
+2024-01-01 13:00:00
+select timestamp '2024-01-01 14:00:00+01:59';
+timestamp '2024-01-01 14:00:00+01:59'
+2024-01-01 12:01:00
+select timestamp '2024-01-01 14:00:00+01:60';
+Error 1292 (22007): Incorrect datetime value: '2024-01-01 14:00:00+01:60'
+select timestamp '2024-01-01 14:00:00-01:00';
+timestamp '2024-01-01 14:00:00-01:00'
+2024-01-01 15:00:00
+select timestamp '2024-01-01 14:00:00-01:59';
+timestamp '2024-01-01 14:00:00-01:59'
+2024-01-01 15:59:00
+select timestamp '2024-01-01 14:00:00-01:60';
+Error 1292 (22007): Incorrect datetime value: '2024-01-01 14:00:00-01:60'
+select timestamp '2024-01-01 14:00:00+14:00';
+timestamp '2024-01-01 14:00:00+14:00'
+2024-01-01 00:00:00
+select timestamp '2024-01-01 14:00:00-14:00';
+timestamp '2024-01-01 14:00:00-14:00'
+2024-01-02 04:00:00
+select timestamp '2024-01-01 14:00:00+14:01';
+Error 1292 (22007): Incorrect datetime value: '2024-01-01 14:00:00+14:01'
+select timestamp '2024-01-01 14:00:00-14:01';
+Error 1292 (22007): Incorrect datetime value: '2024-01-01 14:00:00-14:01'
+select timestamp '2024-01-01 14:00:00+14:59';
+Error 1292 (22007): Incorrect datetime value: '2024-01-01 14:00:00+14:59'
+select timestamp '2024-01-01 14:00:00-14:59';
+Error 1292 (22007): Incorrect datetime value: '2024-01-01 14:00:00-14:59'
+select timestamp '2024-01-01 14:00:00+15:00';
+Error 1292 (22007): Incorrect datetime value: '2024-01-01 14:00:00+15:00'
+select timestamp '2024-01-01 14:00:00-15:00';
+Error 1292 (22007): Incorrect datetime value: '2024-01-01 14:00:00-15:00'
+select timestamp '2024';
+Error 1525 (HY000): Incorrect datetime value: '2024'
+select timestamp '2024-01';
+Error 1525 (HY000): Incorrect datetime value: '2024-01'
+select timestamp '2024-1';
+Error 1525 (HY000): Incorrect datetime value: '2024-1'
+select timestamp '2024-01-01';
+Error 1525 (HY000): Incorrect datetime value: '2024-01-01'
+select timestamp '2024-1-1';
+Error 1525 (HY000): Incorrect datetime value: '2024-1-1'
+select timestamp '2024-01-1';
+Error 1525 (HY000): Incorrect datetime value: '2024-01-1'
+select timestamp '2024-1-01';
+Error 1525 (HY000): Incorrect datetime value: '2024-1-01'
+select timestamp '2024-01-01 14.999999999999';
+Error 1292 (22007): Incorrect datetime value: '2024-01-01 14.999999999999'
+select timestamp '2024-01-01 14.888888888888';
+Error 1292 (22007): Incorrect datetime value: '2024-01-01 14.888888888888'
+select timestamp '2024-01-01 14.66';
+Error 1292 (22007): Incorrect datetime value: '2024-01-01 14.66'
+select timestamp '2024-01-01 14.555555555555';
+Error 1292 (22007): Incorrect datetime value: '2024-01-01 14.555555555555'
+select timestamp '2024-01-01 14.0000111';
+Error 1292 (22007): Incorrect datetime value: '2024-01-01 14.0000111'
+select timestamp '2024-01-01 14.000011';
+timestamp '2024-01-01 14.000011'
+2024-01-01 14:11:00.000000
+select timestamp '2024-01-01 14.55';
+timestamp '2024-01-01 14.55'
+2024-01-01 14:55:00.00
+select timestamp '2024-01-01 14.9';
+timestamp '2024-01-01 14.9'
+2024-01-01 14:09:00.0
+select timestamp '2024-01-01 14.0000000000001';
+timestamp '2024-01-01 14.0000000000001'
+2024-01-01 14:01:00.000000
+select timestamp '2024-01-01 14:00.0000000000001';
+timestamp '2024-01-01 14:00.0000000000001'
+2024-01-01 14:00:01.000000
+select timestamp '2024-01-01 14.';
+timestamp '2024-01-01 14.'
+2024-01-01 14:00:00
+select timestamp '2024-01-01 14:00...';
+Error 1525 (HY000): Incorrect datetime value: '2024-01-01 14:00...'
+select timestamp '2024-01-01 14:00::';
+Error 1525 (HY000): Incorrect datetime value: '2024-01-01 14:00::'
+select timestamp '2024-01-01 14:00:';
+Error 1525 (HY000): Incorrect datetime value: '2024-01-01 14:00:'
+select timestamp '2024-01-01 14:00:00.0000000000001';
+timestamp '2024-01-01 14:00:00.0000000000001'
+2024-01-01 14:00:00.000000
+select timestamp '2024-01-01 14:00:00.999999999999';
+timestamp '2024-01-01 14:00:00.999999999999'
+2024-01-01 14:00:01.000000
+select timestamp '0-02-03 17';
+timestamp '0-02-03 17'
+2000-02-03 17:00:00
+select timestamp '4-01-01 14';
+timestamp '4-01-01 14'
+2004-01-01 14:00:00
+select timestamp '24-01-01 14';
+timestamp '24-01-01 14'
+2024-01-01 14:00:00
+select timestamp '024-01-01 14';
+timestamp '024-01-01 14'
+0024-01-01 14:00:00
+select timestamp '124-01-01 14';
+timestamp '124-01-01 14'
+0124-01-01 14:00:00
+select timestamp '02024-01-01 14';
+timestamp '02024-01-01 14'
+2024-01-01 14:00:00
+select timestamp '000002024-00001-00001 00014';
+timestamp '000002024-00001-00001 00014'
+2024-01-01 14:00:00
+select timestamp '000002024-00001-00001 00014:000001:000001';
+timestamp '000002024-00001-00001 00014:000001:000001'
+2024-01-01 14:01:01
+select timestamp '000002024-00001-00001 00014:000001:000001+001:001';
+Error 1525 (HY000): Incorrect datetime value: '000002024-00001-00001 00014:000001:000001+001:001'
+select timestamp '000002024-00001-00001 00014:000001:000001+01:001';
+Error 1525 (HY000): Incorrect datetime value: '000002024-00001-00001 00014:000001:000001+01:001'
+select timestamp '000002024-00001-00001 00014:000001:000001+001:01';
+Error 1525 (HY000): Incorrect datetime value: '000002024-00001-00001 00014:000001:000001+001:01'
+select timestamp '2024-01-01 14:01:01+1:1';
+Error 1525 (HY000): Incorrect datetime value: '2024-01-01 14:01:01+1:1'
+select timestamp '2024-01-01 14:01:01+01:1';
+Error 1525 (HY000): Incorrect datetime value: '2024-01-01 14:01:01+01:1'
+select timestamp '2024-01-01 14:01:01+1:01';
+Error 1525 (HY000): Incorrect datetime value: '2024-01-01 14:01:01+1:01'
+select timestamp '2024-01-01 14:01:01+01;01';
+Error 1525 (HY000): Incorrect datetime value: '2024-01-01 14:01:01+01;01'
+select timestamp '2024-01-01 14:01:01+01-01';
+Error 1525 (HY000): Incorrect datetime value: '2024-01-01 14:01:01+01-01'
+select timestamp '2024-01-01 14:01:01+0101';
+Error 1525 (HY000): Incorrect datetime value: '2024-01-01 14:01:01+0101'
+select timestamp '2024-1-1 0';
+timestamp '2024-1-1 0'
+2024-01-01 00:00:00
+select timestamp '2024-1-1 1';
+timestamp '2024-1-1 1'
+2024-01-01 01:00:00
+select timestamp '2024-1-1 1:1';
+timestamp '2024-1-1 1:1'
+2024-01-01 01:01:00
+select timestamp '2024-1-1 1:1:1.11';
+timestamp '2024-1-1 1:1:1.11'
+2024-01-01 01:01:01.11
+select timestamp '2024-01-01 0';
+timestamp '2024-01-01 0'
+2024-01-01 00:00:00
+select timestamp '2024-01-01 1';
+timestamp '2024-01-01 1'
+2024-01-01 01:00:00
+select timestamp '2024-01-01 0';
+timestamp '2024-01-01 0'
+2024-01-01 00:00:00
+select timestamp '2024-01-01 14';
+timestamp '2024-01-01 14'
+2024-01-01 14:00:00
+select timestamp '2024-01-01 14:00';
+timestamp '2024-01-01 14:00'
+2024-01-01 14:00:00
+select timestamp '2024-01-01 14:00:00';
+timestamp '2024-01-01 14:00:00'
+2024-01-01 14:00:00
+select timestamp '2024-01-01 14:00:00.010';
+timestamp '2024-01-01 14:00:00.010'
+2024-01-01 14:00:00.010
+select timestamp '2024-01-01 14:00:00.123456789';
+timestamp '2024-01-01 14:00:00.123456789'
+2024-01-01 14:00:00.123457
+select timestamp '2024-01-01 14:00:00.123456789+02:00';
+timestamp '2024-01-01 14:00:00.123456789+02:00'
+2024-01-01 12:00:00.123457
+select timestamp '2024-01-01 14+01:00';
+timestamp '2024-01-01 14+01:00'
+2024-01-01 14:01:00
+select timestamp'10101.5';
+Error 1525 (HY000): Incorrect datetime value: '10101.5'
+SELECT { ts '2024-01-01 14:00:00+00:00' };
+{ ts '2024-01-01 14:00:00+00:00' }
+2024-01-01 14:00:00
+SELECT { ts '2024-01-01 14:00:00-14:00' };
+{ ts '2024-01-01 14:00:00-14:00' }
+2024-01-02 04:00:00
+SELECT { ts '2024-01-01 14:00:00+14:00' };
+{ ts '2024-01-01 14:00:00+14:00' }
+2024-01-01 00:00:00
+SELECT { ts '2024-01-01 14:00:00-14:01' };
+Error 1292 (22007): Incorrect datetime value: '2024-01-01 14:00:00-14:01'
+SELECT { ts '2024-01-01 14:00:00+14:01' };
+Error 1292 (22007): Incorrect datetime value: '2024-01-01 14:00:00+14:01'
+SELECT { ts '2024-01-01 14:00:00-00:00' };
+Error 1292 (22007): Incorrect datetime value: '2024-01-01 14:00:00-00:00'
+SELECT { d '2024-01-01' };
+{ d '2024-01-01' }
+2024-01-01
+SELECT { d '2024-01-01 01:12:31' };
+Error 1292 (22007): Incorrect date value: '2024-01-01 01:12:31'
+SELECT { t '14:00:00' };
+{ t '14:00:00' }
+14:00:00
+SELECT { d '2024-01-01 01:12:31' };
+Error 1292 (22007): Incorrect date value: '2024-01-01 01:12:31'
+SET time_zone = 'UTC';
+CREATE TABLE t (id int primary key, ts TIMESTAMP);
+INSERT INTO t VALUES (1, '2025-03-30 00:59:59');
+INSERT INTO t VALUES (2, '2025-03-30 01:00:00');
+SET time_zone = 'Europe/Paris';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t;
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+2	2025-03-30 03:00:00	1743296400
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts < '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <= '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts > '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+2	2025-03-30 03:00:00	1743296400
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts >= '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+2	2025-03-30 03:00:00	1743296400
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <=> '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE date_add(ts, interval 20 minute) = '2025-03-30 02:19:59';
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE date_add(ts, interval -20 minute) = '2025-03-30 02:40:00';
+id	ts	UNIX_TIMESTAMP(ts)
+2	2025-03-30 03:00:00	1743296400
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = date_add('2025-03-30 02:40:00', interval 20 minute);
+id	ts	UNIX_TIMESTAMP(ts)
+2	2025-03-30 03:00:00	1743296400
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = date_add('2025-03-30 02:19:59', interval -20 minute);
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+ALTER TABLE t ADD INDEX idx_ts (ts);
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts < '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <= '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts > '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+2	2025-03-30 03:00:00	1743296400
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts >= '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+2	2025-03-30 03:00:00	1743296400
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <=> '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE date_add(ts, interval 20 minute) = '2025-03-30 02:19:59';
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE date_add(ts, interval -20 minute) = '2025-03-30 02:40:00';
+id	ts	UNIX_TIMESTAMP(ts)
+2	2025-03-30 03:00:00	1743296400
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = date_add('2025-03-30 02:40:00', interval 20 minute);
+id	ts	UNIX_TIMESTAMP(ts)
+2	2025-03-30 03:00:00	1743296400
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = date_add('2025-03-30 02:19:59', interval -20 minute);
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+SELECT DATE_ADD(ts, INTERVAL 1 HOUR) FROM t;
+DATE_ADD(ts, INTERVAL 1 HOUR)
+2025-03-30 02:59:59
+2025-03-30 04:00:00
+SELECT DATE_SUB(ts, INTERVAL 1 HOUR) FROM t;
+DATE_SUB(ts, INTERVAL 1 HOUR)
+2025-03-30 00:59:59
+2025-03-30 02:00:00
+SELECT TIMESTAMPADD(HOUR, 1, ts) FROM t;
+Error 8179 (HY000): Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 59 59 0}' for time zone 'Europe/Paris'
+SELECT TIMESTAMPDIFF(HOUR, '2025-03-30 01:59:59', ts) FROM t;
+TIMESTAMPDIFF(HOUR, '2025-03-30 01:59:59', ts)
+0
+1
+SELECT UNIX_TIMESTAMP(ts) FROM t;
+UNIX_TIMESTAMP(ts)
+1743296399
+1743296400
+SELECT FROM_UNIXTIME(UNIX_TIMESTAMP(ts)) FROM t;
+FROM_UNIXTIME(UNIX_TIMESTAMP(ts))
+2025-03-30 01:59:59
+2025-03-30 03:00:00
+SELECT DATE_ADD('2025-03-30 02:30:00', INTERVAL 1 HOUR);
+DATE_ADD('2025-03-30 02:30:00', INTERVAL 1 HOUR)
+2025-03-30 03:30:00
+SELECT DATE_SUB('2025-03-30 02:30:00', INTERVAL 1 HOUR);
+DATE_SUB('2025-03-30 02:30:00', INTERVAL 1 HOUR)
+2025-03-30 01:30:00
+SELECT TIMESTAMPADD(HOUR, 1, '2025-03-30 02:30:00');
+TIMESTAMPADD(HOUR, 1, '2025-03-30 02:30:00')
+2025-03-30 03:30:00
+SELECT TIMESTAMPDIFF(HOUR, '2025-03-30 01:59:59', '2025-03-30 02:30:00');
+TIMESTAMPDIFF(HOUR, '2025-03-30 01:59:59', '2025-03-30 02:30:00')
+0
+SELECT UNIX_TIMESTAMP('2025-03-30 02:30:00');
+UNIX_TIMESTAMP('2025-03-30 02:30:00')
+1743296400
+SELECT FROM_UNIXTIME(UNIX_TIMESTAMP('2025-03-30 02:30:00'));
+FROM_UNIXTIME(UNIX_TIMESTAMP('2025-03-30 02:30:00'))
+2025-03-30 03:00:00
