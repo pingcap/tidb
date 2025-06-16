@@ -101,6 +101,8 @@ func TestTableModeBasic(t *testing.T) {
 	tk.MustExec("create view t1_restore_import_view as select * from t1_restore_import")
 	tk.MustExec("create table foreign_key_child(id int, pid INT, INDEX idx_pid (pid),FOREIGN KEY (pid) REFERENCES t1_restore_import(c1) ON DELETE CASCADE)")
 	tk.MustExec("drop table foreign_key_child")
+	// special case allow admin checksum table for import into
+	tk.MustExec("admin checksum table t1_restore_import;")
 
 	// For testing below stmt is not allowed when table is in ModeImport/ModeRestore
 	// DMLs
