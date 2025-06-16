@@ -529,6 +529,8 @@ type Backend struct {
 	logger       log.Logger
 	// This mutex is used to do some mutual exclusion work in the backend, flushKVs() in writer for now.
 	mu sync.Mutex
+
+	ticiWriteGroup *TiCIDataWriterGroup // TiCI writer group
 }
 
 var _ DiskUsage = (*Backend)(nil)
@@ -1435,6 +1437,12 @@ func (local *Backend) doImport(
 	if err != nil && !common.IsContextCanceledError(err) {
 		log.FromContext(ctx).Error("do import meets error", zap.Error(err))
 	}
+
+	if local.ticiWriteGroup != nil {
+		// If the import is done, we can close the write group.
+		return local.ticiWriteGroup.MarkTableUploadFinished(ctx)
+	}
+
 	return err
 }
 
@@ -1727,4 +1735,9 @@ func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 		log.FromContext(ctx).Warn("get region split size and keys failed", zap.Error(err), zap.String("store", serverInfo.StatusAddr))
 	}
 	return 0, 0, errors.New("get region split size and keys failed")
+}
+
+// SetTiCIWriterGroup initializes the ticiWriteGroup field for the Backend using the given table info and schema.
+func (local *Backend) SetTiCIWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) {
+	local.ticiWriteGroup = NewTiCIDataWriterGroup(ctx, tblInfo, schema)
 }

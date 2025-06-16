@@ -1,0 +1,132 @@
+// Copyright 2025 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package external
+
+import (
+	"context"
+	"encoding/binary"
+	"time"
+
+	"github.com/docker/go-units"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"go.uber.org/zap"
+)
+
+// ticiFileWriterMemSizeLimit is the memory buffer size limit for TICIFileWriter.
+// This buffer is used to avoid frequent allocations for each KV pair.
+var ticiFileWriterMemSizeLimit uint64 = 128 * units.MiB
+
+// TiCIMinUploadPartSize defines the minimum upload part size for external storage multipart uploads.
+// Both S3 and GCS require a minimum part size of 5MiB.
+var TiCIMinUploadPartSize int64 = 5 * units.MiB
+
+// TICIFileWriter writes data to a fixed S3 location.
+type TICIFileWriter struct {
+	store      storage.ExternalStorage
+	dataFile   string
+	dataWriter storage.ExternalFileWriter
+	kvBuffer   *membuf.Buffer
+	totalSize  uint64
+	totalCnt   uint64
+	closed     bool
+	logger     *zap.Logger
+	partSize   int64
+}
+
+// NewTICIFileWriter creates a new TICIFileWriter.
+// dataFile is the file name we are writing into.
+func NewTICIFileWriter(ctx context.Context, store storage.ExternalStorage, dataFile string, partSize int64, logger *zap.Logger) (*TICIFileWriter, error) {
+	dataWriter, err := store.Create(ctx, dataFile, &storage.WriterOption{
+		// TODO: maxUploadWorkersPerThread is subject to change up to the test results and performance tuning with TiCI worker.
+		// For now, we set it to maxUploadWorkersPerThread by default.
+		Concurrency: maxUploadWorkersPerThread,
+		PartSize:    partSize,
+	})
+	if err != nil {
+		return nil, err
+	}
+	p := membuf.NewPool(membuf.WithBlockNum(0), membuf.WithBlockSize(int(DefaultBlockSize)))
+	return &TICIFileWriter{
+		store:      store,
+		dataFile:   dataFile,
+		dataWriter: dataWriter,
+		kvBuffer:   p.NewBuffer(membuf.WithBufferMemoryLimit(ticiFileWriterMemSizeLimit)),
+		closed:     false,
+		totalSize:  0,
+		totalCnt:   0,
+		logger:     logger,
+		partSize:   partSize,
+	}, nil
+}
+
+// WriteRow writes a key-value pair to the S3 file.
+func (w *TICIFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
+	length := len(idxKey) + len(idxVal) + lengthBytes*2
+	buf, _ := w.kvBuffer.AllocBytesWithSliceLocation(length)
+	if buf == nil {
+		w.kvBuffer.Reset()
+		buf, _ = w.kvBuffer.AllocBytesWithSliceLocation(length)
+		if buf == nil {
+			return errors.Errorf("tici_writer failed to allocate kv buffer: %d", length)
+		}
+	}
+	encodeKVForTICI(buf, idxKey, idxVal)
+	writeStartTime := time.Now()
+	_, err := w.dataWriter.Write(ctx, buf[:length])
+	if err != nil {
+		return err
+	}
+	w.totalCnt++
+	w.totalSize += uint64(len(idxKey) + len(idxVal))
+	writeDuration := time.Since(writeStartTime)
+
+	// Set up metrics for the tici write operation. Use the label "tici_file_write" to distinguish it from other write operations.
+	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("tici_file_write").Observe(writeDuration.Seconds())
+	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("tici_file_write").
+		Observe(float64(length) / 1024.0 / 1024.0 / writeDuration.Seconds())
+	return nil
+}
+
+// Close closes the writer.
+func (w *TICIFileWriter) Close(ctx context.Context) error {
+	if w.closed {
+		return errors.Errorf("TICIFileWriter already closed")
+	}
+	err := w.dataWriter.Close(ctx)
+	if err != nil {
+		return err
+	}
+	w.logger.Info("close tici file writer", zap.String("dataFile", w.dataFile),
+		zap.Uint64("totalCnt", w.totalCnt),
+		zap.Uint64("totalSize", w.totalSize))
+	w.closed = true
+	return nil
+}
+
+// encodeKVForTICI encodes a key-value pair for TICIFileWriter.
+// This encode process is subject to future modification and improvement.
+// Format: [keyLen(8)][valLen(8)][key][value]
+func encodeKVForTICI(buf, key, value []byte) {
+	intest.Assert(len(buf) == lengthBytes*2+len(key)+len(value))
+	keyLen := len(key)
+	binary.BigEndian.AppendUint64(buf[:0], uint64(keyLen))
+	binary.BigEndian.AppendUint64(buf[lengthBytes:lengthBytes], uint64(len(value)))
+	copy(buf[lengthBytes*2:], key)
+	copy(buf[lengthBytes*2+keyLen:], value)
+}

@@ -16,7 +16,8 @@ syntax = "proto3";
 
 package indexer;
 
-option go_package = ".";
+//option go_package = ".";
+option go_package = "github.com/OliverS929/tidb_private/pkg/tici;tici";
 
 // IndexerService provides index creation and deletion functionality
 service IndexerService {
