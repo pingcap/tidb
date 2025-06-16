@@ -81,15 +81,11 @@ func TestTiflashUsage(t *testing.T) {
 
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tblInfos, err := is.SchemaTableInfos(context.Background(), ast.NewCIStr("test"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	for _, tblInfo := range tblInfos {
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	telemetry.CurrentTiFlashPushDownCount.Swap(0)
