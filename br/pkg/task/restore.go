@@ -267,15 +267,11 @@ type RestoreConfig struct {
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
 	StartTS uint64 `json:"start-ts" toml:"start-ts"`
 	// if not specified system will restore to the max TS available
-<<<<<<< HEAD
-	RestoreTS       uint64                      `json:"restore-ts" toml:"restore-ts"`
-=======
 	RestoreTS uint64 `json:"restore-ts" toml:"restore-ts"`
 	// whether RestoreTS was explicitly specified by user vs auto-detected
 	IsRestoredTSUserSpecified bool `json:"-" toml:"-"`
 	// rewriteTS is the rewritten timestamp of meta kvs.
 	RewriteTS       uint64                      `json:"-" toml:"-"`
->>>>>>> e8aa60dd0c3 (br: resume task that only differs in RestoredTS (#61610))
 	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
 	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
