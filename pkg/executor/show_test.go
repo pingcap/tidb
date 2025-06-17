@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -30,11 +31,8 @@ import (
 )
 
 func Test_fillOneImportJobInfo(t *testing.T) {
-	typeBytes := []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
-		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
-		mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString}
-	fieldTypes := make([]*types.FieldType, 0, len(typeBytes))
-	for _, tp := range typeBytes {
+	fieldTypes := make([]*types.FieldType, 0, len(plannercore.ImportIntoSchemaFTypes))
+	for _, tp := range plannercore.ImportIntoSchemaFTypes {
 		fieldType := types.NewFieldType(tp)
 		flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(tp)
 		fieldType.SetFlen(flen)
@@ -49,24 +47,25 @@ func Test_fillOneImportJobInfo(t *testing.T) {
 		Parameters: importer.ImportParameters{},
 	}
 	executor.FillOneImportJobInfo(c, jobInfo, -1)
-	require.True(t, c.GetRow(0).IsNull(7))
-	require.True(t, c.GetRow(0).IsNull(10))
+	require.True(t, c.GetRow(0).IsNull(8))
 	require.True(t, c.GetRow(0).IsNull(11))
+	require.True(t, c.GetRow(0).IsNull(12))
 
 	executor.FillOneImportJobInfo(c, jobInfo, 0)
-	require.False(t, c.GetRow(1).IsNull(7))
-	require.Equal(t, uint64(0), c.GetRow(1).GetUint64(7))
-	require.True(t, c.GetRow(1).IsNull(10))
+	require.False(t, c.GetRow(1).IsNull(8))
+	require.Equal(t, uint64(0), c.GetRow(1).GetUint64(8))
 	require.True(t, c.GetRow(1).IsNull(11))
+	require.True(t, c.GetRow(1).IsNull(12))
 
-	jobInfo.Summary = &importer.JobSummary{ImportedRows: 123}
+	jobInfo.Status = importer.JobStatusFinished
+	jobInfo.Summary = importer.MockSummary(123)
 	jobInfo.StartTime = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	jobInfo.EndTime = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	executor.FillOneImportJobInfo(c, jobInfo, 0)
-	require.False(t, c.GetRow(2).IsNull(7))
-	require.Equal(t, uint64(123), c.GetRow(2).GetUint64(7))
-	require.False(t, c.GetRow(2).IsNull(10))
+	require.False(t, c.GetRow(2).IsNull(8))
+	require.EqualValues(t, 123, c.GetRow(2).GetUint64(8))
 	require.False(t, c.GetRow(2).IsNull(11))
+	require.False(t, c.GetRow(2).IsNull(12))
 }
 
 func TestShow(t *testing.T) {

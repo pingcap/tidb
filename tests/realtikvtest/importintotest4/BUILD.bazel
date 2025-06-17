@@ -19,6 +19,7 @@ go_test(
         "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/disttask/framework/testutil",
         "//pkg/disttask/importinto",
+        "//pkg/executor",
         "//pkg/executor/importer",
         "//pkg/kv",
         "//pkg/lightning/config",

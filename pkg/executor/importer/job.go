@@ -56,7 +56,8 @@ const (
 	JobStatusRunning   = "running"
 	jogStatusCancelled = "cancelled"
 	jobStatusFailed    = "failed"
-	jobStatusFinished  = "finished"
+	// JobStatusFinished exported since it's used in show import jobs
+	JobStatusFinished = "finished"
 
 	// when the job is finished, step will be set to none.
 	jobStepNone = ""
@@ -273,7 +274,7 @@ func FinishJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, summa
 	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
 		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, step = %?, summary = %?
 		WHERE id = %? AND status = %?;`,
-		jobStatusFinished, jobStepNone, summaryStr, jobID, JobStatusRunning)
+		JobStatusFinished, jobStepNone, summaryStr, jobID, JobStatusRunning)
 	return err
 }
 
@@ -376,7 +377,7 @@ func GetJobsByGroupKey(ctx context.Context, conn sqlexec.SQLExecutor, user, grou
 		whereClause = append(whereClause, "GROUP_KEY is not NULL")
 	}
 	if len(whereClause) > 0 {
-		sql += " WHERE " + strings.Join(whereClause, " AND ")
+		sql = fmt.Sprintf("%s WHERE %s", sql, strings.Join(whereClause, " AND "))
 	}
 
 	rs, err := conn.ExecuteInternal(ctx, sql, args...)

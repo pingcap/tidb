@@ -2436,6 +2436,47 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	return nil
 }
 
+// RevertedInfo is the info retrieved for SHOW IMPORT JOBS query
+// Update this struct when the output of SHOW IMPORT JOBS changes.
+type RevertedInfo struct {
+	JobID         any
+	GroupKey      any
+	FieldLocation any
+	FullTableName any
+	TableID       any
+	Step          any
+	Status        any
+	FileSize      any
+	RowCnt        any
+	ErrorMessage  any
+	CreateTime    any
+	StartTime     any
+	EndTime       any
+	CreatedBy     any
+}
+
+// GetInfoFromRow converts row from SHOW IMPORT JOBS query to a RevertedInfo struct.
+// This function is used in test, to avoid changeing test each time we modify
+// the output of SHOW IMPORT JOBS.
+func GetInfoFromRow(row []any) *RevertedInfo {
+	return &RevertedInfo{
+		JobID:         row[0],
+		GroupKey:      row[1],
+		FieldLocation: row[2],
+		FullTableName: row[3],
+		TableID:       row[4],
+		Step:          row[5],
+		Status:        row[6],
+		FileSize:      row[7],
+		RowCnt:        row[8],
+		ErrorMessage:  row[9],
+		CreateTime:    row[10],
+		StartTime:     row[11],
+		EndTime:       row[12],
+		CreatedBy:     row[13],
+	}
+}
+
 // FillOneImportJobInfo is exported for testing.
 func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, importedRowCount int64) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
@@ -2452,8 +2493,8 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, importedR
 	result.AppendString(5, info.Step)
 	result.AppendString(6, info.Status)
 	result.AppendString(7, units.BytesSize(float64(info.SourceFileSize)))
-	if info.Summary != nil {
-		result.AppendUint64(8, uint64(info.Summary.IngestSummary.RowCnt))
+	if info.Status == importer.JobStatusFinished {
+		result.AppendUint64(8, uint64(info.Summary.PostprocessSummary.RowCnt))
 	} else if importedRowCount >= 0 {
 		result.AppendUint64(8, uint64(importedRowCount))
 	} else {
@@ -2474,7 +2515,23 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, importedR
 	result.AppendString(13, info.CreatedBy)
 }
 
-func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *chunk.Chunk) error {
+// convertToMySQLTime converts go time to MySQL time with the specified location.
+// It's partially copied from builtin_time.go
+func convertToMySQLTime(t time.Time, loc *time.Location) (types.Time, error) {
+	tr, err := types.TruncateFrac(t, 0)
+	if err != nil {
+		return types.ZeroTime, err
+	}
+
+	result := types.NewTime(types.FromGoTime(tr), mysql.TypeDatetime, 0)
+	err = result.ConvertTimeZone(t.Location(), loc)
+	return result, err
+}
+
+func handleImportJobInfo(
+	ctx context.Context, sctx sessionctx.Context,
+	info *importer.JobInfo, result *chunk.Chunk,
+) error {
 	var importedRowCount int64 = -1
 	if info.Summary == nil && info.Status == importer.JobStatusRunning {
 		// for running jobs, need get from distributed framework.
@@ -2486,6 +2543,16 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 		if runInfo.Status == proto.TaskStateAwaitingResolution {
 			info.Status = string(runInfo.Status)
 			info.ErrorMessage = runInfo.ErrorMsg
+		}
+
+		// Use the latest update time from subtasks
+		// TODO(joechenrh): This value will be displayed in SHOW IMPORT JOBS in later PR.
+		if !runInfo.LatestUpdateTime.IsZero() {
+			t, err := convertToMySQLTime(runInfo.LatestUpdateTime, sctx.GetSessionVars().Location())
+			if err != nil {
+				return err
+			}
+			info.UpdateTime = t
 		}
 	}
 	FillOneImportJobInfo(result, info, importedRowCount)
@@ -2700,7 +2767,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		}); err != nil {
 			return err
 		}
-		return handleImportJobInfo(ctx, info, e.result)
+		return handleImportJobInfo(ctx, e.Ctx(), info, e.result)
 	}
 	var infos []*importer.JobInfo
 	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
@@ -2712,7 +2779,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		return err
 	}
 	for _, info := range infos {
-		if err2 := handleImportJobInfo(ctx, info, e.result); err2 != nil {
+		if err2 := handleImportJobInfo(ctx, e.Ctx(), info, e.result); err2 != nil {
 			return err2
 		}
 	}

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -74,7 +75,7 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 	require.EqualValues(s.T(), 10000, summaries.PostprocessSummary.RowCnt)
 
 	rs = s.tk.MustQuery("show import jobs where Job_ID = ?", jobID).Rows()
-	importedRows, err := strconv.Atoi(rs[0][7].(string))
+	importedRows, err := strconv.Atoi(executor.GetInfoFromRow(rs[0]).RowCnt.(string))
 	require.NoError(s.T(), err)
 	require.EqualValues(s.T(), 10000, importedRows)
 
@@ -129,10 +130,10 @@ func (s *mockGCSSuite) TestLocallSortSummary() {
 	require.NoError(s.T(), json.Unmarshal([]byte(rs[0][0].(string)), &summaries))
 
 	require.EqualValues(s.T(), 0, summaries.MergeSummary.RowCnt)
-	require.EqualValues(s.T(), 1000, summaries.PostprocessSummary.RowCnt)
+	require.EqualValues(s.T(), 10000, summaries.PostprocessSummary.RowCnt)
 
 	rs = s.tk.MustQuery("show import jobs where Job_ID = ?", jobID).Rows()
-	importedRows, err := strconv.Atoi(rs[0][7].(string))
+	importedRows, err := strconv.Atoi(executor.GetInfoFromRow(rs[0]).RowCnt.(string))
 	require.NoError(s.T(), err)
 	require.EqualValues(s.T(), 10000, importedRows)
 }

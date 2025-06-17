@@ -26,6 +26,7 @@ go_test(
         "//pkg/disttask/framework/testutil",
         "//pkg/disttask/importinto",
         "//pkg/domain/infosync",
+        "//pkg/executor",
         "//pkg/executor/importer",
         "//pkg/kv",
         "//pkg/lightning/backend/local",

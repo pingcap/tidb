@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -719,7 +720,7 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 	sql := fmt.Sprintf(`IMPORT INTO load_test_write_speed.t FROM 'gs://test-load/speed-test.csv?endpoint=%s'`,
 		gcsEndpoint)
 	result := s.tk.MustQuery(sql)
-	fileSize := result.Rows()[0][6].(string)
+	fileSize := executor.GetInfoFromRow(result.Rows()[0]).FileSize.(string)
 	s.Equal("7.598KiB", fileSize)
 	duration := time.Since(start).Seconds()
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(

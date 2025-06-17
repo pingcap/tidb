@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -119,9 +120,10 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 
 // RuntimeInfo is the runtime information of the task for corresponding job.
 type RuntimeInfo struct {
-	Status     proto.TaskState
-	ImportRows int64
-	ErrorMsg   string
+	Status           proto.TaskState
+	ImportRows       int64
+	LatestUpdateTime time.Time
+	ErrorMsg         string
 }
 
 // GetRuntimeInfoForJob get the corresponding DXF task runtime info for the job.
@@ -151,9 +153,15 @@ func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error
 		return nil, err
 	}
 
-	var importedRows int64
+	var (
+		latestTime   time.Time
+		importedRows int64
+	)
 	for _, summary := range summaries {
 		importedRows += summary.RowCnt.Load()
+		if summary.UpdateTime.After(latestTime) {
+			latestTime = summary.UpdateTime
+		}
 	}
 
 	var errMsg string
@@ -161,9 +169,10 @@ func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error
 		errMsg = task.Error.Error()
 	}
 	return &RuntimeInfo{
-		Status:     task.State,
-		ImportRows: importedRows,
-		ErrorMsg:   errMsg,
+		Status:           task.State,
+		ImportRows:       importedRows,
+		LatestUpdateTime: latestTime,
+		ErrorMsg:         errMsg,
 	}, nil
 }
 

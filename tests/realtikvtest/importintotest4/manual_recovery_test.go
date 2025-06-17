@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -55,8 +56,9 @@ func (s *mockGCSSuite) runTaskToAwaitingState() (context.Context, int64, *proto.
 	s.NoError(err)
 	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
 	s.Len(rows, 1)
-	s.EqualValues("awaiting-resolution", rows[0][5])
-	s.Contains(rows[0][8].(string), "incorrect DOUBLE value")
+	infoRow := executor.GetInfoFromRow(rows[0])
+	s.EqualValues("awaiting-resolution", infoRow.Status)
+	s.Contains(infoRow.ErrorMessage.(string), "incorrect DOUBLE value")
 	return ctx, int64(jobID), task
 }
 
