@@ -24,7 +24,7 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 752.004166655054
+        "Count": 791.004166655054
       },
       {
         "Start": 900,
@@ -79,7 +79,7 @@
       {
         "Start": 800,
         "End": 1000,
-        "Count": 1201.196869573942
+        "Count": 1249.196869573942
       },
       {
         "Start": 900,
@@ -104,7 +104,7 @@
       {
         "Start": 200,
         "End": 400,
-        "Count": 1211.5288209899081
+        "Count": 1188.7788209899081
       },
       {
         "Start": 200,
@@ -2466,7 +2466,7 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 0
+                    "Result": 1
                   }
                 ]
               },
@@ -2747,7 +2747,7 @@
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 0,
+                          "RowCount": 1,
                           "Type": "Range"
                         }
                       }
@@ -2755,7 +2755,7 @@
                   },
                   {
                     "Name": "iab",
-                    "Result": 0
+                    "Result": 1
                   }
                 ]
               },
@@ -3307,11 +3307,11 @@
                 "Expressions": [
                   "lt(test.t.a, -1500)"
                 ],
-                "Selectivity": 0,
+                "Selectivity": 0.0003246753246753247,
                 "partial cover": false
               },
               {
-                "Result": 0
+                "Result": 2.1082813290605499e-7
               }
             ]
           }
@@ -3740,7 +3740,7 @@
                   },
                   {
                     "Name": "iab",
-                    "Result": 0
+                    "Result": 1
                   }
                 ]
               },
@@ -3867,11 +3867,11 @@
                 "Expressions": [
                   "lt(test.t.a, -1500)"
                 ],
-                "Selectivity": 0,
+                "Selectivity": 0.0003246753246753247,
                 "partial cover": false
               },
               {
-                "Result": 0
+                "Result": 1.9066503965832828e-7
               }
             ]
           }
