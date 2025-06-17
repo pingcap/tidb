@@ -95,7 +95,7 @@ func (role *RoleIdentity) String() string {
 }
 
 // GetUserAndHostName returns the user and host name if the given u is not nil.
-func GetUserAndHostName(u *UserIdentity) (string, string) {
+func GetUserAndHostName(u *UserIdentity) (username string, hostname string) {
 	if u == nil {
 		return "", ""
 	}

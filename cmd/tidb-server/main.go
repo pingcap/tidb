@@ -326,7 +326,7 @@ func main() {
 	svr := createServer(storage, dom)
 
 	exited := make(chan struct{})
-	signal.SetupSignalHandler(func() {
+	signal.SetupSignalHandler(func(_ os.Signal) {
 		svr.Close()
 		cleanup(svr, storage, dom)
 		cpuprofile.StopCPUProfiler()

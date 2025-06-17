@@ -3,8 +3,8 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "gcworker",
     srcs = [
-        "gc_login_history.go",
         "gc_worker.go",
+        "pkdb_gc_login_history.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/store/gcworker",
     visibility = ["//visibility:public"],
@@ -48,9 +48,9 @@ go_test(
     name = "gcworker_test",
     timeout = "short",
     srcs = [
-        "gc_login_history_test.go",
         "gc_worker_test.go",
         "main_test.go",
+        "pkdb_gc_login_history_test.go",
     ],
     embed = [":gcworker"],
     flaky = True,

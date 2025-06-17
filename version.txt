@@ -1,6 +1,0 @@
-[branches]
-tidb_enterprise_utilities_member=pingkai
-tidb_enterprise_utilities_branch=release-7.1.8-5
-tidb_security_advanced_member=pingkai
-tidb_security_advanced_branch=release-7.1.8-5
-tidb_ee_test_branch=release-7.1.8-5

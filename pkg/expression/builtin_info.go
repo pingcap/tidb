@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -565,7 +564,7 @@ func (c *tidbVersionFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(len(printer.GetTiDBInfo()))
+	bf.tp.SetFlen(len(VersionPrinter))
 	sig := &builtinTiDBVersionSig{bf}
 	return sig, nil
 }
@@ -583,7 +582,7 @@ func (b *builtinTiDBVersionSig) Clone() builtinFunc {
 // evalString evals a builtinTiDBVersionSig.
 // This will show git hash and build time for tidb-server.
 func (b *builtinTiDBVersionSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	return printer.GetTiDBInfo(), false, nil
+	return VersionPrinter, false, nil
 }
 
 type dataOpAuditFunctionClass struct {

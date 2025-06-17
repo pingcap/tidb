@@ -6,7 +6,8 @@ go_library(
         "error.go",
         "mock_globalaccessor.go",
         "noop.go",
-        "procedure_session.go",
+        "pkdb_procedure_session.go",
+        "pkdb_tidb_vars.go",
         "removed.go",
         "sequence_state.go",
         "session.go",
@@ -96,7 +97,7 @@ go_test(
     srcs = [
         "main_test.go",
         "mock_globalaccessor_test.go",
-        "procedure_session_test.go",
+        "pkdb_procedure_session_test.go",
         "removed_test.go",
         "session_test.go",
         "statusvar_test.go",

@@ -990,6 +990,7 @@ const (
 
 	// TiDBEnableUDVSubstitute indicates whether to enable user defined variable substitute.
 	TiDBEnableUDVSubstitute = "tidb_enable_udv_substitute"
+
 	// TiDBEnableSPParamSubstitute indicates whether to enable stored procedure parameter substitute.
 	TiDBEnableSPParamSubstitute = "tidb_enable_sp_param_substitute"
 )

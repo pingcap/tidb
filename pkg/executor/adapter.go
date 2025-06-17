@@ -1632,8 +1632,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	costTime := sessVars.GetTotalCostDuration()
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
 	enable := cfg.Instance.EnableSlowLog.Load()
-	// if the level is Debug, or trace is enabled, print slow logs anyway
-	force := level <= zapcore.DebugLevel || trace.IsEnabled()
+	// if the level is Debug, print slow logs anyway
+	force := level <= zapcore.DebugLevel
 	if (!enable || costTime < threshold) && !force {
 		return
 	}
@@ -2154,6 +2154,12 @@ func (a *ExecStmt) updatePrevStmt() {
 }
 
 func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Context {
+	if !topsqlstate.TopSQLEnabled() && IsFastPlan(a.Plan) {
+		// To reduce the performance impact on fast plan.
+		// Drop them does not cause notable accuracy issue in TopSQL.
+		return ctx
+	}
+
 	vars := a.Ctx.GetSessionVars()
 	sc := vars.StmtCtx
 	normalizedSQL, sqlDigest := sc.SQLDigest()
@@ -2167,11 +2173,6 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 	}
 	stats := a.Ctx.GetStmtStats()
 	if !topsqlstate.TopSQLEnabled() {
-		// To reduce the performance impact on fast plan.
-		// Drop them does not cause notable accuracy issue in TopSQL.
-		if IsFastPlan(a.Plan) {
-			return ctx
-		}
 		// Always attach the SQL and plan info uses to catch the running SQL when Top SQL is enabled in execution.
 		if stats != nil {
 			stats.OnExecutionBegin(sqlDigestByte, planDigestByte)

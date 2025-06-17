@@ -336,6 +336,7 @@ func GetErrClass(e *Error) ErrClass {
 	return ErrClass(-1)
 }
 
+// TiDBError are Error used in PKDB
 type TiDBError struct {
 	SQLSTATE          string
 	CLASSORIGIN       string

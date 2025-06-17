@@ -24,11 +24,6 @@ ifeq "$(GOPATH)" ""
   $(error Please set the environment variable GOPATH before running `make`)
 endif
 FAIL_ON_STDOUT := awk '{ print } END { if (NR > 0) { exit 1 } }'
-$(warning $(NEED_CLONE))
-PREPARETIDB=$(shell ./prepare_tidb.sh)
-$(warning  $(PREPARETIDB))
-TiDBEnterpriseUtilitiesGitHash:=$(shell cd $(UTILILIESDIR)/ ; git rev-parse HEAD)
-TiDBSecurityAdvancedGitHash:=$(shell cd $(SECURITYDIR)/ ; git rev-parse HEAD)
 
 CURDIR := $(shell pwd)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
@@ -77,8 +72,6 @@ FAILPOINT_DISABLE := find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tool
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty --always)"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %H:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitHash=$(shell git rev-parse HEAD)"
-LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBSecurityAdvancedGitHash=$(TiDBSecurityAdvancedGitHash)"
-LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEnterpriseUtilitiesGitHash=$(TiDBEnterpriseUtilitiesGitHash)"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
 
@@ -143,8 +136,3 @@ endif
 BAZEL_INSTRUMENTATION_FILTER := --instrument_test_targets --instrumentation_filter=//pkg/...,//br/...,//dumpling/...
 
 NOGO_FLAG=true
-
-ifneq ("$(NEED_CLONE)", "NO")
-        CLEARDIR :=$(shell sh -x clear_dir.sh)
-        $(warning  $(CLEARDIR))
-endif
