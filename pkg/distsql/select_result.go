@@ -334,6 +334,7 @@ type selectResult struct {
 	// distSQLConcurrency and paging are only for collecting information, and they don't affect the process of execution.
 	distSQLConcurrency int
 	paging             bool
+	fullRespRead       bool
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
@@ -482,7 +483,7 @@ func anyChunksFull(chk *chunk.Chunk, partialChunks []*chunk.Chunk) bool {
 }
 
 func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk, partialChunks []*chunk.Chunk) error {
-	for !anyChunksFull(chk, partialChunks) {
+	for !anyChunksFull(chk, partialChunks) || (r.fullRespRead && len(r.readOrders) > 0) {
 		if len(r.readOrders) == 0 {
 			err := r.fetchResp(ctx)
 			if err != nil || r.selectResp == nil {
@@ -519,7 +520,7 @@ func (r *selectResult) ensureRespChunkDecoder(outputIdx int) *chunk.Decoder {
 }
 
 func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk, partialChunks []*chunk.Chunk) error {
-	for !anyChunksFull(chk, partialChunks) {
+	for !anyChunksFull(chk, partialChunks) || (r.fullRespRead && len(r.readOrders) > 0) {
 		if len(r.readOrders) == 0 {
 			err := r.fetchResp(ctx)
 			if err != nil || r.selectResp == nil {
