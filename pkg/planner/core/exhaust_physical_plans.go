@@ -3896,8 +3896,13 @@ func getNominalSort(ls *logicalop.LogicalSort, reqProp *property.PhysicalPropert
 }
 
 func getNominalSortSimple(ls *logicalop.LogicalSort, reqProp *property.PhysicalProperty) *NominalSort {
+	prop, canPass, onlyColumn := GetPropByOrderByItemsContainScalarFunc(ls.ByItems)
+	if !canPass || !onlyColumn {
+		return nil
+	}
 	newProp := reqProp.CloneEssentialFields()
 	newProp.RejectSort = true
+	newProp.SortItems = prop.SortItems
 	ps := NominalSort{OnlyColumn: true, ByItems: ls.ByItems}.Init(
 		ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(reqProp.ExpectedCnt), ls.QueryBlockOffset(), newProp)
 	return ps
