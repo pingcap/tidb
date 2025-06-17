@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -62,6 +63,9 @@ type OneFileWriter struct {
 	maxKey []byte
 
 	logger *zap.Logger
+
+	onDup   common.OnDuplicateKey
+	lastKey []byte
 }
 
 // initWriter inits the underlying dataFile/statFile path, dataWriter/statWriter for OneFileWriter.
@@ -105,6 +109,9 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 	if w.minKey == nil {
 		w.minKey = slices.Clone(idxKey)
 	}
+	if slices.Compare(w.lastKey, idxKey) == 0 && w.onDup == common.OnDuplicateKeyError {
+		return common.ErrFoundDuplicateKeys.FastGenByArgs(idxKey, idxVal)
+	}
 	// 1. encode data and write to kvStore.
 	keyLen := len(idxKey)
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
@@ -138,6 +145,7 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 	}
 	w.totalCnt += 1
 	w.totalSize += uint64(keyLen + len(idxVal))
+	w.lastKey = slices.Clone(idxKey)
 	return nil
 }
 

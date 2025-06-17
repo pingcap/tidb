@@ -1779,16 +1779,13 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		[]byte{10},
 		keys,
 		[][]byte{{1}, {11}},
-		common.NoopKeyAdapter{},
-		false,
-		nil,
-		common.DupDetectOpt{},
 		10,
 		123,
 		456,
 		789,
 		true,
 		16*units.GiB,
+		common.OnDuplicateKeyIgnore,
 	)
 
 	jobCh := make(chan *regionJob, 9)
