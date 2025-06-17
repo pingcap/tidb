@@ -41,8 +41,8 @@ message ReaderNodeStatus {
 // Some fields may be duplicated with ShardManifestHeader,
 // however, just leave them here.
 message WorkerNodeShardStatus {
-  string start_key = 1;
-  string end_key = 2;
+  bytes start_key = 1;
+  bytes end_key = 2;
   // TODO shard_id is unique across tables and indexes.
   // We still need them because in meta service we are not currently maintain this correspondence.
   int64 table_id = 3;
@@ -115,8 +115,8 @@ message AppendFragMetaResponse {
 
 // Key range definition for shard cache queries
 message KeyRange {
-  string start_key = 1;
-  string end_key = 2;
+  bytes start_key = 1;
+  bytes end_key = 2;
 }
 
 // Shard local cache information

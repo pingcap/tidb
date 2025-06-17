@@ -20,6 +20,7 @@ import (
 	"github.com/google/btree"
 )
 
+// SortedShards is a sorted shards by start key.
 type SortedShards struct {
 	b *btree.BTreeG[*btreeItem]
 }
@@ -31,7 +32,7 @@ type btreeItem struct {
 
 func newBtreeItem(cachedShard *ShardWithAddr) *btreeItem {
 	return &btreeItem{
-		key:         []byte(cachedShard.StartKey),
+		key:         cachedShard.StartKey,
 		cachedShard: cachedShard,
 	}
 }
@@ -44,12 +45,14 @@ func (item *btreeItem) Less(other *btreeItem) bool {
 	return bytes.Compare(item.key, other.key) < 0
 }
 
+// NewSortedShards creates a new SortedShards with the specified B-tree degree.
 func NewSortedShards(btreeDegree int) *SortedShards {
 	return &SortedShards{
 		b: btree.NewG(btreeDegree, func(a, b *btreeItem) bool { return a.Less(b) }),
 	}
 }
 
+// ReplaceOrInsert replaces an existing shard with the same start key or inserts a new one.
 func (s *SortedShards) ReplaceOrInsert(cachedShard *ShardWithAddr) *ShardWithAddr {
 	old, _ := s.b.ReplaceOrInsert(newBtreeItem(cachedShard))
 	if old != nil {
@@ -58,6 +61,7 @@ func (s *SortedShards) ReplaceOrInsert(cachedShard *ShardWithAddr) *ShardWithAdd
 	return nil
 }
 
+// SearchByKey searches for a shard that contains the specified key.
 func (s *SortedShards) SearchByKey(key []byte, isEndKey bool) (r *ShardWithAddr) {
 	s.b.DescendLessOrEqual(newBtreeSearchItem(key), func(item *btreeItem) bool {
 		shard := item.cachedShard
@@ -72,6 +76,7 @@ func (s *SortedShards) SearchByKey(key []byte, isEndKey bool) (r *ShardWithAddr)
 	return
 }
 
+// AscendGreaterOrEqual iterates over shards that start at or after the specified start key,
 func (s *SortedShards) AscendGreaterOrEqual(startKey, endKey []byte, limit int) (shards []*ShardWithAddr) {
 	lastStartKey := startKey
 	s.b.AscendGreaterOrEqual(newBtreeSearchItem(startKey), func(item *btreeItem) bool {
@@ -104,6 +109,7 @@ func (s *SortedShards) removeIntersecting(r *ShardWithAddr) ([]*btreeItem, bool)
 	return deleted, false
 }
 
+// Clear removes all shards from the sorted shards.
 func (s *SortedShards) Clear() {
 	s.b.Clear(false)
 }

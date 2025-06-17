@@ -23,7 +23,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/tici"
+	tici "github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -42,11 +42,13 @@ type Shard struct {
 	Epoch    uint64
 }
 
+// Contains checks if the shard contains the key.
 func (s *Shard) Contains(key []byte) bool {
 	return bytes.Compare(s.StartKey, key) <= 0 &&
 		(bytes.Compare(key, s.EndKey) < 0 || len(s.EndKey) == 0)
 }
 
+// ContainsByEnd checks if the shard contains the key by its end key.
 func (s *Shard) ContainsByEnd(key []byte) bool {
 	if len(key) == 0 {
 		return len(s.EndKey) == 0
@@ -61,6 +63,7 @@ type ShardWithAddr struct {
 	localCacheAddrs []string
 }
 
+// ShardLocation represents a shard location with its ranges.
 type ShardLocation struct {
 	ShardWithAddr
 	Ranges *KeyRanges
@@ -91,10 +94,18 @@ func NewTiCIShardCacheClient() (*TiCIShardCacheClient, error) {
 
 // ScanRanges sends a request to the TiCI shard cache service to scan ranges for a given table and index.
 func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) (ret []ShardWithAddr, err error) {
+	ticiKeyRanges := make([]*tici.KeyRange, 0, len(keyRanges))
+	for _, r := range keyRanges {
+		ticiKeyRanges = append(ticiKeyRanges, &tici.KeyRange{
+			StartKey: r.StartKey,
+			EndKey:   r.EndKey,
+		})
+	}
+
 	request := &tici.GetShardLocalCacheRequest{
 		TableId:   tableID,
 		IndexId:   indexID,
-		KeyRanges: nil,
+		KeyRanges: ticiKeyRanges,
 		Limit:     int32(limit),
 	}
 
@@ -110,7 +121,7 @@ func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableID int64, in
 	var s = "ShardLocalCacheInfos:["
 	for _, info := range response.ShardLocalCacheInfos {
 		if info != nil {
-			s += fmt.Sprintf("[ShardId: %d, StartKey: %s, EndKey: %s, Epoch: %d, LocalCacheAddrs: %v; ]",
+			s += fmt.Sprintf("[ShardId: %d, StartKey: %v, EndKey: %v, Epoch: %d, LocalCacheAddrs: %v; ]",
 				info.Shard.ShardId, info.Shard.StartKey, info.Shard.EndKey, info.Shard.Epoch, info.LocalCacheAddrs)
 		}
 	}
@@ -122,8 +133,8 @@ func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableID int64, in
 			ret = append(ret, ShardWithAddr{
 				Shard{
 					ShardID:  s.Shard.ShardId,
-					StartKey: []byte(s.Shard.StartKey),
-					EndKey:   []byte(s.Shard.EndKey),
+					StartKey: s.Shard.StartKey,
+					EndKey:   s.Shard.EndKey,
 					Epoch:    s.Shard.Epoch,
 				},
 				s.LocalCacheAddrs,
@@ -155,6 +166,7 @@ func NewTiCIShardCache(client Client) *TiCIShardCache {
 	}
 }
 
+// SplitKeyRangesByLocations splits key ranges by shard locations.
 func (s *TiCIShardCache) SplitKeyRangesByLocations(
 	ctx context.Context,
 	tableID int64,
@@ -199,12 +211,21 @@ func (s *TiCIShardCache) SplitKeyRangesByLocations(
 	return res, nil
 }
 
+// BatchLocateKeyRanges locates key ranges in the TiCI shard cache.
 func (s *TiCIShardCache) BatchLocateKeyRanges(
 	ctx context.Context,
 	tableID int64,
 	indexID int64,
 	keyRanges []kv.KeyRange,
 ) ([]*ShardLocation, error) {
+	var ss = "BatchLocateKeyRanges keyRanges:["
+	for _, info := range keyRanges {
+		ss += fmt.Sprintf("[ StartKey: %v, EndKey: %v ]",
+			[]byte(info.StartKey), []byte(info.EndKey))
+	}
+	ss += "]"
+	logutil.BgLogger().Info("TiCIShardCache BatchLocateKeyRanges",
+		zap.String("keyRanges", ss))
 	uncachedRanges := make([]kv.KeyRange, 0, len(keyRanges))
 	cachedShards := make([]*ShardWithAddr, 0, len(keyRanges))
 	// 1. find shards from cache
@@ -261,19 +282,34 @@ func (s *TiCIShardCache) BatchLocateKeyRanges(
 	}
 
 	merger := newBatchLocateShardsMerger(cachedShards, len(cachedShards)+len(uncachedRanges))
+	retry := 0
 	// 2. load remaining shards from tici client
 	for len(uncachedRanges) > 0 {
-		shards, err := s.BatchLoadShardsWithKeyRanges(ctx, tableID, indexID, keyRanges, defaultShardsPerBatch)
+		shards, err := s.BatchLoadShardsWithKeyRanges(ctx, tableID, indexID, uncachedRanges, defaultShardsPerBatch)
 		if err != nil {
 			return nil, err
 		}
 		if len(shards) == 0 {
-			return nil, errors.New("TiCIShardCache BatchLoadShardsWithKeyRanges return empty shards without err")
+			logutil.BgLogger().Warn("TiCIShardCache BatchLoadShardsWithKeyRanges return empty shards without err")
+			break
 		}
 		for _, shard := range shards {
 			merger.appendShard(&shard)
 		}
 		uncachedRanges = rangesAfterKey(uncachedRanges, shards[len(shards)-1].EndKey)
+		retry++
+		if retry > 10 {
+			var s = "uncachedRanges:["
+			for _, info := range uncachedRanges {
+				s += fmt.Sprintf("[ StartKey: %v, EndKey: %v ]",
+					[]byte(info.StartKey), []byte(info.EndKey))
+			}
+			s += "]"
+			logutil.BgLogger().Warn("TiCIShardCache BatchLoadShardsWithKeyRanges retry too many times, may be a bug",
+				zap.Int("retry", retry), zap.String("uncachedRanges", s))
+			err = errors.New("TiCIShardCache BatchLoadShardsWithKeyRanges retry too many times, may be a bug")
+			return nil, err
+		}
 	}
 	return merger.build(), nil
 }
@@ -298,6 +334,7 @@ func rangesAfterKey(keyRanges []kv.KeyRange, splitKey []byte) []kv.KeyRange {
 	return keyRanges
 }
 
+// BatchLoadShardsWithKeyRanges loads shards from the TiCI shard cache client based on the provided key ranges.
 func (s *TiCIShardCache) BatchLoadShardsWithKeyRanges(
 	ctx context.Context,
 	tableID int64,
@@ -310,10 +347,6 @@ func (s *TiCIShardCache) BatchLoadShardsWithKeyRanges(
 	}
 	shards, err = s.client.ScanRanges(ctx, tableID, indexID, keyRanges, limit)
 	if err != nil {
-		return
-	}
-	if len(shards) == 0 {
-		err = errors.New("no shards found")
 		return
 	}
 	s.mu.Lock()
@@ -422,7 +455,7 @@ func (m *batchLocateShardsMerger) appendShard(uncachedShard *ShardWithAddr) {
 		if len(endKey) == 0 {
 			m.cachedIdx = len(m.cachedShards)
 		} else {
-			m.lastEndKey = []byte(uncachedShard.EndKey)
+			m.lastEndKey = uncachedShard.EndKey
 		}
 	}()
 	if len(uncachedShard.StartKey) == 0 {
