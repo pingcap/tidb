@@ -1295,7 +1295,8 @@ func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRe
 	return nil
 }
 
-func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *columnsPrivRecord {
+// MatchColumns is exported only for test
+func (p *MySQLPrivilege) MatchColumns(user, host, db, table, column string) *columnsPrivRecord {
 	records, exists := p.ColumnsPrivMap[user]
 	if exists {
 		for i := 0; i < len(records); i++ {
@@ -1400,7 +1401,7 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 	}
 
 	for _, r := range roleList {
-		columnRecord := p.matchColumns(r.Username, r.Hostname, db, table, column)
+		columnRecord := p.MatchColumns(r.Username, r.Hostname, db, table, column)
 		if columnRecord != nil {
 			columnPriv |= columnRecord.ColumnPriv
 		}
