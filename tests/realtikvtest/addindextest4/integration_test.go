@@ -47,7 +47,7 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 	}
 	createIndexes := []string{
 		"alter table t add unique index b(b), add index c(c);",
-		"alter table t add unique index b(b) global, add index c(c) global;",
+		"alter table t add unique index b(b) global, add unique index c(c) global;",
 	}
 
 	for i := range createTables {
