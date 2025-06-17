@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -582,9 +583,13 @@ func constructIndexJoinStatic(
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
 	if prop.ExpectedCnt < p.StatsInfo().RowCount {
 		orderRatio := p.SCtx().GetSessionVars().OptOrderingIdxSelRatio
+		// Record the variable usage for explain explore.
+		p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
 		rowsToMeetFirst := 0.0
 		outerRowCount := p.Children()[outerIdx].StatsInfo().RowCount
 		if orderRatio > 0 && outerRowCount > p.StatsInfo().RowCount {
+			// Apply the orderRatio to recognize that a large outer table scan may
+			// read additional rows before the inner table reaches the limit values
 			rowsToMeetFirst = (outerRowCount - p.StatsInfo().RowCount) * orderRatio
 		}
 		expCntScale := prop.ExpectedCnt / p.StatsInfo().RowCount

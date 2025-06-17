@@ -102,6 +102,7 @@ func AdjustRowCountForIndexScanByLimit(sctx planctx.PlanContext,
 	// indexes that provide order, where filtering exists outside of that index or table.
 	// Such plans have high risk since we cannot estimate when rows will be found.
 	orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
+	// Record the variable usage for explain explore.
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
 	if path.CountAfterAccess > rowCount && orderRatio >= 0 {
 		rowsToMeetFirst := 0.0
