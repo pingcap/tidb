@@ -45,10 +45,10 @@ func TestUpdateTableCostCache(t *testing.T) {
 	readTableCostMetrics := &workloadlearning.TableReadCostMetrics{
 		DbName:        ast.CIStr{O: "test", L: "test"},
 		TableName:     ast.CIStr{O: "test", L: "test"},
-		TableScanTime: 10.0,
-		TableMemUsage: 10,
-		ReadFrequency: 10,
-		TableReadCost: 1.0,
+		TableScanTime: time.Duration(10),
+		TableMemUsage: int64(10),
+		ReadFrequency: int64(10),
+		TableReadCost: 10.0,
 	}
 	tableCostMetrics := map[int64]*workloadlearning.TableReadCostMetrics{
 		tableID: readTableCostMetrics,
@@ -64,10 +64,10 @@ func TestUpdateTableCostCache(t *testing.T) {
 	// Verify cached metrics
 	metrics := worker.GetTableReadCostMetrics(tableID)
 	require.NotNil(t, metrics)
-	require.Equal(t, 10.0, metrics.TableScanTime)
-	require.Equal(t, 10.0, metrics.TableMemUsage)
+	require.Equal(t, time.Duration(10), metrics.TableScanTime)
+	require.Equal(t, int64(10), metrics.TableMemUsage)
 	require.Equal(t, int64(10), metrics.ReadFrequency)
-	require.Equal(t, 1.0, metrics.TableReadCost)
+	require.Equal(t, 10.0, metrics.TableReadCost)
 }
 
 func TestGetTableReadCacheMetricsWithNoData(t *testing.T) {

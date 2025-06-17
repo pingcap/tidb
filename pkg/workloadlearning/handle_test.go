@@ -33,8 +33,8 @@ func TestSaveReadTableCostMetrics(t *testing.T) {
 	readTableCostMetrics := &workloadlearning.TableReadCostMetrics{
 		DbName:        ast.CIStr{O: "test", L: "test"},
 		TableName:     ast.CIStr{O: "test", L: "test"},
-		TableScanTime: 10.0,
-		TableMemUsage: 10.0,
+		TableScanTime: time.Duration(10),
+		TableMemUsage: 10,
 		ReadFrequency: 10,
 		TableReadCost: 1.0,
 	}
