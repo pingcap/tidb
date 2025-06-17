@@ -182,6 +182,7 @@ func NewAddIndexIngestPipeline(
 		// Currently, only the batch size of local ingest mode can be adjusted
 		rm = nil
 	}
+	failpoint.InjectCall("mockDMLExecutionBeforeScanV2")
 
 	failpoint.Inject("mockDMLExecutionBeforeScan", func(_ failpoint.Value) {
 		if MockDMLExecutionBeforeScan != nil {
@@ -419,6 +420,7 @@ func (src *TableScanTaskSource) generateTasks() error {
 			src.store,
 			startKey,
 			src.endKey,
+			nil,
 			backfillTaskChanSize,
 		)
 		if err != nil {
