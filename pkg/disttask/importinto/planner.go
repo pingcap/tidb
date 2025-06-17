@@ -55,6 +55,8 @@ type LogicalPlan struct {
 	Stmt              string
 	EligibleInstances []*infosync.ServerInfo
 	ChunkMap          map[int32][]importer.Chunk
+
+	summary importer.StepSummary
 }
 
 // GetTaskExtraParams implements the planner.LogicalPlan interface.
@@ -331,6 +333,10 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 			},
 			Plan: p.Plan,
 		}
+		for _, chunk := range chunks {
+			p.summary.RowCnt = max(p.summary.RowCnt, chunk.RowIDMax)
+			p.summary.Bytes += chunk.FileSize
+		}
 		importSpecs = append(importSpecs, importSpec)
 	}
 	return importSpecs, nil
@@ -366,6 +372,10 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 				zap.Int64("task-id", planCtx.TaskID),
 				zap.String("kv-group", kvGroup))
 			continue
+		}
+		p.summary.Bytes += int64(kvMeta.TotalKVSize)
+		if kvGroup == dataKVGroup {
+			p.summary.RowCnt += int64(kvMeta.TotalKVCnt)
 		}
 		dataFiles := kvMeta.GetDataFiles()
 		nodeCnt := max(1, planCtx.ExecuteNodesCnt)
@@ -421,6 +431,10 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
+		p.summary.Bytes += int64(kvMeta.TotalKVSize)
+		if kvGroup == dataKVGroup {
+			p.summary.RowCnt += int64(kvMeta.TotalKVCnt)
+		}
 		specsForOneSubtask, err3 := splitForOneSubtask(ctx, store, kvGroup, kvMeta, ver.Ver)
 		if err3 != nil {
 			return nil, err3
