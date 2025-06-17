@@ -1467,6 +1467,7 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	cfg.RewriteTS = currentTS
 
 	if err := client.SetCurrentTS(currentTS); err != nil {
 		return errors.Trace(err)
