@@ -48,17 +48,17 @@ alter table test_log_db_create.t_drop_unique_key drop index i1;
 -- create table test_log_db_create.t_fk_child_add (id int primary key, parent_id int);
 -- alter table test_log_db_create.t_fk_child_add add constraint fk_added foreign key (parent_id) references test_log_db_create.t_fk_parent(id);
 
--- ActionDropForeignKey
--- TODO: Known issue - DROP FOREIGN KEY conflicts with auto-created indexes during PITR restore
--- alter table test_snapshot_db_create.t_fk_child_drop drop foreign key fk_to_be_dropped;
--- create table test_log_db_create.t_fk_child_drop (id int primary key, parent_id int, constraint fk_to_be_dropped foreign key (parent_id) references test_log_db_create.t_fk_parent(id));
--- alter table test_log_db_create.t_fk_child_drop drop foreign key fk_to_be_dropped;
-
 -- ActionTruncateTable
 truncate table test_snapshot_db_create.t_to_be_truncated;
 create table test_log_db_create.t_to_be_truncated (id int);
 insert into test_log_db_create.t_to_be_truncated values (1);
 truncate table test_log_db_create.t_to_be_truncated;
+
+-- ActionTruncateTable with indexes
+truncate table test_snapshot_db_create.t_truncate_with_indexes;
+create table test_log_db_create.t_truncate_with_indexes (id int, name varchar(50), data varchar(100), index idx_name (name), unique index idx_id (id), index idx_data (data));
+insert into test_log_db_create.t_truncate_with_indexes values (1, 'test1', 'data1'), (2, 'test2', 'data2'), (3, 'test3', 'data3');
+truncate table test_log_db_create.t_truncate_with_indexes;
 
 -- ActionModifyColumn
 alter table test_snapshot_db_create.t_modify_column modify id BIGINT;
@@ -306,16 +306,41 @@ create table test_log_db_create.t_alter_no_cache (id int, data varchar(100));
 alter table test_log_db_create.t_alter_no_cache cache;
 alter table test_log_db_create.t_alter_no_cache nocache;
 
--- Foreign Key Cleanup Test
--- Drop the foreign keys and then drop both tables to test foreign key cleanup during PITR
+-- ActionDropForeignKey comprehensive test
 SET GLOBAL tidb_enable_foreign_key = ON;
 SET foreign_key_checks = OFF;
--- Drop foreign keys first
+
+-- Test 1: Drop FKs but preserve tables
+alter table test_snapshot_db_create.t_fk_parent_preserve drop foreign key fk_preserve_parent;
+alter table test_snapshot_db_create.t_fk_child_preserve drop foreign key fk_preserve_child;
+
+-- Test 2: Drop FKs and then drop tables 
 alter table test_snapshot_db_create.t_fk_parent_cleanup drop foreign key fk_cleanup_parent;
 alter table test_snapshot_db_create.t_fk_child_cleanup drop foreign key fk_cleanup_child;
--- Drop both tables
 drop table test_snapshot_db_create.t_fk_child_cleanup;
 drop table test_snapshot_db_create.t_fk_parent_cleanup;
+
+-- Create log database equivalent tables for both scenarios
+create table test_log_db_create.t_fk_parent_preserve (id int primary key, name varchar(50));
+create table test_log_db_create.t_fk_child_preserve (id int primary key, parent_id int, constraint fk_preserve_child foreign key (parent_id) references test_log_db_create.t_fk_parent_preserve(id));
+alter table test_log_db_create.t_fk_parent_preserve add column child_id int;
+alter table test_log_db_create.t_fk_parent_preserve add constraint fk_preserve_parent foreign key (child_id) references test_log_db_create.t_fk_child_preserve(id);
+insert into test_log_db_create.t_fk_parent_preserve (id, name) values (1, 'parent1');
+insert into test_log_db_create.t_fk_child_preserve (id, parent_id) values (1, 1);
+-- Drop only the foreign keys but preserve tables
+alter table test_log_db_create.t_fk_parent_preserve drop foreign key fk_preserve_parent;
+alter table test_log_db_create.t_fk_child_preserve drop foreign key fk_preserve_child;
+
+create table test_log_db_create.t_fk_parent_cleanup (id int primary key, name varchar(50));
+create table test_log_db_create.t_fk_child_cleanup (id int primary key, parent_id int, constraint fk_cleanup_child foreign key (parent_id) references test_log_db_create.t_fk_parent_cleanup(id));
+alter table test_log_db_create.t_fk_parent_cleanup add column child_id int;
+alter table test_log_db_create.t_fk_parent_cleanup add constraint fk_cleanup_parent foreign key (child_id) references test_log_db_create.t_fk_child_cleanup(id);
+-- Drop FKs and then drop tables
+alter table test_log_db_create.t_fk_parent_cleanup drop foreign key fk_cleanup_parent;
+alter table test_log_db_create.t_fk_child_cleanup drop foreign key fk_cleanup_child;
+drop table test_log_db_create.t_fk_child_cleanup;
+drop table test_log_db_create.t_fk_parent_cleanup;
+
 SET foreign_key_checks = ON;
 SET GLOBAL tidb_enable_foreign_key = OFF;
 
@@ -344,3 +369,12 @@ create database test_log_multi_drop_schema_with_truncate_table;
 create table test_log_multi_drop_schema_with_truncate_table.t_to_be_truncated (id int);
 truncate table test_log_multi_drop_schema_with_truncate_table.t_to_be_truncated;
 drop database test_log_multi_drop_schema_with_truncate_table;
+
+-- ActionDropSchema + ActionDropSequence
+drop sequence test_snapshot_multi_drop_schema_with_sequence.seq_to_be_dropped;
+drop database test_snapshot_multi_drop_schema_with_sequence;
+create database test_log_multi_drop_schema_with_sequence;
+create sequence test_log_multi_drop_schema_with_sequence.seq_to_be_dropped start with 1 increment by 1;
+create table test_log_multi_drop_schema_with_sequence.t_not_to_be_dropped (id int);
+drop sequence test_log_multi_drop_schema_with_sequence.seq_to_be_dropped;
+drop database test_log_multi_drop_schema_with_sequence;

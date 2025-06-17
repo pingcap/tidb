@@ -435,12 +435,27 @@ table_must_exist "test_log_db_create.t_to_be_truncated"
 row_must_not_exist "test_snapshot_db_create.t_to_be_truncated" "id = 1"
 row_must_not_exist "test_log_db_create.t_to_be_truncated" "id = 1"
 
+# ActionTruncateTable with indexes
+table_must_exist "test_snapshot_db_create.t_truncate_with_indexes"
+table_must_exist "test_log_db_create.t_truncate_with_indexes"
+# verify indexes still exist after truncation
+index_must_exist "test_snapshot_db_create.t_truncate_with_indexes" "idx_name"
+index_must_exist "test_snapshot_db_create.t_truncate_with_indexes" "idx_id"
+index_must_exist "test_snapshot_db_create.t_truncate_with_indexes" "idx_data"
+index_must_exist "test_log_db_create.t_truncate_with_indexes" "idx_name"
+index_must_exist "test_log_db_create.t_truncate_with_indexes" "idx_id"
+index_must_exist "test_log_db_create.t_truncate_with_indexes" "idx_data"
+# verify all data was removed by truncation
+row_must_not_exist "test_snapshot_db_create.t_truncate_with_indexes" "id = 1"
+row_must_not_exist "test_snapshot_db_create.t_truncate_with_indexes" "id = 2"
+row_must_not_exist "test_snapshot_db_create.t_truncate_with_indexes" "id = 3"
+row_must_not_exist "test_log_db_create.t_truncate_with_indexes" "id = 1"
+row_must_not_exist "test_log_db_create.t_truncate_with_indexes" "id = 2"
+row_must_not_exist "test_log_db_create.t_truncate_with_indexes" "id = 3"
+
 # ActionModifyColumn
 check_create_table_contains "test_snapshot_db_create.t_modify_column" "bigint"
 check_create_table_contains "test_log_db_create.t_modify_column" "bigint"
-
-
-# ActionRebaseAutoID
 
 # ActionRenameTable
 table_must_exist "test_snapshot_db_create.t_rename_b"
@@ -511,11 +526,6 @@ index_must_not_exist "test_log_db_create.t_drop_primary_key" "PRIMARY"
 # ActionAddForeignKey
 # foreign_key_must_exist "test_snapshot_db_create" "t_fk_child_add" "fk_added"
 # foreign_key_must_exist "test_log_db_create" "t_fk_child_add" "fk_added"
-
-# ActionDropForeignKey
-# TODO: Known issue - DROP FOREIGN KEY conflicts with auto-created indexes during PITR restore
-# foreign_key_must_not_exist "test_snapshot_db_create" "t_fk_child_drop" "fk_to_be_dropped"
-# foreign_key_must_not_exist "test_log_db_create" "t_fk_child_drop" "fk_to_be_dropped"
 
 # ActionCreateView
 view_must_exist "test_log_db_create.v_view_created"
@@ -656,14 +666,33 @@ check_table_cache_status "test_log_db_create.t_alter_cache" "ENABLE"
 check_table_cache_status "test_snapshot_db_create.t_alter_no_cache" "DISABLE"
 check_table_cache_status "test_log_db_create.t_alter_no_cache" "DISABLE"
 
-# Foreign Key Cleanup Test
-# Verify that both tables are properly dropped and no stale foreign key references remain
+# ActionDropForeignKey comprehensive test
+# Test 1: FK constraints dropped but tables preserved
+table_must_exist "test_snapshot_db_create.t_fk_parent_preserve"
+table_must_exist "test_snapshot_db_create.t_fk_child_preserve"
+table_must_exist "test_log_db_create.t_fk_parent_preserve"
+table_must_exist "test_log_db_create.t_fk_child_preserve"
+# verify foreign key constraints no longer exist
+foreign_key_must_not_exist "test_snapshot_db_create" "t_fk_parent_preserve" "fk_preserve_parent"
+foreign_key_must_not_exist "test_snapshot_db_create" "t_fk_child_preserve" "fk_preserve_child"
+foreign_key_must_not_exist "test_log_db_create" "t_fk_parent_preserve" "fk_preserve_parent"
+foreign_key_must_not_exist "test_log_db_create" "t_fk_child_preserve" "fk_preserve_child"
+# verify data is still present
+row_must_exist "test_snapshot_db_create.t_fk_parent_preserve" "id = 1 AND name = 'parent1'"
+row_must_exist "test_snapshot_db_create.t_fk_child_preserve" "id = 1 AND parent_id = 1"
+row_must_exist "test_log_db_create.t_fk_parent_preserve" "id = 1 AND name = 'parent1'"
+row_must_exist "test_log_db_create.t_fk_child_preserve" "id = 1 AND parent_id = 1"
+# test that we can insert data without foreign key constraints
+run_sql "SET GLOBAL tidb_enable_foreign_key = ON"
+run_sql "INSERT INTO test_snapshot_db_create.t_fk_child_preserve (id, parent_id) VALUES (2, 999)" # Should succeed since FK constraint is gone
+run_sql "INSERT INTO test_log_db_create.t_fk_child_preserve (id, parent_id) VALUES (2, 999)" # Should succeed since FK constraint is gone
+
+# Test 2: FK constraints dropped and tables also dropped
 table_must_not_exist "test_snapshot_db_create.t_fk_parent_cleanup"
 table_must_not_exist "test_snapshot_db_create.t_fk_child_cleanup"
-
-# Test that we can create new tables with the same names without foreign key conflicts
-# This would fail if stale foreign key references remained in the infoschema
-run_sql "SET GLOBAL tidb_enable_foreign_key = ON"
+table_must_not_exist "test_log_db_create.t_fk_parent_cleanup"
+table_must_not_exist "test_log_db_create.t_fk_child_cleanup"
+# test that we can create new tables with the same names without foreign key conflicts
 run_sql "CREATE TABLE test_snapshot_db_create.t_fk_parent_cleanup (id int primary key, name varchar(50))"
 run_sql "CREATE TABLE test_snapshot_db_create.t_fk_child_cleanup (id int primary key, parent_id int, constraint fk_test foreign key (parent_id) references test_snapshot_db_create.t_fk_parent_cleanup(id))"
 run_sql "DROP TABLE test_snapshot_db_create.t_fk_child_cleanup"
@@ -689,3 +718,11 @@ table_must_not_exist "test_snapshot_multi_drop_schema_with_truncate_table.t_to_b
 schema_must_not_exist "test_snapshot_multi_drop_schema_with_truncate_table"
 table_must_not_exist "test_log_multi_drop_schema_with_truncate_table.t_to_be_truncated"
 schema_must_not_exist "test_log_multi_drop_schema_with_truncate_table"
+
+# ActionDropSchema + ActionDropSequence
+sequence_must_not_exist "test_snapshot_multi_drop_schema_with_sequence" "seq_to_be_dropped"
+table_must_not_exist "test_snapshot_multi_drop_schema_with_sequence.t_not_to_be_dropped"
+schema_must_not_exist "test_snapshot_multi_drop_schema_with_sequence"
+sequence_must_not_exist "test_log_multi_drop_schema_with_sequence" "seq_to_be_dropped"
+table_must_not_exist "test_log_multi_drop_schema_with_sequence.t_not_to_be_dropped"
+schema_must_not_exist "test_log_multi_drop_schema_with_sequence"

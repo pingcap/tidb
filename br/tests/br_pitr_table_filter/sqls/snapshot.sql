@@ -27,13 +27,13 @@ create table test_snapshot_db_create.t_drop_unique_key (id int, unique key i1(id
 -- create table test_snapshot_db_create.t_fk_parent (id int primary key, name varchar(50));
 -- create table test_snapshot_db_create.t_fk_child_add (id int primary key, parent_id int);
 
--- ActionDropForeignKey
--- TODO: Known issue - DROP FOREIGN KEY conflicts with auto-created indexes during PITR restore
--- create table test_snapshot_db_create.t_fk_child_drop (id int primary key, parent_id int, constraint fk_to_be_dropped foreign key (parent_id) references test_snapshot_db_create.t_fk_parent(id));
-
 -- ActionTruncateTable
 create table test_snapshot_db_create.t_to_be_truncated (id int);
 insert into test_snapshot_db_create.t_to_be_truncated values (1);
+
+-- ActionTruncateTable with indexes
+create table test_snapshot_db_create.t_truncate_with_indexes (id int, name varchar(50), data varchar(100), index idx_name (name), unique index idx_id (id), index idx_data (data));
+insert into test_snapshot_db_create.t_truncate_with_indexes values (1, 'test1', 'data1'), (2, 'test2', 'data2'), (3, 'test3', 'data3');
 
 -- ActionModifyColumn
 create table test_snapshot_db_create.t_modify_column (id int);
@@ -202,13 +202,20 @@ create table test_snapshot_db_create.t_alter_cache (id int, data varchar(100));
 -- ActionAlterNoCacheTable
 create table test_snapshot_db_create.t_alter_no_cache (id int, data varchar(100));
 
--- Foreign Key Cleanup Test
--- Create two tables with foreign keys to each other at snapshot time
--- These will be dropped during log backup to test foreign key cleanup
+-- ActionDropForeignKey comprehensive test
+-- Create tables with circular foreign keys to test different FK cleanup scenarios
 SET GLOBAL tidb_enable_foreign_key = ON;
+-- Tables that will have FKs dropped but tables preserved
+create table test_snapshot_db_create.t_fk_parent_preserve (id int primary key, name varchar(50));
+create table test_snapshot_db_create.t_fk_child_preserve (id int primary key, parent_id int, constraint fk_preserve_child foreign key (parent_id) references test_snapshot_db_create.t_fk_parent_preserve(id));
+alter table test_snapshot_db_create.t_fk_parent_preserve add column child_id int;
+alter table test_snapshot_db_create.t_fk_parent_preserve add constraint fk_preserve_parent foreign key (child_id) references test_snapshot_db_create.t_fk_child_preserve(id);
+insert into test_snapshot_db_create.t_fk_parent_preserve (id, name) values (1, 'parent1');
+insert into test_snapshot_db_create.t_fk_child_preserve (id, parent_id) values (1, 1);
+
+-- Tables that will have FKs dropped and then tables dropped
 create table test_snapshot_db_create.t_fk_parent_cleanup (id int primary key, name varchar(50));
 create table test_snapshot_db_create.t_fk_child_cleanup (id int primary key, parent_id int, constraint fk_cleanup_child foreign key (parent_id) references test_snapshot_db_create.t_fk_parent_cleanup(id));
--- Add a reverse foreign key to create circular dependency
 alter table test_snapshot_db_create.t_fk_parent_cleanup add column child_id int;
 alter table test_snapshot_db_create.t_fk_parent_cleanup add constraint fk_cleanup_parent foreign key (child_id) references test_snapshot_db_create.t_fk_child_cleanup(id);
 SET GLOBAL tidb_enable_foreign_key = OFF;
@@ -224,3 +231,8 @@ create table test_snapshot_multi_drop_schema.t_not_to_be_dropped (id int);
 -- ActionTruncateTable + ActionDropSchema
 create database test_snapshot_multi_drop_schema_with_truncate_table;
 create table test_snapshot_multi_drop_schema_with_truncate_table.t_to_be_truncated (id int);
+
+-- ActionDropSchema + ActionDropSequence
+create database test_snapshot_multi_drop_schema_with_sequence;
+create sequence test_snapshot_multi_drop_schema_with_sequence.seq_to_be_dropped start with 1 increment by 1;
+create table test_snapshot_multi_drop_schema_with_sequence.t_not_to_be_dropped (id int);
