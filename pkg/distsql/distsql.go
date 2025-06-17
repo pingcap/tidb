@@ -114,6 +114,7 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 		storeType:          kvReq.StoreType,
 		paging:             kvReq.Paging.Enable,
 		distSQLConcurrency: kvReq.Concurrency,
+		fullRespRead:       kvReq.KeepOrder && len(partialFts) > 0,
 	}, nil
 }
 

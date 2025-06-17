@@ -4179,6 +4179,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		index:                      is.Index,
 		keepOrder:                  is.KeepOrder,
 		byItems:                    is.ByItems,
+		byItems2:                   is.ByItems2,
 		desc:                       is.Desc,
 		tableRequest:               tableReq,
 		columns:                    ts.Columns,
@@ -4228,7 +4229,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 
 	dagPB := ret.dagPB
 	user := b.ctx.GetSessionVars().User
-	if (b.ctx.GetSessionVars().SessionAlias == "test" || (user != nil && user.Username == "test")) && is.Table.GetPartitionInfo() == nil && !is.KeepOrder {
+	if (b.ctx.GetSessionVars().SessionAlias == "test" || (user != nil && user.Username == "test")) && is.Table.GetPartitionInfo() == nil {
 		var handleLen, extraColCnt int
 		if v.IndexPlans[0].(*plannercore.PhysicalIndexScan).NeedExtraOutputCol() {
 			extraColCnt = 1

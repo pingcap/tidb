@@ -84,6 +84,10 @@ type lookupTableTask struct {
 	idxRows *chunk.Chunk
 	cursor  int
 
+	pushDownTableRows tableRows
+	leftSkip          int
+	leftLimit         int
+
 	// after the cop task is built, buildDone will be set to the current instant, for Next wait duration statistic.
 	buildDoneTime time.Time
 	doneCh        chan error
@@ -441,6 +445,7 @@ type IndexLookUpExecutor struct {
 	exec.BaseExecutorV2
 	indexUsageReporter *exec.IndexUsageReporter
 	lookupPushDown     bool
+	cmpRowByIdxFn      func(chunk.Row, chunk.Row) bool
 
 	table   table.Table
 	index   *model.IndexInfo
@@ -487,6 +492,7 @@ type IndexLookUpExecutor struct {
 	workerStarted bool
 
 	byItems   []*plannerutil.ByItems
+	byItems2  []*plannerutil.ByItems
 	keepOrder bool
 	desc      bool
 
@@ -728,7 +734,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 	}
 	// When len(kvrange) = 1, no sorting is required,
 	// so remove byItems and non-necessary output columns
-	if len(kvRanges) == 1 {
+	if len(kvRanges) == 1 && !e.lookupPushDown {
 		e.dagPB.OutputOffsets = e.dagPB.OutputOffsets[len(e.byItems):]
 		e.byItems = nil
 	}
@@ -1073,19 +1079,19 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 			break
 		}
 		startTime := time.Now()
-		handles, retChunk, rows, err := w.extractTaskHandles(ctx, chk, result)
+		extractResult, err := w.extractTaskHandles(ctx, chk, result)
 		finishFetch := time.Now()
 		if err != nil {
 			w.syncErr(err)
 			return err
 		}
-		localRowCnt := len(rows)
-		if len(handles) == 0 && localRowCnt == 0 {
+		localRowCnt := len(extractResult.tableRows)
+		if len(extractResult.idxHandles) == 0 && localRowCnt == 0 {
 			i++
 			continue
 		}
 
-		task := w.buildTableTask(handles, retChunk, rows)
+		task := w.buildTableTask(extractResult)
 		task.id = taskID
 		taskID++
 		finishBuild := time.Now()
@@ -1098,7 +1104,9 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 		case <-w.finished:
 			return nil
 		default:
-			if len(handles) == 0 {
+			if len(task.handles) == 0 {
+				task.rows = task.pushDownTableRows
+				task.pushDownTableRows = tableRows{}
 				task.doneCh <- nil
 			} else {
 				e := w.idxLookup
@@ -1126,12 +1134,166 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 	return nil
 }
 
-func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (
-	handles []kv.Handle, retChk *chunk.Chunk, rows []chunk.Row, err error) {
+type tableRows []chunk.Row
+
+func (rs tableRows) AppendFrom(w *indexWorker, chk *chunk.Chunk, start, end int) (newRows []chunk.Row, err error) {
+	var chkSize int
+	if chk != nil {
+		chkSize = chk.NumRows()
+	}
+
+	baseRowsLen := len(rs)
+	if start < 0 || start > chkSize || end < 0 || end > chkSize || start > end {
+		return nil, errors.Errorf("invalid range, %d, %d", start, end)
+	}
+
+	newRows = rs
+	if start == end {
+		return
+	}
+
+	iter := chunk.NewIterator4Chunk(chk)
+	if w.keepOrder {
+		newRows = slices.Grow(newRows, baseRowsLen+chkSize)
+	} else {
+		newRows = slices.Grow(newRows, baseRowsLen+end-start)
+	}
+
+	for i, row := 0, iter.Begin(); row != iter.End(); i, row = i+1, iter.Next() {
+		if !w.keepOrder {
+			if i < start {
+				continue
+			}
+
+			if i >= end {
+				break
+			}
+		}
+		newRows = append(newRows, row)
+	}
+
+	if w.keepOrder {
+		if w.idxLookup.cmpRowByIdxFn == nil {
+			byItems := w.idxLookup.byItems2
+			compareFuncs := make([]chunk.CompareFunc, len(byItems))
+			for i, item := range byItems {
+				keyType := item.Expr.GetType(w.idxLookup.ectx.GetEvalCtx())
+				compareFuncs[i] = chunk.GetCompareFunc(keyType)
+			}
+
+			keyColumns := make([]int, 0, len(byItems)+1)
+			for _, item := range byItems {
+				col := item.Expr.(*expression.Column)
+				keyColumns = append(keyColumns, w.idxLookup.Schema().ColumnIndex(col))
+			}
+
+			w.idxLookup.cmpRowByIdxFn = func(row1 chunk.Row, row2 chunk.Row) bool {
+				for i, colIdx := range keyColumns {
+					cmpFunc := compareFuncs[i]
+					cmp := cmpFunc(row1, colIdx, row2, colIdx)
+					if byItems[i].Desc {
+						cmp = -cmp
+					}
+					if cmp < 0 {
+						return true
+					} else if cmp > 0 {
+						return false
+					}
+				}
+				return false
+			}
+		}
+
+		sort.Slice(newRows[baseRowsLen:baseRowsLen+chkSize], func(i, j int) bool {
+			return w.idxLookup.cmpRowByIdxFn(newRows[i], newRows[j])
+		})
+		if start > 0 {
+			newRows = append(newRows[:baseRowsLen], newRows[baseRowsLen+start:baseRowsLen+end]...)
+		} else if end < chkSize {
+			newRows = newRows[:baseRowsLen+end]
+		}
+	}
+
+	return newRows, nil
+}
+
+func (w *indexWorker) readChunks(idxChk *chunk.Chunk, tblChk *chunk.Chunk, idxHandles []kv.Handle, handleOffsetsInIdx []int, tblRows tableRows) (_ []kv.Handle, _ tableRows, leftSkip int, leftLimit int, _ error) {
+	var idxChkSize, tblChkSize int
+	if idxChk != nil {
+		idxChkSize = idxChk.NumRows()
+	}
+
+	if tblChk != nil {
+		tblChkSize = tblChk.NumRows()
+	}
+
+	if idxChkSize == 0 && tblChkSize == 0 {
+		return idxHandles, tblRows, 0, 0, nil
+	}
+
+	getReadRange := func(chkSize int) (int, int) {
+		// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
+		if chkSize == 0 || w.PushedLimit == nil || w.checkIndexValue != nil {
+			return 0, chkSize
+		}
+
+		var start, end int
+		if w.PushedLimit.Offset > w.scannedKeys {
+			start = int(w.PushedLimit.Offset - w.scannedKeys)
+			end = start + int(w.PushedLimit.Count)
+		} else if w.scannedKeys < w.PushedLimit.Offset+w.PushedLimit.Count {
+			end = int(w.PushedLimit.Offset + w.PushedLimit.Count - w.scannedKeys)
+		}
+
+		return min(start, chkSize), min(end, chkSize)
+	}
+
+	var tblReadStart, tblReadEnd, idxReadStart, idxReadEnd int
+	if !w.keepOrder || idxChkSize == 0 || tblChkSize == 0 {
+		tblReadStart, tblReadEnd = getReadRange(tblChkSize)
+		idxReadStart, idxReadEnd = getReadRange(idxChkSize)
+	} else {
+		tblReadStart, tblReadEnd = 0, tblChkSize
+		idxReadStart, idxReadEnd = 0, idxChkSize
+		leftSkip, leftLimit = getReadRange(tblChkSize + idxChkSize)
+		leftLimit -= leftSkip
+	}
+
+	if tblReadStart < tblReadEnd {
+		var err error
+		if tblRows, err = tblRows.AppendFrom(w, tblChk, tblReadStart, tblReadEnd); err != nil {
+			return idxHandles, tblRows, 0, 0, err
+		}
+	}
+	w.scannedKeys += uint64(tblReadEnd)
+
+	if idxReadStart < idxReadEnd {
+		for i := idxReadStart; i < idxReadEnd; i++ {
+			h, err := w.idxLookup.getHandle(idxChk.GetRow(i), handleOffsetsInIdx, w.idxLookup.isCommonHandle(), getHandleFromIndex)
+			if err != nil {
+				return idxHandles, tblRows, 0, 0, err
+			}
+			idxHandles = append(idxHandles, h)
+		}
+	}
+	w.scannedKeys += uint64(idxReadEnd)
+
+	return idxHandles, tblRows, leftSkip, leftLimit, nil
+}
+
+type extractTaskHandlesResult struct {
+	idxHandles  []kv.Handle
+	checkIdxChk *chunk.Chunk
+	tableRows   tableRows
+	leftSkip    int
+	leftLimit   int
+}
+
+func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (result extractTaskHandlesResult, err error) {
 	numColsWithoutPid := chk.NumCols()
 	ok, err := w.idxLookup.needPartitionHandle(getHandleFromIndex)
 	if err != nil {
-		return nil, nil, rows, err
+		return result, err
 	}
 	if ok {
 		numColsWithoutPid = numColsWithoutPid - 1
@@ -1145,12 +1307,11 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	}
 	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
 	checkLimit := (w.PushedLimit != nil) && (w.checkIndexValue == nil)
-	tblRowCnt := 0
-	for tblRowCnt+len(handles) < w.batchSize {
-		requiredRows := w.batchSize - len(handles) - tblRowCnt
+	for len(result.idxHandles)+len(result.tableRows) < w.batchSize {
+		requiredRows := w.batchSize - len(result.idxHandles) - len(result.tableRows)
 		if checkLimit {
 			if w.PushedLimit.Offset+w.PushedLimit.Count <= w.scannedKeys {
-				return handles, nil, rows, nil
+				return result, nil
 			}
 			leftCnt := w.PushedLimit.Offset + w.PushedLimit.Count - w.scannedKeys
 			if uint64(requiredRows) > leftCnt {
@@ -1158,86 +1319,54 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			}
 		}
 		chk.SetRequiredRows(requiredRows, w.maxChunkSize)
+
 		startTime := time.Now()
 		var tblChk *chunk.Chunk
-		var tblReadLen int
 		if w.idxLookup.lookupPushDown {
 			tblChk = chunk.NewChunkWithCapacity(w.idxLookup.RetFieldTypes(), w.batchSize)
 			tblChk.SetRequiredRows(requiredRows, w.maxChunkSize)
 			err = errors.Trace(idxResult.Next(ctx, tblChk, chk))
-			tblReadLen = tblChk.NumRows()
 		} else {
 			err = errors.Trace(idxResult.Next(ctx, chk))
 		}
 		if err != nil {
-			return handles, nil, rows, err
+			return result, err
 		}
+
+		if chk.NumRows() == 0 && (tblChk == nil || tblChk.NumRows() == 0) {
+			return result, nil
+		}
+
 		if w.idxLookup.stats != nil {
 			w.idxLookup.stats.indexScanBasicStats.Record(time.Since(startTime), chk.NumRows())
 		}
 
-		if chk.NumRows() == 0 && tblReadLen == 0 {
-			return handles, retChk, rows, nil
-		}
-		if handles == nil && chk.NumRows() > 0 {
-			handles = make([]kv.Handle, 0, chk.NumRows())
+		result.idxHandles, result.tableRows, result.leftSkip, result.leftLimit, err = w.readChunks(chk, tblChk, result.idxHandles, handleOffset, result.tableRows)
+		if err != nil {
+			return result, err
 		}
 
-		var rowIter *chunk.Iterator4Chunk
-		var row chunk.Row
-		if tblReadLen > 0 {
-			rowIter = chunk.NewIterator4Chunk(tblChk)
-			row = rowIter.Begin()
-		}
-		for i := range chk.NumRows() + tblReadLen {
-			w.scannedKeys++
-			if checkLimit {
-				if w.scannedKeys <= w.PushedLimit.Offset {
-					continue
-				}
-				if w.scannedKeys > (w.PushedLimit.Offset + w.PushedLimit.Count) {
-					// Skip the handles after Offset+Count.
-					return handles, nil, rows, nil
-				}
-			}
-
-			if rowIter != nil && row != rowIter.End() {
-				if rows == nil {
-					rows = make([]chunk.Row, 0, w.batchSize)
-				}
-				rows = append(rows, row)
-				row = rowIter.Next()
-				tblRowCnt++
-				continue
-			}
-
-			h, err := w.idxLookup.getHandle(chk.GetRow(i-tblReadLen), handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
-			if err != nil {
-				return handles, retChk, rows, err
-			}
-			handles = append(handles, h)
-		}
 		if w.checkIndexValue != nil {
-			if retChk == nil {
-				retChk = chunk.NewChunkWithCapacity(w.idxColTps, w.batchSize)
+			if result.checkIdxChk == nil {
+				result.checkIdxChk = chunk.NewChunkWithCapacity(w.idxColTps, w.batchSize)
 			}
-			retChk.Append(chk, 0, chk.NumRows())
+			result.checkIdxChk.Append(chk, 0, chk.NumRows())
 		}
 	}
 	w.batchSize *= 2
 	if w.batchSize > w.maxBatchSize {
 		w.batchSize = w.maxBatchSize
 	}
-	return handles, retChk, rows, nil
+	return result, nil
 }
 
-func (w *indexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk, rows []chunk.Row) *lookupTableTask {
+func (w *indexWorker) buildTableTask(extractResult extractTaskHandlesResult) *lookupTableTask {
 	var indexOrder *kv.HandleMap
 	var duplicatedIndexOrder *kv.HandleMap
 	if w.keepOrder {
 		// Save the index order.
 		indexOrder = kv.NewHandleMap()
-		for i, h := range handles {
+		for i, h := range extractResult.idxHandles {
 			indexOrder.Set(h, i)
 		}
 	}
@@ -1246,7 +1375,7 @@ func (w *indexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk, r
 		// Save the index order.
 		indexOrder = kv.NewHandleMap()
 		duplicatedIndexOrder = kv.NewHandleMap()
-		for i, h := range handles {
+		for i, h := range extractResult.idxHandles {
 			if _, ok := indexOrder.Get(h); ok {
 				duplicatedIndexOrder.Set(h, i)
 			} else {
@@ -1256,11 +1385,13 @@ func (w *indexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk, r
 	}
 
 	task := &lookupTableTask{
-		handles:              handles,
+		handles:              extractResult.idxHandles,
 		indexOrder:           indexOrder,
 		duplicatedIndexOrder: duplicatedIndexOrder,
-		idxRows:              retChk,
-		rows:                 rows,
+		idxRows:              extractResult.checkIdxChk,
+		pushDownTableRows:    extractResult.tableRows,
+		leftSkip:             extractResult.leftSkip,
+		leftLimit:            extractResult.leftLimit,
 	}
 
 	task.doneCh = make(chan error, 1)
@@ -1658,6 +1789,35 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 			task.memTracker.Consume(memUsage)
 		}
 		sort.Sort(task)
+
+		if len(task.pushDownTableRows) > 0 {
+			newRows := make([]chunk.Row, 0, len(task.rows)+len(task.pushDownTableRows))
+			var cur1, cur2 int
+			for cur1 < len(task.rows) && cur2 < len(task.pushDownTableRows) {
+				r1 := task.rows[cur1]
+				r2 := task.pushDownTableRows[cur2]
+				if w.idxLookup.cmpRowByIdxFn(r1, r2) {
+					newRows = append(newRows, r1)
+					cur1++
+				} else {
+					newRows = append(newRows, r2)
+					cur2++
+				}
+			}
+
+			if cur1 < len(task.rows) {
+				newRows = append(newRows, task.rows[cur1:]...)
+			} else if cur2 < len(task.pushDownTableRows) {
+				newRows = append(newRows, task.pushDownTableRows[cur2:]...)
+			}
+
+			if task.leftSkip > 0 || task.leftLimit > 0 {
+				newRows = newRows[task.leftSkip : len(newRows)-task.leftLimit]
+			}
+
+			task.rows = newRows
+			task.pushDownTableRows = tableRows{}
+		}
 	}
 
 	if handleCnt != len(task.rows) && !util.HasCancelled(ctx) &&

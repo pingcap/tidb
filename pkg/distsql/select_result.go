@@ -334,6 +334,7 @@ type selectResult struct {
 	// distSQLConcurrency and paging are only for collecting information, and they don't affect the process of execution.
 	distSQLConcurrency int
 	paging             bool
+	fullRespRead       bool
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
@@ -482,7 +483,7 @@ func anyChunksFull(chk *chunk.Chunk, partialChunks []*chunk.Chunk) bool {
 }
 
 func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk, partialChunks []*chunk.Chunk) error {
-	for !anyChunksFull(chk, partialChunks) {
+	for !anyChunksFull(chk, partialChunks) || (r.fullRespRead && len(r.readOrders) > 0) {
 		if len(r.readOrders) == 0 {
 			err := r.fetchResp(ctx)
 			if err != nil || r.selectResp == nil {
@@ -519,7 +520,7 @@ func (r *selectResult) ensureRespChunkDecoder(outputIdx int) *chunk.Decoder {
 }
 
 func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk, partialChunks []*chunk.Chunk) error {
-	for !anyChunksFull(chk, partialChunks) {
+	for !anyChunksFull(chk, partialChunks) || (r.fullRespRead && len(r.readOrders) > 0) {
 		if len(r.readOrders) == 0 {
 			err := r.fetchResp(ctx)
 			if err != nil || r.selectResp == nil {
@@ -544,7 +545,7 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk, part
 		}
 		// If the next chunk size is greater than required rows * 0.8, reuse the memory of the next chunk and return
 		// immediately. Otherwise, splice the data to one chunk and wait the next chunk.
-		if remain := respChunkDecoder.RemainedRows(); maxDecode >= remain && remain > int(float64(writeChk.RequiredRows())*0.8) {
+		if remain := respChunkDecoder.RemainedRows(); !r.fullRespRead && maxDecode >= remain && remain > int(float64(writeChk.RequiredRows())*0.8) {
 			if writeChk.NumRows() > 0 {
 				return nil
 			}
@@ -554,6 +555,9 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk, part
 		}
 
 		before := respChunkDecoder.RemainedRows()
+		if writeChk.IsFull() && r.fullRespRead {
+			writeChk.SetRequiredRows(writeChk.NumRows()+before, math.MaxInt)
+		}
 		respChunkDecoder.Decode(writeChk, maxDecode)
 		current.consume(before - respChunkDecoder.RemainedRows())
 		if respChunkDecoder.IsFinished() || current.exhausted() {
@@ -675,7 +679,7 @@ func (r *selectResult) readRowsData(chk *chunk.Chunk, partialChunks []*chunk.Chu
 
 	rowsData := current.chk.RowsData
 	decoder := codec.NewDecoder(writeChk, r.ctx.Location)
-	for !writeChk.IsFull() && len(rowsData) > 0 && !current.exhausted() {
+	for (!writeChk.IsFull() || r.fullRespRead) && len(rowsData) > 0 && !current.exhausted() {
 		for i := range r.rowLen {
 			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[current.outputIdx][i])
 			if err != nil {
