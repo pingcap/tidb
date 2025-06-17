@@ -33,15 +33,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// emptyClusterIndexUsage is empty ClusterIndexUsage, deprecated.
-var emptyClusterIndexUsage = ClusterIndexUsage{}
-
 type featureUsage struct {
 	// transaction usage information
-	Txn *TxnUsage `json:"txn"`
-	// cluster index usage information
-	// key is the first 6 characters of sha2(TABLE_NAME, 256)
-	ClusterIndex              *ClusterIndexUsage               `json:"clusterIndex"`
+	Txn                       *TxnUsage                        `json:"txn"`
 	NewClusterIndex           *NewClusterIndexUsage            `json:"newClusterIndex"`
 	TemporaryTable            bool                             `json:"temporaryTable"`
 	CTE                       *m.CTEUsageCounter               `json:"cte"`
@@ -82,7 +76,7 @@ type resourceControlUsage struct {
 func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsage, error) {
 	var usage featureUsage
 	var err error
-	usage.NewClusterIndex, usage.ClusterIndex, err = getClusterIndexUsageInfo(ctx, sctx)
+	usage.NewClusterIndex, err = getClusterIndexUsageInfo(ctx, sctx)
 	if err != nil {
 		logutil.BgLogger().Info("Failed to get feature usage", zap.Error(err))
 		return nil, err
@@ -181,9 +175,6 @@ func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsa
 // while avoiding circle dependency with domain package.
 var GetDomainInfoSchema func(sessionctx.Context) infoschema.InfoSchema
 
-// ClusterIndexUsage records the usage info of all the tables, no more than 10k tables, deprecated.
-type ClusterIndexUsage map[string]TableClusteredInfo
-
 // TableClusteredInfo records the usage info of clusterindex of each table
 // CLUSTERED, NON_CLUSTERED, NA
 type TableClusteredInfo struct {
@@ -202,7 +193,7 @@ type NewClusterIndexUsage struct {
 }
 
 // getClusterIndexUsageInfo gets the ClusterIndex usage information. It's exported for future test.
-func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu *NewClusterIndexUsage, cu *ClusterIndexUsage, err error) {
+func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu *NewClusterIndexUsage, err error) {
 	var newUsage NewClusterIndexUsage
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 
@@ -212,7 +203,7 @@ func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu
 		FROM information_schema.tables
 		WHERE table_schema not in ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA', 'mysql')`)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	defer func() {
@@ -230,7 +221,7 @@ func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu
 
 	err = sctx.RefreshTxnCtx(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// check ClusterIndex information for each table
@@ -244,7 +235,7 @@ func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu
 		}
 	}
 	newUsage.NumTotalTables = uint64(len(rows))
-	return &newUsage, &emptyClusterIndexUsage, nil
+	return &newUsage, nil
 }
 
 // TxnUsage records the usage info of transaction related features, including
