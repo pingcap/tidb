@@ -507,6 +507,8 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		return errors.Trace(err)
 	}
 
+	e.summary.Reset()
+
 	// read write and ingest step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {
 		if err := sm.ReadJSONFromExternalStorage(ctx, e.tableImporter.GlobalSortStore, sm); err != nil {
