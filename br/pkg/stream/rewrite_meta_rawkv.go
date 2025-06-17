@@ -175,6 +175,16 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
 }
 
 func (sr *SchemasReplace) rewriteEntryForDB(e *kv.Entry, cf string) (*kv.Entry, error) {
+	rawMetaKey, err := ParseTxnMetaKeyFrom(e.Key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	dbID, err := meta.ParseDBKey(rawMetaKey.Field)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	r, err := sr.rewriteValue(
 		e.Value,
 		cf,
@@ -193,6 +203,19 @@ func (sr *SchemasReplace) rewriteEntryForDB(e *kv.Entry, cf string) (*kv.Entry, 
 	}
 	if newKey == nil {
 		return nil, nil
+	}
+
+	// track deleted databases in the same structure as deleted tables
+	if r.Deleted {
+		dbReplace, exist := sr.DbReplaceMap[dbID]
+		if !exist {
+			log.Error("not able to find new db id for deleted database", zap.Int64("oldDBID", dbID))
+		} else {
+			// add deleted database with empty table set
+			if _, ok := sr.deletedTables[dbReplace.DbID]; !ok {
+				sr.deletedTables[dbReplace.DbID] = make(map[int64]struct{})
+			}
+		}
 	}
 
 	return &kv.Entry{Key: newKey, Value: newValue}, nil
