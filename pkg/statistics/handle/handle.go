@@ -168,10 +168,22 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 	}
 	tbl, ok := h.Get(pid)
 	if !ok {
+<<<<<<< HEAD
 		tbl = statistics.PseudoTable(tblInfo, false)
 		tbl.PhysicalID = pid
 		if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
 			h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+=======
+		if returnPseudo {
+			tbl = statistics.PseudoTable(tblInfo, false, true)
+			tbl.PhysicalID = pid
+			if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
+				h.UpdateStatsCache(types.CacheUpdate{
+					Updated: []*statistics.Table{tbl},
+				})
+			}
+			return tbl
+>>>>>>> f585f5d1d48 (statistics: avoid stats meta full load after table analysis (#57756))
 		}
 		return tbl
 	}
