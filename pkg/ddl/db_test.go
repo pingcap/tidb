@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -731,28 +732,28 @@ func TestSchemaValidator(t *testing.T) {
 
 	ts := ver.Ver
 	_, res := dom.SchemaValidator.Check(ts, schemaVer, nil, true)
-	require.Equal(t, domain.ResultSucc, res)
+	require.Equal(t, validatorapi.ResultSucc, res)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed", `return(true)`))
 
 	err = dom.Reload()
 	require.Error(t, err)
 	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil, true)
-	require.Equal(t, domain.ResultSucc, res)
+	require.Equal(t, validatorapi.ResultSucc, res)
 	time.Sleep(dbTestLease)
 
 	ver, err = store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
 	ts = ver.Ver
 	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil, true)
-	require.Equal(t, domain.ResultUnknown, res)
+	require.Equal(t, validatorapi.ResultUnknown, res)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed"))
 	err = dom.Reload()
 	require.NoError(t, err)
 
 	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil, true)
-	require.Equal(t, domain.ResultSucc, res)
+	require.Equal(t, validatorapi.ResultSucc, res)
 
 	// For schema check, it tests for getting the result of "ResultUnknown".
 	is := dom.InfoSchema()

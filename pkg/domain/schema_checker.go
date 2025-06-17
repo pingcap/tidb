@@ -17,6 +17,7 @@ package domain
 import (
 	"time"
 
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
@@ -25,7 +26,7 @@ import (
 
 // SchemaChecker is used for checking schema-validity.
 type SchemaChecker struct {
-	SchemaValidator
+	validatorapi.Validator
 	schemaVer       int64
 	relatedTableIDs []int64
 	needCheckSchema bool
@@ -47,7 +48,7 @@ var (
 // NewSchemaChecker creates a new schema checker.
 func NewSchemaChecker(do *Domain, schemaVer int64, relatedTableIDs []int64, needCheckSchema bool) *SchemaChecker {
 	return &SchemaChecker{
-		SchemaValidator: do.SchemaValidator,
+		Validator:       do.isSyncer.SchemaValidator,
 		schemaVer:       schemaVer,
 		relatedTableIDs: relatedTableIDs,
 		needCheckSchema: needCheckSchema,
@@ -64,14 +65,14 @@ func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.Schem
 	schemaOutOfDateRetryInterval := SchemaOutOfDateRetryInterval.Load()
 	schemaOutOfDateRetryTimes := int(SchemaOutOfDateRetryTimes.Load())
 	for range schemaOutOfDateRetryTimes {
-		relatedChange, checkResult := s.SchemaValidator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), s.relatedTableIDs, s.needCheckSchema)
+		relatedChange, checkResult := s.Validator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), s.relatedTableIDs, s.needCheckSchema)
 		switch checkResult {
-		case ResultSucc:
+		case validatorapi.ResultSucc:
 			return nil, nil
-		case ResultFail:
+		case validatorapi.ResultFail:
 			metrics.SchemaLeaseErrorCounter.WithLabelValues("changed").Inc()
 			return relatedChange, ErrInfoSchemaChanged
-		case ResultUnknown:
+		case validatorapi.ResultUnknown:
 			time.Sleep(schemaOutOfDateRetryInterval)
 		}
 	}

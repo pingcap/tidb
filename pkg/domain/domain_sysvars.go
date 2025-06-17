@@ -19,8 +19,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/tikv/client-go/v2/tikv"
@@ -47,7 +45,7 @@ func (do *Domain) initDomainSysVars() {
 	variable.SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
 	variable.SetLowResolutionTSOUpdateInterval = do.setLowResolutionTSOUpdateInterval
 
-	variable.ChangeSchemaCacheSize = do.changeSchemaCacheSize
+	variable.ChangeSchemaCacheSize = do.isSyncer.ChangeSchemaCacheSize
 
 	variable.ChangePDMetadataCircuitBreakerErrorRateThresholdPct = changePDMetadataCircuitBreakerErrorRateThresholdPct
 }
@@ -149,23 +147,6 @@ func (do *Domain) setExternalTimestamp(ctx context.Context, ts uint64) error {
 
 func (do *Domain) getExternalTimestamp(ctx context.Context) (uint64, error) {
 	return do.store.GetOracle().GetExternalTimestamp(ctx)
-}
-
-func (do *Domain) changeSchemaCacheSize(ctx context.Context, size uint64) error {
-	err := kv.RunInNewTxn(kv.WithInternalSourceType(ctx, kv.InternalTxnDDL), do.store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-		return t.SetSchemaCacheSize(size)
-	})
-	if err != nil {
-		return err
-	}
-	if size > 0 {
-		// Note: change the value to 0 is changing from infoschema v2 to v1.
-		// What we do is change the implementation rather than set the cache capacity.
-		// The change will not take effect until a schema reload happen.
-		do.infoCache.Data.SetCacheCapacity(size)
-	}
-	return nil
 }
 
 func changePDMetadataCircuitBreakerErrorRateThresholdPct(errorRatePct uint32) {
