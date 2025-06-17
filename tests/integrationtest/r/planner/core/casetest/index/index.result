@@ -445,22 +445,13 @@ Projection	10000.00	root		planner__core__casetest__index__index.tt1.c_int
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:tt1	keep order:true, stats:pseudo
   └─StreamAgg(Probe)	10000.00	root		funcs:max(Column#14)->Column#9, funcs:sum(Column#15)->Column#10, funcs:count(1)->Column#11
-<<<<<<< HEAD
     └─Projection	17.91	root		planner__core__casetest__index__index.tt2.c_decimal->Column#14, cast(isnull(planner__core__casetest__index__index.tt2.c_decimal), decimal(20,0) BINARY)->Column#15
       └─IndexMerge	17.91	root		type: union
-=======
-    └─Projection	18.77	root		planner__core__casetest__index__index.tt2.c_decimal->Column#14, cast(isnull(planner__core__casetest__index__index.tt2.c_decimal), decimal(20,0) BINARY)->Column#15
-      └─IndexMerge	18.77	root		type: union
->>>>>>> 1f7fda4c45f (planner: fix index merge skyline pruning may be prior to choose distinct partial index rather than the low count one. (#61372))
         ├─Selection(Build)	10000.00	cop[tikv]		lt(7, planner__core__casetest__index__index.tt1.c_decimal)
         │ └─TableRangeScan	10000.00	cop[tikv]	table:tt2	range:[7,7], keep order:false, stats:pseudo
         ├─Selection(Build)	33333.33	cop[tikv]		eq(planner__core__casetest__index__index.tt1.c_int, planner__core__casetest__index__index.tt2.c_int)
         │ └─IndexRangeScan	33333333.33	cop[tikv]	table:tt2, index:c_str(c_str)	range:["zzzzzzzzzzzzzzzzzzz",+inf], keep order:false, stats:pseudo
-<<<<<<< HEAD
         └─Selection(Probe)	17.91	cop[tikv]		or(and(eq(planner__core__casetest__index__index.tt2.c_int, 7), lt(7, planner__core__casetest__index__index.tt1.c_decimal)), and(ge(planner__core__casetest__index__index.tt2.c_str, "zzzzzzzzzzzzzzzzzzz"), eq(planner__core__casetest__index__index.tt1.c_int, planner__core__casetest__index__index.tt2.c_int)))
-=======
-        └─Selection(Probe)	18.77	cop[tikv]		or(and(eq(planner__core__casetest__index__index.tt2.c_int, 7), lt(7, planner__core__casetest__index__index.tt1.c_decimal)), and(ge(planner__core__casetest__index__index.tt2.c_str, "zzzzzzzzzzzzzzzzzzz"), eq(planner__core__casetest__index__index.tt1.c_int, planner__core__casetest__index__index.tt2.c_int)))
->>>>>>> 1f7fda4c45f (planner: fix index merge skyline pruning may be prior to choose distinct partial index rather than the low count one. (#61372))
           └─TableRowIDScan	43330.00	cop[tikv]	table:tt2	keep order:false, stats:pseudo
 select c_int from tt1 where c_decimal > all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt2.c_int = 7 and tt2.c_int < tt1.c_decimal or tt2.c_str >= 'zzzzzzzzzzzzzzzzzzz' and tt1.c_int = tt2.c_int) order by 1;
 c_int

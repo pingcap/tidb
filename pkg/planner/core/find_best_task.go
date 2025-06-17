@@ -972,7 +972,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 			})
 		}
 		lowestCountAfterAccessIdx := matchIdxes[0]
-		determinedIndexPartialPaths = append(determinedIndexPartialPaths, util.SliceDeepClone(oneORBranch[lowestCountAfterAccessIdx])...)
+		determinedIndexPartialPaths = append(determinedIndexPartialPaths, oneORBranch[lowestCountAfterAccessIdx])
 		// record the index usage info to avoid choosing a single index for all partial paths
 		var indexID int64
 		if oneORBranch[lowestCountAfterAccessIdx].IsTablePath() {

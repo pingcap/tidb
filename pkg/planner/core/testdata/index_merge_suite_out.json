@@ -581,19 +581,11 @@
       {
         "SQL": "select * from t where (a=1 and b=1) or (c=1 and d=1) order by e",
         "Plan": [
-<<<<<<< HEAD
           "Sort 0.20 root  test.t.e",
           "└─IndexMerge 0.20 root  type: union",
-          "  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:cd(c, d) range:[1 1,1 1], keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:abd(a, b, d) range:[1 1,1 1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:cd(c, d) range:[1 1,1 1], keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 0.20 cop[tikv] table:t keep order:false, stats:pseudo"
-=======
-          "Sort 2.00 root  test.t.e",
-          "└─IndexMerge 2.00 root  type: union",
-          "  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:abd(a, b, d) range:[1 1,1 1], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:cd(c, d) range:[1 1,1 1], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"
->>>>>>> 1f7fda4c45f (planner: fix index merge skyline pruning may be prior to choose distinct partial index rather than the low count one. (#61372))
         ]
       }
     ]
