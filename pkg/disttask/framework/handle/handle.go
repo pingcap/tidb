@@ -17,13 +17,17 @@ package handle
 import (
 	"context"
 	goerrors "errors"
+	"path"
+	"strconv"
 	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	litstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -265,6 +269,21 @@ func GetTargetScope() string {
 		return nextgenSEMTargetScope
 	}
 	return vardef.ServiceScope.Load()
+}
+
+// GetCloudStorageURI returns the cloud storage URI with cluster ID appended to the path.
+func GetCloudStorageURI(ctx context.Context, store kv.Storage) string {
+	cloudURI := vardef.CloudStorageURI.Load()
+	if s, ok := store.(kv.StorageWithPD); ok {
+		// When setting the cloudURI value by SQL, we already checked the effectiveness, so we don't need to check it again here.
+		u, _ := litstorage.ParseRawURL(cloudURI)
+		if len(u.Path) != 0 {
+			u.Path = path.Join(u.Path, strconv.FormatUint(s.GetPDClient().GetClusterID(ctx), 10))
+			return u.String()
+		}
+	}
+	logutil.BgLogger().Error("Can't get cluster id from store, use default cloud storage uri")
+	return cloudURI
 }
 
 func init() {

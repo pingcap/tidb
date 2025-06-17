@@ -130,13 +130,19 @@ func (p *PhysicalUnionScan) Attach2Task(tasks ...base.Task) base.Task {
 	if sel, ok := task.Plan().(*PhysicalSelection); ok {
 		if pj, ok := sel.Children()[0].(*PhysicalProjection); ok {
 			// Convert unionScan->selection->projection to projection->unionScan->selection.
-			sel.SetChildren(pj.Children()...)
-			p.SetChildren(sel)
+			// shallow clone sel
+			clonedSel := *sel
+			clonedSel.SetChildren(pj.Children()...)
+			// set child will substitute original child slices, not an in-place change.
+			p.SetChildren(&clonedSel)
 			p.SetStats(task.Plan().StatsInfo())
 			rt := task.(*RootTask)
 			rt.SetPlan(p) // root task plan current is p headed.
-			pj.SetChildren(p)
-			return pj.Attach2Task(task)
+			// shallow clone proj.
+			clonedProj := *pj
+			// set child will substitute original child slices, not an in-place change.
+			clonedProj.SetChildren(p)
+			return clonedProj.Attach2Task(task)
 		}
 	}
 	if pj, ok := task.Plan().(*PhysicalProjection); ok {
@@ -145,8 +151,11 @@ func (p *PhysicalUnionScan) Attach2Task(tasks ...base.Task) base.Task {
 		p.SetStats(task.Plan().StatsInfo())
 		rt, _ := task.(*RootTask)
 		rt.SetPlan(pj.Children()[0])
-		pj.SetChildren(p)
-		return pj.Attach2Task(p.BasePhysicalPlan.Attach2Task(task))
+		// shallow clone proj.
+		clonedProj := *pj
+		// set child will substitute original child slices, not an in-place change.
+		clonedProj.SetChildren(p)
+		return clonedProj.Attach2Task(p.BasePhysicalPlan.Attach2Task(task))
 	}
 	p.SetStats(task.Plan().StatsInfo())
 	// once task is copTask type here, it may be converted proj + tablePlan here.
@@ -625,7 +634,6 @@ func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 		keepOrder:        t.keepOrder,
 	}.Init(ctx, t.tablePlan.QueryBlockOffset())
 	p.PlanPartInfo = t.physPlanPartInfo
-	setTableScanToTableRowIDScan(p.tablePlan)
 	p.SetStats(t.tablePlan.StatsInfo())
 	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
 	// the final agg would be broken. Please reference comments for the similar logic in
@@ -694,17 +702,6 @@ func (t *CopTask) handleRootTaskConds(ctx base.PlanContext, newTask *RootTask) {
 		sel.fromDataSource = true
 		sel.SetChildren(newTask.GetPlan())
 		newTask.SetPlan(sel)
-	}
-}
-
-// setTableScanToTableRowIDScan is to update the isChildOfIndexLookUp attribute of PhysicalTableScan child
-func setTableScanToTableRowIDScan(p base.PhysicalPlan) {
-	if ts, ok := p.(*PhysicalTableScan); ok {
-		ts.SetIsChildOfIndexLookUp(true)
-	} else {
-		for _, child := range p.Children() {
-			setTableScanToTableRowIDScan(child)
-		}
 	}
 }
 
