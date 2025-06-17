@@ -319,6 +319,36 @@ test_with_full_backup_filter() {
     echo "with full backup filter test cases passed"
 }
 
+test_cover_all_ddl() {
+    restart_services || { echo "Failed to restart services"; exit 1; }
+    run_sql "set @@global.foreign_key_checks=1;"
+    run_sql "set @@global.tidb_enable_check_constraint=1;"
+    echo "start all the ddl cover testing"
+    
+    run_sql_file $CUR/sqls/snapshot.sql
+
+    run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$TASK_NAME/log"
+    run_br backup full -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
+
+    run_sql_file $CUR/sqls/log.sql
+
+    . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
+
+    # restart services to clean up the cluster
+    restart_services || { echo "Failed to restart services"; exit 1; }
+    run_sql "set @@global.foreign_key_checks=1;"
+    run_sql "set @@global.tidb_enable_check_constraint=1;"
+
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "test_*.*"
+
+    bash $CUR/sqls/check.sh
+
+    # cleanup
+    rm -rf "$TEST_DIR/$TASK_NAME"
+
+    echo "all ddl tests passed"
+}
+
 test_table_rename() {
     restart_services || { echo "Failed to restart services"; exit 1; }
 
@@ -1661,6 +1691,7 @@ test_pitr_chaining() {
     echo "PITR sequential restore test passed"
 }
 
+test_cover_all_ddl
 test_basic_filter
 test_with_full_backup_filter
 test_table_rename
