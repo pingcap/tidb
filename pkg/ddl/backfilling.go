@@ -338,7 +338,7 @@ func (w *backfillWorker) sendResult(result *backfillResult) {
 }
 
 func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
-	logger := ddlLogger.With(zap.Stringer("worker", w), zap.Int64("jobID", job.ID))
+	logger := logutil.BgLogger().With(zap.String("category", "ddl"), zap.Stringer("worker", w), zap.Int64("jobID", job.ID))
 	var (
 		curTaskID int
 		task      *reorgBackfillTask
@@ -634,6 +634,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	bfWorkerType backfillerType,
 	reorgInfo *reorgInfo,
 ) error {
+	logger := logutil.BgLogger().With(zap.String("category", "ddl"))
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 
 	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
@@ -674,7 +675,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				return egCtx.Err()
 			case result, ok := <-scheduler.resultChan():
 				if !ok {
-					ddlLogger.Info("backfill workers successfully processed",
+					logger.Info("backfill workers successfully processed",
 						zap.Stringer("element", reorgInfo.currElement),
 						zap.Int64("total added count", totalAddedCount),
 						zap.String("start key", hex.EncodeToString(startKey)))
@@ -683,7 +684,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				cnt++
 
 				if result.err != nil {
-					ddlLogger.Warn("backfill worker failed",
+					logger.Warn("backfill worker failed",
 						zap.Int64("job ID", reorgInfo.ID),
 						zap.Int64("total added count", totalAddedCount),
 						zap.String("start key", hex.EncodeToString(startKey)),
@@ -704,7 +705,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				if cnt%(scheduler.currentWorkerSize()*4) == 0 {
 					err2 := reorgInfo.UpdateReorgMeta(keeper.nextKey, sessPool)
 					if err2 != nil {
-						ddlLogger.Warn("update reorg meta failed",
+						logger.Warn("update reorg meta failed",
 							zap.Int64("job ID", reorgInfo.ID),
 							zap.Error(err2))
 					}
@@ -712,7 +713,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 					// the overhead of loading the DDL related global variables.
 					err2 = scheduler.adjustWorkerSize()
 					if err2 != nil {
-						ddlLogger.Warn("cannot adjust backfill worker size",
+						logger.Warn("cannot adjust backfill worker size",
 							zap.Int64("job ID", reorgInfo.ID),
 							zap.Error(err2))
 					}
@@ -735,7 +736,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			if len(kvRanges) == 0 {
 				break
 			}
-			ddlLogger.Info("start backfill workers to reorg record",
+			logutil.BgLogger().Info("start backfill workers to reorg record",
 				zap.Stringer("type", bfWorkerType),
 				zap.Int("workerCnt", scheduler.currentWorkerSize()),
 				zap.Int("regionCnt", len(kvRanges)),
