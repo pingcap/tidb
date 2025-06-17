@@ -169,8 +169,6 @@ func (a VectorFloat32) Add(b VectorFloat32) (VectorFloat32, error) {
 	for i, iMax := 0, a.Len(); i < iMax; i++ {
 		// Hope this can be vectorized.
 		vr[i] = va[i] + vb[i]
-	}
-	for i, iMax := 0, a.Len(); i < iMax; i++ {
 		if math.IsInf(float64(vr[i]), 0) {
 			return ZeroVectorFloat32, errors.Errorf("value out of range: overflow")
 		}
@@ -197,9 +195,6 @@ func (a VectorFloat32) Sub(b VectorFloat32) (VectorFloat32, error) {
 	for i, iMax := 0, a.Len(); i < iMax; i++ {
 		// Hope this can be vectorized.
 		vr[i] = va[i] - vb[i]
-	}
-
-	for i, iMax := 0, a.Len(); i < iMax; i++ {
 		if math.IsInf(float64(vr[i]), 0) {
 			return ZeroVectorFloat32, errors.Errorf("value out of range: overflow")
 		}
@@ -226,18 +221,15 @@ func (a VectorFloat32) Mul(b VectorFloat32) (VectorFloat32, error) {
 	for i, iMax := 0, a.Len(); i < iMax; i++ {
 		// Hope this can be vectorized.
 		vr[i] = va[i] * vb[i]
-	}
-
-	for i, iMax := 0, a.Len(); i < iMax; i++ {
 		if math.IsInf(float64(vr[i]), 0) {
 			return ZeroVectorFloat32, errors.Errorf("value out of range: overflow")
 		}
 		if math.IsNaN(float64(vr[i])) {
 			return ZeroVectorFloat32, errors.Errorf("value out of range: NaN")
 		}
-
-		// TODO: Check for underflow.
-		// See https://github.com/pgvector/pgvector/blob/81d13bd40f03890bb5b6360259628cd473c2e467/src/vector.c#L873
+		if vr[i] == 0 && !(va[i] == 0 || vb[i] == 0) {
+			return ZeroVectorFloat32, errors.Errorf("value out of range: underflow")
+		}
 	}
 
 	return result, nil
