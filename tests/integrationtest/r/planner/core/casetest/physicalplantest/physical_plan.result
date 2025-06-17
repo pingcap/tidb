@@ -3732,10 +3732,10 @@ explain format = 'brief' select * from t where a = 1 or b = 1 order by c limit 2
 id	estRows	task	access object	operator info
 Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
 └─IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
-  ├─Limit(Build)	1.07	cop[tikv]		offset:0, count:2
-  │ └─IndexRangeScan	1.07	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], keep order:true, stats:pseudo
-  ├─Limit(Build)	1.07	cop[tikv]		offset:0, count:2
-  │ └─IndexRangeScan	1.07	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:true, stats:pseudo
+  ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	1.00	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], keep order:true, stats:pseudo
+  ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	1.00	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:true, stats:pseudo
   └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
@@ -3775,8 +3775,8 @@ Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.t
 └─IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
   ├─Limit(Build)	0.02	cop[tikv]		offset:0, count:2
   │ └─IndexRangeScan	0.02	cop[tikv]	table:t, index:idx(a, c)	range:[1 2,1 2], keep order:true, stats:pseudo
-  ├─Limit(Build)	1.88	cop[tikv]		offset:0, count:2
-  │ └─IndexRangeScan	1.88	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:true, stats:pseudo
+  ├─Limit(Build)	1.82	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	1.82	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:true, stats:pseudo
   └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
@@ -3837,10 +3837,10 @@ explain format = 'brief' select * from tcommon where a = 1 or b = 1 order by c l
 id	estRows	task	access object	operator info
 Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.tcommon.a, planner__core__casetest__physicalplantest__physical_plan.tcommon.b, planner__core__casetest__physicalplantest__physical_plan.tcommon.c
 └─IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
-  ├─Limit(Build)	1.07	cop[tikv]		offset:0, count:2
-  │ └─IndexRangeScan	1.07	cop[tikv]	table:tcommon, index:PRIMARY(a, c)	range:[1,1], keep order:true, stats:pseudo
-  ├─Limit(Build)	1.07	cop[tikv]		offset:0, count:2
-  │ └─IndexRangeScan	1.07	cop[tikv]	table:tcommon, index:idx2(b, c)	range:[1,1], keep order:true, stats:pseudo
+  ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	1.00	cop[tikv]	table:tcommon, index:PRIMARY(a, c)	range:[1,1], keep order:true, stats:pseudo
+  ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	1.00	cop[tikv]	table:tcommon, index:idx2(b, c)	range:[1,1], keep order:true, stats:pseudo
   └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:tcommon	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
@@ -3850,8 +3850,8 @@ Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.t
 └─IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
   ├─Limit(Build)	0.18	cop[tikv]		offset:0, count:2
   │ └─IndexRangeScan	0.18	cop[tikv]	table:tcommon, index:PRIMARY(a, c)	range:[1 2,1 2], keep order:true, stats:pseudo
-  ├─Limit(Build)	1.88	cop[tikv]		offset:0, count:2
-  │ └─IndexRangeScan	1.88	cop[tikv]	table:tcommon, index:idx2(b, c)	range:[1,1], keep order:true, stats:pseudo
+  ├─Limit(Build)	1.82	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	1.82	cop[tikv]	table:tcommon, index:idx2(b, c)	range:[1,1], keep order:true, stats:pseudo
   └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:tcommon	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
@@ -3859,10 +3859,10 @@ explain format = 'brief' select * from thash use index(idx_ac, idx_bc) where a =
 id	estRows	task	access object	operator info
 Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.thash.a, planner__core__casetest__physicalplantest__physical_plan.thash.b, planner__core__casetest__physicalplantest__physical_plan.thash.c
 └─IndexMerge	2.00	root	partition:all	type: union, limit embedded(offset:0, count:2)
-  ├─Limit(Build)	1.07	cop[tikv]		offset:0, count:2
-  │ └─IndexRangeScan	1.07	cop[tikv]	table:thash, index:idx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
-  ├─Limit(Build)	1.07	cop[tikv]		offset:0, count:2
-  │ └─IndexRangeScan	1.07	cop[tikv]	table:thash, index:idx_bc(b, c)	range:[1,1], keep order:true, stats:pseudo
+  ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, index:idx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
+  ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, index:idx_bc(b, c)	range:[1,1], keep order:true, stats:pseudo
   └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:thash	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message

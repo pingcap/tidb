@@ -161,7 +161,7 @@ Projection	1.00	root		executor__distsql.t.b
   └─Limit	1.00	root		offset:0, count:1
     └─IndexReader	1.00	root	partition:all	index:Limit
       └─Limit	1.00	cop[tikv]		offset:0, count:1
-        └─IndexRangeScan	34.31	cop[tikv]	table:t, index:k(b)	range:(2,+inf], keep order:true, stats:pseudo
+        └─IndexRangeScan	1.00	cop[tikv]	table:t, index:k(b)	range:(2,+inf], keep order:true, stats:pseudo
 select b from t use index(k) where b > 2 order by b limit 1 for update;
 b
 3
@@ -173,7 +173,7 @@ Projection	1.00	root		executor__distsql.t.b
   └─Limit	1.00	root		offset:0, count:1
     └─IndexReader	1.00	root	partition:all	index:Limit
       └─Limit	1.00	cop[tikv]		offset:0, count:1
-        └─IndexRangeScan	1.04	cop[tikv]	table:t, index:k(b)	range:(2,+inf], keep order:true
+        └─IndexRangeScan	1.00	cop[tikv]	table:t, index:k(b)	range:(2,+inf], keep order:true
 select b from t use index(k) where b > 2 order by b limit 1 for update;
 b
 3
