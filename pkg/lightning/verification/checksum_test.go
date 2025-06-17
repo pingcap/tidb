@@ -118,3 +118,17 @@ func TestGroupChecksum(t *testing.T) {
 	require.Equal(t, uint64(4), merged.SumKVS())
 	require.Equal(t, uint64(28), merged.SumSize())
 }
+
+func TestKVChecksumOperation(t *testing.T) {
+	csum := verification.NewKVChecksum()
+	other := verification.MakeKVChecksum(100, 100, 100)
+	csum.Add(&other)
+	require.EqualValues(t, 100, csum.Sum())
+	require.EqualValues(t, 100, csum.SumSize())
+	require.EqualValues(t, 100, csum.SumKVS())
+	other = verification.MakeKVChecksum(10, 20, 30)
+	csum.Sub(&other)
+	require.EqualValues(t, 100^30, csum.Sum())
+	require.EqualValues(t, 90, csum.SumSize())
+	require.EqualValues(t, 80, csum.SumKVS())
+}

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -45,6 +46,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
 )
 
 func getCSVParser(ctx context.Context, t *testing.T, fileName string) mydump.Parser {
@@ -264,4 +266,11 @@ func TestFileChunkProcess(t *testing.T) {
 		require.ErrorContains(t, processor.Process(ctx), "index write error")
 		require.True(t, ctrl.Satisfied())
 	})
+}
+
+func TestNewIndexRouteWriterFactoryErr(t *testing.T) {
+	writer := importer.NewIndexRouteWriter(zap.NewNop(), func(indexID int64) (*external.Writer, error) {
+		return nil, errors.New("some err")
+	})
+	require.ErrorContains(t, writer.AppendRows(context.Background(), nil, kv.GroupedPairs{1: []common.KvPair{{}}}), "some err")
 }
