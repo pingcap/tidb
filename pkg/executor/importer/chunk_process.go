@@ -51,10 +51,10 @@ var (
 type rowToEncode struct {
 	row   []types.Datum
 	rowID int64
-	// endOffset represents the offset after the current row in encode reader.
+	// scannedPos represents the scanned position of current encode reader.
 	// it will be negative if the data source is not file.
-	endOffset int64
-	resetFn   func()
+	scannedPos int64
+	resetFn    func()
 }
 
 type encodeReaderFn func(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error)
@@ -69,7 +69,8 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 		}
 
 		err = parser.ReadRow()
-		currOffset := parser.ScannedPos()
+		// todo: we can implement a ScannedPos which don't return error, will change it later.
+		currScanned, _ := parser.ScannedPos()
 		switch errors.Cause(err) {
 		case nil:
 		case io.EOF:
@@ -77,15 +78,15 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 			err = nil
 			return
 		default:
-			err = common.ErrEncodeKV.Wrap(err).GenWithStackByArgs(filename, currOffset)
+			err = common.ErrEncodeKV.Wrap(err).GenWithStackByArgs(filename, currScanned)
 			return
 		}
 		lastRow := parser.LastRow()
 		data = rowToEncode{
-			row:       lastRow.Row,
-			rowID:     lastRow.RowID,
-			endOffset: currOffset,
-			resetFn:   func() { parser.RecycleRow(lastRow) },
+			row:        lastRow.Row,
+			rowID:      lastRow.RowID,
+			scannedPos: currScanned,
+			resetFn:    func() { parser.RecycleRow(lastRow) },
 		}
 		return
 	}
@@ -128,10 +129,10 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum)
 	row = chkRow.GetDatumRowWithBuffer(r.currChk.Fields, row)
 	r.cursor++
 	data = rowToEncode{
-		row:       row,
-		rowID:     r.currChk.RowIDOffset + int64(r.cursor),
-		endOffset: -1,
-		resetFn:   func() {},
+		row:        row,
+		rowID:      r.currChk.RowIDOffset + int64(r.cursor),
+		scannedPos: -1,
+		resetFn:    func() {},
 	}
 	return
 }
@@ -314,11 +315,11 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 
 		encodeDurStart := time.Now()
 		kvs, encodeErr := p.encoder.Encode(data.row, data.rowID)
-		currOffset = data.endOffset
+		currOffset = data.scannedPos
 		data.resetFn()
 		if encodeErr != nil {
 			// todo: record and ignore encode error if user set max-errors param
-			return common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(p.chunkName, data.endOffset)
+			return common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(p.chunkName, data.scannedPos)
 		}
 		encodeDur += time.Since(encodeDurStart)
 
