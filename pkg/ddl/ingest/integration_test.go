@@ -525,7 +525,7 @@ func TestAddGlobalIndexInIngestWithUpdate(t *testing.T) {
 
 func TestAddIndexValidateRangesFailed(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int);")
