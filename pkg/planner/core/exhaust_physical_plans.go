@@ -581,9 +581,17 @@ func constructIndexJoinStatic(
 	// outer side expected cnt will be amplified by the prop.ExpectedCnt / p.StatsInfo().RowCount with same ratio.
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
 	if prop.ExpectedCnt < p.StatsInfo().RowCount {
+		orderRatio := p.SCtx().GetSessionVars().OptOrderingIdxSelRatio
+		rowsToMeetFirst := 0.0
+		outerRowCount := p.Children()[outerIdx].StatsInfo().RowCount
+		if orderRatio > 0 && outerRowCount > p.StatsInfo().RowCount {
+			rowsToMeetFirst = (outerRowCount - p.StatsInfo().RowCount) * orderRatio
+		}
 		expCntScale := prop.ExpectedCnt / p.StatsInfo().RowCount
-		chReqProps[outerIdx].ExpectedCnt = p.Children()[outerIdx].StatsInfo().RowCount * expCntScale
+		expectedCnt := (outerRowCount * expCntScale) + rowsToMeetFirst
+		chReqProps[outerIdx].ExpectedCnt = expectedCnt
 	}
+
 	// inner side should pass down the indexJoinProp, which contains the runtime constant inner key, which is used to build the underlying index/pk range.
 	chReqProps[1-outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, IndexJoinProp: indexJoinProp}
 

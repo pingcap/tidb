@@ -117,11 +117,6 @@ func AdjustRowCountForIndexScanByLimit(sctx planctx.PlanContext,
 			// Second target - if there is no index filtering, but there is table filtering,
 			// we need to estimate the number of table rows that need to be scanned.
 			rowsToMeetFirst = (path.CountAfterAccess - dsStatsInfo.RowCount)
-		} else if len(path.ConstCols) > 1 && path.CountAfterAccess > expectedCnt {
-			// Third target - if there is no filtering on the leading table, but potential
-			// filtering across a join, we need to estimate the number of rows that need to
-			// be scanned from this leading table.
-			rowsToMeetFirst = (path.CountAfterAccess - expectedCnt)
 		}
 		rowsToMeetFirst = max(0, (rowsToMeetFirst-rowCount)) * orderRatio
 		rowCount += rowsToMeetFirst
