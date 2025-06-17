@@ -355,6 +355,9 @@ func (cr *chunkProcessor) encodeLoop(
 					logger.Warn("fail to get data engine ScannedPos, progress may not be accurate",
 						log.ShortError(scannedOffsetErr), zap.String("file", cr.chunk.FileMeta.Path))
 				}
+				if scannedOffset == -1 {
+					scannedOffset = newScannedOffset
+				}
 			}
 
 			switch errors.Cause(err) {
