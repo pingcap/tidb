@@ -636,7 +636,7 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 				return errors.Trace(errors.Errorf("batch keys are inconsistent with handles"))
 			}
 			for _, handleIdxVals := range handleIdxValsGroup.([][]types.Datum) {
-				if err := e.index.Delete(e.Ctx().GetSessionVars().StmtCtx, txn, handleIdxVals, handle); err != nil {
+				if err := e.index.Delete(e.Ctx(), txn, handleIdxVals, handle); err != nil {
 					return err
 				}
 				e.removeCnt++
