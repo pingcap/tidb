@@ -30,6 +30,7 @@ func jobInfoEqual(t *testing.T, expected, got *importer.JobInfo) {
 	cloned.CreateTime = got.CreateTime
 	cloned.StartTime = got.StartTime
 	cloned.EndTime = got.EndTime
+	cloned.UpdateTime = got.UpdateTime
 	require.Equal(t, &cloned, got)
 }
 
@@ -40,27 +41,28 @@ func TestJobHappyPath(t *testing.T) {
 	conn := tk.Session().GetSQLExecutor()
 
 	cases := []struct {
-		action          func(jobID int64)
-		expectStatus    string
-		expectStep      string
-		expectedSummary *importer.JobSummary
-		expectedErrMsg  string
+		action         func(jobID int64)
+		expectStatus   string
+		expectStep     string
+		expectedRowCnt int64
+		expectedErrMsg string
 	}{
 		{
 			action: func(jobID int64) {
-				require.NoError(t, importer.FinishJob(ctx, conn, jobID, &importer.JobSummary{ImportedRows: 111}))
+				require.NoError(t, importer.FinishJob(ctx, conn, jobID, importer.MockSummary(111)))
 			},
-			expectStatus:    "finished",
-			expectStep:      "",
-			expectedSummary: &importer.JobSummary{ImportedRows: 111},
+			expectStatus:   "finished",
+			expectStep:     "",
+			expectedRowCnt: 111,
 		},
 		{
 			action: func(jobID int64) {
-				require.NoError(t, importer.FailJob(ctx, conn, jobID, "some error"))
+				require.NoError(t, importer.FailJob(ctx, conn, jobID, "some error", importer.MockSummary(111)))
 			},
 			expectStatus:   "failed",
 			expectStep:     importer.JobStepValidating,
 			expectedErrMsg: "some error",
+			expectedRowCnt: 111,
 		},
 	}
 	for _, c := range cases {
@@ -84,7 +86,7 @@ func TestJobHappyPath(t *testing.T) {
 
 		// create job
 		jobID, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-			jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
+			jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
 		require.NoError(t, err)
 		jobInfo.ID = jobID
 		gotJobInfo, err := importer.GetJob(ctx, conn, jobID, jobInfo.CreatedBy, false)
@@ -132,7 +134,7 @@ func TestJobHappyPath(t *testing.T) {
 		require.False(t, gotJobInfo.EndTime.IsZero())
 		jobInfo.Status = c.expectStatus
 		jobInfo.Step = c.expectStep
-		jobInfo.Summary = c.expectedSummary
+		jobInfo.Summary = importer.MockSummary(c.expectedRowCnt)
 		jobInfo.ErrorMessage = c.expectedErrMsg
 		jobInfoEqual(t, jobInfo, gotJobInfo)
 		cnt, err = importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
@@ -173,7 +175,7 @@ func TestGetAndCancelJob(t *testing.T) {
 
 	// create job
 	jobID1, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
 	jobInfo.ID = jobID1
 	gotJobInfo, err := importer.GetJob(ctx, conn, jobID1, jobInfo.CreatedBy, false)
@@ -210,7 +212,7 @@ func TestGetAndCancelJob(t *testing.T) {
 
 	// create another job
 	jobID2, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
 	jobInfo.ID = jobID2
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID2, jobInfo.CreatedBy, false)
@@ -303,12 +305,12 @@ func TestGetJobInfoNullField(t *testing.T) {
 	}
 	// create jobs
 	jobID1, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
 	require.NoError(t, importer.StartJob(ctx, conn, jobID1, importer.JobStepImporting))
-	require.NoError(t, importer.FailJob(ctx, conn, jobID1, "failed"))
+	require.NoError(t, importer.FailJob(ctx, conn, jobID1, "failed", importer.MockSummary(0)))
 	jobID2, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
 	gotJobInfos, err := importer.GetAllViewableJobs(ctx, conn, "", true)
 	require.NoError(t, err)
@@ -318,6 +320,7 @@ func TestGetJobInfoNullField(t *testing.T) {
 	jobInfo.Status = "failed"
 	jobInfo.Step = importer.JobStepImporting
 	jobInfo.ErrorMessage = "failed"
+	jobInfo.Summary = importer.MockSummary(0)
 	jobInfoEqual(t, jobInfo, gotJobInfos[0])
 	require.False(t, gotJobInfos[0].StartTime.IsZero())
 	require.False(t, gotJobInfos[0].EndTime.IsZero())
@@ -326,6 +329,7 @@ func TestGetJobInfoNullField(t *testing.T) {
 	jobInfo.Step = ""
 	// err msg of jobID2 should be empty
 	jobInfo.ErrorMessage = ""
+	jobInfo.Summary = nil
 	jobInfoEqual(t, jobInfo, gotJobInfos[1])
 	// start/end time of jobID2 should be zero
 	require.True(t, gotJobInfos[1].StartTime.IsZero())

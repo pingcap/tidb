@@ -97,6 +97,7 @@ const (
 	fieldsDefinedNullByOption = "fields_defined_null_by"
 	linesTerminatedByOption   = "lines_terminated_by"
 	skipRowsOption            = "skip_rows"
+	groupKeyOption            = "group_key"
 	splitFileOption           = "split_file"
 	diskQuotaOption           = "disk_quota"
 	threadOption              = "thread"
@@ -134,6 +135,7 @@ var (
 		fieldsDefinedNullByOption:   true,
 		linesTerminatedByOption:     true,
 		skipRowsOption:              true,
+		groupKeyOption:              true,
 		splitFileOption:             false,
 		diskQuotaOption:             true,
 		threadOption:                true,
@@ -272,6 +274,7 @@ type Plan struct {
 	MaxEngineSize         config.ByteSize
 	CloudStorageURI       string
 	DisablePrecheck       bool
+	GroupKey              string
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
@@ -305,6 +308,39 @@ type ASTArgs struct {
 	OnDuplicate        ast.OnDuplicateKeyHandlingType
 	FieldsInfo         *ast.FieldsClause
 	LinesInfo          *ast.LinesClause
+}
+
+// StepSummary records the number of data involved in each step.
+type StepSummary struct {
+	Bytes  int64 `json:"input-bytes,omitempty"`
+	RowCnt int64 `json:"input-rows,omitempty"`
+}
+
+// Summary records the amount of data needed to be processed in each step of the import job.
+// And this information will be saved into tidb_import_jobs table after the job is finished.
+type Summary struct {
+	// bytes and rows to encode
+	// Note that this is not the same as the number of rows in the table,
+	// since this value is get from chunk info.
+	EncodeSummary StepSummary `json:"encode-summary,omitempty"`
+
+	// bytes and rows to merge
+	MergeSummary StepSummary `json:"merge-summary,omitempty"`
+
+	// bytes and rows to ingest
+	IngestSummary StepSummary `json:"ingest-summary,omitempty"`
+
+	// bytes and rows to post process
+	PostprocessSummary StepSummary `json:"postprocess-summary,omitempty"`
+}
+
+// MockSummary creates a mock summary for testing.
+func MockSummary(rowCnt int64) *Summary {
+	return &Summary{
+		PostprocessSummary: StepSummary{
+			RowCnt: rowCnt,
+		},
+	}
 }
 
 // LoadDataController load data controller.
@@ -341,6 +377,23 @@ type LoadDataController struct {
 	GlobalSortStore storage.ExternalStorage
 	// ExecuteNodesCnt is the count of execute nodes.
 	ExecuteNodesCnt int
+}
+
+// validateGroupKey validates the group key.
+// group key should be a string with length <= 256 composed of only alphanumeric characters, '-', and '_'.
+func validateGroupKey(groupKey string) bool {
+	if len(groupKey) > 256 {
+		return false
+	}
+	for _, r := range groupKey {
+		if !((r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') ||
+			r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
@@ -769,6 +822,13 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if err = p.Checksum.FromStringValue(v); err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
+	}
+	if opt, ok := specifiedOptions[groupKeyOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil || !validateGroupKey(v) {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		p.GroupKey = v
 	}
 	if opt, ok := specifiedOptions[recordErrorsOption]; ok {
 		vInt, err := optAsInt64(opt)
@@ -1538,12 +1598,6 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 		return DataSourceTypeQuery
 	}
 	return DataSourceTypeFile
-}
-
-// JobImportResult is the result of the job import.
-type JobImportResult struct {
-	Affected uint64
-	Warnings []contextutil.SQLWarn
 }
 
 // GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.

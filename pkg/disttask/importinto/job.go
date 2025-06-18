@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -29,7 +30,10 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -67,7 +71,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		var err2 error
 		exec := se.GetSQLExecutor()
 		jobID, err2 = importer.CreateJob(ctx, exec, plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
-			plan.User, plan.Parameters, plan.TotalFileSize)
+			plan.User, plan.GroupKey, plan.Parameters, plan.TotalFileSize)
 		if err2 != nil {
 			return err2
 		}
@@ -116,9 +120,10 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 
 // RuntimeInfo is the runtime information of the task for corresponding job.
 type RuntimeInfo struct {
-	Status     proto.TaskState
-	ImportRows uint64
-	ErrorMsg   string
+	Status           proto.TaskState
+	ImportRows       int64
+	LatestUpdateTime time.Time
+	ErrorMsg         string
 }
 
 // GetRuntimeInfoForJob get the corresponding DXF task runtime info for the job.
@@ -137,41 +142,71 @@ func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error
 	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
 	}
-	var importedRows uint64
-	if taskMeta.Plan.CloudStorageURI == "" {
-		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepImport)
-		if err != nil {
-			return nil, err
-		}
-		for _, subtask := range subtasks {
-			var subtaskMeta ImportStepMeta
-			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return nil, errors.Trace(err2)
-			}
-			importedRows += subtaskMeta.Result.LoadedRowCnt
-		}
-	} else {
-		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepWriteAndIngest)
-		if err != nil {
-			return nil, err
-		}
-		for _, subtask := range subtasks {
-			var subtaskMeta WriteIngestStepMeta
-			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return nil, errors.Trace(err2)
-			}
-			importedRows += subtaskMeta.Result.LoadedRowCnt
+
+	step := proto.ImportStepImport
+	if taskMeta.Plan.CloudStorageURI != "" {
+		step = proto.ImportStepWriteAndIngest
+	}
+
+	summaries, err := taskManager.GetAllSubtaskSummaryByStep(ctx, task.ID, step)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		latestTime   time.Time
+		importedRows int64
+	)
+	for _, summary := range summaries {
+		importedRows += summary.RowCnt.Load()
+		if summary.UpdateTime.After(latestTime) {
+			latestTime = summary.UpdateTime
 		}
 	}
+
 	var errMsg string
 	if task.Error != nil {
 		errMsg = task.Error.Error()
 	}
 	return &RuntimeInfo{
-		Status:     task.State,
-		ImportRows: importedRows,
-		ErrorMsg:   errMsg,
+		Status:           task.State,
+		ImportRows:       importedRows,
+		LatestUpdateTime: latestTime,
+		ErrorMsg:         errMsg,
 	}, nil
+}
+
+// GetLastUpdateTimeForRunningJob get the last update time for given job.
+func GetLastUpdateTimeForRunningJob(ctx context.Context, jobID int64) (types.Time, error) {
+	taskManager, err := storage.GetTaskManager()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	if err != nil {
+		return types.ZeroTime, err
+	}
+	taskKey := TaskKey(jobID)
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
+	if err != nil {
+		return types.ZeroTime, err
+	}
+
+	var rs []chunk.Row
+	err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`select max(state_update_time) from
+				(select state_update_time from mysql.tidb_background_subtask where task_key = %?
+					union
+				select state_update_time from mysql.tidb_background_subtask_history where task_key = %?
+			) t`,
+			task.ID, task.ID,
+		)
+		return err
+	})
+
+	if rs[0].IsNull(10) {
+		return types.ZeroTime, err
+	}
+
+	return rs[0].GetTime(0), nil
 }
 
 // TaskKey returns the task key for a job.

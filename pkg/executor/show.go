@@ -121,6 +121,7 @@ type ShowExec struct {
 	ImportJobID       *int64
 	DistributionJobID *int64
 	SQLOrDigest       string // Used for SHOW PLAN FOR <SQL or Digest>
+	ShowGroupKey      string // Used for SHOW IMPORT GROUP <GROUP_KEY>
 }
 
 type showTableRegionRowItem struct {
@@ -292,6 +293,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowSessionStates(ctx)
 	case ast.ShowImportJobs:
 		return e.fetchShowImportJobs(ctx)
+	case ast.ShowImportGroups:
+		return e.fetchShowImportGroups(ctx)
 	case ast.ShowDistributionJobs:
 		return e.fetchShowDistributionJobs(ctx)
 	}
@@ -2433,39 +2436,102 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	return nil
 }
 
+// RevertedInfo is the info retrieved for SHOW IMPORT JOBS query
+// Update this struct when the output of SHOW IMPORT JOBS changes.
+type RevertedInfo struct {
+	JobID         any
+	GroupKey      any
+	FieldLocation any
+	FullTableName any
+	TableID       any
+	Step          any
+	Status        any
+	FileSize      any
+	RowCnt        any
+	ErrorMessage  any
+	CreateTime    any
+	StartTime     any
+	EndTime       any
+	CreatedBy     any
+}
+
+// GetInfoFromRow converts row from SHOW IMPORT JOBS query to a RevertedInfo struct.
+// This function is used in test, to avoid changeing test each time we modify
+// the output of SHOW IMPORT JOBS.
+func GetInfoFromRow(row []any) *RevertedInfo {
+	return &RevertedInfo{
+		JobID:         row[0],
+		GroupKey:      row[1],
+		FieldLocation: row[2],
+		FullTableName: row[3],
+		TableID:       row[4],
+		Step:          row[5],
+		Status:        row[6],
+		FileSize:      row[7],
+		RowCnt:        row[8],
+		ErrorMessage:  row[9],
+		CreateTime:    row[10],
+		StartTime:     row[11],
+		EndTime:       row[12],
+		CreatedBy:     row[13],
+	}
+}
+
 // FillOneImportJobInfo is exported for testing.
 func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, importedRowCount int64) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
 	result.AppendInt64(0, info.ID)
-	result.AppendString(1, info.Parameters.FileLocation)
-	result.AppendString(2, fullTableName)
-	result.AppendInt64(3, info.TableID)
-	result.AppendString(4, info.Step)
-	result.AppendString(5, info.Status)
-	result.AppendString(6, units.BytesSize(float64(info.SourceFileSize)))
-	if info.Summary != nil {
-		result.AppendUint64(7, info.Summary.ImportedRows)
+	if info.GroupKey == "" {
+		result.AppendNull(1)
+	} else {
+		result.AppendString(1, info.GroupKey)
+	}
+
+	result.AppendString(2, info.Parameters.FileLocation)
+	result.AppendString(3, fullTableName)
+	result.AppendInt64(4, info.TableID)
+	result.AppendString(5, info.Step)
+	result.AppendString(6, info.Status)
+	result.AppendString(7, units.BytesSize(float64(info.SourceFileSize)))
+	if info.Status == importer.JobStatusFinished {
+		result.AppendUint64(8, uint64(info.Summary.PostprocessSummary.RowCnt))
 	} else if importedRowCount >= 0 {
-		result.AppendUint64(7, uint64(importedRowCount))
+		result.AppendUint64(8, uint64(importedRowCount))
 	} else {
-		result.AppendNull(7)
+		result.AppendNull(8)
 	}
-	result.AppendString(8, info.ErrorMessage)
-	result.AppendTime(9, info.CreateTime)
+	result.AppendString(9, info.ErrorMessage)
+	result.AppendTime(10, info.CreateTime)
 	if info.StartTime.IsZero() {
-		result.AppendNull(10)
-	} else {
-		result.AppendTime(10, info.StartTime)
-	}
-	if info.EndTime.IsZero() {
 		result.AppendNull(11)
 	} else {
-		result.AppendTime(11, info.EndTime)
+		result.AppendTime(11, info.StartTime)
 	}
-	result.AppendString(12, info.CreatedBy)
+	if info.EndTime.IsZero() {
+		result.AppendNull(12)
+	} else {
+		result.AppendTime(12, info.EndTime)
+	}
+	result.AppendString(13, info.CreatedBy)
 }
 
-func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *chunk.Chunk) error {
+// convertToMySQLTime converts go time to MySQL time with the specified location.
+// It's partially copied from builtin_time.go
+func convertToMySQLTime(t time.Time, loc *time.Location) (types.Time, error) {
+	tr, err := types.TruncateFrac(t, 0)
+	if err != nil {
+		return types.ZeroTime, err
+	}
+
+	result := types.NewTime(types.FromGoTime(tr), mysql.TypeDatetime, 0)
+	err = result.ConvertTimeZone(t.Location(), loc)
+	return result, err
+}
+
+func handleImportJobInfo(
+	ctx context.Context, sctx sessionctx.Context,
+	info *importer.JobInfo, result *chunk.Chunk,
+) error {
 	var importedRowCount int64 = -1
 	if info.Summary == nil && info.Status == importer.JobStatusRunning {
 		// for running jobs, need get from distributed framework.
@@ -2473,10 +2539,20 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 		if err != nil {
 			return err
 		}
-		importedRowCount = int64(runInfo.ImportRows)
+		importedRowCount = runInfo.ImportRows
 		if runInfo.Status == proto.TaskStateAwaitingResolution {
 			info.Status = string(runInfo.Status)
 			info.ErrorMessage = runInfo.ErrorMsg
+		}
+
+		// Use the latest update time from subtasks
+		// TODO(joechenrh): This value will be displayed in SHOW IMPORT JOBS in later PR.
+		if !runInfo.LatestUpdateTime.IsZero() {
+			t, err := convertToMySQLTime(runInfo.LatestUpdateTime, sctx.GetSessionVars().Location())
+			if err != nil {
+				return err
+			}
+			info.UpdateTime = t
 		}
 	}
 	FillOneImportJobInfo(result, info, importedRowCount)
@@ -2578,8 +2654,96 @@ func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result 
 	return nil
 }
 
+type groupInfo struct {
+	groupKey   string
+	jobCount   int64
+	pending    int64
+	running    int64
+	completed  int64
+	failed     int64
+	canceled   int64
+	startTime  types.Time
+	updateTime types.Time
+}
+
+func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
+	var hasSuperPriv bool
+	if pm := privilege.GetPrivilegeManager(e.Ctx()); pm != nil {
+		hasSuperPriv = pm.RequestVerification(e.Ctx().GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
+	}
+	// we use sessionCtx from GetTaskManager, user ctx might not have system table privileges.
+	taskManager, err := fstorage.GetTaskManager()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
+	if err != nil {
+		return err
+	}
+
+	var infos []*importer.JobInfo
+	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+		exec := se.GetSQLExecutor()
+		var err2 error
+		infos, err2 = importer.GetJobsByGroupKey(ctx, exec, e.Ctx().GetSessionVars().User.String(), e.ShowGroupKey, hasSuperPriv)
+		return err2
+	}); err != nil {
+		return err
+	}
+
+	groupMap := make(map[string]*groupInfo)
+	for _, info := range infos {
+		if _, ok := groupMap[info.GroupKey]; !ok {
+			subtaskUpdateTime, err := importinto.GetLastUpdateTimeForRunningJob(ctx, info.ID)
+			if err != nil {
+				return err
+			}
+
+			updateTime := info.UpdateTime
+			if !subtaskUpdateTime.IsZero() {
+				updateTime = subtaskUpdateTime
+			}
+
+			groupMap[info.GroupKey] = &groupInfo{
+				groupKey:   info.GroupKey,
+				startTime:  types.ZeroTime,
+				updateTime: updateTime,
+			}
+		}
+
+		gInfo := groupMap[info.GroupKey]
+		if gInfo.startTime.IsZero() || info.CreateTime.Compare(gInfo.startTime) < 0 {
+			gInfo.startTime = info.CreateTime
+		}
+
+		gInfo.jobCount++
+		switch info.Status {
+		case "pending":
+			gInfo.pending++
+		case "running":
+			gInfo.running++
+		case "finished":
+			gInfo.completed++
+		case "failed":
+			gInfo.failed++
+		case "cancelled":
+			gInfo.canceled++
+		}
+	}
+
+	for _, gInfo := range groupMap {
+		e.result.AppendString(0, gInfo.groupKey)
+		e.result.AppendInt64(1, gInfo.jobCount)
+		e.result.AppendInt64(2, gInfo.pending)
+		e.result.AppendInt64(3, gInfo.running)
+		e.result.AppendInt64(4, gInfo.completed)
+		e.result.AppendInt64(5, gInfo.failed)
+		e.result.AppendInt64(6, gInfo.canceled)
+		e.result.AppendTime(7, gInfo.startTime)
+		e.result.AppendTime(8, gInfo.updateTime)
+	}
+	return nil
+}
+
 // fetchShowImportJobs fills the result with the schema:
-// {"Job_ID", "Data_Source", "Target_Table", "Table_ID",
+// {"Job_ID", "Group_Key", "Data_Source", "Target_Table", "Table_ID",
 // "Phase", "Status", "Source_File_Size", "Imported_Rows",
 // "Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
 func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
@@ -2603,7 +2767,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		}); err != nil {
 			return err
 		}
-		return handleImportJobInfo(ctx, info, e.result)
+		return handleImportJobInfo(ctx, e.Ctx(), info, e.result)
 	}
 	var infos []*importer.JobInfo
 	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
@@ -2615,7 +2779,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		return err
 	}
 	for _, info := range infos {
-		if err2 := handleImportJobInfo(ctx, info, e.result); err2 != nil {
+		if err2 := handleImportJobInfo(ctx, e.Ctx(), info, e.result); err2 != nil {
 			return err2
 		}
 	}
