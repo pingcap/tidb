@@ -1699,7 +1699,26 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			select {
 			case <-do.exit:
 				return
+<<<<<<< HEAD
 			case _, ok = <-watchCh:
+=======
+			case resp, ok := <-watchCh:
+				if ok {
+					count = 0
+					event = do.decodePrivilegeEvent(resp)
+					event = do.batchReadMoreData(watchCh, event)
+				} else {
+					if do.ctx.Err() == nil {
+						logutil.BgLogger().Warn("load privilege loop watch channel closed")
+						watchCh = do.etcdClient.Watch(do.ctx, privilegeKey)
+						count++
+						if count > 10 {
+							time.Sleep(time.Duration(count) * time.Second)
+						}
+						continue
+					}
+				}
+>>>>>>> 8fc1430b834 (*: change some unnecessary error logs to warn or info (#61428))
 			case <-time.After(duration):
 			}
 			if !ok {
@@ -1766,7 +1785,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			})
 
 			if !ok {
-				logutil.BgLogger().Error("LoadSysVarCacheLoop loop watch channel closed")
+				logutil.BgLogger().Warn("LoadSysVarCacheLoop loop watch channel closed")
 				watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
 				count++
 				if count > 10 {
@@ -1779,7 +1798,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			err := do.rebuildSysVarCache(ctx)
 			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
-				logutil.BgLogger().Error("LoadSysVarCacheLoop failed", zap.Error(err))
+				logutil.BgLogger().Warn("LoadSysVarCacheLoop failed", zap.Error(err))
 			}
 		}
 	}, "LoadSysVarCacheLoop")
