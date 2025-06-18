@@ -1872,7 +1872,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			case <-time.After(duration):
 			}
 			if !ok {
-				logutil.BgLogger().Error("load privilege loop watch channel closed")
+				logutil.BgLogger().Warn("load privilege loop watch channel closed")
 				watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
 				count++
 				if count > 10 {
@@ -1885,7 +1885,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			err := do.privHandle.Update()
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
-				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
+				logutil.BgLogger().Warn("load privilege failed", zap.Error(err))
 			}
 		}
 	}, "loadPrivilegeInLoop")
