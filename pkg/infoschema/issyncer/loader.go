@@ -52,7 +52,9 @@ type Loader struct {
 
 	// below fields are set when running background routines
 	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the client to the autoid service.
-	autoidClient       *autoid.ClientDiscover
+	autoidClient *autoid.ClientDiscover
+	// CachedTable need internal session to access some system tables, such as
+	// mysql.table_cache_meta
 	sysExecutorFactory func() (pools.Resource, error)
 }
 
