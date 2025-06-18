@@ -385,6 +385,22 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "CTEReader("
 		str += fmt.Sprintf("%v", x.CTE.IDForStorage)
 		str += ")"
+	case *PhysicalCTESink:
+		str = "CTESink("
+		str += fmt.Sprintf("%v, ", x.IDForStorage)
+		str += "("
+		for _, task := range x.TargetTasks {
+			str += fmt.Sprintf("%d, ", task.ID)
+		}
+		str += "))"
+	case *PhysicalCTESource:
+		str = "CTESource("
+		str += fmt.Sprintf("%v", x.IDForStorage)
+		str += "("
+		for _, task := range x.Tasks {
+			str += fmt.Sprintf("%d, ", task.ID)
+		}
+		str += "))"
 	default:
 		str = fmt.Sprintf("%T", in)
 	}

@@ -497,3 +497,16 @@ func (p ScalarSubqueryEvalCtx) Init(ctx base.PlanContext, offset int) *ScalarSub
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeScalarSubQuery, offset)
 	return &p
 }
+
+func (p PhysicalCTESink) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTESink {
+	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypePhysicalCTESink, &p, 0)
+	p.SetStats(stats)
+	return &p
+}
+
+func (p PhysicalCTESource) Init(ctx base.PlanContext, stats *property.StatsInfo, schema *expression.Schema) *PhysicalCTESource {
+	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypePhysicalCTESource, &p, 0)
+	p.SetStats(stats)
+	p.SetSchema(schema)
+	return &p
+}
