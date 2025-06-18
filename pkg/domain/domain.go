@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	lcom "github.com/pingcap/tidb/pkg/lightning/common"
@@ -317,6 +318,16 @@ func (do *Domain) Store() kv.Storage {
 func (*Domain) GetScope(string) vardef.ScopeFlag {
 	// Now domain status variables scope are all default scope.
 	return variable.DefaultStatusVarScopeFlag
+}
+
+// Reload reloads InfoSchema.
+// It's public in order to do the test.
+func (do *Domain) Reload() error {
+	return do.isSyncer.Reload()
+}
+
+func (do *Domain) GetSchemaValidator() validatorapi.Validator {
+	return do.isSyncer.GetSchemaValidator()
 }
 
 // LogSlowQuery keeps topN recent slow queries in domain.
@@ -820,7 +831,7 @@ func (do *Domain) GetSchemaLease() time.Duration {
 
 // IsLeaseExpired returns whether lease has expired
 func (do *Domain) IsLeaseExpired() bool {
-	return do.isSyncer.SchemaValidator.IsLeaseExpired()
+	return do.isSyncer.GetSchemaValidator().IsLeaseExpired()
 }
 
 // InitInfo4Test init infosync for distributed execution test.

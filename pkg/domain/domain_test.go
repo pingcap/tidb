@@ -128,7 +128,7 @@ func TestInfo(t *testing.T) {
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
 	for range 1000 {
-		if dom.isSyncer.SchemaValidator.IsStarted() {
+		if dom.GetSchemaValidator().IsStarted() {
 			syncerStarted = true
 			break
 		}

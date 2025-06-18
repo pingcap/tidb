@@ -48,7 +48,7 @@ var (
 // NewSchemaChecker creates a new schema checker.
 func NewSchemaChecker(do *Domain, schemaVer int64, relatedTableIDs []int64, needCheckSchema bool) *SchemaChecker {
 	return &SchemaChecker{
-		Validator:       do.isSyncer.SchemaValidator,
+		Validator:       do.GetSchemaValidator(),
 		schemaVer:       schemaVer,
 		relatedTableIDs: relatedTableIDs,
 		needCheckSchema: needCheckSchema,

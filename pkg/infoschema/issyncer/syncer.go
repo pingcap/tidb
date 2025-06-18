@@ -71,7 +71,7 @@ type Syncer struct {
 	deferFn           deferFn
 	mdlCheckCh        chan struct{}
 	mdlCheckTableInfo *mdlCheckTableInfo
-	SchemaValidator   validatorapi.Validator
+	schemaValidator   validatorapi.Validator
 	loader            *Loader
 
 	// below fields are set when running background routines
@@ -99,7 +99,7 @@ func New(
 			jobsIDsMap: make(map[int64]string),
 		},
 	}
-	do.SchemaValidator = isvalidator.New(schemaLease)
+	do.schemaValidator = isvalidator.New(schemaLease)
 	do.loader = &Loader{
 		store:     store,
 		infoCache: infoCache,
@@ -284,7 +284,7 @@ func (s *Syncer) SyncLoop(ctx context.Context) {
 			// Say the schema version now is 1, the owner is changing the schema version to 2, it will not wait for this down TiDB syncing the schema,
 			// then continue to change the TiDB schema to version 3. Unfortunately, this down TiDB schema version will still be version 1.
 			// And version 1 is not consistent to version 3. So we need to stop the schema validator to prohibit the DML executing.
-			s.SchemaValidator.Stop()
+			s.schemaValidator.Stop()
 			err := s.mustRestartSyncer(ctx)
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop, schema syncer restart failed", zap.Error(err))
@@ -297,7 +297,7 @@ func (s *Syncer) SyncLoop(ctx context.Context) {
 				logutil.BgLogger().Error("domain is closed, exit info schema sync loop")
 				return
 			}
-			s.SchemaValidator.Restart(s.InfoSchema().SchemaMetaVersion())
+			s.schemaValidator.Restart(s.InfoSchema().SchemaMetaVersion())
 			logutil.BgLogger().Info("schema syncer restarted")
 		case <-ctx.Done():
 			return
@@ -403,7 +403,7 @@ func (s *Syncer) Reload() error {
 		// it is full load
 		if changes == nil {
 			logutil.BgLogger().Info("full load and reset schema validator")
-			s.SchemaValidator.Reset()
+			s.schemaValidator.Reset()
 		}
 	}
 
@@ -440,7 +440,7 @@ func (s *Syncer) Reload() error {
 		}
 	}
 	// lease renew, so it must be executed despite it is cache or not
-	s.SchemaValidator.Update(version, oldSchemaVersion, is.SchemaMetaVersion(), changes)
+	s.schemaValidator.Update(version, oldSchemaVersion, is.SchemaMetaVersion(), changes)
 	s.postReload(oldSchemaVersion, is.SchemaMetaVersion(), changes)
 
 	return nil
@@ -470,6 +470,11 @@ func (s *Syncer) InfoSchema() infoschema.InfoSchema {
 // GetInfoSyncer returns the InfoSyncer.
 func (s *Syncer) GetInfoSyncer() *infosync.InfoSyncer {
 	return s.info
+}
+
+// GetSchemaValidator returns the schema validator.
+func (s *Syncer) GetSchemaValidator() validatorapi.Validator {
+	return s.schemaValidator
 }
 
 // FetchAllSchemasWithTables fetches all schemas with their tables.

@@ -65,7 +65,7 @@ func TestSchemaCheckerSimple(t *testing.T) {
 	_, err = checker.Check(ts)
 	require.NoError(t, err)
 
-	// Use checker.SchemaValidator.Check instead of checker.Check here because backoff make CI slow.
+	// Use checker.schemaValidator.Check instead of checker.Check here because backoff make CI slow.
 	nowTS := uint64(time.Now().UnixNano())
 	_, result := checker.Validator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs, true)
 	require.Equal(t, validatorapi.ResultUnknown, result)

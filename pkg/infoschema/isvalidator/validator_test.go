@@ -66,7 +66,7 @@ func subTestSchemaValidatorGeneral(t *testing.T) {
 	require.True(t, isTablesChanged)
 	_, valid = validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10}, true)
 	require.Equal(t, validatorapi.ResultUnknown, valid)
-	validator.Restart()
+	validator.Restart(validator.restartSchemaVer)
 
 	// Increase the current time by 2 leases, check schema is invalid.
 	after2LeaseTime := time.Now().Add(2 * lease)
