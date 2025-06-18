@@ -846,7 +846,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
 
 		nodeW := resolve.NewNodeW(stmt)
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
@@ -937,7 +937,7 @@ func TestTwiceCloseUnionExec(t *testing.T) {
 		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
 		nodeW := resolve.NewNodeW(stmt)
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		e := executorBuilder.Build(p)
