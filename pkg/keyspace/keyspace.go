@@ -16,7 +16,7 @@ package keyspace
 
 import (
 	"fmt"
-	"strconv"
+	"sync"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
@@ -56,18 +56,20 @@ func GetKeyspaceNameBySettings() (keyspaceName string) {
 	return keyspaceName
 }
 
-// GetKeyspaceIDBySettings is used to get Keyspace ID setting.
-func GetKeyspaceIDBySettings() (keyspaceID *uint32) {
-	keyspaceName := config.GetGlobalKeyspaceName()
-	if !IsKeyspaceNameEmpty(keyspaceName) && kerneltype.IsNextGen() {
-		keyspaceIDU64, err := strconv.ParseUint(keyspaceName, 10, 32)
-		if err != nil {
-			return nil
+var keyspaceNameBytes []byte
+var genKeyspaceNameOnce sync.Once
+
+// GetKeyspaceNameBytesBySettings is used to get keyspace name setting as a byte slice.
+func GetKeyspaceNameBytesBySettings() []byte {
+	genKeyspaceNameOnce.Do(func() {
+		if !kerneltype.IsNextGen() {
+			return
 		}
-		keyspaceIDU32 := uint32(keyspaceIDU64)
-		return &keyspaceIDU32
-	}
-	return nil
+
+		keyspaceName := config.GetGlobalKeyspaceName()
+		keyspaceNameBytes = []byte(keyspaceName)
+	})
+	return keyspaceNameBytes
 }
 
 // IsKeyspaceNameEmpty is used to determine whether keyspaceName is set.

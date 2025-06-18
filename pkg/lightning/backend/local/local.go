@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"math"
 	"net"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -528,6 +529,8 @@ type Backend struct {
 	logger       log.Logger
 	// This mutex is used to do some mutual exclusion work in the backend, flushKVs() in writer for now.
 	mu sync.Mutex
+
+	nextgenHTTPCli *http.Client
 }
 
 var _ DiskUsage = (*Backend)(nil)
@@ -792,6 +795,9 @@ func (local *Backend) Close() {
 	_ = local.tikvCli.Close()
 	local.pdHTTPCli.Close()
 	local.pdCli.Close()
+	if local.nextgenHTTPCli != nil {
+		local.nextgenHTTPCli.CloseIdleConnections()
+	}
 }
 
 // FlushEngine ensure the written data is saved successfully, to make sure no data lose after restart
@@ -1451,9 +1457,13 @@ func (local *Backend) newRegionJobWorker(
 		regenerateJobsFn: local.generateJobForRange,
 	}
 	if kerneltype.IsNextGen() {
-		httpClient := util.ClientWithTLS(local.tls.TLSConfig())
+		tlsConfig := local.tls.TLSConfig()
+		if local.nextgenHTTPCli == nil {
+			local.nextgenHTTPCli = util.ClientWithTLS(tlsConfig)
+		}
+		isHTTPS := tlsConfig != nil
 		cloudW := &objStoreRegionJobWorker{
-			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, clusterID, httpClient, local.splitCli),
+			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, clusterID, isHTTPS, local.nextgenHTTPCli, local.splitCli),
 			writeBatchSize: local.KVWriteBatchSize,
 			bufPool:        local.engineMgr.getBufferPool(),
 		}

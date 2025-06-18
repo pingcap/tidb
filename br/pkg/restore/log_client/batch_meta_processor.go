@@ -150,6 +150,7 @@ func (mp *MetaKVInfoProcessor) ReadMetaKVFilesAndBuildInfo(
 	); err != nil {
 		return errors.Trace(err)
 	}
+	mp.tableMappingManager.CleanTempKV()
 	return nil
 }
 
@@ -168,7 +169,8 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 	// process entries to collect table IDs
 	for _, entry := range curSortedEntries {
 		// parse entry and do the table mapping, using tableHistoryManager as the collector
-		if err = mp.tableMappingManager.ParseMetaKvAndUpdateIdMapping(&entry.E, cf, mp.tableHistoryManager); err != nil {
+		if err = mp.tableMappingManager.ParseMetaKvAndUpdateIdMapping(&entry.E, cf, entry.Ts,
+			mp.tableHistoryManager); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}

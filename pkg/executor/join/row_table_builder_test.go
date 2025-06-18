@@ -608,6 +608,46 @@ func TestBalanceOfFilteredRows(t *testing.T) {
 	}
 }
 
+func TestUnalignmentLoad(t *testing.T) {
+	unalignData := make([]byte, 0)
+	for i := range 20 {
+		unalignData = append(unalignData, byte(i))
+	}
+	alignData := make([]byte, 0)
+	for i := range 10 {
+		alignData = append(alignData, byte(i))
+		alignData = append(alignData, byte(i+1))
+		alignData = append(alignData, byte(i+2))
+		alignData = append(alignData, byte(i+3))
+		alignData = append(alignData, byte(i+4))
+		alignData = append(alignData, byte(i+5))
+		alignData = append(alignData, byte(i+6))
+		alignData = append(alignData, byte(i+7))
+	}
+	require.True(t, uintptr(unsafe.Pointer(&alignData[0]))%4 == 0)
+
+	// loadUint64
+	for i := range 10 {
+		v1 := *(*uint64)(unsafe.Pointer(&unalignData[i]))
+		v2 := *(*uint64)(unsafe.Pointer(&alignData[i*8]))
+		require.Equal(t, v1, v2)
+	}
+
+	// loadUint32
+	for i := range 10 {
+		v1 := *(*uint32)(unsafe.Pointer(&unalignData[i]))
+		v2 := *(*uint32)(unsafe.Pointer(&alignData[i*8]))
+		require.Equal(t, v1, v2)
+	}
+
+	// loadUint8
+	for i := range 10 {
+		v1 := *(*uint8)(unsafe.Pointer(&unalignData[i]))
+		v2 := *(*uint8)(unsafe.Pointer(&alignData[i*8]))
+		require.Equal(t, v1, v2)
+	}
+}
+
 func TestSetupPartitionInfo(t *testing.T) {
 	type testCase struct {
 		concurrency         uint

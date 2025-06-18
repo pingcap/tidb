@@ -14,7 +14,10 @@
 
 package metrics
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 // TTL metrics
 var (
@@ -41,7 +44,7 @@ var (
 
 // InitTTLMetrics initializes ttl metrics.
 func InitTTLMetrics() {
-	TTLQueryDuration = NewHistogramVec(
+	TTLQueryDuration = metricscommon.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -50,7 +53,7 @@ func InitTTLMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20), // 10ms ~ 1.45hour
 		}, []string{LblSQLType, LblResult})
 
-	TTLProcessedExpiredRowsCounter = NewCounterVec(
+	TTLProcessedExpiredRowsCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -58,7 +61,7 @@ func InitTTLMetrics() {
 			Help:      "The count of expired rows processed in TTL jobs",
 		}, []string{LblSQLType, LblResult})
 
-	TTLJobStatus = NewGaugeVec(
+	TTLJobStatus = metricscommon.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -66,7 +69,7 @@ func InitTTLMetrics() {
 			Help:      "The jobs count in the specified status",
 		}, []string{LblType})
 
-	TTLTaskStatus = NewGaugeVec(
+	TTLTaskStatus = metricscommon.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -74,7 +77,7 @@ func InitTTLMetrics() {
 			Help:      "The tasks count in the specified status",
 		}, []string{LblType})
 
-	TTLPhaseTime = NewCounterVec(
+	TTLPhaseTime = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -82,7 +85,7 @@ func InitTTLMetrics() {
 			Help:      "The time spent in each phase",
 		}, []string{LblType, LblPhase})
 
-	TTLInsertRowsCount = NewCounter(
+	TTLInsertRowsCount = metricscommon.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -90,7 +93,7 @@ func InitTTLMetrics() {
 			Help:      "The count of TTL rows inserted",
 		})
 
-	TTLWatermarkDelay = NewGaugeVec(
+	TTLWatermarkDelay = metricscommon.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -98,7 +101,7 @@ func InitTTLMetrics() {
 			Help:      "Bucketed delay time in seconds for TTL tables.",
 		}, []string{LblType, LblName})
 
-	TTLEventCounter = NewCounterVec(
+	TTLEventCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",

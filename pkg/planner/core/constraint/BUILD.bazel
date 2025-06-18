@@ -7,6 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
-        "//pkg/planner/core/base",
+        "//pkg/sessionctx/stmtctx",
     ],
 )

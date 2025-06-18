@@ -1745,6 +1745,12 @@ func TestBuiltin(t *testing.T) {
 		// for cast as JSON
 		{"SELECT *, CAST(data AS JSON) FROM t;", true, "SELECT *,CAST(`data` AS JSON) FROM `t`"},
 
+		// for JSON_SUM_CRC32
+		{"SELECT *, JSON_SUM_CRC32(data AS UNSIGNED ARRAY) FROM t;", true, "SELECT *,JSON_SUM_CRC32(`data` AS UNSIGNED ARRAY) FROM `t`"},
+		{"SELECT *, JSON_SUM_CRC32(data AS DOUBLE ARRAY) FROM t;", true, "SELECT *,JSON_SUM_CRC32(`data` AS DOUBLE ARRAY) FROM `t`"},
+		{"SELECT *, JSON_SUM_CRC32(data AS DOUBLE) FROM t;", false, ""},
+		{"SELECT *, JSON_SUM_CRC32(data) FROM t;", false, ""},
+
 		// for cast as signed int, fix issue #3691.
 		{"select cast(1 as signed int);", true, "SELECT CAST(1 AS SIGNED)"},
 
@@ -2017,7 +2023,6 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT IS_IPV4_MAPPED(INET6_ATON('::10.0.5.9'));`, true, "SELECT IS_IPV4_MAPPED(INET6_ATON(_UTF8MB4'::10.0.5.9'))"},
 		{`SELECT IS_IPV6('10.0.5.9');`, true, "SELECT IS_IPV6(_UTF8MB4'10.0.5.9')"},
 		{`SELECT IS_USED_LOCK(@str);`, true, "SELECT IS_USED_LOCK(@`str`)"},
-		{`SELECT MASTER_POS_WAIT(@log_name, @log_pos), MASTER_POS_WAIT(@log_name, @log_pos, @timeout), MASTER_POS_WAIT(@log_name, @log_pos, @timeout, @channel_name);`, true, "SELECT MASTER_POS_WAIT(@`log_name`, @`log_pos`),MASTER_POS_WAIT(@`log_name`, @`log_pos`, @`timeout`),MASTER_POS_WAIT(@`log_name`, @`log_pos`, @`timeout`, @`channel_name`)"},
 		{`SELECT NAME_CONST('myname', 14);`, true, "SELECT NAME_CONST(_UTF8MB4'myname', 14)"},
 		{`SELECT RELEASE_ALL_LOCKS();`, true, "SELECT RELEASE_ALL_LOCKS()"},
 		{`SELECT UUID();`, true, "SELECT UUID()"},
@@ -2039,7 +2044,6 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT IS_IPV4_MAPPED(INET6_ATON());`, true, "SELECT IS_IPV4_MAPPED(INET6_ATON())"},
 		{`SELECT IS_IPV6()`, true, "SELECT IS_IPV6()"},
 		{`SELECT IS_USED_LOCK();`, true, "SELECT IS_USED_LOCK()"},
-		{`SELECT MASTER_POS_WAIT();`, true, "SELECT MASTER_POS_WAIT()"},
 		{`SELECT NAME_CONST();`, true, "SELECT NAME_CONST()"},
 		{`SELECT RELEASE_ALL_LOCKS(1);`, true, "SELECT RELEASE_ALL_LOCKS(1)"},
 		{`SELECT UUID(1);`, true, "SELECT UUID(1)"},

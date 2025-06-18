@@ -96,16 +96,6 @@ func CopReadBatchSize(hintSize int) int {
 	return 10 * int(vardef.GetDDLReorgBatchSize())
 }
 
-// CopReadChunkPoolSize is the size of chunk pool, which
-// represents the max concurrent ongoing coprocessor requests.
-// It multiplies the tidb_ddl_reorg_worker_cnt by 10.
-func CopReadChunkPoolSize(hintConc int) int {
-	if hintConc > 0 {
-		return 10 * hintConc
-	}
-	return 10 * int(vardef.GetDDLReorgWorkerCounter())
-}
-
 // NewDDLTLS creates a common.TLS from the tidb config for DDL.
 func NewDDLTLS() (*common.TLS, error) {
 	tidbCfg := tidb.GetGlobalConfig()

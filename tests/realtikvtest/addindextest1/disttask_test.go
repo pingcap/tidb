@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,11 +32,13 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -501,4 +504,17 @@ func TestAddIndexDistCleanUpBlock(t *testing.T) {
 	}
 	wg.Wait()
 	close(ch)
+}
+
+func TestUseClusterIdInGlobalSortPath(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	s, ok := store.(kv.StorageWithPD)
+	require.True(t, ok)
+	vardef.CloudStorageURI.Store("s3://bucket/path/to/folder?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws")
+	path := handle.GetCloudStorageURI(context.Background(), store)
+	require.Equal(t, "s3://bucket/path/to/folder/"+
+		strconv.FormatUint(s.GetPDClient().GetClusterID(context.TODO()), 10)+
+		"?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws", path)
+	// without cluster id
+	require.Equal(t, "s3://bucket/path/to/folder?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws", handle.GetCloudStorageURI(context.Background(), nil))
 }

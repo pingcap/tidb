@@ -1658,7 +1658,7 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
-	DefTiDBCircuitBreakerPDMetaErrorRatePct           = 0
+	DefTiDBCircuitBreakerPDMetaErrorRatePct           = 0.0
 	DefTiDBAccelerateUserCreationUpdate               = false
 	DefTiDBEnableTSValidation                         = true
 )
@@ -1788,6 +1788,8 @@ var (
 	SchemaCacheSize              = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText    = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
 	AccelerateUserCreationUpdate = atomic.NewBool(DefTiDBAccelerateUserCreationUpdate)
+
+	CircuitBreakerPDMetadataErrorRateThresholdPct = atomic.NewFloat64(0.0)
 )
 
 func serverMemoryLimitDefaultValue() string {

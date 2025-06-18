@@ -29,6 +29,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -44,6 +45,8 @@ var retryableErrorMsgList = []string{
 	"coprocessor task terminated due to exceeding the deadline",
 	// fix https://github.com/pingcap/tidb/issues/51383
 	"rate: wait",
+	// Mock error during test
+	"injected random error",
 }
 
 func isRetryableFromErrorMessage(err error) bool {
@@ -72,17 +75,17 @@ func IsRetryableError(err error) bool {
 }
 
 var retryableErrorIDs = map[errors.ErrorID]struct{}{
-	ErrKVEpochNotMatch.ID():  {},
-	ErrKVNotLeader.ID():      {},
-	ErrNoLeader.ID():         {},
-	ErrKVRegionNotFound.ID(): {},
+	errdef.ErrKVEpochNotMatch.ID():  {},
+	errdef.ErrKVNotLeader.ID():      {},
+	ErrNoLeader.ID():                {},
+	errdef.ErrKVRegionNotFound.ID(): {},
 	// common.ErrKVServerIsBusy is a little duplication with tmysql.ErrTiKVServerBusy
 	// it's because the response of sst.ingest gives us a sst.IngestResponse which doesn't contain error code,
 	// so we have to transform it into a defined code
-	ErrKVServerIsBusy.ID():        {},
-	ErrKVReadIndexNotReady.ID():   {},
-	ErrKVIngestFailed.ID():        {},
-	ErrKVRaftProposalDropped.ID(): {},
+	errdef.ErrKVServerIsBusy.ID():        {},
+	errdef.ErrKVReadIndexNotReady.ID():   {},
+	errdef.ErrKVIngestFailed.ID():        {},
+	errdef.ErrKVRaftProposalDropped.ID(): {},
 	// litBackendCtxMgr.Register may return the error.
 	ErrCreatePDClient.ID(): {},
 	// during checksum coprocessor will transform error into driver error in handleCopResponse using ToTiDBErr

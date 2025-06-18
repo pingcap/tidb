@@ -72,7 +72,7 @@ func TestOnefileWriterBasic(t *testing.T) {
 	require.NoError(t, writer.Close(ctx))
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test/0/one-file", memStore, 0, bufSize)
+	kvReader, err := NewKVReader(ctx, "/test/0/one-file", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
 		key, value, err := kvReader.nextKV()
@@ -135,7 +135,7 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 	require.NoError(t, writer.Close(ctx))
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/"+prefix+"/0/one-file", memStore, 0, bufSize)
+	kvReader, err := NewKVReader(ctx, "/"+prefix+"/0/one-file", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
 		key, value, err := kvReader.nextKV()
@@ -216,7 +216,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 
 	kvs := make([]kvPair, 0, kvCount)
 
-	kvReader, err := newKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, 100)
+	kvReader, err := NewKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, 100)
 	require.NoError(t, err)
 	for range kvCount {
 		key, value, err := kvReader.nextKV()
@@ -311,7 +311,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	))
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, bufSize)
+	kvReader, err := NewKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
 		key, value, err := kvReader.nextKV()

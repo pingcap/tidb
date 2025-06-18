@@ -88,7 +88,8 @@ func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expre
 		p.Children()[chIdx] = child
 		return
 	}
-	conditions = expression.PropagateConstant(p.SCtx().GetExprCtx(), conditions)
+	exprCtx := p.SCtx().GetExprCtx()
+	conditions = expression.PropagateConstant(exprCtx, conditions)
 	// Return table dual when filter is constant false or null.
 	dual := Conds2TableDual(child, conditions)
 	if dual != nil {
@@ -97,7 +98,7 @@ func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expre
 		return
 	}
 
-	conditions = constraint.DeleteTrueExprs(p, conditions)
+	conditions = constraint.DeleteTrueExprs(exprCtx, p.SCtx().GetSessionVars().StmtCtx, conditions)
 	if len(conditions) == 0 {
 		p.Children()[chIdx] = child
 		return

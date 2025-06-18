@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -277,6 +278,15 @@ func main() {
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
+	// we cannot add this check inside config.Valid(), as previous '-V' also relies
+	// on initialized global config.
+	if kerneltype.IsNextGen() && len(config.GetGlobalConfig().KeyspaceName) == 0 {
+		fmt.Fprintln(os.Stderr, "invalid config: keyspace name is required for nextgen TiDB")
+		os.Exit(0)
+	} else if kerneltype.IsClassic() && len(config.GetGlobalConfig().KeyspaceName) > 0 {
+		fmt.Fprintln(os.Stderr, "invalid config: keyspace name is not supported for classic TiDB")
+		os.Exit(0)
+	}
 	registerStores()
 	err := metricsutil.RegisterMetrics()
 	terror.MustNil(err)
@@ -337,7 +347,7 @@ func main() {
 		executor.Stop()
 		close(exited)
 	})
-	topsql.SetupTopSQL(keyspace.GetKeyspaceIDBySettings(), svr)
+	topsql.SetupTopSQL(keyspace.GetKeyspaceNameBytesBySettings(), svr)
 	terror.MustNil(svr.Run(dom))
 	<-exited
 	syncLog()
@@ -416,6 +426,18 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 	var err error
 	storage, err := kvstore.New(fullPath)
 	terror.MustNil(err)
+	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
+		pdhttpCli := tikvStore.GetPDHTTPClient()
+		// unistore also implements kv.StorageWithPD, but it does not have PD client.
+		if pdhttpCli != nil {
+			pdStatus, err := pdhttpCli.GetStatus(context.Background())
+			terror.MustNil(err)
+			if !kerneltype.IsMatch(pdStatus.KernelType) {
+				log.Fatal("kernel type mismatch", zap.String("pd", pdStatus.KernelType),
+					zap.String("tidb", kerneltype.Name()))
+			}
+		}
+	}
 	copr.GlobalMPPFailedStoreProber.Run()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.

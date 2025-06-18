@@ -110,7 +110,7 @@ func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
 		plancodec.EncodePlanNode(
 			int(fop.Depth),
 			strconv.Itoa(fop.Origin.ID())+fop.Label.String(),
-			fop.Origin.TP(),
+			fop.Origin.TP(fop.IsINLProbeChild),
 			estRows,
 			taskTypeInfo,
 			fop.Origin.ExplainInfo(),
@@ -289,7 +289,7 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 		p := fop.Origin.(base.PhysicalPlan)
 		plancodec.NormalizePlanNode(
 			int(fop.Depth-uint32(selectPlanOffset)),
-			fop.Origin.TP(),
+			fop.Origin.TP(fop.IsINLProbeChild),
 			taskTypeInfo,
 			p.ExplainNormalizedInfo(),
 			&d.buf,
@@ -333,12 +333,12 @@ func NormalizePlan(p base.Plan) (normalized string, digest *parser.Digest) {
 func (d *planDigester) normalizePlanTree(p base.PhysicalPlan) {
 	d.encodedPlans = make(map[int]bool)
 	d.buf.Reset()
-	d.normalizePlan(p, true, kv.TiKV, 0)
+	d.normalizePlan(p, true, kv.TiKV, 0, false)
 }
 
-func (d *planDigester) normalizePlan(p base.PhysicalPlan, isRoot bool, store kv.StoreType, depth int) {
+func (d *planDigester) normalizePlan(p base.PhysicalPlan, isRoot bool, store kv.StoreType, depth int, isChildOfINL bool) {
 	taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(isRoot, store)
-	plancodec.NormalizePlanNode(depth, p.TP(), taskTypeInfo, p.ExplainNormalizedInfo(), &d.buf)
+	plancodec.NormalizePlanNode(depth, p.TP(isChildOfINL), taskTypeInfo, p.ExplainNormalizedInfo(), &d.buf)
 	d.encodedPlans[p.ID()] = true
 
 	depth++
@@ -346,22 +346,22 @@ func (d *planDigester) normalizePlan(p base.PhysicalPlan, isRoot bool, store kv.
 		if d.encodedPlans[child.ID()] {
 			continue
 		}
-		d.normalizePlan(child, isRoot, store, depth)
+		d.normalizePlan(child, isRoot, store, depth, isChildOfINL)
 	}
 	switch x := p.(type) {
 	case *PhysicalTableReader:
-		d.normalizePlan(x.tablePlan, false, x.StoreType, depth)
+		d.normalizePlan(x.tablePlan, false, x.StoreType, depth, false)
 	case *PhysicalIndexReader:
-		d.normalizePlan(x.indexPlan, false, store, depth)
+		d.normalizePlan(x.indexPlan, false, store, depth, false)
 	case *PhysicalIndexLookUpReader:
-		d.normalizePlan(x.indexPlan, false, store, depth)
-		d.normalizePlan(x.tablePlan, false, store, depth)
+		d.normalizePlan(x.indexPlan, false, store, depth, false)
+		d.normalizePlan(x.tablePlan, false, store, depth, true)
 	case *PhysicalIndexMergeReader:
 		for _, p := range x.partialPlans {
-			d.normalizePlan(p, false, store, depth)
+			d.normalizePlan(p, false, store, depth, false)
 		}
 		if x.tablePlan != nil {
-			d.normalizePlan(x.tablePlan, false, store, depth)
+			d.normalizePlan(x.tablePlan, false, store, depth, true)
 		}
 	}
 }

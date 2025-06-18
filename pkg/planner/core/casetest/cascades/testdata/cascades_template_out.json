@@ -1,0 +1,24 @@
+[
+  {
+    "Name": "TestCascadesTemplate",
+    "Cases": [
+      {
+        "SQL": "select count(1) from t group by a, b",
+        "Plan": [
+          "Projection 10000.00 root  1->Column#3",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a+b from t where b > 2",
+        "Plan": [
+          "Projection 3333.33 root  plus(test.t.a, test.t.b)->Column#3",
+          "└─TableReader 3333.33 root  data:Selection",
+          "  └─Selection 3333.33 cop[tikv]  gt(test.t.b, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  }
+]

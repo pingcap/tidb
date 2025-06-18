@@ -15,6 +15,7 @@
 package metrics
 
 import (
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -31,7 +32,7 @@ var (
 
 // InitDistSQLMetrics initializes distsql metrics.
 func InitDistSQLMetrics() {
-	DistSQLQueryHistogram = NewHistogramVec(
+	DistSQLQueryHistogram = metricscommon.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",
@@ -40,7 +41,7 @@ func InitDistSQLMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblType, LblSQLType, LblCoprType})
 
-	DistSQLScanKeysPartialHistogram = NewHistogram(
+	DistSQLScanKeysPartialHistogram = metricscommon.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",
@@ -49,7 +50,7 @@ func InitDistSQLMetrics() {
 		},
 	)
 
-	DistSQLScanKeysHistogram = NewHistogram(
+	DistSQLScanKeysHistogram = metricscommon.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",
@@ -58,7 +59,7 @@ func InitDistSQLMetrics() {
 		},
 	)
 
-	DistSQLPartialCountHistogram = NewHistogram(
+	DistSQLPartialCountHistogram = metricscommon.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",
@@ -67,7 +68,7 @@ func InitDistSQLMetrics() {
 		},
 	)
 
-	DistSQLCoprCacheCounter = NewCounterVec(
+	DistSQLCoprCacheCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",
@@ -75,7 +76,7 @@ func InitDistSQLMetrics() {
 			Help:      "coprocessor cache hit, evict and miss number",
 		}, []string{LblType})
 
-	DistSQLCoprClosestReadCounter = NewCounterVec(
+	DistSQLCoprClosestReadCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",
@@ -83,7 +84,7 @@ func InitDistSQLMetrics() {
 			Help:      "counter of total copr read local read hit.",
 		}, []string{LblType})
 
-	DistSQLCoprRespBodySize = NewHistogramVec(
+	DistSQLCoprRespBodySize = metricscommon.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",

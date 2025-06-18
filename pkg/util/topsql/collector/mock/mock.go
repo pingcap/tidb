@@ -80,8 +80,8 @@ func (c *TopSQLCollector) Collect(stats []collector.SQLCPUTimeRecord) {
 // BindProcessCPUTimeUpdater implements TopSQLReporter.
 func (*TopSQLCollector) BindProcessCPUTimeUpdater(_ collector.ProcessCPUTimeUpdater) {}
 
-// BindKeyspaceID implements TopSQLReporter.
-func (c *TopSQLCollector) BindKeyspaceID(_ *uint32) {
+// BindKeyspaceName implements TopSQLReporter.
+func (c *TopSQLCollector) BindKeyspaceName(_ []byte) {
 }
 
 // CollectStmtStatsMap implements stmtstats.Collector.

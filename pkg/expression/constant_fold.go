@@ -169,7 +169,7 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 			// we should not fold the extension function, because it may have a side effect.
 			return expr, false
 		}
-		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
+		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(ctx, expr) {
 			return function(ctx, x)
 		}
 

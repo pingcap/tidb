@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -58,7 +59,7 @@ func logicalConstant(bc base.PlanContext, cond expression.Expression) predicateT
 	if !ok {
 		return otherPredicate
 	}
-	if expression.MaybeOverOptimized4PlanCache(bc.GetExprCtx(), []expression.Expression{con}) {
+	if expression.MaybeOverOptimized4PlanCache(bc.GetExprCtx(), con) {
 		return otherPredicate
 	}
 	isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault())
@@ -172,22 +173,14 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 	return newPred, specialCase
 }
 
-// splitCNF converts AND to list using SplitCNFItems. It is needed since simplification may lead to AND at the top level.
-// Several optimizations are based on a list of predicates and AND will block those.
-func splitCNF(conditions []expression.Expression) []expression.Expression {
-	newConditions := make([]expression.Expression, 0, len(conditions))
-	for _, cond := range conditions {
-		newConditions = append(newConditions, expression.SplitCNFItems(cond)...)
-	}
-	return newConditions
-}
-
 func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
 	simplifiedPredicate := shortCircuitLogicalConstants(sctx, predicates)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	pruneEmptyORBranches(sctx, simplifiedPredicate)
-	simplifiedPredicate = splitCNF(simplifiedPredicate)
+	exprCtx := sctx.GetExprCtx()
+	simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate)
+	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
 	return simplifiedPredicate
 }
 
@@ -203,16 +196,24 @@ func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Express
 			jthPredicate := predicates[j]
 			iCol, iType := FindPredicateType(sctx, ithPredicate)
 			jCol, jType := FindPredicateType(sctx, jthPredicate)
-			if iCol == jCol {
+			maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCache(
+				sctx.GetExprCtx(),
+				ithPredicate,
+				jthPredicate)
+			if iCol.Equals(jCol) {
 				if iType == notEqualPredicate && jType == inListPredicate {
 					predicates[j], specialCase = updateInPredicate(sctx, jthPredicate, ithPredicate)
-					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
+					if maybeOverOptimized4PlanCache {
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
+					}
 					if !specialCase {
 						removeValues = append(removeValues, i)
 					}
 				} else if iType == inListPredicate && jType == notEqualPredicate {
 					predicates[i], specialCase = updateInPredicate(sctx, ithPredicate, jthPredicate)
-					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
+					if maybeOverOptimized4PlanCache {
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
+					}
 					if !specialCase {
 						removeValues = append(removeValues, j)
 					}
@@ -244,7 +245,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	var otherPred expression.Expression
 	col1, p1Type := FindPredicateType(ctx, p1)
 	col2, p2Type := FindPredicateType(ctx, p2)
-	if col1 != col2 || col1 == nil {
+	if col1 == nil || !col1.Equals(col2) {
 		return false
 	}
 	if p1Type == equalPredicate {
@@ -336,12 +337,20 @@ func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Express
 			_, jType := FindPredicateType(sctx, jthPredicate)
 			iType = comparisonPred(iType)
 			jType = comparisonPred(jType)
+			maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCache(
+				sctx.GetExprCtx(),
+				ithPredicate,
+				jthPredicate)
 			if iType == scalarPredicate && jType == orPredicate {
 				predicates[j] = updateOrPredicate(sctx, jthPredicate, ithPredicate)
-				sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
+				if maybeOverOptimized4PlanCache {
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
+				}
 			} else if iType == orPredicate && jType == scalarPredicate {
 				predicates[i] = updateOrPredicate(sctx, ithPredicate, jthPredicate)
-				sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
+				if maybeOverOptimized4PlanCache {
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
+				}
 			}
 		}
 	}
@@ -376,7 +385,7 @@ func shortCircuitANDORLogicalConstants(sctx base.PlanContext, predicate expressi
 	case secondType == falsePredicate && !orCase:
 		return secondCondition, true
 	default:
-		if firstCondition != args[0] || secondCondition != args[1] {
+		if !firstCondition.Equal(sctx.GetExprCtx().GetEvalCtx(), args[0]) || !secondCondition.Equal(sctx.GetExprCtx().GetEvalCtx(), args[1]) {
 			finalResult := expression.NewFunctionInternal(sctx.GetExprCtx(), con.FuncName.L, con.GetStaticType(), firstCondition, secondCondition)
 			return finalResult, true
 		}
@@ -388,6 +397,7 @@ func shortCircuitANDORLogicalConstants(sctx base.PlanContext, predicate expressi
 // and returns the potentially simplified condition and its updated type.
 func processCondition(sctx base.PlanContext, condition expression.Expression) (expression.Expression, predicateType) {
 	applied := false
+	maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), condition)
 	_, conditionType := FindPredicateType(sctx, condition)
 
 	if conditionType == orPredicate {
@@ -396,7 +406,7 @@ func processCondition(sctx base.PlanContext, condition expression.Expression) (e
 		condition, applied = shortCircuitANDORLogicalConstants(sctx, condition, false)
 	}
 
-	if applied {
+	if applied && maybeOverOptimized4PlanCache {
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("True/False predicate simplification is triggered")
 	}
 

@@ -188,10 +188,11 @@ fi
 # clear restore environment
 run_sql "DROP DATABASE $DB;"
 run_sql "DROP DATABASE __tidb_br_temporary_mysql;"
+run_sql "DROP DATABASE __TiDB_BR_Temporary_Snapshot_Restore_Checkpoint_2000001;"
 # restore full
 echo "restore start..."
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/pdutil/PDEnabledPauseConfig=return(true)"
-run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $LOG || { cat $LOG; exit 1; }
+run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $LOG --fast-load-sys-tables=false || { cat $LOG; exit 1; }
 export GO_FAILPOINTS=""
 
 pause_count=$(cat $LOG | grep "pause configs successful"| wc -l | xargs)

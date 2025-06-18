@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -507,14 +508,17 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	require.NotNil(t, ts)
 	// manually push down the condition `client_no = c.company_no`
 	var selected expression.Expression
-	for _, cond := range sel.Conditions {
+	var selectedIndex int
+	for i, cond := range sel.Conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.Function.PbCode() == tipb.ScalarFuncSig_EQString {
 			selected = cond
+			selectedIndex = i
 			break
 		}
 	}
 	if selected != nil {
-		core.PushedDown(sel, ts, []expression.Expression{selected}, 0.1)
+		ts.LateMaterializationFilterCondition = []expression.Expression{selected}
+		sel.Conditions = slices.Delete(sel.Conditions, selectedIndex, selectedIndex+1)
 	}
 
 	pb, err := ts.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)

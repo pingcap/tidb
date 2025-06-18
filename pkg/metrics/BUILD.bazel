@@ -27,12 +27,12 @@ go_library(
         "stats.go",
         "topsql.go",
         "ttl.go",
-        "wrapper.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/metrics",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/lightning/metric",
+        "//pkg/metrics/common",
         "//pkg/parser/terror",
         "//pkg/timer/metrics",
         "//pkg/util/logutil",

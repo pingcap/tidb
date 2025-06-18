@@ -23,7 +23,6 @@ import (
 	"io"
 	"math"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
@@ -321,7 +322,7 @@ func newWriteRequest(meta *sst.SSTMeta, resourceGroupName, taskType string) *sst
 	}
 }
 
-func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResult, error) {
+func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWriteResult, err error) {
 	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
@@ -333,8 +334,32 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 	})
 
 	var cancel context.CancelFunc
-	ctx, cancel = context.WithTimeoutCause(ctx, 15*time.Minute, common.ErrWriteTooSlow)
+	// set a timeout for the write operation, if it takes too long, we will return with common.ErrWriteTooSlow and let caller retry the whole job instead of being stuck forever.
+	timeout := 15 * time.Minute
+	ctx, cancel = context.WithTimeoutCause(ctx, timeout, common.ErrWriteTooSlow)
 	defer cancel()
+
+	// A defer function to handle all DeadlineExceeded errors that may occur
+	// during the write operation using this context with 15 minutes timeout.
+	// When the error is "context deadline exceeded", we will check if the cause
+	// is common.ErrWriteTooSlow and return the common.ErrWriteTooSlow instead so
+	// our caller would be able to retry this doWrite operation. By doing this
+	// defer we are hoping to handle all DeadlineExceeded error during this
+	// write, either from gRPC stream or write limiter WaitN operation.
+	wctx := ctx
+	defer func() {
+		if err == nil {
+			return
+		}
+		if errors.Cause(err) == context.DeadlineExceeded {
+			if cause := context.Cause(wctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
+				log.FromContext(ctx).Info("Experiencing a wait timeout while writing to tikv",
+					zap.Int("store-write-bwlimit", local.BackendConfig.StoreWriteBWLimit),
+					zap.Int("limit-size", local.writeLimiter.Limit()))
+				err = errors.Trace(cause) // return the common.ErrWriteTooSlow instead to let caller retry it
+			}
+		}
+	}()
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
@@ -454,6 +479,19 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 		regionMaxSize = j.regionSplitSize * 4 / 3
 	}
 
+	// preparation work for the write timeout fault injection, only enabled if the following failpoint is enabled
+	wcancel := func() {}
+	failpoint.Inject("shortWaitNTimeout", func(val failpoint.Value) {
+		var innerTimeout time.Duration
+		// GO_FAILPOINTS action supplies the duration in
+		ms, _ := val.(int)
+		innerTimeout = time.Duration(ms) * time.Millisecond
+		log.FromContext(ctx).Info("Injecting a timeout to write context.")
+		wctx, wcancel = context.WithTimeoutCause(
+			ctx, innerTimeout, common.ErrWriteTooSlow)
+	})
+	defer wcancel()
+
 	flushKVs := func() error {
 		req.Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 		preparedMsg := &grpc.PreparedMsg{}
@@ -464,7 +502,25 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 		}
 
 		for i := range clients {
-			if err := writeLimiter.WaitN(ctx, allPeers[i].StoreId, int(size)); err != nil {
+			// original ctx would be used when failpoint is not enabled
+			// that new context would be used when failpoint is enabled
+			err := writeLimiter.WaitN(wctx, allPeers[i].StoreId, int(size))
+			if err != nil {
+				// We expect to encounter two types of errors here:
+				// 1. context.DeadlineExceeded — occurs when the calculated delay is
+				//    less than the remaining time in the context, but the context
+				//    expires while sleeping.
+				// 2. "rate: Wait(n=%d) would exceed context deadline" — a fast-fail
+				//    path triggered when the delay already exceeds the remaining
+				//    time for context before sleeping.
+				//
+				// Unfortunately, we cannot precisely control when the context will
+				// expire, so both scenarios are valid and expected.
+				// Fortunately, the "rate: Wait" error is already treated as
+				// retryable, so we only need to explicitly handle
+				// context.DeadlineExceeded here.
+				// We rely on the defer function at the top of doWrite to handle it
+				// for us in general.
 				return errors.Trace(err)
 			}
 			if err := clients[i].SendMsg(preparedMsg); err != nil {
@@ -618,6 +674,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 	var lastRetriedErr error
 	for retry := range maxRetryTimes {
 		resp, err := local.doIngest(ctx, j)
+		err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 		if err != nil {
 			if common.IsContextCanceledError(err) {
 				return err
@@ -633,7 +690,9 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 		if resp.GetError() == nil {
 			return nil
 		}
-		return convertPBError2Error(j, resp.GetError())
+		return ingestcli.NewIngestAPIError(resp.GetError(), func(regions []*metapb.Region) *split.RegionInfo {
+			return extractRegionFromErr(j, regions)
+		})
 	}
 	return lastRetriedErr
 }
@@ -780,64 +839,6 @@ func (local *Backend) GetWriteSpeedLimit() int {
 	return local.writeLimiter.Limit()
 }
 
-// ingestAPIError is the converted error when we call Ingest or MultiIngest successfully,
-// but the server return some logic error, i.e. errorpb.Error.
-// TODO: better move to ingestcli pkg, but the split.RegionInfo might cause import cycle.
-type ingestAPIError struct {
-	// the converted internal error
-	err error
-	// if theErr = ErrKVEpochNotMatch, the new region info maybe extracted from
-	// the PB error
-	newRegion *split.RegionInfo
-}
-
-func (e *ingestAPIError) Error() string {
-	return e.err.Error()
-}
-
-// Cause is used for pingcap/errors.Cause
-func (e *ingestAPIError) Cause() error {
-	return e.err
-}
-
-// Unwrap is used for golang/errors.Is and As
-func (e *ingestAPIError) Unwrap() error {
-	return e.err
-}
-
-func convertPBError2Error(job *regionJob, errPb *errorpb.Error) *ingestAPIError {
-	res := &ingestAPIError{}
-	switch {
-	case errPb.NotLeader != nil:
-		// meet a problem that the region leader+peer are all updated but the return
-		// error is only "NotLeader", we should update the whole region info.
-		res.err = common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
-	case errPb.EpochNotMatch != nil:
-		res.err = common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
-		res.newRegion = extractRegionFromErr(job, errPb.GetEpochNotMatch().GetCurrentRegions())
-	case strings.Contains(errPb.Message, "raft: proposal dropped"):
-		res.err = common.ErrKVRaftProposalDropped.GenWithStack(errPb.GetMessage())
-	case errPb.ServerIsBusy != nil:
-		res.err = common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
-	case errPb.RegionNotFound != nil:
-		res.err = common.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
-	case errPb.ReadIndexNotReady != nil:
-		// this error happens when this region is splitting, the error might be:
-		//   read index not ready, reason can not read index due to split, region 64037
-		// we have paused schedule, but it's temporary,
-		// if next request takes a long time, there's chance schedule is enabled again
-		// or on key range border, another engine sharing this region tries to split this
-		// region may cause this error too.
-		res.err = common.ErrKVReadIndexNotReady.GenWithStack(errPb.GetMessage())
-	case errPb.DiskFull != nil:
-		res.err = common.ErrKVDiskFull.GenWithStack(errPb.GetMessage())
-	default:
-		// all others doIngest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
-		res.err = common.ErrKVIngestFailed.GenWithStack(errPb.GetMessage())
-	}
-	return res
-}
-
 func extractRegionFromErr(job *regionJob, currentRegions []*metapb.Region) *split.RegionInfo {
 	// unlike classic kernel, nextgen cannot return the full current region infos
 	// for the range of the region which is used for ingest, it can only return
@@ -876,16 +877,16 @@ func extractRegionFromErr(job *regionJob, currentRegions []*metapb.Region) *spli
 
 // the input error must be an retryable error
 func getNextStageOnIngestError(err error) (*split.RegionInfo, jobStageTp) {
-	var theErr *ingestAPIError
+	var theErr *ingestcli.IngestAPIError
 	if goerrors.As(err, &theErr) {
 		switch {
-		case goerrors.Is(theErr.err, common.ErrKVIngestFailed):
+		case goerrors.Is(theErr.Err, errdef.ErrKVIngestFailed):
 			return nil, regionScanned
-		case goerrors.Is(theErr.err, common.ErrKVServerIsBusy):
+		case goerrors.Is(theErr.Err, errdef.ErrKVServerIsBusy):
 			return nil, wrote
 		default:
-			if theErr.newRegion != nil {
-				return theErr.newRegion, regionScanned
+			if theErr.NewRegion != nil {
+				return theErr.NewRegion, regionScanned
 			}
 			return nil, needRescan
 		}

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"net/url"
 	"reflect"
 	"slices"
 	"sort"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -41,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -1049,4 +1052,27 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 	}
 	_, err = GetMaxWriteSpeedFromExpression(opt)
 	require.Equal(t, "parse max_write_speed value error: invalid size: 'MiB'", err.Error())
+}
+
+func TestProcessNextGenS3Path(t *testing.T) {
+	u, err := url.Parse("S3://bucket?External-id=abc")
+	require.NoError(t, err)
+	_, err = processSemNextGenS3Path(u)
+	require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+	require.ErrorContains(t, err, "IMPORT INTO with S3 external ID")
+
+	bak := config.GetGlobalKeyspaceName()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "sem-next-gen"
+	})
+	t.Cleanup(func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = bak
+		})
+	})
+	u, err = url.Parse("s3://bucket")
+	require.NoError(t, err)
+	newPath, err := processSemNextGenS3Path(u)
+	require.NoError(t, err)
+	require.Equal(t, "s3://bucket?external-id=sem-next-gen", newPath)
 }

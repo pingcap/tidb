@@ -1655,7 +1655,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		}
 	}
 
-	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
+	resultRows := stmtCtx.GetResultRowsCount()
 
 	var (
 		keyspaceName string
@@ -1795,15 +1795,6 @@ func collectWarningsForSlowLog(stmtCtx *stmtctx.StatementContext) []variable.JSO
 	return res
 }
 
-// GetResultRowsCount gets the count of the statement result rows.
-func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p base.Plan) int64 {
-	runtimeStatsColl := stmtCtx.RuntimeStatsColl
-	if runtimeStatsColl == nil {
-		return 0
-	}
-	return runtimeStatsColl.GetPlanActRows(p.ID())
-}
-
 func (a *ExecStmt) updateNetworkTrafficStatsAndMetrics() {
 	hasMPPTraffic := a.updateMPPNetworkTraffic()
 	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
@@ -1872,7 +1863,7 @@ func getBinaryPlan(sCtx sessionctx.Context) string {
 		return binaryPlan
 	}
 	flat := getFlatPlan(stmtCtx)
-	binaryPlan = plannercore.BinaryPlanStrFromFlatPlan(sCtx.GetPlanCtx(), flat)
+	binaryPlan = plannercore.BinaryPlanStrFromFlatPlan(sCtx.GetPlanCtx(), flat, false)
 	stmtCtx.SetBinaryPlan(binaryPlan)
 	return binaryPlan
 }
@@ -2013,7 +2004,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		execDetail.TimeDetail.WaitTime += stmtCtx.WaitLockLeaseTime
 	}
 
-	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
+	resultRows := stmtCtx.GetResultRowsCount()
 
 	var (
 		keyspaceName string

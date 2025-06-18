@@ -291,7 +291,7 @@ func (s *Server) startHTTPServer() {
 		}
 		baseURL := &url.URL{
 			Scheme: util.InternalHTTPSchema(),
-			Host:   fmt.Sprintf("%s:%s", host, port),
+			Host:   net.JoinHostPort(host, port),
 		}
 		router.HandleFunc("/web/trace", traceapp.HandleTiDB).Name("Trace Viewer")
 		sr := router.PathPrefix("/web/trace/").Subrouter()
@@ -583,17 +583,17 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 
 	go util.WithRecovery(func() {
 		err := grpcServer.Serve(grpcL)
-		logutil.BgLogger().Error("grpc server error", zap.Error(err))
+		logutil.BgLogger().Warn("grpc server error", zap.Error(err))
 	}, nil)
 
 	go util.WithRecovery(func() {
 		err := statusServer.Serve(httpL)
-		logutil.BgLogger().Error("http server error", zap.Error(err))
+		logutil.BgLogger().Warn("http server error", zap.Error(err))
 	}, nil)
 
 	err := m.Serve()
 	if err != nil {
-		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
+		logutil.BgLogger().Warn("start status/rpc server error", zap.Error(err))
 	}
 }
 

@@ -473,17 +473,12 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	if t.tablePlan != nil {
 		tp := t.tablePlan
 		for len(tp.Children()) > 0 {
-			if len(tp.Children()) == 1 {
-				tp = tp.Children()[0]
-			} else {
-				join := tp.(*PhysicalHashJoin)
-				tp = join.Children()[1-join.InnerChildIdx]
-			}
+			tp = tp.Children()[0]
 		}
 		ts := tp.(*PhysicalTableScan)
 		prevColumnLen := len(ts.Columns)
-		prevSchema := ts.schema.Clone()
-		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+		prevSchema := ts.Schema().Clone()
+		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
 		if !t.needExtraProj && len(ts.Columns) > prevColumnLen {
 			// Add a projection to make sure not to output extract columns.
 			t.needExtraProj = true
@@ -500,7 +495,6 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 			KeepOrder:          t.keepOrder,
 		}.Init(ctx, t.idxMergePartPlans[0].QueryBlockOffset())
 		p.PlanPartInfo = t.physPlanPartInfo
-		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.SetPlan(p)
 		if t.needExtraProj {
 			schema := t.originSchema
@@ -522,12 +516,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	} else {
 		tp := t.tablePlan
 		for len(tp.Children()) > 0 {
-			if len(tp.Children()) == 1 {
-				tp = tp.Children()[0]
-			} else {
-				join := tp.(*PhysicalHashJoin)
-				tp = join.Children()[1-join.InnerChildIdx]
-			}
+			tp = tp.Children()[0]
 		}
 		ts := tp.(*PhysicalTableScan)
 		p := PhysicalTableReader{

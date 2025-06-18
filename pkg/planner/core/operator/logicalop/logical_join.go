@@ -205,6 +205,7 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
+	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
@@ -760,7 +761,9 @@ func (p *LogicalJoin) ExtractFDForSemiJoin(equivFromApply [][]intset.FastIntSet)
 
 // ExtractFDForInnerJoin extracts FD for inner join.
 func (p *LogicalJoin) ExtractFDForInnerJoin(equivFromApply [][]intset.FastIntSet) *funcdep.FDSet {
-	leftFD, rightFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
+	child := p.Children()
+	rightFD := child[1].ExtractFD()
+	leftFD := child[0].ExtractFD()
 	fds := leftFD
 	fds.MakeCartesianProduct(rightFD)
 

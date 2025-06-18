@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -137,34 +138,39 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 	plan, err := builder.Build(context.TODO(), nodeW)
 	require.NoError(t, err)
-	flag := uint64(0)
 	// flagGcSubstitute | flagStabilizeResults | flagSkewDistinctAgg | flagEliminateOuterJoin | flagPushDownAgg
-	flag |= flag | 1<<1 | 1<<3 | 1<<8 | 1<<14 | 1<<17
+	flag := rule.FlagGcSubstitute | rule.FlagStabilizeResults | rule.FlagSkewDistinctAgg | rule.FlagEliminateOuterJoin | rule.FlagPushDownAgg
 	_, _, err = core.DoOptimize(context.TODO(), sctx, flag, plan.(base.LogicalPlan))
 	require.NoError(t, err)
 	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
 	require.NotNil(t, otrace)
 	elements := map[int]string{
-		12: "TableReader",
-		14: "TableReader",
-		13: "TableFullScan",
-		15: "HashJoin",
-		6:  "Projection",
-		11: "TableFullScan",
-		9:  "HashJoin",
-		10: "HashJoin",
-		7:  "HashAgg",
-		16: "HashJoin",
-		8:  "StreamAgg",
+		19: "TableReader",
+		12: "HashJoin",
+		13: "HashJoin",
+		21: "TableReader",
+		16: "HashAgg",
+		22: "TableFullScan",
+		9:  "Sort",
+		17: "TableFullScan",
+		20: "TableFullScan",
+		18: "HashAgg",
+		14: "HashAgg",
+		23: "TableReader",
+		11: "HashAgg",
+		8:  "Projection",
 	}
 	final := map[int]struct{}{
-		11: {},
-		12: {},
-		13: {},
+		17: {},
 		14: {},
+		19: {},
+		18: {},
+		22: {},
+		23: {},
+		13: {},
+		11: {},
 		9:  {},
-		7:  {},
-		6:  {},
+		8:  {},
 	}
 	for _, c := range otrace.Candidates {
 		tp, ok := elements[c.ID]

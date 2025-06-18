@@ -68,7 +68,7 @@ type BindingPlanEvolution interface {
 	// TODO: RecordHistPlansAsBindings records the history plans as bindings for qualified queries.
 
 	// ExplorePlansForSQL explores plans for this SQL.
-	ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error)
+	ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation string, analyze bool) ([]*BindingPlanInfo, error)
 }
 
 type bindingAuto struct {
@@ -91,8 +91,8 @@ func newBindingAuto(sPool util.DestroyableSessionPool) BindingPlanEvolution {
 // 1. get historical plan candidates.
 // 2. generate new plan candidates.
 // 3. score all historical and newly-generated plan candidates and recommend the best one.
-func (ba *bindingAuto) ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
-	historicalPlans, err := ba.getHistoricalPlanInfo(currentDB, sqlOrDigest, charset, collation)
+func (ba *bindingAuto) ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation string, analyze bool) ([]*BindingPlanInfo, error) {
+	historicalPlans, err := ba.getBindingPlanInfo(currentDB, sqlOrDigest, charset, collation)
 	if err != nil {
 		return nil, err
 	}
@@ -100,6 +100,12 @@ func (ba *bindingAuto) ExplorePlansForSQL(currentDB, sqlOrDigest, charset, colla
 	generatedPlans, err := ba.planGenerator.Generate(currentDB, sqlOrDigest, charset, collation)
 	if err != nil {
 		return nil, err
+	}
+
+	if analyze {
+		if err := ba.runToGetExecInfo(generatedPlans); err != nil {
+			return nil, err
+		}
 	}
 
 	planCandidates := append(historicalPlans, generatedPlans...)
@@ -111,7 +117,49 @@ func (ba *bindingAuto) ExplorePlansForSQL(currentDB, sqlOrDigest, charset, colla
 	return planCandidates, err
 }
 
-func (ba *bindingAuto) getHistoricalPlanInfo(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
+// runToGetExecInfo runs these plans to get their execution info.
+func (ba *bindingAuto) runToGetExecInfo(plans []*BindingPlanInfo) error {
+	// TODO: support setting timeout
+	for _, plan := range plans {
+		if plan.ExecTimes > 0 {
+			// already has execution info, no need to run again.
+			continue
+		}
+
+		if err := callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
+			vars := sctx.GetSessionVars()
+			defer func(db string, usePlanBaselines bool) {
+				vars.CurrentDB = db
+				vars.UsePlanBaselines = usePlanBaselines
+			}(vars.CurrentDB, vars.UsePlanBaselines)
+			vars.CurrentDB = plan.Binding.Db
+			vars.UsePlanBaselines = false
+			_, _, err := execRows(sctx, plan.BindSQL)
+			if err != nil {
+				return err
+			}
+
+			// get the execution info from the sctx.
+			plan.ExecTimes = 1
+			plan.AvgLatency = float64(vars.GetTotalCostDuration())
+			if vars.StmtCtx.GetExecDetails().ScanDetail != nil {
+				plan.AvgScanRows = float64(vars.StmtCtx.GetExecDetails().ScanDetail.ProcessedKeys)
+			}
+			plan.AvgReturnedRows = float64(vars.StmtCtx.GetResultRowsCount())
+			if plan.AvgReturnedRows > 0 {
+				plan.LatencyPerReturnRow = plan.AvgLatency / plan.AvgReturnedRows
+				plan.ScanRowsPerReturnRow = plan.AvgScanRows / plan.AvgReturnedRows
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// getBindingPlanInfo retrieves the binding plan info for the given SQL or digest.
+func (ba *bindingAuto) getBindingPlanInfo(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
 	// parse and normalize sqlOrDigest
 	// if the length is 64 and it has no " ", treat it as a digest.
 	var whereCond string

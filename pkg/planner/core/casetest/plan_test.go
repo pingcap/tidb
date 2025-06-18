@@ -358,6 +358,30 @@ func TestOuterJoinElimination(t *testing.T) {
 	tk.MustHavePlan("select count(*) from t1 left join t2_uk on t1.a = t2_uk.a group by t1.a", "Join")
 	tk.MustNotHavePlan("select count(*) from t1 left join t2_nnuk on t1.a = t2_nnuk.a group by t1.a", "Join")
 	tk.MustNotHavePlan("select count(*) from t1 left join t2_pk on t1.a = t2_pk.a group by t1.a", "Join")
+
+	// test distinct aggregation
+	tk.MustNotHavePlan("select distinct t1.a from t1 left join t2 on t1.a = t2.a", "Join")
+	tk.MustNotHavePlan("select distinct t1.a from t1 left join t2_k t2 on t1.a = t2.a", "Join")
+	tk.MustNotHavePlan("select distinct t1.a from t1 left join t2_uk t2 on t1.a = t2.a", "Join")
+	tk.MustNotHavePlan("select distinct t1.a from t1 left join t2_nnuk t2 on t1.a = t2.a", "Join")
+	tk.MustNotHavePlan("select distinct t1.a from t1 left join t2_pk t2 on t1.a = t2.a", "Join")
+	// test constant columns with distinct
+	tk.MustNotHavePlan("select distinct 1 from t1 left join t2 on t1.a = t2.a", "Join")
+	tk.MustNotHavePlan("select distinct 1 from t1 left join t2_k t2 on t1.a = t2.a", "Join")
+	tk.MustNotHavePlan("select distinct 1 from t1 left join t2_uk t2 on t1.a = t2.a", "Join")
+	tk.MustNotHavePlan("select distinct 1 from t1 left join t2_nnuk t2 on t1.a = t2.a", "Join")
+	tk.MustNotHavePlan("select distinct 1 from t1 left join t2_pk t2 on t1.a = t2.a", "Join")
+	// test constant columns with distinct
+	tk.MustHavePlan("select 1 from t1 left join t2 on t1.a = t2.a", "Join")
+	tk.MustHavePlan("select 1 from t1 left join t2_k t2 on t1.a = t2.a", "Join")
+	tk.MustHavePlan("select 1 from t1 left join t2_uk t2 on t1.a = t2.a", "Join")
+	tk.MustNotHavePlan("select 1 from t1 left join t2_nnuk t2 on t1.a = t2.a", "Join")
+	tk.MustNotHavePlan("select 1 from t1 left join t2_pk t2 on t1.a = t2.a", "Join")
+	// test subqueries
+	tk.MustHavePlan("select 1 from (select distinct a from t1) t1 left join t2 on t1.a = t2.a", "Join")
+	tk.MustNotHavePlan("select distinct 1 from (select distinct a from t1) t1 left join t2 on t1.a = t2.a", "Join")
+	tk.MustHavePlan("select t1.a from (select distinct a from t1) t1 left join t2 on t1.a = t2.a", "Join")
+	tk.MustNotHavePlan("select distinct t1.a from (select distinct a from t1) t1 left join t2 on t1.a = t2.a", "Join")
 }
 
 func TestCTEErrNotSupportedYet(t *testing.T) {
