@@ -1144,26 +1144,44 @@ t	CREATE TABLE `t` (
 create database test_show_columns_db;
 create user test_show_columns_user;
 create table test_show_columns_db.t (a int, b int);
+create view test_show_columns_db.v (x, y) AS select a as aa, b as bb from test_show_columns_db.t;
 // no grant would report error
 show columns from test_show_columns_db.t;
 Error 1142 (42000): SELECT command denied to user 'test_show_columns_user'@'%' for table 't'
+show columns from test_show_columns_db.v;
+Error 1142 (42000): SELECT command denied to user 'test_show_columns_user'@'%' for table 'v'
 // with column privilege, specific columns are shown.
 grant select(a) on test_show_columns_db.t to test_show_columns_user;
+grant select(x) on test_show_columns_db.v to test_show_columns_user;
 show columns from test_show_columns_db.t;
 Field	Type	Null	Key	Default	Extra
 a	int	YES		NULL	
+show columns from test_show_columns_db.v;
+Field	Type	Null	Key	Default	Extra
+x	int	YES		NULL	
 grant insert(b) on test_show_columns_db.t to test_show_columns_user;
+grant update(y) on test_show_columns_db.v to test_show_columns_user;
 show columns from test_show_columns_db.t;
 Field	Type	Null	Key	Default	Extra
 a	int	YES		NULL	
 b	int	YES		NULL	
+show columns from test_show_columns_db.v;
+Field	Type	Null	Key	Default	Extra
+x	int	YES		NULL	
+y	int	YES		NULL	
 // with table privilege, all columns are shown.
 revoke select(a),insert(b) on test_show_columns_db.t from test_show_columns_user;
+revoke select(x),update(y) on test_show_columns_db.v from test_show_columns_user;
 grant update on test_show_columns_db.t to test_show_columns_user;
+grant references on test_show_columns_db.v to test_show_columns_user;
 show columns from test_show_columns_db.t;
 Field	Type	Null	Key	Default	Extra
 a	int	YES		NULL	
 b	int	YES		NULL	
+show columns from test_show_columns_db.v;
+Field	Type	Null	Key	Default	Extra
+x	int	YES		NULL	
+y	int	YES		NULL	
 drop database test_show_columns_db;
 drop user test_show_columns_user;
 create database test_show_index_db;
