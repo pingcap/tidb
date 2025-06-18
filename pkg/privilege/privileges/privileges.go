@@ -702,7 +702,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	// Login a locked account is not allowed.
 	locked := record.AccountLocked
 	if locked {
-		logutil.BgLogger().Warn(fmt.Sprintf("Access denied for authUser '%s'@'%s'. Account is locked.", authUser, authHost))
+		logutil.BgLogger().Info(fmt.Sprintf("Access denied for authUser '%s'@'%s'. Account is locked.", authUser, authHost))
 		return info, errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
 	}
 
