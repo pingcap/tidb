@@ -281,3 +281,18 @@ func TestIssue61118(t *testing.T) {
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk2.MustExec("admin check table t;")
 }
+
+func TestIssue61303VirtualGenerateColumnSubstitute(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(id int default 1, c0 NUMERIC UNSIGNED ZEROFILL , c1 DECIMAL UNSIGNED  AS (c0) VIRTUAL NOT NULL UNIQUE);")
+	tk.MustExec("insert ignore into t0(c0) values (null);")
+	tk.MustQuery("select * from t0;").Check(testkit.Rows("1 <nil> 0"))
+
+	tk.MustExec("set @@tidb_enable_unsafe_substitute=1")
+	tk.MustExec("CREATE TABLE t1(id int default 1, c0 char(10) , c1 char(10) AS (c0) VIRTUAL NOT NULL UNIQUE);")
+	tk.MustExec("insert ignore into t1(c0) values (null);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 <nil> "))
+}

@@ -371,7 +371,7 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 		ft.charset == other.charset &&
 		ft.collate == other.collate &&
 		flenEqual &&
-		mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag)
+		mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag) && mysql.HasNotNullFlag(ft.flag) == mysql.HasNotNullFlag(other.flag)
 	if !partialEqual {
 		return false
 	}
@@ -386,7 +386,7 @@ func (ft *FieldType) PartialEqual(other *FieldType, unsafe bool) bool {
 		return ft.Equal(other)
 	}
 
-	partialEqual := ft.charset == other.charset && ft.collate == other.collate && mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag)
+	partialEqual := ft.charset == other.charset && ft.collate == other.collate && mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag) && mysql.HasNotNullFlag(ft.flag) == mysql.HasNotNullFlag(other.flag)
 	if !partialEqual || len(ft.elems) != len(other.elems) {
 		return false
 	}
