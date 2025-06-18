@@ -324,7 +324,7 @@ PARTITION BY RANGE COLUMNS(`col_4`)
  PARTITION `p3` VALUES LESS THAN ('GFB'),
  PARTITION `p4` VALUES LESS THAN (MAXVALUE));
 
-insert into t values ('u^D92@_4');
+insert into t values ('u^D92@_4'), (null);
 
 # no error
 explain format='brief' select * from t where col_4 in ( 'u^D92@_4' ,null );

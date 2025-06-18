@@ -921,7 +921,7 @@ PARTITION `p1` VALUES LESS THAN ('959#Km%JOy2EFI'),
 PARTITION `p2` VALUES LESS THAN ('FbL~@RpX01&CYY-%%+'),
 PARTITION `p3` VALUES LESS THAN ('GFB'),
 PARTITION `p4` VALUES LESS THAN (MAXVALUE));
-insert into t values ('u^D92@_4');
+insert into t values ('u^D92@_4'), (null);
 explain format='brief' select * from t where col_4 in ( 'u^D92@_4' ,null );
 id	estRows	task	access object	operator info
 Point_Get	1.00	root	table:t, partition:p4, index:idx_3(col_4)	
