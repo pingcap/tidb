@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
@@ -55,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1361,16 +1363,18 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, g, cfg)
+	// register task if needed
+	// will potentially override restoredTS
+	err = RegisterRestoreIfNeeded(ctx, cfg, PointRestoreCmd, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	failpoint.Inject("failed-before-full-restore", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("failpoint: failed before full restore"))
-	})
+	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, g, cfg, cfg.RestoreID)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
-	// restore log.
 	cfg.adjustRestoreConfigForStreamRestore()
 	cfg.tiflashRecorder = tiflashrec.New()
 	logClient, err := createLogClient(ctx, g, cfg, mgr)
@@ -1522,6 +1526,7 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	cfg.RewriteTS = currentTS
 
 	if err := client.SetCurrentTS(currentTS); err != nil {
 		return errors.Trace(err)
@@ -2026,6 +2031,7 @@ func generatePiTRTaskInfo(
 	mgr *conn.Mgr,
 	g glue.Glue,
 	cfg *RestoreConfig,
+	restoreID uint64,
 ) (*PiTRTaskInfo, error) {
 	var (
 		doFullRestore = len(cfg.FullBackupStorage) > 0
@@ -2034,19 +2040,31 @@ func generatePiTRTaskInfo(
 	)
 	checkInfo := &PiTRTaskInfo{}
 
+	log.Info("generating PiTR task info",
+		zap.Uint64("restoreID", restoreID),
+		zap.Bool("useCheckpoint", cfg.UseCheckpoint),
+		zap.Bool("doFullRestore", doFullRestore))
+
 	if cfg.UseCheckpoint {
 		if len(cfg.CheckpointStorage) > 0 {
 			clusterID := mgr.GetPDClient().GetClusterID(ctx)
-			if err = cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID); err != nil {
+			log.Info("initializing storage checkpoint meta manager for PiTR",
+				zap.Uint64("restoreID", restoreID),
+				zap.Uint64("clusterID", clusterID))
+			if err = cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID, restoreID); err != nil {
 				return nil, errors.Trace(err)
 			}
 		} else {
-			if err = cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain()); err != nil {
+			log.Info("initializing table checkpoint meta manager for PiTR",
+				zap.Uint64("restoreID", restoreID))
+			if err = cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain(), restoreID); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
-		curTaskInfo, err = checkpoint.TryToGetCheckpointTaskInfo(ctx, cfg.snapshotCheckpointMetaManager, cfg.logCheckpointMetaManager)
-		log.Info("current task checkpoint info", zap.Any("checkpoint", curTaskInfo))
+		curTaskInfo, err = checkpoint.GetCheckpointTaskInfo(ctx, cfg.snapshotCheckpointMetaManager, cfg.logCheckpointMetaManager)
+		log.Info("current task checkpoint info",
+			zap.Any("checkpoint", curTaskInfo),
+			zap.Uint64("restoreID", restoreID))
 		if err != nil {
 			return checkInfo, errors.Trace(err)
 		}
@@ -2170,4 +2188,56 @@ func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *Log
 		return 0, errors.Trace(err)
 	}
 	return currentTS, nil
+}
+
+func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName string, domain *domain.Domain) error {
+	// already registered previously
+	if cfg.RestoreID != 0 {
+		log.Info("restore task already registered, skipping re-registration",
+			zap.Uint64("restoreID", cfg.RestoreID),
+			zap.String("cmdName", cmdName))
+		return nil
+	}
+
+	// skip registration if target TiDB version doesn't support restore registry
+	if !restore.HasRestoreIDColumn(domain) {
+		log.Info("skipping restore registration since target TiDB version doesn't support restore registry")
+		return nil
+	}
+
+	originalRestoreTS := cfg.RestoreTS
+	registrationInfo := registry.RegistrationInfo{
+		StartTS:           cfg.StartTS,
+		RestoredTS:        cfg.RestoreTS,
+		FilterStrings:     cfg.FilterStr,
+		UpstreamClusterID: cfg.UpstreamClusterID,
+		WithSysTable:      cfg.WithSysTable,
+		Cmd:               cmdName,
+	}
+
+	// get current registered (due to failure retry) or create new restore task id
+	restoreID, resolvedRestoreTS, err := cfg.RestoreRegistry.ResumeOrCreateRegistration(
+		ctx, registrationInfo, cfg.IsRestoredTSUserSpecified)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.RestoreID = restoreID
+
+	// the registry may have resolved a different RestoreTS from existing tasks
+	// if so, we need to apply it to the config for consistency
+	if resolvedRestoreTS != originalRestoreTS {
+		log.Info("registry resolved a different RestoreTS, updating config",
+			zap.Uint64("original_restored_ts", originalRestoreTS),
+			zap.Uint64("resolved_restored_ts", resolvedRestoreTS),
+			zap.Uint64("restore_id", restoreID))
+		cfg.RestoreTS = resolvedRestoreTS
+	}
+
+	log.Info("registered restore task",
+		zap.Uint64("restoreID", restoreID),
+		zap.String("cmdName", cmdName))
+
+	cfg.RestoreRegistry.StartHeartbeatManager(ctx, restoreID)
+
+	return nil
 }

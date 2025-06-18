@@ -556,6 +556,16 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 			}
 			di.TableName2ID = name2ID
 			tables = specialTableInfos
+			if domainutil.RepairInfo.InRepairMode() && len(domainutil.RepairInfo.GetRepairTableList()) > 0 {
+				mustLoadReapirTableIDs := domainutil.RepairInfo.GetMustLoadRepairTableListByDB(di.Name.L, name2ID)
+				for _, id := range mustLoadReapirTableIDs {
+					tblInfo, err := m.GetTable(di.ID, id)
+					if err != nil {
+						return err
+					}
+					tables = append(tables, tblInfo)
+				}
+			}
 		} else {
 			tables, err = m.ListTables(ctx, di.ID)
 			if err != nil {
@@ -988,12 +998,12 @@ func (do *Domain) topologySyncerKeeper() {
 		case <-ticker.C:
 			err := do.info.StoreTopologyInfo(context.Background())
 			if err != nil {
-				logutil.BgLogger().Error("refresh topology in loop failed", zap.Error(err))
+				logutil.BgLogger().Warn("refresh topology in loop failed", zap.Error(err))
 			}
 		case <-do.info.TopologyDone():
 			logutil.BgLogger().Info("server topology syncer need to restart")
 			if err := do.info.RestartTopology(context.Background()); err != nil {
-				logutil.BgLogger().Error("server topology syncer restart failed", zap.Error(err))
+				logutil.BgLogger().Warn("server topology syncer restart failed", zap.Error(err))
 			} else {
 				logutil.BgLogger().Info("server topology syncer restarted")
 			}
@@ -2040,7 +2050,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 					event = do.batchReadMoreData(watchCh, event)
 				} else {
 					if do.ctx.Err() == nil {
-						logutil.BgLogger().Error("load privilege loop watch channel closed")
+						logutil.BgLogger().Warn("load privilege loop watch channel closed")
 						watchCh = do.etcdClient.Watch(do.ctx, privilegeKey)
 						count++
 						if count > 10 {
@@ -2124,7 +2134,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			})
 
 			if !ok {
-				logutil.BgLogger().Error("LoadSysVarCacheLoop loop watch channel closed")
+				logutil.BgLogger().Warn("LoadSysVarCacheLoop loop watch channel closed")
 				watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
 				count++
 				if count > 10 {
@@ -2137,7 +2147,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			err := do.rebuildSysVarCache(ctx)
 			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
-				logutil.BgLogger().Error("LoadSysVarCacheLoop failed", zap.Error(err))
+				logutil.BgLogger().Warn("LoadSysVarCacheLoop failed", zap.Error(err))
 			}
 		}
 	}, "LoadSysVarCacheLoop")

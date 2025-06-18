@@ -157,6 +157,39 @@ func TestRelevantOptVarsAndFixes(t *testing.T) {
 	}
 }
 
+func TestExplainExploreAnalyze(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, key(a))`)
+	tk.MustExec(`insert into t values (1, 2), (2, 3), (3, 4), (4, 5)`)
+
+	checkExecInfo := func(sql string, hasExecInfo bool) {
+		rs := tk.MustQuery(sql).Rows()
+		for _, row := range rs {
+			latency := row[4].(string)
+			execTimes := row[5].(string)
+			retRows := row[7].(string)
+			if !hasExecInfo {
+				require.Equal(t, latency, "0")
+				require.Equal(t, execTimes, "0")
+				require.Equal(t, retRows, "0")
+			} else {
+				require.NotEqual(t, latency, "0")
+				require.NotEqual(t, execTimes, "0")
+				require.NotEqual(t, retRows, "0")
+			}
+		}
+	}
+
+	checkExecInfo(`explain explore select * from t where a=1`, false)
+	checkExecInfo(`explain explore analyze select * from t where a=1`, true)
+	checkExecInfo(`explain explore select * from t where b<10`, false)
+	checkExecInfo(`explain explore analyze select * from t where b<10`, true)
+	checkExecInfo(`explain explore select count(1) from t where b<10`, false)
+	checkExecInfo(`explain explore analyze select count(1) from t where b<10`, true)
+}
+
 func TestPlanGeneration(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // RestrictedSQLExecutor is an interface provides executing restricted sql statement.
@@ -248,6 +250,18 @@ func DrainRecordSet(ctx context.Context, rs RecordSet, maxChunkSize int) ([]chun
 		}
 		req = chunk.Renew(req, maxChunkSize)
 	}
+}
+
+// DrainRecordSetAndClose fetches the rows in the RecordSet and closes it.
+func DrainRecordSetAndClose(ctx context.Context, rs RecordSet, maxChunkSize int) ([]chunk.Row, error) {
+	defer func() {
+		if closeErr := rs.Close(); closeErr != nil {
+			// Log the close error but don't override the main error
+			logutil.BgLogger().Error("failed to close recordSet in DrainRecordSetAndClose", zap.Error(closeErr))
+		}
+	}()
+
+	return DrainRecordSet(ctx, rs, maxChunkSize)
 }
 
 // ExecSQL executes the sql and returns the result.

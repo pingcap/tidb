@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -76,6 +77,8 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 		p, err = b.pbToAgg(e, true)
 	case tipb.ExecType_TypeKill:
 		p, err = b.pbToKill(e)
+	case tipb.ExecType_TypeBroadcastQuery:
+		p, err = b.pbToBroadcastQuery(e)
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet", e.GetTp())
@@ -202,7 +205,7 @@ func (b *PBPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (base.Physic
 		AggFuncs:     aggFuncs,
 		GroupByItems: groupBys,
 	}
-	baseAgg.schema = schema
+	baseAgg.SetSchema(schema)
 	var partialAgg base.PhysicalPlan
 	if isStreamAgg {
 		partialAgg = baseAgg.initForStream(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
@@ -272,6 +275,18 @@ func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (base.PhysicalPlan, error) {
 	return &PhysicalSimpleWrapper{Inner: simple}, nil
 }
 
+func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan, error) {
+	vars := b.sctx.GetSessionVars()
+	charset, collation := vars.GetCharsetInfo()
+	pa := parser.New()
+	stmt, err := pa.ParseOneStmt(*e.BroadcastQuery.Query, charset, collation)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	simple := Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
+	return &PhysicalSimpleWrapper{Inner: simple}, nil
+}
+
 func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, base.PhysicalPlan) {
 	if physicalPlan == nil {
 		return predicates, physicalPlan
@@ -293,12 +308,12 @@ func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predic
 		}
 		// Set the expression column unique ID.
 		// Since the expression is build from PB, It has not set the expression column ID yet.
-		schemaCols := memTable.schema.Columns
+		schemaCols := memTable.Schema().Columns
 		cols := expression.ExtractColumnsFromExpressions([]*expression.Column{}, predicates, nil)
 		for i := range cols {
 			cols[i].UniqueID = schemaCols[cols[i].Index].UniqueID
 		}
-		predicates = memTable.Extractor.Extract(b.sctx, memTable.schema, names, predicates)
+		predicates = memTable.Extractor.Extract(b.sctx, memTable.Schema(), names, predicates)
 		return predicates, memTable
 	case *PhysicalSelection:
 		selection := plan

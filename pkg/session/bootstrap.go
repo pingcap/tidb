@@ -603,7 +603,9 @@ const (
 		modify_params json,
 		max_node_count INT DEFAULT 0,
 		extra_params json,
+		keyspace varchar(64) default '',
 		key(state),
+		key idx_keyspace(keyspace),
 		UNIQUE KEY task_key(task_key)
 	);`
 
@@ -627,7 +629,9 @@ const (
 		modify_params json,
 		max_node_count INT DEFAULT 0,
 		extra_params json,
+		keyspace varchar(64) default '',
 		key(state),
+		key idx_keyspace(keyspace),
 		UNIQUE KEY task_key(task_key)
 	);`
 
@@ -729,6 +733,29 @@ const (
 		id_map BLOB(524288) NOT NULL,
 		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (restore_id, restored_ts, upstream_cluster_id, segment_id));`
+
+	// CreateRestoreRegistryTable is a table that tracks active restore tasks to prevent conflicts.
+	CreateRestoreRegistryTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_restore_registry (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		filter_strings TEXT NOT NULL,
+		filter_hash VARCHAR(64) NOT NULL,
+		start_ts BIGINT UNSIGNED NOT NULL,
+		restored_ts BIGINT UNSIGNED NOT NULL,
+		upstream_cluster_id BIGINT UNSIGNED,
+		with_sys_table BOOLEAN NOT NULL DEFAULT TRUE,
+		status VARCHAR(20) NOT NULL DEFAULT 'running',
+		cmd TEXT,
+		task_start_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+		last_heartbeat_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
+		UNIQUE KEY unique_registration_params (
+			filter_hash,
+			start_ts,
+			restored_ts,
+			upstream_cluster_id,
+			with_sys_table,
+			cmd(256)
+		)
+	) AUTO_INCREMENT = 1;`
 
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
 	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
@@ -1289,11 +1316,15 @@ const (
 	// version 248
 	// Update mysql.tidb_pitr_id_map to add restore_id as a primary key field
 	version248 = 248
+	version249 = 249
+
+	// version250 add keyspace to tidb_global_task and tidb_global_task_history.
+	version250 = 250
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version248
+var currentBootstrapVersion int64 = version250
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1477,6 +1508,8 @@ var (
 		upgradeToVer246,
 		upgradeToVer247,
 		upgradeToVer248,
+		upgradeToVer249,
+		upgradeToVer250,
 	}
 )
 
@@ -3467,6 +3500,23 @@ func upgradeToVer248(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD PRIMARY KEY(restore_id, restored_ts, upstream_cluster_id, segment_id)")
 }
 
+func upgradeToVer249(s sessiontypes.Session, ver int64) {
+	if ver >= version249 {
+		return
+	}
+	doReentrantDDL(s, CreateRestoreRegistryTable)
+}
+
+func upgradeToVer250(s sessiontypes.Session, ver int64) {
+	if ver >= version250 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `keyspace` varchar(64) DEFAULT '' AFTER `extra_params`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD INDEX idx_keyspace(keyspace)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `keyspace` varchar(64) DEFAULT '' AFTER `extra_params`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD INDEX idx_keyspace(keyspace)", dbterror.ErrDupKeyName)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3613,6 +3663,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateRequestUnitByGroupTable)
 	// create tidb_pitr_id_map
 	mustExecute(s, CreatePITRIDMap)
+	// create tidb_restore_registry
+	mustExecute(s, CreateRestoreRegistryTable)
 	// create `sys` schema
 	mustExecute(s, CreateSysSchema)
 	// create `sys.schema_unused_indexes` view
