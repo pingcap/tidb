@@ -143,7 +143,7 @@ go_test(
     ],
     embed = [":domain"],
     flaky = True,
-    shard_count = 29,
+    shard_count = 28,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
@@ -167,6 +167,7 @@ go_test(
         "//pkg/sessionctx/variable",
         "//pkg/store/mockstore",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/mathutil",

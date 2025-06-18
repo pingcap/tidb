@@ -326,6 +326,7 @@ func (do *Domain) Reload() error {
 	return do.isSyncer.Reload()
 }
 
+// GetSchemaValidator returns the schema validator from domain.
 func (do *Domain) GetSchemaValidator() validatorapi.Validator {
 	return do.isSyncer.GetSchemaValidator()
 }
