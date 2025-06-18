@@ -21,7 +21,7 @@ include Makefile.common
 .PHONY: help
 help: ## Display this help and any documented user-facing targets. Other undocumented targets may be present in the Makefile.
 help:
-	@awk 'BEGIN {FS = ": ##"; printf "Usage:\n  make <target>\n\nCommon Targets:\n"} /^[a-zA-Z0-9_\.\-\/%]+: ##/ { printf "  %-45s %s\n", $$1, $$2 } END { printf "\nFor development workflow:\n  make dev              # Complete development workflow\n  make check            # Run all code quality checks\n  make test             # Run all tests\n  make precheck         # Quick pre-commit checks\n\nFor building:\n  make                  # Build TiDB server (default)\n  make server           # Build TiDB server\n  make clean            # Clean build artifacts\n" }' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ": ##"; printf "Usage:\n make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_\.\-\/%]+: ##/ { printf " %-45s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
 default: server buildsucc ## Default target: build TiDB server
 
@@ -36,18 +36,22 @@ buildsucc:
 all: dev server benchkv ## Build all targets: dev tools, server, and benchkv
 
 .PHONY: dev
+dev: ## Run the full development workflow including all tests and checks
 dev: checklist check integrationtest gogenerate br_unit_test test_part_parser_dev ut check-file-perm ## Run full development workflow including all tests and checks
 	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
 .PHONY: check-setup
-check-setup:tools/bin/revive ## Install development and checking tools
+check-setup: ## Install development and checking tools
+check-setup:tools/bin/revive 
 
 .PHONY: precheck
-precheck: fmt bazel_prepare ## Run pre-commit checks: format code and prepare Bazel files
+precheck: ## Run pre-commit checks
+precheck: fmt bazel_prepare
 
 .PHONY: check
-check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license ## Run comprehensive code quality checks
+check: ## Run comprehensive code quality checks
+check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license 
 
 .PHONY: fmt
 fmt: ## Format Go code using gofmt
@@ -112,6 +116,7 @@ check-parallel:
 CLEAN_UT_BINARY := find . -name '*.test.bin'| xargs rm -f
 
 .PHONY: clean
+clean: ## Clean build artifacts
 clean: failpoint-disable ## Clean build artifacts and test binaries
 	$(GO) clean -i ./...
 	rm -rf $(TEST_COVERAGE_DIR)
@@ -119,6 +124,7 @@ clean: failpoint-disable ## Clean build artifacts and test binaries
 
 # Split tests for CI to run `make test` in parallel.
 .PHONY: test
+test: Run all tests
 test: test_part_1 test_part_2 ## Run all tests (split into parts for parallel execution)
 	@>&2 echo "Great, all tests passed."
 
@@ -339,7 +345,7 @@ tools/bin/errdoc-gen:
 
 .PHONY: tools/bin/golangci-lint
 tools/bin/golangci-lint:
-	# Build from source is not recommand. See https://golangci-lint.run/usage/install/
+	# Build from source is not recommend. See https://golangci-lint.run/usage/install/
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.47.2
 
 .PHONY: tools/bin/vfsgendev
@@ -350,7 +356,7 @@ tools/bin/vfsgendev:
 tools/bin/gotestsum:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install gotest.tools/gotestsum@v1.8.1
 
-# mockgen@v0.2.0 is imcompatible with v0.3.0, so install it always.
+# mockgen@v0.2.0 is incompatible with v0.3.0, so install it always.
 .PHONY: mockgen
 mockgen:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/lance6716/mock/mockgen@v0.4.0-patch
