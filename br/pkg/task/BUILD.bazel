@@ -121,7 +121,7 @@ go_test(
     ],
     embed = [":task"],
     flaky = True,
-    shard_count = 41,
+    shard_count = 42,
     deps = [
         "//br/pkg/backup",
         "//br/pkg/config",
@@ -134,6 +134,7 @@ go_test(
         "//br/pkg/restore/snap_client",
         "//br/pkg/restore/split",
         "//br/pkg/restore/tiflashrec",
+        "//br/pkg/restore/utils",
         "//br/pkg/storage",
         "//br/pkg/stream",
         "//br/pkg/utils",

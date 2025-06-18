@@ -94,6 +94,10 @@ type TableMappingManager struct {
 	tempDefaultKVDbMap    map[dbMetaKey]*dbMetaValue
 
 	noDefaultKVErrorMap map[uint64]error
+
+	// preallocated ID range from snapshot restore for scheduler pausing
+	// [start, end) where end is exclusive
+	PreallocatedRange [2]int64
 }
 
 func NewTableMappingManager() *TableMappingManager {
@@ -836,4 +840,13 @@ func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*metautil.Database, tab
 	}
 	tm.MergeBaseDBReplace(dbReplaces)
 	return nil
+}
+
+// SetPreallocatedRange sets the preallocated ID range from snapshot restore
+// This range will be used for fine-grained scheduler pausing during log restore
+func (tm *TableMappingManager) SetPreallocatedRange(start, end int64) {
+	tm.PreallocatedRange = [2]int64{start, end}
+	log.Info("set preallocated range for scheduler pausing",
+		zap.Int64("start", start),
+		zap.Int64("end", end))
 }
