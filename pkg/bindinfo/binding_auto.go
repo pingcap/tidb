@@ -127,11 +127,13 @@ func (ba *bindingAuto) runToGetExecInfo(plans []*BindingPlanInfo) error {
 		}
 
 		if err := callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
-			sctx.GetSessionVars().CurrentDB = plan.Binding.Db
-			sctx.GetSessionVars().UsePlanBaselines = false
-			defer func() {
-				sctx.GetSessionVars().UsePlanBaselines = true
-			}()
+			vars := sctx.GetSessionVars()
+			defer func(db string, usePlanBaselines bool) {
+				vars.CurrentDB = db
+				vars.UsePlanBaselines = usePlanBaselines
+			}(vars.CurrentDB, vars.UsePlanBaselines)
+			vars.CurrentDB = plan.Binding.Db
+			vars.UsePlanBaselines = false
 			_, _, err := execRows(sctx, plan.BindSQL)
 			if err != nil {
 				return err
@@ -139,11 +141,11 @@ func (ba *bindingAuto) runToGetExecInfo(plans []*BindingPlanInfo) error {
 
 			// get the execution info from the sctx.
 			plan.ExecTimes = 1
-			plan.AvgLatency = float64(sctx.GetSessionVars().GetTotalCostDuration())
-			if sctx.GetSessionVars().StmtCtx.GetExecDetails().ScanDetail != nil {
-				plan.AvgScanRows = float64(sctx.GetSessionVars().StmtCtx.GetExecDetails().ScanDetail.ProcessedKeys)
+			plan.AvgLatency = float64(vars.GetTotalCostDuration())
+			if vars.StmtCtx.GetExecDetails().ScanDetail != nil {
+				plan.AvgScanRows = float64(vars.StmtCtx.GetExecDetails().ScanDetail.ProcessedKeys)
 			}
-			plan.AvgReturnedRows = float64(sctx.GetSessionVars().StmtCtx.GetResultRowsCount())
+			plan.AvgReturnedRows = float64(vars.StmtCtx.GetResultRowsCount())
 			if plan.AvgReturnedRows > 0 {
 				plan.LatencyPerReturnRow = plan.AvgLatency / plan.AvgReturnedRows
 				plan.ScanRowsPerReturnRow = plan.AvgScanRows / plan.AvgReturnedRows
