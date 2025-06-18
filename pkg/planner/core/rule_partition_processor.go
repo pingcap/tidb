@@ -1365,13 +1365,14 @@ func partitionRangeForExpr(sctx base.PlanContext, expr expression.Expression,
 	pruner partitionRangePruner, result partitionRangeOR) partitionRangeOR {
 	// Handle AND, OR respectively.
 	if op, ok := expr.(*expression.ScalarFunction); ok {
-		if op.FuncName.L == ast.LogicAnd {
+		switch op.FuncName.L {
+		case ast.LogicAnd:
 			return partitionRangeForCNFExpr(sctx, op.GetArgs(), pruner, result)
-		} else if op.FuncName.L == ast.LogicOr {
+		case ast.LogicOr:
 			args := op.GetArgs()
 			newRange := partitionRangeForOrExpr(sctx, args[0], args[1], pruner)
 			return result.intersection(newRange)
-		} else if op.FuncName.L == ast.In {
+		case ast.In:
 			if p, ok := pruner.(*rangePruner); ok {
 				newRange := partitionRangeForInExpr(sctx, op.GetArgs(), p)
 				return result.intersection(newRange)
@@ -1452,8 +1453,6 @@ func partitionRangeColumnForInExpr(sctx base.PlanContext, args []expression.Expr
 		}
 		switch constExpr.Value.Kind() {
 		case types.KindInt64, types.KindUint64, types.KindMysqlTime, types.KindString: // for safety, only support string,int and datetime now
-		case types.KindNull:
-			result = append(result, partitionRange{0, 1})
 			continue
 		default:
 			return pruner.fullRange()
@@ -1488,7 +1487,6 @@ func partitionRangeForInExpr(sctx base.PlanContext, args []expression.Expression
 			return pruner.fullRange()
 		}
 		if constExpr.Value.Kind() == types.KindNull {
-			result = append(result, partitionRange{0, 1})
 			continue
 		}
 
