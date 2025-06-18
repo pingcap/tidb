@@ -440,28 +440,38 @@ connection default;
 create database test_show_columns_db;
 create user test_show_columns_user;
 create table test_show_columns_db.t (a int, b int);
+create view test_show_columns_db.v (x, y) AS select a as aa, b as bb from test_show_columns_db.t;
 
 --echo // no grant would report error
 connect (test_show_columns_user, localhost, test_show_columns_user,,);
 --error 1142
 show columns from test_show_columns_db.t;
+--error 1142
+show columns from test_show_columns_db.v;
 
 --echo // with column privilege, specific columns are shown.
 connection default;
 grant select(a) on test_show_columns_db.t to test_show_columns_user;
+grant select(x) on test_show_columns_db.v to test_show_columns_user;
 connection test_show_columns_user;
 show columns from test_show_columns_db.t;
+show columns from test_show_columns_db.v;
 connection default;
 grant insert(b) on test_show_columns_db.t to test_show_columns_user;
+grant update(y) on test_show_columns_db.v to test_show_columns_user;
 connection test_show_columns_user;
 show columns from test_show_columns_db.t;
+show columns from test_show_columns_db.v;
 
 --echo // with table privilege, all columns are shown.
 connection default;
 revoke select(a),insert(b) on test_show_columns_db.t from test_show_columns_user;
+revoke select(x),update(y) on test_show_columns_db.v from test_show_columns_user;
 grant update on test_show_columns_db.t to test_show_columns_user;
+grant references on test_show_columns_db.v to test_show_columns_user;
 connection test_show_columns_user;
 show columns from test_show_columns_db.t;
+show columns from test_show_columns_db.v;
 
 disconnect test_show_columns_user;
 connection default;
