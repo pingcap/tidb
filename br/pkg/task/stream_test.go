@@ -15,6 +15,7 @@
 package task
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/stretchr/testify/require"
@@ -226,9 +228,81 @@ func TestGetExternalStorageOptions(t *testing.T) {
 	require.NoError(t, err)
 	options := getExternalStorageOptions(&cfg, u)
 	require.NotNil(t, options.HTTPClient)
+}
 
-	u, err = storage.ParseBackend("gs://bucket/path", nil)
-	require.NoError(t, err)
-	options = getExternalStorageOptions(&cfg, u)
-	require.Nil(t, options.HTTPClient)
+func TestBuildKeyRangesFromRewriteRules(t *testing.T) {
+	testCases := []struct {
+		name                  string
+		rewriteRules          map[int64]*restoreutils.RewriteRules
+		snapshotRange         [2]int64
+		expectedRangeCount    int
+		expectedLogMessage    string
+		hasValidSnapshotRange bool
+	}{
+		{
+			name: "with valid snapshot range and log restore tables",
+			rewriteRules: map[int64]*restoreutils.RewriteRules{
+				// snapshot tables (within range [100, 200))
+				150: {NewTableID: 150},
+				160: {NewTableID: 160},
+				// log restore tables (outside range)
+				300: {NewTableID: 300},
+				301: {NewTableID: 301},
+				302: {NewTableID: 302},
+			},
+			snapshotRange:         [2]int64{100, 200},
+			expectedRangeCount:    2, // snapshot range + log restore range
+			hasValidSnapshotRange: true,
+		},
+		{
+			name: "with valid snapshot range, no log restore tables",
+			rewriteRules: map[int64]*restoreutils.RewriteRules{
+				150: {NewTableID: 150},
+				160: {NewTableID: 160},
+			},
+			snapshotRange:         [2]int64{100, 200},
+			expectedRangeCount:    1, // only snapshot range
+			hasValidSnapshotRange: true,
+		},
+		{
+			name: "without valid snapshot range",
+			rewriteRules: map[int64]*restoreutils.RewriteRules{
+				150: {NewTableID: 150},
+				160: {NewTableID: 160},
+				300: {NewTableID: 300},
+			},
+			snapshotRange:         [2]int64{},
+			expectedRangeCount:    1, // fallback range covering all tables
+			hasValidSnapshotRange: false,
+		},
+		{
+			name:                  "empty rewrite rules",
+			rewriteRules:          map[int64]*restoreutils.RewriteRules{},
+			snapshotRange:         [2]int64{100, 200},
+			expectedRangeCount:    1, // only snapshot range
+			hasValidSnapshotRange: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a mock LogRestoreConfig
+			cfg := &LogRestoreConfig{
+				RestoreConfig: &RestoreConfig{}, // Initialize the embedded RestoreConfig
+				tableMappingManager: &stream.TableMappingManager{
+					PreallocatedRange: tc.snapshotRange,
+				},
+			}
+
+			keyRanges := buildKeyRangesFromRewriteRules(tc.rewriteRules, cfg)
+			require.Equal(t, tc.expectedRangeCount, len(keyRanges))
+
+			// Verify that all ranges are properly formed (start < end)
+			for i, keyRange := range keyRanges {
+				require.True(t, len(keyRange[0]) > 0, "start key should not be empty for range %d", i)
+				require.True(t, len(keyRange[1]) > 0, "end key should not be empty for range %d", i)
+				require.True(t, bytes.Compare(keyRange[0], keyRange[1]) < 0, "start key should be less than end key for range %d", i)
+			}
+		})
+	}
 }

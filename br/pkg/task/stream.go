@@ -22,6 +22,7 @@ import (
 	"math"
 	"net/http"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
@@ -60,7 +62,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -1532,15 +1536,6 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
-	restoreSchedulersFunc, _, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Always run the post-work even on error, so we don't stuck in the import
-	// mode or emptied schedulers
-	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
-
 	// It need disable GC in TiKV when PiTR.
 	// because the process of PITR is concurrent and kv events isn't sorted by tso.
 	restoreGCFunc, oldGCRatio, err := DisableGC(g, mgr.GetStorage())
@@ -1614,6 +1609,37 @@ func restoreStream(
 	if err := rangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
 		return errors.Trace(err)
 	}
+
+	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
+	// set up scheduler pausing after rewrite rules are built
+	var restoreSchedulersFunc pdutil.UndoFunc
+
+	// use fine-grained scheduler pausing if we have specific tables to restore (not full restore)
+	if cfg.ExplicitFilter && len(rewriteRules) > 0 {
+		keyRanges := buildKeyRangesFromRewriteRules(rewriteRules, cfg)
+		log.Info("using fine-grained scheduler pausing for log restore",
+			zap.Int("key-ranges-count", len(keyRanges)))
+		restoreSchedulersFunc, _, err = restore.FineGrainedRestorePreWork(ctx, mgr,
+			importModeSwitcher, keyRanges, cfg.Online, false)
+	} else {
+		log.Info("using full scheduler pausing for log restore (full restore)")
+		restoreSchedulersFunc, _, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, false)
+	}
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Failpoint for testing scheduler pausing behavior
+	failpoint.Inject("log-restore-scheduler-paused", func() {
+		log.Info("log restore scheduler pausing test point reached")
+		// This allows tests to capture scheduler state while schedulers are paused
+		// The test can use this moment to verify fine-grained vs full scheduler pausing
+	})
+
+	// Always run the post-work even on error, so we don't stuck in the import
+	// mode or emptied schedulers
+	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
 
 	logFilesIter, err := client.LoadDMLFiles(ctx)
 	if err != nil {
@@ -2240,4 +2266,130 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 	cfg.RestoreRegistry.StartHeartbeatManager(ctx, restoreID)
 
 	return nil
+}
+
+// isValidSnapshotRange checks if a snapshot range is valid for scheduler pausing
+// A valid range must be non-zero, have positive start ID, and end > start
+func isValidSnapshotRange(snapshotRange [2]int64) bool {
+	return snapshotRange != [2]int64{} && snapshotRange[0] > 0 && snapshotRange[1] > snapshotRange[0]
+}
+
+// buildKeyRangesFromRewriteRules creates key ranges for fine-grained scheduler pausing
+// It analyzes the new table IDs from rewrite rules to determine ranges:
+// 1. Snapshot restore range: preallocated range stored in table mapping manager
+// 2. Log restore range: contiguous range allocated in one batch during log restore
+func buildKeyRangesFromRewriteRules(rewriteRules map[int64]*restoreutils.RewriteRules,
+	cfg *LogRestoreConfig) [][2]kv.Key {
+	var ranges [][2]int64
+
+	// get preallocated range from snapshot restore
+	// try checkpoint first (works for both initial run and retry if checkpoints enabled),
+	// then fall back to table mapping manager (for initial run without checkpoints)
+	var snapshotRange [2]int64
+	if cfg.snapshotCheckpointMetaManager != nil {
+		// try to load from snapshot checkpoint metadata first
+		if snapshotMeta, err := cfg.snapshotCheckpointMetaManager.LoadCheckpointMetadata(context.Background()); err == nil && snapshotMeta.PreallocIDs != nil {
+			snapshotRange = [2]int64{snapshotMeta.PreallocIDs.Start, snapshotMeta.PreallocIDs.End}
+			log.Info("loaded snapshot preallocated range from checkpoint for scheduler pausing",
+				zap.Int64("start", snapshotRange[0]),
+				zap.Int64("end", snapshotRange[1]))
+		} else if err != nil {
+			log.Warn("failed to load snapshot checkpoint metadata for scheduler pausing", zap.Error(err))
+		}
+	}
+
+	// if no range from checkpoint, try table mapping manager
+	if snapshotRange == [2]int64{} {
+		snapshotRange = cfg.tableMappingManager.PreallocatedRange
+		if snapshotRange != [2]int64{} {
+			log.Info("using snapshot preallocated range from table mapping manager for scheduler pausing",
+				zap.Int64("start", snapshotRange[0]),
+				zap.Int64("end", snapshotRange[1]))
+		} else {
+			log.Info("no preallocated range found for scheduler pausing")
+		}
+	}
+
+	hasValidSnapshotRange := isValidSnapshotRange(snapshotRange)
+	if hasValidSnapshotRange {
+		ranges = append(ranges, snapshotRange)
+	}
+
+	// collect table IDs by category
+	var logRestoreIDs []int64
+
+	for _, rules := range rewriteRules {
+		newTableID := rules.NewTableID
+		if newTableID == 0 {
+			continue
+		}
+
+		if hasValidSnapshotRange {
+			// we have valid snapshot range, check if this table ID is outside it
+			if newTableID < snapshotRange[0] || newTableID >= snapshotRange[1] {
+				logRestoreIDs = append(logRestoreIDs, newTableID)
+			}
+		} else {
+			// no snapshot range available, treat all table IDs as needing scheduler pausing
+			// this includes both snapshot tables (if any) and log restore tables
+			logRestoreIDs = append(logRestoreIDs, newTableID)
+		}
+	}
+
+	// create range for log restore IDs (should be contiguous since allocated in one batch)
+	if len(logRestoreIDs) > 0 {
+		sort.Slice(logRestoreIDs, func(i, j int) bool {
+			return logRestoreIDs[i] < logRestoreIDs[j]
+		})
+
+		minID := logRestoreIDs[0]
+		maxID := logRestoreIDs[len(logRestoreIDs)-1]
+		logRange := [2]int64{minID, maxID + 1}
+		ranges = append(ranges, logRange)
+
+		// only verify contiguity when we have a valid snapshot range
+		// (meaning logRestoreIDs contains only log restore tables, which should be contiguous)
+		if hasValidSnapshotRange {
+			contiguous := verifyContiguousIDs(logRestoreIDs)
+			log.Info("using log restore range for scheduler pausing",
+				zap.Int64("start", logRange[0]),
+				zap.Int64("end", logRange[1]),
+				zap.Int("table-count", len(logRestoreIDs)),
+				zap.Bool("contiguous", contiguous))
+
+			if !contiguous {
+				log.Warn("log restore table IDs are not contiguous, using broader range",
+					zap.Int64s("ids", logRestoreIDs))
+			}
+		} else {
+			log.Info("using fallback range covering all restore tables for scheduler pausing",
+				zap.Int64("start", logRange[0]),
+				zap.Int64("end", logRange[1]),
+				zap.Int("table-count", len(logRestoreIDs)))
+		}
+	}
+
+	// convert ID ranges to key ranges
+	keyRanges := make([][2]kv.Key, 0, len(ranges))
+	for _, idRange := range ranges {
+		startKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(idRange[0]))
+		endKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(idRange[1]))
+		keyRanges = append(keyRanges, [2]kv.Key{startKey, endKey})
+	}
+
+	return keyRanges
+}
+
+// verifyContiguousIDs checks if the sorted table IDs are contiguous
+func verifyContiguousIDs(ids []int64) bool {
+	if len(ids) <= 1 {
+		return true
+	}
+
+	for i := 1; i < len(ids); i++ {
+		if ids[i] != ids[i-1]+1 {
+			return false
+		}
+	}
+	return true
 }
