@@ -124,8 +124,8 @@ clean: failpoint-disable ## Clean build artifacts and test binaries
 
 # Split tests for CI to run `make test` in parallel.
 .PHONY: test
-test: Run all tests
-test: test_part_1 test_part_2 ## Run all tests (split into parts for parallel execution)
+test: ## Run all tests (split into parts for parallel execution)
+test: test_part_1 test_part_2 
 	@>&2 echo "Great, all tests passed."
 
 .PHONY: test_part_1
