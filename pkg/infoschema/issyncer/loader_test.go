@@ -49,7 +49,7 @@ func TestLoadFromTS(t *testing.T) {
 	require.Nil(t, changes)
 
 	// hit cache
-	is, hitCache, oldSchemaVersion, changes, err = l.LoadWithTS(ver.Ver, false)
+	_, hitCache, _, changes, err = l.LoadWithTS(ver.Ver, false)
 	require.NoError(t, err)
 	require.True(t, hitCache)
 	require.Nil(t, changes)
@@ -76,6 +76,7 @@ func TestLoadFromTS(t *testing.T) {
 		infoCache: infoschema.NewCache(nil, 1),
 	}
 	is, hitCache, oldSchemaVersion, changes, err = l.LoadWithTS(ver.Ver, false)
+	require.NoError(t, err)
 	allSchemas = is.AllSchemas()
 	require.EqualValues(t, 1, is.SchemaMetaVersion())
 	require.Len(t, allSchemas, 3)
@@ -107,6 +108,7 @@ func TestLoadFromTS(t *testing.T) {
 	ver, err = store.CurrentVersion(tidbkv.GlobalTxnScope)
 	require.NoError(t, err)
 	is, hitCache, oldSchemaVersion, changes, err = l.LoadWithTS(ver.Ver, false)
+	require.NoError(t, err)
 	allSchemas = is.AllSchemas()
 	require.EqualValues(t, 2, is.SchemaMetaVersion())
 	require.Len(t, allSchemas, 3)
