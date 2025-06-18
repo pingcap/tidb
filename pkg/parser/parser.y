@@ -517,6 +517,7 @@ import (
 	nonclustered          "NONCLUSTERED"
 	none                  "NONE"
 	nowait                "NOWAIT"
+	noNullIndex           "NO_NULL_INDEX"
 	nulls                 "NULLS"
 	nvarcharType          "NVARCHAR"
 	off                   "OFF"
@@ -3729,6 +3730,10 @@ ColumnOption:
 |	"AUTO_RANDOM" AutoRandomOpt
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoRandom, AutoRandOpt: $2.(ast.AutoRandomOption)}
+	}
+|	"NO_NULL_INDEX"
+	{
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionNoNullIndex}
 	}
 
 AutoRandomOpt:
@@ -7114,6 +7119,7 @@ UnReservedKeyword:
 |	"COMPRESSION_TYPE"
 |	"ENCRYPTION_METHOD"
 |	"ENCRYPTION_KEYFILE"
+|	"NO_NULL_INDEX"
 
 TiDBKeyword:
 	"ADMIN"
