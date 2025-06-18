@@ -70,15 +70,9 @@ func (e *ChecksumTableExec) Open(ctx context.Context) error {
 
 	for i := 0; i < len(tasks); i++ {
 		result := <-resultCh
-<<<<<<< HEAD
 		if result.Error != nil {
 			err = result.Error
-			logutil.Logger(ctx).Error("checksum failed", zap.Error(err))
-=======
-		if result.err != nil {
-			err = result.err
 			logutil.Logger(ctx).Warn("checksum failed", zap.Error(err))
->>>>>>> 8fc1430b834 (*: change some unnecessary error logs to warn or info (#61428))
 			continue
 		}
 		e.handleResult(result)
