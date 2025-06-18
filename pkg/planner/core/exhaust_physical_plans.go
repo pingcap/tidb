@@ -581,18 +581,20 @@ func constructIndexJoinStatic(
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	// outer side expected cnt will be amplified by the prop.ExpectedCnt / p.StatsInfo().RowCount with same ratio.
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
-	if prop.ExpectedCnt < p.StatsInfo().RowCount {
-		orderRatio := p.SCtx().GetSessionVars().OptOrderingIdxSelRatio
-		// Record the variable usage for explain explore.
-		p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
+	orderRatio := p.SCtx().GetSessionVars().OptOrderingIdxSelRatio
+	// Record the variable usage for explain explore.
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
+	outerRowCount := p.Children()[outerIdx].StatsInfo().RowCount
+	currentRowCount := p.StatsInfo().RowCount
+	if (prop.ExpectedCnt < p.StatsInfo().RowCount) ||
+		(orderRatio > 0 && outerRowCount > max(prop.ExpectedCnt, currentRowCount)) {
 		rowsToMeetFirst := 0.0
-		outerRowCount := p.Children()[outerIdx].StatsInfo().RowCount
-		if orderRatio > 0 && outerRowCount > p.StatsInfo().RowCount {
+		if orderRatio > 0 && outerRowCount > currentRowCount {
 			// Apply the orderRatio to recognize that a large outer table scan may
 			// read additional rows before the inner table reaches the limit values
-			rowsToMeetFirst = (outerRowCount - p.StatsInfo().RowCount) * orderRatio
+			rowsToMeetFirst = (outerRowCount - currentRowCount) * orderRatio
 		}
-		expCntScale := prop.ExpectedCnt / p.StatsInfo().RowCount
+		expCntScale := prop.ExpectedCnt / currentRowCount
 		expectedCnt := (outerRowCount * expCntScale) + rowsToMeetFirst
 		chReqProps[outerIdx].ExpectedCnt = expectedCnt
 	}
