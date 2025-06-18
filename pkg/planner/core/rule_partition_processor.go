@@ -1453,6 +1453,7 @@ func partitionRangeColumnForInExpr(sctx base.PlanContext, args []expression.Expr
 		}
 		switch constExpr.Value.Kind() {
 		case types.KindInt64, types.KindUint64, types.KindMysqlTime, types.KindString: // for safety, only support string,int and datetime now
+		case types.KindNull:
 			continue
 		default:
 			return pruner.fullRange()
