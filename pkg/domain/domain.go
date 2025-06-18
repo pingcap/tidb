@@ -1844,7 +1844,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	do.privHandle = privileges.NewHandle(sctx.GetRestrictedSQLExecutor())
+	do.privHandle = privileges.NewHandle(do.SysSessionPool())
 	if err := do.privHandle.Update(); err != nil {
 		return errors.Trace(err)
 	}
