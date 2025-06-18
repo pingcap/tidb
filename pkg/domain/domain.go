@@ -129,7 +129,7 @@ const (
 // NewMockDomain is only used for test
 func NewMockDomain() *Domain {
 	do := &Domain{}
-	do.infoCache = infoschema.NewCache(do, 1)
+	do.infoCache = infoschema.NewCache(nil, 1)
 	do.infoCache.Insert(infoschema.MockInfoSchema(nil), 0)
 	return do
 }
@@ -615,7 +615,7 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 		}
 		return sctx, nil
 	})
-	do.infoCache = infoschema.NewCache(do, int(vardef.SchemaVersionCacheLimit.Load()))
+	do.infoCache = infoschema.NewCache(do.store, int(vardef.SchemaVersionCacheLimit.Load()))
 	do.stopAutoAnalyze.Store(false)
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
