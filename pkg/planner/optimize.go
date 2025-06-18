@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -712,6 +713,13 @@ func genBriefPlanWithSCtx(sctx sessionctx.Context, stmt ast.StmtNode) (planDiges
 	return digest.String(), hint.RestoreOptimizerHints(hints), plan, nil
 }
 
+func planIDFunc(plan any) (planID int, ok bool) {
+	if p, ok := plan.(base.Plan); ok {
+		return p.ID(), true
+	}
+	return 0, false
+}
+
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
@@ -722,4 +730,5 @@ func init() {
 	bindinfo.CalculatePlanDigest = calculatePlanDigestFunc
 	bindinfo.RecordRelevantOptVarsAndFixes = recordRelevantOptVarsAndFixes
 	bindinfo.GenBriefPlanWithSCtx = genBriefPlanWithSCtx
+	stmtctx.PlanIDFunc = planIDFunc
 }
