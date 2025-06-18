@@ -1169,8 +1169,9 @@ drop user test_show_columns_user;
 create database test_show_index_db;
 create user test_show_index_user;
 create table test_show_index_db.t (a int, b int);
-alter table test_show_index_db.t add index i1(b);
+alter table test_show_index_db.t add index i1(a);
 alter table test_show_index_db.t add index i2(b);
+alter table test_show_index_db.t add index i3(a,b);
 // no grant would report error
 show index from test_show_index_db.t;
 Error 1142 (42000): SELECT command denied to user 'test_show_index_user'@'%' for table 't'
@@ -1178,14 +1179,18 @@ Error 1142 (42000): SELECT command denied to user 'test_show_index_user'@'%' for
 grant update(a) on test_show_index_db.t to test_show_index_user;
 show index from test_show_index_db.t;
 Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
-t	1	i1	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+t	1	i1	1	a	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
 t	1	i2	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+t	1	i3	1	a	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+t	1	i3	2	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
 // with table privilege, indexes are shown.
 revoke update(a) on test_show_index_db.t from test_show_index_user;
 grant references on test_show_index_db.t to test_show_index_user;
 show index from test_show_index_db.t;
 Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
-t	1	i1	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+t	1	i1	1	a	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
 t	1	i2	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+t	1	i3	1	a	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+t	1	i3	2	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
 drop database test_show_index_db;
 drop user test_show_index_user;
