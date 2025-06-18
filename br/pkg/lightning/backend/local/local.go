@@ -605,6 +605,7 @@ func NewBackend(
 	}
 
 	if shouldCreate {
+		log.FromContext(ctx).Warn("[issue58437] NewBackend Mkdir", zap.String("config.LocalStoreDir", config.LocalStoreDir))
 		err = os.Mkdir(config.LocalStoreDir, 0o700)
 		if err != nil {
 			return nil, common.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(config.LocalStoreDir)
@@ -848,7 +849,9 @@ func (local *Backend) Close() {
 		// If checkpoint is disabled, or we don't detect any duplicate, then this duplicate
 		// db dir will be useless, so we clean up this dir.
 		if allIsWell && (!local.CheckpointEnabled || !hasDuplicates) {
-			if err := os.RemoveAll(filepath.Join(local.LocalStoreDir, duplicateDBName)); err != nil {
+			p := filepath.Join(local.LocalStoreDir, duplicateDBName)
+			local.logger.Warn("[issue58437] Close RemoveAll", zap.String("path", p))
+			if err := os.RemoveAll(p); err != nil {
 				local.logger.Warn("remove duplicate db file failed", zap.Error(err))
 			}
 		}
@@ -858,6 +861,7 @@ func (local *Backend) Close() {
 	// if checkpoint is disable or we finish load all data successfully, then files in this
 	// dir will be useless, so we clean up this dir and all files in it.
 	if !local.CheckpointEnabled || common.IsEmptyDir(local.LocalStoreDir) {
+		local.logger.Warn("[issue58437] Close RemoveAll", zap.String("local.LocalStoreDir", local.LocalStoreDir))
 		err := os.RemoveAll(local.LocalStoreDir)
 		if err != nil {
 			local.logger.Warn("remove local db file failed", zap.Error(err))
@@ -950,11 +954,13 @@ func (local *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig,
 
 	sstDir := engineSSTDir(local.LocalStoreDir, engineUUID)
 	if !cfg.KeepSortDir {
+		log.FromContext(ctx).Warn("[issue58437] OpenEngine RemoveAll", zap.String("sstDir", sstDir))
 		if err := os.RemoveAll(sstDir); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	if !common.IsDirExists(sstDir) {
+		log.FromContext(ctx).Warn("[issue58437] OpenEngine Mkdir", zap.String("sstDir", sstDir))
 		if err := os.Mkdir(sstDir, 0o750); err != nil {
 			return errors.Trace(err)
 		}
@@ -1821,6 +1827,7 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 	if err := localEngine.Close(); err != nil {
 		return err
 	}
+	log.FromContext(ctx).Warn("[issue58437] ResetEngine Cleanup", zap.String("local.LocalStoreDir", local.LocalStoreDir))
 	if err := localEngine.Cleanup(local.LocalStoreDir); err != nil {
 		return err
 	}
@@ -1829,6 +1836,7 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 		localEngine.db.Store(db)
 		localEngine.engineMeta = engineMeta{}
 		if !common.IsDirExists(localEngine.sstDir) {
+			log.FromContext(ctx).Warn("[issue58437] ResetEngine Mkdir", zap.String("sstDir", localEngine.sstDir))
 			if err := os.Mkdir(localEngine.sstDir, 0o750); err != nil {
 				return errors.Trace(err)
 			}
@@ -1867,6 +1875,7 @@ func (local *Backend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) e
 	if err != nil {
 		return err
 	}
+	log.FromContext(ctx).Warn("[issue58437] CleanupEngine", zap.Stringer("uuid", engineUUID))
 	err = localEngine.Cleanup(local.LocalStoreDir)
 	if err != nil {
 		return err
