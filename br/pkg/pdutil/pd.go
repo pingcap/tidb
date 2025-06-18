@@ -652,7 +652,6 @@ func (p *PdController) RemoveSchedulersOnRegion(ctx context.Context, keyRange []
 	// https://github.com/pingcap/tidb/issues/49477.
 	// Let's use two times default value of `patrol-region-interval` from PD configuration.
 	<-time.After(20 * time.Millisecond)
-
 	waitPauseSchedulerDone := func() {
 		if done == nil {
 			return
