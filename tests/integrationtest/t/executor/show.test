@@ -473,8 +473,9 @@ connection default;
 create database test_show_index_db;
 create user test_show_index_user;
 create table test_show_index_db.t (a int, b int);
-alter table test_show_index_db.t add index i1(b);
+alter table test_show_index_db.t add index i1(a);
 alter table test_show_index_db.t add index i2(b);
+alter table test_show_index_db.t add index i3(a,b);
 
 --echo // no grant would report error
 connect (test_show_index_user, localhost, test_show_index_user,,);
