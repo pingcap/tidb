@@ -744,7 +744,7 @@ func (do *Domain) Init(
 		return err
 	}
 
-	do.isSyncer.InitSomeFields(
+	do.isSyncer.InitRequiredFields(
 		do.info, do.ddl.SchemaSyncer(), do.autoidClient,
 		func() (pools.Resource, error) {
 			return do.sysExecutorFactory(do)
