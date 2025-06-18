@@ -117,7 +117,7 @@ type TaskHandle interface {
 	GetPreviousSubtaskMetas(taskID int64, step proto.Step) ([][]byte, error)
 
 	// GetPreviousSubtaskSummary gets previous subtask summaries.
-	GetPreviousSubtaskSummary(taskID int64, step proto.Step) ([]*execute.SubtaskSummary, error)
+	GetAllSubtaskSummaryByStep(taskID int64, step proto.Step) ([]*execute.SubtaskSummary, error)
 
 	SessionExecutor
 }

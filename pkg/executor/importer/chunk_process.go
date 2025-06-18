@@ -298,8 +298,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		}
 
 		if p.collector != nil {
-			dataKVS, _ := kvGroupBatch.groupChecksum.DataAndIndexSumKVS()
-			p.collector.Add(delta, int64(dataKVS))
+			p.collector.Add(delta, int64(rowCount))
 		}
 
 		// the ownership of rowBatch is transferred to the receiver of sendFn, we should
