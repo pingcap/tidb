@@ -89,14 +89,8 @@ func getSession(pool util.SessionPool) (session.Session, error) {
 	se := session.NewSession(sctx, exec, func(se session.Session) {
 		_, err := se.ExecuteSQL(context.Background(), fmt.Sprintf("set tidb_retry_limit=%d", originalRetryLimit))
 		if err != nil {
-<<<<<<< HEAD
 			intest.AssertNoError(err)
-			logutil.BgLogger().Error("fail to reset tidb_retry_limit", zap.Int64("originalRetryLimit", originalRetryLimit), zap.Error(err))
-=======
 			logutil.BgLogger().Warn("fail to reset tidb_retry_limit", zap.Int64("originalRetryLimit", originalRetryLimit), zap.Error(err))
-			se.AvoidReuse()
-			return
->>>>>>> 8fc1430b834 (*: change some unnecessary error logs to warn or info (#61428))
 		}
 
 		if !originalEnable1PC {
