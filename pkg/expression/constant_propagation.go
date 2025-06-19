@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"slices"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -61,11 +62,13 @@ func (s *basePropConstSolver) getColID(col *Column) int {
 	return s.colMapper[col.UniqueID]
 }
 
-func (s *basePropConstSolver) insertCol(col *Column) {
-	_, ok := s.colMapper[col.UniqueID]
-	if !ok {
-		s.colMapper[col.UniqueID] = len(s.colMapper)
-		s.columns = append(s.columns, col)
+func (s *basePropConstSolver) insertCols(cols ...*Column) {
+	for _, col := range cols {
+		_, ok := s.colMapper[col.UniqueID]
+		if !ok {
+			s.colMapper[col.UniqueID] = len(s.colMapper)
+			s.columns = append(s.columns, col)
+		}
 	}
 }
 
@@ -408,13 +411,9 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 }
 
 func (s *propConstSolver) solve(conditions []Expression) []Expression {
-	cols := make([]*Column, 0, len(conditions))
 	for _, cond := range conditions {
 		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
-		cols = append(cols, ExtractColumns(cond)...)
-	}
-	for _, col := range cols {
-		s.insertCol(col)
+		s.insertCols(ExtractColumns(cond)...)
 	}
 	if len(s.columns) > MaxPropagateColsCnt {
 		logutil.BgLogger().Warn("too many columns in a single CNF",
@@ -427,7 +426,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	s.propagateColumnEQ()
 	s.conditions = propagateConstantDNF(s.ctx, s.conditions...)
 	s.conditions = RemoveDupExprs(s.conditions)
-	return s.conditions
+	return slices.Clone(s.conditions)
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
@@ -718,17 +717,13 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 }
 
 func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([]Expression, []Expression) {
-	cols := make([]*Column, 0, len(joinConds)+len(filterConds))
 	for _, cond := range joinConds {
 		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
-		cols = append(cols, ExtractColumns(cond)...)
+		s.insertCols(ExtractColumns(cond)...)
 	}
 	for _, cond := range filterConds {
 		s.filterConds = append(s.filterConds, SplitCNFItems(cond)...)
-		cols = append(cols, ExtractColumns(cond)...)
-	}
-	for _, col := range cols {
-		s.insertCol(col)
+		s.insertCols(ExtractColumns(cond)...)
 	}
 	if len(s.columns) > MaxPropagateColsCnt {
 		logutil.BgLogger().Warn("too many columns",
