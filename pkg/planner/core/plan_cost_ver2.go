@@ -380,7 +380,7 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 		return p.planCostVer2, nil
 	}
 
-	rows := max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
+	rows := max(MinNumRows, getCardinality(p.children[0], option.CostFlag))
 	rowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
@@ -428,7 +428,7 @@ func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanC
 		return p.planCostVer2, nil
 	}
 
-	rows := max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
+	rows := max(MinNumRows, getCardinality(p.children[0], option.CostFlag))
 	n := max(1, float64(p.Count+p.Offset))
 	if n > 10000 {
 		// It's only used to prevent some extreme cases, e.g. `select * from t order by a limit 18446744073709551615`.
@@ -484,7 +484,7 @@ func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *Pl
 		return p.planCostVer2, nil
 	}
 
-	inputRows := max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
+	inputRows := max(MinNumRows, getCardinality(p.children[0], option.CostFlag))
 	outputRows := max(MinNumRows, getCardinality(p, option.CostFlag))
 	outputRowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
@@ -516,8 +516,8 @@ func (p *PhysicalMergeJoin) getPlanCostVer2(taskType property.TaskType, option *
 		return p.planCostVer2, nil
 	}
 
-	leftRows := max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
-	rightRows := max(MinNumRows, getCardinality(p.Children()[1], option.CostFlag))
+	leftRows := max(MinNumRows, getCardinality(p.children[0], option.CostFlag))
+	rightRows := max(MinNumRows, getCardinality(p.children[1], option.CostFlag))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
 	filterCost := sumCostVer2(filterCostVer2(option, leftRows, p.LeftConditions, cpuFactor),
