@@ -716,3 +716,7 @@ func (*mockLazyInfo) GetBinaryPlan() string {
 func (*mockLazyInfo) GetPlanDigest() string {
 	return ""
 }
+
+func (*mockLazyInfo) GetBindingSQLAndDigest() (string, string) {
+	return "", ""
+}
