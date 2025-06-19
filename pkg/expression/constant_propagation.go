@@ -269,16 +269,21 @@ func (s *propConstSolver) Clear() {
 // d = 4 & 2 = c & c = d + 2 & b = 1 & a = 4, we propagate b = 1 and a = 4 and pick eq cond c = 2 and d = 4
 // d = 4 & 2 = c & false & b = 1 & a = 4, we propagate c = 2 and d = 4, and do constant folding: c = d + 2 will be folded as false.
 func (s *propConstSolver) propagateConstantEQ() {
-	intest.Assert(len(s.conditions) == 0)
+	intest.Assert(len(s.eqList) == 0)
 	s.eqList = slices.Grow(s.eqList, len(s.columns))
+	for range s.columns {
+		s.eqList = append(s.eqList, nil)
+	}
 	visited := make([]bool, len(s.conditions))
+	cols := make([]*Column, 0, 4)
+	cons := make([]Expression, 0, 4)
 	for range MaxPropagateColsCnt {
 		mapper := s.pickNewEQConds(visited)
 		if len(mapper) == 0 {
 			return
 		}
-		cols := make([]*Column, 0, len(mapper))
-		cons := make([]Expression, 0, len(mapper))
+		cols = slices.Grow(cols, len(mapper))
+		cons = slices.Grow(cons, len(mapper))
 		for id, con := range mapper {
 			cols = append(cols, s.columns[id])
 			cons = append(cons, con)
@@ -288,6 +293,8 @@ func (s *propConstSolver) propagateConstantEQ() {
 				s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
 			}
 		}
+		clear(cols)
+		clear(cons)
 	}
 }
 
@@ -314,6 +321,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 	if s.unionSet == nil {
 		s.unionSet = disjointset.NewIntSet(len(s.columns))
 	} else {
+		s.unionSet.Clear()
 		s.unionSet.Grow(len(s.columns))
 	}
 	for i := range s.conditions {
@@ -328,6 +336,9 @@ func (s *propConstSolver) propagateColumnEQ() {
 				visited[i] = true
 			}
 		}
+	}
+	if len(s.conditions) == 0 {
+		return
 	}
 
 	condsLen := len(s.conditions)
