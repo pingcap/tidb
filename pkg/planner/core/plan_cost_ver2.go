@@ -138,40 +138,39 @@ const (
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experiments.
-func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
-	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
-		return p.PlanCostVer2, nil
+func (p *PhysicalIndexScan) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCostVer2, nil
 	}
 
 	rows := getCardinality(p, option.CostFlag)
 	rowSize := getAvgRowSize(p.StatsInfo(), p.schema.Columns) // consider all index columns
 	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
 
-	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
-	p.PlanCostInit = true
-	return p.PlanCostVer2, nil
+	p.planCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
+	p.planCostInit = true
+	return p.planCostVer2, nil
 }
 
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experiments.
-func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
-	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
-		return p.PlanCostVer2, nil
+func (p *PhysicalTableScan) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCostVer2, nil
 	}
 
-	var columns []*expression.Column
-	if p.StoreType == kv.TiKV { // Assume all columns for TiKV
-		columns = p.tblCols
+	rows := getCardinality(p, option.CostFlag)
+	var rowSize float64
+	if p.StoreType == kv.TiKV {
+		rowSize = getAvgRowSize(p.StatsInfo(), p.tblCols) // consider all columns if TiKV
 	} else { // TiFlash
 		rowSize = getAvgRowSize(p.StatsInfo(), p.schema.Columns)
 	}
-	rows := getCardinality(p, option.CostFlag)
-	rowSize := getAvgRowSize(p.StatsInfo(), columns)
+	rowSize = math.Max(rowSize, MinRowSize)
 	// Ensure rows and rowSize have a reasonable minimum value to avoid underestimation
 	if !p.isChildOfIndexLookUp {
 		rows = max(MinNumRows, rows)
-		rowSize = max(rowSize, MinRowSize)
 	}
 
 	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
@@ -180,32 +179,7 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 
 	// give TiFlash a start-up cost to let the optimizer prefers to use TiKV to process small table scans.
 	if p.StoreType == kv.TiFlash {
-		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, TiFlashStartupRowPenalty, rowSize, scanFactor))
-	} else {
-		// Apply cost penalty for full scans that carry high risk of underestimation
-		sessionVars := p.SCtx().GetSessionVars()
-		allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
-		tblColHists := p.tblColHists
-
-		// preferRangeScan check here is same as in skylinePruning
-		preferRangeScanCondition := allowPreferRangeScan && (tblColHists.Pseudo || tblColHists.RealtimeCount < 1)
-		// hasHighModifyCount tracks the high risk of a tablescan where auto-analyze had not yet updated the table row count
-		hasHighModifyCount := tblColHists.ModifyCount > tblColHists.RealtimeCount
-		// hasLowEstimate is a check to capture a unique customer case where modifyCount is used for tablescan estimate (but it not adequately understood why)
-		hasLowEstimate := rows > 1 && int64(rows) < tblColHists.RealtimeCount && int64(rows) <= tblColHists.ModifyCount
-		var unsignedIntHandle bool
-		if p.Table.PKIsHandle {
-			if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
-				unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-			}
-		}
-		hasFullRangeScan := !p.isChildOfIndexLookUp && ranger.HasFullRange(p.Ranges, unsignedIntHandle)
-
-		shouldApplyPenalty := hasFullRangeScan && (preferRangeScanCondition || hasHighModifyCount || hasLowEstimate)
-		if shouldApplyPenalty {
-			newRowCount := math.Min(MaxPenaltyRowCount, max(float64(tblColHists.ModifyCount), float64(tblColHists.RealtimeCount)))
-			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
-		}
+		p.planCostVer2 = sumCostVer2(p.planCostVer2, scanCostVer2(option, 10000, rowSize, scanFactor))
 	}
 
 	p.planCostInit = true
