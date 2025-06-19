@@ -14,15 +14,15 @@
 
 ## Introduction
 
-This article proposes a practical TiDB global memory control mechanism.
+This document proposes a practical TiDB global memory control mechanism.
 
 ## Background
 
-According to the introduction in [tidb#58194](https://github.com/pingcap/tidb/issues/58194), there are **`3`** problems with the original memory control mechanism:
+According to the introduction in [#58194](https://github.com/pingcap/tidb/issues/58194), there are **3** problems with the original memory control mechanism:
 
 - Kill SQL/session Risk
 - Heavy Golang GC Impact
-- OOM
+- OOM (Out of Memory)
 
 Severity: `OOM` ≈ `Heavy Golang GC` > `Kill SQL/session`
 
@@ -30,15 +30,16 @@ Severity: `OOM` ≈ `Heavy Golang GC` > `Kill SQL/session`
 
 - Avoid OOM
 - Avoid performance regression
-- Avoid SQL failures (configurable & deterministic behaviors to Kill/Cancel SQL/session)
+- Avoid SQL random failures
+  - require configurable and deterministic behaviors to stop SQL execution
 
 ## Detailed Design
 
 ### Overview
 
-Because TiDB cannot customize physical memory allocation, the core to solve those problems is to avoid the usage of heap (occupied legally / unable to GC) from exceeding [golang runtime soft memory limit](https://pkg.go.dev/runtime/debug#SetMemoryLimit).
+Because TiDB cannot customize physical memory allocation, the core solution to these problems is to prevent heap usage (either legally occupied or not GC-able) from exceeding [golang runtime soft memory limit](https://pkg.go.dev/runtime/debug#SetMemoryLimit).
 
-Memory is a typical mutually exclusive resource and belongs to the finite `Pool` model. Therefore, `preemptive scheduling` can be performed only if its holder, [Memory Resource Pool](#memory-resource-pool)(aka `Memory Pool` / `mem-pool`), is able to release memory.
+Memory is a typical mutually exclusive resource and follows the finite `Pool` model. Therefore, `preemptive scheduling` can be performed only if its holder, [Memory Resource Pool](#memory-resource-pool)(aka `Memory Pool` / `mem-pool`), is able to release memory.
 
 A centralized global [Memory Resource Arbitrator](#memory-resource-arbitrator) (aka `mem-arbitrator` or `arbitrator`) is proposed, which replaces the original optimistic posteriori method with a `pessimistic scheduling` model (`subscription-first-then-allocation`). It quantifies the global memory resources of the TiDB instance into dynamic virtual quotas and identifies unsafe / prohibited quota to ensure global memory safety during the arbitration process.
 
@@ -46,12 +47,11 @@ A centralized global [Memory Resource Arbitrator](#memory-resource-arbitrator) (
 
 The original config [tidb_server_memory_limit](https://docs.pingcap.com/tidb/stable/system-variables/#tidb_server_memory_limit-new-in-v640) (aka `server-limit`) is still the most important hard constraint. `arbitrator` introduces config `soft-limit`, which indicates the upper limit of global memory quota.
 
-When facing an `OOM Risk`, the `arbitrator` will use the `KILL` method to protect the memory safety. For other abnormal situations, it only chooses the `CANCEL` method.
+When facing an `OOM Risk`, the `arbitrator` will use the `KILL` method to protect the memory safety. For other abnormal situations, it only chooses the `CANCEL` method. A new executor error will be defined to represent such behaviors from mem- arbitrator.
 
 - `OOM Risk`: actual memory usage reaches the security warning line & global stuck risk occurs.
-- `KILL` and `CANCEL` interface can be customized.
 
-`arbitrator` contains self-adaptation tuning mechanism to quantify & store the runtime memory state and dynamically adjust the `soft-limit` to resolve `Loop OOM` problem. `arbitrator` provides manual tuning interfaces to handle extreme memory leaks as well: manually set `soft-limit`; pre-subscribe mem quota of a specified size;
+`arbitrator` contains self-adaptive tuning mechanism to quantify & store the runtime memory state and dynamically adjust the `soft-limit` to resolve `Loop OOM` problem. `arbitrator` provides manual tuning interfaces to handle extreme memory leaks as well: manually set `soft-limit`; pre-subscribe the mem quota of a specified size;
 
 - `Loop OOM`: TiDB restarts in a loop due to OOM caused by continuous extreme memory leak loads.
 
@@ -71,36 +71,37 @@ There are **2** work modes for `arbitrator` when memory is insufficient:
 
 New system variables:
 
-- `tidb_mem_arbitrator_mode`: `global` level
-  - `DISABLE` (default): disable mem arbitrator
-  - `STANDARD`: set work mode `STANDARD`
-  - `PRIORITY`: set work mode `PRIORITY`
+- `tidb_mem_arbitrator_mode`: global level
+  - `DISABLE` (default): disable mem-arbitrator
+  - `STANDARD`
+  - `PRIORITY`
 
-- `tidb_mem_arbitrator_soft_limit`: `global` level
+- `tidb_mem_arbitrator_soft_limit`: global level
   - `0` (default)：`95% server-limit`
   - Integer (bytes): `(1, server-limit]`
   - Float (`ratio * server-limit`): `(0, 1]`
-  - `AUTO` (mem-arbitrator self-adaptation adjustment according to runtime state)
+  - `AUTO`
+    - self-adaptive adjustment according to runtime state
 
-- `tidb_mem_arbitrator_query_reserved`: `session` level / `SQL Hint`
+- `tidb_mem_arbitrator_query_reserved`: session level
   - `0` (default)
   - Integer (bytes): `(1, server-limit]`
     - pre-subscribe a specified amount of mem quota before execution
 
-- `tidb_mem_arbitrator_wait_averse`: `session` level / `SQL Hint`
-  - `OFF` (default)
-  - `ON`: bind SQL to STANDARD mode and highest memory priority
+- `tidb_mem_arbitrator_wait_averse`: session level
+  - `0` (default)
+  - `1`: bind SQL to `HIGH` mem-priority; `CANCEL` SQL when memory is insufficient;
+  - `nolimit`: make SQL execution out of the control of the mem-arbitrator
 
 ### System Behavior
 
-- mem-arbitrator is disabled by default and TiDB use the original oom control mechanism
+- mem-arbitrator is disabled by default, and TiDB uses the original oom control mechanism
 - SQL inherits mem-priority from `Resource Group`, otherwise `MEDIUM`
-- SQL can be bound to `wait_averse` property and `HIGH` mem-priority through `tidb_mem_arbitrator_wait_averse`
 - Enable mem-arbitrator:
   - Each TiDB instance has a global unique mem-arbitrator.
-  - Set the sys var `tidb_mem_arbitrator_mode` to not `DISABLE`, and takes effect immediately for all TiDB nodes.
+  - Set the sys var `tidb_mem_arbitrator_mode` to a value other than `DISABLE`, which takes effect immediately for all TiDB nodes.
   - Disable the original OOM control mechanism
-  - Disable `memoryLimitTuner`: the expected maximum memory usage of TiDB instance is similar to golang runtime soft memory limit and `server-limit`.
+  - Disable `memoryLimitTuner`: the expected maximum memory usage of a TiDB instance is similar to the golang runtime soft memory limit and `server-limit`.
 - Enable `STANDARD` mode:
   - All mem quota subscription requests will be executed by FIFO
   - Cancel all queued pools when memory is insufficient
@@ -124,7 +125,7 @@ New system variables:
       - `pool-medium-cap`: medium mem quota of root pools as pool init cap suggestion
       - `last-risk`: `heap` & `quota` state of last `mem risk`
     - When `mem risk` occurs, calculate and locally persist the current state so that it can be restored after each restart.
-    - Regularly `30s` check the runtime state, if the memory stress is reduced, gradually reduce the magnifi to increase the mem quota upper limit
+    - Regularly `30s` check the runtime state, if the memory stress is reduced, gradually reduce the magnifi-ratio to increase the mem quota upper limit
 - pre-subscribe specific mem quota by `tidb_mem_arbitrator_query_reserved`
   - To deal with SQL-level memory leaks, the larger the value, the better the resource isolation effect, and the safer the global memory
 - Dynamically switch mem-arbitrator work mode:
@@ -145,7 +146,7 @@ OLAP scenarios that need to ensure SQL execution (multi-concurrency and large OL
 
 Low latency / non-blocking services (OLTP)
 
-- When the memory resources are insufficient the upper-layer can quickly retry SQL / workload to other TiDB nodes (which can be perceived by TiProxy).
+- When the memory resources are insufficient the upper-layer can quickly retry SQL on other TiDB nodes (which can be managed by TiProxy).
 
 Memory leak or `Loop OOM` scenarios
 
@@ -162,13 +163,13 @@ Deploy multiple TiDB nodes
   - **[opt 2]** Bind important SQL with resource group with `HIGH` priority, bind OLAP-related SQL with `MEDIUM` / `LOW` priority.
     - Make the upper-layer bind the load of the heavy OLAP to specific TiDB nodes.
   - **[opt 3]** Bind important SQL with the `wait_averse` property and set other settings as needed.
-    - Compared to canceling other SQL and waiting for resource release (the waiting time is determined by the process of executing cancel), the method of quickly canceling OLTP-related SQL and retrying it to other TiDB nodes by the upper-layer has lower latency.
+    - Compared to canceling other SQL and waiting for resource release (the waiting time is determined by the process of executing cancel), quickly canceling OLTP related SQL and retrying it on other TiDB nodes at the upper layer results in lower latency.
 
 OOM appears after enabling mem-arbitrator
 
-- **[opt 1]** Set soft-limit to `AUTO` and let mem-arbitrator adaptively adjust the upper limit of global memory resources and gradually converges the OOM problem (multiple OOMs may occur in extreme cases).
-- **[opt 2]** Set the soft-limit to a relative small value / percentage, manually set the global memory quota limit, and quickly solve OOM problems
-- **[opt 3]** For the known SQL with memory leak problem, make it pre-subscribe a relative large amount of mem quota.
+- **[opt 1]** Set soft-limit to `AUTO` and let mem-arbitrator adaptively adjust the upper limit of global memory resources and gradually converge the OOM problem (multiple OOMs may occur in extreme cases).
+- **[opt 2]** Set the soft-limit to a relatively small value / percentage, manually set the global memory quota limit, and quickly solve OOM problems
+- **[opt 3]** For the known SQL with memory leak problem, make it pre-subscribe a relatively large amount of mem quota.
 
 Ensure the successful execution of important SQL
 
@@ -194,7 +195,7 @@ Ensure the successful execution of important SQL
 - `reserved-budget`
 - `actions` interface: `notification`, `out-of-cap`, `out-of-limit`
 
-The allocated quota of `mem-pool` should not exceed the used quota of its `budget + reserved-budget`. When the used quota is GT than the capacity, the pool could increase the budget by **2** ways:
+The allocated quota of `mem-pool` should not exceed the used quota of its `budget + reserved-budget`. When the used quota is greater than the capacity, the pool could increase the budget in two ways:
 
 - request from upstream mem-pool
 - `out-of-cap` action
@@ -202,34 +203,33 @@ The allocated quota of `mem-pool` should not exceed the used quota of its `budge
 
 #### Memory Resource Arbitrator
 
-There will be a unique global-arbitrator under each TiDB instance. The arbitrator uses the common TiDB property `server-limit` as the hard limit for physical / logical memory, and sets it as the soft limit of the golang runtime through `debug.SetMemoryLimit`. The arbitrator also use `95% * server-limit` as the default mode of soft-limit.
+Each TiDB instance will have a single, unique global mem-arbitrator. The arbitrator uses the common TiDB property `server-limit` as the hard limit for physical / logical memory, and sets it as the soft limit of the golang runtime through `debug.SetMemoryLimit`. The arbitrator also uses `95% * server-limit` as the default mode of soft-limit.
 
 The mem quota is separated into **4** parts: `allocated`, `available`, `buffer`, `out-of-control`.
 
 - `allocated`: the quota occupied by mem pools (root `mem-pool` or [await-free-pool](#await-free-pool))
 - `available`: the quota available for alloc
-- [buffer](#buffer): the quota reserved to solve resolving [deadlock](#avoid-deadlock) or memory leaks under `PRIORITY` mode
+- [buffer](#buffer): the quota reserved to resolve [deadlock](#avoid-deadlock) or memory leaks under `PRIORITY` mode
 - [out-of-control](#out-of-control): the unsafe / prohibited quota
   - The `soft-limit` takes effect by modifying out-of-control
 
-The arbitrator itself is a purely logical abstraction. It provides an async working method which can be executed in an independent goroutine.
+The arbitrator is a logical abstraction, implemented as an asynchronous worker running in a separate goroutine.
 
 The root pool is required to implement **3** interfaces before attaching to the arbitrator:
 
-- `Cancel`
-  - Stop & release mem quota
-  - Invoked when the mem quota is insufficient
-- `Kill`
-  - Stop & release heap immediately
-  - Invoked when facing `OOM Risk`
+- `Stop(reason)`
+  - Stop & Release memory resources
+  - `reason`: `CANCEL`, `KILL`, etc.
+- `Finish`
+  - Execute shutdown procedures before destroying the root pool
 - `HeapInuse`
-  - COUNT the heap-inuse of the root pool
+  - Count the heap-inuse of the root pool
 
 ##### Await Free Pool
 
 The arbitrator contains a unique mem pool called `await-free-pool`, which is able to allocate quota from `available` mem quota directly rather than through the `Arbitration` process.
 
-- Complicated scenarios like `sql-compile`/ `optimize` / recursion, which can not track memory usage easily
+- Complicated scenarios like `sql-compile`/ `optimize` / recursion, which cannot easily track memory usage
 - Too `small` memory usage scenarios: small DML, information/schema query, temporary objects, etc.
 
 ##### Memory Tracker
@@ -246,7 +246,7 @@ After the tracker is detached, the root pool will be reset and its memory usage 
 
 ##### Reclaim Heap By GC
 
-The golang runtime GC function is a heavy operation which will stop the whole world. The arbitrator has the ability to sense whole memory usage profile and can invoke such function only when necessary. These are the designed opportunities to execute golang GC:
+The golang runtime GC function is a heavy operation which will stop the whole world. The arbitrator has the ability to sense the whole memory usage profile and can invoke such function only when necessary. These are the designed opportunities to execute golang GC:
 
 - mem-pool killed / canceled
 - Under `Runtime Memory Risk` during arbitration process
@@ -254,11 +254,11 @@ The golang runtime GC function is a heavy operation which will stop the whole wo
 
 ##### Avoid Deadlock
 
-Memory resource contention is an common issue when facing dynamic memory quota allocation. The deadlock problem occurs when all root pools are synchronously requesting memory quota but there is not enough memory resource. To resolve the deadlock problem, there are 2 simple ways:
+Memory resource contention is a common issue when facing dynamic memory quota allocation. The deadlock problem occurs when all root pools are synchronously requesting memory quota but there is not enough memory resource. To resolve the deadlock problem, there are 2 simple ways:
 
 - Reserve a dynamic amount of `buffer`
 - Make the arbitration process never be blocked
-  - The arbitrator maintains a unique `privileged` budget which is a logic flag can only be bound to one root pool until that pool releases it. Any root pool which has occupied this budget can allocate memory quota without limit, which means that in extreme resource contention scenarios, all running pools will be degraded to the `single` concurrency mode.
+  - The arbitrator maintains a unique `privileged` budget which is a logical flag that can be bound to only one root pool until that pool releases it. Any root pool which has occupied this budget can allocate memory quota without limit, which means that in extreme resource contention scenarios, all running pools will be degraded to the `single` concurrency mode.
 
 ##### Statistics & Auto Tune
 
@@ -298,7 +298,7 @@ Sufficient and accurate context can greatly help to enhance memory resource isol
 
 - `digests = max(mem usage) / Pool / Duration`
 
-For the SQL, a appropriate mem quota value for pre-subscription can be found by the following steps:
+For the SQL, an appropriate mem quota value for pre-subscription can be found by the following steps:
 
 - SQL --> Original SQL Hash ID --> Max Mem Usage By ID
 - SQL --> SQL Digest Str --> SQL Digest ID --> Max Mem Usage By SQL Digest ID
@@ -306,7 +306,7 @@ For the SQL, a appropriate mem quota value for pre-subscription can be found by 
 
 ###### stats
 
-To predict the possible maximum quota usage for unknown pools whose mem consumption is NOT `small`, the arbitrator will estimate a appropriate value `suggest-pool-init-cap`. This value will be persisted and can be determined by:
+To predict the possible maximum quota usage for unknown pools whose mem consumption is NOT `small`, the arbitrator will estimate an appropriate value `suggest-pool-init-cap`. This value will be persisted and can be determined by:
 
 - `suggest-pool-init-cap = (median of pool mem usage) / Duration`
 
@@ -327,7 +327,7 @@ From the global perspective, this issue can be reduced to computing the scaling 
 
 Planner / Compiler / Optimizer / Common
 
-- Pre-subscribe a fixed mount of mem quota (`4MB`) from `await-free-pool` in advance for temporary use
+- Pre-subscribe a fixed amount of mem quota (`4MB`) from `await-free-pool` in advance for temporary use
 
 Session
 
@@ -338,7 +338,7 @@ Session
 
 Modify the original session dispatch mechanism
 
-- select the TiDB instance with the minimal value: `allocaed mem quota + pending alloc mem quota`
+- select the TiDB instance with the minimal value: `allocated mem quota + pending alloc mem quota`
 
 ##### Background task
 
@@ -358,7 +358,7 @@ Metrics
 
 - Mem quota subscription task: success/fail number by work mode or priority
 - Execution time of task
-- Memory resources: available, unavailable, unsafe, allocated, mem-magnifi, GC (number of triggers, time costs), refresh runtime mem stats, soft limit, pool memory usage top-3 / medium, runtime memory alloc/free speed, persist mem profile info
+- Memory resources: available, unavailable, unsafe, allocated, magnifi-ratio, GC (number of triggers, time costs), refresh runtime mem stats, soft limit, pool memory usage top-3 / medium, runtime memory alloc/free speed, persist mem profile info
 - Mem Risk
 - OOM Risk
 - KILL: number, priority
@@ -371,10 +371,10 @@ Log
 - CANCEL
 - Runtime mem profile in timeline
 
-SQL explain results & SQL execution statistics
+SQL execution statistics
 
 - Binding arbitrator behavior pattern: STANDARD, PRIORITY
-- Memory priority: LOW, MEDIA, HIGH
+- Memory priority
 - Memory subscription task count, processing time (avg, max, min)
 - Maximum used mem quota, maximum subscribed mem quota
 - execution summary
