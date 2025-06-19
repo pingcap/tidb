@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -113,6 +114,8 @@ type Context interface {
 	// except schema of physical schema objects, the information schema returned
 	// also includes the temporary table definitions stored in session.
 	GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema
+	// GetSchemaValidator returns the schema validator.
+	GetSchemaValidator() validatorapi.Validator
 
 	GetSessionVars() *variable.SessionVars
 

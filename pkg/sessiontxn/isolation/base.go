@@ -602,7 +602,7 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 	txn.SetOption(
 		kv.SchemaChecker,
 		domain.NewSchemaChecker(
-			domain.GetDomain(p.sctx),
+			p.sctx.GetSchemaValidator(),
 			p.GetTxnInfoSchema().SchemaMetaVersion(),
 			physicalTableIDs,
 			needCheckSchema,

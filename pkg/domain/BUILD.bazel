@@ -25,6 +25,7 @@ go_library(
         "//br/pkg/streamhelper/daemon",
         "//pkg/bindinfo",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/notifier",
         "//pkg/ddl/placement",

@@ -172,3 +172,7 @@ func (s *mockStorage) SetMockLockWaits(lockWaits []*deadlockpb.WaitForEntry) {
 func (s *mockStorage) GetClusterID() uint64 {
 	return 1
 }
+
+func (s *mockStorage) GetKeyspace() string {
+	return ""
+}

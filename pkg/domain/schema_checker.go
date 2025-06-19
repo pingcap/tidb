@@ -46,9 +46,9 @@ var (
 )
 
 // NewSchemaChecker creates a new schema checker.
-func NewSchemaChecker(do *Domain, schemaVer int64, relatedTableIDs []int64, needCheckSchema bool) *SchemaChecker {
+func NewSchemaChecker(validator validatorapi.Validator, schemaVer int64, relatedTableIDs []int64, needCheckSchema bool) *SchemaChecker {
 	return &SchemaChecker{
-		Validator:       do.GetSchemaValidator(),
+		Validator:       validator,
 		schemaVer:       schemaVer,
 		relatedTableIDs: relatedTableIDs,
 		needCheckSchema: needCheckSchema,
