@@ -231,8 +231,7 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 var propConstSolverPool = sync.Pool{
 	New: func() any {
 		solver := &propConstSolver{}
-		solver.basePropConstSolver = basePropConstSolverPool.Get().(basePropConstSolver)
-		solver.colMapper = make(map[int64]int)
+		solver.colMapper = make(map[int64]int, 4)
 		return solver
 	},
 }
@@ -245,6 +244,7 @@ type propConstSolver struct {
 // newPropConstSolver returns a PropagateConstantSolver.
 func newPropConstSolver() PropagateConstantSolver {
 	solver := propConstSolverPool.Get().(*propConstSolver)
+	solver.basePropConstSolver = basePropConstSolverPool.Get().(basePropConstSolver)
 	return solver
 }
 
