@@ -2042,7 +2042,12 @@ func (e *ShowExec) dbAccessDenied() error {
 
 func (e *ShowExec) tableAccessDenied(access string, table string) error {
 	user := e.Ctx().GetSessionVars().User
-	u, h := auth.GetUserAndHostName(user)
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
 	return exeerrors.ErrTableaccessDenied.GenWithStackByArgs(access, u, h, table)
 }
 
