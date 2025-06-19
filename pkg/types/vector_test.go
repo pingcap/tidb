@@ -104,6 +104,17 @@ func TestVectorParse(t *testing.T) {
 
 	v, err = types.ParseVectorFloat32(`[-1e39, 1e39]`)
 	require.EqualError(t, err, "value -1e+39 out of range for float32")
+
+	// Test invalid vector with extra characters
+	v, err = types.ParseVectorFloat32(`[1,2,3,4.4]ddddddddddddfasfa`)
+	require.NotNil(t, err)
+	require.True(t, v.IsZeroValue())
+	require.Contains(t, err.Error(), "Invalid vector text")
+
+	v, err = types.ParseVectorFloat32(`[1,2,3]extra`)
+	require.NotNil(t, err)
+	require.True(t, v.IsZeroValue())
+	require.Contains(t, err.Error(), "Invalid vector text")
 }
 
 func TestVectorDatum(t *testing.T) {
