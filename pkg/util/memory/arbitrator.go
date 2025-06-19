@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -112,6 +112,8 @@ const (
 	ArbitratorModePriority
 	// ArbitratorModeDisable indicates the mem-arbitrator is disabled
 	ArbitratorModeDisable
+
+	maxArbitratorMode
 )
 
 // ArbitrationPriority represents the priority of the task: Low, Medium, High
@@ -195,17 +197,20 @@ func (m *MemArbitrator) removeTask(entry *rootPoolEntry) (res bool) {
 }
 
 func (m *MemArbitrator) addTask(entry *rootPoolEntry) {
-	m.tasks.Lock()
-	//
-	entry.taskMu.fifo = m.tasks.fifoTasks.pushBack(entry)
-	priority := entry.ctx.memPriority
-	entry.taskMu.fifoByPriority.priority = priority
-	entry.taskMu.fifoByPriority.wrapListElement = m.tasks.fifoByPriority[priority].pushBack(entry)
-	if entry.ctx.waitAverse {
-		entry.taskMu.fifoWaitAverse = m.tasks.fifoWaitAverse.pushBack(entry)
+	m.tasks.waitingAlloc.Add(entry.request.quota) // before tasks lock
+	{
+		m.tasks.Lock()
+		//
+		priority := entry.ctx.memPriority
+		entry.taskMu.fifoByPriority.priority = priority
+		entry.taskMu.fifoByPriority.wrapListElement = m.tasks.fifoByPriority[priority].pushBack(entry)
+		if entry.ctx.waitAverse {
+			entry.taskMu.fifoWaitAverse = m.tasks.fifoWaitAverse.pushBack(entry)
+		}
+		entry.taskMu.fifo = m.tasks.fifoTasks.pushBack(entry)
+		//
+		m.tasks.Unlock()
 	}
-	//
-	m.tasks.Unlock()
 }
 
 func (m *MemArbitrator) frontTaskEntry() (entry *rootPoolEntry) {
@@ -471,13 +476,9 @@ func (m *MemArbitrator) blockingAllocate(entry *rootPoolEntry, requestedBytes in
 
 // non thread safe: the mutex of root pool must have been locked
 func (m *MemArbitrator) prepareAlloc(entry *rootPoolEntry, requestedBytes int64) {
-	{
-		entry.request.quota = requestedBytes
-		m.addTask(entry)
-		m.notifer.WeakWake()
-	}
-
-	m.tasks.waitingAlloc.Add(entry.request.quota)
+	entry.request.quota = requestedBytes
+	m.addTask(entry)
+	m.notifer.WeakWake()
 }
 
 // non thread safe: the mutex of root pool must have been locked
@@ -491,8 +492,8 @@ func (m *MemArbitrator) waitAlloc(entry *rootPoolEntry) ArbitrateResult {
 			atomic.AddInt64(&m.execMetrics.Task.Succ, 1)
 		}
 	case <-entry.ctx.cancelCh:
-		// 1. cancel by session interruption
-		// 2. cancel by arbitrator
+		// 1. cancel by session
+		// 2. stop by the arbitrate-helper (cancel / kill by arbitrator)
 		res = ArbitrateFail
 		atomic.AddInt64(&m.execMetrics.Task.Fail, 1)
 
@@ -526,8 +527,7 @@ type MemArbitrator struct {
 	execMu struct {
 		startTime    time.Time
 		blockedState blockedState
-		sync.Mutex
-		mode ArbitratorWorkMode // work mode of each round
+		mode         ArbitratorWorkMode // work mode of each round
 	}
 	actions   MemArbitratorActions
 	controlMu struct {
@@ -563,8 +563,7 @@ type MemArbitrator struct {
 			shards   []TrackedConcurrentBudget
 			sizeMask uint64
 		}
-		lastQuotaUsed        int64
-		lastHeapInuse        int64
+		lastQuotaUsage       memPoolQuotaUsageType
 		lastShrinkUtimeMilli atomic.Int64
 	}
 	heapController heapController
@@ -585,6 +584,8 @@ type MemArbitrator struct {
 		sync.Mutex
 		_         holder64Bytes
 		allocated int64 // allocated mem quota
+		released  uint64
+		lastGC    uint64 // released mem quota at last GC point
 		_         holder64Bytes
 		limit     int64 // hard limit of mem quota
 		threshold struct {
@@ -619,8 +620,7 @@ type MemArbitrator struct {
 		running atomic.Int64
 		atomic.Int64
 	}
-	mode             ArbitratorWorkMode
-	ableForRuntimeGC int32
+	mode ArbitratorWorkMode
 }
 
 type buffer struct {
@@ -1053,7 +1053,7 @@ type heapController struct {
 		}
 		minHeapFreeSpeedBPS atomic.Int64
 		start               bool
-		eachRound           struct{ gcExecuted bool }
+		gcExecuted          bool
 	}
 	timedMemProfile [2]memProfile
 	heapAlloc       atomic.Int64
@@ -1263,11 +1263,6 @@ func (m *MemArbitrator) ResetRootPoolByID(uid uint64, maxMemConsumed int64, tune
 	m.wake()
 }
 
-// SetAbleToGC sets the flag to allow garbage collection
-func (m *MemArbitrator) SetAbleToGC() {
-	m.ableForRuntimeGC = 1
-}
-
 func (m *MemArbitrator) resetRootPoolEntry(entry *rootPoolEntry) bool {
 	{
 		entry.stateMu.Lock()
@@ -1323,6 +1318,9 @@ func (m *MemArbitrator) RemoveRootPoolByID(uid uint64) bool {
 	}
 
 	if m.removeRootPoolEntry(entry) {
+		if ctx := entry.ctx.Load(); ctx != nil && ctx.arbitrateHelper != nil {
+			ctx.arbitrateHelper.Finish()
+		}
 		m.wake()
 		return true
 	}
@@ -1369,34 +1367,33 @@ func (m *MemArbitrator) getRootPoolEntry(uid uint64) *rootPoolEntry {
 	return nil
 }
 
-type rootPoolWrap struct {
-	Pool  *ResourcePool
-	entry *rootPoolEntry
+type rootPool struct {
+	entry      *rootPoolEntry
+	arbitrator *MemArbitrator
 }
 
 // FindRootPool finds the root pool by ID
-func (m *MemArbitrator) FindRootPool(uid uint64) rootPoolWrap {
+func (m *MemArbitrator) FindRootPool(uid uint64) rootPool {
 	if e := m.getRootPoolEntry(uid); e != nil {
-		return rootPoolWrap{e.pool, e}
+		return rootPool{e, m}
 	}
-	return rootPoolWrap{nil, nil}
+	return rootPool{}
 }
 
 // EmplaceRootPool emplaces a new root pool with the given uid (uid < 0 means the internal pool)
-func (m *MemArbitrator) EmplaceRootPool(uid uint64) (res rootPoolWrap, err error) {
-	if res.entry = m.getRootPoolEntry(uid); res.entry != nil {
-		res.Pool = res.entry.pool
-		return
+func (m *MemArbitrator) EmplaceRootPool(uid uint64) (rootPool, error) {
+	if e := m.getRootPoolEntry(uid); e != nil {
+		return rootPool{e, m}, nil
 	}
 
-	res.Pool = &ResourcePool{
+	pool := &ResourcePool{
 		name:           fmt.Sprintf("root-pool-%d", uid),
 		uid:            uid,
 		limit:          DefMaxLimit,
 		allocAlignSize: 1,
 	}
-	res.entry, err = m.addRootPool(res.Pool)
-	return
+	entry, err := m.addRootPool(pool)
+	return rootPool{entry, m}, err
 }
 
 func (m *MemArbitrator) addRootPool(pool *ResourcePool) (*rootPoolEntry, error) {
@@ -1458,6 +1455,13 @@ func (m *MemArbitrator) SoftLimit() uint64 {
 	return uint64(m.softLimit())
 }
 
+func (m *MemArbitrator) doSetLimit(limit int64) {
+	m.mu.limit = limit
+	m.mu.threshold.risk = int64(float64(limit) * defCheckSafeRatio)
+	m.mu.threshold.oomRisk = int64(float64(limit) * defCheckOOMRatio)
+	m.doAdjustSoftLimit()
+}
+
 // SetLimit sets the limit of the mem-arbitrator and returns whether the limit has changed
 func (m *MemArbitrator) SetLimit(x uint64) (changed bool) {
 	limit := min(int64(x), DefMaxLimit)
@@ -1472,10 +1476,7 @@ func (m *MemArbitrator) SetLimit(x uint64) (changed bool) {
 		if limit != m.mu.limit {
 			changed = true
 			needWake = limit > m.mu.limit // update to a greater limit
-			m.mu.limit = limit
-			m.mu.threshold.risk = int64(float64(limit) * defCheckSafeRatio)
-			m.mu.threshold.oomRisk = int64(float64(limit) * defCheckOOMRatio)
-			m.doAdjustSoftLimit()
+			m.doSetLimit(limit)
 		}
 		//
 		m.mu.Unlock()
@@ -1513,6 +1514,7 @@ func (m *MemArbitrator) release(x int64) {
 		//
 		m.mu.Unlock()
 	}
+	atomic.AddUint64(&m.mu.released, uint64(x))
 }
 
 func (m *MemArbitrator) allocated() int64 {
@@ -1665,8 +1667,13 @@ func (m *MemArbitrator) allocateFromPrivilegedBudget(target *rootPoolEntry, rema
 	return ok, remainBytes
 }
 
+func (m *MemArbitrator) ableToGC() bool {
+	return m.mu.released-m.mu.lastGC >= uint64(m.poolAllocStats.SmallPoolLimit)
+}
+
 func (m *MemArbitrator) tryRuntimeGC() bool {
-	if atomic.SwapInt32(&m.ableForRuntimeGC, 0) != 0 {
+	if m.ableToGC() {
+		m.mu.lastGC = m.mu.released
 		m.updateTrackedMemStats()
 		m.reclaimHeap()
 		return true
@@ -1751,10 +1758,7 @@ func newMemArbitrator(limit int64, shardNum uint64, maxQuotaShardNum int, minQuo
 	m.tasks.fifoWaitAverse.init()
 	m.notifer = NewNotifer()
 	m.entryMap.init(shardNum, maxQuotaShardNum, minQuotaForReclaim)
-	m.mu.limit = limit
-	m.mu.softLimit.size = limit
-	m.mu.threshold.oomRisk = limit
-	m.mu.threshold.risk = limit
+	m.doSetLimit(limit)
 	m.resetStatistics()
 	m.SetMinHeapFreeSpeedBPS(defMinHeapFreeSpeedBPS)
 	m.cleanupMu.fifoTasks.init()
@@ -1786,7 +1790,7 @@ func (m *MemArbitrator) resetDigestProfileCache(shardNum uint64) {
 	m.digestProfileCache.num.Store(0)
 }
 
-func (m *MemArbitrator) doCancelPendingTasks(prio ArbitrationPriority, waitAverse bool) (cnt int64) {
+func (m *MemArbitrator) doCancelPendingTasks(prio ArbitrationPriority, waitAverse bool) (cnt uint64) {
 	var entries [64]*rootPoolEntry
 
 	fifo := &m.tasks.fifoWaitAverse
@@ -1826,7 +1830,7 @@ func (m *MemArbitrator) doCancelPendingTasks(prio ArbitrationPriority, waitAvers
 			entry.windUp(0, ArbitrateFail)
 		}
 
-		cnt += int64(size)
+		cnt += uint64(size)
 
 		if size != len(entries) {
 			break
@@ -1886,11 +1890,11 @@ func (m *MemArbitrator) doReclaimNonBlockingTasks() {
 	if m.execMu.mode == ArbitratorModeStandard {
 		for prio := minArbitrationPriority; prio < maxArbitrationPriority; prio++ {
 			if m.taskNumByPriority(prio) != 0 {
-				m.execMetrics.Cancel.StandardMode += m.doCancelPendingTasks(prio, false)
+				m.AddMetricsCancelStandardMode(m.doCancelPendingTasks(prio, false))
 			}
 		}
 	} else if m.taskNumOfWaitAverse() != 0 {
-		m.execMetrics.Cancel.WaitAverse += m.doCancelPendingTasks(maxArbitrationPriority, true)
+		m.AddMetricsCancelWaitAverse(m.doCancelPendingTasks(maxArbitrationPriority, true))
 	}
 }
 
@@ -1957,37 +1961,32 @@ func (m *MemArbitrator) implicitRun() { // satisfy any subscription task
 	if m.tasks.fifoTasks.empty() {
 		return
 	}
-	{
-		m.execMu.Lock()
-		//
-		for { // make all tasks success
-			entry := m.frontTaskEntry()
-			if entry == nil {
-				break
-			}
 
-			if entry.arbitratorMu.destroyed {
-				if m.removeTask(entry) {
-					entry.windUp(0, ArbitrateFail)
-				}
-				continue
-			}
-
-			if m.removeTask(entry) {
-				{
-					m.mu.Lock()
-					//
-					m.mu.allocated += entry.request.quota
-					//
-					m.mu.Unlock()
-				}
-
-				m.entryMap.addQuota(entry, entry.request.quota)
-				entry.windUp(entry.request.quota, ArbitrateOk)
-			}
+	for { // make all tasks success
+		entry := m.frontTaskEntry()
+		if entry == nil {
+			break
 		}
-		//
-		m.execMu.Unlock()
+
+		if entry.arbitratorMu.destroyed {
+			if m.removeTask(entry) {
+				entry.windUp(0, ArbitrateFail)
+			}
+			continue
+		}
+
+		if m.removeTask(entry) {
+			{
+				m.mu.Lock()
+				//
+				m.mu.allocated += entry.request.quota
+				//
+				m.mu.Unlock()
+			}
+
+			m.entryMap.addQuota(entry, entry.request.quota)
+			entry.windUp(entry.request.quota, ArbitrateOk)
+		}
 	}
 }
 
@@ -2008,11 +2007,7 @@ func (m *MemArbitrator) runOneRound() (taskExecNum int) {
 	}
 
 	if !m.cleanupMu.fifoTasks.empty() {
-		m.execMu.Lock()
-		//
 		m.doExecuteCleanupTasks()
-		//
-		m.execMu.Unlock()
 	}
 
 	if m.execMu.mode == ArbitratorModeDisable {
@@ -2024,15 +2019,10 @@ func (m *MemArbitrator) runOneRound() (taskExecNum int) {
 		return -2
 	}
 
-	{
-		m.execMu.Lock()
-		//
-		for m.doExecuteFirstTask() {
-			taskExecNum++
-		}
-		//
-		m.execMu.Unlock()
+	for m.doExecuteFirstTask() {
+		taskExecNum++
 	}
+
 	return taskExecNum
 }
 
@@ -2061,9 +2051,14 @@ func (m *MemArbitrator) asyncRun(duration time.Duration) bool {
 	return true
 }
 
-// StartWithMemArbitratorContext starts the root pool with the given context
-func (r *rootPoolWrap) StartWithMemArbitratorContext(m *MemArbitrator, ctx *ArbitrationContext) bool {
-	return m.restartEntryByContext(r.entry, ctx)
+// Restart starts the root pool with the given context
+func (r *rootPool) Restart(ctx *ArbitrationContext) bool {
+	return r.arbitrator.restartEntryByContext(r.entry, ctx)
+}
+
+// Pool returns the internal resource pool
+func (r *rootPool) Pool() *ResourcePool {
+	return r.entry.pool
 }
 
 func (m *MemArbitrator) restartEntryByContext(entry *rootPoolEntry, ctx *ArbitrationContext) bool {
@@ -2224,7 +2219,6 @@ func (m *MemArbitrator) autoRun(
 		m.actions = actions
 		m.refreshRuntimeMemStats()
 		m.initAwaitFreePool(awaitFreePoolAllocAlignSize, awaitFreePoolShardNum)
-		m.SetAbleToGC()
 	}
 	return m.asyncRun(taskTickDur)
 }
@@ -2456,8 +2450,7 @@ func (m *MemArbitrator) updateMemMagnification(utimeMilli int64) (updatedPreProf
 		if ts := m.heapController.lastGC.endUtimeSec.Load(); curTsAlign == ts/defUpdateMemMagnifUtimeAlign {
 			cur.heap = max(cur.heap, m.heapController.lastGC.heapAlloc.Load())
 		}
-		if blockedSize, utimeSec := m.lastBlockedAt(); blockedSize > 0 &&
-			utimeSec/defUpdateMemMagnifUtimeAlign == curTsAlign {
+		if blockedSize, utimeSec := m.lastBlockedAt(); utimeSec/defUpdateMemMagnifUtimeAlign == curTsAlign {
 			cur.quota = max(cur.quota, blockedSize)
 		}
 	}
@@ -2479,25 +2472,18 @@ func (m *MemArbitrator) awaitFreePoolCap() int64 {
 	return m.awaitFree.pool.capacity()
 }
 
-func (m *MemArbitrator) awaitFreePoolHeapInuse() (res int64) {
-	for i := range m.awaitFree.budget.shards {
-		d := m.awaitFree.budget.shards[i].HeapInuse.Load()
-		if d > 0 {
-			res += d
-		}
-	}
-	m.awaitFree.lastHeapInuse = res
-	return
-}
+type memPoolQuotaUsageType struct{ trackedHeap, quota int64 }
 
-func (m *MemArbitrator) awaitFreePoolUsed() (res int64) {
+func (m *MemArbitrator) awaitFreePoolUsed() (res memPoolQuotaUsageType) {
 	for i := range m.awaitFree.budget.shards {
-		d := m.awaitFree.budget.shards[i].Used.Load()
-		if d > 0 {
-			res += d
+		if d := m.awaitFree.budget.shards[i].Used.Load(); d > 0 {
+			res.quota += d
+		}
+		if d := m.awaitFree.budget.shards[i].HeapInuse.Load(); d > 0 {
+			res.trackedHeap += d
 		}
 	}
-	m.awaitFree.lastQuotaUsed = res
+	m.awaitFree.lastQuotaUsage = res
 	return
 }
 
@@ -2519,9 +2505,9 @@ func (m *MemArbitrator) executeTick(utimeMilli int64) bool { // exec batch tasks
 		pre := updatedPreProf
 		profile := m.recordDebugProfile()
 		profile.append(
-			zap.Int64("blocked-heap", pre.heap), zap.Int64("blocked-quota", pre.quota),
-			zap.Int64("magnification-ratio(‰)", pre.ratio),
-			zap.Time("start-time", time.UnixMilli(pre.startUtimeMilli)),
+			zap.Int64("last-blocked-heap", pre.heap), zap.Int64("last-blocked-quota", pre.quota),
+			zap.Int64("last-magnification-ratio(‰)", pre.ratio),
+			zap.Time("last-prof-start-time", time.UnixMilli(pre.startUtimeMilli)),
 		)
 		m.actions.Info("arbitrator timed mem profile",
 			profile.fields[:profile.n]...,
@@ -2561,8 +2547,8 @@ func (m *MemArbitrator) recordDebugProfile() (f DebugFields) {
 		zap.Int64("mem-magnification-ratio(‰)", memMagnif),
 		zap.Int64("root-pool-num", m.RootPoolNum()),
 		zap.Int64("awaitfree-pool-cap", m.awaitFreePoolCap()),
-		zap.Int64("awaitfree-pool-used", m.awaitFree.lastQuotaUsed),
-		zap.Int64("awaitfree-pool-heapinuse", m.awaitFree.lastHeapInuse),
+		zap.Int64("awaitfree-pool-used", m.awaitFree.lastQuotaUsage.quota),
+		zap.Int64("awaitfree-pool-heapinuse", m.awaitFree.lastQuotaUsage.trackedHeap),
 		zap.Int64("tracked-heapinuse", m.avoidance.heapTracked.Load()),
 		zap.Int64("out-of-control", m.avoidance.size.Load()),
 		zap.Int64("reserved-buffer", m.buffer.size.Load()),
@@ -2600,7 +2586,7 @@ func (m *MemArbitrator) tryUpdateTrackedMemStats(utimeMilli int64) bool {
 }
 
 func (m *MemArbitrator) updateTrackedMemStats() {
-	totalHeapInuse := int64(0)
+	totalTrackedHeap := int64(0)
 	if m.entryMap.contextCache.num.Load() != 0 {
 		maxMemUsed := int64(0)
 		m.entryMap.contextCache.Range(func(_, value any) bool {
@@ -2609,9 +2595,10 @@ func (m *MemArbitrator) updateTrackedMemStats() {
 				return true
 			}
 			if ctx := e.ctx.Load(); ctx.available() {
-				memUsed := ctx.arbitrateHelper.HeapInuse()
-				totalHeapInuse += memUsed
-				maxMemUsed = max(maxMemUsed, memUsed)
+				if memUsed := ctx.arbitrateHelper.HeapInuse(); memUsed > 0 {
+					totalTrackedHeap += memUsed
+					maxMemUsed = max(maxMemUsed, memUsed)
+				}
 			}
 			return true
 		})
@@ -2620,10 +2607,9 @@ func (m *MemArbitrator) updateTrackedMemStats() {
 		}
 	}
 
-	awaitFreeUsed := m.awaitFreePoolHeapInuse()
-	totalHeapInuse += awaitFreeUsed
+	totalTrackedHeap += m.awaitFreePoolUsed().trackedHeap
 
-	m.avoidance.heapTracked.Store(totalHeapInuse)
+	m.avoidance.heapTracked.Store(totalTrackedHeap)
 	m.avoidance.lastUpdateUtimeMilli.Store(nowUnixMilli())
 }
 
@@ -2674,13 +2660,7 @@ func (m *MemArbitrator) shrinkAwaitFreePool(minRemain int64, utimeMilli int64) {
 		m.awaitFree.pool.mu.Unlock()
 	}
 	if poolReleased > 0 {
-		{
-			m.mu.Lock()
-			//
-			m.mu.allocated -= poolReleased
-			//
-			m.mu.Unlock()
-		}
+		m.release(poolReleased)
 		atomic.AddInt64(&m.execMetrics.AwaitFree.Shrink, 1)
 		m.weakWake()
 	}
@@ -2695,7 +2675,7 @@ func (m *MemArbitrator) isMemSafe() bool {
 	return m.heapController.heapInuse.Load() < m.mu.threshold.oomRisk
 }
 
-func (m *MemArbitrator) calcMemRisk() *RuntimeMemStateV1 {
+func (m *MemArbitrator) calcMemRisk(maxMagnif int64) *RuntimeMemStateV1 {
 	memState := RuntimeMemStateV1{
 		Version: 1,
 		LastRisk: LastRisk{
@@ -2714,17 +2694,21 @@ func (m *MemArbitrator) calcMemRisk() *RuntimeMemStateV1 {
 		memState.Magnif = max(memState.Magnif, p.Magnif)
 	}
 
+	if memState.Magnif > maxMagnif {
+		// There may be extreme memory leak issues. It's recommended to set soft limit manually.
+		m.actions.Warn("Memory pressure is abnormally high",
+			zap.Int64("mem-magnification-ratio(‰)", memState.Magnif),
+			zap.Int64("upper-limit-ratio(‰)", maxMagnif))
+		memState.Magnif = maxMagnif
+	}
+
 	return &memState
 }
 
 // return `true` is memory state is safe
 func (m *MemArbitrator) handleMemIssues() (isSafe bool) {
 	if m.heapController.memRisk.start {
-		m.heapController.memRisk.eachRound.gcExecuted = false
-
-		if m.tryRuntimeGC() {
-			m.heapController.memRisk.eachRound.gcExecuted = true
-		} else {
+		if m.heapController.memRisk.gcExecuted = m.tryRuntimeGC(); !m.heapController.memRisk.gcExecuted {
 			m.refreshRuntimeMemStats()
 		}
 
@@ -2757,13 +2741,7 @@ func (m *MemArbitrator) innerTime() time.Time {
 }
 
 func (m *MemArbitrator) handleMemUnsafe() {
-	{
-		m.execMu.Lock()
-		//
-		m.doReclaimNonBlockingTasks()
-		//
-		m.execMu.Unlock()
-	}
+	m.doReclaimNonBlockingTasks()
 
 	now := m.innerTime()
 
@@ -2783,7 +2761,7 @@ func (m *MemArbitrator) handleMemUnsafe() {
 			m.reclaimHeap()
 		}
 
-		if memState := m.calcMemRisk(); memState != nil {
+		if memState := m.calcMemRisk(kilo * 10); memState != nil {
 			{
 				m.avoidance.memMagnif.Lock()
 				//
@@ -2805,24 +2783,21 @@ func (m *MemArbitrator) handleMemUnsafe() {
 		heapFrees := m.heapController.heapTotalFree.Load() - m.heapController.memRisk.lastMemStats.heapTotalFree
 		freeSpeedBPS := int64(float64(heapFrees) / dur.Seconds())
 		needReclaimHeap := false
-		if hasMemOOMRisk(freeSpeedBPS, minHeapFreeSpeedBPS, now, m.heapController.memRisk.startTime) {
+		if isMemOOMRisk(freeSpeedBPS, minHeapFreeSpeedBPS, now, m.heapController.memRisk.startTime) {
 			m.execMetrics.Risk.OOM++
 			// dumpHeapProfile()
-			var newKillNum int
-			var reclaiming int64
 			memToReclaim := m.heapController.heapInuse.Load() - m.mu.threshold.risk
-			{
-				{ // warning
-					profile := m.recordDebugProfile()
-					profile.append(
-						zap.Float64("mem-free-speed(MiB/s)", float64(freeSpeedBPS*100/byteSizeMB)/100),
-						zap.Float64("required-speed(MiB/s)", float64(minHeapFreeSpeedBPS)/float64(byteSizeMB)),
-						zap.Int64("mem-to-reclaim", max(0, memToReclaim)),
-					)
-					m.actions.Warn("Runtime memory free(use) speed is too low, start to reclaim by `KILL`", profile.fields[:profile.n]...)
-				}
-				newKillNum, reclaiming = m.killTopnEntry(memToReclaim)
+
+			{ // warning
+				profile := m.recordDebugProfile()
+				profile.append(
+					zap.Float64("mem-free-speed(MiB/s)", float64(freeSpeedBPS*100/byteSizeMB)/100),
+					zap.Float64("required-speed(MiB/s)", float64(minHeapFreeSpeedBPS)/float64(byteSizeMB)),
+					zap.Int64("mem-to-reclaim", max(0, memToReclaim)),
+				)
+				m.actions.Warn("Runtime memory free(use) speed is too low, start to reclaim by `KILL`", profile.fields[:profile.n]...)
 			}
+			newKillNum, reclaiming := m.killTopnEntry(memToReclaim)
 
 			needReclaimHeap = newKillNum == 0
 			if newKillNum != 0 {
@@ -2831,18 +2806,47 @@ func (m *MemArbitrator) handleMemUnsafe() {
 				{ // warning
 					profile := m.recordDebugProfile()
 					profile.append(
-						zap.Int64("total-under-kill-num", m.underKill.num), zap.Int("new-kill-num", newKillNum),
-						zap.Int64("total-under-reclaim", reclaiming),
+						zap.Int64("pool-num-under-kill", m.underKill.num), zap.Int("new-kill-num", newKillNum),
+						zap.Int64("quota-under-reclaim", reclaiming),
 						zap.Int64("rest-to-reclaim", max(0, memToReclaim-reclaiming)),
 					)
 					m.actions.Warn("Restart runtime memory check", profile.fields[:profile.n]...)
 				}
-			} else if m.underKill.num == 0 {
-				// error
-				profile := m.recordDebugProfile()
-				m.actions.Error("No more root pool in arbitrator can be killed to resolve OOM risk",
-					profile.fields[:profile.n]...,
-				)
+			} else {
+				underKillNum := 0
+				for _, entry := range m.underKill.entries {
+					if !entry.arbitratorMu.underKill.fail {
+						underKillNum++
+					}
+				}
+				if underKillNum == 0 {
+					forceKill := 0
+					for { // make all tasks success
+						entry := m.frontTaskEntry()
+						if entry == nil {
+							break
+						}
+						// force kill
+						if ctx := entry.ctx.Load(); ctx.available() {
+							ctx.kill()
+							m.execMetrics.Risk.OOMKill[entry.ctx.memPriority]++
+							forceKill++
+							if m.removeTask(entry) {
+								entry.windUp(0, ArbitrateFail)
+							}
+						}
+					}
+					{
+						// error
+						profile := m.recordDebugProfile()
+						profile.append(zap.Int("kill-awaiting-num", forceKill))
+						m.actions.Error("No more root pool can be killed to resolve OOM risk; KILL all awaiting tasks & pools;",
+							profile.fields[:profile.n]...,
+						)
+					}
+				} else {
+					m.actions.Warn("Wait for pools under `KILL`", zap.Int("num", underKillNum))
+				}
 			}
 		} else {
 			{ // warning
@@ -2858,20 +2862,17 @@ func (m *MemArbitrator) handleMemUnsafe() {
 		now := m.innerTime()
 		m.heapController.memRisk.lastMemStats.heapTotalFree = m.heapController.heapTotalFree.Load()
 		m.heapController.memRisk.lastMemStats.startTime = now
-		if needReclaimHeap && !m.heapController.memRisk.eachRound.gcExecuted {
+		if needReclaimHeap && !m.heapController.memRisk.gcExecuted {
 			m.reclaimHeap()
 		}
 	}
 }
 
-func hasMemOOMRisk(freeSpeedBPS, minHeapFreeSpeedBPS int64, now, startTime time.Time) bool {
+func isMemOOMRisk(freeSpeedBPS, minHeapFreeSpeedBPS int64, now, startTime time.Time) bool {
 	return freeSpeedBPS < minHeapFreeSpeedBPS || now.Sub(startTime) > defHeapReclaimCheckMaxDuration
 }
 
 func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed int64) {
-	m.execMu.Lock()
-	defer m.execMu.Unlock()
-
 	if m.underKill.num > 0 {
 		now := m.innerTime()
 		for uid, entry := range m.underKill.entries {
@@ -3044,21 +3045,37 @@ func (m *MemArbitrator) initAwaitFreePool(allocAlignSize, shardNum int64) {
 	}
 }
 
-// ArbitrateHelperReason represents the reason why the arbitrate helper will be stopped
-type ArbitrateHelperReason int
+// ArbitratorStopReason represents the reason why the arbitrate helper will be stopped
+type ArbitratorStopReason int
 
 // ArbitrateHelperReason values
 const (
-	ArbitratorOOMRiskKill ArbitrateHelperReason = iota
+	ArbitratorOOMRiskKill ArbitratorStopReason = iota
 	ArbitratorWaitAverseCancel
 	ArbitratorStandardCancel
 	ArbitratorPriorityCancel
 )
 
+// String returns the string representation of the ArbitratorStopReason
+func (r ArbitratorStopReason) String() (desc string) {
+	switch r {
+	case ArbitratorOOMRiskKill:
+		desc = "KILL(out-of-memory risk)"
+	case ArbitratorWaitAverseCancel:
+		desc = "CANCEL(out-of-quota & wait-averse)"
+	case ArbitratorStandardCancel:
+		desc = "CANCEL(out-of-quota & standard mode)"
+	case ArbitratorPriorityCancel:
+		desc = "CANCEL(out-of-quota & priority mode)"
+	}
+	return
+}
+
 // ArbitrateHelper is an interface for the arbitrate helper
 type ArbitrateHelper interface {
-	Stop(ArbitrateHelperReason) bool // kill by arbitrator only when meeting oom risk; cancel by arbitrator;
-	HeapInuse() int64                // track heap usage
+	Stop(ArbitratorStopReason) bool // kill by arbitrator only when meeting oom risk; cancel by arbitrator;
+	HeapInuse() int64               // track heap usage
+	Finish()
 }
 
 // ArbitrationContext represents the context & properties of the root pool
@@ -3080,7 +3097,7 @@ func (ctx *ArbitrationContext) available() bool {
 	return false
 }
 
-func (ctx *ArbitrationContext) cancel(reason ArbitrateHelperReason) {
+func (ctx *ArbitrationContext) cancel(reason ArbitratorStopReason) {
 	if ctx.stopped.Swap(true) {
 		return
 	}
@@ -3180,7 +3197,12 @@ func (m *MemArbitrator) stop() bool {
 	return true
 }
 
-func (m *MemArbitrator) restart() bool {
-	m.weakWake()
-	return m.asyncRun(defTaskTickDur)
+// AddMetricsCancelStandardMode adds the number of cancel tasks in standard mode
+func (m *MemArbitrator) AddMetricsCancelStandardMode(delta uint64) {
+	atomic.AddInt64(&m.execMetrics.Cancel.StandardMode, int64(delta))
+}
+
+// AddMetricsCancelWaitAverse adds the number of cancel tasks in wait-averse mode
+func (m *MemArbitrator) AddMetricsCancelWaitAverse(delta uint64) {
+	atomic.AddInt64(&m.execMetrics.Cancel.WaitAverse, int64(delta))
 }
