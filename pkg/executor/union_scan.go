@@ -38,7 +38,6 @@ import (
 type UnionScanExec struct {
 	exec.BaseExecutor
 
-	memBuf     kv.MemBuffer
 	memBufSnap kv.Getter
 
 	conditions           []expression.Expression
@@ -93,10 +92,6 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	}
 
 	defer trace.StartRegion(ctx, "UnionScanBuildRows").End()
-	txn, err := us.Ctx().Txn(false)
-	if err != nil {
-		return err
-	}
 
 	us.physTblIDIdx = -1
 	for i := len(us.columns) - 1; i >= 0; i-- {
@@ -105,12 +100,12 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 			break
 		}
 	}
-	mb := txn.GetMemBuffer()
-	mb.RLock()
-	defer mb.RUnlock()
 
-	us.memBuf = mb
-	us.memBufSnap = mb.SnapshotGetter()
+	if snapshot := us.Ctx().GetSessionVars().StmtCtx.MemBufferSnapshot; snapshot != nil {
+		us.memBufSnap = snapshot
+	} else {
+		us.memBufSnap = nil
+	}
 
 	// 1. select without virtual columns
 	// 2. build virtual columns and select with virtual columns
@@ -137,9 +132,6 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	us.memBuf.RLock()
-	defer us.memBuf.RUnlock()
-
 	// Assume req.Capacity() > 0 after GrowAndReset(), if this assumption fail,
 	// the for-loop may exit without read one single row!
 	req.GrowAndReset(us.MaxChunkSize())
@@ -269,10 +261,12 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			} else {
 				checkKey = tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
 			}
-			if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
-				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
-				// commit, but for simplicity, we don't handle it here.
-				continue
+			if us.memBufSnap != nil {
+				if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
+					// If src handle appears in added rows, it means there is conflict and the transaction will fail to
+					// commit, but for simplicity, we don't handle it here.
+					continue
+				}
 			}
 			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(exec.RetTypes(us.Children(0))))
 		}

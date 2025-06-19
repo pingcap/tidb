@@ -316,27 +316,24 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 
 // txnMemBufferIter implements a kv.Iterator, it is an iterator that combines the membuffer data and snapshot data.
 type txnMemBufferIter struct {
-	sctx       sessionctx.Context
-	kvRanges   []kv.KeyRange
-	cacheTable kv.MemBuffer
-	txn        kv.Transaction
-	idx        int
-	curr       kv.Iterator
-	reverse    bool
-	err        error
+	sctx              sessionctx.Context
+	kvRanges          []kv.KeyRange
+	cacheTable        kv.MemBuffer
+	txn               kv.Transaction
+	memBufferSnapshot kv.MemBufferSnapshot
+	idx               int
+	curr              kv.Iterator
+	reverse           bool
+	err               error
 }
 
 func newTxnMemBufferIter(sctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges []kv.KeyRange, reverse bool) (*txnMemBufferIter, error) {
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	return &txnMemBufferIter{
-		sctx:       sctx,
-		txn:        txn,
-		kvRanges:   kvRanges,
-		cacheTable: cacheTable,
-		reverse:    reverse,
+		sctx:              sctx,
+		memBufferSnapshot: sctx.GetSessionVars().StmtCtx.MemBufferSnapshot,
+		kvRanges:          kvRanges,
+		cacheTable:        cacheTable,
+		reverse:           reverse,
 	}, nil
 }
 
@@ -350,17 +347,21 @@ func (iter *txnMemBufferIter) Valid() bool {
 	for iter.idx < len(iter.kvRanges) {
 		rg := iter.kvRanges[iter.idx]
 		var tmp kv.Iterator
-		if !iter.reverse {
-			tmp = iter.txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
-		} else {
-			tmp = iter.txn.GetMemBuffer().SnapshotIterReverse(rg.EndKey, rg.StartKey)
+		if iter.memBufferSnapshot != nil {
+			tmp = iter.memBufferSnapshot.BatchedSnapshotIter(rg.StartKey, rg.EndKey, iter.reverse)
 		}
 		snapCacheIter, err := getSnapIter(iter.sctx, iter.cacheTable, rg, iter.reverse)
 		if err != nil {
 			iter.err = errors.Trace(err)
 			return true
 		}
-		if snapCacheIter != nil {
+		if tmp == nil && snapCacheIter == nil {
+			iter.idx++
+			continue
+		}
+		if tmp == nil {
+			tmp = snapCacheIter
+		} else if snapCacheIter != nil {
 			tmp, err = transaction.NewUnionIter(tmp, snapCacheIter, iter.reverse)
 			if err != nil {
 				iter.err = errors.Trace(err)
@@ -582,23 +583,22 @@ func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 type processKVFunc func(key, value []byte) error
 
 func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges []kv.KeyRange, reverse bool, fn processKVFunc) error {
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-
+	memBufferSnapshot := ctx.GetSessionVars().StmtCtx.MemBufferSnapshot
 	for _, rg := range kvRanges {
 		var iter kv.Iterator
-		if !reverse {
-			iter = txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
-		} else {
-			iter = txn.GetMemBuffer().SnapshotIterReverse(rg.EndKey, rg.StartKey)
+		if memBufferSnapshot != nil {
+			iter = memBufferSnapshot.BatchedSnapshotIter(rg.StartKey, rg.EndKey, reverse)
 		}
 		snapCacheIter, err := getSnapIter(ctx, cacheTable, rg, reverse)
 		if err != nil {
 			return err
 		}
-		if snapCacheIter != nil {
+		if iter == nil && snapCacheIter == nil {
+			continue
+		}
+		if iter == nil {
+			iter = snapCacheIter
+		} else if snapCacheIter != nil {
 			iter, err = transaction.NewUnionIter(iter, snapCacheIter, reverse)
 			if err != nil {
 				return err
@@ -1004,7 +1004,7 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 			continue
 		}
 
-		// filter key/value by partitition id
+		// filter key/value by partition id
 		if iter.index.Global {
 			_, pid, err := codec.DecodeInt(tablecodec.SplitIndexValue(value).PartitionID)
 			if err != nil {

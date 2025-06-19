@@ -68,7 +68,6 @@ type BatchPointGetExec struct {
 	rowDecoder     *rowcodec.ChunkDecoder
 	keepOrder      bool
 	desc           bool
-	batchGetter    kv.BatchGetter
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -95,8 +94,6 @@ func (e *BatchPointGetExec) buildVirtualColumnInfo() {
 
 // Open implements the Executor interface.
 func (e *BatchPointGetExec) Open(context.Context) error {
-	sessVars := e.Ctx().GetSessionVars()
-	txnCtx := sessVars.TxnCtx
 	txn, err := e.Ctx().Txn(false)
 	if err != nil {
 		return err
@@ -104,18 +101,6 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	e.txn = txn
 
 	setOptionForTopSQL(e.Ctx().GetSessionVars().StmtCtx, e.snapshot)
-	var batchGetter kv.BatchGetter = e.snapshot
-	if txn.Valid() {
-		lock := e.tblInfo.Lock
-		if e.lock {
-			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, e.snapshot)
-		} else if lock != nil && (lock.Tp == ast.TableLockRead || lock.Tp == ast.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
-			batchGetter = newCacheBatchGetter(e.Ctx(), e.tblInfo.ID, e.snapshot)
-		} else {
-			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), nil, e.snapshot)
-		}
-	}
-	e.batchGetter = batchGetter
 	return nil
 }
 
@@ -236,7 +221,25 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var handleVals map[string][]byte
 	var indexKeys []kv.Key
 	var err error
-	batchGetter := e.batchGetter
+	var batchGetter kv.BatchGetter = e.snapshot
+	sessVars := e.Ctx().GetSessionVars()
+	txnCtx := sessVars.TxnCtx
+	txn, err := e.Ctx().Txn(false)
+	if err != nil {
+		return err
+	}
+	if txn.Valid() {
+		lock := e.tblInfo.Lock
+		memBufferSnapshot := e.Ctx().GetSessionVars().StmtCtx.MemBufferSnapshot
+		if e.lock {
+			batchGetter = driver.NewBufferSnapshotBatchGetter(memBufferSnapshot, &PessimisticLockCacheGetter{txnCtx: txnCtx}, e.snapshot)
+		} else if lock != nil && (lock.Tp == ast.TableLockRead || lock.Tp == ast.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
+			batchGetter = newCacheBatchGetter(e.Ctx(), e.tblInfo.ID, e.snapshot)
+		} else if memBufferSnapshot != nil {
+			batchGetter = driver.NewBufferSnapshotBatchGetter(memBufferSnapshot, nil, e.snapshot)
+		}
+	}
+
 	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
 		// If MaxExecutionTime is set, we need to set the context deadline for the batch get.
 		var cancel context.CancelFunc
