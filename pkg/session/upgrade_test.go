@@ -59,4 +59,5 @@ func TestUpgradeToVerFunctionsCheck(t *testing.T) {
 		require.NoError(t, err, "getFunctionName should not return an error")
 		require.Regexp(t, fmt.Sprintf(`^upgradeToVer%d$`, verFn.version), name, "function name should match upgradeToVer pattern")
 	}
+	require.Equal(t, currentBootstrapVersion, lastVer, "last version in upgradeToVerFunctions should match currentBootstrapVersion")
 }

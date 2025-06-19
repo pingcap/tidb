@@ -115,7 +115,7 @@ func mockUpgradeToVerLatest(s types.Session, ver int64) {
 	TestHook.OnBootstrapAfter(s)
 }
 
-// mockSimpleUpgradeToVerLatest mocks a simple upgradeToVerFunctions(make the test faster).
+// mockSimpleUpgradeToVerLatest mocks a simple bootstrapVersion(make the test faster).
 func mockSimpleUpgradeToVerLatest(s types.Session, ver int64) {
 	logutil.BgLogger().Info("mock upgrade to ver latest", zap.Int64("old ver", ver), zap.Int64("mock latest ver", mockLatestVer))
 	if ver >= mockLatestVer {
@@ -146,11 +146,11 @@ func modifyBootstrapVersionForTest(ver int64) {
 
 const (
 	defaultMockUpgradeToVerLatest = 0
-	// MockSimpleUpgradeToVerLatest is used to indicate the use of the simple mock upgradeToVerFunctions, this is just a few simple DDL operations.
+	// MockSimpleUpgradeToVerLatest is used to indicate the use of the simple mock bootstrapVersion, this is just a few simple DDL operations.
 	MockSimpleUpgradeToVerLatest = 1
 )
 
-// MockUpgradeToVerLatestKind is used to indicate the use of different mock upgradeToVerFunctions.
+// MockUpgradeToVerLatestKind is used to indicate the use of different mock bootstrapVersion.
 var MockUpgradeToVerLatestKind = defaultMockUpgradeToVerLatest
 
 func addMockBootstrapVersionForTest(s types.Session) []versionedUpgradeFunction {

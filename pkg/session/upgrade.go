@@ -475,11 +475,11 @@ type versionedUpgradeFunction struct {
 	alwaysRun bool
 }
 
-var (
-	// currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
-	// please make sure this is the largest version
-	currentBootstrapVersion int64 = version250
+// currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
+// please make sure this is the largest version
+var currentBootstrapVersion int64 = version250
 
+var (
 	// this list must be ordered by version in ascending order, and the function
 	// name must follow the same pattern as `upgradeToVer<version>`.
 	upgradeToVerFunctions = []versionedUpgradeFunction{
