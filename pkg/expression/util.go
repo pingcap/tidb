@@ -1399,16 +1399,15 @@ func IsImmutableFunc(expr Expression) bool {
 // are mutable or have side effects, we cannot remove it even if it has duplicates;
 // if the plan is going to be cached, we cannot remove expressions containing `?` neither.
 func RemoveDupExprs(exprs []Expression) []Expression {
-	res := make([]Expression, 0, len(exprs))
 	exists := make(map[string]struct{}, len(exprs))
-	for _, expr := range exprs {
+	return slices.DeleteFunc(exprs, func(expr Expression) bool {
 		key := string(expr.HashCode())
 		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
-			res = append(res, expr)
 			exists[key] = struct{}{}
+			return false
 		}
-	}
-	return res
+		return true
+	})
 }
 
 // GetUint64FromConstant gets a uint64 from constant expression.
