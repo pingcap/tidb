@@ -1208,6 +1208,23 @@ func (s *session) sysSessionPool() util.SessionPool {
 	return domain.GetDomain(s).SysSessionPool()
 }
 
+func createSessionWithCollectorFunc(store kv.Storage) pools.Factory {
+	return func() (pools.Resource, error) {
+		se, err := createSessionFunc(store)()
+		if err != nil {
+			return nil, err
+		}
+
+		dom, err := domap.Get(store)
+		if err != nil {
+			return nil, err
+		}
+
+		s, _ := se.(*session)
+		return attachStatsCollector(s, dom), nil
+	}
+}
+
 func createSessionFunc(store kv.Storage) pools.Factory {
 	return func() (pools.Resource, error) {
 		se, err := createSession(store)
@@ -3856,7 +3873,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	sessionBindHandle := bindinfo.NewSessionBindingHandle()
 	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
 	s.SetSessionStatesHandler(sessionstates.StateBinding, sessionBindHandle)
-	return attachStatsCollector(s, dom), nil
+	return s, nil
 }
 
 // attachStatsCollector attaches the stats collector in the dom for the session

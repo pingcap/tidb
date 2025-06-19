@@ -983,10 +983,9 @@ func GetImportRootDir(tidbCfg *tidb.Config) string {
 }
 
 // FlushTableStats flushes the stats of the table.
-// stats will be flushed in domain.updateStatsWorker, default interval is [1, 2) minutes,
-// see DumpStatsDeltaToKV for more details. then the background analyzer will analyze
-// the table.
-// the stats stay in memory until the next flush, so it might be lost if the tidb-server restarts.
+// stats will be stored in the stat collector, and be applied to to mysql.stats_meta
+// in the domain.UpdateTableStatsLoop with a random interval between [1, 2) minutes.
+// These stats will stay in memory until the next flush, so it might be lost if the tidb-server restarts.
 func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, result *JobImportResult) error {
 	if err := sessiontxn.NewTxn(ctx, se); err != nil {
 		return err
