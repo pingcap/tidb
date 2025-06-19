@@ -51,12 +51,12 @@ func (m *SimpleIntSet) FindRoot(a int) int {
 
 // Clear clears the int disjoint set.
 func (m *SimpleIntSet) Clear() {
-	clear(m.parent)
+	m.parent = m.parent[:0]
 }
 
 // GrowNewIntSet grows the int disjoint set to at least `n` elements.
 func (m *SimpleIntSet) GrowNewIntSet(n int) {
-	clear(m.parent)
+	m.parent = m.parent[:0]
 	m.parent = slices.Grow(m.parent, n)
 	for i := range n {
 		m.parent = append(m.parent, i)

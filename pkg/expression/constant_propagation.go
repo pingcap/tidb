@@ -53,7 +53,8 @@ func newBasePropConstSolver() basePropConstSolver {
 
 func (s *basePropConstSolver) Clear() {
 	clear(s.colMapper)
-	clear(s.eqList)
+	s.eqList = s.eqList[:0]
+
 	clear(s.columns)
 	s.unionSet.Clear()
 	s.ctx = nil
@@ -259,7 +260,7 @@ func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, conditions 
 
 func (s *propConstSolver) Clear() {
 	s.basePropConstSolver.Clear()
-	clear(s.conditions)
+	s.conditions = s.conditions[:0]
 	propConstSolverPool.Put(s)
 }
 
@@ -293,8 +294,8 @@ func (s *propConstSolver) propagateConstantEQ() {
 				s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
 			}
 		}
-		clear(cols)
-		clear(cons)
+		cols = cols[:0]
+		cons = cons[:0]
 	}
 }
 
@@ -336,9 +337,6 @@ func (s *propConstSolver) propagateColumnEQ() {
 			}
 		}
 	}
-	if len(s.conditions) == 0 {
-		return
-	}
 
 	condsLen := len(s.conditions)
 	for i, coli := range s.columns {
@@ -371,7 +369,7 @@ func (s *propConstSolver) setConds2ConstFalse() {
 	if MaybeOverOptimized4PlanCache(s.ctx, s.conditions...) {
 		s.ctx.SetSkipPlanCache("some parameters may be overwritten when constant propagation")
 	}
-	clear(s.conditions)
+	s.conditions = s.conditions[:0]
 	s.conditions = append(s.conditions, &Constant{
 		Value:   types.NewDatum(false),
 		RetType: types.NewFieldType(mysql.TypeTiny),
