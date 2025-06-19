@@ -254,11 +254,11 @@ func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, conditions 
 	return s.solve(conditions)
 }
 
-func (p *propConstSolver) Destory() {
-	p.basePropConstSolver.Clear()
-	clear(p.conditions)
-	basePropConstSolverPool.Put(&p.basePropConstSolver)
-	propConstSolverPool.Put(p)
+func (s *propConstSolver) Clear() {
+	s.basePropConstSolver.Clear()
+	basePropConstSolverPool.Put(&s.basePropConstSolver)
+	clear(s.conditions)
+	propConstSolverPool.Put(&s)
 }
 
 // propagateConstantEQ propagates expressions like 'column = constant' by substituting the constant for column, the
