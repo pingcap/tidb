@@ -32,23 +32,21 @@ import (
 // MaxPropagateColsCnt means the max number of columns that can participate propagation.
 var MaxPropagateColsCnt = 100
 
-var basePropConstSolverPool = sync.Pool{
-	New: func() any {
-		return &basePropConstSolver{
-			colMapper: make(map[int64]int, 4),
-			eqList:    make([]*Constant, 0, 4),
-			columns:   make([]*Column, 0, 4),
-			unionSet:  disjointset.NewIntSet(4),
-		}
-	},
-}
-
 type basePropConstSolver struct {
 	colMapper map[int64]int             // colMapper maps column to its index
 	eqList    []*Constant               // if eqList[i] != nil, it means col_i = eqList[i]
 	unionSet  *disjointset.SimpleIntSet // unionSet stores the relations like col_i = col_j
 	columns   []*Column                 // columns stores all columns appearing in the conditions
 	ctx       exprctx.ExprContext
+}
+
+func newBasePropConstSolver() basePropConstSolver {
+	return basePropConstSolver{
+		colMapper: make(map[int64]int, 4),
+		eqList:    make([]*Constant, 0, 4),
+		columns:   make([]*Column, 0, 4),
+		unionSet:  disjointset.NewIntSet(4),
+	}
 }
 
 func (s *basePropConstSolver) Clear() {
@@ -230,8 +228,10 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 
 var propConstSolverPool = sync.Pool{
 	New: func() any {
-		solver := &propConstSolver{}
-		solver.colMapper = make(map[int64]int, 4)
+		solver := &propConstSolver{
+			basePropConstSolver: newBasePropConstSolver(),
+			conditions:          make([]Expression, 0, 4),
+		}
 		return solver
 	},
 }
@@ -244,7 +244,6 @@ type propConstSolver struct {
 // newPropConstSolver returns a PropagateConstantSolver.
 func newPropConstSolver() PropagateConstantSolver {
 	solver := propConstSolverPool.Get().(*propConstSolver)
-	solver.basePropConstSolver = basePropConstSolverPool.Get().(basePropConstSolver)
 	return solver
 }
 
@@ -256,7 +255,6 @@ func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, conditions 
 
 func (s *propConstSolver) Clear() {
 	s.basePropConstSolver.Clear()
-	basePropConstSolverPool.Put(&s.basePropConstSolver)
 	clear(s.conditions)
 	propConstSolverPool.Put(&s)
 }
