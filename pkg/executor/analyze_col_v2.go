@@ -446,13 +446,8 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 		samplingStatsConcurrency = len(tasks)
 	}
 	var subIndexWorkerWg = NewAnalyzeResultsNotifyWaitGroupWrapper(resultsCh)
-<<<<<<< HEAD
-	subIndexWorkerWg.Add(statsConcurrncy)
-	for i := 0; i < statsConcurrncy; i++ {
-=======
 	subIndexWorkerWg.Add(samplingStatsConcurrency)
 	for range samplingStatsConcurrency {
->>>>>>> 1c05c7fe383 (planner: avoid exceeding the configured concurrency limit (#61786))
 		subIndexWorkerWg.Run(func() { e.subIndexWorkerForNDV(taskCh, resultsCh) })
 	}
 	for _, task := range tasks {
