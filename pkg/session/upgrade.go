@@ -1480,7 +1480,6 @@ func upgradeToVer103(s sessiontypes.Session, _ int64) {
 }
 
 func upgradeToVer104(s sessiontypes.Session, _ int64) {
-
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `sql_digest` varchar(64)")
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `plan_digest` varchar(64)")
 }
@@ -1655,7 +1654,6 @@ func upgradeToVer174(s sessiontypes.Session, _ int64) {
 // After this update, multiple bindings may have the same `original_sql`, but it's OK, and
 // for safety, don't remove duplicated bindings when upgrading.
 func upgradeToVer175(s sessiontypes.Session, _ int64) {
-
 	var err error
 	mustExecute(s, "BEGIN PESSIMISTIC")
 	defer func() {
