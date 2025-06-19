@@ -1340,7 +1340,8 @@ func (do *Domain) Close() {
 
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
-// NewDomain creates a new domain. Should not create multiple domains for the same store.
+// NewDomain creates a new domain for test.
+// Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
 	return NewDomainWithEtcdClient(store, schemaLease, statsLease, dumpFileGcLease, factory, nil)
 }
@@ -2880,7 +2881,12 @@ func (do *Domain) deltaUpdateTickerWorker() {
 	lease := do.statsLease
 	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
 	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
-	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
+	updateDuration := 20*lease + randDuration
+	failpoint.Inject("deltaUpdateDuration", func() {
+		updateDuration = 20 * time.Second
+	})
+
+	deltaUpdateTicker := time.NewTicker(updateDuration)
 	statsHandle := do.StatsHandle()
 	for {
 		select {

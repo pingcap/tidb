@@ -3856,7 +3856,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	sessionBindHandle := bindinfo.NewSessionBindingHandle()
 	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
 	s.SetSessionStatesHandler(sessionstates.StateBinding, sessionBindHandle)
-	return s, nil
+	return attachStatsCollector(s, dom), nil
 }
 
 // attachStatsCollector attaches the stats collector in the dom for the session
