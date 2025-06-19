@@ -470,9 +470,10 @@ const (
 // we might always run the function, such as for version29, and let the function
 // itself to decide whether to run or not and what to run.
 type versionedUpgradeFunction struct {
-	version   int64
-	fn        func(sessiontypes.Session, int64)
-	alwaysRun bool
+	version int64
+	fn      func(sessiontypes.Session, int64)
+	// if true, we will always run fn, and let fn decide whether to run or not.
+	checkRunnableInside bool
 }
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -510,7 +511,7 @@ var (
 		{version: version26, fn: upgradeToVer26},
 		{version: version27, fn: upgradeToVer27},
 		{version: version28, fn: upgradeToVer28},
-		{version: version29, fn: upgradeToVer29, alwaysRun: true},
+		{version: version29, fn: upgradeToVer29, checkRunnableInside: true},
 		{version: version30, fn: upgradeToVer30},
 		{version: version31, fn: upgradeToVer31},
 		{version: version32, fn: upgradeToVer32},
