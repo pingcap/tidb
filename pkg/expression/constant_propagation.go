@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/disjointset"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -259,7 +260,7 @@ func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, conditions 
 func (s *propConstSolver) Clear() {
 	s.basePropConstSolver.Clear()
 	clear(s.conditions)
-	propConstSolverPool.Put(&s)
+	propConstSolverPool.Put(s)
 }
 
 // propagateConstantEQ propagates expressions like 'column = constant' by substituting the constant for column, the
@@ -268,7 +269,8 @@ func (s *propConstSolver) Clear() {
 // d = 4 & 2 = c & c = d + 2 & b = 1 & a = 4, we propagate b = 1 and a = 4 and pick eq cond c = 2 and d = 4
 // d = 4 & 2 = c & false & b = 1 & a = 4, we propagate c = 2 and d = 4, and do constant folding: c = d + 2 will be folded as false.
 func (s *propConstSolver) propagateConstantEQ() {
-	s.eqList = make([]*Constant, len(s.columns))
+	intest.Assert(len(s.conditions) == 0)
+	s.eqList = slices.Grow(s.eqList, len(s.columns))
 	visited := make([]bool, len(s.conditions))
 	for range MaxPropagateColsCnt {
 		mapper := s.pickNewEQConds(visited)
