@@ -54,6 +54,10 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+// PlanIDFunc is used to get the plan ID from stmt.plan.
+// This function is used to avoid import cycle between planner and sessionctx.
+var PlanIDFunc func(plan any) (planID int, ok bool)
+
 var taskIDAlloc uint64
 
 // AllocateTaskID allocates a new unique ID for a statement execution
@@ -1285,6 +1289,18 @@ func (sc *StatementContext) GetOrInitBuildPBCtxFromCache(create func() any) any 
 	})
 
 	return sc.buildPBCtxCache.bctx
+}
+
+// GetResultRowsCount returns the number of result rows from the runtime stats collection.
+func (sc *StatementContext) GetResultRowsCount() (resultRows int64) {
+	if sc == nil || sc.RuntimeStatsColl == nil {
+		return 0
+	}
+	planID, ok := PlanIDFunc(sc.GetPlan())
+	if !ok {
+		return 0
+	}
+	return sc.RuntimeStatsColl.GetPlanActRows(planID)
 }
 
 func newErrCtx(tc types.Context, otherLevels errctx.LevelMap, handler contextutil.WarnAppender) errctx.Context {

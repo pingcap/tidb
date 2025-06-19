@@ -83,8 +83,8 @@ func Test53726(t *testing.T) {
 		Check(testkit.Rows("-258025139 -258025139", "575932053 575932053"))
 	tk.MustQuery("explain select distinct cast(c as decimal), cast(c as signed) from t7").
 		Check(testkit.Rows(
-			"HashAgg_6 2.00 root  group by:Column#13, Column#14, funcs:firstrow(Column#13)->Column#3, funcs:firstrow(Column#14)->Column#4",
-			"└─Projection_12 2.00 root  cast(test.t7.c, decimal(10,0) BINARY)->Column#13, cast(test.t7.c, bigint(22) BINARY)->Column#14",
+			"HashAgg_6 2.00 root  group by:Column#11, Column#12, funcs:firstrow(Column#11)->Column#3, funcs:firstrow(Column#12)->Column#4",
+			"└─Projection_12 2.00 root  cast(test.t7.c, decimal(10,0) BINARY)->Column#11, cast(test.t7.c, bigint(22) BINARY)->Column#12",
 			"  └─TableReader_11 2.00 root  data:TableFullScan_10",
 			"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
 }
@@ -218,20 +218,12 @@ SELECT (4,5) IN (SELECT 8,0 UNION SELECT 8, 8) AS field1
 FROM t1 AS table1
 WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
 GROUP BY field1;`).Check(testkit.Rows("HashJoin 2.00 root  CARTESIAN left outer semi join, left side:HashAgg",
-		"├─HashAgg(Build) 2.00 root  group by:Column#18, Column#19, funcs:firstrow(1)->Column#45",
-		"│ └─Union 0.00 root  ",
-		"│   ├─Projection 0.00 root  8->Column#18, 0->Column#19",
-		"│   │ └─TableDual 0.00 root  rows:0",
-		"│   └─Projection 0.00 root  8->Column#18, 8->Column#19",
-		"│     └─TableDual 0.00 root  rows:0",
+		"├─HashAgg(Build) 1.00 root  group by:Column#18, Column#19, funcs:firstrow(1)->Column#45",
+		"│ └─TableDual 0.00 root  rows:0",
 		"└─HashAgg(Probe) 2.00 root  group by:Column#10, funcs:firstrow(1)->Column#42",
 		"  └─HashJoin 10000.00 root  CARTESIAN left outer semi join, left side:TableReader",
-		"    ├─HashAgg(Build) 2.00 root  group by:Column#8, Column#9, funcs:firstrow(1)->Column#44",
-		"    │ └─Union 0.00 root  ",
-		"    │   ├─Projection 0.00 root  8->Column#8, 0->Column#9",
-		"    │   │ └─TableDual 0.00 root  rows:0",
-		"    │   └─Projection 0.00 root  8->Column#8, 8->Column#9",
-		"    │     └─TableDual 0.00 root  rows:0",
+		"    ├─HashAgg(Build) 1.00 root  group by:Column#8, Column#9, funcs:firstrow(1)->Column#44",
+		"    │ └─TableDual 0.00 root  rows:0",
 		"    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
 		"      └─TableFullScan 10000.00 cop[tikv] table:table1 keep order:false, stats:pseudo"))
 	tk.MustQuery(`SELECT (4,5) IN (SELECT 8,0 UNION SELECT 8, 8) AS field1

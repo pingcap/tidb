@@ -603,7 +603,9 @@ const (
 		modify_params json,
 		max_node_count INT DEFAULT 0,
 		extra_params json,
+		keyspace varchar(64) default '',
 		key(state),
+		key idx_keyspace(keyspace),
 		UNIQUE KEY task_key(task_key)
 	);`
 
@@ -627,7 +629,9 @@ const (
 		modify_params json,
 		max_node_count INT DEFAULT 0,
 		extra_params json,
+		keyspace varchar(64) default '',
 		key(state),
+		key idx_keyspace(keyspace),
 		UNIQUE KEY task_key(task_key)
 	);`
 
@@ -1313,11 +1317,14 @@ const (
 	// Update mysql.tidb_pitr_id_map to add restore_id as a primary key field
 	version248 = 248
 	version249 = 249
+
+	// version250 add keyspace to tidb_global_task and tidb_global_task_history.
+	version250 = 250
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version249
+var currentBootstrapVersion int64 = version250
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1502,6 +1509,7 @@ var (
 		upgradeToVer247,
 		upgradeToVer248,
 		upgradeToVer249,
+		upgradeToVer250,
 	}
 )
 
@@ -3494,6 +3502,16 @@ func upgradeToVer249(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateRestoreRegistryTable)
+}
+
+func upgradeToVer250(s sessiontypes.Session, ver int64) {
+	if ver >= version250 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `keyspace` varchar(64) DEFAULT '' AFTER `extra_params`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD INDEX idx_keyspace(keyspace)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `keyspace` varchar(64) DEFAULT '' AFTER `extra_params`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD INDEX idx_keyspace(keyspace)", dbterror.ErrDupKeyName)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

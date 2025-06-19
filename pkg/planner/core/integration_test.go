@@ -2321,8 +2321,8 @@ func TestIssue46556(t *testing.T) {
 		testkit.Rows(`HashJoin 0.00 root  inner join, equal:[eq(Column#5, test.t0.c0)]`,
 			`├─Projection(Build) 0.00 root  <nil>->Column#5`,
 			`│ └─TableDual 0.00 root  rows:0`,
-			`└─TableReader(Probe) 7992.00 root  data:Selection`,
-			`  └─Selection 7992.00 cop[tikv]  like(test.t0.c0, test.t0.c0, 92), not(isnull(test.t0.c0))`,
+			`└─TableReader(Probe) 9990.00 root  data:Selection`,
+			`  └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.c0))`,
 			`    └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`))
 }
 
