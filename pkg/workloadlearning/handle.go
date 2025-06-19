@@ -150,20 +150,17 @@ func (handle *Handle) analyzeBasedOnStatementStats(infoSchema infoschema.InfoSch
 			zap.Error(err))
 		return nil, startTime, endTime
 	}
-	sql := `select summary_end.DIGEST, summary_end.DIGEST_TEXT, summary_end.BINARY_PLAN,
-            if(summary_start.EXEC_COUNT is NULL, summary_end.EXEC_COUNT, summary_end.EXEC_COUNT - summary_start.EXEC_COUNT) as EXEC_COUNT
-            FROM
-            (SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT
-	        FROM '%?'.HIST_TIDB_STATEMENTS_STATS
-            WHERE STMT_TYPE = 'Select'
-	        AND SNAP_ID = '%?') summary_end
-            left join
-            (SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT
-	        FROM '%?'.HIST_TIDB_STATEMENTS_STATS
-	        WHERE STMT_TYPE = 'Select'
-	        AND SNAP_ID = '%?') summary_start on summary_end.DIGEST = summary_start.DIGEST`
+	sql := new(strings.Builder)
+	sql.WriteString("select summary_end.DIGEST, summary_end.DIGEST_TEXT, summary_end.BINARY_PLAN, " +
+		"if(summary_start.EXEC_COUNT is NULL, summary_end.EXEC_COUNT, summary_end.EXEC_COUNT - summary_start.EXEC_COUNT) as EXEC_COUNT FROM")
+	sqlescape.MustFormatSQL(sql, " (SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT "+
+		"FROM %?.HIST_TIDB_STATEMENTS_STATS WHERE STMT_TYPE = 'Select' AND SNAP_ID = %?) summary_end", mysql.WorkloadSchema, endSnapshotID)
+	sqlescape.MustFormatSQL(sql, "left join (SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT "+
+		"FROM %?.HIST_TIDB_STATEMENTS_STATS WHERE STMT_TYPE = 'Select' AND SNAP_ID = %?) summary_start "+
+		"on summary_end.DIGEST = summary_start.DIGEST", mysql.WorkloadSchema, startSnapshotID)
+
 	// Step2.1: get statements stats record from ClusterTableTiDBStatementsStats
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, mysql.WorkloadSchema, endSnapshotID, mysql.WorkloadSchema, startSnapshotID)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		logutil.ErrVerboseLogger().Warn("Failed to query CLUSTER_TIDB_STATEMENTS_STATS table",
 			zap.Time("end_time", endTime),
@@ -220,10 +217,14 @@ func (handle *Handle) analyzeBasedOnStatementStats(infoSchema infoschema.InfoSch
 // It means that the snapshot is a **past** snapshot whose time is before the given time and **closest** to the given time.
 // Only find the **one closest** snapshot ID, so the result is a single uint64 value.
 func findClosestSnapshotIDByTime(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, time time.Time) (uint64, error) {
-	sql := `select SNAPSHOT_ID from ` + mysql.WorkloadSchema + `.` + histSnapshotsTable + ` where BEGIN_TIME > '%?' and END_TIME != NULL order by ('%?' - BEGIN_TIME) asc limit 1`
+	sql := new(strings.Builder)
+	sqlescape.MustFormatSQL(sql, "select SNAPSHOT_ID from %?.%? where BEGIN_TIME > %? and END_TIME != NULL "+
+		"order by (%? - BEGIN_TIME) asc limit 1",
+		mysql.WorkloadSchema, histSnapshotsTable,
+		time.AddDate(0, 0, -(int(defSnapshotInterval)*2)), time)
 	// Due to the time cost of snapshot worker, to ensure that a snapshot ID can be found within the "between and" time interval,
 	// the time interval is extended to within two past snapshot interval.
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, time.AddDate(0, 0, -(int(defSnapshotInterval)*2)), time)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		return 0, err
 	}
@@ -428,8 +429,7 @@ func extractMetricsFromOperatorTree(op *tipb.ExplainOperator, operatorMetrics []
 		return operatorMetrics, err
 	}
 	switch operatorType {
-	case plancodec.TypeIndexLookUp:
-	case plancodec.TypeIndexReader:
+	case plancodec.TypeIndexLookUp, plancodec.TypeIndexReader:
 		// Handle the case like:
 		//  └─IndexLookUp_x | IndexReader_x
 		//    └─xxx
@@ -451,8 +451,7 @@ func extractMetricsFromOperatorTree(op *tipb.ExplainOperator, operatorMetrics []
 				TableScanTime: scanTime,
 				TableMemUsage: memUsage,
 			})
-	case plancodec.TypePointGet:
-	case plancodec.TypeBatchPointGet:
+	case plancodec.TypePointGet, plancodec.TypeBatchPointGet:
 		if len(op.AccessObjects) == 0 {
 			return operatorMetrics, fmt.Errorf("faile to get table name while access object is empty, operator name: %s", op.Name)
 		}
@@ -569,8 +568,6 @@ func extractTableNameFromAccessObject(accessObject *tipb.AccessObject) (dbName s
 			return "", ""
 		}
 		return ao.ScanObject.Database, ao.ScanObject.Table
-	default:
-		return "", ""
 	}
 	return "", ""
 }
