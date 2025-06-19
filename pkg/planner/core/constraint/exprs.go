@@ -21,6 +21,9 @@ import (
 
 // DeleteTrueExprs deletes the surely true expressions
 func DeleteTrueExprs(buildCtx expression.BuildContext, stmtCtx *stmtctx.StatementContext, conds []expression.Expression) []expression.Expression {
+	if len(conds) == 0 {
+		return conds
+	}
 	newConds := make([]expression.Expression, 0, len(conds))
 	for _, cond := range conds {
 		con, ok := cond.(*expression.Constant)

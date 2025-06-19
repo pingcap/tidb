@@ -420,9 +420,6 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 }
 
 func (s *propConstSolver) solve(conditions []Expression) []Expression {
-	if len(conditions) == 0 {
-		return conditions
-	}
 	s.conditions = slices.Grow(s.conditions, len(conditions))
 	for _, cond := range conditions {
 		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
@@ -445,6 +442,9 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
 // This is a constant propagation logic for expression list such as ['a=1', 'a=b']
 func PropagateConstant(ctx exprctx.ExprContext, conditions ...Expression) []Expression {
+	if len(conditions) == 0 {
+		return conditions
+	}
 	solver := newPropConstSolver()
 	defer func() {
 		solver.Clear()
