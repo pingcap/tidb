@@ -1495,6 +1495,10 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ‹10›, index-values:‹\"handle: 10, values: [KindInt64 19]\"› != record-values:‹\"handle: 10, values: [KindInt64 20]\"›")
 	tk.MustExec("set @@tidb_redact_log=0;")
 
+	tk.MustExec("create table other (a int);")
+	tk.MustGetErrMsg("admin check table other, admin_test;",
+		"admin check only supports one table at a time")
+
 	// Recover records.
 	txn, err = store.Begin()
 	require.NoError(t, err)
