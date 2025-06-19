@@ -14,7 +14,9 @@
 
 package disjointset
 
-import "slices"
+import (
+	"slices"
+)
 
 // SimpleIntSet is the int disjoint set.
 // It's not designed for sparse case. You should use it when the elements are continuous.
@@ -52,7 +54,11 @@ func (m *SimpleIntSet) Clear() {
 	clear(m.parent)
 }
 
-// Grow grows the int disjoint set to at least `n` elements.
-func (m *SimpleIntSet) Grow(n int) {
+// GrowNewIntSet grows the int disjoint set to at least `n` elements.
+func (m *SimpleIntSet) GrowNewIntSet(n int) {
+	clear(m.parent)
 	m.parent = slices.Grow(m.parent, n)
+	for i := range n {
+		m.parent = append(m.parent, i)
+	}
 }

@@ -321,8 +321,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 	if s.unionSet == nil {
 		s.unionSet = disjointset.NewIntSet(len(s.columns))
 	} else {
-		s.unionSet.Clear()
-		s.unionSet.Grow(len(s.columns))
+		s.unionSet.GrowNewIntSet(len(s.columns))
 	}
 	for i := range s.conditions {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
@@ -684,7 +683,7 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 	if s.unionSet == nil {
 		s.unionSet = disjointset.NewIntSet(len(s.columns))
 	} else {
-		s.unionSet.Grow(len(s.columns))
+		s.unionSet.GrowNewIntSet(len(s.columns))
 	}
 	var outerCol, innerCol *Column
 	// Only consider column equal condition in joinConds.
