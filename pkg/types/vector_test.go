@@ -61,9 +61,9 @@ func TestVectorParse(t *testing.T) {
 	require.NotNil(t, err)
 	require.True(t, v.IsZeroValue())
 
-	// Note: Currently we will parse "null" into [].
+	// "null" string should return error, not empty vector
 	v, err = types.ParseVectorFloat32(`null`)
-	require.Nil(t, err)
+	require.NotNil(t, err)
 	require.True(t, v.IsZeroValue())
 
 	v, err = types.ParseVectorFloat32(`"json_str"`)
