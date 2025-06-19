@@ -589,7 +589,7 @@ func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*precheck.CheckRe
 	diskQuota := int64(ci.cfg.TikvImporter.DiskQuota)
 	diskQuotaStr := units.BytesSize(float64(diskQuota))
 
-	//Warn the user if diskQuota is 0 or negative, as it's likely a misconfiguration
+	// Warn the user if diskQuota is 0 or negative, as it's likely a misconfiguration
 	if diskQuota <= 0 {
 		log.FromContext(ctx).Warn("`tikv-importer.disk-quota` is set to 0 or less; please configure a valid positive value")
 	}
