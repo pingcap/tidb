@@ -633,7 +633,8 @@ func TestTxnSavepointWithDDL(t *testing.T) {
 	tk2.MustExec("alter table t2 add index idx2(c2)")
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t2").Check(testkit.Rows())
-	tk.MustExec("admin check table t1, t2")
+	tk.MustExec("admin check table t1")
+	tk.MustExec("admin check table t2")
 
 	prepareFn()
 	tk.MustExec("truncate table t1")
@@ -649,7 +650,8 @@ func TestTxnSavepointWithDDL(t *testing.T) {
 	require.Error(t, err)
 	require.Regexp(t, ".*8028.*Information schema is changed during the execution of the statement.*", err.Error())
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
-	tk.MustExec("admin check table t1, t2")
+	tk.MustExec("admin check table t1")
+	tk.MustExec("admin check table t2")
 }
 
 func TestSnapshotVersion(t *testing.T) {
