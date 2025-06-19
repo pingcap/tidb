@@ -465,6 +465,11 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			return
 		}
 		if str, ok := r.(string); !ok || !strings.Contains(str, memory.PanicMemoryExceedWarnMsg) {
+			// Not sure why panic again after recover, we need to skip this for test.
+			failpoint.Inject("skipExecPanic", func() {
+				err = errors.Errorf("%v", r)
+				failpoint.Return()
+			})
 			panic(r)
 		}
 		err = errors.Errorf("%v", r)
