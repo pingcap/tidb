@@ -229,7 +229,7 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 }
 
 var propConstSolverPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		solver := &propConstSolver{}
 		solver.basePropConstSolver = basePropConstSolverPool.Get().(basePropConstSolver)
 		solver.colMapper = make(map[int64]int)
