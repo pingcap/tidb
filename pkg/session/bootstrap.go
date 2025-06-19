@@ -1002,10 +1002,9 @@ func upgrade(s sessiontypes.Session) {
 	// It is only used in test.
 	upgradeFns := addMockBootstrapVersionForTest(s)
 	for _, verFn := range upgradeFns {
-		if ver < verFn.version || verFn.checkRunnableInside {
+		if ver < verFn.version {
 			verFn.fn(s, ver)
 			logutil.BgLogger().Info("upgrade to bootstrap version.",
-				zap.Bool("check-runnable-inside", verFn.checkRunnableInside),
 				zap.Int64("old-start-version", ver),
 				zap.Int64("in-progress-version", verFn.version),
 				zap.Int64("target-version", currentBootstrapVersion))

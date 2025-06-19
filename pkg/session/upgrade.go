@@ -465,15 +465,11 @@ const (
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
 // to a specific bootstrap version.
-// normally we will run the upgrade function when the current bootstrapped version
-// is less than the version in this struct, but there are some exceptions where
-// we might always run the function, such as for version29, and let the function
-// itself to decide whether to run or not and what to run.
+// we will run the upgrade function fn when the current bootstrapped version is
+// less than the version in this struct
 type versionedUpgradeFunction struct {
 	version int64
 	fn      func(sessiontypes.Session, int64)
-	// if true, we will always run fn, and let fn decide whether to run or not.
-	checkRunnableInside bool
 }
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -511,7 +507,7 @@ var (
 		{version: version26, fn: upgradeToVer26},
 		{version: version27, fn: upgradeToVer27},
 		{version: version28, fn: upgradeToVer28},
-		{version: version29, fn: upgradeToVer29, checkRunnableInside: true},
+		{version: version29, fn: upgradeToVer29},
 		{version: version30, fn: upgradeToVer30},
 		{version: version31, fn: upgradeToVer31},
 		{version: version32, fn: upgradeToVer32},
