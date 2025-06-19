@@ -33,6 +33,7 @@ go_library(
         "//util/collate",
         "//util/dbterror",
         "//util/execdetails",
+        "//util/intest",
         "//util/logutil",
         "//util/memory",
         "//util/ranger",
