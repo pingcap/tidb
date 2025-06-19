@@ -411,6 +411,7 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 }
 
 func (s *propConstSolver) solve(conditions []Expression) []Expression {
+	s.conditions = slices.Grow(s.conditions, len(conditions))
 	for _, cond := range conditions {
 		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
 		s.insertCols(ExtractColumns(cond)...)
