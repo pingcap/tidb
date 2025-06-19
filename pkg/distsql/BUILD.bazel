@@ -49,6 +49,7 @@ go_library(
         "@com_github_tikv_client_go_v2//tikvrpc/interceptor",
         "@com_github_tikv_client_go_v2//util",
         "@org_golang_google_grpc//metadata",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
 )
