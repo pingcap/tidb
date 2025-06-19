@@ -50,6 +50,8 @@ const (
 	runawayRecordGCSelectBatchSize = runawayRecordGCBatchSize * 5
 )
 
+var sampleLogger = logutil.SampleLoggerFactory(time.Minute, 1, zap.String(logutil.LogFieldCategory, "runaway"))
+
 // Manager is used to detect and record runaway queries.
 type Manager struct {
 	exit chan struct{}
@@ -230,7 +232,7 @@ func (rm *Manager) RunawayWatchSyncLoop() {
 		case <-runawayWatchSyncTicker.C:
 			err := rm.UpdateNewAndDoneWatch()
 			if err != nil {
-				logutil.BgLogger().Warn("get runaway watch record failed", zap.Error(err))
+				sampleLogger().Warn("get runaway watch record failed", zap.Error(err))
 			}
 		}
 	}
@@ -380,8 +382,9 @@ func (rm *Manager) UpdateNewAndDoneWatch() error {
 	rm.runawaySyncer.mu.Lock()
 	defer rm.runawaySyncer.mu.Unlock()
 	// DDL may be not finished during the startup, so we need to check the table exist.
-	if !rm.runawaySyncer.checkWatchTableExist() {
-		return nil
+	exist, err := rm.runawaySyncer.checkWatchTableExist()
+	if err != nil || !exist {
+		return err
 	}
 	records, err := rm.runawaySyncer.getNewWatchRecords()
 	if err != nil {
@@ -390,8 +393,9 @@ func (rm *Manager) UpdateNewAndDoneWatch() error {
 	for _, r := range records {
 		rm.AddWatch(r)
 	}
-	if !rm.runawaySyncer.checkWatchDoneTableExist() {
-		return nil
+	exist, err = rm.runawaySyncer.checkWatchDoneTableExist()
+	if err != nil || !exist {
+		return err
 	}
 	doneRecords, err := rm.runawaySyncer.getNewWatchDoneRecords()
 	if err != nil {

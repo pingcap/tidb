@@ -33,7 +33,7 @@ func TestQueryWatch(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	if variable.SchemaCacheSize.Load() != 0 {
 		t.Skip("skip this test because the schema cache is enabled")
@@ -170,7 +170,7 @@ func TestQueryWatchIssue56897(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustQuery("QUERY WATCH ADD ACTION KILL SQL TEXT SIMILAR TO 'use test';").Check((testkit.Rows("1")))
