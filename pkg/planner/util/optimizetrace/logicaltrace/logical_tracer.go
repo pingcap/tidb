@@ -81,10 +81,6 @@ func AppendGroupByItemsPruneTraceStep(p base.LogicalPlan, prunedGroupByItems []e
 	if len(prunedGroupByItems) < 1 {
 		return
 	}
-	s := make([]expression.StringerWithCtx, 0, len(prunedGroupByItems))
-	for _, item := range prunedGroupByItems {
-		s = append(s, item)
-	}
 	appendItemPruneTraceStep(p, "groupByItems", prunedGroupByItems, opt)
 }
 
