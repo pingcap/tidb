@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -1330,7 +1331,7 @@ func (rc *LogClient) UpdateSchemaVersionFullReload(ctx context.Context) error {
 			var e error
 			// To trigger full-reload instead of diff-reload, we need to increase the schema version
 			// by at least `domain.LoadSchemaDiffVersionGapThreshold`.
-			schemaVersion, e = t.GenSchemaVersions(64 + domain.LoadSchemaDiffVersionGapThreshold)
+			schemaVersion, e = t.GenSchemaVersions(64 + issyncer.LoadSchemaDiffVersionGapThreshold)
 			if e != nil {
 				return e
 			}
