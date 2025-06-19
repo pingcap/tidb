@@ -54,8 +54,7 @@ func newBasePropConstSolver() basePropConstSolver {
 func (s *basePropConstSolver) Clear() {
 	clear(s.colMapper)
 	s.eqList = s.eqList[:0]
-
-	clear(s.columns)
+	s.columns = s.columns[:0]
 	s.unionSet.Clear()
 	s.ctx = nil
 }
