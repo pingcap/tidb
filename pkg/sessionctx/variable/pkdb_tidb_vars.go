@@ -7,8 +7,8 @@ const (
 	TiDBXEnableScheduleLeaderRule = "tidbx_enable_schedule_leader_rule"
 	// TiDBXEnableTiKVLocalCall indicates whether to enable TiKV local calls.
 	TiDBXEnableTiKVLocalCall = "tidbx_enable_tikv_local_call"
-	// TiDBXEnablePDFusion indicates whether to use Inter-Process Call for PD.
-	TiDBXEnablePDFusion = "tidbx_enable_pd_fusion"
+	// TiDBXEnablePDLocalCall indicates whether to use Inter-Process Call for PD.
+	TiDBXEnablePDLocalCall = "tidbx_enable_pd_local_call"
 )
 
 // Default TiDB system variable values.

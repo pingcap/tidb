@@ -40,30 +40,30 @@ var ffiSysVars = []*SysVar{
 		}, GetGlobal: func(context.Context, *SessionVars) (string, error) {
 		return BoolToOnOff(EnableScheduleLeaderRule.Load()), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBXEnablePDFusion, Value: BoolToOnOff(DefTiDBXEnableLocalRPCOpt), Type: TypeBool,
+	{Scope: ScopeGlobal, Name: TiDBXEnablePDLocalCall, Value: BoolToOnOff(DefTiDBXEnableLocalRPCOpt), Type: TypeBool,
 		SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
-			if PDFusionVar == nil {
-				return errors.Errorf("%s is not initialized. Please check if this is fusion mode", TiDBXEnablePDFusion)
+			if PDLocalCallVar == nil {
+				return errors.Errorf("%s is not initialized. Please check if this is fusion mode", TiDBXEnablePDLocalCall)
 			}
-			if TiDBOptOn(s) != (*PDFusionVar).Load() {
-				(*PDFusionVar).Store(TiDBOptOn(s))
+			if TiDBOptOn(s) != (*PDLocalCallVar).Load() {
+				(*PDLocalCallVar).Store(TiDBOptOn(s))
 				logutil.BgLogger().Info("set enable local rpc opt",
-					zap.String("variable", TiDBXEnablePDFusion),
+					zap.String("variable", TiDBXEnablePDLocalCall),
 					zap.Bool("enable", TiDBOptOn(s)))
 			}
 			return nil
 		}, GetGlobal: func(context.Context, *SessionVars) (string, error) {
-		if PDFusionVar == nil {
-			return "", errors.Errorf("%s is not initialized. Please check if this is fusion mode", TiDBXEnablePDFusion)
+		if PDLocalCallVar == nil {
+			return "", errors.Errorf("%s is not initialized. Please check if this is fusion mode", TiDBXEnablePDLocalCall)
 		}
-		return BoolToOnOff((*PDFusionVar).Load()), nil
+		return BoolToOnOff((*PDLocalCallVar).Load()), nil
 	}},
 }
 
-// PDFusionVar will be set by the upper package tidbx-server to point to pd-server's
+// PDLocalCallVar will be set by the upper package tidbx-server to point to pd-server's
 // EnableIPC. This is to break the dependency cycle between tidbx-server and
 // pd-server.
-var PDFusionVar *atomic.Bool
+var PDLocalCallVar *atomic.Bool
 
 func init() {
 	defaultSysVars = append(defaultSysVars, ffiSysVars...)
