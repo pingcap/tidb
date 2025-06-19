@@ -49,15 +49,15 @@ func TestAdminCheckPanic(t *testing.T) {
 		('child5', 'productE', '2023-10-05 16:10:00')`)
 	tk.MustExec("CREATE INDEX t_idx_created_at ON t (created_at)")
 
-	// Some versions may have fixed this bug, so we also manually inject panic.
+	// Some newer versions may have fixed this bug, so we also manually inject panic.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockFastAdminCheckPanic", "return")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockAdminCheckPanic", "return")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/skipExecPanic", "return")
 
-	// When there are some bugs in the executor/optimizeradmin check should
-	// return error no matter whether fast admin check is enabled or not.
+	// When there are some critical bugs in the executor/optimizer, admin check
+	// should fail to execute no matter whether fast admin check is enabled or not.
 	tk.MustExec("set @@tidb_enable_fast_table_check = OFF")
 	tk.MustExecToErr("admin check table t")
-	tk.MustExec("set @@tidb_enable_fast_table_check = 1")
+	tk.MustExec("set @@tidb_enable_fast_table_check = ON")
 	tk.MustExecToErr("admin check table t")
 }
