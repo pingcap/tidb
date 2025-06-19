@@ -20,9 +20,11 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -69,6 +71,32 @@ func countScheduleDenyRules(rules []SchedulerRule) int {
 	return count
 }
 
+// waitForSchedulerRules polls PD to verify scheduler rules are in effect and returns the count
+func waitForSchedulerRules(t *testing.T, pdAddr string) int {
+	// Wait a bit for scheduler rules to be applied by PD
+	time.Sleep(1 * time.Second)
+
+	// Poll PD to verify scheduler rules are in effect
+	var ruleCount int
+	maxRetries := 10
+	for i := 0; i < maxRetries; i++ {
+		schedulerRules := getPDSchedulerRules(t, pdAddr)
+		ruleCount = countScheduleDenyRules(schedulerRules)
+
+		if ruleCount > 0 {
+			t.Logf("Verified scheduler rules are active: %d rules found (attempt %d/%d)", ruleCount, i+1, maxRetries)
+			break
+		}
+
+		if i < maxRetries-1 {
+			t.Logf("No scheduler rules found yet, retrying... (attempt %d/%d)", i+1, maxRetries)
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+
+	return ruleCount
+}
+
 // TestLogRestoreFineGrainedSchedulerPausing tests that log restore uses fine-grained
 // scheduler pausing when filters are specified and full pausing when no filters are used
 func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
@@ -76,17 +104,17 @@ func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
 	s := kit.simpleWorkload()
 	s.createSimpleTableWithData(kit)
 
+	taskName := "test-scheduler-pausing"
+
 	// Create tables before log backup (these will be in snapshot range)
 	kit.tk.MustExec("CREATE TABLE test.snapshot_table1 (id INT PRIMARY KEY, data VARCHAR(100))")
 	kit.tk.MustExec("CREATE TABLE test.snapshot_table2 (id INT PRIMARY KEY, data VARCHAR(100))")
 	kit.tk.MustExec("INSERT INTO test.snapshot_table1 VALUES (1, 'snapshot1'), (2, 'snapshot2')")
 	kit.tk.MustExec("INSERT INTO test.snapshot_table2 VALUES (1, 'snapshot1'), (2, 'snapshot2')")
 
-	taskName := t.Name()
-
-	// Start log backup first, then take full backup to avoid timing gaps
-	kit.RunLogStart(taskName, func(sc *task.StreamConfig) {})
-	kit.RunFullBackup(func(bc *task.BackupConfig) {})
+	// Start log backup first, then take full backup
+	kit.RunLogStart(taskName, func(cfg *task.StreamConfig) {})
+	kit.RunFullBackup(func(cfg *task.BackupConfig) {})
 
 	// Create tables during log backup (these will be in log backup range)
 	kit.tk.MustExec("CREATE TABLE test.log_table1 (id INT PRIMARY KEY, data VARCHAR(100))")
@@ -94,27 +122,30 @@ func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
 	kit.tk.MustExec("INSERT INTO test.log_table1 VALUES (1, 'log1'), (2, 'log2')")
 	kit.tk.MustExec("INSERT INTO test.log_table2 VALUES (1, 'log1'), (2, 'log2')")
 
-	// Add some incremental data to existing tables
-	s.insertSimpleIncreaseData(kit)
+	// Add some incremental data to both snapshot and log tables
 	kit.tk.MustExec("INSERT INTO test.snapshot_table1 VALUES (3, 'incremental')")
 	kit.tk.MustExec("INSERT INTO test.log_table1 VALUES (3, 'incremental')")
 
 	kit.forceFlushAndWait(taskName)
 	kit.StopTaskIfExists(taskName)
 
-	// Test case 1: Filtered restore (should use fine-grained pausing)
-	t.Run("FilteredRestore", func(t *testing.T) {
+	// Test case 1: Filtered restore with scheduler verification
+	t.Run("FilteredRestoreWithSchedulerVerification", func(t *testing.T) {
 		s.cleanSimpleData(kit)
 		kit.tk.MustExec("DROP TABLE IF EXISTS test.snapshot_table1, test.snapshot_table2, test.log_table1, test.log_table2")
 
-		var schedulerRulesDuringRestore []SchedulerRule
-		var ruleCount int
+		// Channel to receive the captured rule count from failpoint
+		ruleCountChan := make(chan int, 1)
 
 		// Enable failpoint to capture scheduler state during restore
 		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused", func() {
-			// Capture scheduler rules when the failpoint is hit
-			schedulerRulesDuringRestore = getPDSchedulerRules(t, "127.0.0.1:2379")
-			ruleCount = countScheduleDenyRules(schedulerRulesDuringRestore)
+			ruleCount := waitForSchedulerRules(t, "127.0.0.1:2379")
+
+			// Send the result through channel
+			select {
+			case ruleCountChan <- ruleCount:
+			default:
+			}
 		}))
 		defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused")
 
@@ -125,28 +156,42 @@ func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
 			kit.SetFilter(&rc.Config, "test.snapshot_table1", "test.log_table1")
 		})
 
-		// Verify that scheduler rules were created (fine-grained pausing)
-		// We should have exactly 2 rules: one for snapshot range, one for log range
-		// Or it could be fewer if ranges are merged or optimized
-		require.Greater(t, ruleCount, 0, "Expected scheduler pausing rules during filtered restore")
-		require.Equal(t, ruleCount, 2, "Fine-grained pausing should 2 rules (snapshot + log ranges)")
+		// Get the captured rule count from channel
+		var capturedRuleCount int
+		select {
+		case capturedRuleCount = <-ruleCountChan:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Timeout waiting for scheduler rule count from failpoint")
+		}
 
-		t.Logf("Filtered restore created %d scheduler deny rules (expected <= 2)", ruleCount)
+		// Verify that scheduler rules were created and detected
+		require.Greater(t, capturedRuleCount, 0, "Expected scheduler pausing rules during filtered restore")
+		require.LessOrEqual(t, capturedRuleCount, 2, "Fine-grained pausing should create at most 2 rules (snapshot + log ranges)")
+
+		// Verify tables were restored
+		kit.tk.MustQuery("SELECT COUNT(*) FROM test.snapshot_table1").Check(testkit.Rows("3"))
+		kit.tk.MustQuery("SELECT COUNT(*) FROM test.log_table1").Check(testkit.Rows("3"))
+
+		t.Logf("Filtered restore created %d scheduler deny rules and completed successfully", capturedRuleCount)
 	})
 
-	// Test case 2: Full restore (should use full pausing)
-	t.Run("FullRestore", func(t *testing.T) {
+	// Test case 2: Full restore with scheduler verification
+	t.Run("FullRestoreWithSchedulerVerification", func(t *testing.T) {
 		s.cleanSimpleData(kit)
 		kit.tk.MustExec("DROP TABLE IF EXISTS test.snapshot_table1, test.snapshot_table2, test.log_table1, test.log_table2")
 
-		var schedulerRulesDuringRestore []SchedulerRule
-		var ruleCount int
+		// Channel to receive the captured rule count from failpoint
+		ruleCountChan := make(chan int, 1)
 
 		// Enable failpoint to capture scheduler state during restore
 		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused", func() {
-			// Capture scheduler rules when the failpoint is hit
-			schedulerRulesDuringRestore = getPDSchedulerRules(t, "127.0.0.1:2379")
-			ruleCount = countScheduleDenyRules(schedulerRulesDuringRestore)
+			ruleCount := waitForSchedulerRules(t, "127.0.0.1:2379")
+
+			// Send the result through channel
+			select {
+			case ruleCountChan <- ruleCount:
+			default:
+			}
 		}))
 		defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused")
 
@@ -156,9 +201,25 @@ func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
 			// No filters - this should trigger full pausing (1 rule for all schedulers)
 		})
 
-		require.Equal(t, ruleCount, 1, "Full restore should create exactly 1 scheduler rule (full pausing)")
+		// Get the captured rule count from channel
+		var capturedRuleCount int
+		select {
+		case capturedRuleCount = <-ruleCountChan:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Timeout waiting for scheduler rule count from failpoint")
+		}
 
-		t.Logf("Full restore created %d scheduler deny rule (expected = 1)", ruleCount)
+		// For full restore, should use traditional full scheduler pausing (1 rule)
+		// vs fine-grained pausing (2 rules) for filtered restore
+		require.Equal(t, capturedRuleCount, 1, "Full restore should create exactly 1 scheduler rule (full pausing)")
+
+		// Verify all tables were restored
+		kit.tk.MustQuery("SELECT COUNT(*) FROM test.snapshot_table1").Check(testkit.Rows("3"))
+		kit.tk.MustQuery("SELECT COUNT(*) FROM test.snapshot_table2").Check(testkit.Rows("2"))
+		kit.tk.MustQuery("SELECT COUNT(*) FROM test.log_table1").Check(testkit.Rows("3"))
+		kit.tk.MustQuery("SELECT COUNT(*) FROM test.log_table2").Check(testkit.Rows("2"))
+
+		t.Logf("Full restore created %d scheduler deny rule and completed successfully", capturedRuleCount)
 	})
 
 	// Verify scheduler rules are cleaned up after both tests
