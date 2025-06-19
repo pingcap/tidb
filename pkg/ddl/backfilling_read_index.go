@@ -117,7 +117,7 @@ func (r *readIndexStepExecutor) runGlobalPipeline(
 	sm *BackfillSubTaskMeta,
 	concurrency int,
 ) error {
-	pipe, err := r.buildExternalStorePipeline(opCtx, subtask.TaskID,subtask.ID, sm, concurrency)
+	pipe, err := r.buildExternalStorePipeline(opCtx, subtask.TaskID, subtask.ID, sm, concurrency)
 	if err != nil {
 		return err
 	}
