@@ -15,6 +15,8 @@
 package expression
 
 import (
+	"sync"
+
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -30,13 +32,31 @@ import (
 // MaxPropagateColsCnt means the max number of columns that can participate propagation.
 var MaxPropagateColsCnt = 100
 
-// nolint:structcheck
+var basePropConstSolverPool = sync.Pool{
+	New: func() any {
+		return &basePropConstSolver{
+			colMapper: make(map[int64]int, 4),
+			eqList:    make([]*Constant, 0, 4),
+			columns:   make([]*Column, 0, 4),
+			unionSet:  disjointset.NewIntSet(4),
+		}
+	},
+}
+
 type basePropConstSolver struct {
 	colMapper map[int64]int             // colMapper maps column to its index
 	eqList    []*Constant               // if eqList[i] != nil, it means col_i = eqList[i]
 	unionSet  *disjointset.SimpleIntSet // unionSet stores the relations like col_i = col_j
 	columns   []*Column                 // columns stores all columns appearing in the conditions
 	ctx       exprctx.ExprContext
+}
+
+func (s *basePropConstSolver) Clear() {
+	clear(s.colMapper)
+	clear(s.eqList)
+	clear(s.columns)
+	s.unionSet.Clear()
+	s.ctx = nil
 }
 
 func (s *basePropConstSolver) getColID(col *Column) int {
@@ -208,9 +228,37 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 	return false, false, cond
 }
 
+var propConstSolverPool = sync.Pool{
+	New: func() interface{} {
+		solver := &propConstSolver{}
+		solver.basePropConstSolver = basePropConstSolverPool.Get().(basePropConstSolver)
+		solver.colMapper = make(map[int64]int)
+		return solver
+	},
+}
+
 type propConstSolver struct {
 	basePropConstSolver
 	conditions []Expression
+}
+
+// newPropConstSolver returns a PropagateConstantSolver.
+func newPropConstSolver() PropagateConstantSolver {
+	solver := propConstSolverPool.Get().(*propConstSolver)
+	return solver
+}
+
+// PropagateConstant propagate constant values of deterministic predicates in a condition.
+func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression {
+	s.ctx = ctx
+	return s.solve(conditions)
+}
+
+func (p *propConstSolver) Destory() {
+	p.basePropConstSolver.Clear()
+	clear(p.conditions)
+	basePropConstSolverPool.Put(p.basePropConstSolver)
+	propConstSolverPool.Put(p)
 }
 
 // propagateConstantEQ propagates expressions like 'column = constant' by substituting the constant for column, the
@@ -260,7 +308,11 @@ func (s *propConstSolver) propagateConstantEQ() {
 // We maintain a unionSet representing the equivalent for every two columns.
 func (s *propConstSolver) propagateColumnEQ() {
 	visited := make([]bool, len(s.conditions))
-	s.unionSet = disjointset.NewIntSet(len(s.columns))
+	if s.unionSet == nil {
+		s.unionSet = disjointset.NewIntSet(len(s.columns))
+	} else {
+		s.unionSet.Grow(len(s.columns))
+	}
 	for i := range s.conditions {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.GetArgs()[0].(*Column)
@@ -306,10 +358,11 @@ func (s *propConstSolver) setConds2ConstFalse() {
 	if MaybeOverOptimized4PlanCache(s.ctx, s.conditions...) {
 		s.ctx.SetSkipPlanCache("some parameters may be overwritten when constant propagation")
 	}
-	s.conditions = []Expression{&Constant{
+	clear(s.conditions)
+	s.conditions = append(s.conditions, &Constant{
 		Value:   types.NewDatum(false),
 		RetType: types.NewFieldType(mysql.TypeTiny),
-	}}
+	})
 }
 
 // pickNewEQConds tries to pick new equal conds and puts them to retMapper.
@@ -374,15 +427,19 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	}
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
-	s.conditions = propagateConstantDNF(s.ctx, s.conditions)
+	s.conditions = propagateConstantDNF(s.ctx, s.conditions...)
 	s.conditions = RemoveDupExprs(s.conditions)
 	return s.conditions
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
 // This is a constant propagation logic for expression list such as ['a=1', 'a=b']
-func PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression {
-	return newPropConstSolver().PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), conditions)
+func PropagateConstant(ctx exprctx.ExprContext, conditions ...Expression) []Expression {
+	solver := newPropConstSolver()
+	defer func() {
+		solver.Clear()
+	}()
+	return solver.PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), conditions)
 }
 
 type propOuterJoinConstSolver struct {
@@ -613,7 +670,11 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 		return
 	}
 	visited := make([]bool, 2*len(s.joinConds)+len(s.filterConds))
-	s.unionSet = disjointset.NewIntSet(len(s.columns))
+	if s.unionSet == nil {
+		s.unionSet = disjointset.NewIntSet(len(s.columns))
+	} else {
+		s.unionSet.Grow(len(s.columns))
+	}
 	var outerCol, innerCol *Column
 	// Only consider column equal condition in joinConds.
 	// If we have column equal in filter condition, the outer join should have been simplified already.
@@ -680,18 +741,18 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 	}
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
-	s.joinConds = propagateConstantDNF(s.ctx, s.joinConds)
-	s.filterConds = propagateConstantDNF(s.ctx, s.filterConds)
+	s.joinConds = propagateConstantDNF(s.ctx, s.joinConds...)
+	s.filterConds = propagateConstantDNF(s.ctx, s.filterConds...)
 	return s.joinConds, s.filterConds
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
-func propagateConstantDNF(ctx exprctx.ExprContext, conds []Expression) []Expression {
+func propagateConstantDNF(ctx exprctx.ExprContext, conds ...Expression) []Expression {
 	for i, cond := range conds {
 		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.LogicOr {
 			dnfItems := SplitDNFItems(cond)
 			for j, item := range dnfItems {
-				dnfItems[j] = ComposeCNFCondition(ctx, PropagateConstant(ctx, []Expression{item})...)
+				dnfItems[j] = ComposeCNFCondition(ctx, PropagateConstant(ctx, item)...)
 			}
 			conds[i] = ComposeDNFCondition(ctx, dnfItems...)
 		}
@@ -720,17 +781,5 @@ func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Ex
 // PropagateConstantSolver is a constant propagate solver.
 type PropagateConstantSolver interface {
 	PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression
-}
-
-// newPropConstSolver returns a PropagateConstantSolver.
-func newPropConstSolver() PropagateConstantSolver {
-	solver := &propConstSolver{}
-	solver.colMapper = make(map[int64]int)
-	return solver
-}
-
-// PropagateConstant propagate constant values of deterministic predicates in a condition.
-func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression {
-	s.ctx = ctx
-	return s.solve(conditions)
+	Clear()
 }
