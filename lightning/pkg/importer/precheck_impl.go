@@ -576,22 +576,22 @@ func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*precheck.CheckRe
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	localAvailable := int64(storageSize.Available)           //Available disk space in bytes
-	availableStr := units.BytesSize(float64(localAvailable)) //Human-readable availabe space
+	localAvailable := int64(storageSize.Available)
+	availableStr := units.BytesSize(float64(localAvailable))
 
 	estimatedDataSizeResult, err := ci.preInfoGetter.EstimateSourceDataSize(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	estimatedDataSizeWithIndex := estimatedDataSizeResult.SizeWithIndex
-	estimatedStr := units.BytesSize(float64(estimatedDataSizeWithIndex)) //Human-readable estimated size
+	estimatedStr := units.BytesSize(float64(estimatedDataSizeWithIndex))
 
-	diskQuota := int64(ci.cfg.TikvImporter.DiskQuota)   //Configured disk quota in bytes
-	diskQuotaStr := units.BytesSize(float64(diskQuota)) //Human-readabledisk quota
+	diskQuota := int64(ci.cfg.TikvImporter.DiskQuota)
+	diskQuotaStr := units.BytesSize(float64(diskQuota))
 
 	//Warn the user if diskQuota is 0 or negative, as it's likely a misconfiguration
 	if diskQuota <= 0 {
-		log.FromContext(ctx).Warn("`tikv-importer.disk-quota` is set to 0 or less; please configure a valid positive value.")
+		log.FromContext(ctx).Warn("`tikv-importer.disk-quota` is set to 0 or less; please configure a valid positive value")
 	}
 
 	switch {
@@ -602,7 +602,7 @@ func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*precheck.CheckRe
 	case diskQuota > localAvailable:
 		theResult.Message = fmt.Sprintf("local disk space is insufficient to meet the configured disk-quota. "+
 			"Available space: %s, Configured disk-quota: %s. "+
-			"Please increase the available disk space or adjust the tikv-importer.disk-quota setting to a value lower than the available space and try again.",
+			"Please increase the available disk space or adjust the tikv-importer.disk-quota setting to a value lower than the available space and try again",
 			availableStr,
 			diskQuotaStr)
 		theResult.Passed = false
