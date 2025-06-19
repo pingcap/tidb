@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"unsafe"
 
 	jsoniter "github.com/json-iterator/go"
@@ -246,6 +247,17 @@ func ParseVectorFloat32(s string) (VectorFloat32, error) {
 	}
 	if valueError != nil {
 		return ZeroVectorFloat32, valueError
+	}
+
+	// Check if there are any remaining characters after the JSON array
+	// This ensures we reject strings like "[1,2,3]extra"
+	remaining := parser.SkipAndReturnBytes()
+	if len(remaining) > 0 {
+		// Check if the remaining bytes are only whitespace
+		trimmed := strings.TrimSpace(string(remaining))
+		if len(trimmed) > 0 {
+			return ZeroVectorFloat32, errors.Errorf("Invalid vector text: %s", s)
+		}
 	}
 
 	dim := len(values)
