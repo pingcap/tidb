@@ -1418,7 +1418,7 @@ func file_indexer_proto_rawDescGZIP() []byte {
 
 var file_indexer_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
 var file_indexer_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
-var file_indexer_proto_goTypes = []interface{}{
+var file_indexer_proto_goTypes = []any{
 	(IndexType)(0),                      // 0: indexer.IndexType
 	(ParserType)(0),                     // 1: indexer.ParserType
 	(GetIndexProgressResponse_State)(0), // 2: indexer.GetIndexProgressResponse.State
@@ -1473,7 +1473,7 @@ func file_indexer_proto_init() {
 		return
 	}
 	if !protoimpl.UnsafeEnabled {
-		file_indexer_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
+		file_indexer_proto_msgTypes[0].Exporter = func(v any, i int) any {
 			switch v := v.(*ShardManifestHeader); i {
 			case 0:
 				return &v.state
@@ -1485,7 +1485,7 @@ func file_indexer_proto_init() {
 				return nil
 			}
 		}
-		file_indexer_proto_msgTypes[1].Exporter = func(v interface{}, i int) interface{} {
+		file_indexer_proto_msgTypes[1].Exporter = func(v any, i int) any {
 			switch v := v.(*AddShardRequest); i {
 			case 0:
 				return &v.state
@@ -1497,7 +1497,7 @@ func file_indexer_proto_init() {
 				return nil
 			}
 		}
-		file_indexer_proto_msgTypes[2].Exporter = func(v interface{}, i int) interface{} {
+		file_indexer_proto_msgTypes[2].Exporter = func(v any, i int) any {
 			switch v := v.(*AddShardResponse); i {
 			case 0:
 				return &v.state
@@ -1509,7 +1509,7 @@ func file_indexer_proto_init() {
 				return nil
 			}
 		}
-		file_indexer_proto_msgTypes[3].Exporter = func(v interface{}, i int) interface{} {
+		file_indexer_proto_msgTypes[3].Exporter = func(v any, i int) any {
 			switch v := v.(*CreateIndexRequest); i {
 			case 0:
 				return &v.state
@@ -1521,7 +1521,7 @@ func file_indexer_proto_init() {
 				return nil
 			}
 		}
-		file_indexer_proto_msgTypes[4].Exporter = func(v interface{}, i int) interface{} {
+		file_indexer_proto_msgTypes[4].Exporter = func(v any, i int) any {
 			switch v := v.(*CreateIndexResponse); i {
 			case 0:
 				return &v.state
@@ -1533,7 +1533,7 @@ func file_indexer_proto_init() {
 				return nil
 			}
 		}
-		file_indexer_proto_msgTypes[5].Exporter = func(v interface{}, i int) interface{} {
+		file_indexer_proto_msgTypes[5].Exporter = func(v any, i int) any {
 			switch v := v.(*DropIndexRequest); i {
 			case 0:
 				return &v.state
@@ -1545,7 +1545,7 @@ func file_indexer_proto_init() {
 				return nil
 			}
 		}
-		file_indexer_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
+		file_indexer_proto_msgTypes[6].Exporter = func(v any, i int) any {
 			switch v := v.(*DropIndexResponse); i {
 			case 0:
 				return &v.state
@@ -1557,7 +1557,7 @@ func file_indexer_proto_init() {
 				return nil
 			}
 		}
-		file_indexer_proto_msgTypes[7].Exporter = func(v interface{}, i int) interface{} {
+		file_indexer_proto_msgTypes[7].Exporter = func(v any, i int) any {
 			switch v := v.(*TableInfo); i {
 			case 0:
 				return &v.state
@@ -1569,7 +1569,7 @@ func file_indexer_proto_init() {
 				return nil
 			}
 		}
-		file_indexer_proto_msgTypes[8].Exporter = func(v interface{}, i int) interface{} {
+		file_indexer_proto_msgTypes[8].Exporter = func(v any, i int) any {
 			switch v := v.(*ColumnInfo); i {
 			case 0:
 				return &v.state
@@ -1581,7 +1581,7 @@ func file_indexer_proto_init() {
 				return nil
 			}
 		}
-		file_indexer_proto_msgTypes[9].Exporter = func(v interface{}, i int) interface{} {
+		file_indexer_proto_msgTypes[9].Exporter = func(v any, i int) any {
 			switch v := v.(*IndexInfo); i {
 			case 0:
 				return &v.state
@@ -1593,7 +1593,7 @@ func file_indexer_proto_init() {
 				return nil
 			}
 		}
-		file_indexer_proto_msgTypes[10].Exporter = func(v interface{}, i int) interface{} {
+		file_indexer_proto_msgTypes[10].Exporter = func(v any, i int) any {
 			switch v := v.(*ParserInfo); i {
 			case 0:
 				return &v.state
@@ -1605,7 +1605,7 @@ func file_indexer_proto_init() {
 				return nil
 			}
 		}
-		file_indexer_proto_msgTypes[11].Exporter = func(v interface{}, i int) interface{} {
+		file_indexer_proto_msgTypes[11].Exporter = func(v any, i int) any {
 			switch v := v.(*GetIndexProgressRequest); i {
 			case 0:
 				return &v.state
@@ -1617,7 +1617,7 @@ func file_indexer_proto_init() {
 				return nil
 			}
 		}
-		file_indexer_proto_msgTypes[12].Exporter = func(v interface{}, i int) interface{} {
+		file_indexer_proto_msgTypes[12].Exporter = func(v any, i int) any {
 			switch v := v.(*GetIndexProgressResponse); i {
 			case 0:
 				return &v.state

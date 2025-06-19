@@ -1311,7 +1311,7 @@ func file_tici_proto_rawDescGZIP() []byte {
 }
 
 var file_tici_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
-var file_tici_proto_goTypes = []interface{}{
+var file_tici_proto_goTypes = []any{
 	(*WorkerNodeStatus)(nil),              // 0: tici.WorkerNodeStatus
 	(*ReaderNodeStatus)(nil),              // 1: tici.ReaderNodeStatus
 	(*WorkerNodeShardStatus)(nil),         // 2: tici.WorkerNodeShardStatus
@@ -1380,7 +1380,7 @@ func file_tici_proto_init() {
 	}
 	file_indexer_proto_init()
 	if !protoimpl.UnsafeEnabled {
-		file_tici_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
+		file_tici_proto_msgTypes[0].Exporter = func(v any, i int) any {
 			switch v := v.(*WorkerNodeStatus); i {
 			case 0:
 				return &v.state
@@ -1392,7 +1392,7 @@ func file_tici_proto_init() {
 				return nil
 			}
 		}
-		file_tici_proto_msgTypes[1].Exporter = func(v interface{}, i int) interface{} {
+		file_tici_proto_msgTypes[1].Exporter = func(v any, i int) any {
 			switch v := v.(*ReaderNodeStatus); i {
 			case 0:
 				return &v.state
@@ -1404,7 +1404,7 @@ func file_tici_proto_init() {
 				return nil
 			}
 		}
-		file_tici_proto_msgTypes[2].Exporter = func(v interface{}, i int) interface{} {
+		file_tici_proto_msgTypes[2].Exporter = func(v any, i int) any {
 			switch v := v.(*WorkerNodeShardStatus); i {
 			case 0:
 				return &v.state
@@ -1416,7 +1416,7 @@ func file_tici_proto_init() {
 				return nil
 			}
 		}
-		file_tici_proto_msgTypes[3].Exporter = func(v interface{}, i int) interface{} {
+		file_tici_proto_msgTypes[3].Exporter = func(v any, i int) any {
 			switch v := v.(*WorkerNodeCompactionStatus); i {
 			case 0:
 				return &v.state
@@ -1428,7 +1428,7 @@ func file_tici_proto_init() {
 				return nil
 			}
 		}
-		file_tici_proto_msgTypes[4].Exporter = func(v interface{}, i int) interface{} {
+		file_tici_proto_msgTypes[4].Exporter = func(v any, i int) any {
 			switch v := v.(*WorkerNodeHeartbeatRequest); i {
 			case 0:
 				return &v.state
@@ -1440,7 +1440,7 @@ func file_tici_proto_init() {
 				return nil
 			}
 		}
-		file_tici_proto_msgTypes[5].Exporter = func(v interface{}, i int) interface{} {
+		file_tici_proto_msgTypes[5].Exporter = func(v any, i int) any {
 			switch v := v.(*WorkerNodeHeartbeatResponse); i {
 			case 0:
 				return &v.state
@@ -1452,7 +1452,7 @@ func file_tici_proto_init() {
 				return nil
 			}
 		}
-		file_tici_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
+		file_tici_proto_msgTypes[6].Exporter = func(v any, i int) any {
 			switch v := v.(*ReaderNodeHeartbeatRequest); i {
 			case 0:
 				return &v.state
@@ -1464,7 +1464,7 @@ func file_tici_proto_init() {
 				return nil
 			}
 		}
-		file_tici_proto_msgTypes[7].Exporter = func(v interface{}, i int) interface{} {
+		file_tici_proto_msgTypes[7].Exporter = func(v any, i int) any {
 			switch v := v.(*ReaderNodeHeartbeatResponse); i {
 			case 0:
 				return &v.state
@@ -1476,7 +1476,7 @@ func file_tici_proto_init() {
 				return nil
 			}
 		}
-		file_tici_proto_msgTypes[8].Exporter = func(v interface{}, i int) interface{} {
+		file_tici_proto_msgTypes[8].Exporter = func(v any, i int) any {
 			switch v := v.(*FragMeta); i {
 			case 0:
 				return &v.state
@@ -1488,7 +1488,7 @@ func file_tici_proto_init() {
 				return nil
 			}
 		}
-		file_tici_proto_msgTypes[9].Exporter = func(v interface{}, i int) interface{} {
+		file_tici_proto_msgTypes[9].Exporter = func(v any, i int) any {
 			switch v := v.(*AppendFragMetaRequest); i {
 			case 0:
 				return &v.state
@@ -1500,7 +1500,7 @@ func file_tici_proto_init() {
 				return nil
 			}
 		}
-		file_tici_proto_msgTypes[10].Exporter = func(v interface{}, i int) interface{} {
+		file_tici_proto_msgTypes[10].Exporter = func(v any, i int) any {
 			switch v := v.(*AppendFragMetaResponse); i {
 			case 0:
 				return &v.state
@@ -1512,7 +1512,7 @@ func file_tici_proto_init() {
 				return nil
 			}
 		}
-		file_tici_proto_msgTypes[11].Exporter = func(v interface{}, i int) interface{} {
+		file_tici_proto_msgTypes[11].Exporter = func(v any, i int) any {
 			switch v := v.(*KeyRange); i {
 			case 0:
 				return &v.state
@@ -1524,7 +1524,7 @@ func file_tici_proto_init() {
 				return nil
 			}
 		}
-		file_tici_proto_msgTypes[12].Exporter = func(v interface{}, i int) interface{} {
+		file_tici_proto_msgTypes[12].Exporter = func(v any, i int) any {
 			switch v := v.(*ShardLocalCacheInfo); i {
 			case 0:
 				return &v.state
@@ -1536,7 +1536,7 @@ func file_tici_proto_init() {
 				return nil
 			}
 		}
-		file_tici_proto_msgTypes[13].Exporter = func(v interface{}, i int) interface{} {
+		file_tici_proto_msgTypes[13].Exporter = func(v any, i int) any {
 			switch v := v.(*GetShardLocalCacheRequest); i {
 			case 0:
 				return &v.state
@@ -1548,7 +1548,7 @@ func file_tici_proto_init() {
 				return nil
 			}
 		}
-		file_tici_proto_msgTypes[14].Exporter = func(v interface{}, i int) interface{} {
+		file_tici_proto_msgTypes[14].Exporter = func(v any, i int) any {
 			switch v := v.(*GetShardLocalCacheResponse); i {
 			case 0:
 				return &v.state
@@ -1560,7 +1560,7 @@ func file_tici_proto_init() {
 				return nil
 			}
 		}
-		file_tici_proto_msgTypes[15].Exporter = func(v interface{}, i int) interface{} {
+		file_tici_proto_msgTypes[15].Exporter = func(v any, i int) any {
 			switch v := v.(*DebugGetShardManifestRequest); i {
 			case 0:
 				return &v.state
@@ -1572,7 +1572,7 @@ func file_tici_proto_init() {
 				return nil
 			}
 		}
-		file_tici_proto_msgTypes[16].Exporter = func(v interface{}, i int) interface{} {
+		file_tici_proto_msgTypes[16].Exporter = func(v any, i int) any {
 			switch v := v.(*DebugGetShardManifestResponse); i {
 			case 0:
 				return &v.state
