@@ -1612,27 +1612,27 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 }
 
 func buildBatchCopTasksForFullText(store *kvStore, tableID int64, indexID int64, executorID string, keyRanges *KeyRanges) ([]*batchCopTask, error) {
+	cmdType := tikvrpc.CmdBatchCop
 	cache := store.GetTiCIShardCache()
-	const cmdType = tikvrpc.CmdBatchCop
 	tasks := make([]*batchCopTask, 0)
-	locs, err := cache.BatchLocateKeyRanges(context.TODO(), tableID, indexID, keyRanges.ToRanges())
+	ret, err := cache.BatchLocateKeyRanges(context.TODO(), tableID, indexID, keyRanges.ToRanges())
 	if err != nil {
 		return nil, err
 	}
-	if len(locs) == 0 {
+	if len(ret) == 0 {
 		return nil, errors.New("No shard info found")
 	}
 
 	storeShard := make(map[string][]*coprocessor.ShardInfo)
-	for _, loc := range locs {
+	for _, shard := range ret {
 		// Always use the first local cache address as the store address.
-		if _, ok := storeShard[loc.localCacheAddrs[0]]; !ok {
-			storeShard[loc.localCacheAddrs[0]] = make([]*coprocessor.ShardInfo, 0)
+		if _, ok := storeShard[shard.localCacheAddrs[0]]; !ok {
+			storeShard[shard.localCacheAddrs[0]] = make([]*coprocessor.ShardInfo, 0)
 		}
-		storeShard[loc.localCacheAddrs[0]] = append(storeShard[loc.localCacheAddrs[0]], &coprocessor.ShardInfo{
-			ShardId:    loc.ShardID,
-			ShardEpoch: loc.Epoch,
-			Ranges:     loc.Ranges.ToPBRanges(),
+		storeShard[shard.localCacheAddrs[0]] = append(storeShard[shard.localCacheAddrs[0]], &coprocessor.ShardInfo{
+			ShardId:    shard.ShardID,
+			ShardEpoch: shard.Epoch,
+			Ranges:     shard.Ranges.ToPBRanges(),
 		})
 	}
 

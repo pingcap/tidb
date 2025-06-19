@@ -786,6 +786,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			builder.FullTextInfo.ExecutorID = e.idxPlans[0].ExplainID().String()
 
 			id := e.Table().Meta().ID
+			// Mock Range  [t_id, t_id +1) to scan the whole table.
 			startKey := tablecodec.EncodeTablePrefix(id)
 			endKey := tablecodec.EncodeTablePrefix(id + 1)
 			kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}

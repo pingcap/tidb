@@ -23,7 +23,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/kv"
-	tici "github.com/pingcap/tidb/pkg/tici"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"

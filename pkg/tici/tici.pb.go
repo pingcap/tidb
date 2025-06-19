@@ -18,7 +18,7 @@
 // 	protoc        v5.29.3
 // source: tici.proto
 
-package __
+package tici
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"

@@ -18,7 +18,7 @@
 // - protoc             v5.29.3
 // source: indexer.proto
 
-package __
+package tici
 
 import (
 	context "context"
