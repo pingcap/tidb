@@ -257,7 +257,7 @@ func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, conditions 
 func (p *propConstSolver) Destory() {
 	p.basePropConstSolver.Clear()
 	clear(p.conditions)
-	basePropConstSolverPool.Put(p.basePropConstSolver)
+	basePropConstSolverPool.Put(&p.basePropConstSolver)
 	propConstSolverPool.Put(p)
 }
 
