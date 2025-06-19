@@ -159,7 +159,7 @@ func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.Lo
 }
 
 // CanPushToCopImpl checks whether the logical plan can be pushed to coprocessor.
-func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bool) bool {
+func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool {
 	p := lp.GetBaseLogicalPlan().(*BaseLogicalPlan)
 	ret := true
 	for _, ch := range p.Children() {
@@ -196,25 +196,23 @@ func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp, true)
+			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp)
 		case *LogicalSort:
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp, true)
+			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp)
 		case *LogicalProjection:
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
+			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp)
 		case *LogicalExpand:
 			// Expand itself only contains simple col ref and literal projection. (always ok, check its child)
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
-		case *LogicalTableDual:
-			return storeTp == kv.TiFlash && considerDual
+			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp)
 		case *LogicalAggregation, *LogicalSelection, *LogicalJoin, *LogicalWindow:
 			if storeTp != kv.TiFlash {
 				return false
