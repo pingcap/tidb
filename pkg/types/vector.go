@@ -220,6 +220,12 @@ func ZeroCopyDeserializeVectorFloat32(b []byte) (VectorFloat32, []byte, error) {
 
 // ParseVectorFloat32 parses a string into a vector.
 func ParseVectorFloat32(s string) (VectorFloat32, error) {
+	// issue #57143 jsoniter parse null will return as []
+	// Trim whitespace and check for null string and reject it
+	if strings.TrimSpace(s) == "null" {
+		return ZeroVectorFloat32, errors.Errorf("Invalid vector text: %s", s)
+	}
+
 	var values []float32
 	var valueError error
 	// We explicitly use a JSON float parser to reject other JSON types.
