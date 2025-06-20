@@ -1678,7 +1678,7 @@ var defaultSysVars = []*SysVar{
 		MaxValue:                math.MaxInt32,
 		IsHintUpdatableVerified: false,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-			timeoutMS := tidbOptPositiveInt32(s, 0)
+			timeoutMS := tidbOptPositiveInt32(s, 200)
 			vars.LoadBindingTimeout = uint64(timeoutMS)
 			return nil
 		}},
