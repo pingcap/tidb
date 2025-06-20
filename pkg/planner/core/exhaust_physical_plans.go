@@ -3880,7 +3880,10 @@ func exhaustPhysicalPlans4LogicalSort(lp base.LogicalPlan, prop *property.Physic
 	} else if prop.TaskTp == property.MppTaskType {
 		if logicalop.CanPushToCopImpl(&ls.BaseLogicalPlan, kv.TiFlash) {
 			ps := getNominalSortSimple(ls, prop)
-			return []base.PhysicalPlan{ps}, true, nil
+			if ps != nil {
+				return []base.PhysicalPlan{ps}, true, nil
+			}
+			return nil, true, nil
 		}
 	}
 	return nil, true, nil
