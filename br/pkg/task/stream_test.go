@@ -27,7 +27,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/stretchr/testify/require"
@@ -230,10 +229,10 @@ func TestGetExternalStorageOptions(t *testing.T) {
 	require.NotNil(t, options.HTTPClient)
 }
 
-func TestBuildKeyRangesFromRewriteRules(t *testing.T) {
+func TestBuildKeyRangesFromSchemasReplace(t *testing.T) {
 	testCases := []struct {
 		name                  string
-		rewriteRules          map[int64]*restoreutils.RewriteRules
+		schemasReplace        *stream.SchemasReplace
 		snapshotRange         [2]int64
 		expectedRangeCount    int
 		expectedLogMessage    string
@@ -241,14 +240,20 @@ func TestBuildKeyRangesFromRewriteRules(t *testing.T) {
 	}{
 		{
 			name: "with valid snapshot range and log restore tables",
-			rewriteRules: map[int64]*restoreutils.RewriteRules{
-				// snapshot tables (within range [100, 200))
-				150: {NewTableID: 150},
-				160: {NewTableID: 160},
-				// log restore tables (outside range)
-				300: {NewTableID: 300},
-				301: {NewTableID: 301},
-				302: {NewTableID: 302},
+			schemasReplace: &stream.SchemasReplace{
+				DbReplaceMap: map[string]*stream.DBReplaceInfo{
+					"test_db": {
+						Name:        "test_db",
+						FilteredOut: false,
+						TableMap: map[int64]*stream.TableReplaceInfo{
+							// snapshot tables (within range [100, 200))
+							150: {TableID: 150, Name: "table1", FilteredOut: false, PartitionMap: map[int64]int64{}},
+							160: {TableID: 160, Name: "table2", FilteredOut: false, PartitionMap: map[int64]int64{}},
+							// log restore tables (outside range)
+							300: {TableID: 300, Name: "table3", FilteredOut: false, PartitionMap: map[int64]int64{301: 301, 302: 302}},
+						},
+					},
+				},
 			},
 			snapshotRange:         [2]int64{100, 200},
 			expectedRangeCount:    2, // snapshot range + log restore range
@@ -256,9 +261,17 @@ func TestBuildKeyRangesFromRewriteRules(t *testing.T) {
 		},
 		{
 			name: "with valid snapshot range, no log restore tables",
-			rewriteRules: map[int64]*restoreutils.RewriteRules{
-				150: {NewTableID: 150},
-				160: {NewTableID: 160},
+			schemasReplace: &stream.SchemasReplace{
+				DbReplaceMap: map[string]*stream.DBReplaceInfo{
+					"test_db": {
+						Name:        "test_db",
+						FilteredOut: false,
+						TableMap: map[int64]*stream.TableReplaceInfo{
+							150: {TableID: 150, Name: "table1", FilteredOut: false, PartitionMap: map[int64]int64{}},
+							160: {TableID: 160, Name: "table2", FilteredOut: false, PartitionMap: map[int64]int64{}},
+						},
+					},
+				},
 			},
 			snapshotRange:         [2]int64{100, 200},
 			expectedRangeCount:    1, // only snapshot range
@@ -266,18 +279,28 @@ func TestBuildKeyRangesFromRewriteRules(t *testing.T) {
 		},
 		{
 			name: "without valid snapshot range",
-			rewriteRules: map[int64]*restoreutils.RewriteRules{
-				150: {NewTableID: 150},
-				160: {NewTableID: 160},
-				300: {NewTableID: 300},
+			schemasReplace: &stream.SchemasReplace{
+				DbReplaceMap: map[string]*stream.DBReplaceInfo{
+					"test_db": {
+						Name:        "test_db",
+						FilteredOut: false,
+						TableMap: map[int64]*stream.TableReplaceInfo{
+							150: {TableID: 150, Name: "table1", FilteredOut: false, PartitionMap: map[int64]int64{}},
+							160: {TableID: 160, Name: "table2", FilteredOut: false, PartitionMap: map[int64]int64{}},
+							300: {TableID: 300, Name: "table3", FilteredOut: false, PartitionMap: map[int64]int64{}},
+						},
+					},
+				},
 			},
 			snapshotRange:         [2]int64{},
 			expectedRangeCount:    1, // fallback range covering all tables
 			hasValidSnapshotRange: false,
 		},
 		{
-			name:                  "empty rewrite rules",
-			rewriteRules:          map[int64]*restoreutils.RewriteRules{},
+			name: "empty schemas replace",
+			schemasReplace: &stream.SchemasReplace{
+				DbReplaceMap: map[string]*stream.DBReplaceInfo{},
+			},
 			snapshotRange:         [2]int64{100, 200},
 			expectedRangeCount:    1, // only snapshot range
 			hasValidSnapshotRange: true,
@@ -294,7 +317,7 @@ func TestBuildKeyRangesFromRewriteRules(t *testing.T) {
 				},
 			}
 
-			keyRanges := buildKeyRangesFromRewriteRules(tc.rewriteRules, cfg)
+			keyRanges := buildKeyRangesFromSchemasReplace(tc.schemasReplace, cfg)
 			require.Equal(t, tc.expectedRangeCount, len(keyRanges))
 
 			// Verify that all ranges are properly formed (start < end)
