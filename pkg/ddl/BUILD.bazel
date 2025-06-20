@@ -76,6 +76,7 @@ go_library(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl/copr",
         "//pkg/ddl/ingest",
         "//pkg/ddl/label",
