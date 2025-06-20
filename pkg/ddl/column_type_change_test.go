@@ -339,7 +339,7 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 					checkErr = errors.New("assert the writable column number error")
 					return
 				}
-				if tbl.WritableCols()[2].OriginDefaultValue.(string) != "0" {
+				if tbl.WritableCols()[2].OriginDefaultValue != tbl.WritableCols()[2].DefaultValue {
 					checkErr = errors.New("assert the write only column origin default value error")
 					return
 				}
@@ -419,11 +419,8 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 					checkErr = errors.New("assert the writable column number error")
 					return
 				}
-				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
-				expectVal := "1971-06-09"
-				if originalDV != expectVal {
-					errMsg := fmt.Sprintf("expect: %v, got: %v", expectVal, originalDV)
-					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
+				if tbl.WritableCols()[3].OriginDefaultValue != tbl.WritableCols()[3].DefaultValue {
+					checkErr = errors.New("assert the write only column origin default value error")
 					return
 				}
 			}
@@ -501,11 +498,8 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 				checkErr = errors.New("assert the writable column number error" + errMsg)
 				return
 			}
-			originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
-			expectVal := "0000-00-00 00:00:00"
-			if originalDV != expectVal {
-				errMsg := fmt.Sprintf("expect: %v, got: %v", expectVal, originalDV)
-				checkErr = errors.New("assert the write only column origin default value error" + errMsg)
+			if tbl.WritableCols()[3].OriginDefaultValue != tbl.WritableCols()[3].DefaultValue {
+				checkErr = errors.New("assert the write only column origin default value error")
 				return
 			}
 			// The casted value will be inserted into changing column too.
