@@ -1046,8 +1046,8 @@ func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any)
 		mysql.SystemDB, mysql.GlobalVariablesTable, name)
 	terror.MustNil(err)
 	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
+	terror.MustNil(rs.Next(ctx, req))
+	terror.MustNil(rs.Close())
 	if req.NumRows() != 0 {
 		return
 	}
