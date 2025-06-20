@@ -270,7 +270,7 @@ func (s *propConstSolver) Clear() {
 // d = 4 & 2 = c & c = d + 2 & b = 1 & a = 4, we propagate b = 1 and a = 4 and pick eq cond c = 2 and d = 4
 // d = 4 & 2 = c & false & b = 1 & a = 4, we propagate c = 2 and d = 4, and do constant folding: c = d + 2 will be folded as false.
 func (s *propConstSolver) propagateConstantEQ() {
-	intest.Assert(len(s.eqMapper) == 0)
+	intest.Assert(len(s.eqMapper) == 0 && s.eqMapper != nil)
 	visited := make([]bool, len(s.conditions))
 	cols := make([]*Column, 0, 4)
 	cons := make([]Expression, 0, 4)
@@ -772,9 +772,10 @@ func propagateConstantDNF(ctx exprctx.ExprContext, conds ...Expression) []Expres
 func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Expression,
 	outerSchema, innerSchema *Schema, nullSensitive bool) ([]Expression, []Expression) {
 	solver := &propOuterJoinConstSolver{
-		outerSchema:   outerSchema,
-		innerSchema:   innerSchema,
-		nullSensitive: nullSensitive,
+		basePropConstSolver: newBasePropConstSolver(),
+		outerSchema:         outerSchema,
+		innerSchema:         innerSchema,
+		nullSensitive:       nullSensitive,
 	}
 	solver.colMapper = make(map[int64]int)
 	solver.ctx = ctx
