@@ -39,7 +39,7 @@ type SchedulerRule struct {
 	LabelKeys []string            `json:"label_keys"`
 	Labels    []map[string]string `json:"labels"`
 	RuleType  string              `json:"rule_type"`
-	Data      interface{}         `json:"data"`
+	Data      any                 `json:"data"`
 }
 
 // KeyRange represents a key range in the scheduler rule data
@@ -49,8 +49,8 @@ type KeyRange struct {
 }
 
 const (
-	EMPTY_RANGE_START = ""
-	EMPTY_RANGE_END   = ""
+	EmptyRangeStart = ""
+	EmptyRangeEnd   = ""
 )
 
 // getPDSchedulerRules fetches the current scheduler rules from PD
@@ -166,7 +166,7 @@ func compareKeyRanges(t *testing.T, baselineRanges, currentRanges map[string][]K
 					t.Logf("    Range %d: %s -> %s", i+1, kr.StartKey, kr.EndKey)
 
 					// Check if this is a full range pause (empty start/end keys)
-					if kr.StartKey == EMPTY_RANGE_START && kr.EndKey == EMPTY_RANGE_END {
+					if kr.StartKey == EmptyRangeStart && kr.EndKey == EmptyRangeEnd {
 						t.Logf("    -> FULL RANGE PAUSE detected (empty start/end keys)")
 					} else {
 						t.Logf("    -> FINE-GRAINED PAUSE detected (specific key range)")
@@ -408,7 +408,7 @@ func TestLogRestoreFullSchedulerPausing(t *testing.T) {
 				if baselineRanges, exists := baselineKeyRanges[ruleKey]; exists {
 					newRanges := findNewKeyRanges(baselineRanges, currentRanges)
 					for _, newRange := range newRanges {
-						if newRange.StartKey == EMPTY_RANGE_START && newRange.EndKey == EMPTY_RANGE_END {
+						if newRange.StartKey == EmptyRangeStart && newRange.EndKey == EmptyRangeEnd {
 							t.Log("CONFIRMED: Full range scheduler pausing detected (empty start/end keys)")
 						}
 					}
