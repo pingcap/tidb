@@ -15,8 +15,20 @@
 package exportloopref
 
 import (
+<<<<<<< HEAD:build/linter/exportloopref/analyzer.go
 	"github.com/kyoh86/exportloopref"
 	"github.com/pingcap/tidb/build/linter/util"
+=======
+	"fmt"
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/stretchr/testify/require"
+>>>>>>> 284a3ee23c7 (importinto: use same type context flag setting as insert (#58606)):pkg/executor/select_test.go
 )
 
 // Analyzer is the analyzer struct of exportloopref.
@@ -24,4 +36,38 @@ var Analyzer = exportloopref.Analyzer
 
 func init() {
 	util.SkipAnalyzerByConfig(Analyzer)
+}
+
+func TestImportIntoShouldHaveSameFlagsAsInsert(t *testing.T) {
+	insertStmt := &ast.InsertStmt{}
+	importStmt := &ast.ImportIntoStmt{}
+	insertCtx := mock.NewContext()
+	importCtx := mock.NewContext()
+	insertCtx.BindDomain(&domain.Domain{})
+	importCtx.BindDomain(&domain.Domain{})
+	for _, modeStr := range []string{
+		"",
+		"IGNORE_SPACE",
+		"STRICT_TRANS_TABLES",
+		"STRICT_ALL_TABLES",
+		"ALLOW_INVALID_DATES",
+		"NO_ZERO_IN_DATE",
+		"NO_ZERO_DATE",
+		"NO_ZERO_IN_DATE,STRICT_ALL_TABLES",
+		"NO_ZERO_DATE,STRICT_ALL_TABLES",
+		"NO_ZERO_IN_DATE,NO_ZERO_DATE,STRICT_ALL_TABLES",
+	} {
+		t.Run(fmt.Sprintf("mode %s", modeStr), func(t *testing.T) {
+			mode, err := mysql.GetSQLMode(modeStr)
+			require.NoError(t, err)
+			insertCtx.GetSessionVars().SQLMode = mode
+			require.NoError(t, executor.ResetContextOfStmt(insertCtx, insertStmt))
+			importCtx.GetSessionVars().SQLMode = mode
+			require.NoError(t, executor.ResetContextOfStmt(importCtx, importStmt))
+
+			insertTypeCtx := insertCtx.GetSessionVars().StmtCtx.TypeCtx()
+			importTypeCtx := importCtx.GetSessionVars().StmtCtx.TypeCtx()
+			require.EqualValues(t, insertTypeCtx.Flags(), importTypeCtx.Flags())
+		})
+	}
 }
