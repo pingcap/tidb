@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session/syssession"
+	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
@@ -173,10 +174,10 @@ func (f *faultSessionPool) setFault(ft fault) {
 }
 
 func TestGetSessionWithFault(t *testing.T) {
-	origAttachStats, origDetachStats := ttlworker.AttachStatsCollector, ttlworker.DetachStatsCollector
+	origAttachStats, origDetachStats := statshandle.AttachStatsCollector, statshandle.DetachStatsCollector
 	defer func() {
-		ttlworker.AttachStatsCollector = origAttachStats
-		ttlworker.DetachStatsCollector = origDetachStats
+		statshandle.AttachStatsCollector = origAttachStats
+		statshandle.DetachStatsCollector = origDetachStats
 	}()
 
 	_, dom := testkit.CreateMockStoreAndDomain(t)

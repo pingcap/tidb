@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/testkit/testflag"
@@ -106,10 +107,10 @@ func sessionFactoryWithTimeout(t *testing.T, from any, timeout time.Duration) fu
 }
 
 func TestWithSession(t *testing.T) {
-	origAttachStats, origDetachStats := ttlworker.AttachStatsCollector, ttlworker.DetachStatsCollector
+	origAttachStats, origDetachStats := statshandle.AttachStatsCollector, statshandle.DetachStatsCollector
 	defer func() {
-		ttlworker.AttachStatsCollector = origAttachStats
-		ttlworker.DetachStatsCollector = origDetachStats
+		statshandle.AttachStatsCollector = origAttachStats
+		statshandle.DetachStatsCollector = origDetachStats
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
