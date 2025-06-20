@@ -10,7 +10,11 @@ go_test(
     data = glob(["testdata/**"]),
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 17,
+=======
+    shard_count = 20,
+>>>>>>> c3acc967319 (planner: fix a estimation case when index.hist.NDV is greater than index.topN.num. (#61793))
     deps = [
         "//pkg/domain",
         "//pkg/executor",

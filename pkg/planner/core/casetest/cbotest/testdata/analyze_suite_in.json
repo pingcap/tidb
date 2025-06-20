@@ -255,5 +255,27 @@
       // Should choose idx_b instead of idx_a, because idx_b would scan only 1 row.
       "explain format = 'brief' select * from t where a >= 999900 order by b limit 1"
     ]
+<<<<<<< HEAD
+=======
+  },
+  {
+    "name": "TestIssue59563",
+    "cases": [
+      "EXPLAIN format = 'verbose' SELECT * FROM  `tbl_cardcore_transaction` `transactio0_` WHERE `transactio0_`.`period` = '202502' AND `transactio0_`.`account_number` = '1901040107462200' ORDER BY `transactio0_`.`transaction_status`, `transactio0_`.`account_number`, `transactio0_`.`entry_date` ASC, `transactio0_`.`id` ASC;"
+    ]
+  },
+  {
+    "name": "TestIssue61389",
+    "cases": [
+      "EXPLAIN format=brief select /*+ nth_plan(5) */ * from `t19f3e4f1`  where  `colc864` in ( select  `colc864`     from  `t19f3e4f1`  where       `colaadb` in (      select     `colf2af`\n from   `t0da79f8d`  where  not ( `t19f3e4f1`.`colc864` <> null )  )  ) limit 2837;",
+      "select /*+ nth_plan(5) */ * from `t19f3e4f1`  where  `colc864` in ( select  `colc864`     from  `t19f3e4f1`  where       `colaadb` in (      select     `colf2af`\n from   `t0da79f8d`  where  not ( `t19f3e4f1`.`colc864` <> null )  )  ) limit 2837;"
+    ]
+  },
+  {
+    "name": "TestIssue61792",
+    "cases": [
+      "explain select * from tbl_cardcore_statement s where  s.latest_stmt_print_date = '2024-10-16';"
+    ]
+>>>>>>> c3acc967319 (planner: fix a estimation case when index.hist.NDV is greater than index.topN.num. (#61793))
   }
 ]
