@@ -434,7 +434,7 @@ func refineCETrace(sctx base.PlanContext) {
 		return cmp.Compare(i.RowCount, j.RowCount)
 	})
 	traceRecords := stmtCtx.OptimizerCETrace
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	for _, rec := range traceRecords {
 		tbl, _ := infoschema.FindTableByTblOrPartID(is, rec.TableID)
 		if tbl != nil {

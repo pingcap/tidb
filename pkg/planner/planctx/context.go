@@ -45,10 +45,10 @@ type PlanContext interface {
 	GetStore() kv.Storage
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
-	// GetDomainInfoSchema returns the latest information schema in domain
-	// Different with `domain.InfoSchema()`, the information schema returned by this method
-	// includes the temporary table definitions stored in session
-	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
+	// GetLatestInfoSchema returns the latest information schema.
+	// except schema of physical schema objects, the information schema returned
+	// also includes the temporary table definitions stored in session.
+	GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema
 	// GetInfoSchema returns the current infoschema
 	GetInfoSchema() infoschema.MetaOnlyInfoSchema
 	// UpdateColStatsUsage updates the column stats usage.
