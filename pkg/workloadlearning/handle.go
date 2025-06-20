@@ -68,7 +68,7 @@ const (
 )
 
 const (
-	workloadRepoQuery = "select summary_end.DIGEST, summary_end.DIGEST_TEXT, summary_end.BINARY_PLAN, " +
+	workloadQueryTemplate = "select summary_end.DIGEST, summary_end.DIGEST_TEXT, summary_end.BINARY_PLAN, " +
 		"if(summary_start.EXEC_COUNT is NULL, summary_end.EXEC_COUNT, summary_end.EXEC_COUNT - summary_start.EXEC_COUNT) as EXEC_COUNT FROM " +
 		"(SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT " +
 		"FROM %?.HIST_TIDB_STATEMENTS_STATS WHERE STMT_TYPE = 'Select' AND SNAP_ID = %?) summary_end " +
@@ -160,7 +160,7 @@ func (handle *Handle) analyzeBasedOnStatementStats(infoSchema infoschema.InfoSch
 			zap.Error(err))
 		return nil, startTime, endTime
 	}
-	sql, err := sqlescape.EscapeSQL(workloadRepoQuery, mysql.WorkloadSchema, endSnapshotID, mysql.WorkloadSchema, startSnapshotID)
+	sql, err := sqlescape.EscapeSQL(workloadQueryTemplate, mysql.WorkloadSchema, endSnapshotID, mysql.WorkloadSchema, startSnapshotID)
 	if err != nil {
 		logutil.ErrVerboseLogger().Warn("Failed to construct SQL query for ClusterTableTiDBStatementsStats",
 			zap.Uint64("end_snapshot_id", endSnapshotID),
