@@ -85,13 +85,13 @@ func hasJoinEqConditionCoveringUK(keys []expression.KeyInfo, joinPairs [][2]*exp
 // collectDataSourceUniqueKeys recursively traverses the logical plan tree to find all DataSource nodes
 // and returns their primary key or unique key information (PKOrUK).
 func collectDataSourceUniqueKeys(p base.LogicalPlan) [][]expression.KeyInfo {
-	var allKeys [][]expression.KeyInfo
 	if ds, ok := p.(*logicalop.DataSource); ok {
 		if keys := ds.Schema().PKOrUK; keys != nil {
-			allKeys = append(allKeys, keys)
+			return [][]expression.KeyInfo{keys}
 		}
-		return allKeys
+		return nil
 	}
+	allKeys := make([][]expression.KeyInfo, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		if childKeys := collectDataSourceUniqueKeys(child); childKeys != nil {
 			allKeys = append(allKeys, childKeys...)
@@ -149,7 +149,7 @@ func checkAllJoinsUniqueByEqCondition(p base.LogicalPlan) bool {
 	if len(join.EqualConditions) == 0 {
 		return false
 	}
-	var joinPairs [][2]*expression.Column
+	joinPairs := make([][2]*expression.Column, 0, len(join.EqualConditions))
 	for _, cond := range join.EqualConditions {
 		if cond.FuncName.L != ast.EQ {
 			return false
