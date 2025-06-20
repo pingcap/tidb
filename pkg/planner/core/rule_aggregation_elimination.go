@@ -200,7 +200,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 			break
 		}
 	}
-	allowEliminateAgg4Join := fixcontrol.GetBoolWithDefault(agg.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix61556, false)
+	allowEliminateAgg4Join := fixcontrol.GetBoolWithDefault(agg.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix61556, true)
 	// Handle the multi-table join case: check if a unique key from a base table is covered and preserved through all joins.
 	if !coveredByUniqueKey && allowEliminateAgg4Join {
 		// The GROUP BY columns may cover a unique key from a base table.
