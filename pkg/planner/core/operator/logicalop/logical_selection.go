@@ -191,13 +191,13 @@ func (p *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base
 func (p *LogicalSelection) PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	// it is only test
 	pp := p.Self().(*LogicalSelection)
-	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	intest.AssertFunc(func() bool {
-		expected := make([]string, 0, len(p.Conditions))
-		for _, cond := range p.Conditions {
+		ectx := p.SCtx().GetExprCtx().GetEvalCtx()
+		expected := make([]string, 0, len(pp.Conditions))
+		for _, cond := range pp.Conditions {
 			expected = append(expected, cond.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
-		actualExprs := utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.Conditions)
+		actualExprs := utilfuncp.ApplyPredicateSimplification(p.SCtx(), pp.Conditions)
 		actual := make([]string, 0, len(actualExprs))
 		for _, cond := range actualExprs {
 			actual = append(actual, cond.StringWithCtx(ectx, errors.RedactLogDisable))
