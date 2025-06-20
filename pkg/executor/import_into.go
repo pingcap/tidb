@@ -279,11 +279,11 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	selectedChunkCh := make(chan importer.QueryChunk, 1)
 	ti.SetSelectedChunkCh(selectedChunkCh)
 
-	var importResult *importer.JobImportResult
+	var importedRows int64
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
 		var err error
-		importResult, err = ti.ImportSelectedRows(egCtx, newSCtx)
+		importedRows, err = ti.ImportSelectedRows(egCtx, newSCtx)
 		return err
 	})
 	eg.Go(func() error {
@@ -323,14 +323,14 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 		return err
 	}
 
-	if err2 = importer.FlushTableStats(ctx, newSCtx, e.controller.TableInfo.ID, importResult); err2 != nil {
+	if err2 = importer.FlushTableStats(ctx, newSCtx, e.controller.TableInfo.ID, importedRows); err2 != nil {
 		logutil.Logger(ctx).Error("flush stats failed", zap.Error(err2))
 	}
 
 	stmtCtx := e.userSctx.GetSessionVars().StmtCtx
-	stmtCtx.SetAffectedRows(importResult.Affected)
+	stmtCtx.SetAffectedRows(uint64(importedRows))
 	// TODO: change it after spec is ready.
-	stmtCtx.SetMessage(fmt.Sprintf("Records: %d, ID: %s", importResult.Affected, importID))
+	stmtCtx.SetMessage(fmt.Sprintf("Records: %d, ID: %s", importedRows, importID))
 	return nil
 }
 

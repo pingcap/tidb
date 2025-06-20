@@ -532,6 +532,11 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 				return annotateErr(err, allPeers[i], "when send data")
 			}
 		}
+
+		if local.collector != nil {
+			local.collector.Add(size, int64(count))
+		}
+
 		failpoint.Inject("afterFlushKVs", func() {
 			log.FromContext(ctx).Info(fmt.Sprintf("afterFlushKVs count=%d,size=%d", count, size))
 		})

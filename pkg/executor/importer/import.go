@@ -1540,12 +1540,6 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 	return DataSourceTypeFile
 }
 
-// JobImportResult is the result of the job import.
-type JobImportResult struct {
-	Affected uint64
-	Warnings []contextutil.SQLWarn
-}
-
 // GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.
 // target node is current node if it's server-disk import, import from query or disttask is disabled,
 // else it's the node managed by disttask.

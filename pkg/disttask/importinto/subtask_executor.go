@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -35,7 +36,7 @@ import (
 // MiniTaskExecutor is the interface for a minimal task executor.
 // exported for testing.
 type MiniTaskExecutor interface {
-	Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error
+	Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter, collector execute.Collector) error
 }
 
 // importMinimalTaskExecutor is a minimal task executor for IMPORT INTO.
@@ -51,7 +52,11 @@ func newImportMinimalTaskExecutor0(t *importStepMinimalTask) MiniTaskExecutor {
 	}
 }
 
-func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error {
+func (e *importMinimalTaskExecutor) Run(
+	ctx context.Context,
+	dataWriter, indexWriter backend.EngineWriter,
+	collector execute.Collector,
+) error {
 	logger := logutil.BgLogger().With(zap.Stringer("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
 	logger.Info("execute chunk")
 	failpoint.Inject("beforeSortChunk", func() {})
@@ -71,6 +76,7 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 			sharedVars.IndexEngine,
 			logger,
 			checksum,
+			collector,
 		); err != nil {
 			return err
 		}
@@ -83,6 +89,7 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 			indexWriter,
 			logger,
 			checksum,
+			collector,
 		); err != nil {
 			return err
 		}

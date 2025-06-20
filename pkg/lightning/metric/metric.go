@@ -33,6 +33,7 @@ const (
 	StateRestored       = "restored"      // source data bytes restored during restore engine
 	StateRestoreWritten = "written"       // kv bytes written during restore engine
 	StateImported       = "imported"      // kv bytes imported during import engine
+	StateMerged         = "merged"        // kv bytes merged during merge-sort step
 
 	ProgressPhaseTotal   = "total"   // total restore progress(not include post-process, like checksum and analyze)
 	ProgressPhaseRestore = "restore" // restore engine progress
