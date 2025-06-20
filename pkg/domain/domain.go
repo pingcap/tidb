@@ -175,10 +175,7 @@ type Domain struct {
 	// Otherwise, the session will be leaked. Because there is a strong reference from the domain to the session.
 	// Deprecated: Use `advancedSysSessionPool` instead.
 	sysSessionPool util.DestroyableSessionPool
-	// Sessions from sysSessionPool are not set with stat collector, thus we can't update the row count
-	// after import finished. So we create a separate session pool for dist task.
-	distTaskSessionPool util.DestroyableSessionPool
-	exit                chan struct{}
+	exit           chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
 	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the client to the autoid service.
@@ -1343,24 +1340,20 @@ func (do *Domain) Close() {
 
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
-// NewDomain creates a new domain for test.
-// Should not create multiple domains for the same store.
+// NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
 	return NewDomainWithEtcdClient(store, schemaLease, statsLease, dumpFileGcLease, factory, nil)
 }
 
 // NewDomainWithEtcdClient creates a new domain with etcd client. Should not create multiple domains for the same store.
-func NewDomainWithEtcdClient(
-	store kv.Storage,
-	schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration,
-	factory pools.Factory,
-	etcdClient *clientv3.Client) *Domain {
+func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory, etcdClient *clientv3.Client) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
 	capacity := 200 // capacity of the sysSessionPool size
-
-	createPool := func(cap int, factory pools.Factory) util.DestroyableSessionPool {
-		return util.NewSessionPool(
-			cap, factory,
+	do := &Domain{
+		store: store,
+		exit:  make(chan struct{}),
+		sysSessionPool: util.NewSessionPool(
+			capacity, factory,
 			func(r pools.Resource) {
 				_, ok := r.(sessionctx.Context)
 				intest.Assert(ok)
@@ -1379,18 +1372,11 @@ func NewDomainWithEtcdClient(
 				intest.Assert(r != nil)
 				infosync.DeleteInternalSession(r)
 			},
-		)
-	}
-
-	do := &Domain{
-		store:               store,
-		exit:                make(chan struct{}),
-		sysSessionPool:      createPool(capacity, factory),
-		distTaskSessionPool: createPool(16, factory),
-		statsLease:          statsLease,
-		schemaLease:         schemaLease,
-		slowQuery:           newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
-		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
+		),
+		statsLease:        statsLease,
+		schemaLease:       schemaLease,
+		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
+		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
 		mdlCheckTableInfo: &mdlCheckTableInfo{
 			mu:         sync.Mutex{},
 			jobsVerMap: make(map[int64]int64),
@@ -1782,7 +1768,7 @@ func (do *Domain) InitDistTaskLoop() error {
 		}
 	})
 
-	taskManager := storage.NewTaskManager(do.distTaskSessionPool)
+	taskManager := storage.NewTaskManager(do.sysSessionPool)
 	var serverID string
 	if intest.InTest {
 		do.InitInfo4Test()
