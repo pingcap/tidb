@@ -374,7 +374,7 @@ func mergeContinuousKeyRanges(schemaKeyRanges []keyRangeMayExclude) []kv.KeyRang
 // It contains all non system table key ranges and meta data key ranges.
 // The time complexity is O(nlogn).
 func getFlashbackKeyRanges(ctx context.Context, sess sessionctx.Context, flashbackTS uint64) ([]kv.KeyRange, error) {
-	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	schemas := is.AllSchemas()
 
 	// get snapshot schema IDs.

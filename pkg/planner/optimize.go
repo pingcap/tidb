@@ -622,7 +622,7 @@ func hypoIndexChecker(ctx context.Context, is infoschema.InfoSchema) func(db, tb
 // queryPlanCost returns the plan cost of this node, which is mainly for the Index Advisor.
 func queryPlanCost(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error) {
 	nodeW := resolve.NewNodeW(stmt)
-	plan, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	plan, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return 0, err
 	}
@@ -647,7 +647,7 @@ func calculatePlanDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDi
 		return "", err
 	}
 
-	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return "", err
 	}
@@ -672,7 +672,7 @@ func recordRelevantOptVarsAndFixes(sctx sessionctx.Context, stmt ast.StmtNode) (
 		return nil, nil, err
 	}
 
-	_, _, err = Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	_, _, err = Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -700,7 +700,7 @@ func genBriefPlanWithSCtx(sctx sessionctx.Context, stmt ast.StmtNode) (planDiges
 		return "", "", nil, err
 	}
 
-	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return "", "", nil, err
 	}
