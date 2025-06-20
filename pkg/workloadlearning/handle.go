@@ -67,6 +67,16 @@ const (
 	histSnapshotsTable  = "HIST_SNAPSHOTS"
 )
 
+const (
+	workloadRepoQuery = "select summary_end.DIGEST, summary_end.DIGEST_TEXT, summary_end.BINARY_PLAN, " +
+		"if(summary_start.EXEC_COUNT is NULL, summary_end.EXEC_COUNT, summary_end.EXEC_COUNT - summary_start.EXEC_COUNT) as EXEC_COUNT FROM " +
+		"(SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT " +
+		"FROM %?.HIST_TIDB_STATEMENTS_STATS WHERE STMT_TYPE = 'Select' AND SNAP_ID = %?) summary_end " +
+		"left join (SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT " +
+		"FROM %?.HIST_TIDB_STATEMENTS_STATS WHERE STMT_TYPE = 'Select' AND SNAP_ID = %?) summary_start " +
+		"on summary_end.DIGEST = summary_start.DIGEST"
+)
+
 // Handle The entry point for all workload-based learning related tasks
 type Handle struct {
 	sysSessionPool util.DestroyableSessionPool
@@ -150,17 +160,16 @@ func (handle *Handle) analyzeBasedOnStatementStats(infoSchema infoschema.InfoSch
 			zap.Error(err))
 		return nil, startTime, endTime
 	}
-	sql := new(strings.Builder)
-	sql.WriteString("select summary_end.DIGEST, summary_end.DIGEST_TEXT, summary_end.BINARY_PLAN, " +
-		"if(summary_start.EXEC_COUNT is NULL, summary_end.EXEC_COUNT, summary_end.EXEC_COUNT - summary_start.EXEC_COUNT) as EXEC_COUNT FROM")
-	sqlescape.MustFormatSQL(sql, " (SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT "+
-		"FROM %?.HIST_TIDB_STATEMENTS_STATS WHERE STMT_TYPE = 'Select' AND SNAP_ID = %?) summary_end", mysql.WorkloadSchema, endSnapshotID)
-	sqlescape.MustFormatSQL(sql, "left join (SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT "+
-		"FROM %?.HIST_TIDB_STATEMENTS_STATS WHERE STMT_TYPE = 'Select' AND SNAP_ID = %?) summary_start "+
-		"on summary_end.DIGEST = summary_start.DIGEST", mysql.WorkloadSchema, startSnapshotID)
-
+	sql, err := sqlescape.EscapeSQL(workloadRepoQuery, mysql.WorkloadSchema, endSnapshotID, mysql.WorkloadSchema, startSnapshotID)
+	if err != nil {
+		logutil.ErrVerboseLogger().Warn("Failed to construct SQL query for ClusterTableTiDBStatementsStats",
+			zap.Uint64("end_snapshot_id", endSnapshotID),
+			zap.Uint64("start_snapshot_id", startSnapshotID),
+			zap.Error(err))
+		return nil, startTime, endTime
+	}
 	// Step2.1: get statements stats record from ClusterTableTiDBStatementsStats
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql)
 	if err != nil {
 		logutil.ErrVerboseLogger().Warn("Failed to query CLUSTER_TIDB_STATEMENTS_STATS table",
 			zap.Time("end_time", endTime),
