@@ -48,6 +48,7 @@ var (
 	ErrPDInvalidResponse      = errors.Normalize("PD invalid response", errors.RFCCodeText("BR:PD:ErrPDInvalidResponse"))
 	ErrPDBatchScanRegion      = errors.Normalize("batch scan region", errors.RFCCodeText("BR:PD:ErrPDBatchScanRegion"))
 	ErrPDUnknownScatterResult = errors.Normalize("failed to wait region scattered", errors.RFCCodeText("BR:PD:ErrPDUknownScatterResult"))
+	ErrPDNotFullyScatter      = errors.Normalize("pd not fully scattered", errors.RFCCodeText("BR:PD:ErrPDNotFullyScatter"))
 	ErrPDSplitFailed          = errors.Normalize("failed to wait region splitted", errors.RFCCodeText("BR:PD:ErrPDUknownScatterResult"))
 
 	ErrBackupChecksumMismatch    = errors.Normalize("backup checksum mismatch", errors.RFCCodeText("BR:Backup:ErrBackupChecksumMismatch"))
