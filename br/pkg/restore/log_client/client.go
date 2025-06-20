@@ -887,8 +887,16 @@ func (rc *LogClient) RestoreKVFiles(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	var applyWg sync.WaitGroup
-	eg, ectx := errgroup.WithContext(ctx)
+	var (
+		applyWg  sync.WaitGroup
+		eg, ectx = errgroup.WithContext(ctx)
+
+		skipped    = metrics.KVApplyTasksEvents.WithLabelValues("skipped")
+		submitted  = metrics.KVApplyTasksEvents.WithLabelValues("submitted")
+		started    = metrics.KVApplyTasksEvents.WithLabelValues("started")
+		finished   = metrics.KVApplyTasksEvents.WithLabelValues("finished")
+		memApplied = metrics.KVLogFileEmittedMemory.WithLabelValues("2-applied")
+	)
 	applyFunc := func(files []*LogDataFileInfo, kvCount int64, size uint64) {
 		if len(files) == 0 {
 			return
@@ -897,16 +905,23 @@ func (rc *LogClient) RestoreKVFiles(
 		// because the tableID of files is the same.
 		rule, ok := rules[files[0].TableId]
 		if !ok {
+			skipped.Add(float64(len(files)))
 			onProgress(kvCount)
 			summary.CollectInt("FileSkip", len(files))
 			log.Debug("skip file due to table id not matched", zap.Int64("table-id", files[0].TableId))
 			skipFile += len(files)
 		} else {
+			submitted.Add(float64(len(files)))
 			applyWg.Add(1)
 			rc.logRestoreManager.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
+				started.Add(float64(len(files)))
 				fileStart := time.Now()
 				defer applyWg.Done()
 				defer func() {
+					for _, file := range files {
+						memApplied.Add(float64(file.Size()))
+					}
+					finished.Add(float64(len(files)))
 					onProgress(kvCount)
 					updateStats(uint64(kvCount), size)
 					summary.CollectInt("File", len(files))
