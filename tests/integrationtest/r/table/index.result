@@ -82,3 +82,25 @@ drop table if exists t;
 create table t (a int, b int, k varchar(255), primary key (a, b), key k (k));
 insert into t values (1, 1, 'abc                                                                                                                                ');
 drop table t;
+drop table if exists t;
+create table t (
+pid char(64) NOT NULL,
+another_id int NOT NULL,
+field varchar(255),
+PRIMARY KEY (`pid`) /*T![clustered_index] CLUSTERED */,
+KEY `idx` (`another_id`)
+);
+CREATE INDEX if not exists idx ON t (`another_id`);
+show warnings;
+Level	Code	Message
+Note	1061	Duplicate key name 'idx'
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `pid` char(64) NOT NULL,
+  `another_id` int NOT NULL,
+  `field` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`pid`) /*T![clustered_index] CLUSTERED */,
+  KEY `idx` (`another_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
