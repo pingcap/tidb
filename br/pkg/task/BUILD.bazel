@@ -135,7 +135,6 @@ go_test(
         "//br/pkg/restore/snap_client",
         "//br/pkg/restore/split",
         "//br/pkg/restore/tiflashrec",
-        "//br/pkg/restore/utils",
         "//br/pkg/storage",
         "//br/pkg/stream",
         "//br/pkg/utils",

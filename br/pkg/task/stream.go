@@ -1588,6 +1588,39 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
+	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(),
+		cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
+	// set up scheduler pausing before meta kv restore starts
+	var restoreSchedulersFunc pdutil.UndoFunc
+
+	// use fine-grained scheduler pausing if we have specific tables to restore (not full restore)
+	if cfg.ExplicitFilter {
+		keyRanges := buildKeyRangesFromSchemasReplace(schemasReplace, cfg)
+		if len(keyRanges) > 0 {
+			log.Info("using fine-grained scheduler pausing for log restore",
+				zap.Int("key-ranges-count", len(keyRanges)))
+			restoreSchedulersFunc, _, err = restore.FineGrainedRestorePreWork(ctx, mgr,
+				importModeSwitcher, keyRanges, cfg.Online, false)
+		} else {
+			log.Info("no key ranges to pause, skipping scheduler pausing")
+			restoreSchedulersFunc = func(context.Context) error { return nil }
+		}
+	} else {
+		log.Info("using full scheduler pausing for log restore (full restore)")
+		restoreSchedulersFunc, _, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, false)
+	}
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Failpoint for testing scheduler pausing behavior
+	failpoint.InjectCall("log-restore-scheduler-paused")
+
+	// Always run the post-work even on error, so we don't stuck in the import
+	// mode or emptied schedulers
+	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
+
 	updateStats := func(kvCount uint64, size uint64) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -1609,37 +1642,6 @@ func restoreStream(
 	if err := rangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
 		return errors.Trace(err)
 	}
-
-	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
-	// set up scheduler pausing after rewrite rules are built
-	var restoreSchedulersFunc pdutil.UndoFunc
-
-	// use fine-grained scheduler pausing if we have specific tables to restore (not full restore)
-	if cfg.ExplicitFilter && len(rewriteRules) > 0 {
-		keyRanges := buildKeyRangesFromRewriteRules(rewriteRules, cfg)
-		log.Info("using fine-grained scheduler pausing for log restore",
-			zap.Int("key-ranges-count", len(keyRanges)))
-		restoreSchedulersFunc, _, err = restore.FineGrainedRestorePreWork(ctx, mgr,
-			importModeSwitcher, keyRanges, cfg.Online, false)
-	} else {
-		log.Info("using full scheduler pausing for log restore (full restore)")
-		restoreSchedulersFunc, _, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, false)
-	}
-
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Failpoint for testing scheduler pausing behavior
-	failpoint.Inject("log-restore-scheduler-paused", func() {
-		log.Info("log restore scheduler pausing test point reached")
-		// This allows tests to capture scheduler state while schedulers are paused
-		// The test can use this moment to verify fine-grained vs full scheduler pausing
-	})
-
-	// Always run the post-work even on error, so we don't stuck in the import
-	// mode or emptied schedulers
-	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
 
 	logFilesIter, err := client.LoadDMLFiles(ctx)
 	if err != nil {
@@ -2274,20 +2276,26 @@ func isValidSnapshotRange(snapshotRange [2]int64) bool {
 	return snapshotRange != [2]int64{} && snapshotRange[0] > 0 && snapshotRange[1] > snapshotRange[0]
 }
 
-// buildKeyRangesFromRewriteRules creates key ranges for fine-grained scheduler pausing
-// It analyzes the new table IDs from rewrite rules to determine ranges:
+// buildKeyRangesFromSchemasReplace creates key ranges for fine-grained scheduler pausing
+// It analyzes the new table IDs from schemasReplace to determine ranges:
 // 1. Snapshot restore range: preallocated range stored in table mapping manager
 // 2. Log restore range: contiguous range allocated in one batch during log restore
-func buildKeyRangesFromRewriteRules(rewriteRules map[int64]*restoreutils.RewriteRules,
+func buildKeyRangesFromSchemasReplace(schemasReplace *stream.SchemasReplace,
 	cfg *LogRestoreConfig) [][2]kv.Key {
 	var ranges [][2]int64
 
 	// get preallocated range from snapshot restore
-	// try checkpoint first (works for both initial run and retry if checkpoints enabled),
-	// then fall back to table mapping manager (for initial run without checkpoints)
+	// try table mapping manager first (memory read), then checkpoint if needed (database read)
 	var snapshotRange [2]int64
-	if cfg.snapshotCheckpointMetaManager != nil {
-		// try to load from snapshot checkpoint metadata first
+
+	// first try table mapping manager (fast memory read)
+	snapshotRange = cfg.tableMappingManager.PreallocatedRange
+	if snapshotRange != [2]int64{} {
+		log.Info("using snapshot preallocated range from table mapping manager for scheduler pausing",
+			zap.Int64("start", snapshotRange[0]),
+			zap.Int64("end", snapshotRange[1]))
+	} else if cfg.snapshotCheckpointMetaManager != nil {
+		// fallback to checkpoint metadata if table mapping manager doesn't have the range
 		if snapshotMeta, err := cfg.snapshotCheckpointMetaManager.LoadCheckpointMetadata(context.Background()); err == nil && snapshotMeta.PreallocIDs != nil {
 			snapshotRange = [2]int64{snapshotMeta.PreallocIDs.Start, snapshotMeta.PreallocIDs.End}
 			log.Info("loaded snapshot preallocated range from checkpoint for scheduler pausing",
@@ -2298,16 +2306,8 @@ func buildKeyRangesFromRewriteRules(rewriteRules map[int64]*restoreutils.Rewrite
 		}
 	}
 
-	// if no range from checkpoint, try table mapping manager
 	if snapshotRange == [2]int64{} {
-		snapshotRange = cfg.tableMappingManager.PreallocatedRange
-		if snapshotRange != [2]int64{} {
-			log.Info("using snapshot preallocated range from table mapping manager for scheduler pausing",
-				zap.Int64("start", snapshotRange[0]),
-				zap.Int64("end", snapshotRange[1]))
-		} else {
-			log.Info("no preallocated range found for scheduler pausing")
-		}
+		log.Info("no preallocated range found for scheduler pausing")
 	}
 
 	hasValidSnapshotRange := isValidSnapshotRange(snapshotRange)
@@ -2315,57 +2315,74 @@ func buildKeyRangesFromRewriteRules(rewriteRules map[int64]*restoreutils.Rewrite
 		ranges = append(ranges, snapshotRange)
 	}
 
-	// collect table IDs by category
-	var logRestoreIDs []int64
+	// helper function to check if an ID is outside the snapshot range and needs a separate pause range
+	isOutsideSnapshotRange := func(id int64) bool {
+		if id == 0 {
+			return false
+		}
+		if hasValidSnapshotRange {
+			// check if this ID is outside the snapshot range (needs separate pausing)
+			return id < snapshotRange[0] || id >= snapshotRange[1]
+		}
+		return true
+	}
 
-	for _, rules := range rewriteRules {
-		newTableID := rules.NewTableID
-		if newTableID == 0 {
+	// collect table IDs by category
+	var schedulerPauseIDs []int64
+
+	for _, dbReplace := range schemasReplace.DbReplaceMap {
+		if dbReplace.FilteredOut {
 			continue
 		}
-
-		if hasValidSnapshotRange {
-			// we have valid snapshot range, check if this table ID is outside it
-			if newTableID < snapshotRange[0] || newTableID >= snapshotRange[1] {
-				logRestoreIDs = append(logRestoreIDs, newTableID)
+		for _, tableReplace := range dbReplace.TableMap {
+			if tableReplace.FilteredOut {
+				continue
 			}
-		} else {
-			// no snapshot range available, treat all table IDs as needing scheduler pausing
-			// this includes both snapshot tables (if any) and log restore tables
-			logRestoreIDs = append(logRestoreIDs, newTableID)
+
+			// collect table ID if it's outside snapshot range
+			if isOutsideSnapshotRange(tableReplace.TableID) {
+				schedulerPauseIDs = append(schedulerPauseIDs, tableReplace.TableID)
+			}
+
+			// also collect partition IDs for this table
+			for _, partitionID := range tableReplace.PartitionMap {
+				if isOutsideSnapshotRange(partitionID) {
+					schedulerPauseIDs = append(schedulerPauseIDs, partitionID)
+				}
+			}
 		}
 	}
 
-	// create range for log restore IDs (should be contiguous since allocated in one batch)
-	if len(logRestoreIDs) > 0 {
-		sort.Slice(logRestoreIDs, func(i, j int) bool {
-			return logRestoreIDs[i] < logRestoreIDs[j]
+	// create range for scheduler pause IDs (should be contiguous since allocated in one batch)
+	if len(schedulerPauseIDs) > 0 {
+		sort.Slice(schedulerPauseIDs, func(i, j int) bool {
+			return schedulerPauseIDs[i] < schedulerPauseIDs[j]
 		})
 
-		minID := logRestoreIDs[0]
-		maxID := logRestoreIDs[len(logRestoreIDs)-1]
+		minID := schedulerPauseIDs[0]
+		maxID := schedulerPauseIDs[len(schedulerPauseIDs)-1]
 		logRange := [2]int64{minID, maxID + 1}
 		ranges = append(ranges, logRange)
 
 		// only verify contiguity when we have a valid snapshot range
-		// (meaning logRestoreIDs contains only log restore tables, which should be contiguous)
+		// (meaning schedulerPauseIDs contains only log restore tables, which should be contiguous)
 		if hasValidSnapshotRange {
-			contiguous := verifyContiguousIDs(logRestoreIDs)
+			contiguous := verifyContiguousIDs(schedulerPauseIDs)
 			log.Info("using log restore range for scheduler pausing",
 				zap.Int64("start", logRange[0]),
 				zap.Int64("end", logRange[1]),
-				zap.Int("table-count", len(logRestoreIDs)),
+				zap.Int("table-count", len(schedulerPauseIDs)),
 				zap.Bool("contiguous", contiguous))
 
 			if !contiguous {
 				log.Warn("log restore table IDs are not contiguous, using broader range",
-					zap.Int64s("ids", logRestoreIDs))
+					zap.Int64s("ids", schedulerPauseIDs))
 			}
 		} else {
-			log.Info("using fallback range covering all restore tables for scheduler pausing",
+			log.Info("no valid snapshot range found, pausing scheduler for entire ID range found in log backup",
 				zap.Int64("start", logRange[0]),
 				zap.Int64("end", logRange[1]),
-				zap.Int("table-count", len(logRestoreIDs)))
+				zap.Int("table-count", len(schedulerPauseIDs)))
 		}
 	}
 

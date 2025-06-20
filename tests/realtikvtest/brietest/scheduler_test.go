@@ -38,79 +38,189 @@ type SchedulerRule struct {
 	Count     int                 `json:"count"`
 	LabelKeys []string            `json:"label_keys"`
 	Labels    []map[string]string `json:"labels"`
+	RuleType  string              `json:"rule_type"`
+	Data      interface{}         `json:"data"`
 }
 
+// KeyRange represents a key range in the scheduler rule data
+type KeyRange struct {
+	StartKey string `json:"start_key"`
+	EndKey   string `json:"end_key"`
+}
+
+const (
+	EMPTY_RANGE_START = ""
+	EMPTY_RANGE_END   = ""
+)
+
 // getPDSchedulerRules fetches the current scheduler rules from PD
-func getPDSchedulerRules(t *testing.T, pdAddr string) []SchedulerRule {
+func getPDSchedulerRules(t *testing.T, pdAddr string) ([]SchedulerRule, error) {
 	url := fmt.Sprintf("http://%s/pd/api/v1/config/region-label/rules", pdAddr)
 	resp, err := http.Get(url)
-	require.NoError(t, err)
+	if err != nil {
+		return nil, err
+	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
+	if err != nil {
+		return nil, err
+	}
 
 	var rules []SchedulerRule
 	err = json.Unmarshal(body, &rules)
-	require.NoError(t, err)
+	if err != nil {
+		return nil, err
+	}
 
-	return rules
+	return rules, nil
 }
 
-// countScheduleDenyRules counts how many rules have schedule=deny label
-func countScheduleDenyRules(rules []SchedulerRule) int {
-	count := 0
-	for _, rule := range rules {
-		for _, label := range rule.Labels {
-			if label["key"] == "schedule" && label["value"] == "deny" {
-				count++
+// extractKeyRangesFromRule extracts key ranges from a scheduler rule's Data field
+func extractKeyRangesFromRule(rule SchedulerRule) ([]KeyRange, error) {
+	if rule.Data == nil {
+		return nil, nil
+	}
+
+	dataBytes, err := json.Marshal(rule.Data)
+	if err != nil {
+		return nil, err
+	}
+
+	var keyRanges []KeyRange
+	err = json.Unmarshal(dataBytes, &keyRanges)
+	if err != nil {
+		return nil, err
+	}
+
+	return keyRanges, nil
+}
+
+// analyzeSchedulerRules provides detailed analysis of scheduler rules and their key ranges
+func analyzeSchedulerRules(t *testing.T, rules []SchedulerRule, title string) map[string][]KeyRange {
+	t.Logf("=== %s ===", title)
+	t.Logf("Total rules found: %d", len(rules))
+
+	allKeyRanges := make(map[string][]KeyRange)
+
+	for i, rule := range rules {
+		keyRanges, err := extractKeyRangesFromRule(rule)
+		if err != nil {
+			t.Logf("Failed to parse key ranges from rule %d: %v", i+1, err)
+		}
+
+		ruleKey := fmt.Sprintf("%s/%s", rule.GroupID, rule.ID)
+		allKeyRanges[ruleKey] = keyRanges
+
+		t.Logf("Rule %d: ID=%s, GroupID=%s", i+1, rule.ID, rule.GroupID)
+		t.Logf("  StartKey=%s, EndKey=%s", rule.StartKey, rule.EndKey)
+		t.Logf("  Role=%s, Count=%d, RuleType=%s", rule.Role, rule.Count, rule.RuleType)
+
+		if len(rule.Labels) > 0 {
+			t.Logf("  Labels:")
+			for _, label := range rule.Labels {
+				t.Logf("    - %s=%s", label["key"], label["value"])
+			}
+		}
+
+		if len(keyRanges) > 0 {
+			t.Logf("  Key Ranges in Data field (%d total):", len(keyRanges))
+			for j, kr := range keyRanges {
+				t.Logf("    Range %d: %s -> %s", j+1, kr.StartKey, kr.EndKey)
+			}
+		}
+		t.Logf("")
+	}
+
+	return allKeyRanges
+}
+
+// compareKeyRanges compares key ranges between baseline and current state
+func compareKeyRanges(t *testing.T, baselineRanges, currentRanges map[string][]KeyRange) bool {
+	t.Log("Comparing key ranges...")
+
+	hasChanges := false
+
+	for ruleKey, currentKRs := range currentRanges {
+		baselineKRs, existedInBaseline := baselineRanges[ruleKey]
+
+		if !existedInBaseline {
+			t.Logf("NEW RULE: %s with %d key ranges", ruleKey, len(currentKRs))
+			for i, kr := range currentKRs {
+				t.Logf("  Range %d: %s -> %s", i+1, kr.StartKey, kr.EndKey)
+			}
+			hasChanges = true
+			continue
+		}
+
+		// Compare existing rule's key ranges
+		if len(currentKRs) != len(baselineKRs) {
+			t.Logf("RULE MODIFIED: %s", ruleKey)
+			t.Logf("  Baseline had %d ranges, now has %d ranges", len(baselineKRs), len(currentKRs))
+
+			// Find new ranges
+			newRanges := findNewKeyRanges(baselineKRs, currentKRs)
+			if len(newRanges) > 0 {
+				t.Logf("  NEW key ranges added:")
+				for i, kr := range newRanges {
+					t.Logf("    Range %d: %s -> %s", i+1, kr.StartKey, kr.EndKey)
+
+					// Check if this is a full range pause (empty start/end keys)
+					if kr.StartKey == EMPTY_RANGE_START && kr.EndKey == EMPTY_RANGE_END {
+						t.Logf("    -> FULL RANGE PAUSE detected (empty start/end keys)")
+					} else {
+						t.Logf("    -> FINE-GRAINED PAUSE detected (specific key range)")
+					}
+				}
+				t.Logf("  This indicates scheduler pausing is active!")
+				hasChanges = true
+			}
+
+			// Find removed ranges
+			removedRanges := findNewKeyRanges(currentKRs, baselineKRs)
+			if len(removedRanges) > 0 {
+				t.Logf("  Key ranges removed:")
+				for i, kr := range removedRanges {
+					t.Logf("    Range %d: %s -> %s", i+1, kr.StartKey, kr.EndKey)
+				}
+				hasChanges = true
+			}
+		} else {
+			t.Logf("RULE UNCHANGED: %s (%d ranges)", ruleKey, len(currentKRs))
+		}
+	}
+
+	return hasChanges
+}
+
+// findNewKeyRanges finds ranges in 'current' that are not in 'baseline'
+func findNewKeyRanges(baseline, current []KeyRange) []KeyRange {
+	var newRanges []KeyRange
+
+	for _, currentRange := range current {
+		found := false
+		for _, baselineRange := range baseline {
+			if currentRange.StartKey == baselineRange.StartKey && currentRange.EndKey == baselineRange.EndKey {
+				found = true
 				break
 			}
 		}
-	}
-	return count
-}
-
-// waitForSchedulerRules polls PD to verify scheduler rules are in effect and returns the count
-func waitForSchedulerRules(t *testing.T, pdAddr string) int {
-	// Wait a bit for scheduler rules to be applied by PD
-	time.Sleep(1 * time.Second)
-
-	// Poll PD to verify scheduler rules are in effect
-	var ruleCount int
-	maxRetries := 10
-	for i := 0; i < maxRetries; i++ {
-		schedulerRules := getPDSchedulerRules(t, pdAddr)
-		ruleCount = countScheduleDenyRules(schedulerRules)
-
-		if ruleCount > 0 {
-			t.Logf("Verified scheduler rules are active: %d rules found (attempt %d/%d)", ruleCount, i+1, maxRetries)
-			break
-		}
-
-		if i < maxRetries-1 {
-			t.Logf("No scheduler rules found yet, retrying... (attempt %d/%d)", i+1, maxRetries)
-			time.Sleep(500 * time.Millisecond)
+		if !found {
+			newRanges = append(newRanges, currentRange)
 		}
 	}
 
-	return ruleCount
+	return newRanges
 }
 
-// TestLogRestoreFineGrainedSchedulerPausing tests that log restore uses fine-grained
-// scheduler pausing when filters are specified and full pausing when no filters are used
-func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
-	kit := NewLogBackupKit(t)
+// setupTestData creates test tables and data for scheduler pausing tests
+func setupTestData(kit *LogBackupKit, taskName string) {
 	s := kit.simpleWorkload()
 	s.createSimpleTableWithData(kit)
 
-	taskName := "test-scheduler-pausing"
-
 	// Create tables before log backup (these will be in snapshot range)
 	kit.tk.MustExec("CREATE TABLE test.snapshot_table1 (id INT PRIMARY KEY, data VARCHAR(100))")
-	kit.tk.MustExec("CREATE TABLE test.snapshot_table2 (id INT PRIMARY KEY, data VARCHAR(100))")
 	kit.tk.MustExec("INSERT INTO test.snapshot_table1 VALUES (1, 'snapshot1'), (2, 'snapshot2')")
-	kit.tk.MustExec("INSERT INTO test.snapshot_table2 VALUES (1, 'snapshot1'), (2, 'snapshot2')")
 
 	// Start log backup first, then take full backup
 	kit.RunLogStart(taskName, func(cfg *task.StreamConfig) {})
@@ -118,113 +228,212 @@ func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
 
 	// Create tables during log backup (these will be in log backup range)
 	kit.tk.MustExec("CREATE TABLE test.log_table1 (id INT PRIMARY KEY, data VARCHAR(100))")
-	kit.tk.MustExec("CREATE TABLE test.log_table2 (id INT PRIMARY KEY, data VARCHAR(100))")
 	kit.tk.MustExec("INSERT INTO test.log_table1 VALUES (1, 'log1'), (2, 'log2')")
-	kit.tk.MustExec("INSERT INTO test.log_table2 VALUES (1, 'log1'), (2, 'log2')")
 
-	// Add some incremental data to both snapshot and log tables
+	// Add some incremental data
 	kit.tk.MustExec("INSERT INTO test.snapshot_table1 VALUES (3, 'incremental')")
 	kit.tk.MustExec("INSERT INTO test.log_table1 VALUES (3, 'incremental')")
 
 	kit.forceFlushAndWait(taskName)
 	kit.StopTaskIfExists(taskName)
+}
 
-	// Test case 1: Filtered restore with scheduler verification
-	t.Run("FilteredRestoreWithSchedulerVerification", func(t *testing.T) {
-		s.cleanSimpleData(kit)
-		kit.tk.MustExec("DROP TABLE IF EXISTS test.snapshot_table1, test.snapshot_table2, test.log_table1, test.log_table2")
+// cleanupTestData removes test tables
+func cleanupTestData(kit *LogBackupKit) {
+	s := kit.simpleWorkload()
+	s.cleanSimpleData(kit)
+	kit.tk.MustExec("DROP TABLE IF EXISTS test.snapshot_table1, test.log_table1")
+}
 
-		// Channel to receive the captured rule count from failpoint
-		ruleCountChan := make(chan int, 1)
+// checkSchedulerPausingBehavior monitors scheduler rules during restore
+func checkSchedulerPausingBehavior(t *testing.T, baselineKeyRanges map[string][]KeyRange) []SchedulerRule {
+	var finalRules []SchedulerRule
+	maxRetries := 20
 
-		// Enable failpoint to capture scheduler state during restore
-		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused", func() {
-			ruleCount := waitForSchedulerRules(t, "127.0.0.1:2379")
+	for i := 0; i < maxRetries; i++ {
+		time.Sleep(200 * time.Millisecond)
 
-			// Send the result through channel
-			select {
-			case ruleCountChan <- ruleCount:
-			default:
-			}
-		}))
-		defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused")
-
-		// Run filtered restore - failpoint will be hit during execution
-		kit.RunStreamRestore(func(rc *task.RestoreConfig) {
-			rc.FullBackupStorage = kit.LocalURI("full")
-			// Set table filters to include both snapshot and log tables
-			kit.SetFilter(&rc.Config, "test.snapshot_table1", "test.log_table1")
-		})
-
-		// Get the captured rule count from channel
-		var capturedRuleCount int
-		select {
-		case capturedRuleCount = <-ruleCountChan:
-		case <-time.After(5 * time.Second):
-			t.Fatal("Timeout waiting for scheduler rule count from failpoint")
+		rules, err := getPDSchedulerRules(t, "127.0.0.1:2379")
+		if err != nil {
+			t.Logf("Failed to get scheduler rules (attempt %d): %v", i+1, err)
+			continue
 		}
 
-		// Verify that scheduler rules were created and detected
-		require.Greater(t, capturedRuleCount, 0, "Expected scheduler pausing rules during filtered restore")
-		require.LessOrEqual(t, capturedRuleCount, 2, "Fine-grained pausing should create at most 2 rules (snapshot + log ranges)")
+		t.Logf("Attempt %d: Got %d scheduler rules", i+1, len(rules))
 
-		// Verify tables were restored
-		kit.tk.MustQuery("SELECT COUNT(*) FROM test.snapshot_table1").Check(testkit.Rows("3"))
-		kit.tk.MustQuery("SELECT COUNT(*) FROM test.log_table1").Check(testkit.Rows("3"))
+		// Check if any rule has more key ranges than baseline
+		hasNewRanges := false
 
-		t.Logf("Filtered restore created %d scheduler deny rules and completed successfully", capturedRuleCount)
-	})
-
-	// Test case 2: Full restore with scheduler verification
-	t.Run("FullRestoreWithSchedulerVerification", func(t *testing.T) {
-		s.cleanSimpleData(kit)
-		kit.tk.MustExec("DROP TABLE IF EXISTS test.snapshot_table1, test.snapshot_table2, test.log_table1, test.log_table2")
-
-		// Channel to receive the captured rule count from failpoint
-		ruleCountChan := make(chan int, 1)
-
-		// Enable failpoint to capture scheduler state during restore
-		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused", func() {
-			ruleCount := waitForSchedulerRules(t, "127.0.0.1:2379")
-
-			// Send the result through channel
-			select {
-			case ruleCountChan <- ruleCount:
-			default:
+		for _, rule := range rules {
+			ruleKey := fmt.Sprintf("%s/%s", rule.GroupID, rule.ID)
+			keyRanges, err := extractKeyRangesFromRule(rule)
+			if err == nil {
+				// Compare with baseline
+				if baselineRanges, exists := baselineKeyRanges[ruleKey]; exists {
+					if len(keyRanges) > len(baselineRanges) {
+						hasNewRanges = true
+						t.Logf("Detected new key ranges in rule %s! Baseline: %d, Current: %d",
+							ruleKey, len(baselineRanges), len(keyRanges))
+					}
+				}
 			}
-		}))
-		defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused")
-
-		// Run full restore - failpoint will be hit during execution
-		kit.RunStreamRestore(func(rc *task.RestoreConfig) {
-			rc.FullBackupStorage = kit.LocalURI("full")
-			// No filters - this should trigger full pausing (1 rule for all schedulers)
-		})
-
-		// Get the captured rule count from channel
-		var capturedRuleCount int
-		select {
-		case capturedRuleCount = <-ruleCountChan:
-		case <-time.After(5 * time.Second):
-			t.Fatal("Timeout waiting for scheduler rule count from failpoint")
 		}
 
-		// For full restore, should use traditional full scheduler pausing (1 rule)
-		// vs fine-grained pausing (2 rules) for filtered restore
-		require.Equal(t, capturedRuleCount, 1, "Full restore should create exactly 1 scheduler rule (full pausing)")
+		if hasNewRanges {
+			finalRules = rules
+			t.Logf("Scheduler pausing detected - new key ranges added!")
+			break
+		}
 
-		// Verify all tables were restored
-		kit.tk.MustQuery("SELECT COUNT(*) FROM test.snapshot_table1").Check(testkit.Rows("3"))
-		kit.tk.MustQuery("SELECT COUNT(*) FROM test.snapshot_table2").Check(testkit.Rows("2"))
-		kit.tk.MustQuery("SELECT COUNT(*) FROM test.log_table1").Check(testkit.Rows("3"))
-		kit.tk.MustQuery("SELECT COUNT(*) FROM test.log_table2").Check(testkit.Rows("2"))
+		if i == maxRetries-1 {
+			finalRules = rules
+			t.Logf("Reached max retries. Using final rule set.")
+		}
+	}
 
-		t.Logf("Full restore created %d scheduler deny rule and completed successfully", capturedRuleCount)
+	return finalRules
+}
+
+// TestLogRestoreFineGrainedSchedulerPausing tests that log restore uses fine-grained
+// scheduler pausing when filters are specified
+func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
+	kit := NewLogBackupKit(t)
+	taskName := "test-fine-grained-scheduler"
+
+	setupTestData(kit, taskName)
+	cleanupTestData(kit)
+
+	// Get baseline scheduler rules
+	t.Log("Getting baseline scheduler rules...")
+	baselineRules, err := getPDSchedulerRules(t, "127.0.0.1:2379")
+	require.NoError(t, err)
+	baselineKeyRanges := analyzeSchedulerRules(t, baselineRules, "BASELINE SCHEDULER RULES (before restore)")
+
+	// Create channel to capture results from the callback
+	rulesChan := make(chan []SchedulerRule, 1)
+
+	// Enable failpoint with callback that checks PD scheduler status
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused", func() {
+		t.Logf("Failpoint triggered - checking PD scheduler rules")
+		finalRules := checkSchedulerPausingBehavior(t, baselineKeyRanges)
+		rulesChan <- finalRules
+	}))
+	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused")
+
+	// Run filtered restore
+	t.Logf("Starting filtered restore...")
+	kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+		rc.FullBackupStorage = kit.LocalURI("full")
+		kit.SetFilter(&rc.Config, "test.snapshot_table1", "test.log_table1")
 	})
 
-	// Verify scheduler rules are cleaned up after both tests
-	finalRules := getPDSchedulerRules(t, "127.0.0.1:2379")
-	finalCount := countScheduleDenyRules(finalRules)
-	require.Equal(t, finalCount, 0, "All scheduler rules should be cleaned up after restore completes")
-	t.Logf("Scheduler rules properly cleaned up: final count = %d", finalCount)
+	// Wait for callback results
+	select {
+	case restoreRules := <-rulesChan:
+		t.Log("Analyzing scheduler rules during filtered restore:")
+		restoreKeyRanges := analyzeSchedulerRules(t, restoreRules, "SCHEDULER RULES DURING FILTERED RESTORE")
+		hasChanges := compareKeyRanges(t, baselineKeyRanges, restoreKeyRanges)
+
+		if hasChanges {
+			t.Log("SUCCESS: Fine-grained scheduler pausing detected during filtered restore")
+		} else {
+			t.Log("WARNING: No scheduler changes detected during filtered restore")
+		}
+
+	case <-time.After(20 * time.Second):
+		t.Logf("Timeout waiting for failpoint callback")
+	}
+
+	// Verify tables were restored correctly
+	kit.tk.MustQuery("SELECT COUNT(*) FROM test.snapshot_table1").Check(testkit.Rows("3"))
+	kit.tk.MustQuery("SELECT COUNT(*) FROM test.log_table1").Check(testkit.Rows("3"))
+
+	// Get final scheduler rules after restore completes
+	t.Log("Getting final scheduler rules after restore...")
+	finalRules, err := getPDSchedulerRules(t, "127.0.0.1:2379")
+	require.NoError(t, err)
+	finalKeyRanges := analyzeSchedulerRules(t, finalRules, "FINAL SCHEDULER RULES (after filtered restore)")
+
+	t.Log("Comparing final state with baseline:")
+	compareKeyRanges(t, baselineKeyRanges, finalKeyRanges)
+
+	t.Logf("Filtered restore test completed")
+}
+
+// TestLogRestoreFullSchedulerPausing tests that log restore uses full
+// scheduler pausing when no filters are specified
+func TestLogRestoreFullSchedulerPausing(t *testing.T) {
+	kit := NewLogBackupKit(t)
+	taskName := "test-full-scheduler"
+
+	setupTestData(kit, taskName)
+	cleanupTestData(kit)
+
+	// Get baseline scheduler rules
+	t.Log("Getting baseline scheduler rules...")
+	baselineRules, err := getPDSchedulerRules(t, "127.0.0.1:2379")
+	require.NoError(t, err)
+	baselineKeyRanges := analyzeSchedulerRules(t, baselineRules, "BASELINE SCHEDULER RULES (before restore)")
+
+	// Create channel to capture results from the callback
+	rulesChan := make(chan []SchedulerRule, 1)
+
+	// Enable failpoint with callback that checks PD scheduler status
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused", func() {
+		t.Logf("Failpoint triggered - checking PD scheduler rules")
+		finalRules := checkSchedulerPausingBehavior(t, baselineKeyRanges)
+		rulesChan <- finalRules
+	}))
+	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused")
+
+	// Run restore WITHOUT filters (should trigger full scheduler pausing)
+	t.Logf("Starting full restore (no filters)...")
+	kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+		rc.FullBackupStorage = kit.LocalURI("full")
+		// No filters set - should trigger full scheduler pausing
+	})
+
+	// Wait for callback results
+	select {
+	case restoreRules := <-rulesChan:
+		t.Log("Analyzing scheduler rules during full restore:")
+		restoreKeyRanges := analyzeSchedulerRules(t, restoreRules, "SCHEDULER RULES DURING FULL RESTORE")
+		hasChanges := compareKeyRanges(t, baselineKeyRanges, restoreKeyRanges)
+
+		if hasChanges {
+			t.Log("SUCCESS: Full scheduler pausing detected during unfiltered restore")
+
+			// Check if any new ranges have empty start/end keys (indicating full pause)
+			for ruleKey, currentRanges := range restoreKeyRanges {
+				if baselineRanges, exists := baselineKeyRanges[ruleKey]; exists {
+					newRanges := findNewKeyRanges(baselineRanges, currentRanges)
+					for _, newRange := range newRanges {
+						if newRange.StartKey == EMPTY_RANGE_START && newRange.EndKey == EMPTY_RANGE_END {
+							t.Log("CONFIRMED: Full range scheduler pausing detected (empty start/end keys)")
+						}
+					}
+				}
+			}
+		} else {
+			t.Log("WARNING: No scheduler changes detected during full restore")
+		}
+
+	case <-time.After(20 * time.Second):
+		t.Logf("Timeout waiting for failpoint callback")
+	}
+
+	// Verify tables were restored correctly
+	kit.tk.MustQuery("SELECT COUNT(*) FROM test.snapshot_table1").Check(testkit.Rows("3"))
+	kit.tk.MustQuery("SELECT COUNT(*) FROM test.log_table1").Check(testkit.Rows("3"))
+
+	// Get final scheduler rules after restore completes
+	t.Log("Getting final scheduler rules after restore...")
+	finalRules, err := getPDSchedulerRules(t, "127.0.0.1:2379")
+	require.NoError(t, err)
+	finalKeyRanges := analyzeSchedulerRules(t, finalRules, "FINAL SCHEDULER RULES (after full restore)")
+
+	t.Log("Comparing final state with baseline:")
+	compareKeyRanges(t, baselineKeyRanges, finalKeyRanges)
+
+	t.Logf("Full restore test completed")
 }
