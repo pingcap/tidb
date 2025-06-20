@@ -320,8 +320,9 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 		columns := expression.ExtractColumns(cond)
 		if columnNames == nil {
 			columnNames = make([]string, 0, len(columns))
+		} else {
+			slices.Grow(columnNames, len(columns))
 		}
-		slices.Grow(columnNames, len(columns))
 		for _, col := range columns {
 			parts := strings.Split(col.OrigName, ".")
 			columnNames = append(columnNames, strings.ToLower(parts[len(parts)-1]))
@@ -349,7 +350,7 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 			selectedColumns[colName] = true
 		}
 		selectedConditions = append(selectedConditions, cond)
-		clear(columnNames)
+		columnNames = columnNames[:0] // reset columnNames slice to avoid unnecessary memory allocation
 	}
 
 	for colName := range selectedColumns {
