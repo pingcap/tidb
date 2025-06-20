@@ -94,9 +94,8 @@ func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Cl
 			zap.Stringer("ddl lease", ddlLease),
 			zap.Stringer("stats lease", statisticLease))
 		factory := createSessionFunc(store)
-		factoryWithCollector := createSessionWithCollectorFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-		d = domain.NewDomainWithEtcdClient(store, ddlLease, statisticLease, planReplayerGCLease, factory, factoryWithCollector, etcdClient)
+		d = domain.NewDomainWithEtcdClient(store, ddlLease, statisticLease, planReplayerGCLease, factory, etcdClient)
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {

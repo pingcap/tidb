@@ -93,6 +93,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
@@ -103,7 +104,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -1206,23 +1206,6 @@ func sqlForLog(sql string) string {
 
 func (s *session) sysSessionPool() util.SessionPool {
 	return domain.GetDomain(s).SysSessionPool()
-}
-
-func createSessionWithCollectorFunc(store kv.Storage) pools.Factory {
-	return func() (pools.Resource, error) {
-		se, err := createSessionFunc(store)()
-		if err != nil {
-			return nil, err
-		}
-
-		dom, err := domap.Get(store)
-		if err != nil {
-			return nil, err
-		}
-
-		s, _ := se.(*session)
-		return attachStatsCollector(s, dom), nil
-	}
 }
 
 func createSessionFunc(store kv.Storage) pools.Factory {
@@ -3692,13 +3675,13 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 
 	// start TTL job manager after setup stats collector
 	// because TTL could modify a lot of columns, and need to trigger auto analyze
-	ttlworker.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	statshandle.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 		if s, ok := s.(*session); ok {
 			return attachStatsCollector(s, dom)
 		}
 		return s
 	}
-	ttlworker.DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	statshandle.DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 		if s, ok := s.(*session); ok {
 			return detachStatsCollector(s)
 		}

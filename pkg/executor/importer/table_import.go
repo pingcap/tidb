@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -990,6 +991,10 @@ func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, 
 	if err := sessiontxn.NewTxn(ctx, se); err != nil {
 		return err
 	}
+
+	exec := statshandle.AttachStatsCollector(se.GetSQLExecutor())
+	defer statshandle.DetachStatsCollector(exec)
+
 	sessionVars := se.GetSessionVars()
 	sessionVars.TxnCtxMu.Lock()
 	defer sessionVars.TxnCtxMu.Unlock()
