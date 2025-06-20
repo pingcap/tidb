@@ -1112,7 +1112,7 @@ Level	Code	Message
 Note	1105	[f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where f > 3 and g = 5;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_12	3.33	19531.97	root		
+IndexLookUp_12	3.33	9931.97	root		
 ├─IndexRangeScan_9(Build)	10.00	2035.00	cop[tikv]	table:t, index:g(g)	range:[5,5], keep order:false, stats:pseudo
 └─Selection_11(Probe)	3.33	3269.59	cop[tikv]		gt(planner__core__casetest__integration.t.f, 3)
   └─TableRowIDScan_10	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -1120,8 +1120,8 @@ Level	Code	Message
 Note	1105	[f_g,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where g = 5 order by f;
 id	estRows	estCost	task	access object	operator info
-Sort_5	10.00	21321.97	root		planner__core__casetest__integration.t.f
-└─IndexLookUp_10	10.00	19545.34	root		
+Sort_5	10.00	11721.97	root		planner__core__casetest__integration.t.f
+└─IndexLookUp_10	10.00	9945.34	root		
   ├─IndexRangeScan_8(Build)	10.00	2035.00	cop[tikv]	table:t, index:g(g)	range:[5,5], keep order:false, stats:pseudo
   └─TableRowIDScan_9(Probe)	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
@@ -1129,7 +1129,7 @@ Note	1105	[g] remain after pruning paths for t given Prop{SortItems: [], TaskTp:
 Note	1105	[t,f_g,g] remain after pruning paths for t given Prop{SortItems: [{planner__core__casetest__integration.t.f asc}], TaskTp: rootTask}
 explain format = 'verbose' select * from t where d = 3 order by c, e;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_15	10.00	215519.24	root		
+IndexLookUp_15	10.00	205919.24	root		
 ├─Selection_14(Build)	10.00	2941000.00	cop[tikv]		eq(planner__core__casetest__integration.t.d, 3)
 │ └─IndexFullScan_12	10000.00	2442000.00	cop[tikv]	table:t, index:c_d_e(c, d, e)	keep order:true, stats:pseudo
 └─TableRowIDScan_13(Probe)	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
