@@ -948,7 +948,7 @@ func (e *Explain) renderResultForExplore() error {
 	if sqlOrDigest == "" {
 		sqlOrDigest = e.ExecStmt.Text()
 	}
-	plans, err := bindingHandle.ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation)
+	plans, err := bindingHandle.ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation, e.Analyze)
 	if err != nil {
 		return err
 	}

@@ -60,12 +60,13 @@ func (g *planGenerator) Generate(defaultSchema, sql, charset, collation string) 
 
 		for _, genedPlan := range genedPlans {
 			// TODO: construct bindingSQL in a more strict way.
-			bindingSQL := sql[:len(prefix)] + "/*+ " + genedPlan.planHints + " */ " + sql[len(prefix):]
+			bindingSQL := sql[:len(prefix)] + " /*+ " + genedPlan.planHints + " */ " + sql[len(prefix):]
 			binding := &Binding{
 				OriginalSQL: sql,
 				BindSQL:     bindingSQL,
 				Db:          defaultSchema,
 				Source:      "generated",
+				PlanDigest:  genedPlan.planDigest,
 			}
 			if err := prepareHints(sctx, binding); err != nil {
 				return err

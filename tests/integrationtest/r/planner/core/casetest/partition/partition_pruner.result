@@ -910,3 +910,21 @@ IndexLookUp_8	1.60	root	partition:p1,p2
 ├─IndexRangeScan_5(Build)	2.00	cop[tikv]	table:t, index:PRIMARY(b)	range:[1,1], [2,2], keep order:false, stats:pseudo
 └─Selection_7(Probe)	1.60	cop[tikv]		like(issue42135.t.a, "%a%", 92)
   └─TableRowIDScan_6	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+CREATE TABLE `t` (
+`col_4` varchar(223) DEFAULT 'QKd^)QlWh#cT&3',
+UNIQUE KEY `idx_3` (`col_4`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`col_4`)
+(PARTITION `p0` VALUES LESS THAN ('+*8Ab='),
+PARTITION `p1` VALUES LESS THAN ('959#Km%JOy2EFI'),
+PARTITION `p2` VALUES LESS THAN ('FbL~@RpX01&CYY-%%+'),
+PARTITION `p3` VALUES LESS THAN ('GFB'),
+PARTITION `p4` VALUES LESS THAN (MAXVALUE));
+insert into t values ('u^D92@_4'), (null);
+explain format='brief' select * from t where col_4 in ( 'u^D92@_4' ,null );
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, partition:p4, index:idx_3(col_4)	
+select * from t where col_4 in ( 'u^D92@_4' ,null );
+col_4
+u^D92@_4

@@ -31,6 +31,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// Version constants for BackfillTaskMeta.
+const (
+	BackfillTaskMetaVersion0 = iota
+	BackfillTaskMetaVersion1
+)
+
 // BackfillTaskMeta is the dist task meta for backfilling index.
 type BackfillTaskMeta struct {
 	Job model.Job `json:"job"`
@@ -42,6 +48,8 @@ type BackfillTaskMeta struct {
 
 	CloudStorageURI string `json:"cloud_storage_uri"`
 	EstimateRowSize int    `json:"estimate_row_size"`
+
+	Version int `json:"version,omitempty"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
