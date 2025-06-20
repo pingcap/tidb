@@ -615,7 +615,7 @@ func (d *ddl) refreshTiFlashPlacementRules(sctx sessionctx.Context, tick uint64)
 			logutil.DDLLogger().Warn("get placement rule err", zap.Error(err))
 			continue
 		}
-		// rule is missing
+		// pdhttp.GetPlacementRule returns the zero object instead of nil pointer when not found.
 		ruleIsMissing := rule == nil || len(rule.ID) == 0
 		if ruleIsMissing && replica.TableInfo.TiFlashReplica.Count > 0 {
 			job := &model.Job{
