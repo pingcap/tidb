@@ -121,6 +121,30 @@ func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
 }
 
+func (s *mockGCSSuite) TestImportIntoStatsUpdate() {
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.csv"},
+		Content:     []byte("1,foo1,bar1,123\n2,foo2,bar2,456\n3,foo3,bar3,789\n"),
+	})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	s.prepareAndUseDB("gsort_basic")
+	s.tk.MustExec(`create table t(a bigint primary key, b varchar(100), c varchar(100), d int,
+		key(a), key(c,d), key(d));`)
+
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/*.csv?endpoint=%s'`, gcsEndpoint)
+	result := s.tk.MustQuery(importSQL).Rows()
+	require.Equal(s.T(), "finished", result[0][5].(string))
+
+	// After import success, the table stat should be updated
+	require.Eventually(s.T(), func() bool {
+		r := s.tk.MustQuery("select table_rows from information_schema.tables where table_name= 't' and table_schema = 'gsort_basic'").Rows()
+		require.Len(s.T(), r, 1)
+		rows, err := strconv.Atoi(r[0][0].(string))
+		require.NoError(s.T(), err)
+		return rows == 3
+	}, 30*time.Second, 100*time.Millisecond, "stats not updated after import into")
+}
+
 func (s *mockGCSSuite) TestBasicImportInto() {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
