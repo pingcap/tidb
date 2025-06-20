@@ -156,11 +156,10 @@ func checkAllJoinsUniqueByEqCondition(p base.LogicalPlan) bool {
 		}
 		col1, ok1 := cond.GetArgs()[0].(*expression.Column)
 		col2, ok2 := cond.GetArgs()[1].(*expression.Column)
-		if ok1 && ok2 {
-			joinPairs = append(joinPairs, [2]*expression.Column{col1, col2})
-		} else {
+		if !ok1 || !ok2 {
 			return false
 		}
+		joinPairs = append(joinPairs, [2]*expression.Column{col1, col2})
 	}
 
 	if !checkJoinChildUniqueKeyCoverage(join.Children()[0], joinPairs, 0) {
