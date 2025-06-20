@@ -241,11 +241,11 @@ func TestBuildKeyRangesFromSchemasReplace(t *testing.T) {
 		{
 			name: "with valid snapshot range and log restore tables",
 			schemasReplace: &stream.SchemasReplace{
-				DbReplaceMap: map[string]*stream.DBReplaceInfo{
-					"test_db": {
+				DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
+					1: {
 						Name:        "test_db",
 						FilteredOut: false,
-						TableMap: map[int64]*stream.TableReplaceInfo{
+						TableMap: map[int64]*stream.TableReplace{
 							// snapshot tables (within range [100, 200))
 							150: {TableID: 150, Name: "table1", FilteredOut: false, PartitionMap: map[int64]int64{}},
 							160: {TableID: 160, Name: "table2", FilteredOut: false, PartitionMap: map[int64]int64{}},
@@ -262,11 +262,11 @@ func TestBuildKeyRangesFromSchemasReplace(t *testing.T) {
 		{
 			name: "with valid snapshot range, no log restore tables",
 			schemasReplace: &stream.SchemasReplace{
-				DbReplaceMap: map[string]*stream.DBReplaceInfo{
-					"test_db": {
+				DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
+					2: {
 						Name:        "test_db",
 						FilteredOut: false,
-						TableMap: map[int64]*stream.TableReplaceInfo{
+						TableMap: map[int64]*stream.TableReplace{
 							150: {TableID: 150, Name: "table1", FilteredOut: false, PartitionMap: map[int64]int64{}},
 							160: {TableID: 160, Name: "table2", FilteredOut: false, PartitionMap: map[int64]int64{}},
 						},
@@ -280,11 +280,11 @@ func TestBuildKeyRangesFromSchemasReplace(t *testing.T) {
 		{
 			name: "without valid snapshot range",
 			schemasReplace: &stream.SchemasReplace{
-				DbReplaceMap: map[string]*stream.DBReplaceInfo{
-					"test_db": {
+				DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
+					3: {
 						Name:        "test_db",
 						FilteredOut: false,
-						TableMap: map[int64]*stream.TableReplaceInfo{
+						TableMap: map[int64]*stream.TableReplace{
 							150: {TableID: 150, Name: "table1", FilteredOut: false, PartitionMap: map[int64]int64{}},
 							160: {TableID: 160, Name: "table2", FilteredOut: false, PartitionMap: map[int64]int64{}},
 							300: {TableID: 300, Name: "table3", FilteredOut: false, PartitionMap: map[int64]int64{}},
@@ -299,7 +299,7 @@ func TestBuildKeyRangesFromSchemasReplace(t *testing.T) {
 		{
 			name: "empty schemas replace",
 			schemasReplace: &stream.SchemasReplace{
-				DbReplaceMap: map[string]*stream.DBReplaceInfo{},
+				DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{},
 			},
 			snapshotRange:         [2]int64{100, 200},
 			expectedRangeCount:    1, // only snapshot range
