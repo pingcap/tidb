@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/disjointset"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -36,7 +35,7 @@ var MaxPropagateColsCnt = 100
 
 type basePropConstSolver struct {
 	colMapper map[int64]int             // colMapper maps column to its index
-	eqList    []*Constant               // if eqList[i] != nil, it means col_i = eqList[i]
+	eqMapper  map[int]*Constant         // if eqMapper[i] != nil, it means col_i = eqMapper[i]
 	unionSet  *disjointset.SimpleIntSet // unionSet stores the relations like col_i = col_j
 	columns   []*Column                 // columns stores all columns appearing in the conditions
 	ctx       exprctx.ExprContext
@@ -45,7 +44,7 @@ type basePropConstSolver struct {
 func newBasePropConstSolver() basePropConstSolver {
 	return basePropConstSolver{
 		colMapper: make(map[int64]int, 4),
-		eqList:    make([]*Constant, 0, 4),
+		eqMapper:  make(map[int]*Constant, 4),
 		columns:   make([]*Column, 0, 4),
 		unionSet:  disjointset.NewIntSet(4),
 	}
@@ -53,7 +52,7 @@ func newBasePropConstSolver() basePropConstSolver {
 
 func (s *basePropConstSolver) Clear() {
 	clear(s.colMapper)
-	s.eqList = s.eqList[:0]
+	clear(s.eqMapper)
 	s.columns = s.columns[:0]
 	s.unionSet.Clear()
 	s.ctx = nil
@@ -73,20 +72,20 @@ func (s *basePropConstSolver) insertCols(cols ...*Column) {
 	}
 }
 
-// tryToUpdateEQList tries to update the eqList. When the eqList has store this column with a different constant, like
+// tryToUpdateEQList tries to update the eqMapper. When the eqMapper has store this column with a different constant, like
 // a = 1 and a = 2, we set the second return value to false.
 func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (bool, bool) {
 	if con.Value.IsNull() && ConstExprConsiderPlanCache(con, s.ctx.IsUseCache()) {
 		return false, true
 	}
 	id := s.getColID(col)
-	oldCon := s.eqList[id]
-	if oldCon != nil {
+	oldCon, ok := s.eqMapper[id]
+	if ok {
 		evalCtx := s.ctx.GetEvalCtx()
 		res, err := oldCon.Value.Compare(evalCtx.TypeCtx(), &con.Value, collate.GetCollator(col.GetType(s.ctx.GetEvalCtx()).GetCollate()))
 		return false, res != 0 || err != nil
 	}
-	s.eqList[id] = con
+	s.eqMapper[id] = con
 	return true, false
 }
 
@@ -257,6 +256,7 @@ func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, conditions 
 	return s.solve(conditions)
 }
 
+// Clear clears the solver and returns it to the pool.
 func (s *propConstSolver) Clear() {
 	s.basePropConstSolver.Clear()
 	s.conditions = s.conditions[:0]
@@ -269,11 +269,6 @@ func (s *propConstSolver) Clear() {
 // d = 4 & 2 = c & c = d + 2 & b = 1 & a = 4, we propagate b = 1 and a = 4 and pick eq cond c = 2 and d = 4
 // d = 4 & 2 = c & false & b = 1 & a = 4, we propagate c = 2 and d = 4, and do constant folding: c = d + 2 will be folded as false.
 func (s *propConstSolver) propagateConstantEQ() {
-	intest.Assert(len(s.eqList) == 0)
-	s.eqList = slices.Grow(s.eqList, len(s.columns))
-	for range s.columns {
-		s.eqList = append(s.eqList, nil)
-	}
 	visited := make([]bool, len(s.conditions))
 	cols := make([]*Column, 0, 4)
 	cons := make([]Expression, 0, 4)
@@ -594,7 +589,7 @@ func (s *propOuterJoinConstSolver) pickNewEQConds(visited []bool) map[int]*Const
 // propagateConstantEQ propagates expressions like `outerCol = const` by substituting `outerCol` in *JOIN* condition
 // with `const`, the procedure repeats multiple times.
 func (s *propOuterJoinConstSolver) propagateConstantEQ() {
-	s.eqList = make([]*Constant, len(s.columns))
+	clear(s.eqMapper)
 	lenFilters := len(s.filterConds)
 	visited := make([]bool, lenFilters+len(s.joinConds))
 	for range MaxPropagateColsCnt {
