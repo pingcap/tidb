@@ -2332,7 +2332,7 @@ func TestIssue61890(t *testing.T) {
 	MustExec(t, s1, "create table mysql.global_variables(`VARIABLE_NAME` varchar(64) NOT NULL PRIMARY KEY clustered, `VARIABLE_VALUE` varchar(16383) DEFAULT NULL)")
 
 	s2 := CreateSessionAndSetID(t, store)
-	initGlobalVariableIfNotExists(s2, variable.TiDBEnableINLJoinInnerMultiPattern, variable.Off)
+	initGlobalVariableIfNotExists(s2, vardef.TiDBEnableINLJoinInnerMultiPattern, vardef.Off)
 
 	dom.Close()
 }
