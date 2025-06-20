@@ -80,6 +80,11 @@ func (s *SubtaskSummary) Reset() {
 
 // Collector is the interface for collecting subtask metrics.
 type Collector interface {
+	// Add is used collects metrics.
+	// `bytes` is the number of bytes processed, and `rows` is the number of rows processed.
+	// The meaning of `bytes` may vary by scenario, for example:
+	//   - During encoding, it represents the number of bytes read from the source data file.
+	//   - During merge sort, it represents the number of bytes merged.
 	Add(bytes, rows int64)
 }
 
