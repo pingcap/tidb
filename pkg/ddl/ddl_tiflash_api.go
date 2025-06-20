@@ -616,7 +616,8 @@ func (d *ddl) refreshTiFlashPlacementRules(sctx sessionctx.Context, tick uint64)
 			continue
 		}
 		// rule is missing
-		if rule == nil && replica.TableInfo.TiFlashReplica.Count > 0 {
+		ruleIsMissing := rule == nil || len(rule.ID) == 0
+		if ruleIsMissing && replica.TableInfo.TiFlashReplica.Count > 0 {
 			job := &model.Job{
 				SchemaID:   replica.DBInfo.ID,
 				TableID:    replica.TableInfo.ID,
