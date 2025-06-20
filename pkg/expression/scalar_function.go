@@ -729,6 +729,7 @@ func (sf *ScalarFunction) Equals(other any) bool {
 // ReHashCode is used after we change the argument in place.
 func ReHashCode(sf *ScalarFunction) {
 	sf.hashcode = sf.hashcode[:0]
+	sf.hashcode = slices.Grow(sf.hashcode, 1+len(sf.FuncName.L)+len(sf.GetArgs())*8+1)
 	sf.hashcode = append(sf.hashcode, scalarFunctionFlag)
 	sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
 	for _, arg := range sf.GetArgs() {

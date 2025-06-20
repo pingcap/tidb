@@ -33,7 +33,7 @@ var Analyzer = &analysis.Analyzer{
 }
 
 const (
-	bootstrapCodeFile = "/bootstrap.go"
+	bootstrapCodeFile = "/upgrade.go"
 )
 
 func run(pass *analysis.Pass) (any, error) {
@@ -68,13 +68,13 @@ func run(pass *analysis.Pass) (any, error) {
 						continue
 					}
 					switch v2.Names[0].Name {
-					case "bootstrapVersion":
+					case "upgradeToVerFunctions":
 						composeLit := v2.Values[0].(*ast.CompositeLit)
 						lastElm := composeLit.Elts[len(composeLit.Elts)-1]
-						ident := lastElm.(*ast.Ident)
+						ident := lastElm.(*ast.CompositeLit).Elts[1].(*ast.KeyValueExpr).Value.(*ast.Ident)
 						maxVerFuncUsed, err = strconv.Atoi(ident.Name[len("upgradeToVer"):])
 						if err != nil {
-							panic("unexpected value of bootstrapVersion: " + ident.Name)
+							panic("unexpected value of upgradeToVerFunctions: " + ident.Name)
 						}
 						maxVerFuncUsedPos = lastElm.Pos()
 					case "currentBootstrapVersion":

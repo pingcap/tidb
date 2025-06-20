@@ -198,7 +198,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	store kv.Storage,
 	extStoreURI string,
 	sessPool opSessPool,
-	jobID, subtaskID int64,
+	taskID, subtaskID int64,
 	tbl table.PhysicalTable,
 	idxInfos []*model.IndexInfo,
 	startKey, endKey kv.Key,
@@ -243,7 +243,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
 		reorgMeta.GetBatchSize(), reorgMeta, nil)
 	writeOp := NewWriteExternalStoreOperator(
-		ctx, copCtx, sessPool, jobID, subtaskID,
+		ctx, copCtx, sessPool, taskID, subtaskID,
 		tbl, indexes, extStore, srcChkPool, writerCnt,
 		onClose, memSizePerIndex, reorgMeta, tikvCodec,
 	)
@@ -254,7 +254,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	operator.Compose(writeOp, sinkOp)
 
 	logutil.Logger(ctx).Info("build add index cloud storage operators",
-		zap.Int64("jobID", jobID),
+		zap.Int64("taskID", taskID),
 		zap.String("memCap", units.BytesSize(float64(memCap))),
 		zap.String("memSizePerIdx", units.BytesSize(float64(memSizePerIndex))),
 		zap.Int("avgRowSize", avgRowSize),
@@ -624,7 +624,7 @@ func NewWriteExternalStoreOperator(
 	ctx *OperatorCtx,
 	copCtx copr.CopContext,
 	sessPool opSessPool,
-	jobID int64,
+	taskID int64,
 	subtaskID int64,
 	tbl table.PhysicalTable,
 	indexes []table.Index,
@@ -658,7 +658,7 @@ func NewWriteExternalStoreOperator(
 					SetGroupOffset(i).
 					SetOnDup(onDuplicateKey)
 				writerID := uuid.New().String()
-				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
+				prefix := path.Join(strconv.Itoa(int(taskID)), strconv.Itoa(int(subtaskID)))
 				writer := builder.Build(store, prefix, writerID)
 				writers = append(writers, writer)
 			}

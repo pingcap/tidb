@@ -315,6 +315,7 @@ go_test(
         "//pkg/expression",
         "//pkg/expression/exprstatic",
         "//pkg/infoschema",
+        "//pkg/infoschema/validatorapi",
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/lightning/backend/external",

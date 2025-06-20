@@ -1566,11 +1566,7 @@
         "SQL": "explain format = 'brief' select count(*) from (select a , b from t where false union all select a , c from t1 where false) tt",
         "Plan": [
           "StreamAgg 1.00 root  funcs:count(1)->Column#11",
-          "└─Union 0.00 root  ",
-          "  ├─Projection 0.00 root  test.t.a->Column#9, cast(test.t.b, double BINARY)->Column#10",
-          "  │ └─TableDual 0.00 root  rows:0",
-          "  └─Projection 0.00 root  test.t1.a->Column#9, cast(test.t1.c, double BINARY)->Column#10",
-          "    └─TableDual 0.00 root  rows:0"
+          "└─TableDual 0.00 root  rows:0"
         ]
       }
     ]
