@@ -3196,23 +3196,23 @@ FlashbackDatabaseStmt:
  *
  *******************************************************************/
 DistributeTableStmt:
-	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOrAssignmentEq Identifier "ENGINE" EqOrAssignmentEq Identifier
+	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOpt stringLit "ENGINE" EqOpt stringLit
 	{
 		$$ = &ast.DistributeTableStmt{
 			Table:          $3.(*ast.TableName),
 			PartitionNames: $4.([]ast.CIStr),
-			Rule:           ast.NewCIStr($7),
-			Engine:         ast.NewCIStr($10),
+			Rule:           $7,
+			Engine:         $10,
 		}
 	}
-|	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOrAssignmentEq Identifier "ENGINE" EqOrAssignmentEq Identifier "TIMEOUT" EqOrAssignmentEq Identifier
+|	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOpt stringLit "ENGINE" EqOpt stringLit "TIMEOUT" EqOpt stringLit
 	{
 		$$ = &ast.DistributeTableStmt{
 			Table:          $3.(*ast.TableName),
 			PartitionNames: $4.([]ast.CIStr),
-			Rule:           ast.NewCIStr($7),
-			Engine:         ast.NewCIStr($10),
-			Timeout:        ast.NewCIStr($13),
+			Rule:           $7,
+			Engine:         $10,
+			Timeout:        $13,
 		}
 	}
 
