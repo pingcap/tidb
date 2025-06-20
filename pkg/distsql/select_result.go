@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	tikvmetrics "github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
@@ -377,6 +378,9 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 }
 
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
+	req, ctx := tracing.StartRegionEx(ctx, "SelectResult.Next")
+	defer req.End()
+
 	chk.Reset()
 	if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
 		err := r.fetchResp(ctx)
