@@ -340,9 +340,19 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
 		if !expBackoffSuccess {
 			// Use the column's histogram for single column range for a multi-column index.
+			cnt := float64(0)
 			if idx.StatsVer == statistics.Version2 && isSingleColRange && !isSingleColIdx && c != nil && c.Histogram.NDV > 0 {
-				count += betweenRowCountOnColumn(sctx, c, indexRange.LowVal[0], indexRange.HighVal[0], lb, rb)
-			} else {
+				cnt = betweenRowCountOnColumn(sctx, c, indexRange.LowVal[0], indexRange.HighVal[0], lb, rb)
+				cnt, err = adjustRowCountForBoundaries(sctx, c, cnt, indexRange, indexRange.LowVal[0], indexRange.HighVal[0], lb, rb, realtimeRowCount, modifyCount)
+				if err != nil {
+					// if the column stats is invalid, we should use the index stats.
+					cnt = 0
+				} else {
+					count += cnt
+				}
+			}
+			if cnt == 0 {
+				// If we didn't utilize column stats, we should use the index stats.
 				count += betweenRowCountOnIndex(sctx, idx, l, r)
 			}
 		}
