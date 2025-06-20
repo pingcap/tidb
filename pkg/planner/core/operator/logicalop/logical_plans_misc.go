@@ -89,7 +89,7 @@ func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expre
 		return
 	}
 	exprCtx := p.SCtx().GetExprCtx()
-	conditions = expression.PropagateConstant(exprCtx, conditions)
+	conditions = expression.PropagateConstant(exprCtx, conditions...)
 	// Return table dual when filter is constant false or null.
 	dual := Conds2TableDual(child, conditions)
 	if dual != nil {
