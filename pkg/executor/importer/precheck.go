@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
@@ -63,6 +64,9 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec
 		if err := e.checkTotalFileSize(); err != nil {
 			return err
 		}
+	}
+	if e.Plan.CSVHeaderOption == mydump.CSVHeaderAuto && len(e.ASTArgs.ColumnsAndUserVars) != 0 {
+		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("AUTO remove csv header option does not support column list")
 	}
 	if err := e.checkTableEmpty(ctx, conn); err != nil {
 		return err
