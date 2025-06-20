@@ -1362,6 +1362,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	for _, availablePath := range available {
 		if !isMVIndexPath(availablePath) {
 			allMVIIndexPath = false
+			break
 		}
 	}
 	if allMVIIndexPath {
@@ -4821,7 +4822,7 @@ func (b *PlanBuilder) buildDistributeTable(node *ast.DistributeTableStmt) (base.
 	tnW := b.resolveCtx.GetTableName(node.Table)
 	tblInfo := tnW.TableInfo
 	if !slices.Contains(ruleList, node.Rule.L) {
-		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("rule must be leader-scatter, follower-scatter or learner-scatter")
+		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("rule must be leader-scatter, peer-scatter or learner-scatter")
 	}
 	if !slices.Contains(engineList, node.Engine.L) {
 		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("engine must be tikv or tiflash")

@@ -15,27 +15,26 @@
 package constraint
 
 import (
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 )
 
 // DeleteTrueExprs deletes the surely true expressions
 func DeleteTrueExprs(buildCtx expression.BuildContext, stmtCtx *stmtctx.StatementContext, conds []expression.Expression) []expression.Expression {
-	newConds := make([]expression.Expression, 0, len(conds))
-	for _, cond := range conds {
+	if len(conds) == 0 {
+		return conds
+	}
+	return slices.DeleteFunc(conds, func(cond expression.Expression) bool {
 		con, ok := cond.(*expression.Constant)
 		if !ok {
-			newConds = append(newConds, cond)
-			continue
+			return false
 		}
 		if expression.MaybeOverOptimized4PlanCache(buildCtx, con) {
-			newConds = append(newConds, cond)
-			continue
+			return false
 		}
-		if isTrue, err := con.Value.ToBool(stmtCtx.TypeCtx()); err == nil && isTrue == 1 {
-			continue
-		}
-		newConds = append(newConds, cond)
-	}
-	return newConds
+		isTrue, err := con.Value.ToBool(stmtCtx.TypeCtx())
+		return err == nil && isTrue == 1
+	})
 }

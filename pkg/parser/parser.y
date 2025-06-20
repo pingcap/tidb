@@ -5573,6 +5573,25 @@ ExplainStmt:
 			Explore:   true,
 		}
 	}
+|	ExplainSym "EXPLORE" "ANALYZE" SelectStmt
+	{
+		startOffset := parser.startOffset(&yyS[yypt])
+		stmt := $4
+		stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		$$ = &ast.ExplainStmt{
+			Stmt:    stmt,
+			Explore: true,
+			Analyze: true,
+		}
+	}
+|	ExplainSym "EXPLORE" "ANALYZE" stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			SQLDigest: $4,
+			Explore:   true,
+			Analyze:   true,
+		}
+	}
 |	ExplainSym TableName
 	{
 		$$ = &ast.ExplainStmt{
