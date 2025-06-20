@@ -74,6 +74,8 @@ const (
 	// Fix56318 controls whether to do HeavyFunctionOptimize. The HeavyFunctionOptimize eliminate the usage of
 	// the function in TopN operators
 	Fix56318 uint64 = 56318
+	// Fix61556 controls whether to allow elimination of aggregation functions in join operations.
+	Fix61556 uint64 = 61556
 )
 
 // GetStr fetches the given key from the fix control map as a string type.

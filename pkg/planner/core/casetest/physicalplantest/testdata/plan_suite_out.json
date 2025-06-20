@@ -4010,5 +4010,94 @@
         "Warning": null
       }
     ]
+  },
+  {
+    "Name": "TestRuleAggElimination4Join",
+    "Cases": [
+      {
+        "SQL": "SELECT t1.id1, t1.id2, SUM(t1.id3)  FROM t1, t2  WHERE t1.id1=t2.id1 AND t1.id2=t2.id2  GROUP BY t1.id1, t1.id2;",
+        "Plan": [
+          "Projection 12500.00 root  test.t1.id1, test.t1.id2, Column#11",
+          "└─Projection 12500.00 root  cast(test.t1.id3, decimal(32,0) BINARY)->Column#11, test.t1.id1, test.t1.id2",
+          "  └─HashJoin 12500.00 root  inner join, equal:[eq(test.t1.id1, test.t2.id1) eq(test.t1.id2, test.t2.id2)]",
+          "    ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 10000.00 cop[tikv] table:t2, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1, t2, t3 WHERE t1.id1=t2.id1 AND t1.id2=t2.id2   AND t2.id1=t3.id1 AND t2.id2=t3.id2 GROUP BY t1.id1, t1.id2;",
+        "Plan": [
+          "Projection 15625.00 root  test.t1.id1, test.t1.id2, Column#16",
+          "└─Projection 15625.00 root  1->Column#16, test.t1.id1, test.t1.id2",
+          "  └─HashJoin 15625.00 root  inner join, equal:[eq(test.t2.id1, test.t3.id1) eq(test.t2.id2, test.t3.id2)]",
+          "    ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 10000.00 cop[tikv] table:t3, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12500.00 root  inner join, equal:[eq(test.t1.id1, test.t2.id1) eq(test.t1.id2, test.t2.id2)]",
+          "      ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "      │ └─IndexFullScan 10000.00 cop[tikv] table:t2, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1, t2 WHERE t1.id1 = t2.id1 GROUP BY t1.id1, t1.id2;",
+        "Plan": [
+          "Projection 8000.00 root  test.t1.id1, test.t1.id2, Column#11",
+          "└─HashAgg 8000.00 root  group by:test.t1.id1, test.t1.id2, funcs:count(test.t1.id3)->Column#11, funcs:firstrow(test.t1.id1)->test.t1.id1, funcs:firstrow(test.t1.id2)->test.t1.id2",
+          "  └─HashJoin 12500.00 root  inner join, equal:[eq(test.t1.id1, test.t2.id1)]",
+          "    ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 10000.00 cop[tikv] table:t2, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1, t2 WHERE ABS(t1.id1) = t2.id1 AND t1.id2 = t2.id2 GROUP BY t1.id1, t1.id2;",
+        "Plan": [
+          "Projection 8000.00 root  test.t1.id1, test.t1.id2, Column#11",
+          "└─HashAgg 8000.00 root  group by:test.t1.id1, test.t1.id2, funcs:count(test.t1.id3)->Column#11, funcs:firstrow(test.t1.id1)->test.t1.id1, funcs:firstrow(test.t1.id2)->test.t1.id2",
+          "  └─HashJoin 12500.00 root  inner join, equal:[eq(test.t2.id2, test.t1.id2) eq(test.t2.id1, Column#12)]",
+          "    ├─Projection(Build) 10000.00 root  test.t1.id1, test.t1.id2, test.t1.id3, abs(test.t1.id1)->Column#12",
+          "    │ └─TableReader 10000.00 root  data:TableFullScan",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─IndexReader(Probe) 10000.00 root  index:IndexFullScan",
+          "      └─IndexFullScan 10000.00 cop[tikv] table:t2, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "SELECT t1.id1, t1.id2, SUM(t1.id3) FROM t1 WHERE EXISTS ( SELECT 1 FROM t2 WHERE t1.id1=t2.id1 AND t1.id2=t2.id2 ) GROUP BY t1.id1, t1.id2;",
+        "Plan": [
+          "Projection 8000.00 root  test.t1.id1, test.t1.id2, cast(test.t1.id3, decimal(32,0) BINARY)->Column#12",
+          "└─HashJoin 8000.00 root  semi join, left side:TableReader, equal:[eq(test.t1.id1, test.t2.id1) eq(test.t1.id2, test.t2.id2)]",
+          "  ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 10000.00 cop[tikv] table:t2, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "WITH RECURSIVE cte AS ( SELECT id1, id2, id3 FROM t1 UNION ALL SELECT id1+1, id2+1, id3 FROM cte WHERE id1 < 10 ) SELECT id1, id2, SUM(id3) FROM cte GROUP BY id1, id2;",
+        "Plan": [
+          "Projection 8001.00 root  test.t1.id1, test.t1.id2, Column#22",
+          "└─HashAgg 8001.00 root  group by:Column#24, Column#25, funcs:sum(Column#23)->Column#22, funcs:firstrow(Column#24)->test.t1.id1, funcs:firstrow(Column#25)->test.t1.id2",
+          "  └─Projection 18000.00 root  cast(test.t1.id3, decimal(10,0) BINARY)->Column#23, test.t1.id1->Column#24, test.t1.id2->Column#25",
+          "    └─CTEFullScan 18000.00 root CTE:cte data:CTE_0",
+          "CTE_0 18000.00 root  Recursive CTE",
+          "├─TableReader(Seed Part) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─Projection(Recursive Part) 8000.00 root  cast(plus(test.t1.id1, 1), int(11))->test.t1.id1, cast(plus(test.t1.id2, 1), int(11))->test.t1.id2, test.t1.id3",
+          "  └─Selection 8000.00 root  lt(test.t1.id1, 10)",
+          "    └─CTETable 10000.00 root  Scan on CTE_0"
+        ],
+        "Warn": null
+      }
+    ]
   }
 ]
