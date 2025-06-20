@@ -619,12 +619,15 @@ func (d *ddl) refreshTiFlashPlacementRules(sctx sessionctx.Context, tick uint64)
 		ruleIsMissing := rule == nil || len(rule.ID) == 0
 		if ruleIsMissing && replica.TableInfo.TiFlashReplica.Count > 0 {
 			job := &model.Job{
-				SchemaID:   replica.DBInfo.ID,
-				TableID:    replica.TableInfo.ID,
-				SchemaName: replica.DBInfo.Name.L,
-				TableName:  replica.TableInfo.Name.L,
-				Type:       model.ActionSetTiFlashReplica,
-				BinlogInfo: &model.HistoryInfo{},
+				Version:        model.GetJobVerInUse(),
+				SchemaID:       replica.DBInfo.ID,
+				TableID:        replica.TableInfo.ID,
+				SchemaName:     replica.DBInfo.Name.L,
+				TableName:      replica.TableInfo.Name.L,
+				Type:           model.ActionSetTiFlashReplica,
+				BinlogInfo:     &model.HistoryInfo{},
+				CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
+				SQLMode:        sctx.GetSessionVars().SQLMode,
 			}
 			args := model.SetTiFlashReplicaArgs{TiflashReplica: ast.TiFlashReplicaSpec{
 				Count:  replica.TableInfo.TiFlashReplica.Count,
