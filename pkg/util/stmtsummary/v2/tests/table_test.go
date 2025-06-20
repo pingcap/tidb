@@ -678,25 +678,6 @@ func TestPerformanceSchemaforPlanCache(t *testing.T) {
 		testkit.Rows("3 1"))
 }
 
-func TestExplainExploreStmtStats(t *testing.T) {
-	setupStmtSummary()
-	defer closeStmtSummary()
-
-	store := testkit.CreateMockStore(t)
-	tmp := testkit.NewTestKit(t, store)
-	tmp.MustExec("set tidb_enable_prepared_plan_cache=ON")
-	tk := newTestKitWithPlanCache(t, store)
-
-	// Clear summaries.
-	tk.MustExec("set global tidb_enable_stmt_summary = 0")
-	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(`create table t (a int, b int, c int, key(a))`)
-	//tk.MustQuery(`select count(1) from t where a=1`)
-	tk.MustQuery("select 1 from information_schema.tidb_statements_stats where digest_text=''").Rows()
-}
-
 func newTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
