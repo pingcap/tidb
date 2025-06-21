@@ -1433,8 +1433,6 @@ type SessionVars struct {
 	AssertionLevel AssertionLevel
 	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
 	IgnorePreparedCacheCloseStmt bool
-	// EnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
-	EnableNewCostInterface bool
 	// CostModelVersion is a internal switch to indicates the Cost Model Version.
 	CostModelVersion int
 	// IndexJoinDoubleReadPenaltyCostRate indicates whether to add some penalty cost to IndexJoin and how much of it.
@@ -2260,6 +2258,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		GuaranteeLinearizability:      vardef.DefTiDBGuaranteeLinearizability,
 		AnalyzeVersion:                vardef.DefTiDBAnalyzeVersion,
 		EnableIndexMergeJoin:          vardef.DefTiDBEnableIndexMergeJoin,
+		TrackAggregateMemoryUsage:     vardef.DefTiDBTrackAggregateMemoryUsage,
+		TiDBEnableExchangePartition:   true,
 		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:          vardef.DefCTEMaxRecursionDepth,
 		TMPTableSize:                  vardef.DefTiDBTmpTableMaxSize,
@@ -2288,6 +2288,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableWindowFunction:          vardef.DefEnableWindowFunction,
 		CostModelVersion:              vardef.DefTiDBCostModelVer,
 		OptimizerEnableNAAJ:           vardef.DefTiDBEnableNAAJ,
+		RegardNULLAsPoint:             vardef.DefTiDBRegardNULLAsPoint,
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
@@ -2339,7 +2340,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.MemTracker.Killer = &vars.SQLKiller
 	vars.StatsLoadSyncWait.Store(vardef.StatsLoadSyncWait.Load())
 	vars.UseHashJoinV2 = joinversion.IsOptimizedVersion(vardef.DefTiDBHashJoinVersion)
-
+	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize,
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
 		case kv.TiFlash.Name():
