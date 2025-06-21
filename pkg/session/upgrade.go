@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -1912,10 +1911,7 @@ func upgradeToVer241(s sessiontypes.Session, _ int64) {
 
 // writeClusterID writes cluster id into mysql.tidb
 func writeClusterID(s sessiontypes.Session) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
-	defer cancel()
-
-	clusterID := s.GetDomain().(*domain.Domain).GetPDClient().GetClusterID(ctx)
+	clusterID := s.GetStore().GetClusterID()
 
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB Cluster ID.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
 		mysql.SystemDB,

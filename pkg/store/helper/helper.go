@@ -78,6 +78,7 @@ type Storage interface {
 	GetPDHTTPClient() pd.Client
 	GetOption(any) (any, bool)
 	SetOption(any, any)
+	GetClusterID() uint64
 }
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
