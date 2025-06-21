@@ -26,7 +26,7 @@ import (
 
 // DecodeBinaryPlan decode the binary plan and display it similar to EXPLAIN ANALYZE statement.
 func DecodeBinaryPlan(binaryPlan string) (string, error) {
-	protoBytes, err := decompress(binaryPlan)
+	protoBytes, err := Decompress(binaryPlan)
 	if err != nil {
 		return "", err
 	}
@@ -107,7 +107,7 @@ func DecodeBinaryPlan(binaryPlan string) (string, error) {
 // DecodeBinaryPlan4Connection decodes a binary execution plan for the `EXPLAIN FOR CONNECTION` statement.
 // This function is also used by TopSQL for plan analysis.
 func DecodeBinaryPlan4Connection(binaryPlan string, format string, forTopsql bool) ([][]string, error) {
-	protoBytes, err := decompress(binaryPlan)
+	protoBytes, err := Decompress(binaryPlan)
 	if err != nil {
 		return nil, err
 	}
