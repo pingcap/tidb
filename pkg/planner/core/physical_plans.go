@@ -994,16 +994,30 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 // ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
 func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 	colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
-	copyColumn := make([]*model.ColumnInfo, len(columns))
-	copy(copyColumn, columns)
-	var extraColumn *expression.Column
-	var extraColumnModel *model.ColumnInfo
-	if schema.Columns[len(schema.Columns)-1].ID == model.ExtraHandleID {
-		extraColumn = schema.Columns[len(schema.Columns)-1]
-		extraColumnModel = copyColumn[len(copyColumn)-1]
-		schema.Columns = schema.Columns[:len(schema.Columns)-1]
-		copyColumn = copyColumn[:len(copyColumn)-1]
+	copyColumn := make([]*model.ColumnInfo, 0, len(columns))
+	copyColumn = append(copyColumn, columns...)
+
+	oldNumColumns := len(schema.Columns)
+	numExtraColumns := 0
+	for i := oldNumColumns - 1; i >= 0; i-- {
+		cid := schema.Columns[i].ID
+		// Move extra columns to the end.
+		// ExtraRowChecksumID is ignored here since it's treated as an ordinary column.
+		// https://github.com/pingcap/tidb/blob/3c407312a986327bc4876920e70fdd6841b8365f/pkg/util/rowcodec/decoder.go#L206-L222
+		if cid != model.ExtraHandleID && cid != model.ExtraPhysTblID {
+			break
+		}
+		numExtraColumns++
 	}
+
+	extraColumns := make([]*expression.Column, numExtraColumns)
+	copy(extraColumns, schema.Columns[oldNumColumns-numExtraColumns:])
+	schema.Columns = schema.Columns[:oldNumColumns-numExtraColumns]
+
+	extraColumnModels := make([]*model.ColumnInfo, numExtraColumns)
+	copy(extraColumnModels, copyColumn[len(copyColumn)-numExtraColumns:])
+	copyColumn = copyColumn[:len(copyColumn)-numExtraColumns]
+
 	schemaColumns := schema.Columns
 	for _, col := range schemaColumns {
 		if col.VirtualExpr == nil {
@@ -1018,10 +1032,9 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 			}
 		}
 	}
-	if extraColumn != nil {
-		schema.Columns = append(schema.Columns, extraColumn)
-		copyColumn = append(copyColumn, extraColumnModel) // nozero
-	}
+
+	schema.Columns = append(schema.Columns, extraColumns...)
+	copyColumn = append(copyColumn, extraColumnModels...)
 	return copyColumn
 }
 
