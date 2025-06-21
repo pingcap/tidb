@@ -96,7 +96,7 @@ func (d *ResultEncoder) ColumnTypeInfoCharsetID(info *Info) uint16 {
 	if d.isNull || len(d.chsName) == 0 || !isStringColumnType(info.Type) {
 		return charset
 	}
-	if charset == mysql.BinaryDefaultCollationID {
+	if charset == mysql.BinaryDefaultCollationID && !isBlobColumnType(info.Type) {
 		return mysql.BinaryDefaultCollationID
 	}
 	return uint16(mysql.CharsetNameToID(d.chsName))
@@ -130,6 +130,14 @@ func (d *ResultEncoder) EncodeWith(src []byte, enc charset.Encoding) []byte {
 		logutil.BgLogger().Debug("encode error", zap.Error(err))
 	}
 	return data
+}
+
+func isBlobColumnType(tp byte) bool {
+	switch tp {
+	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+		return true
+	}
+	return false
 }
 
 func isStringColumnType(tp byte) bool {

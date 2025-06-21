@@ -1017,3 +1017,8 @@ result
 select ((exists (select 1)) * -5) as c1;
 c1
 -5
+CREATE TABLE test_61880 (c1 blob);
+insert into test_61880 (c1) values(0);
+select * from test_61880;
+c1
+0
