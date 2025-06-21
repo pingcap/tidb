@@ -288,3 +288,14 @@ func TestIssue61303VirtualGenerateColumnSubstitute(t *testing.T) {
 	tk.MustExec("insert ignore into t1(c0) values (null);")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 <nil> "))
 }
+
+func TestABC(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int not null, b int not null);")
+	tk.MustExec("set @@tidb_opt_enable_three_stage_multi_distinct_agg=on;")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	tk.MustQuery(`explain select count(distinct b) from t;`).Check(testkit.Rows("1"))
+}
