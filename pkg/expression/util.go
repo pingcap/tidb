@@ -501,7 +501,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 		refExprArr := cowExprRef{v.GetArgs(), nil}
 		oldCollEt, err := CheckAndDeriveCollationFromExprs(ctx, v.FuncName.L, v.RetType.EvalType(), v.GetArgs()...)
 		if err != nil {
-			logutil.BgLogger().Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
+			logutil.BgLogger().Error("Unexpected error happened during ColumnSubstitution", zap.Error(err), zap.Stack("stack"))
 			return false, false, v
 		}
 		var tmpArgForCollCheck []Expression
