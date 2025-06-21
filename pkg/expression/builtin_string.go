@@ -2993,6 +2993,11 @@ func (b *builtinOctStringSig) evalString(ctx EvalContext, row chunk.Row) (string
 		return "", isNull, err
 	}
 
+	// for issue #59446 should return NULL for empty string
+	if len(val) == 0 {
+		return "", true, nil
+	}
+
 	negative, overflow := false, false
 	val = getValidPrefix(strings.TrimSpace(val), 10)
 	if len(val) == 0 {
