@@ -249,7 +249,7 @@ func (b *mppExecBuilder) buildExpand(pb *tipb.Expand) (mppExec, error) {
 
 	// adding groupingID uint64|not-null as last one field types.
 	groupingIDFieldType := types.NewFieldType(mysql.TypeLonglong)
-	groupingIDFieldType.SetFlag(mysql.NotNullFlag | mysql.UnsignedFlag)
+	groupingIDFieldType.SetFlag(mysql.UnsignedFlag)
 	mutatedFieldTypes = append(mutatedFieldTypes, groupingIDFieldType)
 
 	exec.fieldTypes = mutatedFieldTypes
