@@ -468,7 +468,7 @@ func (s *propOuterJoinConstSolver) setConds2ConstFalse(filterConds bool) {
 	}}
 	if filterConds {
 		s.filterConds = []Expression{&Constant{
-			Value:   types.NewDatum(false),
+			Value:   types.NewDatum(true),
 			RetType: types.NewFieldType(mysql.TypeTiny),
 		}}
 	}
