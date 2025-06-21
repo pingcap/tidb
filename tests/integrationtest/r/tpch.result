@@ -301,6 +301,40 @@ Sort	1.00	root		tpch.orders.o_orderpriority
         ├─IndexRangeScan(Build)	14814885.94	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
         └─Selection(Probe)	11851908.75	cop[tikv]		lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate)
           └─TableRowIDScan	14814885.94	cop[tikv]	table:lineitem	keep order:false
+explain format = 'cost_trace'
+select
+o_orderpriority,
+count(*) as order_count
+from
+orders
+where
+o_orderdate >= '1995-01-01'
+and o_orderdate < date_add('1995-01-01', interval '3' month)
+and exists (
+select
+*
+from
+lineitem
+where
+l_orderkey = o_orderkey
+and l_commitdate < l_receiptdate
+)
+group by
+o_orderpriority
+order by
+o_orderpriority;
+id	estRows	estCost	costFormula	task	access object	operator info
+Sort_10	1.00	1535326713.48	N/A	root		tpch.orders.o_orderpriority
+└─Projection_12	1.00	1535326707.47	N/A	root		tpch.orders.o_orderpriority, Column#27
+  └─HashAgg_13	1.00	1535326688.87	N/A	root		group by:tpch.orders.o_orderpriority, funcs:count(1)->Column#27, funcs:firstrow(tpch.orders.o_orderpriority)->tpch.orders.o_orderpriority
+    └─IndexHashJoin_21	2340750.00	1533781760.87	N/A	root		semi join, inner:IndexLookUp_18, outer key:tpch.orders.o_orderkey, inner key:tpch.lineitem.l_orderkey, equal cond:eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)
+      ├─TableReader_40(Build)	2925937.50	1018698988.52	N/A	root		data:Selection_39
+      │ └─Selection_39	2925937.50	15188625000.00	N/A	cop[tikv]		ge(tpch.orders.o_orderdate, 1995-01-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1995-04-01 00:00:00.000000)
+      │   └─TableFullScan_38	75000000.00	14963625000.00	N/A	cop[tikv]	table:orders	keep order:false
+      └─IndexLookUp_18(Probe)	11851908.75	165.41	N/A	root		
+        ├─IndexRangeScan_15(Build)	14814885.94	349.37	N/A	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
+        └─Selection_17(Probe)	11851908.75	1285.14	N/A	cop[tikv]		lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate)
+          └─TableRowIDScan_16	14814885.94	1269.95	N/A	cop[tikv]	table:lineitem	keep order:false
 /*
 Q5 Local Supplier Volume Query
 This query lists the revenue volume done through local suppliers.

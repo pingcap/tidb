@@ -1093,10 +1093,12 @@ func sumCostVer2(costs ...costVer2) (ret costVer2) {
 			for factor, factorCost := range c.trace.factorCosts {
 				ret.trace.factorCosts[factor] += factorCost
 			}
-			if ret.trace.formula != "" {
-				ret.trace.formula += " + "
+			if c.trace.formula != "" { // this empty formula is created NewZeroCostVer2 and no update happened,
+				if ret.trace.formula != "" {
+					ret.trace.formula += " + "
+				}
+				ret.trace.formula += "(" + c.trace.formula + ")"
 			}
-			ret.trace.formula += "(" + c.trace.formula + ")"
 		}
 	}
 	return ret
