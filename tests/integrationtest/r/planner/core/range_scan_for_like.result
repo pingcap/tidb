@@ -289,7 +289,7 @@ Projection	1.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
 └─Sort	1.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	1.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
     └─Selection	1.00	root		like(planner__core__range_scan_for_like.t.a, "aa", 92)
-      └─Point_Get	1.00	root	table:t, index:ia(a)	
+      └─Point_Get	1.00	root	table:t, index:ia(a)	condition: [like(planner__core__range_scan_for_like.t.a, aa, 92)]
 select *, length(a) from t use index (ia) where a like 'aa' order by a,_tidb_rowid;
 a	length(a)
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa%' order by a,_tidb_rowid;
@@ -319,7 +319,7 @@ Projection	1.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
 └─Sort	1.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	1.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
     └─Selection	1.00	root		like(planner__core__range_scan_for_like.t.a, "", 92)
-      └─Point_Get	1.00	root	table:t, index:ia(a)	
+      └─Point_Get	1.00	root	table:t, index:ia(a)	condition: [like(planner__core__range_scan_for_like.t.a, , 92)]
 select *, length(a) from t use index (ia) where a like '' order by a,_tidb_rowid;
 a	length(a)
 	0
