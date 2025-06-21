@@ -930,6 +930,106 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 	return
 }
 
+// FetchColumnPrivileges implements privilege.Manager FetchColumnPrivileges interface.
+func (p *UserPrivileges) FetchColumnPrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error) {
+	if SkipWithGrant {
+		return nil, ErrNonexistingGrant.GenWithStackByArgs("root", "%")
+	}
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
+
+	if err := p.Handle.ensureActiveUser(u); err != nil {
+		return nil, err
+	}
+	mysqlPrivilege := p.Handle.Get()
+
+	users := make([]string, 0, 1)
+	hosts := make([]string, 0, 1)
+
+	if p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "columns_priv", "", mysql.SelectPriv) &&
+		p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv) {
+		for _, u := range mysqlPrivilege.user {
+			users = append(users, u.User)
+			hosts = append(hosts, u.Host)
+		}
+	} else {
+		users = append(users, u)
+		hosts = append(hosts, h)
+	}
+
+	return mysqlPrivilege.fetchColumnPrivileges(users, hosts), nil
+}
+
+// FetchTablePrivileges implements privilege.Manager FetchColumnPrivileges interface.
+func (p *UserPrivileges) FetchTablePrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error) {
+	if SkipWithGrant {
+		return nil, ErrNonexistingGrant.GenWithStackByArgs("root", "%")
+	}
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
+
+	if err := p.Handle.ensureActiveUser(u); err != nil {
+		return nil, err
+	}
+	mysqlPrivilege := p.Handle.Get()
+
+	users := make([]string, 0, 1)
+	hosts := make([]string, 0, 1)
+
+	if p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv) {
+		for _, u := range mysqlPrivilege.user {
+			users = append(users, u.User)
+			hosts = append(hosts, u.Host)
+		}
+	} else {
+		users = append(users, u)
+		hosts = append(hosts, h)
+	}
+
+	return mysqlPrivilege.fetchTablePrivileges(users, hosts), nil
+}
+
+// FetchSchemaPrivileges implements privilege.Manager FetchColumnPrivileges interface.
+func (p *UserPrivileges) FetchSchemaPrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error) {
+	if SkipWithGrant {
+		return nil, ErrNonexistingGrant.GenWithStackByArgs("root", "%")
+	}
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
+
+	if err := p.Handle.ensureActiveUser(u); err != nil {
+		return nil, err
+	}
+	mysqlPrivilege := p.Handle.Get()
+
+	users := make([]string, 0, 1)
+	hosts := make([]string, 0, 1)
+
+	if p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "db", "", mysql.SelectPriv) {
+		for _, u := range mysqlPrivilege.user {
+			users = append(users, u.User)
+			hosts = append(hosts, u.Host)
+		}
+	} else {
+		users = append(users, u)
+		hosts = append(hosts, h)
+	}
+
+	return mysqlPrivilege.fetchSchemaPrivileges(users, hosts), nil
+}
+
 // ActiveRoles implements privilege.Manager ActiveRoles interface.
 func (p *UserPrivileges) ActiveRoles(ctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string) {
 	if SkipWithGrant {
