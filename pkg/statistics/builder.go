@@ -274,28 +274,17 @@ func BuildHistAndTopN(
 	}()
 	tz := ctx.GetSessionVars().StmtCtx.TimeZone()
 	var getComparedBytes func(datum types.Datum) ([]byte, error)
-	var encodeBuf []byte
 	// Optimize getComparedBytes function
 	if isColumn {
 		getComparedBytes = func(datum types.Datum) ([]byte, error) {
-			// Reset buffer to zero length but keep capacity
-			encodeBuf = encodeBuf[:0]
-			// Pre-allocate buffer with reasonable size to avoid reallocations
-			if cap(encodeBuf) < 32 {
-				encodeBuf = make([]byte, 0, 32)
-			}
-			encoded, err := codec.EncodeKey(tz, encodeBuf, datum)
+			encoded, err := codec.EncodeKey(tz, nil, datum)
 			err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 			if memTracker != nil {
-				// Only track new allocations
-				if cap(encoded) > cap(encodeBuf) {
-					deltaSize := int64(cap(encoded))
-					memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
-					memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
-				}
+				// Track memory usage
+				deltaSize := int64(cap(encoded))
+				memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+				memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 			}
-			// Update the shared buffer
-			encodeBuf = encoded
 			return encoded, err
 		}
 	} else {
