@@ -46,6 +46,15 @@ type Manager interface {
 	// ShowGrants shows granted privileges for user.
 	ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
 
+	// FetchColumnPrivileges gets column privilege for user
+	FetchColumnPrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error)
+
+	// FetchTablePrivileges gets table privilege for user
+	FetchTablePrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error)
+
+	// FetchSchemaPrivileges gets schema privilege for user
+	FetchSchemaPrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error)
+
 	// GetEncodedPassword shows the encoded password for user.
 	GetEncodedPassword(user, host string) string
 

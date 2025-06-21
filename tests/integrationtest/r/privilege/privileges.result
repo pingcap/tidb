@@ -663,3 +663,45 @@ update privilege__privileges.tt1 inner join t_f
 set t_f.fullname=t_f.fullname
 where tt1.id=t_f.id;
 Error 1288 (HY000): The target table t_f of the UPDATE is not updatable
+create database test_information_schema;
+create table test_information_schema.t (a int, b int);
+create user test_information_schema_u1, test_information_schema_u2, test_information_schema_u3;
+grant select on test_information_schema.* to test_information_schema_u1;
+grant select on test_information_schema.t to test_information_schema_u2;
+grant select(a) on test_information_schema.t to test_information_schema_u3;
+// default user can see all privileges.
+select * from information_schema.schema_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	PRIVILEGE_TYPE	IS_GRANTABLE
+'test_information_schema_u1'@'%'	def	test_information_schema	SELECT	NO
+select * from information_schema.table_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	PRIVILEGE_TYPE	IS_GRANTABLE
+'test_information_schema_u2'@'%'	def	test_information_schema	t	SELECT	NO
+select * from information_schema.column_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	PRIVILEGE_TYPE	IS_GRANTABLE
+'test_information_schema_u3'@'%'	def	test_information_schema	t	a	SELECT	NO
+// test_information_schema_u1 can only see schema_privileges.
+select * from information_schema.schema_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	PRIVILEGE_TYPE	IS_GRANTABLE
+'test_information_schema_u1'@'%'	def	test_information_schema	SELECT	NO
+select * from information_schema.table_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	PRIVILEGE_TYPE	IS_GRANTABLE
+select * from information_schema.column_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	PRIVILEGE_TYPE	IS_GRANTABLE
+// test_information_schema_u2 can only see table_privileges.
+select * from information_schema.schema_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	PRIVILEGE_TYPE	IS_GRANTABLE
+select * from information_schema.table_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	PRIVILEGE_TYPE	IS_GRANTABLE
+'test_information_schema_u2'@'%'	def	test_information_schema	t	SELECT	NO
+select * from information_schema.column_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	PRIVILEGE_TYPE	IS_GRANTABLE
+// test_information_schema_u3 can only see column_privileges.
+select * from information_schema.schema_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	PRIVILEGE_TYPE	IS_GRANTABLE
+select * from information_schema.table_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	PRIVILEGE_TYPE	IS_GRANTABLE
+select * from information_schema.column_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	PRIVILEGE_TYPE	IS_GRANTABLE
+'test_information_schema_u3'@'%'	def	test_information_schema	t	a	SELECT	NO
+drop database test_information_schema;
+drop user test_information_schema_u1, test_information_schema_u2, test_information_schema_u3;

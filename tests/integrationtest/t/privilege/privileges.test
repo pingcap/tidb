@@ -898,3 +898,45 @@ with t_f as (
 
 disconnect u53490;
 connection default;
+
+# Test information_schema.schema_privileges, table_privileges and column_privileges
+create database test_information_schema;
+create table test_information_schema.t (a int, b int);
+
+create user test_information_schema_u1, test_information_schema_u2, test_information_schema_u3;
+grant select on test_information_schema.* to test_information_schema_u1;
+grant select on test_information_schema.t to test_information_schema_u2;
+grant select(a) on test_information_schema.t to test_information_schema_u3;
+
+--echo // default user can see all privileges.
+select * from information_schema.schema_privileges where TABLE_SCHEMA = 'test_information_schema';
+select * from information_schema.table_privileges where TABLE_SCHEMA = 'test_information_schema';
+select * from information_schema.column_privileges where TABLE_SCHEMA = 'test_information_schema';
+
+--echo // test_information_schema_u1 can only see schema_privileges.
+connect (test_information_schema_u1, localhost, test_information_schema_u1, , );
+connection test_information_schema_u1;
+select * from information_schema.schema_privileges where TABLE_SCHEMA = 'test_information_schema';
+select * from information_schema.table_privileges where TABLE_SCHEMA = 'test_information_schema';
+select * from information_schema.column_privileges where TABLE_SCHEMA = 'test_information_schema';
+disconnect test_information_schema_u1;
+
+--echo // test_information_schema_u2 can only see table_privileges.
+connect (test_information_schema_u2, localhost, test_information_schema_u2, , );
+connection test_information_schema_u2;
+select * from information_schema.schema_privileges where TABLE_SCHEMA = 'test_information_schema';
+select * from information_schema.table_privileges where TABLE_SCHEMA = 'test_information_schema';
+select * from information_schema.column_privileges where TABLE_SCHEMA = 'test_information_schema';
+disconnect test_information_schema_u2;
+
+--echo // test_information_schema_u3 can only see column_privileges.
+connect (test_information_schema_u3, localhost, test_information_schema_u3, , );
+connection test_information_schema_u3;
+select * from information_schema.schema_privileges where TABLE_SCHEMA = 'test_information_schema';
+select * from information_schema.table_privileges where TABLE_SCHEMA = 'test_information_schema';
+select * from information_schema.column_privileges where TABLE_SCHEMA = 'test_information_schema';
+disconnect test_information_schema_u3;
+
+connection default;
+drop database test_information_schema;
+drop user test_information_schema_u1, test_information_schema_u2, test_information_schema_u3;
