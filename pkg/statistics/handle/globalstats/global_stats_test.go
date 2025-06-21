@@ -964,19 +964,19 @@ func TestIssues24349WithConcurrency(t *testing.T) {
 }
 
 func TestGlobalStatsAndSQLBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_merge_partition_stats_concurrency=1")
-	testGlobalStatsAndSQLBinding(tk)
+	testGlobalStatsAndSQLBinding(tk, t, dom)
 }
 
 func TestGlobalStatsAndSQLBindingWithConcurrency(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_merge_partition_stats_concurrency=2")
-	testGlobalStatsAndSQLBinding(tk)
+	testGlobalStatsAndSQLBinding(tk, t, dom)
 }
 
 func TestMergeGlobalStatsForCMSketch(t *testing.T) {
