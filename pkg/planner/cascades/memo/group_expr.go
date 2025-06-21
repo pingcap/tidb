@@ -160,6 +160,7 @@ func (e *GroupExpression) mergeTo(target *GroupExpression) {
 	}
 	e.Inputs = e.Inputs[:0]
 	e.group = nil
+	e.SetAbandoned()
 }
 
 func (e *GroupExpression) addr() unsafe.Pointer {
