@@ -2291,7 +2291,7 @@ func TestInsertColumnPrivilege(t *testing.T) {
 	userTk.MustExec(`INSERT INTO test.t1 SET a = 1, b = 2;`)
 	userTk.MustExec(`INSERT INTO test.t1 VALUES (1,2);`)
 	// FIXME(cbc): for tidb, the parser will treat `INSERT INTO test.t1 SET a = 1, b = a * 2;` the same
-	// 	as `INSERT INTO test.t1 SET a = 1, b = a * 2`, so it does NOT require SELECT privilege of a
+	// 	as `INSERT INTO test.t1 VALUES (1,2)`, so it does NOT require SELECT privilege of `a`
 	// userTk.MustGetErrCode(`INSERT INTO test.t1 SET a = 1, b = a * 2;`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT SELECT(a) ON test.t1 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`INSERT INTO test.t1 SET a = 1, b = a * 2;`)
