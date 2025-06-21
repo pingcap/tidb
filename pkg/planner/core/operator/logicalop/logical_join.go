@@ -266,11 +266,11 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		p.LeftConditions = nil
 		p.RightConditions = nil
 		p.EqualConditions = equalCond
-		p.OtherConditions = otherCond
+		p.OtherConditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), otherCond)
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	case AntiSemiJoin:
-		predicates = expression.PropagateConstant(p.SCtx().GetExprCtx(), predicates...)
+		predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
