@@ -463,7 +463,7 @@ type propOuterJoinConstSolver struct {
 
 func (s *propOuterJoinConstSolver) setConds2ConstFalse(filterConds bool) {
 	s.joinConds = []Expression{&Constant{
-		Value:   types.NewDatum(filterConds),
+		Value:   types.NewDatum(!filterConds),
 		RetType: types.NewFieldType(mysql.TypeTiny),
 	}}
 }
