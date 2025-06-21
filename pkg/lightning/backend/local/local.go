@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
@@ -53,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -86,9 +88,6 @@ const (
 	gRPCKeepAliveTimeout = 5 * time.Minute
 	gRPCBackOffMaxDelay  = 10 * time.Minute
 
-	// The max ranges count in a batch to split and scatter.
-	maxBatchSplitRanges = 4096
-
 	propRangeIndex = "tikv.range_index"
 
 	defaultPropSizeIndexDistance = 4 * units.MiB
@@ -119,9 +118,95 @@ var (
 	// A large retry times is for tolerating tikv cluster failures.
 	MaxWriteAndIngestRetryTimes = 30
 
+	// defaultMaxBatchSplitRanges is the default max ranges count in a batch to split and scatter.
+	defaultMaxBatchSplitRanges  = 4096
+	defaultMaxIngestReqPerSec   = 5
+	defaultMaxIngestConcurrency = 5
+
 	// Unlimited RPC receive message size for TiKV importer
 	unlimitedRPCRecvMsgSize = math.MaxInt32
 )
+
+var (
+	// CurrentMaxBatchSplitRanges stores the current limit for batch split ranges.
+	// It is initialized with defaultMaxBatchSplitRanges.
+	CurrentMaxBatchSplitRanges atomic.Int64
+	// CurrentMaxIngestReqPerSec stores the current limit for ingest requests per second.
+	CurrentMaxIngestReqPerSec atomic.Int64
+	// CurrentMaxIngestConcurrency stores the current limit for concurrent ingest requests.
+	CurrentMaxIngestConcurrency atomic.Int64
+)
+
+// InitializeGlobalMaxBatchSplitRanges loads the maxBatchSplitRanges value using meta.Meta or sets a default.
+func InitializeGlobalMaxBatchSplitRanges(m *meta.Mutator, logger *zap.Logger) error {
+	valInt, isNull, err := m.GetIngestMaxBatchSplitRanges()
+	if err != nil {
+		return errors.Annotate(err, "failed to read maxBatchSplitRanges from meta store")
+	}
+	if isNull || valInt <= 0 {
+		valInt = defaultMaxBatchSplitRanges
+		logger.Info("maxBatchSplitRanges not found in meta store, initialized to default and persisted",
+			zap.Int("value", defaultMaxBatchSplitRanges))
+	} else {
+		logger.Info("loaded maxBatchSplitRanges from meta store", zap.Int("value", valInt))
+	}
+	CurrentMaxBatchSplitRanges.Store(int64(valInt))
+
+	valInt, isNull, err = m.GetIngestMaxReqPerSecond()
+	if err != nil {
+		return errors.Annotate(err, "failed to read maxIngestReqPerSec from meta store")
+	}
+	if isNull || valInt <= 0 {
+		valInt = defaultMaxIngestReqPerSec
+		logger.Info("maxIngestReqPerSec not found in meta store, initialized to default and persisted",
+			zap.Int("value", defaultMaxIngestReqPerSec))
+	} else {
+		logger.Info("loaded maxIngestReqPerSec from meta store", zap.Int("value", valInt))
+	}
+	CurrentMaxIngestReqPerSec.Store(int64(valInt))
+
+	valInt, isNull, err = m.GetIngestMaxConcurrency()
+	if err != nil {
+		return errors.Annotate(err, "failed to read maxIngestReqConcurrency from meta store")
+	}
+	if isNull || valInt <= 0 {
+		valInt = defaultMaxIngestConcurrency
+		logger.Info("maxIngestReqConcurrency not found in meta store, initialized to default and persisted",
+
+			zap.Int("value", defaultMaxIngestConcurrency))
+	} else {
+		logger.Info("loaded maxIngestReqConcurrency from meta store", zap.Int("value", valInt))
+	}
+	CurrentMaxIngestConcurrency.Store(int64(valInt))
+	return nil
+}
+
+// GetMaxBatchSplitRanges returns the current maximum number of ranges in a batch to split and scatter.
+func GetMaxBatchSplitRanges() int {
+	val := CurrentMaxBatchSplitRanges.Load()
+	if val == 0 { // Not yet initialized from TiKV or invalid value caused fallback to 0
+		return defaultMaxBatchSplitRanges
+	}
+	return int(val)
+}
+
+// GetMaxIngestReqPerSec returns the current maximum number of ingest requests per second.
+func GetMaxIngestReqPerSec() int {
+	val := CurrentMaxIngestReqPerSec.Load()
+	if val == 0 {
+		return defaultMaxIngestReqPerSec
+	}
+	return int(val)
+}
+
+// GestMaxIngestConcurrency returns the current maximum number of concurrent ingest requests.
+func GestMaxIngestConcurrency() int {
+	val := CurrentMaxIngestConcurrency.Load()
+	if val == 0 {
+		return defaultMaxIngestConcurrency
+	}
+	return int(val)
+}
 
 // importClientFactory is factory to create new import client for specific store.
 type importClientFactory interface {
@@ -929,7 +1014,7 @@ func (local *Backend) prepareAndSendJob(
 				failpoint.Break()
 			})
 
-			err = local.splitAndScatterRegionInBatches(ctx, regionSplitKeys, maxBatchSplitRanges)
+			err = local.splitAndScatterRegionInBatches(ctx, regionSplitKeys, GetMaxBatchSplitRanges())
 			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}
@@ -1382,6 +1467,7 @@ func (local *Backend) doImport(
 		toCh            = jobToWorkerCh
 		afterExecuteJob func([]*metapb.Peer)
 		clusterID       uint64
+		ingestLimiter   = newIngestLimiter(workerCtx, GetMaxIngestReqPerSec(), GestMaxIngestConcurrency())
 	)
 	if local.pdCli != nil {
 		clusterID = local.pdCli.GetClusterID(ctx)
@@ -1395,8 +1481,9 @@ func (local *Backend) doImport(
 		toCh = balancer.innerJobToWorkerCh
 		afterExecuteJob = balancer.releaseStoreLoad
 	}
+
 	for range local.WorkerConcurrency {
-		worker := local.newRegionJobWorker(clusterID, toCh, jobFromWorkerCh, &jobWg, afterExecuteJob)
+		worker := local.newRegionJobWorker(clusterID, toCh, jobFromWorkerCh, &jobWg, afterExecuteJob, ingestLimiter)
 		workGroup.Go(func() error {
 			return worker.run(workerCtx)
 		})
@@ -1448,6 +1535,7 @@ func (local *Backend) newRegionJobWorker(
 	toCh, jobFromWorkerCh chan *regionJob,
 	jobWg *sync.WaitGroup,
 	afterExecuteJob func([]*metapb.Peer),
+	ingestLimiter *ingestLimiter,
 ) regionJobWorker {
 	base := &regionJobBaseWorker{
 		jobInCh:          toCh,
@@ -1455,6 +1543,7 @@ func (local *Backend) newRegionJobWorker(
 		jobWg:            jobWg,
 		afterRunJobFn:    afterExecuteJob,
 		regenerateJobsFn: local.generateJobForRange,
+		ingestLimiter:    ingestLimiter,
 	}
 	if kerneltype.IsNextGen() {
 		tlsConfig := local.tls.TLSConfig()

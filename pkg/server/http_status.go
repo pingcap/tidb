@@ -262,6 +262,14 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for upgrade operations.
 	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
 
+	// HTTP path for ingest configurations
+	router.Handle("/ingest/max-batch-split-ranges", tikvhandler.NewIngestMaxBatchSplitRangesHandler(
+		tikvHandlerTool, tikvhandler.IngestParamMaxBatchSplitRanges)).Name("IngestMaxBatchSplitRanges")
+	router.Handle("/ingest/max-ingest-req-per-sec", tikvhandler.NewIngestMaxBatchSplitRangesHandler(
+		tikvHandlerTool, tikvhandler.IngestParamMaxReqPerSec)).Name("IngestMaxReqPerSec")
+	router.Handle("/ingest/max-ingest-concurrency", tikvhandler.NewIngestMaxBatchSplitRangesHandler(
+		tikvHandlerTool, tikvhandler.IngestParamMaxConcurrency)).Name("IngestMaxConcurrency")
+
 	if s.cfg.Store == config.StoreTypeTiKV {
 		// HTTP path for tikv.
 		router.Handle("/tables/{db}/{table}/regions", tikvhandler.NewTableHandler(tikvHandlerTool, tikvhandler.OpTableRegions))
