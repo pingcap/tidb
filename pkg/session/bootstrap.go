@@ -59,8 +59,11 @@ import (
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.etcd.io/etcd/client/v3/concurrency"
+=======
+>>>>>>> 43c7806b459 (session: fix `initGlobalVariableIfNotExists` function forget call rs.close (#61890))
 	"go.uber.org/zap"
 )
 
@@ -3314,13 +3317,9 @@ func upgradeToVer220(s sessiontypes.Session, ver int64) {
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, name)
+	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;", mysql.SystemDB, mysql.GlobalVariablesTable, name)
 	terror.MustNil(err)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
-	if req.NumRows() != 0 {
+	if len(rows) != 0 {
 		return
 	}
 
