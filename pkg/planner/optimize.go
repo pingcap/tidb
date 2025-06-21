@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -706,10 +707,17 @@ func genBriefPlanWithSCtx(sctx sessionctx.Context, stmt ast.StmtNode) (planDiges
 	flat := core.FlattenPhysicalPlan(p, false)
 	_, digest := core.NormalizeFlatPlan(flat)
 	sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true // ignore operatorID to make the output simpler
-	plan := core.ExplainFlatPlanInRowFormat(flat, types.ExplainFormatBrief, false, nil, nil)
+	plan := core.ExplainFlatPlanInRowFormat(flat, types.ExplainFormatBrief, false, nil)
 	hints := core.GenHintsFromFlatPlan(flat)
 
 	return digest.String(), hint.RestoreOptimizerHints(hints), plan, nil
+}
+
+func planIDFunc(plan any) (planID int, ok bool) {
+	if p, ok := plan.(base.Plan); ok {
+		return p.ID(), true
+	}
+	return 0, false
 }
 
 func init() {
@@ -722,4 +730,5 @@ func init() {
 	bindinfo.CalculatePlanDigest = calculatePlanDigestFunc
 	bindinfo.RecordRelevantOptVarsAndFixes = recordRelevantOptVarsAndFixes
 	bindinfo.GenBriefPlanWithSCtx = genBriefPlanWithSCtx
+	stmtctx.PlanIDFunc = planIDFunc
 }

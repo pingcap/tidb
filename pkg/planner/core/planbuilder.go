@@ -1362,6 +1362,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	for _, availablePath := range available {
 		if !isMVIndexPath(availablePath) {
 			allMVIIndexPath = false
+			break
 		}
 	}
 	if allMVIIndexPath {
@@ -4821,7 +4822,7 @@ func (b *PlanBuilder) buildDistributeTable(node *ast.DistributeTableStmt) (base.
 	tnW := b.resolveCtx.GetTableName(node.Table)
 	tblInfo := tnW.TableInfo
 	if !slices.Contains(ruleList, node.Rule.L) {
-		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("rule must be leader-scatter, follower-scatter or learner-scatter")
+		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("rule must be leader-scatter, peer-scatter or learner-scatter")
 	}
 	if !slices.Contains(engineList, node.Engine.L) {
 		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("engine must be tikv or tiflash")
@@ -5526,7 +5527,7 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (base.Plan, error) {
 	return p, nil
 }
 
-func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, explainRows [][]string, analyze, explore bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl, sqlDigest string) (base.Plan, error) {
+func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, explainBriefBinary string, analyze, explore bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl, sqlDigest string) (base.Plan, error) {
 	format = strings.ToLower(format)
 	if format == types.ExplainFormatTrueCardCost && !analyze {
 		return nil, errors.Errorf("'explain format=%v' cannot work without 'analyze', please use 'explain analyze format=%v'", format, format)
@@ -5539,7 +5540,7 @@ func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, expl
 		Explore:          explore,
 		SQLDigest:        sqlDigest,
 		ExecStmt:         execStmt,
-		ExplainRows:      explainRows,
+		BriefBinaryPlan:  explainBriefBinary,
 		RuntimeStatsColl: runtimeStats,
 	}
 	p.SetSCtx(b.ctx)
@@ -5566,11 +5567,11 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (base.Plan
 	if !ok || targetPlan == nil {
 		return &Explain{Format: explainForFormat}, nil
 	}
-	var explainRows [][]string
-	if explainForFormat == types.ExplainFormatROW {
-		explainRows = processInfo.PlanExplainRows
+	// TODO: support other explain formats for connection
+	if explainForFormat != types.ExplainFormatBrief && explainForFormat != types.ExplainFormatROW && explainForFormat != types.ExplainFormatVerbose {
+		return nil, errors.Errorf("explain format '%s' for connection is not supported now", explainForFormat)
 	}
-	return b.buildExplainPlan(targetPlan, explainForFormat, explainRows, false, false, nil, processInfo.RuntimeStatsColl, "")
+	return b.buildExplainPlan(targetPlan, explainForFormat, processInfo.BriefBinaryPlan, false, false, nil, processInfo.RuntimeStatsColl, "")
 }
 
 func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt) (base.Plan, error) {
@@ -5599,7 +5600,7 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 		}
 	}
 
-	return b.buildExplainPlan(targetPlan, explain.Format, nil, explain.Analyze, explain.Explore, explain.Stmt, nil, explain.SQLDigest)
+	return b.buildExplainPlan(targetPlan, explain.Format, "", explain.Analyze, explain.Explore, explain.Stmt, nil, explain.SQLDigest)
 }
 
 func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) (base.Plan, error) {

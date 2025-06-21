@@ -60,6 +60,7 @@ go_library(
         "rule_decorrelate.go",
         "rule_derive_topn_from_window.go",
         "rule_eliminate_projection.go",
+        "rule_eliminate_unionall_dual_item.go",
         "rule_generate_column_substitute.go",
         "rule_inject_extra_projection.go",
         "rule_join_elimination.go",
@@ -124,6 +125,7 @@ go_library(
         "//pkg/planner/cascades",
         "//pkg/planner/cascades/base",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/constraint",
         "//pkg/planner/core/cost",
         "//pkg/planner/core/metrics",
         "//pkg/planner/core/operator/baseimpl",
@@ -258,6 +260,7 @@ go_test(
         "rule_join_reorder_dp_test.go",
         "runtime_filter_generator_test.go",
         "stringer_test.go",
+        "task_test.go",
         "util_test.go",
     ],
     data = glob([

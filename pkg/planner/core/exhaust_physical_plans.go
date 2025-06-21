@@ -752,6 +752,9 @@ func constructIndexJoin(
 	compareFilters *ColWithCmpFuncManager,
 	extractOtherEQ bool,
 ) []base.PhysicalPlan {
+	if innerTask.Invalid() {
+		return nil
+	}
 	if ranges == nil {
 		ranges = ranger.Ranges{} // empty range
 	}
@@ -1896,6 +1899,17 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 		return constructIndexJoinInnerSideTask(result, prop, wrapper.zippedChildren, false)
 	}
 
+	numAgg := 0
+	for _, child := range wrapper.zippedChildren {
+		if _, ok := child.(*logicalop.LogicalAggregation); ok {
+			numAgg++
+		}
+	}
+	if numAgg > 1 {
+		// can't support this case now, see #61669.
+		return base.InvalidTask
+	}
+
 	// Try stream aggregation first.
 	// We will choose the stream aggregation if the following conditions are met:
 	// 1. Force hint stream agg by /*+ stream_agg() */
@@ -2622,7 +2636,7 @@ func tryToGetMppHashJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProper
 	baseJoin.InnerChildIdx = preferredBuildIndex
 	childrenProps := make([]*property.PhysicalProperty, 2)
 	if useBCJ {
-		childrenProps[preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.BroadcastType, CanAddEnforcer: true, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+		childrenProps[preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.BroadcastType, CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus}
 		expCnt := math.MaxFloat64
 		if prop.ExpectedCnt < p.StatsInfo().RowCount {
 			expCntScale := prop.ExpectedCnt / p.StatsInfo().RowCount
@@ -2638,9 +2652,9 @@ func tryToGetMppHashJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProper
 			if len(matches) == 0 {
 				return nil
 			}
-			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.HashType, MPPPartitionCols: prop.MPPPartitionCols, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.HashType, MPPPartitionCols: prop.MPPPartitionCols, CTEProducerStatus: prop.CTEProducerStatus}
 		} else {
-			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.AnyType, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.AnyType, CTEProducerStatus: prop.CTEProducerStatus}
 		}
 	} else {
 		lPartitionKeys, rPartitionKeys := p.GetPotentialPartitionKeys()
@@ -2669,8 +2683,8 @@ func tryToGetMppHashJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProper
 			lPartitionKeys = choosePartitionKeys(lPartitionKeys, matches)
 			rPartitionKeys = choosePartitionKeys(rPartitionKeys, matches)
 		}
-		childrenProps[0] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: lPartitionKeys, CanAddEnforcer: true, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
-		childrenProps[1] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: rPartitionKeys, CanAddEnforcer: true, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+		childrenProps[0] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: lPartitionKeys, CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus}
+		childrenProps[1] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: rPartitionKeys, CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus}
 	}
 	join := PhysicalHashJoin{
 		basePhysicalJoin:  baseJoin,
@@ -3475,7 +3489,6 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 				MPPPartitionTp:    property.HashType,
 				MPPPartitionCols:  partitionCols,
 				CanAddEnforcer:    true,
-				RejectSort:        true,
 				CTEProducerStatus: prop.CTEProducerStatus,
 			}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
@@ -3497,7 +3510,6 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType,
 			ExpectedCnt:       math.MaxFloat64,
 			MPPPartitionTp:    property.AnyType,
-			RejectSort:        true,
 			CTEProducerStatus: prop.CTEProducerStatus,
 		}
 		agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
@@ -3513,7 +3525,6 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 			childProp := &property.PhysicalProperty{
 				TaskTp:            property.MppTaskType,
 				ExpectedCnt:       math.MaxFloat64,
-				RejectSort:        true,
 				CTEProducerStatus: prop.CTEProducerStatus,
 			}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
@@ -3525,7 +3536,6 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 		// TODO: support scalar agg in MPP, merge the final result to one node
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType,
 			ExpectedCnt:       math.MaxFloat64,
-			RejectSort:        true,
 			CTEProducerStatus: prop.CTEProducerStatus,
 		}
 
@@ -3802,18 +3812,17 @@ func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.Ph
 	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
 		return nil, true, nil
 	}
-	canUseMpp := p.SCtx().GetSessionVars().IsMPPAllowed() && logicalop.CanPushToCopImpl(&p.BaseLogicalPlan, kv.TiFlash, true)
+	canUseMpp := p.SCtx().GetSessionVars().IsMPPAllowed() && logicalop.CanPushToCopImpl(&p.BaseLogicalPlan, kv.TiFlash)
 	chReqProps := make([]*property.PhysicalProperty, 0, p.ChildLen())
 	for range p.Children() {
 		if canUseMpp && prop.TaskTp == property.MppTaskType {
 			chReqProps = append(chReqProps, &property.PhysicalProperty{
 				ExpectedCnt:       prop.ExpectedCnt,
 				TaskTp:            property.MppTaskType,
-				RejectSort:        true,
 				CTEProducerStatus: prop.CTEProducerStatus,
 			})
 		} else {
-			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus})
+			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt, CTEProducerStatus: prop.CTEProducerStatus})
 		}
 	}
 	ua := PhysicalUnionAll{
@@ -3826,7 +3835,6 @@ func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.Ph
 			chReqProps = append(chReqProps, &property.PhysicalProperty{
 				ExpectedCnt:       prop.ExpectedCnt,
 				TaskTp:            property.MppTaskType,
-				RejectSort:        true,
 				CTEProducerStatus: prop.CTEProducerStatus,
 			})
 		}
@@ -3869,17 +3877,20 @@ func exhaustPhysicalPlans4LogicalSort(lp base.LogicalPlan, prop *property.Physic
 			}
 			return ret, true, nil
 		}
-	} else if prop.TaskTp == property.MppTaskType && prop.RejectSort {
-		if logicalop.CanPushToCopImpl(&ls.BaseLogicalPlan, kv.TiFlash, true) {
+	} else if prop.TaskTp == property.MppTaskType {
+		if logicalop.CanPushToCopImpl(&ls.BaseLogicalPlan, kv.TiFlash) {
 			ps := getNominalSortSimple(ls, prop)
-			return []base.PhysicalPlan{ps}, true, nil
+			if ps != nil {
+				return []base.PhysicalPlan{ps}, true, nil
+			}
+			return nil, true, nil
 		}
 	}
 	return nil, true, nil
 }
 
 func getPhysicalSort(ls *logicalop.LogicalSort, prop *property.PhysicalProperty) base.PhysicalPlan {
-	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.QueryBlockOffset(), &property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus})
+	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.QueryBlockOffset(), &property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus})
 	return ps
 }
 
@@ -3888,7 +3899,6 @@ func getNominalSort(ls *logicalop.LogicalSort, reqProp *property.PhysicalPropert
 	if !canPass {
 		return nil
 	}
-	prop.RejectSort = true
 	prop.ExpectedCnt = reqProp.ExpectedCnt
 	ps := NominalSort{OnlyColumn: onlyColumn, ByItems: ls.ByItems}.Init(
 		ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.QueryBlockOffset(), prop)
@@ -3896,8 +3906,12 @@ func getNominalSort(ls *logicalop.LogicalSort, reqProp *property.PhysicalPropert
 }
 
 func getNominalSortSimple(ls *logicalop.LogicalSort, reqProp *property.PhysicalProperty) *NominalSort {
+	prop, canPass, onlyColumn := GetPropByOrderByItemsContainScalarFunc(ls.ByItems)
+	if !canPass || !onlyColumn {
+		return nil
+	}
 	newProp := reqProp.CloneEssentialFields()
-	newProp.RejectSort = true
+	newProp.SortItems = prop.SortItems
 	ps := NominalSort{OnlyColumn: true, ByItems: ls.ByItems}.Init(
 		ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(reqProp.ExpectedCnt), ls.QueryBlockOffset(), newProp)
 	return ps
@@ -3929,7 +3943,7 @@ func exhaustPhysicalPlans4LogicalCTE(lp base.LogicalPlan, prop *property.Physica
 func exhaustPhysicalPlans4LogicalSequence(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalSequence)
 	possibleChildrenProps := make([][]*property.PhysicalProperty, 0, 2)
-	anyType := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, CanAddEnforcer: true, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+	anyType := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus}
 	if prop.TaskTp == property.MppTaskType {
 		if prop.CTEProducerStatus == property.SomeCTEFailedMpp {
 			return nil, true, nil

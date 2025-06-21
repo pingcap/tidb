@@ -1407,7 +1407,7 @@ func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 
 func loadCloudStorageURI(w *worker, job *model.Job) {
 	jc := w.jobContext(job.ID, job.ReorgMeta)
-	jc.cloudStorageURI = vardef.CloudStorageURI.Load()
+	jc.cloudStorageURI = handle.GetCloudStorageURI(w.workCtx, w.store)
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
 }
 
@@ -2705,6 +2705,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
 			EstimateRowSize: rowSize,
+			Version:         BackfillTaskMetaVersion1,
 		}
 
 		metaData, err := json.Marshal(taskMeta)
@@ -3069,7 +3070,7 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 			ts := oracle.GoTimeToTS(time.Now())
 			//nolint:forcetypeassert
 			s := reorg.jobCtx.store.(tikv.Storage)
-			s.UpdateSPCache(ts, time.Now())
+			s.UpdateTxnSafePointCache(ts, time.Now())
 			time.Sleep(time.Second * 3)
 		}
 	})

@@ -24,3 +24,13 @@ func TestKernelType(t *testing.T) {
 	require.Equal(t, !IsClassic(), IsNextGen())
 	require.Equal(t, IsClassic(), !IsNextGen())
 }
+
+func TestIsMatch(t *testing.T) {
+	if IsClassic() {
+		require.True(t, IsMatch(""))
+		require.True(t, IsMatch("Classic"))
+	} else if IsNextGen() {
+		require.True(t, IsMatch("Next Generation"))
+	}
+	require.False(t, IsMatch("Unknown"))
+}

@@ -545,7 +545,7 @@ func NewPlanCacheValue(
 	}
 
 	flat := FlattenPhysicalPlan(plan, false)
-	binaryPlan := BinaryPlanStrFromFlatPlan(sctx.GetPlanCtx(), flat)
+	binaryPlan := BinaryPlanStrFromFlatPlan(sctx.GetPlanCtx(), flat, false)
 
 	// calculate opt env hash using cacheKey and paramTypes
 	// (cacheKey, paramTypes) contains all factors that can affect the plan

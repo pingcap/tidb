@@ -2286,6 +2286,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		GroupConcatMaxLen:             vardef.DefGroupConcatMaxLen,
 		EnableRedactLog:               vardef.DefTiDBRedactLog,
 		EnableWindowFunction:          vardef.DefEnableWindowFunction,
+		CostModelVersion:              vardef.DefTiDBCostModelVer,
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
