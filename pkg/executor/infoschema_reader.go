@@ -232,11 +232,11 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
 		case infoschema.TableColumnPrivileges:
-			err = e.setDataFromColumnPrivileges(ctx, sctx)
+			err = e.setDataFromColumnPrivileges(sctx)
 		case infoschema.TableTablePrivileges:
-			err = e.setDataFromTablePrivileges(ctx, sctx)
+			err = e.setDataFromTablePrivileges(sctx)
 		case infoschema.TableSchemaPrivileges:
-			err = e.setDataFromSchemaPrivileges(ctx, sctx)
+			err = e.setDataFromSchemaPrivileges(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -3954,189 +3954,47 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromColumnPrivileges(ctx context.Context, sctx sessionctx.Context) error {
-	exec := sctx.GetRestrictedSQLExecutor()
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+func (e *memtableRetriever) setDataFromColumnPrivileges(sctx sessionctx.Context) error {
 	user := sctx.GetSessionVars().User
 	pm := privilege.GetPrivilegeManager(sctx)
-	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil,
-		`SELECT c.user,
-			Concat("'", c.USER, "'@'", c.host, "'") AS GRANTEE,
-			c.db                                    AS TABLE_SCHEMA,
-			c.table_name                            AS TABLE_NAME,
-			c.column_name                           AS COLUMN_NAME,
-			c.column_priv                           AS PRIVILEGE_TYPE,
-			CASE
-				WHEN find_in_set('Grant', t.table_priv) > 0 THEN "YES"
-				ELSE "NO"
-			END                                     AS IS_GRANTABLE
-		FROM mysql.columns_priv AS c
-    	JOIN mysql.tables_priv AS t
-			ON c.user = t.user
-				AND c.host = t.host
-				AND c.db = t.db
-				AND c.table_name = t.table_name;`)
-	if err != nil {
-		return err
-	}
-	if len(chunkRows) == 0 {
+	if pm == nil {
 		return nil
 	}
-
-	rows := make([][]types.Datum, 0, len(chunkRows))
-	for _, chunkRow := range chunkRows {
-		if chunkRow.Len() != 7 {
-			continue
-		}
-		userName := chunkRow.GetString(0)
-		if pm != nil &&
-			!(pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "columns_priv", "", mysql.SelectPriv) &&
-				pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv)) &&
-			user != nil && userName != user.Username {
-			continue
-		}
-		grantee := chunkRow.GetString(1)
-		db := chunkRow.GetString(2)
-		tableName := chunkRow.GetString(3)
-		columnName := chunkRow.GetString(4)
-		privilegeTypes := chunkRow.GetSet(5)
-		isGrantable := chunkRow.GetString(6)
-		for _, priv := range strings.Split(privilegeTypes.String(), ",") {
-			rows = append(rows, types.MakeDatums(
-				grantee,
-				"def",
-				db,
-				tableName,
-				columnName,
-				strings.ToUpper(priv),
-				isGrantable,
-			))
-		}
+	rows, err := pm.FetchColumnPrivileges(sctx, user)
+	if err != nil {
+		return err
 	}
 
 	e.rows = rows
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromTablePrivileges(ctx context.Context, sctx sessionctx.Context) error {
-	exec := sctx.GetRestrictedSQLExecutor()
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+func (e *memtableRetriever) setDataFromTablePrivileges(sctx sessionctx.Context) error {
 	user := sctx.GetSessionVars().User
 	pm := privilege.GetPrivilegeManager(sctx)
-	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil,
-		`SELECT user,
-			concat("'", user, "'@'", host, "'") AS GRANTEE,
-			db 																	AS TABLE_SCHEMA,
-			table_name 													AS TABLE_NAME,
-			table_priv 													AS PRIVILEGE_TYPE,
-			CASE
-				WHEN find_in_set('Grant', table_priv) > 0 THEN "YES"
-				ELSE "NO"
-			END 																AS IS_GRANTABLE
-		FROM mysql.tables_priv
-		WHERE table_priv != '';`)
-	if err != nil {
-		return err
-	}
-	if len(chunkRows) == 0 {
+	if pm == nil {
 		return nil
 	}
-
-	rows := make([][]types.Datum, 0, len(chunkRows))
-	for _, chunkRow := range chunkRows {
-		if chunkRow.Len() != 6 {
-			continue
-		}
-		userName := chunkRow.GetString(0)
-		if !pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv) && user != nil && userName != user.Username {
-			continue
-		}
-		grantee := chunkRow.GetString(1)
-		db := chunkRow.GetString(2)
-		tableName := chunkRow.GetString(3)
-		privilegeTypes := chunkRow.GetSet(4)
-		isGrantable := chunkRow.GetString(5)
-		for _, priv := range strings.Split(privilegeTypes.String(), ",") {
-			if u := strings.ToUpper(priv); u != "GRANT" {
-				rows = append(rows, types.MakeDatums(
-					grantee,
-					"def",
-					db,
-					tableName,
-					u,
-					isGrantable,
-				))
-			}
-		}
+	rows, err := pm.FetchTablePrivileges(sctx, user)
+	if err != nil {
+		return err
 	}
 
 	e.rows = rows
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromSchemaPrivileges(ctx context.Context, sctx sessionctx.Context) error {
-	exec := sctx.GetRestrictedSQLExecutor()
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+func (e *memtableRetriever) setDataFromSchemaPrivileges(sctx sessionctx.Context) error {
 	user := sctx.GetSessionVars().User
 	pm := privilege.GetPrivilegeManager(sctx)
-	chunkRows, resFields, err := exec.ExecRestrictedSQL(ctx, nil,
-		`SELECT user,
-			concat("'", user, "'@'", host, "'") AS GRANTEE,
-			db AS TABLE_SCHEMA,
-			Grant_priv,
-			Select_priv,
-			Insert_priv,
-			Update_priv,
-			Delete_priv,
-			Create_priv,
-			Drop_priv,
-			References_priv,
-			Index_priv,
-			Alter_priv,
-			Create_tmp_table_priv,
-			Lock_tables_priv,
-			Create_view_priv,
-			Show_view_priv,
-			Create_routine_priv,
-			Alter_routine_priv,
-			Execute_priv,
-			Event_priv,
-			Trigger_priv
-		FROM mysql.db;`)
+	if pm == nil {
+		return nil
+	}
+	rows, err := pm.FetchSchemaPrivileges(sctx, user)
 	if err != nil {
 		return err
 	}
-	if len(chunkRows) == 0 {
-		return nil
-	}
 
-	rows := make([][]types.Datum, 0, len(chunkRows))
-	for _, chunkRow := range chunkRows {
-		if chunkRow.Len() != 22 {
-			continue
-		}
-		userName := chunkRow.GetString(0)
-		if !pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "db", "", mysql.SelectPriv) && user != nil && userName != user.Username {
-			continue
-		}
-		grantee := chunkRow.GetString(1)
-		tableSchema := chunkRow.GetString(2)
-		isGrantable := "NO"
-		if chunkRow.GetEnum(3).String() == "Y" {
-			isGrantable = "YES"
-		}
-		for i := 4; i < 22; i++ {
-			if chunkRow.GetEnum(i).String() == "Y" {
-				rows = append(rows, types.MakeDatums(
-					grantee,
-					"def",
-					tableSchema,
-					strings.ToUpper(mysql.Priv2Str[mysql.Col2PrivType[resFields[i].Column.Name.O]]),
-					isGrantable,
-				))
-			}
-		}
-	}
 	e.rows = rows
 	return nil
 }
