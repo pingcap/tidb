@@ -2178,11 +2178,11 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AutoIncrementIncrement:        vardef.DefAutoIncrementIncrement,
 		AutoIncrementOffset:           vardef.DefAutoIncrementOffset,
 		StmtCtx:                       stmtctx.NewStmtCtx(),
-		AllowAggPushDown:              false,
+		AllowAggPushDown:              vardef.DefOptAggPushDown,
 		AllowCartesianBCJ:             vardef.DefOptCartesianBCJ,
 		MPPOuterJoinFixedBuildSide:    vardef.DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:    vardef.DefBroadcastJoinThresholdSize,
-		BroadcastJoinThresholdCount:   vardef.DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:   vardef.DefBroadcastJoinThresholdCount,
 		OptimizerSelectivityLevel:     vardef.DefTiDBOptimizerSelectivityLevel,
 		EnableOuterJoinReorder:        vardef.DefTiDBEnableOuterJoinReorder,
 		RetryLimit:                    vardef.DefTiDBRetryLimit,
@@ -2287,6 +2287,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableRedactLog:               vardef.DefTiDBRedactLog,
 		EnableWindowFunction:          vardef.DefEnableWindowFunction,
 		CostModelVersion:              vardef.DefTiDBCostModelVer,
+		OptimizerEnableNAAJ:           vardef.DefTiDBEnableNAAJ,
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
