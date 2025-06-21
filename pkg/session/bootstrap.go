@@ -59,11 +59,8 @@ import (
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.etcd.io/etcd/client/v3/concurrency"
-=======
->>>>>>> 43c7806b459 (session: fix `initGlobalVariableIfNotExists` function forget call rs.close (#61890))
 	"go.uber.org/zap"
 )
 
