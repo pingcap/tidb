@@ -2598,7 +2598,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	vars := s.GetSessionVars()
 	sc := vars.StmtCtx
 
-	return sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
+	dctx := sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
 		return &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
 			InRestrictedSQL: sc.InRestrictedSQL,
@@ -2651,6 +2651,16 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			ExecDetails: &sc.SyncExecDetails,
 		}
 	})
+
+	// Check if the runaway checker is updated. This is to avoid that evaluating a non-correlated subquery
+	// during the optimization phase will cause the `*distsqlctx.DistSQLContext` to be created before the
+	// runaway checker is set later at the execution phase.
+	// Ref: https://github.com/pingcap/tidb/issues/61899
+	if dctx.RunawayChecker != sc.RunawayChecker {
+		dctx.RunawayChecker = sc.RunawayChecker
+	}
+
+	return dctx
 }
 
 // GetRangerCtx returns the context used in `ranger` related functions
