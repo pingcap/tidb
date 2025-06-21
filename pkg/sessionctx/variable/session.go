@@ -2289,6 +2289,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		CostModelVersion:              vardef.DefTiDBCostModelVer,
 		OptimizerEnableNAAJ:           vardef.DefTiDBEnableNAAJ,
 		RegardNULLAsPoint:             vardef.DefTiDBRegardNULLAsPoint,
+		AllowProjectionPushDown:       vardef.DefOptEnableProjectionPushDown,
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
