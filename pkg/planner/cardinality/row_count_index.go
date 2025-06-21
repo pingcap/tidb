@@ -332,28 +332,29 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 				corrCount += corrCnt
 			}
 		}
-		colIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
-		// Retrieve column statistics for the 1st index column
-		c := coll.GetCol(colIDs[0])
+		var colIDs []int64
+		var c *statistics.Column
+		if idx.StatsVer == statistics.Version2 {
+			colIDs = coll.Idx2ColUniqueIDs[idx.Histogram.ID]
+			// Retrieve column statistics for the 1st index column
+			c = coll.GetCol(colIDs[0])
+		}
 		// If this is single column predicate - use the column's information rather than index.
 		// Index histograms are converted to string. Column uses original type - which can be more accurate for out of range
 		isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
 		if !expBackoffSuccess {
 			// Use the column's histogram for single column range for a multi-column index.
 			cnt := float64(0)
-			if idx.StatsVer == statistics.Version2 && isSingleColRange && !isSingleColIdx && c != nil && c.Histogram.NDV > 0 {
+			if isSingleColRange && !isSingleColIdx && c != nil && c.Histogram.NDV > 0 {
 				cnt = betweenRowCountOnColumn(sctx, c, indexRange.LowVal[0], indexRange.HighVal[0], lb, rb)
-				cnt, err = adjustRowCountForBoundaries(sctx, c, cnt, indexRange, indexRange.LowVal[0], indexRange.HighVal[0], lb, rb, realtimeRowCount, modifyCount)
-				if err != nil {
-					// if the column stats is invalid, we should use the index stats.
-					cnt = 0
-				} else {
-					count += cnt
-				}
+				cnt, _ = adjustRowCountForBoundaries(sctx, c, cnt, indexRange, indexRange.LowVal[0], indexRange.HighVal[0], lb, rb, realtimeRowCount, modifyCount)
 			}
 			if cnt == 0 {
 				// If we didn't utilize column stats, we should use the index stats.
 				count += betweenRowCountOnIndex(sctx, idx, l, r)
+			} else {
+				// If we used the column stats, we should use it as the count.
+				count += cnt
 			}
 		}
 
