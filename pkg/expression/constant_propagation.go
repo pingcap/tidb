@@ -463,15 +463,9 @@ type propOuterJoinConstSolver struct {
 
 func (s *propOuterJoinConstSolver) setConds2ConstFalse(filterConds bool) {
 	s.joinConds = []Expression{&Constant{
-		Value:   types.NewDatum(false),
+		Value:   types.NewDatum(filterConds),
 		RetType: types.NewFieldType(mysql.TypeTiny),
 	}}
-	if filterConds {
-		s.filterConds = []Expression{&Constant{
-			Value:   types.NewDatum(true),
-			RetType: types.NewFieldType(mysql.TypeTiny),
-		}}
-	}
 }
 
 func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Constant) (*Constant, bool) {
