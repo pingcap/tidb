@@ -1300,7 +1300,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	minIndexRows := ds.TableStats.RowCount * ds.AccessPathMinSelectivity
 	if preferRange {
 		// Override preferRange with the following limitations to scope
-		preferRange = (ds.MostMatchingIndex > 1 && minIndexRows < 2) || preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
+		preferRange = (ds.MostMatchingIndex > 1 && minIndexRows < 2 && ds.AccessPathMinSelectivity < 0.1) || preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
 	}
 	if preferRange && len(candidates) > 1 {
 		// If a candidate path is TiFlash-path or forced-path or MV index or global index, we just keep them. For other
