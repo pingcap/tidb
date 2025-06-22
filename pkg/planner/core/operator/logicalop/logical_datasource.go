@@ -119,6 +119,9 @@ type DataSource struct {
 	// It considers CountAfterIndex for index paths and CountAfterAccess for table paths and index merge paths.
 	AccessPathMinSelectivity float64
 
+	// MostMatchingIndex is the maximum number of matching index columns of all indexes.
+	MostMatchingIndex int
+
 	// AskedColumnGroup is upper asked column groups for maintained of group ndv from composite index.
 	AskedColumnGroup [][]*expression.Column
 }
