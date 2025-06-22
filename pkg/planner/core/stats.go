@@ -419,9 +419,9 @@ func detachCondAndBuildRangeForPath(
 	return err
 }
 
-func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float64) (float64, int64, bool) {
+func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float64) (float64, int, bool) {
 	minSelectivity := 1.0
-	maxMatchingColumns := int64(0)
+	maxMatchingColumns := int(0)
 	indexForce := false
 	for _, path := range paths {
 		// For table path and index merge path, AccessPath.CountAfterIndex is not set and meaningless,
@@ -436,7 +436,7 @@ func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float
 		if !indexForce && path.Forced {
 			indexForce = true
 		}
-		maxMatchingColumns = max(maxMatchingColumns, int64(path.EqOrInCondCount))
+		maxMatchingColumns = max(maxMatchingColumns, path.EqOrInCondCount)
 	}
 	return minSelectivity, maxMatchingColumns, indexForce
 }

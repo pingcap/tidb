@@ -1297,9 +1297,10 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		false,
 	)
 	ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix52869)
+	minIndexRows := ds.TableStats.RowCount * ds.AccessPathMinSelectivity
 	if preferRange {
 		// Override preferRange with the following limitations to scope
-		preferRange = (ds.MostMatchingIndex > 1 && ds.AccessPathMinSelectivity < 1) || preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
+		preferRange = (ds.MostMatchingIndex > 1 && minIndexRows < 2) || preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
 	}
 	if preferRange && len(candidates) > 1 {
 		// If a candidate path is TiFlash-path or forced-path or MV index or global index, we just keep them. For other
@@ -1319,7 +1320,9 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
-				if c.path.EqOrInCondCount == ds.MostMatchingIndex && c.path.CountAfterIndex > 0 && c.path.CountAfterIndex < (ds.AccessPathMinSelectivity*1.01) {
+				// Preference the most matching index path for very selective index plans
+				if c.path.EqOrInCondCount > 1 && c.path.EqOrInCondCount == ds.MostMatchingIndex &&
+					c.path.CountAfterIndex > 0 && minIndexRows < 2 && c.path.CountAfterIndex <= (minIndexRows*1.2) {
 					mostMatchPath = append(mostMatchPath, c)
 					hasMostMatchPath = true
 				}
