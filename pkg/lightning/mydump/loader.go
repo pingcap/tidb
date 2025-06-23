@@ -956,8 +956,8 @@ func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store
 	return float64(tot) / float64(pos), nil
 }
 
-// SampleParquetDataSize samples the data size of the parquet file.
-func SampleParquetDataSize(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (int64, error) {
+// SampleParquetRowSize samples row size of the parquet file.
+func SampleParquetRowSize(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (float64, error) {
 	totalRowCount, err := ReadParquetFileRowCountByFile(ctx, store, fileMeta)
 	if totalRowCount == 0 || err != nil {
 		return 0, err
@@ -996,6 +996,5 @@ func SampleParquetDataSize(ctx context.Context, fileMeta SourceFileMeta, store s
 			break
 		}
 	}
-	size := int64(float64(totalRowCount) / float64(rowCount) * float64(rowSize))
-	return size, nil
+	return float64(rowSize) / float64(rowCount), nil
 }

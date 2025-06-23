@@ -1178,12 +1178,16 @@ func testSampleParquetDataSize(t *testing.T, count int) {
 	err = store.WriteFile(ctx, fileName, bf.Bytes())
 	require.NoError(t, err)
 
-	size, err := md.SampleParquetDataSize(ctx, md.SourceFileMeta{
+	rowSize, err := md.SampleParquetRowSize(ctx, md.SourceFileMeta{
 		Path: fileName,
 	}, store)
 	require.NoError(t, err)
+	rowCount, err := md.ReadParquetFileRowCountByFile(ctx, store, md.SourceFileMeta{
+		Path: fileName,
+	})
+	require.NoError(t, err)
 	// expected error within 10%, so delta = totalRowSize / 10
-	require.InDelta(t, totalRowSize, size, float64(totalRowSize)/10)
+	require.InDelta(t, totalRowSize, int64(rowSize*float64(rowCount)), float64(totalRowSize)/10)
 }
 
 func TestSampleParquetDataSize(t *testing.T) {
@@ -1215,7 +1219,7 @@ func TestParallelProcess(t *testing.T) {
 
 	oneTest := func(length int, concurrency int) {
 		original := make([]md.RawFile, length)
-		for i := range length {
+		for i := 0; i < length; i++ {
 			original[i] = md.RawFile{Path: randomString()}
 		}
 
