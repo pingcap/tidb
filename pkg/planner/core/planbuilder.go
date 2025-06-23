@@ -6112,7 +6112,6 @@ func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 
 func (b *PlanBuilder) buildAdminAlterDDLJob(ctx context.Context, as *ast.AdminStmt) (_ base.Plan, err error) {
 	options := make([]*AlterDDLJobOpt, 0, len(as.AlterJobOptions))
-	optionNames := make([]string, 0, len(as.AlterJobOptions))
 	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	for _, opt := range as.AlterJobOptions {
 		_, ok := allowedAlterDDLJobParams[opt.Name]
@@ -6130,7 +6129,6 @@ func (b *PlanBuilder) buildAdminAlterDDLJob(ctx context.Context, as *ast.AdminSt
 			return nil, err
 		}
 		options = append(options, &alterDDLJobOpt)
-		optionNames = append(optionNames, opt.Name)
 	}
 	p := &AlterDDLJob{
 		JobID:   as.JobNumber,
