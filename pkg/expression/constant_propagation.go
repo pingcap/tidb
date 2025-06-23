@@ -806,6 +806,7 @@ func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Ex
 	}()
 	solver.outerSchema = outerSchema
 	solver.innerSchema = innerSchema
+	solver.nullSensitive = nullSensitive
 	solver.ctx = ctx
 	return solver.solve(joinConds, filterConds)
 }
