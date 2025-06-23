@@ -775,7 +775,7 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 	s.propagateColumnEQ()
 	s.joinConds = propagateConstantDNF(s.ctx, s.joinConds...)
 	s.filterConds = propagateConstantDNF(s.ctx, s.filterConds...)
-	return s.joinConds, s.filterConds
+	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
