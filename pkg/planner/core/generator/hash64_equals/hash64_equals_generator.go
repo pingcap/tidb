@@ -77,8 +77,13 @@ func genHash64EqualsForLogicalOps(x any) ([]byte, error) {
 		}
 		callName := "op." + vType.Field(i).Name
 		// if a field is a pointer, we should encode the Nil/NotNil flag inside hash64.
-		if f.Type.Kind() == reflect.Pointer || f.Type.Kind() == reflect.Slice {
+		if f.Type.Kind() == reflect.Pointer {
 			c.write("if %v == nil { h.HashByte(base.NilFlag) } else {", callName)
+			c.write("h.HashByte(base.NotNilFlag)")
+			c.Hash64Element(f.Type, callName)
+			c.write("}")
+		} else if f.Type.Kind() == reflect.Slice {
+			c.write("if len(%v) == 0 { h.HashByte(base.NilFlag) } else {", callName)
 			c.write("h.HashByte(base.NotNilFlag)")
 			c.Hash64Element(f.Type, callName)
 			c.write("}")
@@ -168,7 +173,7 @@ func isHash64EqualsField(fType reflect.StructField) bool {
 func (c *cc) EqualsElement(fType reflect.Type, lhs, rhs string, i string) {
 	switch fType.Kind() {
 	case reflect.Slice:
-		c.write("if (%v == nil && %v != nil) || (%v != nil && %v == nil) || len(%v) != len(%v) { return false }", lhs, rhs, lhs, rhs, lhs, rhs)
+		c.write("if (len(%v) == 0 && len(%v) != 0) || (len(%v) != 0 && len(%v) == 0) || len(%v) != len(%v) { return false }", lhs, rhs, lhs, rhs, lhs, rhs)
 		itemName := "one"
 		if strings.HasPrefix(lhs, "one") {
 			itemName = lhs + "e"
