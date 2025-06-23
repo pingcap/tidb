@@ -439,6 +439,8 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
 	tk.MustExec("insert into tlist values " + strings.Join(listVals, ","))
 
+	// Disable auto analyze to ensure that stats are not automatically collected
+	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	// before analyzing, the planner will choose TableScan to access the 1% of records
 	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
 	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
@@ -470,4 +472,6 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
 	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
 	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
+	// Reset auto analyze after test
+	tk.MustExec("set @@global.tidb_enable_auto_analyze='ON'")
 }

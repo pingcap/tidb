@@ -218,20 +218,12 @@ SELECT (4,5) IN (SELECT 8,0 UNION SELECT 8, 8) AS field1
 FROM t1 AS table1
 WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
 GROUP BY field1;`).Check(testkit.Rows("HashJoin 2.00 root  CARTESIAN left outer semi join, left side:HashAgg",
-		"├─HashAgg(Build) 2.00 root  group by:Column#18, Column#19, funcs:firstrow(1)->Column#45",
-		"│ └─Union 0.00 root  ",
-		"│   ├─Projection 0.00 root  8->Column#18, 0->Column#19",
-		"│   │ └─TableDual 0.00 root  rows:0",
-		"│   └─Projection 0.00 root  8->Column#18, 8->Column#19",
-		"│     └─TableDual 0.00 root  rows:0",
+		"├─HashAgg(Build) 1.00 root  group by:Column#18, Column#19, funcs:firstrow(1)->Column#45",
+		"│ └─TableDual 0.00 root  rows:0",
 		"└─HashAgg(Probe) 2.00 root  group by:Column#10, funcs:firstrow(1)->Column#42",
 		"  └─HashJoin 10000.00 root  CARTESIAN left outer semi join, left side:TableReader",
-		"    ├─HashAgg(Build) 2.00 root  group by:Column#8, Column#9, funcs:firstrow(1)->Column#44",
-		"    │ └─Union 0.00 root  ",
-		"    │   ├─Projection 0.00 root  8->Column#8, 0->Column#9",
-		"    │   │ └─TableDual 0.00 root  rows:0",
-		"    │   └─Projection 0.00 root  8->Column#8, 8->Column#9",
-		"    │     └─TableDual 0.00 root  rows:0",
+		"    ├─HashAgg(Build) 1.00 root  group by:Column#8, Column#9, funcs:firstrow(1)->Column#44",
+		"    │ └─TableDual 0.00 root  rows:0",
 		"    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
 		"      └─TableFullScan 10000.00 cop[tikv] table:table1 keep order:false, stats:pseudo"))
 	tk.MustQuery(`SELECT (4,5) IN (SELECT 8,0 UNION SELECT 8, 8) AS field1
@@ -280,4 +272,19 @@ func TestIssue61118(t *testing.T) {
 	tk2.MustExec("execute stmt using @a, @a;")
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk2.MustExec("admin check table t;")
+}
+
+func TestIssue61303VirtualGenerateColumnSubstitute(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(id int default 1, c0 NUMERIC UNSIGNED ZEROFILL , c1 DECIMAL UNSIGNED  AS (c0) VIRTUAL NOT NULL UNIQUE);")
+	tk.MustExec("insert ignore into t0(c0) values (null);")
+	tk.MustQuery("select * from t0;").Check(testkit.Rows("1 <nil> 0"))
+
+	tk.MustExec("set @@tidb_enable_unsafe_substitute=1")
+	tk.MustExec("CREATE TABLE t1(id int default 1, c0 char(10) , c1 char(10) AS (c0) VIRTUAL NOT NULL UNIQUE);")
+	tk.MustExec("insert ignore into t1(c0) values (null);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 <nil> "))
 }

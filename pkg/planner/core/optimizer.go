@@ -107,6 +107,7 @@ var optRuleList = []base.LogicalOptRule{
 	&JoinReOrderSolver{},
 	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
+	&EliminateUnionAllDualItem{},
 	&ResolveExpand{},
 }
 
