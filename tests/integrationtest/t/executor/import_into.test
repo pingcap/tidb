@@ -72,7 +72,7 @@ import into t from '/file.csv' with skip_rows=null;
 -- error 8164
 import into t from '/file.csv' with skip_rows='';
 -- error 8164
-import into t from '/file.csv' with skip_rows=-1;
+import into t from '/file.csv' with skip_rows=-2;
 -- error 8164
 import into t from '/file.csv' with skip_rows=true;
 -- error 8164

@@ -345,6 +345,58 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	}...))
 }
 
+func (s *mockGCSSuite) TestCSVHeaderOption() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "csv-option"})
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "csv-option", Name: "csv_with_header.csv"},
+		Content: []byte(`a,b,c
+1,test1,11
+2,test2,22
+3,test3,33
+4,test4,44`),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "csv-option", Name: "csv_without_header.csv"},
+		Content: []byte(`5,test5,55
+6,test6,66
+7,test7,77
+8,test8,88`),
+	})
+	s.prepareAndUseDB("csv_option")
+	s.tk.MustExec("drop table if exists t;")
+	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
+
+	testCases := []struct {
+		skipRows int64
+		file     string
+		result   bool
+		count    int
+	}{
+		{-1, "csv_with_header.csv", true, 4},
+		{-1, "csv_without_header.csv", true, 4},
+		{1, "csv_with_header.csv", true, 4},
+		{1, "csv_without_header.csv", true, 3}, // the first row is skipped
+		{0, "csv_with_header.csv", false, -1},
+		{0, "csv_without_header.csv", true, 4},
+		{-1, "*.csv", true, 8},
+		{0, "*.csv", false, -1},
+		{1, "*.csv", true, 7},
+	}
+
+	for _, tc := range testCases {
+		s.tk.MustExec("truncate table t")
+		loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://csv-option/%s?endpoint=%s'
+		with skip_rows=%d, thread=1`, tc.file, gcsEndpoint, tc.skipRows)
+		if tc.result {
+			s.tk.MustQuery(loadDataSQL)
+			s.tk.MustQuery("SELECT count(*) FROM t;").Check(testkit.Rows(strconv.Itoa(tc.count)))
+		} else {
+			s.tk.MustQueryToErr(loadDataSQL)
+		}
+	}
+}
+
 func (s *mockGCSSuite) TestGeneratedColumnsAndTSVFile() {
 	// For issue https://github.com/pingcap/tidb/issues/39885
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")

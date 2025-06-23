@@ -300,10 +300,12 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 		},
 		Remote: &chunk.FileMeta,
 	}
-	parser, err := ti.LoadDataController.GetParser(ctx, info)
+
+	parser, err := ti.LoadDataController.GetParser(ctx, info, chunk.Chunk.Offset == 0)
 	if err != nil {
 		return nil, err
 	}
+
 	if chunk.Chunk.Offset == 0 {
 		// if data file is split, only the first chunk need to do skip.
 		// see check in initOptions.

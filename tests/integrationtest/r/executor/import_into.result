@@ -68,7 +68,7 @@ import into t from '/file.csv' with skip_rows=null;
 Error 8164 (HY000): Invalid option value for skip_rows
 import into t from '/file.csv' with skip_rows='';
 Error 8164 (HY000): Invalid option value for skip_rows
-import into t from '/file.csv' with skip_rows=-1;
+import into t from '/file.csv' with skip_rows=-2;
 Error 8164 (HY000): Invalid option value for skip_rows
 import into t from '/file.csv' with skip_rows=true;
 Error 8164 (HY000): Invalid option value for skip_rows
@@ -77,7 +77,7 @@ Error 8164 (HY000): Invalid option value for split_file
 import into t from '/file.csv' with split_file;
 Error 8164 (HY000): Invalid option value for lines_terminated_by, should not be empty when use split_file
 import into t from '/file.csv' with split_file, skip_rows=2;
-Error 8164 (HY000): Invalid option value for skip_rows, should be <= 1 when split-file is enabled
+Error 8164 (HY000): Invalid option value for lines_terminated_by, should not be empty when use split_file
 import into t from '/file.csv' with disk_quota='aa';
 Error 8164 (HY000): Invalid option value for disk_quota
 import into t from '/file.csv' with disk_quota='220MiBxxx';

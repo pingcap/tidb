@@ -258,6 +258,9 @@ type Plan struct {
 	// LinesStartingBy is not used in IMPORT INTO
 	// FieldsOptEnclosed is not used in either IMPORT INTO or LOAD DATA
 	plannercore.LineFieldsInfo
+	CSVHeaderOption mydump.CSVHeaderOption
+
+	// TODO(joechenrh): remove IgnoreLines
 	IgnoreLines uint64
 
 	DiskQuota             config.ByteSize
@@ -414,6 +417,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 		NullValueOptEnclosed: nullValueOptEnclosed,
 		LineFieldsInfo:       lineFieldsInfo,
 		IgnoreLines:          ignoreLines,
+		CSVHeaderOption:      mydump.CSVHeaderFalse,
 
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		Charset:          charset,
@@ -595,6 +599,7 @@ func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, sto
 	p.MaxRecordedErrors = 100
 	p.Detached = false
 	p.DisableTiKVImportMode = false
+	p.CSVHeaderOption = mydump.CSVHeaderFalse
 	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
 	p.CloudStorageURI = handle.GetCloudStorageURI(ctx, store)
 
@@ -728,10 +733,20 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	if opt, ok := specifiedOptions[skipRowsOption]; ok {
 		vInt, err := optAsInt64(opt)
-		if err != nil || vInt < 0 {
+		if err != nil || vInt < -1 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		p.IgnoreLines = uint64(vInt)
+
+		if vInt > 0 {
+			p.CSVHeaderOption = mydump.CSVHeaderTrue
+			p.IgnoreLines = uint64(vInt - 1)
+		} else if vInt == 0 {
+			p.CSVHeaderOption = mydump.CSVHeaderFalse
+			p.IgnoreLines = 0
+		} else if vInt == -1 {
+			p.CSVHeaderOption = mydump.CSVHeaderAuto
+			p.IgnoreLines = 0
+		}
 	}
 	if _, ok := specifiedOptions[splitFileOption]; ok {
 		p.SplitFile = true
@@ -1326,6 +1341,7 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 func (e *LoadDataController) GetParser(
 	ctx context.Context,
 	dataFileInfo LoadDataReaderInfo,
+	isFirstChunk bool,
 ) (parser mydump.Parser, err error) {
 	reader, err2 := dataFileInfo.Opener(ctx)
 	if err2 != nil {
@@ -1350,14 +1366,31 @@ func (e *LoadDataController) GetParser(
 		if err != nil {
 			return nil, err
 		}
+
+		// Only first chunk need process header
+		csvHeaderOption := e.CSVHeaderOption
+		if !isFirstChunk {
+			csvHeaderOption = mydump.CSVHeaderFalse
+		}
 		parser, err = mydump.NewCSVParser(
 			ctx,
 			e.GenerateCSVConfig(),
 			reader,
 			LoadDataReadBlockSize,
 			nil,
-			false,
+			csvHeaderOption,
 			charsetConvertor)
+		if err == nil && csvHeaderOption == mydump.CSVHeaderAuto {
+			columnNames := make([]string, 0, len(e.FieldMappings))
+			for _, fieldMapping := range e.FieldMappings {
+				if fieldMapping.Column != nil {
+					columnNames = append(columnNames, fieldMapping.Column.Name.O)
+				} else {
+					columnNames = append(columnNames, "")
+				}
+			}
+			parser.SetColumns(columnNames)
+		}
 	case DataFormatSQL:
 		parser = mydump.NewChunkParser(
 			ctx,
