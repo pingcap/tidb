@@ -174,6 +174,9 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 }
 
 func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
+	if len(predicates) == 0 {
+		return predicates
+	}
 	simplifiedPredicate := shortCircuitLogicalConstants(sctx, predicates)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
