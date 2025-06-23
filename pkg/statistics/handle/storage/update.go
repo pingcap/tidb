@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
 
@@ -202,5 +203,7 @@ func removeExtendedStatsItem(statsCache statsutil.StatsCache,
 	}
 	newTbl := tbl.Copy()
 	delete(newTbl.ExtendedStats.Stats, statsName)
-	statsCache.UpdateStatsCache([]*statistics.Table{newTbl}, nil)
+	statsCache.UpdateStatsCache(util.CacheUpdate{
+		Updated: []*statistics.Table{newTbl},
+	})
 }

@@ -170,7 +170,7 @@ func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int
 }
 
 // Update updates the new statistics table cache.
-func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64) {
+func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, skipMoveForward bool) {
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
 		metrics.UpdateCounter.Inc()
@@ -181,10 +181,12 @@ func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64) {
 		sc.c.Del(id)
 	}
 
-	// update the maxTblStatsVer
-	for _, t := range tables {
-		if oldVersion := sc.maxTblStatsVer.Load(); t.Version > oldVersion {
-			sc.maxTblStatsVer.CompareAndSwap(oldVersion, t.Version)
+	if !skipMoveForward {
+		// update the maxTblStatsVer
+		for _, t := range tables {
+			if oldVersion := sc.maxTblStatsVer.Load(); t.Version > oldVersion {
+				sc.maxTblStatsVer.CompareAndSwap(oldVersion, t.Version)
+			}
 		}
 	}
 }
