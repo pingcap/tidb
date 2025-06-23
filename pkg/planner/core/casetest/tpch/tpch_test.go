@@ -403,7 +403,7 @@ func BenchmarkTPCHQ3(b *testing.B) {
 func BenchmarkTPCHQ4(b *testing.B) {
 	store, dom := testkit.CreateMockStoreAndDomain(b)
 	tk := testkit.NewTestKit(b, store)
-	tk.MustExecr("use test")
+	tk.MustExec("use test")
 	createOrders(b, tk, dom)
 	createLineItem(b, tk, dom)
 	testkit.LoadTableStats("test.lineitem.json", dom)
