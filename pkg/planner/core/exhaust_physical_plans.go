@@ -2190,10 +2190,7 @@ func recordWarnings(lp base.LogicalPlan, prop *property.PhysicalProperty, inEnfo
 	if err := recordIndexJoinHintWarnings(lp, prop, inEnforce); err != nil {
 		return err
 	}
-	if err := recordLimitToCopWarnings(lp); err != nil {
-		return err
-	}
-	return nil
+	return recordLimitToCopWarnings(lp)
 }
 
 func recordLimitToCopWarnings(lp base.LogicalPlan) error {
