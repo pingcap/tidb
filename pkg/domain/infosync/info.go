@@ -794,6 +794,10 @@ func (is *InfoSyncer) getEtcdClientForMinStartTS() *clientv3.Client {
 	// In our future refactor plan, the SafePointKV and TiDB min start ts will be completely removed.
 	const cfgGCManagementType = "gc_management_type"
 	const cfgGCManagementTypeKeyspaceLevel = "keyspace_level"
+	// Ignore nil tikvCodec, which may happen in some tests.
+	if is.tikvCodec == nil {
+		return is.unprefixedEtcdCli
+	}
 	cfg := is.tikvCodec.GetKeyspaceMeta().GetConfig()
 	if cfg != nil && cfg[cfgGCManagementType] == cfgGCManagementTypeKeyspaceLevel {
 		return is.etcdCli
