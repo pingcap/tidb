@@ -17,6 +17,7 @@ package registry
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -88,14 +89,6 @@ const (
 		 with_sys_table, status, cmd, task_start_time, last_heartbeat_time)
 		VALUES (%%?, MD5(%%?), %%?, %%?, %%?, %%?, 'running', %%?, %%?, %%?)`
 
-	// selectStaleRunningTasksSQLTemplate is the SQL template for finding potentially stale running tasks
-	selectStaleRunningTasksSQLTemplate = `
-		SELECT id, last_heartbeat_time
-		FROM %s.%s
-		WHERE status = 'running'
-		AND last_heartbeat_time < DATE_SUB(NOW(), INTERVAL %%? MINUTE)
-		ORDER BY id ASC`
-
 	// selectTaskHeartbeatSQLTemplate is the SQL template for getting a specific task's heartbeat time
 	selectTaskHeartbeatSQLTemplate = `
 		SELECT last_heartbeat_time
@@ -111,16 +104,25 @@ const (
 		AND with_sys_table = %%?
 		AND cmd = %%?
 		AND restored_ts != %%?
-		AND status IN ('running', 'paused')
+		AND status IN ('running', 'paused', 'dropping')
 		ORDER BY id DESC
 		LIMIT 1`
+
+	// selectDroppingStatusTasksSQLTemplate is the SQL template for finding tasks with dropping status
+	selectDroppingStatusTasksSQLTemplate = `SELECT id FROM %s.%s WHERE status = 'dropping'`
+
+	// selectLeftTasksSQLTemplate is the SQL template for finding the left tasks of the tasks whose IDs are given
+	selectLeftTasksSQLTemplate = `SELECT id FROM %s.%s WHERE id in (%s)`
+
+	// selectRunningTaskSQLTemplate is the SQL template for finding any running tasks
+	selectRunningTaskSQLTemplate = `SELECT id FROM %s.%s WHERE status in ('running', 'dropping') limit 1`
 
 	// transitionStaleTaskToPausedSQLTemplate is the SQL template for atomically transitioning a
 	// stale running task to paused
 	transitionStaleTaskToPausedSQLTemplate = `
 		UPDATE %s.%s
 		SET status = 'paused'
-		WHERE id = %%? AND status = 'running' AND last_heartbeat_time = %%?`
+		WHERE id = %%? AND status IN ('running', 'dropping') AND last_heartbeat_time = %%?`
 )
 
 // TaskStatus represents the current state of a restore task
@@ -131,6 +133,8 @@ const (
 	TaskStatusRunning TaskStatus = "running"
 	// TaskStatusPaused indicates the task is temporarily stopped
 	TaskStatusPaused TaskStatus = "paused"
+	// TaskStatusDropping indicates the task is prepared to be dropped
+	TaskStatusDropping TaskStatus = "dropping"
 )
 
 // RegistrationInfo contains information about a registered restore
@@ -162,6 +166,8 @@ type Registry struct {
 	se               glue.Session
 	heartbeatSession glue.Session
 	heartbeatManager *HeartbeatManager
+
+	waitIDs []uint64
 }
 
 // NewRestoreRegistry creates a new registry using TiDB's session
@@ -261,12 +267,26 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 		zap.Bool("is_restored_ts_user_specified", isRestoredTSUserSpecified))
 
 	var taskID uint64
+	var waitIDs []uint64
 
 	err = r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor,
 		sessionOpts []sqlexec.OptionFuncAlias) error {
+		// find the tasks with dropping status
+		lookupSQL := fmt.Sprintf(selectDroppingStatusTasksSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+		rows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, lookupSQL)
+		if err != nil {
+			return errors.Annotate(err, "failed to look up tasks with dropping status")
+		}
+		if len(rows) > 0 {
+			waitIDs = make([]uint64, 0, len(rows))
+			for _, row := range rows {
+				waitIDs = append(waitIDs, row.GetUint64(0))
+			}
+		}
+
 		// first look for an existing task with the same parameters
-		lookupSQL := fmt.Sprintf(lookupRegistrationSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
-		rows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, lookupSQL,
+		lookupSQL = fmt.Sprintf(lookupRegistrationSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+		rows, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, lookupSQL,
 			filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
 		if err != nil {
 			return errors.Annotate(err, "failed to look up existing task")
@@ -282,7 +302,7 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 			}
 
 			// if task exists and is running, return error
-			if status == string(TaskStatusRunning) {
+			if status == string(TaskStatusRunning) || status == string(TaskStatusDropping) {
 				log.Warn("task already exists and is running",
 					zap.Uint64("restore_id", existingTaskID))
 				return errors.Annotatef(berrors.ErrInvalidArgument,
@@ -350,6 +370,7 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 		return 0, 0, err
 	}
 
+	r.waitIDs = waitIDs
 	return taskID, resolvedRestoreTS, nil
 }
 
@@ -606,7 +627,7 @@ func (r *Registry) resolveRestoreTS(ctx context.Context,
 	}
 
 	// if existing task is running, check if it's stale
-	if existingStatus == string(TaskStatusRunning) {
+	if existingStatus == string(TaskStatusRunning) || existingStatus == string(TaskStatusDropping) {
 		log.Info("existing task is running, checking if it's stale",
 			zap.Uint64("existing_task_id", conflictingTaskID))
 
@@ -801,4 +822,66 @@ func (r *Registry) transitionStaleTaskToPaused(ctx context.Context, taskID uint6
 	}
 
 	return transitioned, nil
+}
+
+// OperationAfterWaitIDs do the specified operations until the dropping tasks is removed
+func (r *Registry) OperationAfterWaitIDs(ctx context.Context, fn func() error) error {
+	for ids := range slices.Chunk(r.waitIDs, 10) {
+		idStrs := make([]string, 0, len(ids))
+		for _, id := range ids {
+			idStrs = append(idStrs, fmt.Sprintf("%d", id))
+		}
+		idsStr := strings.Join(idStrs, ",")
+		for {
+			lookupSQL := fmt.Sprintf(selectLeftTasksSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName, idsStr)
+			rows, _, err := r.se.GetSessionCtx().GetRestrictedSQLExecutor().ExecRestrictedSQL(
+				kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+				nil,
+				lookupSQL,
+				selectLeftTasksSQLTemplate,
+				RestoreRegistryDBName, RestoreRegistryTableName, idsStr,
+			)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if len(rows) == 0 {
+				break
+			}
+			leftId := rows[0].GetUint64(0)
+			log.Info("wait for the task finishing dropping", zap.Uint64("task id", leftId))
+			time.Sleep(5 * time.Second)
+		}
+	}
+	return fn()
+}
+
+// GlobalOperationAfterSetDroppingStatus do the global operation if there is no running task and set dropping status for the task
+func (r *Registry) GlobalOperationAfterSetDroppingStatus(ctx context.Context, restoreID uint64, fn func() error) error {
+	noRunningTask := false
+	err := r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor,
+		sessionOpts []sqlexec.OptionFuncAlias) error {
+		lookupSQL := fmt.Sprintf(selectRunningTaskSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+		rows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, lookupSQL)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(rows) > 0 {
+			// skip do the global operation
+			return nil
+		}
+		updateSQL := fmt.Sprintf(updateStatusSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+		if err := r.se.ExecuteInternal(ctx, updateSQL, TaskStatusDropping, restoreID, TaskStatusRunning); err != nil {
+			return errors.Annotatef(err, "failed to conditionally update task status from %s to %s",
+				TaskStatusRunning, TaskStatusDropping)
+		}
+		noRunningTask = true
+		return nil
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if noRunningTask {
+		return fn()
+	}
+	return nil
 }
