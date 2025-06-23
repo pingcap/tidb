@@ -126,7 +126,7 @@ func TestDistributeTable(t *testing.T) {
 	recoverCli := infosync.SetPDHttpCliForTest(cli)
 	defer recoverCli()
 	mockCreateSchedulerWithInput := func(tblName string, config map[string]any, partitions []string) *mock.Call {
-		is := tk.Session().GetDomainInfoSchema()
+		is := tk.Session().GetLatestInfoSchema()
 		tbl, err := is.TableInfoByName(ast.NewCIStr(database), ast.NewCIStr(tblName))
 		require.NoError(t, err)
 		tblID := tbl.ID
@@ -227,7 +227,7 @@ func TestShowTableDistributions(t *testing.T) {
 	recoverCli := infosync.SetPDHttpCliForTest(cli)
 	defer recoverCli()
 	mockGetDistributions := func(tblName, partition string, distributions *pdhttp.RegionDistributions) *mock.Call {
-		is := tk.Session().GetDomainInfoSchema()
+		is := tk.Session().GetLatestInfoSchema()
 		tbl, err := is.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr(tblName))
 		require.NoError(t, err)
 		tblID := tbl.ID
