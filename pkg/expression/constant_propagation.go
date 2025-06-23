@@ -449,6 +449,17 @@ func PropagateConstant(ctx exprctx.ExprContext, conditions ...Expression) []Expr
 	return solver.PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), conditions)
 }
 
+var propOuterJoinConstSolverPool = sync.Pool{
+	New: func() any {
+		solver := &propOuterJoinConstSolver{
+			basePropConstSolver: newBasePropConstSolver(),
+			joinConds:           make([]Expression, 0, 4),
+			filterConds:         make([]Expression, 0, 4),
+		}
+		return solver
+	},
+}
+
 type propOuterJoinConstSolver struct {
 	basePropConstSolver
 	joinConds   []Expression
@@ -461,16 +472,34 @@ type propOuterJoinConstSolver struct {
 	nullSensitive bool
 }
 
+func newPropOuterJoinConstSolver() *propOuterJoinConstSolver {
+	solver := propOuterJoinConstSolverPool.Get().(*propOuterJoinConstSolver)
+	return solver
+}
+
+// clear resets the solver.
+func (s *propOuterJoinConstSolver) Clear() {
+	s.basePropConstSolver.Clear()
+	s.joinConds = s.joinConds[:0]
+	s.filterConds = s.filterConds[:0]
+	s.outerSchema = nil
+	s.innerSchema = nil
+	s.nullSensitive = false
+	propOuterJoinConstSolverPool.Put(s)
+}
+
 func (s *propOuterJoinConstSolver) setConds2ConstFalse(filterConds bool) {
-	s.joinConds = []Expression{&Constant{
+	s.joinConds = s.joinConds[:0]
+	s.joinConds = append(s.joinConds, &Constant{
 		Value:   types.NewDatum(false),
 		RetType: types.NewFieldType(mysql.TypeTiny),
-	}}
+	})
 	if filterConds {
-		s.filterConds = []Expression{&Constant{
+		s.filterConds = s.filterConds[:0]
+		s.filterConds = append(s.filterConds, &Constant{
 			Value:   types.NewDatum(false),
 			RetType: types.NewFieldType(mysql.TypeTiny),
-		}}
+		})
 	}
 }
 
@@ -746,7 +775,7 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 	s.propagateColumnEQ()
 	s.joinConds = propagateConstantDNF(s.ctx, s.joinConds...)
 	s.filterConds = propagateConstantDNF(s.ctx, s.filterConds...)
-	return s.joinConds, s.filterConds
+	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
@@ -771,13 +800,13 @@ func propagateConstantDNF(ctx exprctx.ExprContext, conds ...Expression) []Expres
 // expressions in join conditions and filter conditions;
 func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Expression,
 	outerSchema, innerSchema *Schema, nullSensitive bool) ([]Expression, []Expression) {
-	solver := &propOuterJoinConstSolver{
-		basePropConstSolver: newBasePropConstSolver(),
-		outerSchema:         outerSchema,
-		innerSchema:         innerSchema,
-		nullSensitive:       nullSensitive,
-	}
-	solver.colMapper = make(map[int64]int)
+	solver := newPropOuterJoinConstSolver()
+	defer func() {
+		solver.Clear()
+	}()
+	solver.outerSchema = outerSchema
+	solver.innerSchema = innerSchema
+	solver.nullSensitive = nullSensitive
 	solver.ctx = ctx
 	return solver.solve(joinConds, filterConds)
 }
