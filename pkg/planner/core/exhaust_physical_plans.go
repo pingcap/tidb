@@ -2186,6 +2186,32 @@ func handleFilterIndexJoinHints(p *logicalop.LogicalJoin, candidates []base.Phys
 	return filtered
 }
 
+func recordWarnings(lp base.LogicalPlan, prop *property.PhysicalProperty, inEnforce bool) error {
+	if err := recordIndexJoinHintWarnings(lp, prop, inEnforce); err != nil {
+		return err
+	}
+	if err := recordLimitToCopWarnings(lp); err != nil {
+		return err
+	}
+	return nil
+}
+
+func recordLimitToCopWarnings(lp base.LogicalPlan) error {
+	var preferPushDown *bool
+	switch lp := lp.(type) {
+	case *logicalop.LogicalTopN:
+		preferPushDown = &lp.PreferLimitToCop
+	case *logicalop.LogicalLimit:
+		preferPushDown = &lp.PreferLimitToCop
+	default:
+		return nil
+	}
+	if *preferPushDown {
+		return plannererrors.ErrInternal.FastGen("Optimizer Hint LIMIT_TO_COP is inapplicable")
+	}
+	return nil
+}
+
 // recordIndexJoinHintWarnings records the warnings msg if no valid preferred physic are picked.
 // todo: extend recordIndexJoinHintWarnings to support all kind of operator's warnings handling.
 func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalProperty, inEnforce bool) error {
@@ -2233,6 +2259,15 @@ func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalPro
 	return nil
 }
 
+func applyLogicalHintVarEigen(lp base.LogicalPlan, task base.Task, childTasks []base.Task) (preferred bool) {
+	return applyLogicalJoinHint(lp, task.Plan()) ||
+		applyLogicalTopNAndLimitHint(lp, childTasks)
+}
+
+// Get the most preferred and efficient one by hint and low-cost priority.
+// since hint applicable plan may greater than 1, like inl_join can suit for:
+// index_join, index_hash_join, index_merge_join, we should chase the most efficient
+// one among them.
 // applyLogicalJoinHint is used to handle logic hint/prefer/variable, which is not a strong guide for optimization phase.
 // It is changed from handleForceIndexJoinHints to handle the preferred join hint among several valid physical plan choices.
 // It will return true if the hint can be applied when saw a real physic plan successfully built and returned up from child.
@@ -2240,6 +2275,17 @@ func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalPro
 // for the logic hint, we will return false and the optimizer will continue to return the normal low-cost one.
 func applyLogicalJoinHint(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
 	return preferMergeJoin(lp, physicPlan) || preferIndexJoinFamily(lp, physicPlan) || preferHashJoin(lp, physicPlan)
+}
+
+func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, childTasks []base.Task) (preferred bool) {
+	if pushLimitOrTopNForcibly(lp) {
+		// if there is a hint control or threshold switch, try to get the copTask as the prior.
+		// here we don't assert task itself, because when topN attach 2 cop task, it will become root type automatically.
+		if _, ok := childTasks[0].(*CopTask); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func preferHashJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
@@ -2931,23 +2977,20 @@ func pushLimitOrTopNForcibly(p base.LogicalPlan) bool {
 	}
 
 	if *preferPushDown || meetThreshold {
-		if p.CanPushToCop(kv.TiKV) {
-			return true
-		}
-		if *preferPushDown {
-			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer Hint LIMIT_TO_COP is inapplicable")
-			*preferPushDown = false
-		}
+		// we remove the child subTree check, each logical operator only focus on themselves.
+		// for current level, they prefer a push-down copTask.
+		return true
 	}
 
 	return false
 }
 
 func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
-	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
-	if !pushLimitOrTopNForcibly(lt) {
-		allTaskTypes = append(allTaskTypes, property.RootTaskType)
-	}
+	// topN should always generate rootTaskType for:
+	// case1: after v7.5, since tiFlash Cop has been banned, mppTaskType may return invalid task when there are some root conditions.
+	// case2: for index merge case which can only be run in root type, topN and limit can't be pushed to the inside index merge when it's an intersection.
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
+	// we move the pushLimitOrTopNForcibly check to attach2Task to do the prefer choice.
 	mppAllowed := lt.SCtx().GetSessionVars().IsMPPAllowed()
 	if mppAllowed {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
@@ -3012,10 +3055,7 @@ func getPhysLimits(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) [
 		return nil
 	}
 
-	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
-	if !pushLimitOrTopNForcibly(lt) {
-		allTaskTypes = append(allTaskTypes, property.RootTaskType)
-	}
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), SortItems: p.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
@@ -3765,10 +3805,7 @@ func getLimitPhysicalPlans(p *logicalop.LogicalLimit, prop *property.PhysicalPro
 		return nil, true, nil
 	}
 
-	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
-	if !pushLimitOrTopNForcibly(p) {
-		allTaskTypes = append(allTaskTypes, property.RootTaskType)
-	}
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
 	if p.CanPushToCop(kv.TiFlash) && p.SCtx().GetSessionVars().IsMPPAllowed() {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}

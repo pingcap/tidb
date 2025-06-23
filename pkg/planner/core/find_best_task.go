@@ -245,15 +245,10 @@ func enumeratePhysicalPlans4Task(
 			curTask = curTask.ConvertToRootTask(p.SCtx())
 		}
 
-		// Get the most preferred and efficient one by hint and low-cost priority.
-		// since hint applicable plan may greater than 1, like inl_join can suit for:
-		// index_join, index_hash_join, index_merge_join, we should chase the most efficient
-		// one among them.
-		//
 		// we need to check the hint is applicable before enforcing the property. otherwise
 		// what we get is Sort ot Exchanger kind of operators.
 		// todo: extend applyLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
-		hintApplicable := applyLogicalJoinHint(p.Self(), curTask.Plan())
+		hintApplicable := applyLogicalHintVarEigen(p.Self(), curTask, childTasks)
 
 		// Enforce curTask property
 		if addEnforcer {
@@ -297,7 +292,7 @@ func enumeratePhysicalPlans4Task(
 	}
 	// if there is no valid preferred low-cost physical one, return the normal low one.
 	// if the hint is specified without any valid plan, we should also record the warnings.
-	if warn := recordIndexJoinHintWarnings(p.Self(), prop, addEnforcer); warn != nil {
+	if warn := recordWarnings(p.Self(), prop, addEnforcer); warn != nil {
 		bestTask.AppendWarning(warn)
 	}
 	// return the normal lowest-cost physical one.
