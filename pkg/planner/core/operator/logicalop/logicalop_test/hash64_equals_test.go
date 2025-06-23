@@ -790,8 +790,8 @@ func TestLogicalJoinHash64Equals(t *testing.T) {
 	hasher2.Reset()
 	la1.Hash64(hasher1)
 	la2.Hash64(hasher2)
-	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
-	require.True(t, la1.Equals(la2))
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, la1.Equals(la2))
 
 	la2.EqualConditions = []*expression.ScalarFunction{}
 	hasher2.Reset()
