@@ -26,7 +26,7 @@ func (op *LogicalJoin) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeJoin)
 	op.LogicalSchemaProducer.Hash64(h)
 	h.HashInt64(int64(op.JoinType))
-	if len(op.EqualConditions) == 0 {
+	if op.EqualConditions == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -35,7 +35,7 @@ func (op *LogicalJoin) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
-	if len(op.NAEQConditions) == 0 {
+	if op.NAEQConditions == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -44,7 +44,7 @@ func (op *LogicalJoin) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
-	if len(op.LeftConditions) == 0 {
+	if op.LeftConditions == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -53,7 +53,7 @@ func (op *LogicalJoin) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
-	if len(op.RightConditions) == 0 {
+	if op.RightConditions == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -62,7 +62,7 @@ func (op *LogicalJoin) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
-	if len(op.OtherConditions) == 0 {
+	if op.OtherConditions == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -91,7 +91,7 @@ func (op *LogicalJoin) Equals(other any) bool {
 	if op.JoinType != op2.JoinType {
 		return false
 	}
-	if (len(op.EqualConditions) == 0 && len(op2.EqualConditions) != 0) || (len(op.EqualConditions) != 0 && len(op2.EqualConditions) == 0) || len(op.EqualConditions) != len(op2.EqualConditions) {
+	if (op.EqualConditions == nil && op2.EqualConditions != nil) || (op.EqualConditions != nil && op2.EqualConditions == nil) || len(op.EqualConditions) != len(op2.EqualConditions) {
 		return false
 	}
 	for i, one := range op.EqualConditions {
@@ -99,7 +99,7 @@ func (op *LogicalJoin) Equals(other any) bool {
 			return false
 		}
 	}
-	if (len(op.NAEQConditions) == 0 && len(op2.NAEQConditions) != 0) || (len(op.NAEQConditions) != 0 && len(op2.NAEQConditions) == 0) || len(op.NAEQConditions) != len(op2.NAEQConditions) {
+	if (op.NAEQConditions == nil && op2.NAEQConditions != nil) || (op.NAEQConditions != nil && op2.NAEQConditions == nil) || len(op.NAEQConditions) != len(op2.NAEQConditions) {
 		return false
 	}
 	for i, one := range op.NAEQConditions {
@@ -107,7 +107,7 @@ func (op *LogicalJoin) Equals(other any) bool {
 			return false
 		}
 	}
-	if (len(op.LeftConditions) == 0 && len(op2.LeftConditions) != 0) || (len(op.LeftConditions) != 0 && len(op2.LeftConditions) == 0) || len(op.LeftConditions) != len(op2.LeftConditions) {
+	if (op.LeftConditions == nil && op2.LeftConditions != nil) || (op.LeftConditions != nil && op2.LeftConditions == nil) || len(op.LeftConditions) != len(op2.LeftConditions) {
 		return false
 	}
 	for i, one := range op.LeftConditions {
@@ -115,7 +115,7 @@ func (op *LogicalJoin) Equals(other any) bool {
 			return false
 		}
 	}
-	if (len(op.RightConditions) == 0 && len(op2.RightConditions) != 0) || (len(op.RightConditions) != 0 && len(op2.RightConditions) == 0) || len(op.RightConditions) != len(op2.RightConditions) {
+	if (op.RightConditions == nil && op2.RightConditions != nil) || (op.RightConditions != nil && op2.RightConditions == nil) || len(op.RightConditions) != len(op2.RightConditions) {
 		return false
 	}
 	for i, one := range op.RightConditions {
@@ -123,7 +123,7 @@ func (op *LogicalJoin) Equals(other any) bool {
 			return false
 		}
 	}
-	if (len(op.OtherConditions) == 0 && len(op2.OtherConditions) != 0) || (len(op.OtherConditions) != 0 && len(op2.OtherConditions) == 0) || len(op.OtherConditions) != len(op2.OtherConditions) {
+	if (op.OtherConditions == nil && op2.OtherConditions != nil) || (op.OtherConditions != nil && op2.OtherConditions == nil) || len(op.OtherConditions) != len(op2.OtherConditions) {
 		return false
 	}
 	for i, one := range op.OtherConditions {
@@ -138,7 +138,7 @@ func (op *LogicalJoin) Equals(other any) bool {
 func (op *LogicalAggregation) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeAgg)
 	op.LogicalSchemaProducer.Hash64(h)
-	if len(op.AggFuncs) == 0 {
+	if op.AggFuncs == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -147,7 +147,7 @@ func (op *LogicalAggregation) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
-	if len(op.GroupByItems) == 0 {
+	if op.GroupByItems == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -156,7 +156,7 @@ func (op *LogicalAggregation) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
-	if len(op.PossibleProperties) == 0 {
+	if op.PossibleProperties == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -185,7 +185,7 @@ func (op *LogicalAggregation) Equals(other any) bool {
 	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
 		return false
 	}
-	if (len(op.AggFuncs) == 0 && len(op2.AggFuncs) != 0) || (len(op.AggFuncs) != 0 && len(op2.AggFuncs) == 0) || len(op.AggFuncs) != len(op2.AggFuncs) {
+	if (op.AggFuncs == nil && op2.AggFuncs != nil) || (op.AggFuncs != nil && op2.AggFuncs == nil) || len(op.AggFuncs) != len(op2.AggFuncs) {
 		return false
 	}
 	for i, one := range op.AggFuncs {
@@ -193,7 +193,7 @@ func (op *LogicalAggregation) Equals(other any) bool {
 			return false
 		}
 	}
-	if (len(op.GroupByItems) == 0 && len(op2.GroupByItems) != 0) || (len(op.GroupByItems) != 0 && len(op2.GroupByItems) == 0) || len(op.GroupByItems) != len(op2.GroupByItems) {
+	if (op.GroupByItems == nil && op2.GroupByItems != nil) || (op.GroupByItems != nil && op2.GroupByItems == nil) || len(op.GroupByItems) != len(op2.GroupByItems) {
 		return false
 	}
 	for i, one := range op.GroupByItems {
@@ -201,11 +201,11 @@ func (op *LogicalAggregation) Equals(other any) bool {
 			return false
 		}
 	}
-	if (len(op.PossibleProperties) == 0 && len(op2.PossibleProperties) != 0) || (len(op.PossibleProperties) != 0 && len(op2.PossibleProperties) == 0) || len(op.PossibleProperties) != len(op2.PossibleProperties) {
+	if (op.PossibleProperties == nil && op2.PossibleProperties != nil) || (op.PossibleProperties != nil && op2.PossibleProperties == nil) || len(op.PossibleProperties) != len(op2.PossibleProperties) {
 		return false
 	}
 	for i, one := range op.PossibleProperties {
-		if (len(one) == 0 && len(op2.PossibleProperties[i]) != 0) || (len(one) != 0 && len(op2.PossibleProperties[i]) == 0) || len(one) != len(op2.PossibleProperties[i]) {
+		if (one == nil && op2.PossibleProperties[i] != nil) || (one != nil && op2.PossibleProperties[i] == nil) || len(one) != len(op2.PossibleProperties[i]) {
 			return false
 		}
 		for ii, onee := range one {
@@ -221,7 +221,7 @@ func (op *LogicalAggregation) Equals(other any) bool {
 func (op *LogicalApply) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeApply)
 	op.LogicalJoin.Hash64(h)
-	if len(op.CorCols) == 0 {
+	if op.CorCols == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -248,7 +248,7 @@ func (op *LogicalApply) Equals(other any) bool {
 	if !op.LogicalJoin.Equals(&op2.LogicalJoin) {
 		return false
 	}
-	if (len(op.CorCols) == 0 && len(op2.CorCols) != 0) || (len(op.CorCols) != 0 && len(op2.CorCols) == 0) || len(op.CorCols) != len(op2.CorCols) {
+	if (op.CorCols == nil && op2.CorCols != nil) || (op.CorCols != nil && op2.CorCols == nil) || len(op.CorCols) != len(op2.CorCols) {
 		return false
 	}
 	for i, one := range op.CorCols {
@@ -266,7 +266,7 @@ func (op *LogicalApply) Equals(other any) bool {
 func (op *LogicalExpand) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeExpand)
 	op.LogicalSchemaProducer.Hash64(h)
-	if len(op.DistinctGroupByCol) == 0 {
+	if op.DistinctGroupByCol == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -275,7 +275,7 @@ func (op *LogicalExpand) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
-	if len(op.DistinctGbyExprs) == 0 {
+	if op.DistinctGbyExprs == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -285,7 +285,7 @@ func (op *LogicalExpand) Hash64(h base.Hasher) {
 		}
 	}
 	h.HashInt64(int64(op.DistinctSize))
-	if len(op.RollupGroupingSets) == 0 {
+	if op.RollupGroupingSets == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -300,7 +300,7 @@ func (op *LogicalExpand) Hash64(h base.Hasher) {
 			}
 		}
 	}
-	if len(op.LevelExprs) == 0 {
+	if op.LevelExprs == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -341,7 +341,7 @@ func (op *LogicalExpand) Equals(other any) bool {
 	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
 		return false
 	}
-	if (len(op.DistinctGroupByCol) == 0 && len(op2.DistinctGroupByCol) != 0) || (len(op.DistinctGroupByCol) != 0 && len(op2.DistinctGroupByCol) == 0) || len(op.DistinctGroupByCol) != len(op2.DistinctGroupByCol) {
+	if (op.DistinctGroupByCol == nil && op2.DistinctGroupByCol != nil) || (op.DistinctGroupByCol != nil && op2.DistinctGroupByCol == nil) || len(op.DistinctGroupByCol) != len(op2.DistinctGroupByCol) {
 		return false
 	}
 	for i, one := range op.DistinctGroupByCol {
@@ -349,7 +349,7 @@ func (op *LogicalExpand) Equals(other any) bool {
 			return false
 		}
 	}
-	if (len(op.DistinctGbyExprs) == 0 && len(op2.DistinctGbyExprs) != 0) || (len(op.DistinctGbyExprs) != 0 && len(op2.DistinctGbyExprs) == 0) || len(op.DistinctGbyExprs) != len(op2.DistinctGbyExprs) {
+	if (op.DistinctGbyExprs == nil && op2.DistinctGbyExprs != nil) || (op.DistinctGbyExprs != nil && op2.DistinctGbyExprs == nil) || len(op.DistinctGbyExprs) != len(op2.DistinctGbyExprs) {
 		return false
 	}
 	for i, one := range op.DistinctGbyExprs {
@@ -360,15 +360,15 @@ func (op *LogicalExpand) Equals(other any) bool {
 	if op.DistinctSize != op2.DistinctSize {
 		return false
 	}
-	if (len(op.RollupGroupingSets) == 0 && len(op2.RollupGroupingSets) != 0) || (len(op.RollupGroupingSets) != 0 && len(op2.RollupGroupingSets) == 0) || len(op.RollupGroupingSets) != len(op2.RollupGroupingSets) {
+	if (op.RollupGroupingSets == nil && op2.RollupGroupingSets != nil) || (op.RollupGroupingSets != nil && op2.RollupGroupingSets == nil) || len(op.RollupGroupingSets) != len(op2.RollupGroupingSets) {
 		return false
 	}
 	for i, one := range op.RollupGroupingSets {
-		if (len(one) == 0 && len(op2.RollupGroupingSets[i]) != 0) || (len(one) != 0 && len(op2.RollupGroupingSets[i]) == 0) || len(one) != len(op2.RollupGroupingSets[i]) {
+		if (one == nil && op2.RollupGroupingSets[i] != nil) || (one != nil && op2.RollupGroupingSets[i] == nil) || len(one) != len(op2.RollupGroupingSets[i]) {
 			return false
 		}
 		for ii, onee := range one {
-			if (len(onee) == 0 && len(op2.RollupGroupingSets[i][ii]) != 0) || (len(onee) != 0 && len(op2.RollupGroupingSets[i][ii]) == 0) || len(onee) != len(op2.RollupGroupingSets[i][ii]) {
+			if (onee == nil && op2.RollupGroupingSets[i][ii] != nil) || (onee != nil && op2.RollupGroupingSets[i][ii] == nil) || len(onee) != len(op2.RollupGroupingSets[i][ii]) {
 				return false
 			}
 			for iii, oneee := range onee {
@@ -378,11 +378,11 @@ func (op *LogicalExpand) Equals(other any) bool {
 			}
 		}
 	}
-	if (len(op.LevelExprs) == 0 && len(op2.LevelExprs) != 0) || (len(op.LevelExprs) != 0 && len(op2.LevelExprs) == 0) || len(op.LevelExprs) != len(op2.LevelExprs) {
+	if (op.LevelExprs == nil && op2.LevelExprs != nil) || (op.LevelExprs != nil && op2.LevelExprs == nil) || len(op.LevelExprs) != len(op2.LevelExprs) {
 		return false
 	}
 	for i, one := range op.LevelExprs {
-		if (len(one) == 0 && len(op2.LevelExprs[i]) != 0) || (len(one) != 0 && len(op2.LevelExprs[i]) == 0) || len(one) != len(op2.LevelExprs[i]) {
+		if (one == nil && op2.LevelExprs[i] != nil) || (one != nil && op2.LevelExprs[i] == nil) || len(one) != len(op2.LevelExprs[i]) {
 			return false
 		}
 		for ii, onee := range one {
@@ -404,7 +404,7 @@ func (op *LogicalExpand) Equals(other any) bool {
 func (op *LogicalLimit) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeLimit)
 	op.LogicalSchemaProducer.Hash64(h)
-	if len(op.PartitionBy) == 0 {
+	if op.PartitionBy == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -432,7 +432,7 @@ func (op *LogicalLimit) Equals(other any) bool {
 	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
 		return false
 	}
-	if (len(op.PartitionBy) == 0 && len(op2.PartitionBy) != 0) || (len(op.PartitionBy) != 0 && len(op2.PartitionBy) == 0) || len(op.PartitionBy) != len(op2.PartitionBy) {
+	if (op.PartitionBy == nil && op2.PartitionBy != nil) || (op.PartitionBy != nil && op2.PartitionBy == nil) || len(op.PartitionBy) != len(op2.PartitionBy) {
 		return false
 	}
 	for i, one := range op.PartitionBy {
@@ -489,7 +489,7 @@ func (op *DataSource) Hash64(h base.Hasher) {
 		h.HashByte(base.NotNilFlag)
 		op.TableAsName.Hash64(h)
 	}
-	if len(op.PushedDownConds) == 0 {
+	if op.PushedDownConds == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -498,7 +498,7 @@ func (op *DataSource) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
-	if len(op.AllConds) == 0 {
+	if op.AllConds == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -533,7 +533,7 @@ func (op *DataSource) Equals(other any) bool {
 	if !op.TableAsName.Equals(op2.TableAsName) {
 		return false
 	}
-	if (len(op.PushedDownConds) == 0 && len(op2.PushedDownConds) != 0) || (len(op.PushedDownConds) != 0 && len(op2.PushedDownConds) == 0) || len(op.PushedDownConds) != len(op2.PushedDownConds) {
+	if (op.PushedDownConds == nil && op2.PushedDownConds != nil) || (op.PushedDownConds != nil && op2.PushedDownConds == nil) || len(op.PushedDownConds) != len(op2.PushedDownConds) {
 		return false
 	}
 	for i, one := range op.PushedDownConds {
@@ -541,7 +541,7 @@ func (op *DataSource) Equals(other any) bool {
 			return false
 		}
 	}
-	if (len(op.AllConds) == 0 && len(op2.AllConds) != 0) || (len(op.AllConds) != 0 && len(op2.AllConds) == 0) || len(op.AllConds) != len(op2.AllConds) {
+	if (op.AllConds == nil && op2.AllConds != nil) || (op.AllConds != nil && op2.AllConds == nil) || len(op.AllConds) != len(op2.AllConds) {
 		return false
 	}
 	for i, one := range op.AllConds {
@@ -650,7 +650,7 @@ func (op *LogicalPartitionUnionAll) Equals(other any) bool {
 func (op *LogicalProjection) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeProj)
 	op.LogicalSchemaProducer.Hash64(h)
-	if len(op.Exprs) == 0 {
+	if op.Exprs == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -678,7 +678,7 @@ func (op *LogicalProjection) Equals(other any) bool {
 	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
 		return false
 	}
-	if (len(op.Exprs) == 0 && len(op2.Exprs) != 0) || (len(op.Exprs) != 0 && len(op2.Exprs) == 0) || len(op.Exprs) != len(op2.Exprs) {
+	if (op.Exprs == nil && op2.Exprs != nil) || (op.Exprs != nil && op2.Exprs == nil) || len(op.Exprs) != len(op2.Exprs) {
 		return false
 	}
 	for i, one := range op.Exprs {
@@ -698,7 +698,7 @@ func (op *LogicalProjection) Equals(other any) bool {
 // Hash64 implements the Hash64Equals interface.
 func (op *LogicalSelection) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeSel)
-	if len(op.Conditions) == 0 {
+	if op.Conditions == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -721,7 +721,7 @@ func (op *LogicalSelection) Equals(other any) bool {
 	if op2 == nil {
 		return false
 	}
-	if (len(op.Conditions) == 0 && len(op2.Conditions) != 0) || (len(op.Conditions) != 0 && len(op2.Conditions) == 0) || len(op.Conditions) != len(op2.Conditions) {
+	if (op.Conditions == nil && op2.Conditions != nil) || (op.Conditions != nil && op2.Conditions == nil) || len(op.Conditions) != len(op2.Conditions) {
 		return false
 	}
 	for i, one := range op.Conditions {
@@ -807,7 +807,7 @@ func (op *LogicalShowDDLJobs) Equals(other any) bool {
 // Hash64 implements the Hash64Equals interface.
 func (op *LogicalSort) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeSort)
-	if len(op.ByItems) == 0 {
+	if op.ByItems == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -830,7 +830,7 @@ func (op *LogicalSort) Equals(other any) bool {
 	if op2 == nil {
 		return false
 	}
-	if (len(op.ByItems) == 0 && len(op2.ByItems) != 0) || (len(op.ByItems) != 0 && len(op2.ByItems) == 0) || len(op.ByItems) != len(op2.ByItems) {
+	if (op.ByItems == nil && op2.ByItems != nil) || (op.ByItems != nil && op2.ByItems == nil) || len(op.ByItems) != len(op2.ByItems) {
 		return false
 	}
 	for i, one := range op.ByItems {
@@ -873,7 +873,7 @@ func (op *LogicalTableDual) Equals(other any) bool {
 func (op *LogicalTopN) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeTopN)
 	op.LogicalSchemaProducer.Hash64(h)
-	if len(op.ByItems) == 0 {
+	if op.ByItems == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -882,7 +882,7 @@ func (op *LogicalTopN) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
-	if len(op.PartitionBy) == 0 {
+	if op.PartitionBy == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -911,7 +911,7 @@ func (op *LogicalTopN) Equals(other any) bool {
 	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
 		return false
 	}
-	if (len(op.ByItems) == 0 && len(op2.ByItems) != 0) || (len(op.ByItems) != 0 && len(op2.ByItems) == 0) || len(op.ByItems) != len(op2.ByItems) {
+	if (op.ByItems == nil && op2.ByItems != nil) || (op.ByItems != nil && op2.ByItems == nil) || len(op.ByItems) != len(op2.ByItems) {
 		return false
 	}
 	for i, one := range op.ByItems {
@@ -919,7 +919,7 @@ func (op *LogicalTopN) Equals(other any) bool {
 			return false
 		}
 	}
-	if (len(op.PartitionBy) == 0 && len(op2.PartitionBy) != 0) || (len(op.PartitionBy) != 0 && len(op2.PartitionBy) == 0) || len(op.PartitionBy) != len(op2.PartitionBy) {
+	if (op.PartitionBy == nil && op2.PartitionBy != nil) || (op.PartitionBy != nil && op2.PartitionBy == nil) || len(op.PartitionBy) != len(op2.PartitionBy) {
 		return false
 	}
 	for i, one := range op.PartitionBy {
@@ -942,7 +942,7 @@ func (op *LogicalTopN) Equals(other any) bool {
 // Hash64 implements the Hash64Equals interface.
 func (op *LogicalUnionScan) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeUnionScan)
-	if len(op.Conditions) == 0 {
+	if op.Conditions == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -966,7 +966,7 @@ func (op *LogicalUnionScan) Equals(other any) bool {
 	if op2 == nil {
 		return false
 	}
-	if (len(op.Conditions) == 0 && len(op2.Conditions) != 0) || (len(op.Conditions) != 0 && len(op2.Conditions) == 0) || len(op.Conditions) != len(op2.Conditions) {
+	if (op.Conditions == nil && op2.Conditions != nil) || (op.Conditions != nil && op2.Conditions == nil) || len(op.Conditions) != len(op2.Conditions) {
 		return false
 	}
 	for i, one := range op.Conditions {
@@ -984,7 +984,7 @@ func (op *LogicalUnionScan) Equals(other any) bool {
 func (op *LogicalWindow) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeWindow)
 	op.LogicalSchemaProducer.Hash64(h)
-	if len(op.WindowFuncDescs) == 0 {
+	if op.WindowFuncDescs == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -993,7 +993,7 @@ func (op *LogicalWindow) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
-	if len(op.PartitionBy) == 0 {
+	if op.PartitionBy == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -1002,7 +1002,7 @@ func (op *LogicalWindow) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
-	if len(op.OrderBy) == 0 {
+	if op.OrderBy == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -1034,7 +1034,7 @@ func (op *LogicalWindow) Equals(other any) bool {
 	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
 		return false
 	}
-	if (len(op.WindowFuncDescs) == 0 && len(op2.WindowFuncDescs) != 0) || (len(op.WindowFuncDescs) != 0 && len(op2.WindowFuncDescs) == 0) || len(op.WindowFuncDescs) != len(op2.WindowFuncDescs) {
+	if (op.WindowFuncDescs == nil && op2.WindowFuncDescs != nil) || (op.WindowFuncDescs != nil && op2.WindowFuncDescs == nil) || len(op.WindowFuncDescs) != len(op2.WindowFuncDescs) {
 		return false
 	}
 	for i, one := range op.WindowFuncDescs {
@@ -1042,7 +1042,7 @@ func (op *LogicalWindow) Equals(other any) bool {
 			return false
 		}
 	}
-	if (len(op.PartitionBy) == 0 && len(op2.PartitionBy) != 0) || (len(op.PartitionBy) != 0 && len(op2.PartitionBy) == 0) || len(op.PartitionBy) != len(op2.PartitionBy) {
+	if (op.PartitionBy == nil && op2.PartitionBy != nil) || (op.PartitionBy != nil && op2.PartitionBy == nil) || len(op.PartitionBy) != len(op2.PartitionBy) {
 		return false
 	}
 	for i, one := range op.PartitionBy {
@@ -1050,7 +1050,7 @@ func (op *LogicalWindow) Equals(other any) bool {
 			return false
 		}
 	}
-	if (len(op.OrderBy) == 0 && len(op2.OrderBy) != 0) || (len(op.OrderBy) != 0 && len(op2.OrderBy) == 0) || len(op.OrderBy) != len(op2.OrderBy) {
+	if (op.OrderBy == nil && op2.OrderBy != nil) || (op.OrderBy != nil && op2.OrderBy == nil) || len(op.OrderBy) != len(op2.OrderBy) {
 		return false
 	}
 	for i, one := range op.OrderBy {
