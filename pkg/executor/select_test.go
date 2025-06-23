@@ -40,8 +40,8 @@ func TestImportIntoShouldHaveSameFlagsAsInsert(t *testing.T) {
 	importStmt := &ast.ImportIntoStmt{}
 	insertCtx := mock.NewContext()
 	importCtx := mock.NewContext()
-	insertCtx.BindDomain(&domain.Domain{})
-	importCtx.BindDomain(&domain.Domain{})
+	domain.BindDomain(insertCtx, &domain.Domain{})
+	domain.BindDomain(importCtx, &domain.Domain{})
 	for _, modeStr := range []string{
 		"",
 		"IGNORE_SPACE",
