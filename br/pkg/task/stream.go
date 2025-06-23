@@ -2399,10 +2399,6 @@ func buildKeyRangesFromSchemasReplace(schemasReplace *stream.SchemasReplace,
 
 // verifyContiguousIDs checks if the sorted table IDs are contiguous
 func verifyContiguousIDs(ids []int64) bool {
-	if len(ids) <= 1 {
-		return true
-	}
-
 	for i := 1; i < len(ids); i++ {
 		if ids[i] != ids[i-1]+1 {
 			return false

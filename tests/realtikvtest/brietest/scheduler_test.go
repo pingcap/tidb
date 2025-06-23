@@ -23,11 +23,9 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap/zapcore"
 )
 
 // SchedulerRule represents a PD scheduler rule
@@ -299,9 +297,6 @@ func checkSchedulerPausingBehavior(t *testing.T, baselineKeyRanges map[string][]
 // TestLogRestoreFineGrainedSchedulerPausing tests that log restore uses fine-grained
 // scheduler pausing when filters are specified
 func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
-	// Set log level to Info to enable BR logging
-	log.SetLevel(zapcore.InfoLevel)
-
 	kit := NewLogBackupKit(t)
 	taskName := "test-fine-grained-scheduler"
 
@@ -315,15 +310,15 @@ func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
 	baselineKeyRanges := analyzeSchedulerRules(t, baselineRules, "BASELINE SCHEDULER RULES (before restore)")
 
 	// Create channel to capture results from the callback
-	//rulesChan := make(chan []SchedulerRule, 1)
+	rulesChan := make(chan []SchedulerRule, 1)
 
 	// Enable failpoint with callback that checks PD scheduler status
-	//require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused", func() {
-	//	t.Log("Failpoint triggered - checking PD scheduler rules")
-	//	finalRules := checkSchedulerPausingBehavior(t, baselineKeyRanges)
-	//	rulesChan <- finalRules
-	//}))
-	//defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused")
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused", func() {
+		t.Log("Failpoint triggered - checking PD scheduler rules")
+		finalRules := checkSchedulerPausingBehavior(t, baselineKeyRanges)
+		rulesChan <- finalRules
+	}))
+	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused")
 
 	// Run filtered restore
 	t.Log("Starting filtered restore...")
@@ -332,21 +327,17 @@ func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
 	})
 
 	// Wait for callback results
-	//select {
-	//case restoreRules := <-rulesChan:
-	//	t.Log("Analyzing scheduler rules during filtered restore:")
-	//	restoreKeyRanges := analyzeSchedulerRules(t, restoreRules, "SCHEDULER RULES DURING FILTERED RESTORE")
-	//	hasChanges := compareKeyRanges(t, baselineKeyRanges, restoreKeyRanges)
-	//
-	//	if hasChanges {
-	//		t.Log("SUCCESS: Fine-grained scheduler pausing detected during filtered restore")
-	//	} else {
-	//		t.Log("WARNING: No scheduler changes detected during filtered restore")
-	//	}
-	//
-	//case <-time.After(20 * time.Second):
-	//	t.Logf("Timeout waiting for failpoint callback")
-	//}
+	select {
+	case restoreRules := <-rulesChan:
+		t.Log("Analyzing scheduler rules during filtered restore:")
+		restoreKeyRanges := analyzeSchedulerRules(t, restoreRules, "SCHEDULER RULES DURING FILTERED RESTORE")
+		hasChanges := compareKeyRanges(t, baselineKeyRanges, restoreKeyRanges)
+
+		require.True(t, hasChanges, "Fine-grained scheduler pausing should be detected during filtered restore")
+
+	case <-time.After(20 * time.Second):
+		require.Fail(t, "Timeout waiting for failpoint callback - scheduler pausing may not have been triggered")
+	}
 
 	// Verify tables were restored correctly
 	t.Log("verify tables")
@@ -360,7 +351,8 @@ func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
 	finalKeyRanges := analyzeSchedulerRules(t, finalRules, "FINAL SCHEDULER RULES (after filtered restore)")
 
 	t.Log("Comparing final state with baseline:")
-	compareKeyRanges(t, baselineKeyRanges, finalKeyRanges)
+	finalHasChanges := compareKeyRanges(t, baselineKeyRanges, finalKeyRanges)
+	require.False(t, finalHasChanges, "Scheduler rules should return to baseline state after restore completion")
 
 	t.Logf("Filtered restore test completed")
 }
@@ -368,9 +360,6 @@ func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
 // TestLogRestoreFullSchedulerPausing tests that log restore uses full
 // scheduler pausing when no filters are specified
 func TestLogRestoreFullSchedulerPausing(t *testing.T) {
-	// Set log level to Info to enable BR logging
-	log.SetLevel(zapcore.InfoLevel)
-
 	kit := NewLogBackupKit(t)
 	taskName := "test-full-scheduler"
 
@@ -407,26 +396,25 @@ func TestLogRestoreFullSchedulerPausing(t *testing.T) {
 		restoreKeyRanges := analyzeSchedulerRules(t, restoreRules, "SCHEDULER RULES DURING FULL RESTORE")
 		hasChanges := compareKeyRanges(t, baselineKeyRanges, restoreKeyRanges)
 
-		if hasChanges {
-			t.Log("SUCCESS: Full scheduler pausing detected during unfiltered restore")
+		require.True(t, hasChanges, "Full scheduler pausing should be detected during unfiltered restore")
 
-			// Check if any new ranges have empty start/end keys (indicating full pause)
-			for ruleKey, currentRanges := range restoreKeyRanges {
-				if baselineRanges, exists := baselineKeyRanges[ruleKey]; exists {
-					newRanges := findNewKeyRanges(baselineRanges, currentRanges)
-					for _, newRange := range newRanges {
-						if newRange.StartKey == EmptyRangeStart && newRange.EndKey == EmptyRangeEnd {
-							t.Log("CONFIRMED: Full range scheduler pausing detected (empty start/end keys)")
-						}
+		// Check if any new ranges have empty start/end keys (indicating full pause)
+		foundFullRange := false
+		for ruleKey, currentRanges := range restoreKeyRanges {
+			if baselineRanges, exists := baselineKeyRanges[ruleKey]; exists {
+				newRanges := findNewKeyRanges(baselineRanges, currentRanges)
+				for _, newRange := range newRanges {
+					if newRange.StartKey == EmptyRangeStart && newRange.EndKey == EmptyRangeEnd {
+						t.Log("CONFIRMED: Full range scheduler pausing detected (empty start/end keys)")
+						foundFullRange = true
 					}
 				}
 			}
-		} else {
-			t.Log("WARNING: No scheduler changes detected during full restore")
 		}
+		require.True(t, foundFullRange, "Full range scheduler pausing (empty start/end keys) should be detected in unfiltered restore")
 
 	case <-time.After(20 * time.Second):
-		t.Logf("Timeout waiting for failpoint callback")
+		require.Fail(t, "Timeout waiting for failpoint callback - scheduler pausing may not have been triggered")
 	}
 
 	// Verify tables were restored correctly
@@ -440,7 +428,8 @@ func TestLogRestoreFullSchedulerPausing(t *testing.T) {
 	finalKeyRanges := analyzeSchedulerRules(t, finalRules, "FINAL SCHEDULER RULES (after full restore)")
 
 	t.Log("Comparing final state with baseline:")
-	compareKeyRanges(t, baselineKeyRanges, finalKeyRanges)
+	finalHasChanges := compareKeyRanges(t, baselineKeyRanges, finalKeyRanges)
+	require.False(t, finalHasChanges, "Scheduler rules should return to baseline state after restore completion")
 
 	t.Logf("Full restore test completed")
 }
