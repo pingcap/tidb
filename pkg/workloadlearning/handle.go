@@ -196,7 +196,7 @@ func (handle *Handle) analyzeBasedOnStatementStats(infoSchema infoschema.InfoSch
 			continue
 		}
 		// Step2.3: accumulate all metrics from each record
-		accumulateMetricsGroupByTableID(ctx, currentRecordMetrics, readFrequency, tableIDToMetrics, infoSchema)
+		AccumulateMetricsGroupByTableID(ctx, currentRecordMetrics, readFrequency, tableIDToMetrics, infoSchema)
 	}
 
 	// Step3: compute the table cost metrics by table scan time / total scan time + table mem usage / total mem usage
@@ -398,7 +398,11 @@ func extractScanAndMemoryFromBinaryPlan(binaryPlan string) ([]*TableReadCostMetr
 	return operatorExtractMetrics, nil
 }
 
-func accumulateMetricsGroupByTableID(ctx context.Context, currentRecordMetrics []*TableReadCostMetrics, frequency int64, previousMetrics map[int64]*TableReadCostMetrics, infoSchema infoschema.InfoSchema) {
+// AccumulateMetricsGroupByTableID previousMetrics += currentRecordMetrics * frequency
+// Step1: find the table id for all currentRecordMetrics
+// Step2: Multiply the scan time and memory usage by frequency for all currentRecordMetrics
+// Step3: Group by table id and sum with previous metrics
+func AccumulateMetricsGroupByTableID(ctx context.Context, currentRecordMetrics []*TableReadCostMetrics, frequency int64, previousMetrics map[int64]*TableReadCostMetrics, infoSchema infoschema.InfoSchema) {
 	// Multiply exec count for each operator cpu and memory metrics
 	// Group by table id and sum the scan time and memory usage for each operatorExtractMetrics
 	// (TODO) The alias table name is recorded in operator instead of real table name. So we cannot handle the alias table name case now.
