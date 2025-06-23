@@ -1467,11 +1467,9 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 			us.cacheTable = cacheData
 		} else if loading {
 			return
-		} else {
-			if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
-				store := b.ctx.GetStore()
-				cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
-			}
+		} else if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
+			store := b.ctx.GetStore()
+			cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
 		}
 	}
 }
@@ -1961,10 +1959,8 @@ func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *
 	// 1 row in set (0.00 sec)
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
 		e.DefaultVal = nil
-	} else {
-		if v.IsFinalAgg() {
-			e.DefaultVal = e.AllocPool.Alloc(exec.RetTypes(e), 1, 1)
-		}
+	} else if v.IsFinalAgg() {
+		e.DefaultVal = e.AllocPool.Alloc(exec.RetTypes(e), 1, 1)
 	}
 	for _, aggDesc := range v.AggFuncs {
 		if aggDesc.HasDistinct || len(aggDesc.OrderByItems) > 0 {
@@ -5635,14 +5631,10 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) exec.Executor {
 
 	chkSize := b.ctx.GetSessionVars().MaxChunkSize
 	// iterOutTbl will be constructed in CTEExec.Open().
-	var resTbl cteutil.Storage
-	var iterInTbl cteutil.Storage
 	var producer *cteProducer
 	storages, ok := storageMap[v.CTE.IDForStorage]
 	if ok {
 		// Storage already setup.
-		resTbl = storages.ResTbl
-		iterInTbl = storages.IterInTbl
 		producer = storages.Producer
 	} else {
 		if v.SeedPlan == nil {
@@ -5658,12 +5650,12 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) exec.Executor {
 
 		// Setup storages.
 		tps := seedExec.RetFieldTypes()
-		resTbl = cteutil.NewStorageRowContainer(tps, chkSize)
+		resTbl := cteutil.NewStorageRowContainer(tps, chkSize)
 		if err := resTbl.OpenAndRef(); err != nil {
 			b.err = err
 			return nil
 		}
-		iterInTbl = cteutil.NewStorageRowContainer(tps, chkSize)
+		iterInTbl := cteutil.NewStorageRowContainer(tps, chkSize)
 		if err := iterInTbl.OpenAndRef(); err != nil {
 			b.err = err
 			return nil
