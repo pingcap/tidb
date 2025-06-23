@@ -1017,3 +1017,8 @@ result
 select ((exists (select 1)) * -5) as c1;
 c1
 -5
+SELECT IS_UUID(' 6ccd780c-baba-1026-8567-4cc3505b2a62 ');
+IS_UUID(' 6ccd780c-baba-1026-8567-4cc3505b2a62 ')
+0
+SELECT UUID_TO_BIN(' 6ccd780c-baba-1026-9564-5b8c656024db ');
+Error 1411 (HY000): Incorrect string value: ' 6ccd780c-baba-1026-9564-5b8c656024db ' for function uuid_to_bin
