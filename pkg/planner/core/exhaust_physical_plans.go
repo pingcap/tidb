@@ -1184,6 +1184,10 @@ func buildDataSource2IndexScanByIndexJoinProp(
 		if !isMVIndexPath(path) {
 			return true // not a MVIndex path, it can successfully be index join probe side.
 		}
+		if path.FtsQueryInfo != nil {
+			// FTS index can not be used in index join.
+			return true
+		}
 		return false
 	}
 	indexJoinResult, keyOff2IdxOff := getBestIndexJoinPathResultByProp(ds, prop.IndexJoinProp, indexValid)

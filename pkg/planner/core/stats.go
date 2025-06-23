@@ -182,6 +182,7 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
 	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 	if path.Index.FullTextInfo != nil {
+		path.TableFilters = slices.Clone(conds)
 		return nil
 	}
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
@@ -208,6 +209,14 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 	}
 	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl)
 	return err
+}
+
+func deriveSearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) {
+	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.SCtx())
+		defer debugtrace.LeaveContextCommon(ds.SCtx())
+	}
+	path.CountAfterAccess = min(float64(ds.StatisticTable.RealtimeCount)/10, 1000)
 }
 
 // deriveIndexPathStats will fulfill the information that the AccessPath need.
@@ -603,6 +612,10 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 				return err
 			}
 			path.IsSingleScan = true
+		} else if path.FtsQueryInfo != nil {
+			deriveSearchPathStats(ds, path)
+			path.IsSingleScan = false
+			logutil.BgLogger().Warn("add pushed down selection", zap.String("table filters", fmt.Sprintf("%v", path.TableFilters)))
 		} else {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
 			path.IsSingleScan = isSingleScan(ds, path.FullIdxCols, path.FullIdxColLens)
