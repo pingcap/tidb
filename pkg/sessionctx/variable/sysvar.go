@@ -1515,15 +1515,22 @@ var defaultSysVars = []*SysVar{
 			return nil
 		}},
 	{
+<<<<<<< HEAD
 		Scope:                   ScopeGlobal,
 		Name:                    TiDBLoadBindingTimeout,
 		Value:                   "200",
 		Type:                    TypeUnsigned,
+=======
+		Scope:                   vardef.ScopeGlobal,
+		Name:                    vardef.TiDBLoadBindingTimeout,
+		Value:                   strconv.Itoa(vardef.DefTiDBLoadBindingTimeout),
+		Type:                    vardef.TypeUnsigned,
+>>>>>>> a3cba16f8ee (planner: fix uninit timeout for loading bindings (#61891))
 		MinValue:                0,
 		MaxValue:                math.MaxInt32,
 		IsHintUpdatableVerified: false,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-			timeoutMS := tidbOptPositiveInt32(s, 0)
+			timeoutMS := tidbOptPositiveInt32(s, vardef.DefTiDBLoadBindingTimeout)
 			vars.LoadBindingTimeout = uint64(timeoutMS)
 			return nil
 		}},
