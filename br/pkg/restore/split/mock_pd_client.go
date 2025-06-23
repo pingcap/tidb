@@ -40,6 +40,7 @@ type MockPDClientForSplit struct {
 	scatterRegions struct {
 		notImplemented bool
 		regionCount    int
+		failedCount    int
 	}
 	getOperator struct {
 		responses map[uint64][]*pdpb.GetOperatorResponse
@@ -177,6 +178,13 @@ func (c *MockPDClientForSplit) ScatterRegions(_ context.Context, regionIDs []uin
 
 	if c.scatterRegions.notImplemented {
 		return nil, status.Error(codes.Unimplemented, "Ah, yep")
+	}
+	if c.scatterRegions.failedCount > 0 {
+		c.scatterRegions.failedCount--
+		return &pdpb.ScatterRegionResponse{
+			FinishedPercentage: 0,
+			FailedRegionsId:    regionIDs[:],
+		}, nil
 	}
 	c.scatterRegions.regionCount += len(regionIDs)
 	return &pdpb.ScatterRegionResponse{}, nil
