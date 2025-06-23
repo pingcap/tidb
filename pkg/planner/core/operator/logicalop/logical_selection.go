@@ -108,7 +108,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	retConditions, child = p.Children()[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
 	retConditions = append(retConditions, canNotBePushDown...)
 	if len(retConditions) > 0 {
-		p.Conditions = expression.PropagateConstant(exprCtx, retConditions)
+		p.Conditions = expression.PropagateConstant(exprCtx, retConditions...)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, p.Conditions)
 		if dual != nil {

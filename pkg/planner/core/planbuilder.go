@@ -1857,6 +1857,9 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 }
 
 func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStmt) (*CheckTable, error) {
+	if len(as.Tables) > 1 {
+		return nil, errors.New("admin check only supports one table at a time")
+	}
 	tblName := as.Tables[0]
 	tnW := b.resolveCtx.GetTableName(tblName)
 	tableInfo := tnW.TableInfo
@@ -4718,7 +4721,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	//
 	// tidb_read_staleness can be used to do stale read too, it's allowed as long as
 	// TableInfo.ID matches with the latest schema.
-	latestIS := b.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	latestIS := b.ctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	tableInPlan, ok := latestIS.TableByID(ctx, tableInfo.ID)
 	if !ok {
 		// adaptor.handleNoDelayExecutor has a similar check, but we want to give

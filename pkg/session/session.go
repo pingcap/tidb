@@ -4355,7 +4355,7 @@ func (s *session) GetInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 }
 
-func (s *session) GetDomainInfoSchema() infoschemactx.MetaOnlyInfoSchema {
+func (s *session) GetLatestInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	is := domain.GetDomain(s).InfoSchema()
 	extIs := &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, extIs)
@@ -4628,7 +4628,7 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 		)
 		return false
 	}
-	is, ok := s.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is, ok := s.GetLatestInfoSchema().(infoschema.InfoSchema)
 	if !ok {
 		stmtCtx.AppendWarning(errors.New("Pipelined DML failed to get latest InfoSchema. Fallback to standard mode"))
 		return false

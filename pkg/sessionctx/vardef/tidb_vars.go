@@ -1661,6 +1661,7 @@ const (
 	DefTiDBCircuitBreakerPDMetaErrorRatePct           = 0.0
 	DefTiDBAccelerateUserCreationUpdate               = false
 	DefTiDBEnableTSValidation                         = true
+	DefTiDBLoadBindingTimeout                         = 200
 )
 
 // Process global variables.
