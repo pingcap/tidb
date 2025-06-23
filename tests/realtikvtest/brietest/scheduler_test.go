@@ -23,9 +23,11 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap/zapcore"
 )
 
 // SchedulerRule represents a PD scheduler rule
@@ -297,6 +299,9 @@ func checkSchedulerPausingBehavior(t *testing.T, baselineKeyRanges map[string][]
 // TestLogRestoreFineGrainedSchedulerPausing tests that log restore uses fine-grained
 // scheduler pausing when filters are specified
 func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
+	// Set log level to Info to enable BR logging
+	log.SetLevel(zapcore.InfoLevel)
+
 	kit := NewLogBackupKit(t)
 	taskName := "test-fine-grained-scheduler"
 
@@ -363,6 +368,9 @@ func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
 // TestLogRestoreFullSchedulerPausing tests that log restore uses full
 // scheduler pausing when no filters are specified
 func TestLogRestoreFullSchedulerPausing(t *testing.T) {
+	// Set log level to Info to enable BR logging
+	log.SetLevel(zapcore.InfoLevel)
+
 	kit := NewLogBackupKit(t)
 	taskName := "test-full-scheduler"
 
