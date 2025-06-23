@@ -1305,6 +1305,16 @@ func GetTiFlashRegionCountFromPD(ctx context.Context, tableID int64, regionCount
 	return is.tiflashReplicaManager.GetRegionCountFromPD(ctx, tableID, regionCount)
 }
 
+// GetPlacementRule is a helper function to get placement rule by table id.
+func GetPlacementRule(ctx context.Context, tableID int64) (*pdhttp.Rule, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	return is.tiflashReplicaManager.GetPlacementRule(ctx, tableID)
+}
+
 // GetTiFlashStoresStat gets the TiKV store information by accessing PD's api.
 func GetTiFlashStoresStat(ctx context.Context) (*pdhttp.StoresInfo, error) {
 	is, err := getGlobalInfoSyncer()

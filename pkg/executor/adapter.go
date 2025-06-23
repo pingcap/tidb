@@ -1698,7 +1698,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		}
 	}
 
-	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
+	resultRows := stmtCtx.GetResultRowsCount()
 
 	var (
 		keyspaceName string
@@ -1836,15 +1836,6 @@ func collectWarningsForSlowLog(stmtCtx *stmtctx.StatementContext) []variable.JSO
 		res[len(warnings)+i].IsExtra = true
 	}
 	return res
-}
-
-// GetResultRowsCount gets the count of the statement result rows.
-func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p base.Plan) int64 {
-	runtimeStatsColl := stmtCtx.RuntimeStatsColl
-	if runtimeStatsColl == nil {
-		return 0
-	}
-	return runtimeStatsColl.GetPlanActRows(p.ID())
 }
 
 func (a *ExecStmt) updateNetworkTrafficStatsAndMetrics() {
@@ -2056,7 +2047,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		execDetail.TimeDetail.WaitTime += stmtCtx.WaitLockLeaseTime
 	}
 
-	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
+	resultRows := stmtCtx.GetResultRowsCount()
 
 	var (
 		keyspaceName string
