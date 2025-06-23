@@ -489,7 +489,7 @@ func (op *DataSource) Hash64(h base.Hasher) {
 		h.HashByte(base.NotNilFlag)
 		op.TableAsName.Hash64(h)
 	}
-	if op.PushedDownConds == nil {
+	if len(op.PushedDownConds) == 0 {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -498,7 +498,7 @@ func (op *DataSource) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
-	if op.AllConds == nil {
+	if len(op.AllConds) == 0 {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
@@ -541,7 +541,7 @@ func (op *DataSource) Equals(other any) bool {
 			return false
 		}
 	}
-	if (op.AllConds == nil && op2.AllConds != nil) || (op.AllConds != nil && op2.AllConds == nil) || len(op.AllConds) != len(op2.AllConds) {
+	if (len(op.AllConds) == 0 && len(op2.AllConds) != 0) || (len(op.AllConds) != 0 && len(op2.AllConds) == 0) || len(op.AllConds) != len(op2.AllConds) {
 		return false
 	}
 	for i, one := range op.AllConds {
