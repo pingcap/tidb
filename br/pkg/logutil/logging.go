@@ -380,3 +380,14 @@ func MarshalHistogram(m prometheus.Histogram) zapcore.ObjectMarshaler {
 		return nil
 	})
 }
+
+// OverrideLevel temporary sets level to the global logger.
+//
+// Usage: `defer OverrideLevel(zapcore.LevelXxx)()`
+//
+// Don't use this in parallel, or the log level may not be reset correctly.
+func OverrideLevel(lvl zapcore.Level) func() {
+	oldLvl := log.GetLevel()
+	log.SetLevel(lvl)
+	return func() { log.SetLevel(oldLvl) }
+}
