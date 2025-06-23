@@ -5604,7 +5604,7 @@ func getHintedStmtThroughPlanDigest(ctx base.PlanContext, planDigest string) (st
 			p := parser.New()
 			originNode, err := p.ParseOneStmt(query, characterSet, collation)
 			if err != nil {
-				return errors.NewNoStackErrorf("failed to parse SQL for Plan Digest: %v", err, planDigest)
+				return errors.NewNoStackErrorf("failed to parse SQL for Plan Digest: %v", planDigest)
 			}
 			hintedSQL := bindinfo.GenerateBindingSQL(originNode, planHint, schema)
 			stmt, err = p.ParseOneStmt(hintedSQL, characterSet, collation)
