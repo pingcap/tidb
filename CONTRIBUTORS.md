@@ -1,1 +1,1 @@
-See [TiDB Contributors](https://contributor.tidb.io/people/contributor)
+See [TiDB Contributors](https://github.com/pingcap/tidb/graphs/contributors)
