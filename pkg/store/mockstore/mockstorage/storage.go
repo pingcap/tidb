@@ -174,5 +174,8 @@ func (s *mockStorage) GetClusterID() uint64 {
 }
 
 func (s *mockStorage) GetKeyspace() string {
-	return ""
+	if s.keyspaceMeta == nil {
+		return ""
+	}
+	return s.keyspaceMeta.Name
 }
