@@ -130,6 +130,7 @@ type InfoSyncer struct {
 	tiflashReplicaManager TiFlashReplicaManager
 	resourceManagerClient pd.ResourceManagerClient
 	infoCache             infoschemaMinTS
+	tikvCodec             tikv.Codec
 }
 
 // ServerInfo represents the server's basic information.
@@ -265,6 +266,7 @@ func GlobalInfoSyncerInit(
 		serverInfoPath:    fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 		infoCache:         infoCache,
+		tikvCodec:         codec,
 	}
 	is.info.Store(getServerInfo(id, serverIDGetter))
 	err := is.init(ctx, skipRegisterToDashBoard)
@@ -785,22 +787,38 @@ func (is *InfoSyncer) GetMinStartTS() uint64 {
 	return is.minStartTS
 }
 
+func (is *InfoSyncer) getEtcdClientForMinStartTS() *clientv3.Client {
+	// Note: this is a temporary implementation.
+	// When the config values and check function has a public implementation from PD client, the constant definitions
+	// here can be removed.
+	// In our future refactor plan, the SafePointKV and TiDB min start ts will be completely removed.
+	const cfgGCManagementType = "gc_management_type"
+	const cfgGCManagementTypeKeyspaceLevel = "keyspace_level"
+	cfg := is.tikvCodec.GetKeyspaceMeta().GetConfig()
+	if cfg != nil && cfg[cfgGCManagementType] == cfgGCManagementTypeKeyspaceLevel {
+		return is.etcdCli
+	}
+	return is.unprefixedEtcdCli
+}
+
 // storeMinStartTS stores self server min start timestamp to etcd.
 func (is *InfoSyncer) storeMinStartTS(ctx context.Context) error {
-	if is.unprefixedEtcdCli == nil {
+	cli := is.getEtcdClientForMinStartTS()
+	if cli == nil {
 		return nil
 	}
-	return util.PutKVToEtcd(ctx, is.unprefixedEtcdCli, keyOpDefaultRetryCnt, is.minStartTSPath,
+	return util.PutKVToEtcd(ctx, cli, keyOpDefaultRetryCnt, is.minStartTSPath,
 		strconv.FormatUint(is.minStartTS, 10),
 		clientv3.WithLease(is.session.Lease()))
 }
 
 // RemoveMinStartTS removes self server min start timestamp from etcd.
 func (is *InfoSyncer) RemoveMinStartTS() {
-	if is.unprefixedEtcdCli == nil {
+	cli := is.getEtcdClientForMinStartTS()
+	if cli == nil {
 		return
 	}
-	err := util.DeleteKeyFromEtcd(is.minStartTSPath, is.unprefixedEtcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	err := util.DeleteKeyFromEtcd(is.minStartTSPath, cli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
 		logutil.BgLogger().Error("remove minStartTS failed", zap.Error(err))
 	}
