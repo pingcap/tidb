@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
 	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/zap"
@@ -265,12 +266,9 @@ type mdLoaderSetup struct {
 	dbIndexMap    map[string]int
 	tableIndexMap map[filter.Table]int
 	setupCfg      *MDLoaderSetupConfig
-<<<<<<< HEAD
-=======
 
 	// store all file infos from parallel reading
 	sampledParquetRowSizes sync.Map
->>>>>>> cc8d9cbbd4d (lignthing/importinto: parallel reading files infos from data store (#59382))
 }
 
 // NewLoader constructs a MyDumper loader that scanns the data source and constructs a set of metadatas.
@@ -623,25 +621,6 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 
 	switch res.Type {
 	case SourceTypeSQL, SourceTypeCSV:
-<<<<<<< HEAD
-		if info.FileMeta.Compression != CompressionNone {
-			compressRatio, err2 := SampleFileCompressRatio(ctx, info.FileMeta, s.loader.GetStore())
-			if err2 != nil {
-				logger.Error("fail to calculate data file compress ratio", zap.String("category", "loader"),
-					zap.String("schema", res.Schema), zap.String("table", res.Name), zap.Stringer("type", res.Type))
-			} else {
-				info.FileMeta.RealSize = int64(compressRatio * float64(info.FileMeta.FileSize))
-			}
-		}
-		s.tableDatas = append(s.tableDatas, info)
-	case SourceTypeParquet:
-		parquestDataSize, err2 := SampleParquetDataSize(ctx, info.FileMeta, s.loader.GetStore())
-		if err2 != nil {
-			logger.Error("fail to sample parquet data size", zap.String("category", "loader"),
-				zap.String("schema", res.Schema), zap.String("table", res.Name), zap.Stringer("type", res.Type), zap.Error(err2))
-		} else {
-			info.FileMeta.RealSize = parquestDataSize
-=======
 		info.FileMeta.RealSize = EstimateRealSizeForFile(ctx, info.FileMeta, s.loader.GetStore())
 	case SourceTypeParquet:
 		var (
@@ -674,7 +653,6 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 		info.FileMeta.Rows = totalRowCount
 		if m, ok := metric.FromContext(ctx); ok {
 			m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(totalRowCount))
->>>>>>> cc8d9cbbd4d (lignthing/importinto: parallel reading files infos from data store (#59382))
 		}
 	}
 
