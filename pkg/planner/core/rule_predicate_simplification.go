@@ -174,6 +174,9 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 }
 
 func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool) []expression.Expression {
+	if len(predicates) == 0 {
+		return predicates
+	}
 	simplifiedPredicate := shortCircuitLogicalConstants(sctx, predicates)
 	exprCtx := sctx.GetExprCtx()
 	// In some scenarios, we need to perform constant propagation,
