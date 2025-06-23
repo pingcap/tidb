@@ -872,12 +872,8 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateReadyToMerge
 		}
-<<<<<<< HEAD
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
-=======
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
 		failpoint.InjectCall("afterBackfillStateRunningDone", job)
->>>>>>> 247a47641ce (ddl: fix addindex wrong rowcount on dxf when the job txn failed (#58575))
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
 		failpoint.Inject("mockDMLExecutionStateBeforeMerge", func(_ failpoint.Value) {

@@ -17,6 +17,9 @@ package addindextest
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -31,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -135,24 +139,14 @@ func TestAddIndexDistCancel(t *testing.T) {
 		tk1.MustExec("admin cancel ddl jobs " + jobID)
 	}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", "1*return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish"))
-	}()
-
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", "1*return(true)")
 	require.Error(t, tk.ExecToErr("alter table t add index idx(a);"))
 	tk.MustExec("admin check table t;")
 	tk.MustExec("alter table t add index idx2(a);")
 	tk.MustExec("admin check table t;")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish")
 
-	tk.MustExec(`set global tidb_enable_dist_task=0;`)
-}
-
-<<<<<<< HEAD
-=======
-func TestAddIndexDistCancel(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
+	// test get row count when job txn failed
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -203,34 +197,9 @@ func TestAddIndexDistCancel(t *testing.T) {
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone")
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable")
 
-	// test cancel is timely
-	enter := make(chan struct{})
-	testfailpoint.EnableCall(
-		t,
-		"github.com/pingcap/tidb/pkg/lightning/backend/local/beforeExecuteRegionJob",
-		func(ctx context.Context) {
-			close(enter)
-			select {
-			case <-time.After(time.Second * 30):
-			case <-ctx.Done():
-			}
-		})
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		err := tk2.ExecToErr("alter table t add index idx_ba(b, a);")
-		require.ErrorContains(t, err, "Cancelled DDL job")
-	}()
-	<-enter
-	jobID := tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string)
-	now := time.Now()
-	tk.MustExec("admin cancel ddl jobs " + jobID)
-	wg.Wait()
-	// cancel should be timely
-	require.Less(t, time.Since(now).Seconds(), 20.0)
+	tk.MustExec(`set global tidb_enable_dist_task=0`)
 }
 
->>>>>>> 247a47641ce (ddl: fix addindex wrong rowcount on dxf when the job txn failed (#58575))
 func TestAddIndexDistPauseAndResume(t *testing.T) {
 	t.Skip("unstable") // TODO(tangenta): fix this unstable test
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
