@@ -897,12 +897,8 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-<<<<<<< HEAD
-			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
-=======
 			failpoint.InjectCall("onUpdateJobParam")
-			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeed()
->>>>>>> 444c38fba07 (workerpool: fix block on Tune when all workers finished (#59271))
+			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
 			if maxWriteSpeed != bcCtx.GetLocalBackend().GetWriteSpeedLimit() {
 				bcCtx.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
 				logutil.DDLIngestLogger().Info("adjust ddl job config success",

@@ -874,12 +874,8 @@ func (w *worker) runOneJobStep(
 					case <-stopCheckingJobCancelled:
 						return
 					case <-ticker.C:
-<<<<<<< HEAD
-						latestJob, err := jobCtx.sysTblMgr.GetJobByID(w.workCtx, job.ID)
-=======
 						failpoint.InjectCall("checkJobCancelled", job)
-						latestJob, err := sysTblMgr.GetJobByID(w.workCtx, job.ID)
->>>>>>> 444c38fba07 (workerpool: fix block on Tune when all workers finished (#59271))
+						latestJob, err := jobCtx.sysTblMgr.GetJobByID(w.workCtx, job.ID)
 						if err == systable.ErrNotFound {
 							logutil.DDLLogger().Info(
 								"job not found, might already finished",
