@@ -35,7 +35,7 @@ go_test(
         "handle_test.go",
     ],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = [
         ":workloadlearning",
         "//pkg/parser/ast",
