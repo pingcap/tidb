@@ -2067,7 +2067,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 		// It's possible that the task state is succeed but the ddl job is paused.
 		// When task in succeed state, we can skip the dist task execution/scheduing process.
 		if task.State == proto.TaskStateSucceed {
-			w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
+			w.updateJobRowCount(taskKey, reorgInfo.Job.ID)
 			logutil.DDLLogger().Info(
 				"task succeed, start to resume the ddl job",
 				zap.String("task-key", taskKey))
