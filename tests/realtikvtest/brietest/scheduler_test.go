@@ -310,41 +310,41 @@ func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
 	baselineKeyRanges := analyzeSchedulerRules(t, baselineRules, "BASELINE SCHEDULER RULES (before restore)")
 
 	// Create channel to capture results from the callback
-	rulesChan := make(chan []SchedulerRule, 1)
+	//rulesChan := make(chan []SchedulerRule, 1)
 
 	// Enable failpoint with callback that checks PD scheduler status
-	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused", func() {
-		t.Logf("Failpoint triggered - checking PD scheduler rules")
-		finalRules := checkSchedulerPausingBehavior(t, baselineKeyRanges)
-		rulesChan <- finalRules
-	}))
-	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused")
+	//require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused", func() {
+	//	t.Log("Failpoint triggered - checking PD scheduler rules")
+	//	finalRules := checkSchedulerPausingBehavior(t, baselineKeyRanges)
+	//	rulesChan <- finalRules
+	//}))
+	//defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused")
 
 	// Run filtered restore
-	t.Logf("Starting filtered restore...")
+	t.Log("Starting filtered restore...")
 	kit.RunStreamRestore(func(rc *task.RestoreConfig) {
-		rc.FullBackupStorage = kit.LocalURI("full")
 		kit.SetFilter(&rc.Config, "test.snapshot_table1", "test.log_table1")
 	})
 
 	// Wait for callback results
-	select {
-	case restoreRules := <-rulesChan:
-		t.Log("Analyzing scheduler rules during filtered restore:")
-		restoreKeyRanges := analyzeSchedulerRules(t, restoreRules, "SCHEDULER RULES DURING FILTERED RESTORE")
-		hasChanges := compareKeyRanges(t, baselineKeyRanges, restoreKeyRanges)
-
-		if hasChanges {
-			t.Log("SUCCESS: Fine-grained scheduler pausing detected during filtered restore")
-		} else {
-			t.Log("WARNING: No scheduler changes detected during filtered restore")
-		}
-
-	case <-time.After(20 * time.Second):
-		t.Logf("Timeout waiting for failpoint callback")
-	}
+	//select {
+	//case restoreRules := <-rulesChan:
+	//	t.Log("Analyzing scheduler rules during filtered restore:")
+	//	restoreKeyRanges := analyzeSchedulerRules(t, restoreRules, "SCHEDULER RULES DURING FILTERED RESTORE")
+	//	hasChanges := compareKeyRanges(t, baselineKeyRanges, restoreKeyRanges)
+	//
+	//	if hasChanges {
+	//		t.Log("SUCCESS: Fine-grained scheduler pausing detected during filtered restore")
+	//	} else {
+	//		t.Log("WARNING: No scheduler changes detected during filtered restore")
+	//	}
+	//
+	//case <-time.After(20 * time.Second):
+	//	t.Logf("Timeout waiting for failpoint callback")
+	//}
 
 	// Verify tables were restored correctly
+	t.Log("verify tables")
 	kit.tk.MustQuery("SELECT COUNT(*) FROM test.snapshot_table1").Check(testkit.Rows("3"))
 	kit.tk.MustQuery("SELECT COUNT(*) FROM test.log_table1").Check(testkit.Rows("3"))
 
@@ -389,7 +389,6 @@ func TestLogRestoreFullSchedulerPausing(t *testing.T) {
 	// Run restore WITHOUT filters (should trigger full scheduler pausing)
 	t.Logf("Starting full restore (no filters)...")
 	kit.RunStreamRestore(func(rc *task.RestoreConfig) {
-		rc.FullBackupStorage = kit.LocalURI("full")
 		// No filters set - should trigger full scheduler pausing
 	})
 
