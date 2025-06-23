@@ -2275,10 +2275,20 @@ func applyLogicalJoinHint(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (pr
 }
 
 func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, childTasks []base.Task) (preferred bool) {
-	if pushLimitOrTopNForcibly(lp) {
-		// if there is a hint control or threshold switch, try to get the copTask as the prior.
+	hintPrefer, meetThreshold := pushLimitOrTopNForcibly(lp)
+	if hintPrefer {
+		// if there is a user hint control, try to get the copTask as the prior.
 		// here we don't assert task itself, because when topN attach 2 cop task, it will become root type automatically.
 		if _, ok := childTasks[0].(*CopTask); ok {
+			return true
+		}
+	}
+	if meetThreshold {
+		// previously, we set meetThreshold for prefer cop than root task type. but for mpp task we still need to a CBO among them.
+		if _, ok := childTasks[0].(*CopTask); ok {
+			return true
+		}
+		if _, ok := childTasks[0].(*MppTask); ok {
 			return true
 		}
 	}
@@ -2959,7 +2969,7 @@ func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.
 	return ret, true, nil
 }
 
-func pushLimitOrTopNForcibly(p base.LogicalPlan) bool {
+func pushLimitOrTopNForcibly(p base.LogicalPlan) (bool, bool) {
 	var meetThreshold bool
 	var preferPushDown *bool
 	switch lp := p.(type) {
@@ -2970,16 +2980,12 @@ func pushLimitOrTopNForcibly(p base.LogicalPlan) bool {
 		preferPushDown = &lp.PreferLimitToCop
 		meetThreshold = true // always push Limit down in this case since it has no side effect
 	default:
-		return false
+		return false, false
 	}
 
-	if *preferPushDown || meetThreshold {
-		// we remove the child subTree check, each logical operator only focus on themselves.
-		// for current level, they prefer a push-down copTask.
-		return true
-	}
-
-	return false
+	// we remove the child subTree check, each logical operator only focus on themselves.
+	// for current level, they prefer a push-down copTask.
+	return *preferPushDown, meetThreshold
 }
 
 func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
