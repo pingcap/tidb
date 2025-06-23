@@ -2969,9 +2969,7 @@ func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.
 	return ret, true, nil
 }
 
-func pushLimitOrTopNForcibly(p base.LogicalPlan) (bool, bool) {
-	var meetThreshold bool
-	var preferPushDown bool
+func pushLimitOrTopNForcibly(p base.LogicalPlan) (meetThreshold bool, preferPushDown bool) {
 	switch lp := p.(type) {
 	case *logicalop.LogicalTopN:
 		preferPushDown = lp.PreferLimitToCop
