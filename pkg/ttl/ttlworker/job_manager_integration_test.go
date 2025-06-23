@@ -138,13 +138,13 @@ func TestWithSession(t *testing.T) {
 
 	type mockStatsSQLExecutor struct{ sqlexec.SQLExecutor }
 	var attached, detached bool
-	ttlworker.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	statshandle.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 		require.False(t, attached)
 		attached = true
 		require.Same(t, tk.Session().GetSQLExecutor(), s)
 		return &mockStatsSQLExecutor{SQLExecutor: tk.Session().GetSQLExecutor()}
 	}
-	ttlworker.DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	statshandle.DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 		require.False(t, detached)
 		detached = true
 		m, ok := s.(*mockStatsSQLExecutor)

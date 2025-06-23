@@ -200,13 +200,13 @@ func TestGetSessionWithFault(t *testing.T) {
 	type mockAttached struct{ sqlexec.SQLExecutor }
 	var attached *mockAttached
 	var detached sqlexec.SQLExecutor
-	ttlworker.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	statshandle.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 		require.Nil(t, attached)
 		require.Nil(t, detached)
 		attached = &mockAttached{SQLExecutor: s}
 		return attached
 	}
-	ttlworker.DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	statshandle.DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 		require.NotNil(t, attached)
 		require.Same(t, attached, s)
 		require.Nil(t, detached)

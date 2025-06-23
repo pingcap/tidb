@@ -50,13 +50,13 @@ const (
 )
 
 // AttachStatsCollector attaches the stats collector for the session.
-// this function is registered in BootstrapSession in /session/session.go
+// this function is registered in BootstrapSession in pkg/session/session.go
 var AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 	return s
 }
 
 // DetachStatsCollector removes the stats collector for the session
-// this function is registered in BootstrapSession in /session/session.go
+// this function is registered in BootstrapSession in pkg/session/session.go
 var DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 	return s
 }
