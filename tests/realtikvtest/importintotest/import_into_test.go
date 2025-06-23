@@ -1229,7 +1229,6 @@ func (s *mockGCSSuite) TestDiskQuota() {
 }
 
 func (s *mockGCSSuite) TestAnalyze() {
-	s.T().Skip("skip for ci now")
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
 	s.tk.MustExec("CREATE DATABASE load_data;")
 
