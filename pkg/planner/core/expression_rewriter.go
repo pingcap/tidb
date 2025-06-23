@@ -2702,37 +2702,24 @@ func (b *PlanBuilder) appendColumnsToVisitedInfo(columnVisited []*ast.ColumnName
 	switch {
 	case len(views) > 0:
 		view := views[len(views)-1]
-		reportErr := plannererrors.ErrViewInvalid.GenWithStackByArgs(view.Schema.O, view.Name.O)
 		for _, colName := range columnVisited {
 			b.visitInfo = appendVisitInfo(b.visitInfo,
 				mysql.SelectPriv,
 				colName.Schema.L,
 				colName.Table.L,
 				colName.Name.L,
-				reportErr,
+				plannererrors.ErrViewInvalid.GenWithStackByArgs(view.Schema.O, view.Name.O),
 			)
 		}
 	case b.checkColPriv == reportTableErrOption:
-		// schema -> table
-		tableMap := make(map[string]map[string]any, 1)
 		for _, colName := range columnVisited {
-			tableSet := tableMap[colName.Schema.L]
-			if tableSet == nil {
-				tableSet = make(map[string]any, 1)
-			}
-			tableSet[colName.Table.L] = 0
-			tableMap[colName.Schema.L] = tableSet
-		}
-		for schema, tables := range tableMap {
-			for table := range tables {
-				b.visitInfo = appendVisitInfo(b.visitInfo,
-					mysql.SelectPriv,
-					schema,
-					table,
-					"",
-					plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", user, host, table),
-				)
-			}
+			b.visitInfo = appendVisitInfo(b.visitInfo,
+				mysql.SelectPriv,
+				colName.Schema.L,
+				colName.Table.L,
+				colName.Name.L,
+				plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", user, host, colName.Table.L),
+			)
 		}
 	default:
 		for _, colName := range columnVisited {
