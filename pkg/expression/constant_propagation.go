@@ -35,27 +35,24 @@ import (
 var MaxPropagateColsCnt = 100
 
 type basePropConstSolver struct {
-	colMapper      map[int64]int             // colMapper maps column to its index
-	colCountMapper map[int64]int             // colCountMapper maps column to its count in the conditions
-	eqMapper       map[int]*Constant         // if eqMapper[i] != nil, it means col_i = eqMapper[i]
-	unionSet       *disjointset.SimpleIntSet // unionSet stores the relations like col_i = col_j
-	columns        []*Column                 // columns stores all columns appearing in the conditions
-	ctx            exprctx.ExprContext
+	colMapper map[int64]int             // colMapper maps column to its index
+	eqMapper  map[int]*Constant         // if eqMapper[i] != nil, it means col_i = eqMapper[i]
+	unionSet  *disjointset.SimpleIntSet // unionSet stores the relations like col_i = col_j
+	columns   []*Column                 // columns stores all columns appearing in the conditions
+	ctx       exprctx.ExprContext
 }
 
 func newBasePropConstSolver() basePropConstSolver {
 	return basePropConstSolver{
-		colMapper:      make(map[int64]int, 4),
-		colCountMapper: make(map[int64]int, 4),
-		eqMapper:       make(map[int]*Constant, 4),
-		columns:        make([]*Column, 0, 4),
-		unionSet:       disjointset.NewIntSet(4),
+		colMapper: make(map[int64]int, 4),
+		eqMapper:  make(map[int]*Constant, 4),
+		columns:   make([]*Column, 0, 4),
+		unionSet:  disjointset.NewIntSet(4),
 	}
 }
 
 func (s *basePropConstSolver) Clear() {
 	clear(s.colMapper)
-	clear(s.colCountMapper)
 	clear(s.eqMapper)
 	s.columns = s.columns[:0]
 	s.unionSet.Clear()
@@ -66,26 +63,12 @@ func (s *basePropConstSolver) getColID(col *Column) int {
 	return s.colMapper[col.UniqueID]
 }
 
-func (s *basePropConstSolver) getColCount(col *Column) int {
-	count, ok := s.colCountMapper[col.UniqueID]
-	if !ok {
-		return 0
-	}
-	return count
-}
-
 func (s *basePropConstSolver) insertCols(cols ...*Column) {
 	for _, col := range cols {
 		_, ok := s.colMapper[col.UniqueID]
 		if !ok {
 			s.colMapper[col.UniqueID] = len(s.colMapper)
 			s.columns = append(s.columns, col)
-		}
-		_, ok = s.colCountMapper[col.UniqueID]
-		if !ok {
-			s.colCountMapper[col.UniqueID] = 1
-		} else {
-			s.colCountMapper[col.UniqueID] += 1
 		}
 	}
 }
@@ -343,13 +326,10 @@ func (s *propConstSolver) propagateColumnEQ() {
 			rCol, rOk := fun.GetArgs()[1].(*Column)
 			// TODO: Enable hybrid types in ConstantPropagate.
 			if lOk && rOk && lCol.GetType(s.ctx.GetEvalCtx()).GetCollate() == rCol.GetType(s.ctx.GetEvalCtx()).GetCollate() && !lCol.GetType(s.ctx.GetEvalCtx()).Hybrid() && !rCol.GetType(s.ctx.GetEvalCtx()).Hybrid() {
-				// a = column#2 and a < 10 and b < 10, column#2 is only used once in the conditions, so we don't need to propagate it.
-				if s.getColCount(lCol) > 1 && s.getColCount(rCol) > 1 {
-					lID := s.getColID(lCol)
-					rID := s.getColID(rCol)
-					s.unionSet.Union(lID, rID)
-					visited[i] = true
-				}
+				lID := s.getColID(lCol)
+				rID := s.getColID(rCol)
+				s.unionSet.Union(lID, rID)
+				visited[i] = true
 			}
 		}
 	}
@@ -368,17 +348,13 @@ func (s *propConstSolver) propagateColumnEQ() {
 					continue
 				}
 				cond := s.conditions[k]
-				if s.getColCount(colj) > 1 {
-					replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
-					if replaced {
-						s.conditions = append(s.conditions, newExpr)
-					}
+				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
+				if replaced {
+					s.conditions = append(s.conditions, newExpr)
 				}
-				if s.getColCount(coli) > 1 {
-					replaced, _, newExpr := tryToReplaceCond(s.ctx, colj, coli, cond, false)
-					if replaced {
-						s.conditions = append(s.conditions, newExpr)
-					}
+				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond, false)
+				if replaced {
+					s.conditions = append(s.conditions, newExpr)
 				}
 			}
 		}

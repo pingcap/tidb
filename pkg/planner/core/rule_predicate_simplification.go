@@ -173,13 +173,16 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 	return newPred, specialCase
 }
 
-func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
+func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, skipPropagateConstant bool) []expression.Expression {
 	simplifiedPredicate := shortCircuitLogicalConstants(sctx, predicates)
+	exprCtx := sctx.GetExprCtx()
+	if skipPropagateConstant {
+		simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate...)
+	}
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	pruneEmptyORBranches(sctx, simplifiedPredicate)
-	exprCtx := sctx.GetExprCtx()
-	simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate...)
+
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
 	return simplifiedPredicate
 }

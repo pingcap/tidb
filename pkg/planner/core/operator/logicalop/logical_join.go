@@ -205,7 +205,7 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
-	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates)
+	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
@@ -266,11 +266,11 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		p.LeftConditions = nil
 		p.RightConditions = nil
 		p.EqualConditions = equalCond
-		p.OtherConditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), otherCond)
+		p.OtherConditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), otherCond, true)
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	case AntiSemiJoin:
-		predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates)
+		predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
