@@ -83,9 +83,10 @@ func (s *basePropConstSolver) insertCols(cols ...*Column) {
 		}
 		_, ok = s.colCountMapper[col.UniqueID]
 		if !ok {
-			s.colCountMapper[col.UniqueID] = 0
+			s.colCountMapper[col.UniqueID] = 1
+		} else {
+			s.colCountMapper[col.UniqueID] += 1
 		}
-		s.colCountMapper[col.UniqueID] += 1
 	}
 }
 
