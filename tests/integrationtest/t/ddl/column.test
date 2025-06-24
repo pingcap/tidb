@@ -62,3 +62,12 @@ create table t(a bit(32) default b'1111111111111111111111111111111');
 # issue 58947
 drop table t;
 create table t(id bigint primary key, i int unsigned DEFAULT (0));
+
+# issue 61475 tests that an error is returned for default value as a column.
+--error 1105
+CREATE TABLE default_from_other_col (
+ id bigint unsigned NOT NULL AUTO_INCREMENT,
+ src_col timestamp NULL DEFAULT NULL,
+ new_col timestamp NULL DEFAULT(src_col),
+ PRIMARY KEY (id)
+);
