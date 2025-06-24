@@ -1972,6 +1972,17 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 			},
 		},
 		{
+			sql: `SELECT t2.* FROM t JOIN t2 ON t.a = t2.a WHERE t.b > 0`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+			},
+		},
+		{
 			sql: `SELECT t.b FROM t
 						LEFT OUTER JOIN
 								(SELECT a, COUNT(*) AS ct FROM t2 GROUP BY a) AS derived
