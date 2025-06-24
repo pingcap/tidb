@@ -2249,12 +2249,13 @@ func TestTiDBUpgradeToVer211(t *testing.T) {
 	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err = getBootstrapVersion(seV210)
+
+	newSe := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(newSe)
 	require.NoError(t, err)
 	require.Less(t, int64(ver210), ver)
 
-	seV210.(*session).dom = dom
-	r := MustExecToRecodeSet(t, seV210, "select count(summary) from mysql.tidb_background_subtask_history;")
+	r := MustExecToRecodeSet(t, newSe, "select count(summary) from mysql.tidb_background_subtask_history;")
 	req := r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
