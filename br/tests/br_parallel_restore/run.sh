@@ -714,10 +714,10 @@ test_restore_abort() {
 
 setup_test_environment
 
-#test_mixed_parallel_restores
-#test_concurrent_restore_table_conflicts
-#test_restore_with_different_systable_settings
-#test_auto_restored_ts_conflict
+test_mixed_parallel_restores
+test_concurrent_restore_table_conflicts
+test_restore_with_different_systable_settings
+test_auto_restored_ts_conflict
 test_restore_abort
 
 echo "Parallel restore tests completed successfully"
