@@ -288,11 +288,11 @@ func (w *TiCIDataWriter) WriteHeader(ctx context.Context, commitTS uint64) error
 	// Use proto.Marshal to serialize TableInfo and IndexInfo.
 	tblBytes, err := proto.Marshal(tblPB)
 	if err != nil {
-		return errors.Annotate(err, "marshal TableInfo (json)")
+		return errors.Annotate(err, "marshal TableInfo (proto)")
 	}
 	idxBytes, err := proto.Marshal(idxPB)
 	if err != nil {
-		return errors.Annotate(err, "marshal IndexInfo (json)")
+		return errors.Annotate(err, "marshal IndexInfo (proto)")
 	}
 	return w.ticiFileWriter.WriteHeader(ctx, tblBytes, idxBytes, commitTS)
 }
