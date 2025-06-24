@@ -2049,7 +2049,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, int64(0))
 			lockedID = tableInfo.ID
 		}
-		latestIS := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
+		latestIS := sctx.GetLatestISWithoutSessExt().(infoschema.InfoSchema)
 		domainSchemaVer := latestIS.SchemaMetaVersion()
 		tbl, err = latestIS.TableByName(ctx, dbName, tableInfo.Name)
 		if err != nil {

@@ -489,7 +489,7 @@ func getGroupNDVs(ds *logicalop.DataSource) []property.GroupNDV {
 func getTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (fullName string, tblInfo *model.TableInfo) {
 	fullName = "tableID " + strconv.FormatInt(id, 10)
 
-	is := sctx.GetLatestInfoSchema()
+	is := sctx.GetLatestISWithoutSessExt()
 	var tbl table.Table
 	var partDef *model.PartitionDefinition
 

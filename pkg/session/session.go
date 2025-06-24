@@ -4377,6 +4377,10 @@ func (s *session) GetLatestInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, extIs)
 }
 
+func (s *session) GetLatestISWithoutSessExt() infoschemactx.MetaOnlyInfoSchema {
+	return s.infoCache.GetLatest()
+}
+
 func (s *session) GetSchemaValidator() validatorapi.Validator {
 	return s.schemaValidator
 }

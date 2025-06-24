@@ -361,6 +361,11 @@ func (c *Context) GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema {
 	return c.is
 }
 
+// GetLatestISWithoutSessExt implements sessionctx.Context GetLatestISWithoutSessExt interface.
+func (c *Context) GetLatestISWithoutSessExt() infoschema.MetaOnlyInfoSchema {
+	return c.GetLatestInfoSchema()
+}
+
 // GetSchemaValidator implements sessionctx.Context GetSchemaValidator interface.
 func (c *Context) GetSchemaValidator() validatorapi.Validator {
 	return c.schValidator
