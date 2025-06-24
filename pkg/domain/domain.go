@@ -889,7 +889,7 @@ func (do *Domain) loadSysKSInfoSchema() error {
 }
 
 // GetKSStore returns the kv.Storage for the given keyspace.
-func (do *Domain) GetKSStore(targetKS string) kv.Storage {
+func (*Domain) GetKSStore(targetKS string) kv.Storage {
 	if targetKS == keyspace.System {
 		return kvstore.GetSystemStorage()
 	}
