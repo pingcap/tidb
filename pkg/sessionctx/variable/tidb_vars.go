@@ -1247,9 +1247,9 @@ const (
 	// TiDBTSOClientRPCMode controls how the TSO client performs the TSO RPC requests. It internally controls the
 	// concurrency of the RPC. This variable provides an approach to tune the latency of getting timestamps from PD.
 	TiDBTSOClientRPCMode = "tidb_tso_client_rpc_mode"
-	// TiDBCircuitBreakerPDMetadataErrorRateThresholdPct variable is used to set percent of errors to trip the circuit breaker for get region calls to PD
+	// TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio variable is used to set ratio of errors to trip the circuit breaker for get region calls to PD
 	// https://github.com/tikv/rfcs/blob/master/text/0115-circuit-breaker.md
-	TiDBCircuitBreakerPDMetadataErrorRateThresholdPct = "tidb_cb_pd_metadata_error_rate_threshold_pct"
+	TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio = "tidb_cb_pd_metadata_error_rate_threshold_ratio"
 )
 
 // TiDB intentional limits
@@ -1621,7 +1621,7 @@ const (
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 	DefTiDBLoadBindingTimeout                         = 200
-	DefTiDBCircuitBreakerPDMetaErrorRatePct           = 0
+	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
 )
 
 // Process global variables.
@@ -1742,8 +1742,9 @@ var (
 	IgnoreInlistPlanDigest          = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
 	TxnEntrySizeLimit               = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 
-	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
-	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+	SchemaCacheSize                                 = atomic.NewUint64(DefTiDBSchemaCacheSize)
+	SchemaCacheSizeOriginText                       = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+	CircuitBreakerPDMetadataErrorRateThresholdRatio = atomic.NewFloat64(0.0)
 )
 
 var (
@@ -1779,8 +1780,8 @@ var (
 	EnableStatsOwner func() error = nil
 	// DisableStatsOwner is the func registered by stats to disable running stats in this instance.
 	DisableStatsOwner func() error = nil
-	// ChangePDMetadataCircuitBreakerErrorRateThresholdPct changes the error rate threshold of the PD metadata circuit breaker.
-	ChangePDMetadataCircuitBreakerErrorRateThresholdPct func(uint32) = nil
+	// ChangePDMetadataCircuitBreakerErrorRateThresholdRatio changes the error rate threshold of the PD metadata circuit breaker.
+	ChangePDMetadataCircuitBreakerErrorRateThresholdRatio func(uint32) = nil
 )
 
 // Hooks functions for Cluster Resource Control.
