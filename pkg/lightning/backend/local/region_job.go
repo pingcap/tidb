@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"math"
@@ -315,15 +316,11 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	return err
 }
 
-<<<<<<< HEAD
-func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
+func (local *Backend) doWrite(ctx context.Context, j *regionJob) (err error) {
 	if j.stage != regionScanned {
 		return nil
 	}
 
-=======
-func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWriteResult, err error) {
->>>>>>> cc0925eeafc (Lightning: Attempt to return writeTooSlow when we experience write timeout. (#61346))
 	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
