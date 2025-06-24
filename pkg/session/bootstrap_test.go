@@ -177,6 +177,8 @@ func TestBootstrapWithError(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, dom.Start(ddl.Bootstrap))
 		se.dom = dom
+		se.infoCache = dom.InfoCache()
+		se.schemaValidator = dom.GetSchemaValidator()
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
 		require.NoError(t, err)
