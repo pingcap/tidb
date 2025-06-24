@@ -106,13 +106,13 @@ type Context interface {
 
 	// Deprecated: the semantics of session.GetInfoSchema() is ambiguous
 	// If you want to get the infoschema of the current transaction in SQL layer, use sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
-	// If you want to get the latest infoschema use `GetDomainInfoSchema`
+	// If you want to get the latest infoschema use `GetLatestInfoSchema`
 	GetInfoSchema() infoschema.MetaOnlyInfoSchema
 
-	// GetDomainInfoSchema returns the latest information schema in domain
-	// Different with `domain.InfoSchema()`, the information schema returned by this method
-	// includes the temporary table definitions stored in session
-	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
+	// GetLatestInfoSchema returns the latest information schema.
+	// except schema of physical schema objects, the information schema returned
+	// also includes the temporary table definitions stored in session.
+	GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema
 
 	GetSessionVars() *variable.SessionVars
 
