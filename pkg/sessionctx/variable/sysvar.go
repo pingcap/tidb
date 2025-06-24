@@ -3563,19 +3563,19 @@ var defaultSysVars = []*SysVar{
 			return (*SetPDClientDynamicOption.Load())(vardef.TiDBTSOClientRPCMode, val)
 		},
 	},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdPct, Value: strconv.FormatFloat(vardef.DefTiDBCircuitBreakerPDMetaErrorRatePct, 'f', -1, 64),
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio, Value: strconv.FormatFloat(vardef.DefTiDBCircuitBreakerPDMetaErrorRateRatio, 'f', -1, 64),
 		Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return strconv.FormatFloat(vardef.CircuitBreakerPDMetadataErrorRateThresholdPct.Load(), 'f', -1, 64), nil
+			return strconv.FormatFloat(vardef.CircuitBreakerPDMetadataErrorRateThresholdRatio.Load(), 'f', -1, 64), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			v := tidbOptFloat64(val, vardef.DefTiDBCircuitBreakerPDMetaErrorRatePct)
+			v := tidbOptFloat64(val, vardef.DefTiDBCircuitBreakerPDMetaErrorRateRatio)
 			if v < 0 || v > 1 {
-				return errors.Errorf("invalid tidb_cb_pd_metadata_error_rate_threshold_pct value %s", val)
+				return errors.Errorf("invalid tidb_cb_pd_metadata_error_rate_threshold_ratio value %s", val)
 			}
-			vardef.CircuitBreakerPDMetadataErrorRateThresholdPct.Store(v)
-			if ChangePDMetadataCircuitBreakerErrorRateThresholdPct != nil {
-				ChangePDMetadataCircuitBreakerErrorRateThresholdPct(uint32(v * 100))
+			vardef.CircuitBreakerPDMetadataErrorRateThresholdRatio.Store(v)
+			if ChangePDMetadataCircuitBreakerErrorRateThresholdRatio != nil {
+				ChangePDMetadataCircuitBreakerErrorRateThresholdRatio(uint32(v * 100))
 			}
 			return nil
 		},
