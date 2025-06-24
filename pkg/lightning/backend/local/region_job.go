@@ -454,6 +454,13 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 		},
 	}
 
+	if local.ticiWriteGroup != nil {
+		// Write file headers for all tici writers in the group.
+		if err = local.ticiWriteGroup.WriteHeader(ctx, dataCommitTS); err != nil {
+			return nil, errors.Annotate(err, "ticiWriteGroup.WriteHeader failed")
+		}
+	}
+
 	pairs := make([]*sst.Pair, 0, defaultKVBatchCount)
 	count := 0
 	size := int64(0)

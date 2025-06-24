@@ -134,7 +134,12 @@ func (w *TiCIDataWriter) GetCloudStoragePath(
 		)
 		return "", err
 	}
-	defer ticiMgr.Close()
+	defer func() {
+		closeErr := ticiMgr.Close()
+		if closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 	s3Path, err := ticiMgr.GetCloudStoragePath(ctx, w.tblInfo, w.idxInfo, w.schema, lowerBound, upperBound)
 	if err != nil {
 		logger.Error("failed to get TiCI cloud storage path",
@@ -192,7 +197,12 @@ func (w *TiCIDataWriter) MarkPartitionUploadFinished(
 		)
 		return err
 	}
-	defer ticiMgr.Close()
+	defer func() {
+		closeErr := ticiMgr.Close()
+		if closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 	err = ticiMgr.MarkPartitionUploadFinished(ctx, s3Path)
 	if err != nil {
 		logger.Error("failed to mark partition upload finished",
@@ -231,7 +241,12 @@ func (w *TiCIDataWriter) MarkTableUploadFinished(
 		)
 		return err
 	}
-	defer ticiMgr.Close()
+	defer func() {
+		closeErr := ticiMgr.Close()
+		if closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 	err = ticiMgr.MarkTableUploadFinished(ctx, w.tblInfo.ID, w.idxInfo.ID)
 	if err != nil {
 		logger.Error("failed to mark table upload finished",
@@ -245,9 +260,18 @@ func (w *TiCIDataWriter) MarkTableUploadFinished(
 	return err
 }
 
+// WriteHeader writes the header to the underlying TICIFileWriter.
+// commitTS is the commit timestamp to include in the header.
+func (w *TiCIDataWriter) WriteHeader(ctx context.Context, commitTS uint64) error {
+	if w.ticiFileWriter == nil {
+		return errors.New("TICIFileWriter is not initialized")
+	}
+	return w.ticiFileWriter.WriteHeader(ctx, w.tblInfo, w.idxInfo, commitTS)
+}
+
 // WritePairs writes a batch of KV Pairs to the S3 file using the underlying TICIFileWriter.
 func (w *TiCIDataWriter) WritePairs(ctx context.Context, pairs []*sst.Pair, count int) error {
-	for i := 0; i < count; i++ {
+	for i := range count {
 		if err := w.ticiFileWriter.WriteRow(ctx, pairs[i].Key, pairs[i].Value); err != nil {
 			return err
 		}
@@ -275,9 +299,20 @@ func (w *TiCIDataWriter) CloseFileWriter(ctx context.Context) error {
 	return w.ticiFileWriter.Close(ctx)
 }
 
-// TiCIDataWriterGroup manages a group of TiCIDataWriter and runs operations on all of them.
+// TiCIDataWriterGroup manages a group of TiCIDataWriter, each responsible for a fulltext index in a table.
 type TiCIDataWriterGroup struct {
 	writers []*TiCIDataWriter
+}
+
+// WriteHeader writes the header to all writers in the group.
+// commitTS is the commit timestamp to include in the header.
+func (g *TiCIDataWriterGroup) WriteHeader(ctx context.Context, commitTS uint64) error {
+	for _, w := range g.writers {
+		if err := w.WriteHeader(ctx, commitTS); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // WritePairs writes a batch of KV Pairs to all writers in the group.
@@ -299,7 +334,6 @@ func (g *TiCIDataWriterGroup) WritePairs(ctx context.Context, pairs []*sst.Pair,
 	return nil
 }
 
-// TiCIDataWriterGroup is a group of TiCIDataWriter, each responsible for a fulltext index in a table.
 // NewTiCIDataWriterGroup creates a new TiCIDataWriterGroup for all fulltext indexes in the given table.
 func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) *TiCIDataWriterGroup {
 	fulltextIndexes := GetFulltextIndexes(tblInfo)

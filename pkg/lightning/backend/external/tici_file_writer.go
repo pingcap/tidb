@@ -17,6 +17,7 @@ package external
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"time"
 
 	"github.com/docker/go-units"
@@ -25,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/intest"
+
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"go.uber.org/zap"
 )
 
@@ -38,15 +41,16 @@ var TiCIMinUploadPartSize int64 = 5 * units.MiB
 
 // TICIFileWriter writes data to a fixed S3 location.
 type TICIFileWriter struct {
-	store      storage.ExternalStorage
-	dataFile   string
-	dataWriter storage.ExternalFileWriter
-	kvBuffer   *membuf.Buffer
-	totalSize  uint64
-	totalCnt   uint64
-	closed     bool
-	logger     *zap.Logger
-	partSize   int64
+	store         storage.ExternalStorage
+	dataFile      string
+	dataWriter    storage.ExternalFileWriter
+	kvBuffer      *membuf.Buffer
+	totalSize     uint64
+	totalCnt      uint64
+	closed        bool
+	logger        *zap.Logger
+	partSize      int64
+	headerWritten bool
 }
 
 // NewTICIFileWriter creates a new TICIFileWriter.
@@ -116,6 +120,56 @@ func (w *TICIFileWriter) Close(ctx context.Context) error {
 		zap.Uint64("totalCnt", w.totalCnt),
 		zap.Uint64("totalSize", w.totalSize))
 	w.closed = true
+	return nil
+}
+
+// WriteHeader serializes and writes the header containing TableInfo, IndexInfo, and CommitTS.
+// The format is:
+// [8 bytes] Length of TableInfo (big endian uint64)
+// [N bytes] TableInfo (serialized)
+// [8 bytes] Length of IndexInfo (big endian uint64)
+// [M bytes] IndexInfo (serialized)
+// [8 bytes] CommitTS (big endian uint64)
+func (w *TICIFileWriter) WriteHeader(ctx context.Context, tbl *model.TableInfo, idx *model.IndexInfo, commitTS uint64) error {
+	// Check if the header has already been written.
+	if w.headerWritten {
+		return errors.New("TICIFileWriter header already written")
+	}
+
+	var (
+		tblBytes []byte
+		idxBytes []byte
+		err      error
+	)
+	// Use json.Marshal to serialize TableInfo and IndexInfo.
+	tblBytes, err = json.Marshal(tbl)
+	if err != nil {
+		return errors.Annotate(err, "marshal TableInfo (json)")
+	}
+	idxBytes, err = json.Marshal(idx)
+	if err != nil {
+		return errors.Annotate(err, "marshal IndexInfo (json)")
+	}
+
+	headerLen := 8 + len(tblBytes) + 8 + len(idxBytes) + 8
+	header := make([]byte, headerLen)
+	off := 0
+	binary.BigEndian.PutUint64(header[off:], uint64(len(tblBytes)))
+	off += 8
+	copy(header[off:], tblBytes)
+	off += len(tblBytes)
+	binary.BigEndian.PutUint64(header[off:], uint64(len(idxBytes)))
+	off += 8
+	copy(header[off:], idxBytes)
+	off += len(idxBytes)
+	binary.BigEndian.PutUint64(header[off:], commitTS)
+	off += 8
+
+	_, err = w.dataWriter.Write(ctx, header)
+	if err != nil {
+		return errors.Annotate(err, "write header")
+	}
+	w.headerWritten = true
 	return nil
 }
 
