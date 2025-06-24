@@ -173,10 +173,10 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 	return newPred, specialCase
 }
 
-func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, skipPropagateConstant bool) []expression.Expression {
+func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool) []expression.Expression {
 	simplifiedPredicate := shortCircuitLogicalConstants(sctx, predicates)
 	exprCtx := sctx.GetExprCtx()
-	if skipPropagateConstant {
+	if propagateConstant {
 		simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate...)
 	}
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
