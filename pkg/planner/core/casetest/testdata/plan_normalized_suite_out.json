@@ -397,11 +397,12 @@
       {
         "SQL": "explain format='brief' select * from t1 where a!=1 order by c limit 1",
         "Plan": [
-          " TopN                  root         test.t1.c",
-          " └─TableReader         root         ",
-          "   └─TopN              cop[tiflash] test.t1.c",
-          "     └─Selection       cop[tiflash] ne(test.t1.a, ?)",
-          "       └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
+          " TopN                    root         test.t1.c",
+          " └─TableReader           root         ",
+          "   └─ExchangeSender      cop[tiflash] ",
+          "     └─TopN              cop[tiflash] test.t1.c",
+          "       └─Selection       cop[tiflash] ne(test.t1.a, ?)",
+          "         └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
         ]
       },
       {
