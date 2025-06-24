@@ -111,7 +111,6 @@ func findBestTask4LogicalTableDual(lp base.LogicalPlan, prop *property.PhysicalP
 	appendCandidate4PhysicalOptimizeOp(opt, p, dual, prop)
 	rt := &RootTask{}
 	rt.SetPlan(dual)
-	rt.SetEmpty(p.RowCount == 0)
 	return rt, 1, nil
 }
 
@@ -204,7 +203,7 @@ func enumeratePhysicalPlans4Task(
 		iteration = iterateChildPlan4LogicalSequence
 	}
 	var fd *funcdep.FDSet
-	if addEnforcer {
+	if addEnforcer && len(physicalPlans) != 0 {
 		switch logicalPlan := p.Self().(type) {
 		case *logicalop.LogicalJoin, *logicalop.LogicalAggregation:
 			// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
@@ -1081,26 +1080,8 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	// step1: match the property from all the index partial alternative paths.
 	determinedIndexPartialPaths := make([]*util.AccessPath, 0, len(path.PartialAlternativeIndexPaths))
 	usedIndexMap := make(map[int64]struct{}, 1)
-	type idxWrapper struct {
-		// matchIdx is those match alternative paths from one alternative paths set.
-		// like we said above, for a=1, it has two partial alternative paths: [a, ac]
-		// if we met an empty property here, matchIdx from [a, ac] for a=1 will be both. = [0,1]
-		// if we met an sort[c] property here, matchIdx from [a, ac] for a=1 will be both. = [1]
-		matchIdx []int
-		// pathIdx actually is original position offset indicates where current matchIdx is
-		// computed from. eg: [[a, ac], [b, bc]] for sort[c] property:
-		//     idxWrapper{[ac], 0}, 0 is the offset in first dimension of PartialAlternativeIndexPaths
-		//     idxWrapper{[bc], 1}, 1 is the offset in first dimension of PartialAlternativeIndexPaths
-		pathIdx int
-	}
-	allMatchIdxes := make([]idxWrapper, 0, len(path.PartialAlternativeIndexPaths))
-	// special logic for alternative paths:
-	// index merge:
-	//  path1: {pk, index1}
-	//  path2: {pk}
-	// if we choose pk in the first path, then path2 has no choice but pk, this will result in all single index failure.
-	// so we should collect all match prop paths down, stored as matchIdxes here.
-	for pathIdx, oneORBranch := range path.PartialAlternativeIndexPaths {
+	useMVIndex := false
+	for _, oneORBranch := range path.PartialAlternativeIndexPaths {
 		matchIdxes := make([]int, 0, 1)
 		for i, oneAlternative := range oneORBranch {
 			// if there is some sort items and this path doesn't match this prop, continue.
@@ -1142,60 +1123,25 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 				return -cmp.Compare(lIsGlobalIndex, rIsGlobalIndex)
 			})
 		}
-		allMatchIdxes = append(allMatchIdxes, idxWrapper{matchIdxes, pathIdx})
-	}
-	// sort allMatchIdxes by its element length.
-	// index merge:                index merge:
-	//  path1: {pk, index1}  ==>    path2: {pk}
-	//  path2: {pk}                 path1: {pk, index1}
-	// here for the fixed choice pk of path2, let it be the first one to choose, left choice of index1 to path1.
-	slices.SortStableFunc(allMatchIdxes, func(a, b idxWrapper) int {
-		lhsLen := len(a.matchIdx)
-		rhsLen := len(b.matchIdx)
-		return cmp.Compare(lhsLen, rhsLen)
-	})
-	useMVIndex := false
-	for _, matchIdxes := range allMatchIdxes {
-		// since matchIdxes are ordered by matchIdxes's length,
-		// we should use matchIdxes.pathIdx to locate where it comes from.
-		alternatives := path.PartialAlternativeIndexPaths[matchIdxes.pathIdx]
-		found := false
-		// pick a most suitable index partial alternative from all matched alternative paths according to asc CountAfterAccess,
-		// By this way, a distinguished one is better.
-		for _, oneIdx := range matchIdxes.matchIdx {
-			var indexID int64
-			if alternatives[oneIdx][0].IsTablePath() {
-				indexID = -1
-			} else {
-				indexID = alternatives[oneIdx][0].Index.ID
-				// For MV index, we just choose the first (best) one, and we don't need to check to avoid choosing the
-				// same index.
-				if alternatives[oneIdx][0].Index.MVIndex {
-					useMVIndex = true
-					determinedIndexPartialPaths = append(determinedIndexPartialPaths,
-						util.SliceDeepClone(alternatives[oneIdx])...)
-					found = true
-					break
-				}
-			}
-			if _, ok := usedIndexMap[indexID]; !ok {
-				// try to avoid all index partial paths are all about a single index.
-				determinedIndexPartialPaths = append(determinedIndexPartialPaths,
-					util.SliceDeepClone(alternatives[oneIdx])...)
-				usedIndexMap[indexID] = struct{}{}
-				found = true
-				break
+		lowestCountAfterAccessIdx := matchIdxes[0]
+		determinedIndexPartialPaths = append(determinedIndexPartialPaths, util.SliceDeepClone(oneORBranch[lowestCountAfterAccessIdx])...)
+		// record the index usage info to avoid choosing a single index for all partial paths
+		var indexID int64
+		if oneORBranch[lowestCountAfterAccessIdx][0].IsTablePath() {
+			indexID = -1
+		} else {
+			indexID = oneORBranch[lowestCountAfterAccessIdx][0].Index.ID
+			// record mv index because it's not affected by the all single index limitation.
+			if oneORBranch[lowestCountAfterAccessIdx][0].Index.MVIndex {
+				useMVIndex = true
 			}
 		}
-		if !found {
-			// just pick the same name index (just using the first one is ok), in case that there may be some other
-			// picked distinctive index path for other partial paths latter.
-			determinedIndexPartialPaths = append(determinedIndexPartialPaths,
-				util.SliceDeepClone(alternatives[matchIdxes.matchIdx[0]])...)
-			// uedIndexMap[oneORBranch[oneIdx].Index.ID] = struct{}{} must already be colored.
-		}
+		// record the lowestCountAfterAccessIdx's chosen index.
+		usedIndexMap[indexID] = struct{}{}
 	}
-	if len(usedIndexMap) == 1 && !useMVIndex {
+	// since all the choice is done, check the all single index limitation, skip check for mv index.
+	// since ds index merge hints will prune other path ahead, lift the all single index limitation here.
+	if len(usedIndexMap) == 1 && !useMVIndex && len(ds.IndexMergeHints) <= 0 {
 		// if all partial path are using a same index, meaningless and fail over.
 		return nil, false
 	}
@@ -1288,10 +1234,6 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	for _, path := range ds.PossibleAccessPaths {
 		// We should check whether the possible access path is valid first.
 		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
-			continue
-		}
-		// Use Inverted Index can not be used as access path index.
-		if path.Index != nil && path.Index.InvertedInfo != nil {
 			continue
 		}
 		if len(path.PartialAlternativeIndexPaths) > 0 {
@@ -1615,7 +1557,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		// if we already know the range of the scan is empty, just return a TableDual
 		if len(path.Ranges) == 0 {
 			// We should uncache the tableDual plan.
-			if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), path.AccessConds) {
+			if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), path.AccessConds...) {
 				ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("get a TableDual plan")
 			}
 			dual := PhysicalTableDual{}.Init(ds.SCtx(), ds.StatsInfo(), ds.QueryBlockOffset())
@@ -1700,7 +1642,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 
 				// Batch/PointGet plans may be over-optimized, like `a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1).
 				// For safety, prevent these plans from the plan cache here.
-				if !pointGetTask.Invalid() && expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), candidate.path.AccessConds) && !isSafePointGetPath4PlanCache(ds.SCtx(), candidate.path) {
+				if !pointGetTask.Invalid() && expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), candidate.path.AccessConds...) && !isSafePointGetPath4PlanCache(ds.SCtx(), candidate.path) {
 					ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("Batch/PointGet plans may be over-optimized")
 				}
 
@@ -2708,19 +2650,6 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		return base.InvalidTask, nil
 	}
 	ts, _ := getOriginalPhysicalTableScan(ds, prop, candidate.path, candidate.isMatchProp)
-	if ts.KeepOrder && ts.StoreType == kv.TiFlash && (ts.Desc || ds.SCtx().GetSessionVars().TiFlashFastScan) {
-		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not keep order in TableScan
-		return base.InvalidTask, nil
-	}
-	// When the the store type is TiFlash, we will try to set the UsedColumnarIndexes.
-	// FIXME: Now it is a naive implementation, we will refine it based on selectivity and cost in the future.
-	if ts.StoreType == kv.TiFlash {
-		for _, index := range ts.Table.Indices {
-			if index.State == model.StatePublic && index.InvertedInfo != nil {
-				ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildInvertedIndexExtra(candidate.path.Index, index.InvertedInfo.ColumnID, index.ID))
-			}
-		}
-	}
 
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
@@ -2728,6 +2657,12 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	canMppConvertToRoot := prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed() && isTiFlashPath
 	canMppConvertToRootForDisaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash && canMppConvertToRoot
 	canMppConvertToRootForWhenTiFlashCopIsBanned := ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && canMppConvertToRoot
+
+	// Fast checks
+	if isTiFlashPath && ts.KeepOrder && (ts.Desc || ds.SCtx().GetSessionVars().TiFlashFastScan) {
+		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not support keep order in TableScan
+		return base.InvalidTask, nil
+	}
 	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
 		if ts.KeepOrder {
 			return base.InvalidTask, nil
@@ -2739,6 +2674,19 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil && !candidate.isMatchProp {
 			return base.InvalidTask, nil
 		}
+	} else {
+		if isTiFlashPath && config.GetGlobalConfig().DisaggregatedTiFlash || isTiFlashPath && ds.SCtx().GetSessionVars().IsTiFlashCopBanned() {
+			// prop.TaskTp is cop related, just return base.InvalidTask.
+			return base.InvalidTask, nil
+		}
+		if isTiFlashPath && candidate.isMatchProp && ds.TableInfo.GetPartitionInfo() != nil {
+			// TableScan on partition table on TiFlash can't keep order.
+			return base.InvalidTask, nil
+		}
+	}
+
+	// MPP task
+	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
 		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil {
 			// Only the corresponding index can generate a valid task.
 			intest.Assert(ts.Table.Columns[candidate.path.Index.Columns[0].Offset].ID == prop.VectorProp.Column.ID, "The passed vector column is not matched with the index")
@@ -2752,7 +2700,6 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 				tipb.VectorDistanceMetric(distanceMetricPB),
 				prop.VectorProp.TopK,
 				ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
-				candidate.path.Index.ID,
 				prop.VectorProp.Vec.SerializeTo(nil),
 				tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, false),
 			))
@@ -2791,7 +2738,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			Columns:        ds.TblCols,
 			ColumnNames:    ds.OutputNames(),
 		}
-		mppTask = ts.addPushedDownSelectionToMppTask(mppTask, ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt))
+		mppTask = ts.addPushedDownSelectionToMppTask(mppTask, ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.AstIndexHints)
 		var task base.Task = mppTask
 		if !mppTask.Invalid() {
 			if prop.TaskTp == property.MppTaskType && len(mppTask.rootTaskConds) > 0 {
@@ -2810,10 +2757,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		}
 		return task, nil
 	}
-	if isTiFlashPath && config.GetGlobalConfig().DisaggregatedTiFlash || isTiFlashPath && ds.SCtx().GetSessionVars().IsTiFlashCopBanned() {
-		// prop.TaskTp is cop related, just return base.InvalidTask.
-		return base.InvalidTask, nil
-	}
+	// Cop task
 	copTask := &CopTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
@@ -2830,10 +2774,6 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
 		if ds.TableInfo.GetPartitionInfo() != nil {
-			// TableScan on partition table on TiFlash can't keep order.
-			if ts.StoreType == kv.TiFlash {
-				return base.InvalidTask, nil
-			}
 			// Add sort items for table scan for merge-sort operation between partitions.
 			byItems := make([]*util.ByItems, 0, len(prop.SortItems))
 			for _, si := range prop.SortItems {
@@ -2845,7 +2785,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			ts.ByItems = byItems
 		}
 	}
-	ts.addPushedDownSelection(copTask, ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt))
+	ts.addPushedDownSelection(copTask, ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.AstIndexHints)
 	if prop.IsFlashProp() && len(copTask.rootTaskConds) != 0 {
 		return base.InvalidTask, nil
 	}
@@ -3043,7 +2983,24 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 	return rTsk
 }
 
-func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *MppTask, stats *property.StatsInfo) *MppTask {
+func (ts *PhysicalTableScan) buildPushedDownSelection(stats *property.StatsInfo, indexHints []*ast.IndexHint) *PhysicalSelection {
+	if ts.StoreType == kv.TiFlash {
+		handleTiFlashPredicatePushDown(ts.SCtx(), ts, indexHints)
+		conditions := make([]expression.Expression, 0, len(ts.filterCondition)-len(ts.LateMaterializationFilterCondition))
+		for _, cond := range ts.filterCondition {
+			if !expression.Contains(ts.SCtx().GetExprCtx().GetEvalCtx(), ts.LateMaterializationFilterCondition, cond) {
+				conditions = append(conditions, cond)
+			}
+		}
+		if len(conditions) == 0 {
+			return nil
+		}
+		return PhysicalSelection{Conditions: conditions}.Init(ts.SCtx(), stats, ts.QueryBlockOffset())
+	}
+	return PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.SCtx(), stats, ts.QueryBlockOffset())
+}
+
+func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *MppTask, stats *property.StatsInfo, indexHints []*ast.IndexHint) *MppTask {
 	filterCondition, rootTaskConds := SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	var newRootConds []expression.Expression
 	filterCondition, newRootConds = expression.PushDownExprs(util.GetPushDownCtx(ts.SCtx()), filterCondition, ts.StoreType)
@@ -3052,14 +3009,17 @@ func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *MppTask, stats
 	ts.filterCondition = filterCondition
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
-		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.SCtx(), stats, ts.QueryBlockOffset())
-		sel.SetChildren(ts)
-		mpp.p = sel
+		if sel := ts.buildPushedDownSelection(stats, indexHints); sel != nil {
+			sel.SetChildren(ts)
+			mpp.p = sel
+		} else {
+			mpp.p = ts
+		}
 	}
 	return mpp
 }
 
-func (ts *PhysicalTableScan) addPushedDownSelection(copTask *CopTask, stats *property.StatsInfo) {
+func (ts *PhysicalTableScan) addPushedDownSelection(copTask *CopTask, stats *property.StatsInfo, indexHints []*ast.IndexHint) {
 	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	var newRootConds []expression.Expression
 	ts.filterCondition, newRootConds = expression.PushDownExprs(util.GetPushDownCtx(ts.SCtx()), ts.filterCondition, ts.StoreType)
@@ -3067,9 +3027,13 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *CopTask, stats *pro
 
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
-		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.SCtx(), stats, ts.QueryBlockOffset())
+		sel := ts.buildPushedDownSelection(stats, indexHints)
+		if sel == nil {
+			copTask.tablePlan = ts
+			return
+		}
 		if len(copTask.rootTaskConds) != 0 {
-			selectivity, _, err := cardinality.Selectivity(ts.SCtx(), copTask.tblColHists, ts.filterCondition, nil)
+			selectivity, _, err := cardinality.Selectivity(ts.SCtx(), copTask.tblColHists, sel.Conditions, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = cost.SelectionFactor
@@ -3217,7 +3181,6 @@ func findBestTask4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalPropert
 	} else {
 		rt := &RootTask{}
 		rt.SetPlan(pcte)
-		rt.SetEmpty(false)
 		t = rt
 	}
 	if prop.CanAddEnforcer {

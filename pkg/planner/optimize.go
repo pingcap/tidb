@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -233,7 +234,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 
 	warns = warns[:0]
 	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
-		oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+		oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)
 		if err != nil {
 			sessVars.StmtCtx.AppendWarning(err)
 		}
@@ -317,7 +318,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 				sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL binding")
 			}
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
-				oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+				oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)
 				if err != nil {
 					sessVars.StmtCtx.AppendWarning(err)
 				}
@@ -621,7 +622,7 @@ func hypoIndexChecker(ctx context.Context, is infoschema.InfoSchema) func(db, tb
 // queryPlanCost returns the plan cost of this node, which is mainly for the Index Advisor.
 func queryPlanCost(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error) {
 	nodeW := resolve.NewNodeW(stmt)
-	plan, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	plan, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return 0, err
 	}
@@ -646,7 +647,7 @@ func calculatePlanDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDi
 		return "", err
 	}
 
-	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return "", err
 	}
@@ -671,7 +672,7 @@ func recordRelevantOptVarsAndFixes(sctx sessionctx.Context, stmt ast.StmtNode) (
 		return nil, nil, err
 	}
 
-	_, _, err = Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	_, _, err = Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -699,17 +700,24 @@ func genBriefPlanWithSCtx(sctx sessionctx.Context, stmt ast.StmtNode) (planDiges
 		return "", "", nil, err
 	}
 
-	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return "", "", nil, err
 	}
 	flat := core.FlattenPhysicalPlan(p, false)
 	_, digest := core.NormalizeFlatPlan(flat)
 	sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true // ignore operatorID to make the output simpler
-	plan := core.ExplainFlatPlanInRowFormat(flat, types.ExplainFormatBrief, false, nil, nil)
+	plan := core.ExplainFlatPlanInRowFormat(flat, types.ExplainFormatBrief, false, nil)
 	hints := core.GenHintsFromFlatPlan(flat)
 
 	return digest.String(), hint.RestoreOptimizerHints(hints), plan, nil
+}
+
+func planIDFunc(plan any) (planID int, ok bool) {
+	if p, ok := plan.(base.Plan); ok {
+		return p.ID(), true
+	}
+	return 0, false
 }
 
 func init() {
@@ -722,4 +730,5 @@ func init() {
 	bindinfo.CalculatePlanDigest = calculatePlanDigestFunc
 	bindinfo.RecordRelevantOptVarsAndFixes = recordRelevantOptVarsAndFixes
 	bindinfo.GenBriefPlanWithSCtx = genBriefPlanWithSCtx
+	stmtctx.PlanIDFunc = planIDFunc
 }

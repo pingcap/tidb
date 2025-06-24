@@ -96,8 +96,10 @@ func (p *LogicalSelection) HashCode() []byte {
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	predicates = constraint.DeleteTrueExprs(p, predicates)
-	p.Conditions = constraint.DeleteTrueExprs(p, p.Conditions)
+	exprCtx := p.SCtx().GetExprCtx()
+	stmtCtx := p.SCtx().GetSessionVars().StmtCtx
+	predicates = constraint.DeleteTrueExprs(exprCtx, stmtCtx, predicates)
+	p.Conditions = constraint.DeleteTrueExprs(exprCtx, stmtCtx, p.Conditions)
 	var child base.LogicalPlan
 	var retConditions []expression.Expression
 	var originConditions []expression.Expression
@@ -105,9 +107,8 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	originConditions = canBePushDown
 	retConditions, child = p.Children()[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
 	retConditions = append(retConditions, canNotBePushDown...)
-	exprCtx := p.SCtx().GetExprCtx()
 	if len(retConditions) > 0 {
-		p.Conditions = expression.PropagateConstant(exprCtx, retConditions)
+		p.Conditions = expression.PropagateConstant(exprCtx, retConditions...)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, p.Conditions)
 		if dual != nil {

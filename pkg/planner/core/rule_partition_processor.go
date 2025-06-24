@@ -931,6 +931,10 @@ type partitionRange struct {
 	end   int
 }
 
+func (p *partitionRange) Cmp(a partitionRange) int {
+	return cmp.Compare(p.start, a.start)
+}
+
 // partitionRangeOR represents OR(range1, range2, ...)
 type partitionRangeOR []partitionRange
 
@@ -958,14 +962,6 @@ func (or partitionRangeOR) Len() int {
 	return len(or)
 }
 
-func (or partitionRangeOR) Less(i, j int) bool {
-	return or[i].start < or[j].start
-}
-
-func (or partitionRangeOR) Swap(i, j int) {
-	or[i], or[j] = or[j], or[i]
-}
-
 func (or partitionRangeOR) union(x partitionRangeOR) partitionRangeOR {
 	or = append(or, x...)
 	return or.simplify()
@@ -977,13 +973,14 @@ func (or partitionRangeOR) simplify() partitionRangeOR {
 		return or
 	}
 	// Make the ranges order by start.
-	sort.Sort(or)
-	sorted := or
+	slices.SortFunc(or, func(i, j partitionRange) int {
+		return i.Cmp(j)
+	})
 
 	// Iterate the sorted ranges, merge the adjacent two when their range overlap.
 	// For example, [0, 1), [2, 7), [3, 5), ... => [0, 1), [2, 7) ...
-	res := sorted[:1]
-	for _, curr := range sorted[1:] {
+	res := or[:1]
+	for _, curr := range or[1:] {
 		last := &res[len(res)-1]
 		if curr.start > last.end {
 			res = append(res, curr)
@@ -1368,13 +1365,14 @@ func partitionRangeForExpr(sctx base.PlanContext, expr expression.Expression,
 	pruner partitionRangePruner, result partitionRangeOR) partitionRangeOR {
 	// Handle AND, OR respectively.
 	if op, ok := expr.(*expression.ScalarFunction); ok {
-		if op.FuncName.L == ast.LogicAnd {
+		switch op.FuncName.L {
+		case ast.LogicAnd:
 			return partitionRangeForCNFExpr(sctx, op.GetArgs(), pruner, result)
-		} else if op.FuncName.L == ast.LogicOr {
+		case ast.LogicOr:
 			args := op.GetArgs()
 			newRange := partitionRangeForOrExpr(sctx, args[0], args[1], pruner)
 			return result.intersection(newRange)
-		} else if op.FuncName.L == ast.In {
+		case ast.In:
 			if p, ok := pruner.(*rangePruner); ok {
 				newRange := partitionRangeForInExpr(sctx, op.GetArgs(), p)
 				return result.intersection(newRange)
@@ -1456,7 +1454,6 @@ func partitionRangeColumnForInExpr(sctx base.PlanContext, args []expression.Expr
 		switch constExpr.Value.Kind() {
 		case types.KindInt64, types.KindUint64, types.KindMysqlTime, types.KindString: // for safety, only support string,int and datetime now
 		case types.KindNull:
-			result = append(result, partitionRange{0, 1})
 			continue
 		default:
 			return pruner.fullRange()
@@ -1491,7 +1488,6 @@ func partitionRangeForInExpr(sctx base.PlanContext, args []expression.Expression
 			return pruner.fullRange()
 		}
 		if constExpr.Value.Kind() == types.KindNull {
-			result = append(result, partitionRange{0, 1})
 			continue
 		}
 

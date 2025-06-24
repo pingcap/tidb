@@ -21,12 +21,14 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -176,5 +178,9 @@ func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error
 
 // TaskKey returns the task key for a job.
 func TaskKey(jobID int64) string {
+	if kerneltype.IsNextGen() {
+		ks := keyspace.GetKeyspaceNameBySettings()
+		return fmt.Sprintf("%s/%s/%d", ks, proto.ImportInto, jobID)
+	}
 	return fmt.Sprintf("%s/%d", proto.ImportInto, jobID)
 }

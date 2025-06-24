@@ -1697,13 +1697,13 @@ var defaultSysVars = []*SysVar{
 	{
 		Scope:                   vardef.ScopeGlobal,
 		Name:                    vardef.TiDBLoadBindingTimeout,
-		Value:                   "200",
+		Value:                   strconv.Itoa(vardef.DefTiDBLoadBindingTimeout),
 		Type:                    vardef.TypeUnsigned,
 		MinValue:                0,
 		MaxValue:                math.MaxInt32,
 		IsHintUpdatableVerified: false,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-			timeoutMS := tidbOptPositiveInt32(s, 0)
+			timeoutMS := tidbOptPositiveInt32(s, vardef.DefTiDBLoadBindingTimeout)
 			vars.LoadBindingTimeout = uint64(timeoutMS)
 			return nil
 		}},
@@ -3563,14 +3563,24 @@ var defaultSysVars = []*SysVar{
 			return (*SetPDClientDynamicOption.Load())(vardef.TiDBTSOClientRPCMode, val)
 		},
 	},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdPct, Value: strconv.Itoa(vardef.DefTiDBCircuitBreakerPDMetaErrorRatePct), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: 100,
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio, Value: strconv.FormatFloat(vardef.DefTiDBCircuitBreakerPDMetaErrorRateRatio, 'f', -1, 64),
+		Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatFloat(vardef.CircuitBreakerPDMetadataErrorRateThresholdRatio.Load(), 'f', -1, 64), nil
+		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			if ChangePDMetadataCircuitBreakerErrorRateThresholdPct != nil {
-				ChangePDMetadataCircuitBreakerErrorRateThresholdPct(uint32(tidbOptPositiveInt32(val, vardef.DefTiDBCircuitBreakerPDMetaErrorRatePct)))
+			v := tidbOptFloat64(val, vardef.DefTiDBCircuitBreakerPDMetaErrorRateRatio)
+			if v < 0 || v > 1 {
+				return errors.Errorf("invalid tidb_cb_pd_metadata_error_rate_threshold_ratio value %s", val)
+			}
+			vardef.CircuitBreakerPDMetadataErrorRateThresholdRatio.Store(v)
+			if ChangePDMetadataCircuitBreakerErrorRateThresholdRatio != nil {
+				ChangePDMetadataCircuitBreakerErrorRateThresholdRatio(uint32(v * 100))
 			}
 			return nil
 		},
 	},
+
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAccelerateUserCreationUpdate, Value: BoolToOnOff(vardef.DefTiDBAccelerateUserCreationUpdate), Type: vardef.TypeBool,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			vardef.AccelerateUserCreationUpdate.Store(TiDBOptOn(val))

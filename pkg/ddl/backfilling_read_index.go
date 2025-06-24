@@ -55,7 +55,7 @@ type readIndexStepExecutor struct {
 	avgRowSize      int
 	cloudStorageURI string
 
-	curRowCount *atomic.Int64
+	*execute.SubtaskSummary
 
 	subtaskSummary sync.Map // subtaskID => readIndexSummary
 	backendCfg     *local.BackendConfig
@@ -88,7 +88,7 @@ func newReadIndexExecutor(
 		jc:              jc,
 		cloudStorageURI: cloudStorageURI,
 		avgRowSize:      avgRowSize,
-		curRowCount:     &atomic.Int64{},
+		SubtaskSummary:  &execute.SubtaskSummary{},
 	}, nil
 }
 
@@ -117,7 +117,7 @@ func (r *readIndexStepExecutor) runGlobalPipeline(
 	sm *BackfillSubTaskMeta,
 	concurrency int,
 ) error {
-	pipe, err := r.buildExternalStorePipeline(opCtx, subtask.ID, sm, concurrency)
+	pipe, err := r.buildExternalStorePipeline(opCtx, subtask.TaskID, subtask.ID, sm, concurrency)
 	if err != nil {
 		return err
 	}
@@ -188,7 +188,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	opCtx, cancel := NewDistTaskOperatorCtx(ctx, subtask.TaskID, subtask.ID)
 	defer cancel()
-	r.curRowCount.Store(0)
+	r.Reset()
 
 	concurrency := int(r.GetResource().CPU.Capacity())
 	if r.isGlobalSort() {
@@ -198,9 +198,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 }
 
 func (r *readIndexStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	return &execute.SubtaskSummary{
-		RowCount: r.curRowCount.Load(),
-	}
+	return r.SubtaskSummary
 }
 
 func (r *readIndexStepExecutor) Cleanup(ctx context.Context) error {
@@ -356,7 +354,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 			zap.Int64s("index IDs", indexIDs))
 		return nil, err
 	}
-	rowCntListener := newDistTaskRowCntListener(r.curRowCount, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
+	rowCntCollector := newDistTaskRowCntCollector(r.SubtaskSummary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
 	return NewAddIndexIngestPipeline(
 		opCtx,
 		d.store,
@@ -371,12 +369,13 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 		r.job.ReorgMeta,
 		r.avgRowSize,
 		concurrency,
-		rowCntListener,
+		rowCntCollector,
 	)
 }
 
 func (r *readIndexStepExecutor) buildExternalStorePipeline(
 	opCtx *OperatorCtx,
+	taskID int64,
 	subtaskID int64,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
@@ -406,13 +405,13 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		}
 		idxNames.WriteString(idx.Name.O)
 	}
-	rowCntListener := newDistTaskRowCntListener(r.curRowCount, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
+	rowCntCollector := newDistTaskRowCntCollector(r.SubtaskSummary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx,
 		d.store,
 		r.cloudStorageURI,
 		r.d.sessPool,
-		r.job.ID,
+		taskID,
 		subtaskID,
 		tbl,
 		r.indexes,
@@ -423,26 +422,25 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		r.avgRowSize,
 		concurrency,
 		r.GetResource(),
-		rowCntListener,
+		rowCntCollector,
 		r.backend.GetTiKVCodec(),
 	)
 }
 
-type distTaskRowCntListener struct {
-	EmptyRowCntListener
-	totalRowCount *atomic.Int64
-	counter       prometheus.Counter
+type distTaskRowCntCollector struct {
+	summary *execute.SubtaskSummary
+	counter prometheus.Counter
 }
 
-func newDistTaskRowCntListener(totalRowCnt *atomic.Int64, dbName, tblName, idxName string) *distTaskRowCntListener {
+func newDistTaskRowCntCollector(summary *execute.SubtaskSummary, dbName, tblName, idxName string) *distTaskRowCntCollector {
 	counter := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, dbName, tblName, idxName)
-	return &distTaskRowCntListener{
-		totalRowCount: totalRowCnt,
-		counter:       counter,
+	return &distTaskRowCntCollector{
+		summary: summary,
+		counter: counter,
 	}
 }
 
-func (d *distTaskRowCntListener) Written(rowCnt int) {
-	d.totalRowCount.Add(int64(rowCnt))
+func (d *distTaskRowCntCollector) Add(_, rowCnt int64) {
+	d.summary.RowCnt.Add(rowCnt)
 	d.counter.Add(float64(rowCnt))
 }

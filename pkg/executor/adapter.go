@@ -1655,7 +1655,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		}
 	}
 
-	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
+	resultRows := stmtCtx.GetResultRowsCount()
 
 	var (
 		keyspaceName string
@@ -1795,15 +1795,6 @@ func collectWarningsForSlowLog(stmtCtx *stmtctx.StatementContext) []variable.JSO
 	return res
 }
 
-// GetResultRowsCount gets the count of the statement result rows.
-func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p base.Plan) int64 {
-	runtimeStatsColl := stmtCtx.RuntimeStatsColl
-	if runtimeStatsColl == nil {
-		return 0
-	}
-	return runtimeStatsColl.GetPlanActRows(p.ID())
-}
-
 func (a *ExecStmt) updateNetworkTrafficStatsAndMetrics() {
 	hasMPPTraffic := a.updateMPPNetworkTraffic()
 	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
@@ -1872,7 +1863,7 @@ func getBinaryPlan(sCtx sessionctx.Context) string {
 		return binaryPlan
 	}
 	flat := getFlatPlan(stmtCtx)
-	binaryPlan = plannercore.BinaryPlanStrFromFlatPlan(sCtx.GetPlanCtx(), flat)
+	binaryPlan = plannercore.BinaryPlanStrFromFlatPlan(sCtx.GetPlanCtx(), flat, false)
 	stmtCtx.SetBinaryPlan(binaryPlan)
 	return binaryPlan
 }
@@ -1948,7 +1939,9 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	}
 
 	// Internal SQLs must also be recorded to keep the consistency of `PrevStmt` and `PrevStmtDigest`.
-	if !stmtsummaryv2.Enabled() || ((sessVars.InRestrictedSQL || len(userString) == 0) && !stmtsummaryv2.EnabledInternal()) {
+	// If this SQL is under `explain explore {SQL}`, we still want to record them in stmt summary.
+	isInternalSQL := (sessVars.InRestrictedSQL || len(userString) == 0) && !sessVars.InExplainExplore
+	if !stmtsummaryv2.Enabled() || (isInternalSQL && !stmtsummaryv2.EnabledInternal()) {
 		sessVars.SetPrevStmtDigest("")
 		return
 	}
@@ -2013,7 +2006,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		execDetail.TimeDetail.WaitTime += stmtCtx.WaitLockLeaseTime
 	}
 
-	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
+	resultRows := stmtCtx.GetResultRowsCount()
 
 	var (
 		keyspaceName string
@@ -2046,7 +2039,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.MemMax = memMax
 	stmtExecInfo.DiskMax = diskMax
 	stmtExecInfo.StartTime = sessVars.StartTime
-	stmtExecInfo.IsInternal = sessVars.InRestrictedSQL
+	stmtExecInfo.IsInternal = isInternalSQL
 	stmtExecInfo.Succeed = succ
 	stmtExecInfo.PlanInCache = sessVars.FoundInPlanCache
 	stmtExecInfo.PlanInBinding = sessVars.FoundInBinding

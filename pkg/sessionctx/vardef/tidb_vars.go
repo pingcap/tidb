@@ -1258,9 +1258,9 @@ const (
 	// TiDBTSOClientRPCMode controls how the TSO client performs the TSO RPC requests. It internally controls the
 	// concurrency of the RPC. This variable provides an approach to tune the latency of getting timestamps from PD.
 	TiDBTSOClientRPCMode = "tidb_tso_client_rpc_mode"
-	// TiDBCircuitBreakerPDMetadataErrorRateThresholdPct variable is used to set percent of errors to trip the circuit breaker for get region calls to PD
+	// TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio variable is used to set ratio of errors to trip the circuit breaker for get region calls to PD
 	// https://github.com/tikv/rfcs/blob/master/text/0115-circuit-breaker.md
-	TiDBCircuitBreakerPDMetadataErrorRateThresholdPct = "tidb_cb_pd_metadata_error_rate_threshold_pct"
+	TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio = "tidb_cb_pd_metadata_error_rate_threshold_ratio"
 
 	// TiDBEnableTSValidation controls whether to enable the timestamp validation in client-go.
 	TiDBEnableTSValidation = "tidb_enable_ts_validation"
@@ -1658,9 +1658,10 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
-	DefTiDBCircuitBreakerPDMetaErrorRatePct           = 0
+	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
 	DefTiDBAccelerateUserCreationUpdate               = false
 	DefTiDBEnableTSValidation                         = true
+	DefTiDBLoadBindingTimeout                         = 200
 )
 
 // Process global variables.
@@ -1788,6 +1789,8 @@ var (
 	SchemaCacheSize              = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText    = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
 	AccelerateUserCreationUpdate = atomic.NewBool(DefTiDBAccelerateUserCreationUpdate)
+
+	CircuitBreakerPDMetadataErrorRateThresholdRatio = atomic.NewFloat64(0.0)
 )
 
 func serverMemoryLimitDefaultValue() string {

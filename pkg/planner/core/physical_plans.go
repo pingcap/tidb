@@ -908,8 +908,8 @@ type PhysicalTableScan struct {
 	filterCondition []expression.Expression
 	// LateMaterializationFilterCondition is used to record the filter conditions
 	// that are pushed down to table scan from selection by late materialization.
-	// TODO: remove this field after we support pushing down selection to coprocessor.
 	LateMaterializationFilterCondition []expression.Expression
+	lateMaterializationSelectivity     float64
 
 	Table   *model.TableInfo    `plan-cache-clone:"shallow"`
 	Columns []*model.ColumnInfo `plan-cache-clone:"shallow"`
@@ -939,8 +939,6 @@ type PhysicalTableScan struct {
 	Desc      bool
 	// ByItems only for partition table with orderBy + pushedLimit
 	ByItems []*util.ByItems
-
-	isChildOfIndexLookUp bool
 
 	PlanPartInfo *PhysPlanPartInfo
 
@@ -1117,11 +1115,6 @@ func expandVirtualColumn(schema *expression.Schema, copyColumn []*model.ColumnIn
 		}
 	}
 	return copyColumn
-}
-
-// SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
-func (ts *PhysicalTableScan) SetIsChildOfIndexLookUp(isIsChildOfIndexLookUp bool) {
-	ts.isChildOfIndexLookUp = isIsChildOfIndexLookUp
 }
 
 const emptyPhysicalTableScanSize = int64(unsafe.Sizeof(PhysicalTableScan{}))
@@ -2854,7 +2847,7 @@ func (p *PhysicalCTE) ExplainInfo() string {
 }
 
 // ExplainID overrides the ExplainID.
-func (p *PhysicalCTE) ExplainID() fmt.Stringer {
+func (p *PhysicalCTE) ExplainID(_ ...bool) fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		if p.SCtx() != nil && p.SCtx().GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.TP()
@@ -2962,7 +2955,7 @@ func (p *CTEDefinition) ExplainInfo() string {
 }
 
 // ExplainID overrides the ExplainID.
-func (p *CTEDefinition) ExplainID() fmt.Stringer {
+func (p *CTEDefinition) ExplainID(_ ...bool) fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
 	})
@@ -2996,7 +2989,7 @@ func (*PhysicalCTEStorage) ExplainInfo() string {
 }
 
 // ExplainID overrides the ExplainID.
-func (p *PhysicalCTEStorage) ExplainID() fmt.Stringer {
+func (p *PhysicalCTEStorage) ExplainID(_ ...bool) fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
 	})
@@ -3055,7 +3048,7 @@ func (p *PhysicalSequence) MemoryUsage() (sum int64) {
 }
 
 // ExplainID overrides the ExplainID.
-func (p *PhysicalSequence) ExplainID() fmt.Stringer {
+func (p *PhysicalSequence) ExplainID(_ ...bool) fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		if p.SCtx() != nil && p.SCtx().GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.TP()

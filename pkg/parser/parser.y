@@ -5579,6 +5579,25 @@ ExplainStmt:
 			Explore:   true,
 		}
 	}
+|	ExplainSym "EXPLORE" "ANALYZE" SelectStmt
+	{
+		startOffset := parser.startOffset(&yyS[yypt])
+		stmt := $4
+		stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		$$ = &ast.ExplainStmt{
+			Stmt:    stmt,
+			Explore: true,
+			Analyze: true,
+		}
+	}
+|	ExplainSym "EXPLORE" "ANALYZE" stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			SQLDigest: $4,
+			Explore:   true,
+			Analyze:   true,
+		}
+	}
 |	ExplainSym TableName
 	{
 		$$ = &ast.ExplainStmt{
@@ -5603,6 +5622,13 @@ ExplainStmt:
 		$$ = &ast.ExplainStmt{
 			Stmt:   $2,
 			Format: "row",
+		}
+	}
+|	ExplainSym stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $2,
+			Format:     "row",
 		}
 	}
 |	ExplainSym "FOR" "CONNECTION" NUM
@@ -5640,6 +5666,20 @@ ExplainStmt:
 			Format: $4,
 		}
 	}
+|	ExplainSym "FORMAT" "=" ExplainFormatType stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $5,
+			Format:     $4,
+		}
+	}
+|	ExplainSym "FORMAT" "=" stringLit stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $5,
+			Format:     $4,
+		}
+	}
 |	ExplainSym "ANALYZE" ExplainableStmt
 	{
 		$$ = &ast.ExplainStmt{
@@ -5648,12 +5688,36 @@ ExplainStmt:
 			Analyze: true,
 		}
 	}
+|	ExplainSym "ANALYZE" stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $3,
+			Format:     "row",
+			Analyze:    true,
+		}
+	}
 |	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType ExplainableStmt
 	{
 		$$ = &ast.ExplainStmt{
 			Stmt:    $6,
 			Format:  $5,
 			Analyze: true,
+		}
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $6,
+			Format:     $5,
+			Analyze:    true,
+		}
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" stringLit stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $6,
+			Format:     $5,
+			Analyze:    true,
 		}
 	}
 |	ExplainSym "ANALYZE" "FORMAT" "=" stringLit ExplainableStmt

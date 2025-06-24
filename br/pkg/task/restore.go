@@ -270,7 +270,11 @@ type RestoreConfig struct {
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
 	StartTS uint64 `json:"start-ts" toml:"start-ts"`
 	// if not specified system will restore to the max TS available
-	RestoreTS       uint64                      `json:"restore-ts" toml:"restore-ts"`
+	RestoreTS uint64 `json:"restore-ts" toml:"restore-ts"`
+	// whether RestoreTS was explicitly specified by user vs auto-detected
+	IsRestoredTSUserSpecified bool `json:"-" toml:"-"`
+	// rewriteTS is the rewritten timestamp of meta kvs.
+	RewriteTS       uint64                      `json:"-" toml:"-"`
 	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
 	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
@@ -389,6 +393,9 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	if cfg.RestoreTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
+
+	// check if RestoreTS was explicitly specified by user
+	cfg.IsRestoredTSUserSpecified = flags.Changed(FlagStreamRestoreTS)
 
 	if cfg.FullBackupStorage, err = flags.GetString(FlagStreamFullBackupStorage); err != nil {
 		return errors.Trace(err)
@@ -896,7 +903,11 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		for tableId := range cfg.PiTRTableTracker.PartitionIds {
 			tableIds = append(tableIds, tableId)
 		}
-		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, cfg.StartTS, tableIds)
+		dbIds := make([]int64, 0, len(cfg.PiTRTableTracker.DBIds))
+		for dbId := range cfg.PiTRTableTracker.DBIds {
+			dbIds = append(dbIds, dbId)
+		}
+		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, cfg.StartTS, cfg.RewriteTS, tableIds, dbIds)
 		if err != nil {
 			restoreErr = err
 			return
@@ -950,7 +961,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// unregister restore task
 	failpoint.Inject("fail-at-end-of-restore", func() {
-		log.Info("failpoint fail-at-end-of-restore injected, failing at the end of restore task")
+		log.Info("failpoint fail-at-end-of-restore injected, failing at the end of restore task",
+			zap.Error(restoreErr))
 		restoreErr = errors.New("failpoint: fail-at-end-of-restore")
 	})
 
@@ -1268,13 +1280,14 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 	// only run when this full restore is part of the PiTR
 	if isPiTR {
+		snapshotDbMap := client.GetDatabaseMap()
 		snapshotTableMap := client.GetTableMap()
 		// adjust tables to restore in the snapshot restore phase since it will later be renamed during
 		// log restore and will fall into or out of the filter range.
 		err = AdjustTablesToRestoreAndCreateTableTracker(
 			cfg.logTableHistoryManager,
 			cfg.RestoreConfig,
-			client.GetDatabaseMap(),
+			snapshotDbMap,
 			snapshotTableMap,
 			client.GetPartitionMap(),
 			tableMap,
@@ -1288,16 +1301,16 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			zap.Int("tables", len(tableMap)),
 			zap.Int("db", len(dbMap)))
 
-		tableNameByTableID := func(tableID int64) string {
+		tableNameByTableID := func(tableId int64) string {
 			dbName, tableName, dbID := "", "", int64(0)
 			history := cfg.logTableHistoryManager.GetTableHistory()
-			if locations, exists := history[tableID]; exists {
+			if locations, exists := history[tableId]; exists {
 				if name, exists := cfg.logTableHistoryManager.GetDBNameByID(locations[1].DbID); exists {
 					dbName = name
 				}
 				dbID = locations[1].DbID
 				tableName = locations[1].TableName
-			} else if tableMeta, exists := tableMap[tableID]; exists && tableMeta != nil && tableMeta.Info != nil {
+			} else if tableMeta, exists := tableMap[tableId]; exists && tableMeta != nil && tableMeta.Info != nil {
 				if tableMeta.DB != nil && len(dbName) == 0 {
 					dbName = tableMeta.DB.Name.O
 				}
@@ -1310,7 +1323,16 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			}
 			return fmt.Sprintf("%s.%s", dbName, tableName)
 		}
-		checkTableIDLost := func(tableId int64) bool {
+		dbNameByDbId := func(dbId int64) string {
+			if dbName, ok := cfg.logTableHistoryManager.GetDBNameByID(dbId); ok {
+				return dbName
+			}
+			if dbInfo, ok := dbMap[dbId]; ok && dbInfo != nil && dbInfo.Info != nil {
+				return dbInfo.Info.Name.O
+			}
+			return ""
+		}
+		checkTableIdLost := func(tableId int64) bool {
 			// check whether exists in log backup
 			if _, exists := cfg.logTableHistoryManager.GetTableHistory()[tableId]; exists {
 				return false
@@ -1321,10 +1343,24 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			}
 			return true
 		}
+		checkDbIdLost := func(dbId int64) bool {
+			// check whether exists in log backup
+			if _, exists := cfg.logTableHistoryManager.GetDBNameByID(dbId); exists {
+				return false
+			}
+			// check whether exists in snapshot backup
+			if _, exists := snapshotDbMap[dbId]; exists {
+				return false
+			}
+			return true
+		}
 		if err := restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 			ctx, cfg.logRestoreStorage, cfg.PiTRTableTracker, backupMeta.GetEndVersion(), cfg.piTRTaskInfo.RestoreTS,
-			tableNameByTableID, checkTableIDLost,
+			tableNameByTableID, dbNameByDbId, checkTableIdLost, checkDbIdLost, cfg.tableMappingManager.CleanError,
 		); err != nil {
+			return errors.Trace(err)
+		}
+		if err := cfg.tableMappingManager.ReportIfError(); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1365,7 +1401,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
-	if userTableIDNotReusedWhenNeedCheck, err := client.AllocTableIDs(ctx, tables, loadStatsPhysical && !cpEnabledAndExists, reusePreallocIDs); err != nil {
+	if userTableIDNotReusedWhenNeedCheck, err := client.AllocTableIDs(ctx, tables, loadStatsPhysical, loadSysTablePhysical, reusePreallocIDs); err != nil {
 		return errors.Trace(err)
 	} else if userTableIDNotReusedWhenNeedCheck {
 		log.Warn("Cannot load stats physically because not all table ids are reused. Fallback to logically load stats.")
@@ -1373,6 +1409,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		tables = fallbackStatsTables(tables)
 		loadStatsPhysical = false
 	}
+	tables = client.CleanTablesIfTemporarySystemTablesRenamed(loadStatsPhysical, loadSysTablePhysical, tables)
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
 	var restoreSchedulersFunc pdutil.UndoFunc
@@ -1385,8 +1422,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if isPiTR && cfg.tableMappingManager != nil {
+			cfg.tableMappingManager.SetPreallocatedRange(preAllocRange[0], preAllocRange[1])
+		}
 		keyRange := rewriteKeyRanges(preAllocRange)
-		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
+		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(
+			ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -1395,7 +1436,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// need to know whether restore has been completed so can restore schedulers
 	canRestoreSchedulers := false
 	defer func() {
-		cancel()
 		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
 		if cfg.UseCheckpoint && !canRestoreSchedulers {
 			log.Info("skip removing pd scheduler for next retry")
@@ -1527,13 +1567,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	createdTables, err := createDBsAndTables(ctx, client, cfg, mgr, dbs, tables)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	// TODO: after ID preallocation supports checkpoint, we can remove this check
-	if loadStatsPhysical && cpEnabledAndExists {
-		if err := checkAllUserTableIDsReused(createdTables); err != nil {
-			log.Warn("Cannot load stats physically because not all table ids are reused. Fallback to logically load stats.", zap.Error(err))
-			loadStatsPhysical = false
-		}
 	}
 
 	/* failpoint */
@@ -1842,38 +1875,6 @@ func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.
 	}
 	if !allUnique {
 		return errors.Annotate(berrors.ErrTablesAlreadyExisted, message)
-	}
-	return nil
-}
-
-func checkAllUserTableIDsReused(createdTables []*restoreutils.CreatedTable) error {
-	for _, createdTable := range createdTables {
-		if createdTable.OldTable.Info.ID != createdTable.Table.ID {
-			return errors.Errorf("cannot load stats physically because not all table ids are reused, "+
-				"upstream table ID is %d and downstream table ID is %d",
-				createdTable.OldTable.Info.ID,
-				createdTable.Table.ID,
-			)
-		}
-		if createdTable.OldTable.Info.Partition != nil && createdTable.OldTable.Info.Partition.Definitions != nil {
-			if createdTable.Table.Partition == nil || createdTable.Table.Partition.Definitions == nil {
-				return errors.Errorf("the created table has partitions but the origin table does not, "+
-					"table ID is %d", createdTable.Table.ID,
-				)
-			}
-			downstreamTableIDSet := make(map[int64]struct{})
-			for _, def := range createdTable.Table.Partition.Definitions {
-				downstreamTableIDSet[def.ID] = struct{}{}
-			}
-			for _, def := range createdTable.OldTable.Info.Partition.Definitions {
-				if _, exists := downstreamTableIDSet[def.ID]; !exists {
-					return errors.Errorf("the origin table has the partition but the created table does not, "+
-						"table ID is %d and upstream partition ID is %d",
-						createdTable.Table.ID, def.ID,
-					)
-				}
-			}
-		}
 	}
 	return nil
 }

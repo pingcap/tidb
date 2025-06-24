@@ -2023,7 +2023,6 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT IS_IPV4_MAPPED(INET6_ATON('::10.0.5.9'));`, true, "SELECT IS_IPV4_MAPPED(INET6_ATON(_UTF8MB4'::10.0.5.9'))"},
 		{`SELECT IS_IPV6('10.0.5.9');`, true, "SELECT IS_IPV6(_UTF8MB4'10.0.5.9')"},
 		{`SELECT IS_USED_LOCK(@str);`, true, "SELECT IS_USED_LOCK(@`str`)"},
-		{`SELECT MASTER_POS_WAIT(@log_name, @log_pos), MASTER_POS_WAIT(@log_name, @log_pos, @timeout), MASTER_POS_WAIT(@log_name, @log_pos, @timeout, @channel_name);`, true, "SELECT MASTER_POS_WAIT(@`log_name`, @`log_pos`),MASTER_POS_WAIT(@`log_name`, @`log_pos`, @`timeout`),MASTER_POS_WAIT(@`log_name`, @`log_pos`, @`timeout`, @`channel_name`)"},
 		{`SELECT NAME_CONST('myname', 14);`, true, "SELECT NAME_CONST(_UTF8MB4'myname', 14)"},
 		{`SELECT RELEASE_ALL_LOCKS();`, true, "SELECT RELEASE_ALL_LOCKS()"},
 		{`SELECT UUID();`, true, "SELECT UUID()"},
@@ -2045,7 +2044,6 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT IS_IPV4_MAPPED(INET6_ATON());`, true, "SELECT IS_IPV4_MAPPED(INET6_ATON())"},
 		{`SELECT IS_IPV6()`, true, "SELECT IS_IPV6()"},
 		{`SELECT IS_USED_LOCK();`, true, "SELECT IS_USED_LOCK()"},
-		{`SELECT MASTER_POS_WAIT();`, true, "SELECT MASTER_POS_WAIT()"},
 		{`SELECT NAME_CONST();`, true, "SELECT NAME_CONST()"},
 		{`SELECT RELEASE_ALL_LOCKS(1);`, true, "SELECT RELEASE_ALL_LOCKS(1)"},
 		{`SELECT UUID(1);`, true, "SELECT UUID(1)"},
@@ -5711,6 +5709,10 @@ func TestExplain(t *testing.T) {
 		{"EXPLAIN FORMAT = TIDB_JSON FOR CONNECTION 1", true, "EXPLAIN FORMAT = 'TIDB_JSON' FOR CONNECTION 1"},
 		{"EXPLAIN FORMAT = tidb_json SELECT 1", true, "EXPLAIN FORMAT = 'tidb_json' SELECT 1"},
 		{"EXPLAIN ANALYZE FORMAT = tidb_json SELECT 1", true, "EXPLAIN ANALYZE FORMAT = 'tidb_json' SELECT 1"},
+		{"EXPLAIN 'sqldigest'", true, "EXPLAIN FORMAT = 'row' 'sqldigest'"},
+		{"EXPLAIN ANALYZE 'sqldigest'", true, "EXPLAIN ANALYZE 'sqldigest'"},
+		{"EXPLAIN format='json' 'sqldigest'", true, "EXPLAIN FORMAT = 'json' 'sqldigest'"},
+		{"EXPLAIN ANALYZE format='json' 'sqldigest'", true, "EXPLAIN ANALYZE FORMAT = 'json' 'sqldigest'"},
 	}
 	RunTest(t, table, false)
 }

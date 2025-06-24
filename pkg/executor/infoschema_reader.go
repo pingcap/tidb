@@ -2062,7 +2062,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 	}
 	requestByTableRange := false
 	var allRegionsInfo *pd.RegionsInfo
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	if e.extractor != nil {
 		extractor, ok := e.extractor.(*plannercore.TiKVRegionStatusExtractor)
 		if ok && len(extractor.GetTablesID()) > 0 {

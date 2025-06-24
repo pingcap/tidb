@@ -351,8 +351,8 @@ func (c *Context) GetInfoSchema() infoschema.MetaOnlyInfoSchema {
 // MockInfoschema only serves for test.
 var MockInfoschema func(tbList []*model.TableInfo) infoschema.MetaOnlyInfoSchema
 
-// GetDomainInfoSchema returns the latest information schema in domain
-func (c *Context) GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema {
+// GetLatestInfoSchema returns the latest information schema in domain
+func (c *Context) GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema {
 	if c.is == nil {
 		c.is = MockInfoschema(nil)
 	}
@@ -682,7 +682,6 @@ func newContext() *Context {
 	vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	vars.EnablePaging = vardef.DefTiDBEnablePaging
 	vars.MinPagingSize = vardef.DefMinPagingSize
-	vars.CostModelVersion = vardef.DefTiDBCostModelVer
 	vars.EnableChunkRPC = true
 	vars.DivPrecisionIncrement = vardef.DefDivPrecisionIncrement
 	if err := sctx.GetSessionVars().SetSystemVar(vardef.MaxAllowedPacket, "67108864"); err != nil {

@@ -337,7 +337,7 @@ func (p *BaseLogicalPlan) RollBackTaskMap(ts uint64) {
 // For TiFlash, it will check whether the operator is supported, but note that the check
 // might be inaccurate.
 func (p *BaseLogicalPlan) CanPushToCop(storeTp kv.StoreType) bool {
-	return CanPushToCopImpl(p, storeTp, false)
+	return CanPushToCopImpl(p, storeTp)
 }
 
 // ExtractFD implements LogicalPlan.<22nd> interface.
