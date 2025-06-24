@@ -3968,6 +3968,9 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
 	}
 
+	// INSERT statement requires `INSERT` column-level privilege.
+	// If a column list is given following the table, these columns' privilge is required.
+	// Otherwise, the privilege of all visiable columns in the table is required.
 	user := b.ctx.GetSessionVars().User
 	checkColumnPriv := len(insert.Columns) != 0
 	var authErr error
@@ -4451,6 +4454,9 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	user := b.ctx.GetSessionVars().User
 	var insertErr, deleteErr error
 	userName, hostName := auth.GetUserAndHostName(user)
+	// LOAD DATA statement requires `INSERT` column-level privilege.
+	// If a column list is given following the table, these columns' privilge is required.
+	// Otherwise, the privilege of all visiable columns in the table is required.
 	if len(ld.Columns) == 0 {
 		insertErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", userName, hostName, p.Table.Name.O)
 		for _, col := range tableInPlan.VisibleCols() {
