@@ -1481,13 +1481,12 @@ func restoreStream(
 	// because the process of PITR is concurrent and kv events isn't sorted by tso.
 	var restoreGCFunc RestoreGCFunc
 	var oldGCRatio string
-	cfg.RestoreRegistry.OperationAfterWaitIDs(ctx, func() (err error) {
+	if err := cfg.RestoreRegistry.OperationAfterWaitIDs(ctx, func() (err error) {
 		restoreGCFunc, oldGCRatio, err = DisableGC(g, mgr.GetStorage())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		return nil
-	})
+		return errors.Trace(err)
+	}); err != nil {
+		return errors.Trace(err)
+	}
 	gcDisabledRestorable := false
 	defer func() {
 		// don't restore the gc-ratio-threshold if checkpoint mode is used and restored is not finished
@@ -1503,7 +1502,7 @@ func restoreStream(
 			oldGCRatio = utils.DefaultGcRatioVal
 		}
 		log.Info("start to restore gc", zap.String("ratio", oldGCRatio))
-		err = cfg.RestoreRegistry.GlobalOperationAfterSetDroppingStatus(ctx, cfg.RestoreID, func() error {
+		err = cfg.RestoreRegistry.GlobalOperationAfterSetResettingStatus(ctx, cfg.RestoreID, func() error {
 			if err := restoreGCFunc(oldGCRatio); err != nil {
 				log.Error("failed to restore gc", zap.Error(err))
 			}
