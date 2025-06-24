@@ -868,8 +868,10 @@ func (r *Registry) OperationAfterWaitIDs(ctx context.Context, fn func() error) e
 	return fn()
 }
 
-// GlobalOperationAfterSetResettingStatus do the global operation if there is no running task and set resetting status for the task
-func (r *Registry) GlobalOperationAfterSetResettingStatus(ctx context.Context, restoreID uint64, fn func() error) error {
+// GlobalOperationAfterSetResettingStatus do the global operation if there is no running task and set resetting
+// status for the task
+func (r *Registry) GlobalOperationAfterSetResettingStatus(ctx context.Context,
+	restoreID uint64, fn func() error) error {
 	updateSQL := fmt.Sprintf(updateStatusSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 	if err := r.se.ExecuteInternal(ctx, updateSQL, TaskStatusResetting, restoreID, TaskStatusRunning); err != nil {
 		return errors.Annotatef(err, "failed to conditionally update task status from %s to %s",
