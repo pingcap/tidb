@@ -1410,8 +1410,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if isPiTR && cfg.tableMappingManager != nil {
+			cfg.tableMappingManager.SetPreallocatedRange(preAllocRange[0], preAllocRange[1])
+		}
 		keyRange := rewriteKeyRanges(preAllocRange)
-		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
+		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(
+			ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -1420,7 +1424,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// need to know whether restore has been completed so can restore schedulers
 	canRestoreSchedulers := false
 	defer func() {
-		cancel()
 		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
 		if cfg.UseCheckpoint && !canRestoreSchedulers {
 			log.Info("skip removing pd scheduler for next retry")

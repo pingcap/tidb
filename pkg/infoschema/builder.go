@@ -162,7 +162,7 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 		}
 
 		// Schema exists in kv but not in infoschema, create it to infoschema
-		if _, ok := b.SchemaByID(schemaID); !ok {
+		if _, ok := b.schemaByID(schemaID); !ok {
 			schemaDiff := &model.SchemaDiff{
 				Version:     diff.Version,
 				Type:        model.ActionCreateSchema,
@@ -174,7 +174,7 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 				return nil, errors.Trace(err)
 			}
 		} else {
-			currentSchema, _ := b.SchemaByID(schemaID)
+			currentSchema, _ := b.schemaByID(schemaID)
 
 			needsCharsetUpdate := currentSchema.Charset != dbInfo.Charset || currentSchema.Collate != dbInfo.Collate
 			needsPlacementUpdate := !equalPlacementPolicy(currentSchema.PlacementPolicyRef, dbInfo.PlacementPolicyRef)
@@ -210,7 +210,7 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 
 	// Table operation - check if database exists in infoschema first
 	// if not just return, since infoschema is consistent, if schema is gone then all tables must have gone.
-	if _, ok := b.SchemaByID(schemaID); !ok {
+	if _, ok := b.schemaByID(schemaID); !ok {
 		return nil, nil
 	}
 
@@ -1187,4 +1187,17 @@ func tableBucketIdx(tableID int64) int {
 
 func tableIDIsValid(tableID int64) bool {
 	return tableID > 0
+}
+
+// schemaByID returns schema by ID, respecting the enableV2 flag
+func (b *Builder) schemaByID(id int64) (*model.DBInfo, bool) {
+	var dbInfo *model.DBInfo
+	var ok bool
+
+	if b.enableV2 {
+		dbInfo, ok = b.infoschemaV2.SchemaByID(id)
+	} else {
+		dbInfo, ok = b.infoSchema.SchemaByID(id)
+	}
+	return dbInfo, ok
 }
