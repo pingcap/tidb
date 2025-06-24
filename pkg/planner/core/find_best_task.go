@@ -417,7 +417,6 @@ func compareTaskCost(curTask, bestTask base.Task, op *optimizetrace.PhysicalOpti
 }
 
 // getTaskPlanCost returns the cost of this task.
-// The new cost interface will be used if EnableNewCostInterface is true.
 // The second returned value indicates whether this task is valid.
 func getTaskPlanCost(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float64, bool, error) {
 	if t.Invalid() {
