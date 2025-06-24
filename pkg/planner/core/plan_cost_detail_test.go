@@ -143,8 +143,6 @@ func optimize(t *testing.T, sql string, p *parser.Parser, ctx sessionctx.Context
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
 	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
-	sctx.GetSessionVars().EnableNewCostInterface = true
-	sctx.GetSessionVars().CostModelVersion = 1
 	builder, _ := plannercore.NewPlanBuilder().Init(sctx, dom.InfoSchema(), hint.NewQBHintHandler(nil))
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 	plan, err := builder.Build(context.TODO(), nodeW)
