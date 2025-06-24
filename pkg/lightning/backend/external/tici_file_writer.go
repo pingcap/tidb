@@ -17,7 +17,6 @@ package external
 import (
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"time"
 
 	"github.com/docker/go-units"
@@ -27,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/intest"
 
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"go.uber.org/zap"
 )
 
@@ -130,44 +128,34 @@ func (w *TICIFileWriter) Close(ctx context.Context) error {
 // [8 bytes] Length of IndexInfo (big endian uint64)
 // [M bytes] IndexInfo (serialized)
 // [8 bytes] CommitTS (big endian uint64)
-func (w *TICIFileWriter) WriteHeader(ctx context.Context, tbl *model.TableInfo, idx *model.IndexInfo, commitTS uint64) error {
-	// Check if the header has already been written.
+func (w *TICIFileWriter) WriteHeader(ctx context.Context, tblInBytes []byte, idxInBytes []byte, commitTS uint64) error {
 	if w.headerWritten {
 		return errors.New("TICIFileWriter header already written")
 	}
-
-	var (
-		tblBytes []byte
-		idxBytes []byte
-		err      error
-	)
-	// Use json.Marshal to serialize TableInfo and IndexInfo.
-	tblBytes, err = json.Marshal(tbl)
-	if err != nil {
-		return errors.Annotate(err, "marshal TableInfo (json)")
-	}
-	idxBytes, err = json.Marshal(idx)
-	if err != nil {
-		return errors.Annotate(err, "marshal IndexInfo (json)")
+	if w.dataWriter == nil {
+		return errors.New("TICIFileWriter dataWriter is nil")
 	}
 
-	headerLen := 8 + len(tblBytes) + 8 + len(idxBytes) + 8
+	headerLen := 8 + len(tblInBytes) + 8 + len(idxInBytes) + 8
 	header := make([]byte, headerLen)
 	off := 0
-	binary.BigEndian.PutUint64(header[off:], uint64(len(tblBytes)))
+
+	binary.BigEndian.PutUint64(header[off:], uint64(len(tblInBytes)))
 	off += 8
-	copy(header[off:], tblBytes)
-	off += len(tblBytes)
-	binary.BigEndian.PutUint64(header[off:], uint64(len(idxBytes)))
+	copy(header[off:], tblInBytes)
+	off += len(tblInBytes)
+
+	binary.BigEndian.PutUint64(header[off:], uint64(len(idxInBytes)))
 	off += 8
-	copy(header[off:], idxBytes)
-	off += len(idxBytes)
+	copy(header[off:], idxInBytes)
+	off += len(idxInBytes)
+
 	binary.BigEndian.PutUint64(header[off:], commitTS)
 	off += 8
 
-	_, err = w.dataWriter.Write(ctx, header)
+	_, err := w.dataWriter.Write(ctx, header)
 	if err != nil {
-		return errors.Annotate(err, "write header")
+		return errors.New("write header: " + err.Error())
 	}
 	w.headerWritten = true
 	return nil

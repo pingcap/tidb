@@ -2,6 +2,7 @@ package local
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -266,7 +267,22 @@ func (w *TiCIDataWriter) WriteHeader(ctx context.Context, commitTS uint64) error
 	if w.ticiFileWriter == nil {
 		return errors.New("TICIFileWriter is not initialized")
 	}
-	return w.ticiFileWriter.WriteHeader(ctx, w.tblInfo, w.idxInfo, commitTS)
+
+	var (
+		tblBytes []byte
+		idxBytes []byte
+		err      error
+	)
+	// Use json.Marshal to serialize TableInfo and IndexInfo.
+	tblBytes, err = json.Marshal(w.tblInfo)
+	if err != nil {
+		return errors.Annotate(err, "marshal TableInfo (json)")
+	}
+	idxBytes, err = json.Marshal(w.idxInfo)
+	if err != nil {
+		return errors.Annotate(err, "marshal IndexInfo (json)")
+	}
+	return w.ticiFileWriter.WriteHeader(ctx, tblBytes, idxBytes, commitTS)
 }
 
 // WritePairs writes a batch of KV Pairs to the S3 file using the underlying TICIFileWriter.
