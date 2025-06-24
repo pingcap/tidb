@@ -497,10 +497,10 @@ func TestBitColumnPushDown(t *testing.T) {
 		{"  └─Selection_21(Probe)", "root", "not(isnull(Column#7))"},
 		{"    └─StreamAgg_23", "root", "funcs:min(test.t2.b)->Column#7"},
 		{"      └─TopN_24", "root", "test.t2.b, offset:0, count:1"},
-		{"        └─TableReader_32", "root", "data:TopN_31"},
-		{"          └─TopN_31", "cop[tikv]", "test.t2.b, offset:0, count:1"},
-		{"            └─Selection_30", "cop[tikv]", "lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))"},
-		{"              └─TableFullScan_29", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"        └─TableReader_34", "root", "data:TopN_33"},
+		{"          └─TopN_33", "cop[tikv]", "test.t2.b, offset:0, count:1"},
+		{"            └─Selection_32", "cop[tikv]", "lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))"},
+		{"              └─TableFullScan_31", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 	tk.MustExec("insert t1 values ('A', 1);")
