@@ -347,7 +347,7 @@ func TestError(t *testing.T) {
 }
 
 func TestLeaseTimeout(t *testing.T) {
-	defer logutil.OverrideLevel(zapcore.DebugLevel)()
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	req := require.New(t)
 	pdc := fakeCluster(t, 3, dummyRegions(100)...)
 	ms := newTestEnv(pdc)
@@ -375,7 +375,7 @@ func TestLeaseTimeout(t *testing.T) {
 }
 
 func TestLeaseTimeoutWhileTakingSnapshot(t *testing.T) {
-	defer logutil.OverrideLevel(zapcore.DebugLevel)()
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	req := require.New(t)
 	pdc := fakeCluster(t, 3, dummyRegions(100)...)
 	ms := newTestEnv(pdc)
@@ -412,7 +412,7 @@ func TestLeaseTimeoutWhileTakingSnapshot(t *testing.T) {
 }
 
 func TestRetryEnv(t *testing.T) {
-	defer logutil.OverrideLevel(zapcore.DebugLevel)()
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	req := require.New(t)
 	pdc := fakeCluster(t, 3, dummyRegions(100)...)
 	tms := newTestEnv(pdc)
@@ -453,7 +453,7 @@ func (c *counterClient) Recv() (*brpb.PrepareSnapshotBackupResponse, error) {
 }
 
 func TestSplitEnv(t *testing.T) {
-	defer logutil.OverrideLevel(zapcore.DebugLevel)()
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	cc := SplitRequestClient{PrepareClient: &counterClient{}, MaxRequestSize: 1024}
 	reset := func() {
 		cc.PrepareClient.(*counterClient).send = 0

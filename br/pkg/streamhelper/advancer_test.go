@@ -74,7 +74,7 @@ func TestTick(t *testing.T) {
 }
 
 func TestWithFailure(t *testing.T) {
-	defer logutil.OverrideLevel(zapcore.DebugLevel)()
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	defer func() {
 		fmt.Println(c)
@@ -119,7 +119,7 @@ func shouldFinishInTime(t *testing.T, d time.Duration, name string, f func()) {
 }
 
 func TestCollectorFailure(t *testing.T) {
-	defer logutil.OverrideLevel(zapcore.DebugLevel)()
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	c.onGetClient = func(u uint64) error {
 		return status.Error(codes.DataLoss,
@@ -166,7 +166,7 @@ func oneStoreFailure() func(uint64) error {
 }
 
 func TestOneStoreFailure(t *testing.T) {
-	defer logutil.OverrideLevel(zapcore.DebugLevel)()
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	ctx := context.Background()
 	splitKeys := make([]string, 0, 1000)
@@ -219,7 +219,7 @@ func TestGCServiceSafePoint(t *testing.T) {
 }
 
 func TestTaskRanges(t *testing.T) {
-	defer logutil.OverrideLevel(zapcore.DebugLevel)()
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	defer fmt.Println(c)
 	ctx := context.Background()
@@ -238,7 +238,7 @@ func TestTaskRanges(t *testing.T) {
 }
 
 func TestTaskRangesWithSplit(t *testing.T) {
-	defer logutil.OverrideLevel(zapcore.DebugLevel)()
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	defer fmt.Println(c)
 	ctx := context.Background()
@@ -303,7 +303,7 @@ func TestClearCache(t *testing.T) {
 }
 
 func TestBlocked(t *testing.T) {
-	defer logutil.OverrideLevel(zapcore.DebugLevel)()
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	ctx := context.Background()
 	req := require.New(t)
@@ -458,7 +458,7 @@ func TestOwnerDropped(t *testing.T) {
 
 // TestRemoveTaskAndFlush tests the bug has been described in #50839.
 func TestRemoveTaskAndFlush(t *testing.T) {
-	defer logutil.OverrideLevel(zapcore.DebugLevel)()
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	ctx := context.Background()
 	c := createFakeCluster(t, 4, true)
 	installSubscribeSupport(c)

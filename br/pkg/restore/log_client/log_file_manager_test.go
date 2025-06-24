@@ -165,7 +165,7 @@ func (b *mockMetaBuilder) b(_ bool) (*storage.LocalStorage, string) {
 }
 
 func testReadMetaBetweenTSWithVersion(t *testing.T, m metaMaker) {
-	defer logutil.OverrideLevel(zapcore.DebugLevel)()
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	type Case struct {
 		items           []*backuppb.Metadata
 		startTS         uint64

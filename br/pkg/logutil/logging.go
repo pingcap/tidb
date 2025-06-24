@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"testing"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -383,11 +384,11 @@ func MarshalHistogram(m prometheus.Histogram) zapcore.ObjectMarshaler {
 
 // OverrideLevel temporary sets level to the global logger.
 //
-// Usage: `defer OverrideLevel(zapcore.LevelXxx)()`
-//
-// Don't use this in parallel, or the log level may not be reset correctly.
-func OverrideLevel(lvl zapcore.Level) func() {
+// Don't use this in parallel test cases.
+func OverrideLevelForTest(t *testing.T, lvl zapcore.Level) {
+	t.Helper()
+
 	oldLvl := log.GetLevel()
+	t.Cleanup(func() { log.SetLevel(oldLvl) })
 	log.SetLevel(lvl)
-	return func() { log.SetLevel(oldLvl) }
 }

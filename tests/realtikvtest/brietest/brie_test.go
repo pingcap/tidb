@@ -46,7 +46,7 @@ func TestShowBackupQuery(t *testing.T) {
 	tmp := makeTempDirForBackup(t)
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
 
-	defer logutil.OverrideLevel(zapcore.ErrorLevel)()
+	logutil.OverrideLevelForTest(t, zapcore.ErrorLevel)
 	tk.MustExec("use test;")
 	tk.MustExec("create table foo(pk int primary key auto_increment, v varchar(255));")
 	tk.MustExec("insert into foo(v) values " + strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",") + ";")
