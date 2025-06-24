@@ -1,4 +1,4 @@
-// Copyright 2019-present PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -368,7 +368,7 @@ func TestSafeCopy(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 
 			// Check that it's a different slice (not the same memory)
-			if tt.input != nil && len(tt.input) > 0 {
+			if len(tt.input) > 0 {
 				// Modify the original to ensure copy is independent
 				original := make([]byte, len(tt.input))
 				copy(original, tt.input)
