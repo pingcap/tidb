@@ -2102,7 +2102,7 @@ func (a *ExecStmt) GetPlanDigest() string {
 
 // GetBindingSQLAndDigest implements StmtExecLazyInfo interface, providing the
 // normalized SQL and digest, with additional rules specific to bindings.
-func (a *ExecStmt) GetBindingSQLAndDigest() (string, string) {
+func (a *ExecStmt) GetBindingSQLAndDigest() (s string, d string) {
 	normalizedSQL, digest := parser.NormalizeDigestForBinding(bindinfo.RestoreDBForBinding(a.StmtNode, a.Ctx.GetSessionVars().CurrentDB))
 	return normalizedSQL, digest.String()
 }
