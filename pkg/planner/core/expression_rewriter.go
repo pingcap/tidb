@@ -252,7 +252,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	if len(b.rewriterPool) < b.rewriterCounter {
 		rewriter = &expressionRewriter{
 			sctx: b.ctx.GetExprCtx(), ctx: ctx,
-			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, rollExpand: b.currentBlockExpand, columnVisited: make([]*ast.ColumnName, 0, 8)},
+			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, rollExpand: b.currentBlockExpand, colNamesForLazilyPrivilegeCheck: make([]*ast.ColumnName, 0, 8)},
 		}
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 		return
@@ -271,7 +271,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	rewriter.planCtx.aggrMap = nil
 	rewriter.planCtx.insertPlan = nil
 	rewriter.planCtx.rollExpand = b.currentBlockExpand
-	rewriter.planCtx.columnVisited = make([]*ast.ColumnName, 0, 8)
+	rewriter.planCtx.colNamesForLazilyPrivilegeCheck = make([]*ast.ColumnName, 0, 8)
 	return
 }
 
@@ -300,8 +300,8 @@ func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScal
 		}()
 	}
 	defer func() {
-		if planCtx != nil && len(planCtx.columnVisited) > 0 && planCtx.builder.checkColPriv != noCheckOption {
-			planCtx.builder.appendColumnsToVisitedInfo(planCtx.columnVisited)
+		if planCtx != nil && len(planCtx.colNamesForLazilyPrivilegeCheck) > 0 && planCtx.builder.checkColPriv != noCheckOption {
+			planCtx.builder.appendColNamesToVisitInfo(planCtx.colNamesForLazilyPrivilegeCheck)
 		}
 	}()
 	exprNode.Accept(rewriter)
@@ -340,8 +340,9 @@ type exprRewriterPlanCtx struct {
 
 	rollExpand *logicalop.LogicalExpand
 
-	// columnVisited records the visited columns, which is used for checking columns privilege
-	columnVisited []*ast.ColumnName
+	// colNamesForLazilyPrivilegeCheck pre-collects the visited columns during rewriting, These columns
+	// will be added to PlanBuilder.visitInfo, and be later checked in CheckPrivilege after building plan.
+	colNamesForLazilyPrivilegeCheck []*ast.ColumnName
 }
 
 type expressionRewriter struct {
@@ -2489,10 +2490,10 @@ func (er *expressionRewriter) clause() clauseCode {
 }
 
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
-	var columnVisited *types.FieldName
+	var fieldName4PrivilegeCheck *types.FieldName
 	defer func() {
-		if columnVisited != nil && er.planCtx != nil {
-			er.appendColumnVisited(columnVisited)
+		if fieldName4PrivilegeCheck != nil && er.planCtx != nil {
+			er.precollectColNames(fieldName4PrivilegeCheck)
 		}
 	}()
 	idx, err := expression.FindFieldName(er.names, v)
@@ -2507,7 +2508,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 		er.ctxStackAppend(column, er.names[idx])
-		columnVisited = er.names[idx]
+		fieldName4PrivilegeCheck = er.names[idx]
 		return
 	} else if er.planCtx == nil && er.sourceTable != nil &&
 		(v.Table.L == "" || er.sourceTable.Name.L == v.Table.L) {
@@ -2533,7 +2534,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		return
 	} else if col != nil {
 		er.ctxStackAppend(col, name)
-		columnVisited = name
+		fieldName4PrivilegeCheck = name
 		return
 	}
 	for i := len(planCtx.builder.outerSchemas) - 1; i >= 0; i-- {
@@ -2542,7 +2543,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		if idx >= 0 {
 			column := outerSchema.Columns[idx]
 			er.ctxStackAppend(&expression.CorrelatedColumn{Column: *column, Data: new(types.Datum)}, outerName[idx])
-			columnVisited = outerName[idx]
+			fieldName4PrivilegeCheck = outerName[idx]
 			return
 		}
 		if err != nil {
@@ -2696,7 +2697,7 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 	return strings.ToLower(x) == ast.CurrentTimestamp
 }
 
-func (b *PlanBuilder) appendColumnsToVisitedInfo(columnVisited []*ast.ColumnName) {
+func (b *PlanBuilder) appendColNamesToVisitInfo(columnVisited []*ast.ColumnName) {
 	user, host := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
 	views := b.ctx.GetSessionVars().StmtCtx.SavedViews
 	switch {
@@ -2734,16 +2735,16 @@ func (b *PlanBuilder) appendColumnsToVisitedInfo(columnVisited []*ast.ColumnName
 	}
 }
 
-func (er *expressionRewriter) appendColumnVisited(columnVisited *types.FieldName) {
+func (er *expressionRewriter) precollectColNames(fieldName *types.FieldName) {
 	colName := &ast.ColumnName{
-		Name:   columnVisited.OrigColName,
-		Table:  columnVisited.OrigTblName,
-		Schema: columnVisited.DBName,
+		Name:   fieldName.OrigColName,
+		Table:  fieldName.OrigTblName,
+		Schema: fieldName.DBName,
 	}
 	b := er.planCtx.builder
-	if b != nil && b.is != nil && infoschema.TableIsView(b.is, columnVisited.DBName, columnVisited.TblName) {
-		colName.Name = columnVisited.ColName
-		colName.Table = columnVisited.TblName
+	if b != nil && b.is != nil && infoschema.TableIsView(b.is, fieldName.DBName, fieldName.TblName) {
+		colName.Name = fieldName.ColName
+		colName.Table = fieldName.TblName
 	}
 
 	// When checking a derived table, its colName.Schema.L would be empty, we can just skip it.
@@ -2753,6 +2754,6 @@ func (er *expressionRewriter) appendColumnVisited(columnVisited *types.FieldName
 		if _, ok := b.nameMapCTE[colName.Table.L]; ok {
 			return
 		}
-		er.planCtx.columnVisited = append(er.planCtx.columnVisited, colName)
+		er.planCtx.colNamesForLazilyPrivilegeCheck = append(er.planCtx.colNamesForLazilyPrivilegeCheck, colName)
 	}
 }
