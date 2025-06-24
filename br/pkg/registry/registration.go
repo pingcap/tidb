@@ -96,7 +96,7 @@ const (
 		FROM %s.%s
 		WHERE id = %%?`
 
-	// selectConflictingTaskSQLTemplate is the SQL template for finding tasks with same parameters except restoredTS
+	// selectConflictingTaskSQLTemplate is the SQL template for finding tasks with same parameters
 	selectConflictingTaskSQLTemplate = `
 		SELECT id, restored_ts, status, last_heartbeat_time FROM %s.%s
 		WHERE filter_hash = MD5(%%?)
@@ -104,7 +104,6 @@ const (
 		AND upstream_cluster_id = %%?
 		AND with_sys_table = %%?
 		AND cmd = %%?
-		AND restored_ts != %%?
 		ORDER BY id DESC
 		LIMIT 1`
 
@@ -621,20 +620,20 @@ func (r *Registry) resolveRestoreTS(ctx context.Context,
 
 	filterStrings := strings.Join(info.FilterStrings, FilterSeparator)
 
-	// look for tasks with same filter, startTS, cluster, sysTable, cmd but different restoredTS
+	// look for tasks with same filter, startTS, cluster, sysTable, cmd
 	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 
 	checkSQL := fmt.Sprintf(selectConflictingTaskSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 	rows, _, err := execCtx.ExecRestrictedSQL(ctx, nil, checkSQL,
-		filterStrings, info.StartTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd, info.RestoredTS)
+		filterStrings, info.StartTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
 	if err != nil {
-		return 0, errors.Annotate(err, "failed to check for existing tasks with different restoredTS")
+		return 0, errors.Annotate(err, "failed to check for existing tasks with same parameters")
 	}
 
 	// no conflicting task found, use the current restoredTS
 	if len(rows) == 0 {
-		log.Info("no existing tasks found with different restoredTS",
+		log.Info("no existing tasks found with same parameters",
 			zap.Uint64("restored_ts", info.RestoredTS))
 		return info.RestoredTS, nil
 	}
@@ -644,7 +643,7 @@ func (r *Registry) resolveRestoreTS(ctx context.Context,
 	existingStatus := rows[0].GetString(2)
 	initialHeartbeatTime := rows[0].GetTime(3).String()
 
-	log.Info("found existing task with different restoredTS",
+	log.Info("found existing task with same parameters",
 		zap.Uint64("existing_task_id", conflictingTaskID),
 		zap.Uint64("existing_restored_ts", existingRestoredTS),
 		zap.String("existing_status", existingStatus),
@@ -653,6 +652,15 @@ func (r *Registry) resolveRestoreTS(ctx context.Context,
 		zap.Uint64("start_ts", info.StartTS),
 		zap.String("last heartbeat time", initialHeartbeatTime),
 	)
+
+	// if restoredTS values are different and user explicitly specified it, use current restoredTS
+	if isRestoredTSUserSpecified && existingRestoredTS != info.RestoredTS {
+		log.Info("existing task has different restoredTS than user-specified, using current restoredTS",
+			zap.Uint64("existing_task_id", conflictingTaskID),
+			zap.Uint64("existing_restored_ts", existingRestoredTS),
+			zap.Uint64("current_restored_ts", info.RestoredTS))
+		return info.RestoredTS, nil
+	}
 
 	// if existing task is paused, reuse its restoredTS
 	if existingStatus == string(TaskStatusPaused) {

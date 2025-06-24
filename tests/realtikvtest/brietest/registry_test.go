@@ -135,7 +135,46 @@ func TestRegistryBasicOperations(t *testing.T) {
 		registry.RestoreRegistryTableName, restoreID))
 	require.Equal(t, "running", rows.Rows()[0][0])
 
-	// Test 3: Conflict detection - same task already running
+	err = r.PauseTask(ctx, restoreID)
+	require.NoError(t, err)
+
+	// Test 3: User explicitly specifies SAME restoredTS as existing paused task
+	// Should reuse the existing task (new behavior test)
+	infoWithSameUserSpecifiedTS := registry.RegistrationInfo{
+		FilterStrings:     []string{"db.table"},
+		StartTS:           100,
+		RestoredTS:        200, // Same RestoreTS as existing task
+		UpstreamClusterID: 1,
+		WithSysTable:      true,
+		Cmd:               "restore",
+	}
+
+	resumedID2, resolvedRestoreTS3, err := r.ResumeOrCreateRegistration(ctx, infoWithSameUserSpecifiedTS, true)
+	require.NoError(t, err)
+	require.Equal(t, restoreID, resumedID2, "Should reuse existing task when user specifies same restoredTS")
+	require.Equal(t, uint64(200), resolvedRestoreTS3, "Should use the same restoredTS")
+
+	// Pause task again for next test
+	err = r.PauseTask(ctx, restoreID)
+	require.NoError(t, err)
+
+	// Test 4: Auto-detected restoredTS is SAME as existing paused task
+	// Should also reuse the existing task
+	infoWithSameAutoDetectedTS := registry.RegistrationInfo{
+		FilterStrings:     []string{"db.table"},
+		StartTS:           100,
+		RestoredTS:        200, // Same RestoreTS (auto-detected)
+		UpstreamClusterID: 1,
+		WithSysTable:      true,
+		Cmd:               "restore",
+	}
+
+	resumedID3, resolvedRestoreTS4, err := r.ResumeOrCreateRegistration(ctx, infoWithSameAutoDetectedTS, false) // false = auto-detected
+	require.NoError(t, err)
+	require.Equal(t, restoreID, resumedID3, "Should reuse existing task when auto-detected restoredTS is same")
+	require.Equal(t, uint64(200), resolvedRestoreTS4, "Should use the same restoredTS")
+
+	// Test 5: Conflict detection - same task already running
 	_, _, err = r.ResumeOrCreateRegistration(ctx, info, true)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "already exists and is running")
