@@ -34,10 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/set"
-	"go.uber.org/zap"
 )
 
 // HashAggInput indicates the input of hash agg exec.
@@ -209,10 +207,10 @@ func (e *HashAggExec) Close() error {
 		e.executed.Store(false)
 		if e.memTracker != nil {
 			if e.memTracker.BytesConsumed() < 0 {
-				logutil.BgLogger().Warn("Memory tracker's counter is invalid", zap.Int64("counter", e.memTracker.BytesConsumed()))
 				e.invalidMemoryUsageForTrackingTest = true
+			} else {
+				e.memTracker.ReplaceBytesUsed(0)
 			}
-			e.memTracker.ReplaceBytesUsed(0)
 		}
 		e.parallelExecValid = false
 		if e.parallelAggSpillAction != nil {
@@ -340,11 +338,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			chk:        exec.NewFirstChunk(e.Children(0)),
 			giveBackCh: e.partialWorkers[i].inputCh,
 		}
-<<<<<<< HEAD
-		e.memTracker.Consume(input.chk.MemoryUsage())
-=======
 		memUsage += input.chk.MemoryUsage()
->>>>>>> 985609a5a21 (executor: fix goroutine leak when exceed quota in hash agg (#58078))
 		e.inputCh <- input
 	}
 
