@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package keyspace provides utilities for keyspace in TiDB.
+// Package keyspace provides utilities for keyspace for nextgen TiDB.
 //
 // Keyspace are used to isolate data and operations, allowing for multi-tenancy
 // in next generation TiDB. Each keyspace represents a logical cluster on top of
@@ -29,4 +29,7 @@
 //
 // During upgrade, we also need to follow above order, i.e. We need to upgrade
 // the SYSTEM keyspace first, then user keyspace.
+//
+// Note: serverless also use keyspace, and have the special NULL and DEFAULT
+// keyspace, while nextgen hasn't.
 package keyspace
