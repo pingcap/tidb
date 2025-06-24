@@ -1229,7 +1229,7 @@ func getSessionFactoryWithDom(store kv.Storage) func(*domain.Domain) (pools.Reso
 }
 
 func getKSSessionFactory(currKSStore kv.Storage, targetKS string) pools.Factory {
-	facWithDom := getSessionFactoryInternal(currKSStore, func(store kv.Storage, dom *domain.Domain) (*session, error) {
+	facWithDom := getSessionFactoryInternal(currKSStore, func(store kv.Storage, _ *domain.Domain) (*session, error) {
 		return createKSSession(store, targetKS)
 	})
 	return func() (pools.Resource, error) {
