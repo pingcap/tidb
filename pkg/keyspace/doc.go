@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package keyspace provides utilities for keyspace in TiDB.
+// Package keyspace provides utilities for keyspace for nextgen TiDB.
 //
-// keyspace are used to isolate data and operations, allowing for multi-tenancy
-// in next generation TiDB. each keyspace represents a logical cluster on top of
+// Keyspace are used to isolate data and operations, allowing for multi-tenancy
+// in next generation TiDB. Each keyspace represents a logical cluster on top of
 // the underlying physical cluster.
 //
-// there is a special keyspace named "SYSTEM", which is reserved for system-level
+// There is a special keyspace named "SYSTEM", which is reserved for system-level
 // services and data, currently, only the DXF service uses this keyspace.
 // As user keyspace depends on SYSTEM keyspace, we need to make sure SYSTEM
 // keyspace exist before user keyspace start serving any user traffic. So for the
@@ -29,4 +29,7 @@
 //
 // During upgrade, we also need to follow above order, i.e. We need to upgrade
 // the SYSTEM keyspace first, then user keyspace.
+//
+// Note: serverless also use keyspace, and have the special NULL and DEFAULT
+// keyspace, while nextgen hasn't.
 package keyspace

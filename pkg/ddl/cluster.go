@@ -61,18 +61,6 @@ const (
 	flashbackTimeout    = 3 * time.Minute // 3min
 )
 
-const (
-	pdScheduleArgsOffset = 1 + iota
-	gcEnabledOffset
-	autoAnalyzeOffset
-	readOnlyOffset
-	totalLockedRegionsOffset
-	startTSOffset
-	commitTSOffset
-	ttlJobEnableOffSet
-	keyRangesOffset
-)
-
 func closePDSchedule(ctx context.Context) error {
 	closeMap := make(map[string]any)
 	for _, key := range pdScheduleKey {
