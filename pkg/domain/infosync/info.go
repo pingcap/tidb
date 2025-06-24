@@ -789,17 +789,14 @@ func (is *InfoSyncer) GetMinStartTS() uint64 {
 
 func (is *InfoSyncer) getEtcdClientForMinStartTS() *clientv3.Client {
 	// Note: this is a temporary implementation.
-	// When the config values and check function has a public implementation from PD client, the constant definitions
-	// here can be removed.
 	// In our future refactor plan, the SafePointKV and TiDB min start ts will be completely removed.
-	const cfgGCManagementType = "gc_management_type"
-	const cfgGCManagementTypeKeyspaceLevel = "keyspace_level"
+
 	// Ignore nil tikvCodec, which may happen in some tests.
 	if is.tikvCodec == nil {
 		return is.unprefixedEtcdCli
 	}
-	cfg := is.tikvCodec.GetKeyspaceMeta().GetConfig()
-	if cfg != nil && cfg[cfgGCManagementType] == cfgGCManagementTypeKeyspaceLevel {
+
+	if pd.IsKeyspaceUsingKeyspaceLevelGC(is.tikvCodec.GetKeyspaceMeta()) {
 		return is.etcdCli
 	}
 	return is.unprefixedEtcdCli
