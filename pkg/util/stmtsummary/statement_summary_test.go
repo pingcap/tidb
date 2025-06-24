@@ -776,7 +776,7 @@ func (a *mockLazyInfo) GetPlanDigest() string {
 	return a.planDigest
 }
 
-func (a *mockLazyInfo) GetBindingSQLAndDigest() (string, string) {
+func (a *mockLazyInfo) GetBindingSQLAndDigest() (s string, d string) {
 	return a.bindingSQL, a.bindingDigest
 }
 

@@ -722,6 +722,6 @@ func (*mockLazyInfo) GetPlanDigest() string {
 	return ""
 }
 
-func (*mockLazyInfo) GetBindingSQLAndDigest() (string, string) {
+func (*mockLazyInfo) GetBindingSQLAndDigest() (sql string, digest string) {
 	return "", ""
 }
