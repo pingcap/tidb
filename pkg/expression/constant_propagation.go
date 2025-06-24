@@ -368,13 +368,17 @@ func (s *propConstSolver) propagateColumnEQ() {
 					continue
 				}
 				cond := s.conditions[k]
-				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
-				if replaced {
-					s.conditions = append(s.conditions, newExpr)
+				if s.getColCount(colj) > 1 {
+					replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
+					if replaced {
+						s.conditions = append(s.conditions, newExpr)
+					}
 				}
-				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond, false)
-				if replaced {
-					s.conditions = append(s.conditions, newExpr)
+				if s.getColCount(coli) > 1 {
+					replaced, _, newExpr := tryToReplaceCond(s.ctx, colj, coli, cond, false)
+					if replaced {
+						s.conditions = append(s.conditions, newExpr)
+					}
 				}
 			}
 		}
