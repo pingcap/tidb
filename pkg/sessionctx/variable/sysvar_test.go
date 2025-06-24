@@ -1742,23 +1742,23 @@ func TestTiDBSchemaCacheSize(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestTiDBCircuitBreakerPDMetadataErrorRateThresholdPct(t *testing.T) {
-	sv := GetSysVar(TiDBCircuitBreakerPDMetadataErrorRateThresholdPct)
+func TestTiDBCircuitBreakerPDMetadataErrorRateThresholdRatio(t *testing.T) {
+	sv := GetSysVar(TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio)
 	vars := NewSessionVars(nil)
 
 	// Too low, will get raised to the min value
 	val, err := sv.Validate(vars, "-1", ScopeGlobal)
 	require.NoError(t, err)
-	require.Equal(t, strconv.FormatInt(GetSysVar(TiDBCircuitBreakerPDMetadataErrorRateThresholdPct).MinValue, 10), val)
+	require.Equal(t, strconv.FormatInt(GetSysVar(TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio).MinValue, 10), val)
 	warn := vars.StmtCtx.GetWarnings()[0].Err
-	require.Equal(t, "[variable:1292]Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_pct value: '-1'", warn.Error())
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_ratio value: '-1'", warn.Error())
 
 	// Too high, will get lowered to the max value
 	val, err = sv.Validate(vars, "101", ScopeGlobal)
 	require.NoError(t, err)
-	require.Equal(t, strconv.FormatUint(GetSysVar(TiDBCircuitBreakerPDMetadataErrorRateThresholdPct).MaxValue, 10), val)
+	require.Equal(t, strconv.FormatUint(GetSysVar(TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio).MaxValue, 10), val)
 	warn = vars.StmtCtx.GetWarnings()[1].Err
-	require.Equal(t, "[variable:1292]Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_pct value: '101'", warn.Error())
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_ratio value: '1.1'", warn.Error())
 
 	// valid
 	val, err = sv.Validate(vars, "10", ScopeGlobal)
