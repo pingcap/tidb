@@ -407,7 +407,11 @@ func ParallelProcess[T, R any](
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
 
-	for i, input := range inputs {
+	for i, v := range inputs {
+		// capture loop variable for go1.21
+		ii := i
+		input := v
+
 		eg.Go(func() error {
 			select {
 			case <-egCtx.Done():
@@ -419,7 +423,7 @@ func ParallelProcess[T, R any](
 			if err != nil {
 				return err
 			}
-			outputs[i] = v
+			outputs[ii] = v
 			return nil
 		})
 	}
