@@ -1309,7 +1309,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		mostMatchPath := make([]*candidatePath, 0, len(candidates))
 		var hasRangeScanPath, hasMostMatchPath bool
 		for _, c := range candidates {
-			if c.path.Forced || c.path.StoreType == kv.TiFlash {
+			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && c.path.Index.MVIndex) {
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
@@ -1319,8 +1319,8 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
-				} else if c.path.IsTablePath() || (c.path.Index != nil && (c.path.Index.Global || c.path.Index.MVIndex)) {
-					// Also keep PK, global index and MV indexes
+				} else if c.path.IsTablePath() || (c.path.Index != nil && c.path.Index.Global) {
+					// Also keep PK and global index
 					preferredPaths = append(preferredPaths, c)
 				}
 				// Preference the most matching index path for very selective index plans
