@@ -2294,6 +2294,10 @@ func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp
 				if _, ok := childTasks[0].(*RootTask); ok {
 					return false
 				}
+				// peer cop task should compare the cost with each other.
+				if _, ok := childTasks[0].(*CopTask); ok {
+					return true
+				}
 			} else {
 				if _, ok := childTasks[0].(*CopTask); ok {
 					state.topNCopExist = true
@@ -2315,6 +2319,10 @@ func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp
 		if state.limitCopExist {
 			if _, ok := childTasks[0].(*RootTask); ok {
 				return false
+			}
+			// peer cop task should compare the cost with each other.
+			if _, ok := childTasks[0].(*CopTask); ok {
+				return true
 			}
 		} else {
 			if _, ok := childTasks[0].(*CopTask); ok {
