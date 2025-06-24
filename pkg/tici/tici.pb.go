@@ -2792,7 +2792,8 @@ const file_tici_proto_rawDesc = "" +
 	"\x1bMarkPartitionUploadFinished\x12(.tici.MarkPartitionUploadFinishedRequest\x1a).tici.MarkPartitionUploadFinishedResponse\x12f\n" +
 	"\x17MarkTableUploadFinished\x12$.tici.MarkTableUploadFinishedRequest\x1a%.tici.MarkTableUploadFinishedResponse2K\n" +
 	"\x0eIndexerService\x129\n" +
-	"\bAddShard\x12\x15.tici.AddShardRequest\x1a\x16.tici.AddShardResponseB2Z0github.com/OliverS929/tidb_private/pkg/tici;ticib\x06proto3"
+	"\bAddShard\x12\x15.tici.AddShardRequest\x1a\x16.tici.AddShardResponseB\n" +
+	"Z\bpkg/ticib\x06proto3"
 
 var (
 	file_tici_proto_rawDescOnce sync.Once

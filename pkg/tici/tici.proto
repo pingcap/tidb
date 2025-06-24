@@ -16,8 +16,7 @@ syntax = "proto3";
 
 package tici;
 
-//option go_package = ".";
-option go_package = "github.com/OliverS929/tidb_private/pkg/tici;tici";
+option go_package = "pkg/tici";
 
 message WorkerNodeStatus {
   // TODO Need more metrics, such as disk usage, quotas, cache miss rates
