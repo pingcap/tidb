@@ -1309,19 +1309,20 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		mostMatchPath := make([]*candidatePath, 0, len(candidates))
 		var hasRangeScanPath, hasMostMatchPath bool
 		for _, c := range candidates {
-			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && (c.path.Index.Global || c.path.Index.MVIndex)) {
+			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && c.path.Index.MVIndex) {
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
 			if !c.path.IsFullScanRange(ds.TableInfo) {
 				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
 				indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
+				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) ||
+					(c.path.Index != nil && c.path.Index.Global) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
 				// Preference the most matching index path for very selective index plans
-				if c.path.EqOrInCondCount > 1 && c.path.EqOrInCondCount == ds.MostMatchingIndex &&
+				if !preferMerge && c.path.EqOrInCondCount > 1 && c.path.EqOrInCondCount == ds.MostMatchingIndex &&
 					c.path.CountAfterIndex > 0 && minIndexRows < 2 && c.path.CountAfterIndex <= (minIndexRows*1.2) {
 					mostMatchPath = append(mostMatchPath, c)
 					hasMostMatchPath = true
