@@ -604,7 +604,9 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCa
 	}
 	tbl = tbl.Copy()
 	tbl.Columns[c.ID] = colHist
-	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+	statsCache.UpdateStatsCache(util.CacheUpdate{
+		Updated: []*statistics.Table{tbl},
+	})
 	statistics.HistogramNeededItems.Delete(col)
 	return nil
 }
@@ -663,7 +665,9 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCac
 	}
 	tbl = tbl.Copy()
 	tbl.Indices[idx.ID] = idxHist
-	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+	statsCache.UpdateStatsCache(util.CacheUpdate{
+		Updated: []*statistics.Table{tbl},
+	})
 	statistics.HistogramNeededItems.Delete(idx)
 	return nil
 }

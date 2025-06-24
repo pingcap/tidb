@@ -533,6 +533,8 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 		tbl = tbl.Copy()
 		tbl.Indices[item.ID] = idxHist
 	}
-	h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+	h.UpdateStatsCache(utilstats.CacheUpdate{
+		Updated: []*statistics.Table{tbl},
+	})
 	return true
 }
