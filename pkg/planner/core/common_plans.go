@@ -922,7 +922,7 @@ func (e *Explain) prepareSchema() error {
 	case e.Explore:
 		fieldNames = []string{"statement", "binding_hint", "plan", "plan_digest", "avg_latency", "exec_times", "avg_scan_rows",
 			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason",
-			"run_the_plan", "binding"}
+			"explain_analyze", "binding"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
