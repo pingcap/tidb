@@ -14,11 +14,11 @@
 
 // Package keyspace provides utilities for keyspace in TiDB.
 //
-// keyspace are used to isolate data and operations, allowing for multi-tenancy
-// in next generation TiDB. each keyspace represents a logical cluster on top of
+// Keyspace are used to isolate data and operations, allowing for multi-tenancy
+// in next generation TiDB. Each keyspace represents a logical cluster on top of
 // the underlying physical cluster.
 //
-// there is a special keyspace named "SYSTEM", which is reserved for system-level
+// There is a special keyspace named "SYSTEM", which is reserved for system-level
 // services and data, currently, only the DXF service uses this keyspace.
 // As user keyspace depends on SYSTEM keyspace, we need to make sure SYSTEM
 // keyspace exist before user keyspace start serving any user traffic. So for the
