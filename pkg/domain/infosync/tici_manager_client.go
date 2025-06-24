@@ -16,12 +16,14 @@ package infosync
 
 import (
 	"context"
-	"fmt"
+	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -29,25 +31,106 @@ import (
 
 // TiCIManagerCtx manages fulltext index for TiCI.
 type TiCIManagerCtx struct {
+	mu                sync.RWMutex
+	err               error
 	conn              *grpc.ClientConn
 	metaServiceClient tici.MetaServiceClient
+	ctx               context.Context
 }
+
+// MetaServiceEelectionKey is the election path used for meta service leader election.
+// The same as https://github.com/pingcap-inc/tici/blob/master/src/servicediscovery/mod.rs#L4
+const MetaServiceEelectionKey = "/tici/metaserivce/election"
 
 // NewTiCIManager creates a new TiCI manager.
-func NewTiCIManager(ticiHost string, ticiPort string) (*TiCIManagerCtx, error) {
-	conn, err := grpc.NewClient(fmt.Sprintf("%s:%s", ticiHost, ticiPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
+func NewTiCIManager(client *clientv3.Client) (*TiCIManagerCtx, error) {
+	ctx := context.Background()
+	metaServiceClient, err := createMetaServiceClient(ctx, client)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "failed to create meta service client")
 	}
-	metaServiceClient := tici.NewMetaServiceClient(conn)
-	return &TiCIManagerCtx{
-		conn:              conn,
+	managerCtx := &TiCIManagerCtx{
 		metaServiceClient: metaServiceClient,
-	}, nil
+		ctx:               ctx,
+	}
+	opt := clientv3.WithPrefix()
+	ch := client.Watch(managerCtx.ctx, MetaServiceEelectionKey, opt)
+	go managerCtx.updateClient(ch)
+	return managerCtx, nil
 }
 
-// CreateFulltextIndex creates fulltext index on TiCI.
-func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
+func createMetaServiceClient(ctx context.Context, client *clientv3.Client) (tici.MetaServiceClient, error) {
+	opt := clientv3.WithPrefix()
+	resp, err := client.Get(ctx, MetaServiceEelectionKey, opt)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get meta service election key")
+	}
+	if len(resp.Kvs) == 0 {
+		return nil, errors.New("no meta service leader found")
+	}
+	if len(resp.Kvs) > 1 {
+		return nil, errors.New("multiple meta service leaders found")
+	}
+	kv := resp.Kvs[0]
+	conn, err := grpc.NewClient(string(kv.Value), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to create grpc client for meta service at %s", kv.Value)
+	}
+	return tici.NewMetaServiceClient(conn), nil
+}
+
+// updateClient listens for changes in the MetaServiceEelectionKey in etcd and updates the metaServiceClient accordingly.
+func (t *TiCIManagerCtx) updateClient(ch clientv3.WatchChan) {
+	for resp := range ch {
+		for _, event := range resp.Events {
+			switch event.Type {
+			case clientv3.EventTypePut:
+				func() {
+					t.mu.Lock()
+					defer t.mu.Unlock()
+					conn, err := grpc.NewClient(string(event.Kv.Value), grpc.WithTransportCredentials(insecure.NewCredentials()))
+					if err != nil {
+						t.conn.Close()
+						t.conn = nil
+						t.metaServiceClient = nil
+						t.err = err
+						return
+					}
+					// Close previous connection if it exists
+					if t.conn != nil {
+						t.conn.Close()
+					}
+					t.conn = conn
+					t.metaServiceClient = tici.NewMetaServiceClient(t.conn)
+					t.err = nil
+				}()
+				logutil.BgLogger().Info("Received Put event, update leader address", zap.String("key", string(event.Kv.Key)), zap.String("value", string(event.Kv.Value)))
+			case clientv3.EventTypeDelete:
+				// just ignore delete event
+			}
+		}
+	}
+}
+
+// Close closes the grpc connection and cleans up the metaServiceClient.
+func (t *TiCIManagerCtx) Close() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.ctx.Done() // Ensure the context is done before closing
+	if t.conn != nil {
+		if err := t.conn.Close(); err != nil {
+			logutil.BgLogger().Error("failed to close grpc connection", zap.Error(err))
+		}
+		t.conn = nil
+	}
+	if t.metaServiceClient != nil {
+		t.metaServiceClient = nil
+	}
+	t.err = errors.New("TiCIManagerCtx closed")
+}
+
+// CreateFullTextIndex creates fulltext index on TiCI.
+func (t *TiCIManagerCtx) CreateFullTextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
 	indexColumns := make([]*tici.ColumnInfo, 0)
 	for i := range indexInfo.Columns {
 		offset := indexInfo.Columns[i].Offset
@@ -95,15 +178,53 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 			Columns:      tableColumns,
 		},
 	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if t.metaServiceClient == nil {
+		var errMsg string
+		if t.err != nil {
+			errMsg = t.err.Error()
+		}
+		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
+		return nil
+	}
 	resp, err := t.metaServiceClient.CreateIndex(ctx, req)
 	if err != nil {
 		return err
 	}
 	if resp.Status != 0 {
-		logutil.BgLogger().Error("create fulltext index failed", zap.String("indexID", resp.IndexId), zap.String("errorMessage", resp.ErrorMessage))
+		logutil.BgLogger().Error("create fulltext index failed", zap.Int64("indexID", req.IndexInfo.IndexId), zap.String("errorMessage", resp.ErrorMessage))
 		return nil
 	}
-	logutil.BgLogger().Info("create fulltext index success", zap.String("indexID", resp.IndexId))
+	logutil.BgLogger().Info("create fulltext index success", zap.Int64("indexID", req.IndexInfo.IndexId))
 
+	return nil
+}
+
+// DropFullTextIndex drop full text index on TiCI.
+func (t *TiCIManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int64) error {
+	req := &tici.DropIndexRequest{
+		TableId: tableID,
+		IndexId: indexID,
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if t.metaServiceClient == nil {
+		var errMsg string
+		if t.err != nil {
+			errMsg = t.err.Error()
+		}
+		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
+		return nil
+	}
+	resp, err := t.metaServiceClient.DropIndex(ctx, req)
+	if err != nil {
+		return err
+	}
+	if resp.Status != 0 {
+		logutil.BgLogger().Error("drop full text index failed", zap.Int64("table ID", req.TableId), zap.Int64("index ID", req.IndexId), zap.String("errorMessage", resp.ErrorMessage))
+		return nil
+	}
+	logutil.BgLogger().Info("drop full text index success", zap.Int64("index ID", req.TableId), zap.Int64("index ID", req.IndexId))
 	return nil
 }

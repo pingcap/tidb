@@ -22,6 +22,7 @@ package tici
 
 import (
 	context "context"
+
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -33,25 +34,29 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	MetaService_WorkerNodeHeartbeat_FullMethodName    = "/tici.MetaService/WorkerNodeHeartbeat"
-	MetaService_ReaderNodeHeartbeat_FullMethodName    = "/tici.MetaService/ReaderNodeHeartbeat"
-	MetaService_CreateIndex_FullMethodName            = "/tici.MetaService/CreateIndex"
-	MetaService_DropIndex_FullMethodName              = "/tici.MetaService/DropIndex"
-	MetaService_GetIndexProgress_FullMethodName       = "/tici.MetaService/GetIndexProgress"
-	MetaService_AppendFragMeta_FullMethodName         = "/tici.MetaService/AppendFragMeta"
-	MetaService_GetShardLocalCacheInfo_FullMethodName = "/tici.MetaService/GetShardLocalCacheInfo"
-	MetaService_DebugGetShardManifest_FullMethodName  = "/tici.MetaService/DebugGetShardManifest"
+	MetaService_WorkerNodeHeartbeat_FullMethodName         = "/tici.MetaService/WorkerNodeHeartbeat"
+	MetaService_ReaderNodeHeartbeat_FullMethodName         = "/tici.MetaService/ReaderNodeHeartbeat"
+	MetaService_CreateIndex_FullMethodName                 = "/tici.MetaService/CreateIndex"
+	MetaService_DropIndex_FullMethodName                   = "/tici.MetaService/DropIndex"
+	MetaService_GetIndexProgress_FullMethodName            = "/tici.MetaService/GetIndexProgress"
+	MetaService_AppendFragMeta_FullMethodName              = "/tici.MetaService/AppendFragMeta"
+	MetaService_GetShardLocalCacheInfo_FullMethodName      = "/tici.MetaService/GetShardLocalCacheInfo"
+	MetaService_DebugGetShardManifest_FullMethodName       = "/tici.MetaService/DebugGetShardManifest"
+	MetaService_FinishCompactFragments_FullMethodName      = "/tici.MetaService/FinishCompactFragments"
+	MetaService_GetImportStoragePath_FullMethodName        = "/tici.MetaService/GetImportStoragePath"
+	MetaService_MarkPartitionUploadFinished_FullMethodName = "/tici.MetaService/MarkPartitionUploadFinished"
+	MetaService_MarkTableUploadFinished_FullMethodName     = "/tici.MetaService/MarkTableUploadFinished"
 )
 
 // MetaServiceClient is the client API for MetaService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type MetaServiceClient interface {
-	// Maintains heartbeat from worker nodes(such as writers, compactors) to meta service.
+	// Maintains heartbeat from worker nodes(such as writers, compactors) to meta
+	// service.
 	WorkerNodeHeartbeat(ctx context.Context, in *WorkerNodeHeartbeatRequest, opts ...grpc.CallOption) (*WorkerNodeHeartbeatResponse, error)
 	// Maintains heartbeat from reader nodes to meta service.
 	ReaderNodeHeartbeat(ctx context.Context, in *ReaderNodeHeartbeatRequest, opts ...grpc.CallOption) (*ReaderNodeHeartbeatResponse, error)
-	// TODO It will eventually replace the same RPCs in indexer.rs
 	// CreateIndex creates a new index
 	CreateIndex(ctx context.Context, in *CreateIndexRequest, opts ...grpc.CallOption) (*CreateIndexResponse, error)
 	// DropIndex removes an existing index
@@ -63,6 +68,16 @@ type MetaServiceClient interface {
 	GetShardLocalCacheInfo(ctx context.Context, in *GetShardLocalCacheRequest, opts ...grpc.CallOption) (*GetShardLocalCacheResponse, error)
 	// Debug usage: get shard manifest from meta service writer
 	DebugGetShardManifest(ctx context.Context, in *DebugGetShardManifestRequest, opts ...grpc.CallOption) (*DebugGetShardManifestResponse, error)
+	FinishCompactFragments(ctx context.Context, in *FinishCompactFragRequest, opts ...grpc.CallOption) (*FinishCompactFragResponse, error)
+	// Returns the cloud storage path where TiDB should upload a baseline shard
+	// for the specified [table_info, index_info, key_range].
+	GetImportStoragePath(ctx context.Context, in *GetImportStoragePathRequest, opts ...grpc.CallOption) (*GetImportStoragePathResponse, error)
+	// Called by Import DXF to notify Meta Service after a partitions for
+	// the given index are uploaded.
+	MarkPartitionUploadFinished(ctx context.Context, in *MarkPartitionUploadFinishedRequest, opts ...grpc.CallOption) (*MarkPartitionUploadFinishedResponse, error)
+	// Called to notify Meta Service that the whole table/index upload is
+	// finished.
+	MarkTableUploadFinished(ctx context.Context, in *MarkTableUploadFinishedRequest, opts ...grpc.CallOption) (*MarkTableUploadFinishedResponse, error)
 }
 
 type metaServiceClient struct {
@@ -145,15 +160,51 @@ func (c *metaServiceClient) DebugGetShardManifest(ctx context.Context, in *Debug
 	return out, nil
 }
 
+func (c *metaServiceClient) FinishCompactFragments(ctx context.Context, in *FinishCompactFragRequest, opts ...grpc.CallOption) (*FinishCompactFragResponse, error) {
+	out := new(FinishCompactFragResponse)
+	err := c.cc.Invoke(ctx, MetaService_FinishCompactFragments_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *metaServiceClient) GetImportStoragePath(ctx context.Context, in *GetImportStoragePathRequest, opts ...grpc.CallOption) (*GetImportStoragePathResponse, error) {
+	out := new(GetImportStoragePathResponse)
+	err := c.cc.Invoke(ctx, MetaService_GetImportStoragePath_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *metaServiceClient) MarkPartitionUploadFinished(ctx context.Context, in *MarkPartitionUploadFinishedRequest, opts ...grpc.CallOption) (*MarkPartitionUploadFinishedResponse, error) {
+	out := new(MarkPartitionUploadFinishedResponse)
+	err := c.cc.Invoke(ctx, MetaService_MarkPartitionUploadFinished_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *metaServiceClient) MarkTableUploadFinished(ctx context.Context, in *MarkTableUploadFinishedRequest, opts ...grpc.CallOption) (*MarkTableUploadFinishedResponse, error) {
+	out := new(MarkTableUploadFinishedResponse)
+	err := c.cc.Invoke(ctx, MetaService_MarkTableUploadFinished_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MetaServiceServer is the server API for MetaService service.
 // All implementations must embed UnimplementedMetaServiceServer
 // for forward compatibility
 type MetaServiceServer interface {
-	// Maintains heartbeat from worker nodes(such as writers, compactors) to meta service.
+	// Maintains heartbeat from worker nodes(such as writers, compactors) to meta
+	// service.
 	WorkerNodeHeartbeat(context.Context, *WorkerNodeHeartbeatRequest) (*WorkerNodeHeartbeatResponse, error)
 	// Maintains heartbeat from reader nodes to meta service.
 	ReaderNodeHeartbeat(context.Context, *ReaderNodeHeartbeatRequest) (*ReaderNodeHeartbeatResponse, error)
-	// TODO It will eventually replace the same RPCs in indexer.rs
 	// CreateIndex creates a new index
 	CreateIndex(context.Context, *CreateIndexRequest) (*CreateIndexResponse, error)
 	// DropIndex removes an existing index
@@ -165,6 +216,16 @@ type MetaServiceServer interface {
 	GetShardLocalCacheInfo(context.Context, *GetShardLocalCacheRequest) (*GetShardLocalCacheResponse, error)
 	// Debug usage: get shard manifest from meta service writer
 	DebugGetShardManifest(context.Context, *DebugGetShardManifestRequest) (*DebugGetShardManifestResponse, error)
+	FinishCompactFragments(context.Context, *FinishCompactFragRequest) (*FinishCompactFragResponse, error)
+	// Returns the cloud storage path where TiDB should upload a baseline shard
+	// for the specified [table_info, index_info, key_range].
+	GetImportStoragePath(context.Context, *GetImportStoragePathRequest) (*GetImportStoragePathResponse, error)
+	// Called by Import DXF to notify Meta Service after a partitions for
+	// the given index are uploaded.
+	MarkPartitionUploadFinished(context.Context, *MarkPartitionUploadFinishedRequest) (*MarkPartitionUploadFinishedResponse, error)
+	// Called to notify Meta Service that the whole table/index upload is
+	// finished.
+	MarkTableUploadFinished(context.Context, *MarkTableUploadFinishedRequest) (*MarkTableUploadFinishedResponse, error)
 	mustEmbedUnimplementedMetaServiceServer()
 }
 
@@ -196,6 +257,18 @@ func (UnimplementedMetaServiceServer) GetShardLocalCacheInfo(context.Context, *G
 func (UnimplementedMetaServiceServer) DebugGetShardManifest(context.Context, *DebugGetShardManifestRequest) (*DebugGetShardManifestResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DebugGetShardManifest not implemented")
 }
+func (UnimplementedMetaServiceServer) FinishCompactFragments(context.Context, *FinishCompactFragRequest) (*FinishCompactFragResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method FinishCompactFragments not implemented")
+}
+func (UnimplementedMetaServiceServer) GetImportStoragePath(context.Context, *GetImportStoragePathRequest) (*GetImportStoragePathResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetImportStoragePath not implemented")
+}
+func (UnimplementedMetaServiceServer) MarkPartitionUploadFinished(context.Context, *MarkPartitionUploadFinishedRequest) (*MarkPartitionUploadFinishedResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MarkPartitionUploadFinished not implemented")
+}
+func (UnimplementedMetaServiceServer) MarkTableUploadFinished(context.Context, *MarkTableUploadFinishedRequest) (*MarkTableUploadFinishedResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MarkTableUploadFinished not implemented")
+}
 func (UnimplementedMetaServiceServer) mustEmbedUnimplementedMetaServiceServer() {}
 
 // UnsafeMetaServiceServer may be embedded to opt out of forward compatibility for this service.
@@ -209,7 +282,7 @@ func RegisterMetaServiceServer(s grpc.ServiceRegistrar, srv MetaServiceServer) {
 	s.RegisterService(&MetaService_ServiceDesc, srv)
 }
 
-func _MetaService_WorkerNodeHeartbeat_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func _MetaService_WorkerNodeHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(WorkerNodeHeartbeatRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -221,13 +294,13 @@ func _MetaService_WorkerNodeHeartbeat_Handler(srv any, ctx context.Context, dec 
 		Server:     srv,
 		FullMethod: MetaService_WorkerNodeHeartbeat_FullMethodName,
 	}
-	handler := func(ctx context.Context, req any) (any, error) {
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MetaServiceServer).WorkerNodeHeartbeat(ctx, req.(*WorkerNodeHeartbeatRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_ReaderNodeHeartbeat_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func _MetaService_ReaderNodeHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReaderNodeHeartbeatRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -239,13 +312,13 @@ func _MetaService_ReaderNodeHeartbeat_Handler(srv any, ctx context.Context, dec 
 		Server:     srv,
 		FullMethod: MetaService_ReaderNodeHeartbeat_FullMethodName,
 	}
-	handler := func(ctx context.Context, req any) (any, error) {
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MetaServiceServer).ReaderNodeHeartbeat(ctx, req.(*ReaderNodeHeartbeatRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_CreateIndex_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func _MetaService_CreateIndex_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CreateIndexRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -257,13 +330,13 @@ func _MetaService_CreateIndex_Handler(srv any, ctx context.Context, dec func(any
 		Server:     srv,
 		FullMethod: MetaService_CreateIndex_FullMethodName,
 	}
-	handler := func(ctx context.Context, req any) (any, error) {
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MetaServiceServer).CreateIndex(ctx, req.(*CreateIndexRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_DropIndex_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func _MetaService_DropIndex_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DropIndexRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -275,13 +348,13 @@ func _MetaService_DropIndex_Handler(srv any, ctx context.Context, dec func(any) 
 		Server:     srv,
 		FullMethod: MetaService_DropIndex_FullMethodName,
 	}
-	handler := func(ctx context.Context, req any) (any, error) {
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MetaServiceServer).DropIndex(ctx, req.(*DropIndexRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_GetIndexProgress_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func _MetaService_GetIndexProgress_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetIndexProgressRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -293,13 +366,13 @@ func _MetaService_GetIndexProgress_Handler(srv any, ctx context.Context, dec fun
 		Server:     srv,
 		FullMethod: MetaService_GetIndexProgress_FullMethodName,
 	}
-	handler := func(ctx context.Context, req any) (any, error) {
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MetaServiceServer).GetIndexProgress(ctx, req.(*GetIndexProgressRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_AppendFragMeta_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func _MetaService_AppendFragMeta_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AppendFragMetaRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -311,13 +384,13 @@ func _MetaService_AppendFragMeta_Handler(srv any, ctx context.Context, dec func(
 		Server:     srv,
 		FullMethod: MetaService_AppendFragMeta_FullMethodName,
 	}
-	handler := func(ctx context.Context, req any) (any, error) {
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MetaServiceServer).AppendFragMeta(ctx, req.(*AppendFragMetaRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_GetShardLocalCacheInfo_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func _MetaService_GetShardLocalCacheInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetShardLocalCacheRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -329,13 +402,13 @@ func _MetaService_GetShardLocalCacheInfo_Handler(srv any, ctx context.Context, d
 		Server:     srv,
 		FullMethod: MetaService_GetShardLocalCacheInfo_FullMethodName,
 	}
-	handler := func(ctx context.Context, req any) (any, error) {
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MetaServiceServer).GetShardLocalCacheInfo(ctx, req.(*GetShardLocalCacheRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_DebugGetShardManifest_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func _MetaService_DebugGetShardManifest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DebugGetShardManifestRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -347,8 +420,80 @@ func _MetaService_DebugGetShardManifest_Handler(srv any, ctx context.Context, de
 		Server:     srv,
 		FullMethod: MetaService_DebugGetShardManifest_FullMethodName,
 	}
-	handler := func(ctx context.Context, req any) (any, error) {
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MetaServiceServer).DebugGetShardManifest(ctx, req.(*DebugGetShardManifestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MetaService_FinishCompactFragments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FinishCompactFragRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MetaServiceServer).FinishCompactFragments(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MetaService_FinishCompactFragments_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MetaServiceServer).FinishCompactFragments(ctx, req.(*FinishCompactFragRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MetaService_GetImportStoragePath_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetImportStoragePathRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MetaServiceServer).GetImportStoragePath(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MetaService_GetImportStoragePath_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MetaServiceServer).GetImportStoragePath(ctx, req.(*GetImportStoragePathRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MetaService_MarkPartitionUploadFinished_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MarkPartitionUploadFinishedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MetaServiceServer).MarkPartitionUploadFinished(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MetaService_MarkPartitionUploadFinished_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MetaServiceServer).MarkPartitionUploadFinished(ctx, req.(*MarkPartitionUploadFinishedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MetaService_MarkTableUploadFinished_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MarkTableUploadFinishedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MetaServiceServer).MarkTableUploadFinished(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MetaService_MarkTableUploadFinished_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MetaServiceServer).MarkTableUploadFinished(ctx, req.(*MarkTableUploadFinishedRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -391,6 +536,153 @@ var MetaService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DebugGetShardManifest",
 			Handler:    _MetaService_DebugGetShardManifest_Handler,
+		},
+		{
+			MethodName: "FinishCompactFragments",
+			Handler:    _MetaService_FinishCompactFragments_Handler,
+		},
+		{
+			MethodName: "GetImportStoragePath",
+			Handler:    _MetaService_GetImportStoragePath_Handler,
+		},
+		{
+			MethodName: "MarkPartitionUploadFinished",
+			Handler:    _MetaService_MarkPartitionUploadFinished_Handler,
+		},
+		{
+			MethodName: "MarkTableUploadFinished",
+			Handler:    _MetaService_MarkTableUploadFinished_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "tici.proto",
+}
+
+const (
+	WorkerService_AddShard_FullMethodName         = "/tici.WorkerService/AddShard"
+	WorkerService_CompactFragments_FullMethodName = "/tici.WorkerService/CompactFragments"
+)
+
+// WorkerServiceClient is the client API for WorkerService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type WorkerServiceClient interface {
+	// Add shard for an index
+	AddShard(ctx context.Context, in *AddShardRequest, opts ...grpc.CallOption) (*AddShardResponse, error)
+	// Compact a shard
+	CompactFragments(ctx context.Context, in *CompactFragRequest, opts ...grpc.CallOption) (*CompactFragResponse, error)
+}
+
+type workerServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewWorkerServiceClient(cc grpc.ClientConnInterface) WorkerServiceClient {
+	return &workerServiceClient{cc}
+}
+
+func (c *workerServiceClient) AddShard(ctx context.Context, in *AddShardRequest, opts ...grpc.CallOption) (*AddShardResponse, error) {
+	out := new(AddShardResponse)
+	err := c.cc.Invoke(ctx, WorkerService_AddShard_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerServiceClient) CompactFragments(ctx context.Context, in *CompactFragRequest, opts ...grpc.CallOption) (*CompactFragResponse, error) {
+	out := new(CompactFragResponse)
+	err := c.cc.Invoke(ctx, WorkerService_CompactFragments_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// WorkerServiceServer is the server API for WorkerService service.
+// All implementations must embed UnimplementedWorkerServiceServer
+// for forward compatibility
+type WorkerServiceServer interface {
+	// Add shard for an index
+	AddShard(context.Context, *AddShardRequest) (*AddShardResponse, error)
+	// Compact a shard
+	CompactFragments(context.Context, *CompactFragRequest) (*CompactFragResponse, error)
+	mustEmbedUnimplementedWorkerServiceServer()
+}
+
+// UnimplementedWorkerServiceServer must be embedded to have forward compatible implementations.
+type UnimplementedWorkerServiceServer struct {
+}
+
+func (UnimplementedWorkerServiceServer) AddShard(context.Context, *AddShardRequest) (*AddShardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AddShard not implemented")
+}
+func (UnimplementedWorkerServiceServer) CompactFragments(context.Context, *CompactFragRequest) (*CompactFragResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CompactFragments not implemented")
+}
+func (UnimplementedWorkerServiceServer) mustEmbedUnimplementedWorkerServiceServer() {}
+
+// UnsafeWorkerServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to WorkerServiceServer will
+// result in compilation errors.
+type UnsafeWorkerServiceServer interface {
+	mustEmbedUnimplementedWorkerServiceServer()
+}
+
+func RegisterWorkerServiceServer(s grpc.ServiceRegistrar, srv WorkerServiceServer) {
+	s.RegisterService(&WorkerService_ServiceDesc, srv)
+}
+
+func _WorkerService_AddShard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddShardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServiceServer).AddShard(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkerService_AddShard_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServiceServer).AddShard(ctx, req.(*AddShardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkerService_CompactFragments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompactFragRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServiceServer).CompactFragments(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkerService_CompactFragments_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServiceServer).CompactFragments(ctx, req.(*CompactFragRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// WorkerService_ServiceDesc is the grpc.ServiceDesc for WorkerService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var WorkerService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "tici.WorkerService",
+	HandlerType: (*WorkerServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "AddShard",
+			Handler:    _WorkerService_AddShard_Handler,
+		},
+		{
+			MethodName: "CompactFragments",
+			Handler:    _WorkerService_CompactFragments_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

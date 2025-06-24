@@ -1310,14 +1310,24 @@ func GetTiFlashStoresStat(ctx context.Context) (*pdhttp.StoresInfo, error) {
 	return is.tiflashReplicaManager.GetStoresStat(ctx)
 }
 
-// CreateFulltextIndex create fulltext infex on TiCI.
-func CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
-	ticiManager, err := NewTiCIManager("0.0.0.0", "50061")
+// CreateFullTextIndex create fulltext infex on TiCI.
+func CreateFullTextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
+	ticiManager, err := NewTiCIManager(GetEtcdClient())
 	if err != nil {
 		return err
 	}
-	defer ticiManager.conn.Close()
-	return ticiManager.CreateFulltextIndex(ctx, tblInfo, indexInfo, schemaName)
+	defer ticiManager.Close()
+	return ticiManager.CreateFullTextIndex(ctx, tblInfo, indexInfo, schemaName)
+}
+
+// DropFullTextIndex drop fulltext infex on TiCI.
+func DropFullTextIndex(ctx context.Context, tableID int64, indexID int64) error {
+	ticiManager, err := NewTiCIManager(GetEtcdClient())
+	if err != nil {
+		return err
+	}
+	defer ticiManager.Close()
+	return ticiManager.DropFullTextIndex(ctx, tableID, indexID)
 }
 
 // CloseTiFlashManager closes TiFlash manager.
