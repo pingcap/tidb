@@ -1228,9 +1228,9 @@ func getSessionFactoryWithDom(store kv.Storage) func(*domain.Domain) (pools.Reso
 	return getSessionFactoryInternal(store, CreateSessionWithDomain)
 }
 
-func getKSSessionFactory(currKSStore kv.Storage, targetKS string) pools.Factory {
+func getCrossKSSessionFactory(currKSStore kv.Storage, targetKS string) pools.Factory {
 	facWithDom := getSessionFactoryInternal(currKSStore, func(store kv.Storage, _ *domain.Domain) (*session, error) {
-		return createKSSession(store, targetKS)
+		return createCrossKSSession(store, targetKS)
 	})
 	return func() (pools.Resource, error) {
 		return facWithDom(nil)
@@ -3842,9 +3842,9 @@ func createSession(store kv.Storage) (*session, error) {
 	return createSessionWithOpt(store, dom, dom.GetSchemaValidator(), dom.InfoCache(), nil)
 }
 
-func createKSSession(currKSStore kv.Storage, targetKS string) (*session, error) {
+func createCrossKSSession(currKSStore kv.Storage, targetKS string) (*session, error) {
 	if currKSStore.GetKeyspace() == targetKS {
-		return createSession(currKSStore)
+		return nil, errors.New("cannot create session for the same keyspace")
 	}
 	dom, err := domap.Get(currKSStore)
 	if err != nil {

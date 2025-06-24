@@ -648,7 +648,7 @@ func NewDomainWithEtcdClient(
 	do.initDomainSysVars()
 
 	if shouldLoadSysKSAdditionally(store) {
-		do.sysksInfoCache = infoschema.NewCache(do.store, int(vardef.SchemaVersionCacheLimit.Load()))
+		do.sysksInfoCache = infoschema.NewCache(kvstore.GetSystemStorage(), int(vardef.SchemaVersionCacheLimit.Load()))
 		do.sysksISLoader = issyncer.NewLoader(kvstore.GetSystemStorage(), do.sysksInfoCache)
 		// TODO register to a separate session manager when we start syncer for
 		// system keyspace.
