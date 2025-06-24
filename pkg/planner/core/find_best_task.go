@@ -180,6 +180,11 @@ func rebuildChildTasks(p *logicalop.BaseLogicalPlan, childTasks *[]base.Task, pp
 	return nil
 }
 
+type enumerateState struct {
+	topNCopExist  bool
+	limitCopExist bool
+}
+
 // @first: indicates the best task returned.
 // @second: indicates the plan cnt in this subtree.
 // @third: indicates whether this plan apply the hint.
@@ -210,6 +215,7 @@ func enumeratePhysicalPlans4Task(
 			fd = logicalPlan.ExtractFD()
 		}
 	}
+	initState := &enumerateState{}
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()
@@ -248,7 +254,7 @@ func enumeratePhysicalPlans4Task(
 		// we need to check the hint is applicable before enforcing the property. otherwise
 		// what we get is Sort ot Exchanger kind of operators.
 		// todo: extend applyLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
-		hintApplicable := applyLogicalHintVarEigen(p.Self(), curTask, childTasks)
+		hintApplicable := applyLogicalHintVarEigen(p.Self(), initState, pp, curTask, childTasks)
 
 		// Enforce curTask property
 		if addEnforcer {

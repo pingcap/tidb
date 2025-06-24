@@ -2256,9 +2256,9 @@ func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalPro
 	return nil
 }
 
-func applyLogicalHintVarEigen(lp base.LogicalPlan, task base.Task, childTasks []base.Task) (preferred bool) {
+func applyLogicalHintVarEigen(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, task base.Task, childTasks []base.Task) (preferred bool) {
 	return applyLogicalJoinHint(lp, task.Plan()) ||
-		applyLogicalTopNAndLimitHint(lp, childTasks)
+		applyLogicalTopNAndLimitHint(lp, state, pp, childTasks)
 }
 
 // Get the most preferred and efficient one by hint and low-cost priority.
@@ -2274,7 +2274,7 @@ func applyLogicalJoinHint(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (pr
 	return preferMergeJoin(lp, physicPlan) || preferIndexJoinFamily(lp, physicPlan) || preferHashJoin(lp, physicPlan)
 }
 
-func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, childTasks []base.Task) (preferred bool) {
+func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
 	hintPrefer, meetThreshold := pushLimitOrTopNForcibly(lp)
 	if hintPrefer {
 		// if there is a user hint control, try to get the copTask as the prior.
@@ -2284,9 +2284,48 @@ func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, childTasks []base.Task) (
 		}
 	}
 	if meetThreshold {
-		// previously, we set meetThreshold for prefer cop than root task type. but for mpp task we still need to a CBO among them.
-		if _, ok := childTasks[0].(*CopTask); ok {
-			return true
+		// previously, we set meetThreshold for pruning root task type but mpp task type. so:
+		// 1: when one copTask exists, we will ignore root task type.
+		// 2: mppTask always in the cbo comparing.
+		// 3: when none copTask exists, we will consider rootTask vs mppTask.
+		_, isTopN := pp.(*PhysicalTopN)
+		if isTopN {
+			if state.topNCopExist {
+				if _, ok := childTasks[0].(*RootTask); ok {
+					return false
+				}
+			} else {
+				if _, ok := childTasks[0].(*CopTask); ok {
+					state.topNCopExist = true
+					return true
+				}
+				// when we encounter rootTask type while still see no topNCopExist.
+				// that means there is no copTask valid before, we will consider rootTask here.
+				if _, ok := childTasks[0].(*RootTask); ok {
+					return true
+				}
+			}
+			if _, ok := childTasks[0].(*MppTask); ok {
+				return true
+			}
+			// shouldn't be here
+			return false
+		}
+		// limit case:
+		if state.limitCopExist {
+			if _, ok := childTasks[0].(*RootTask); ok {
+				return false
+			}
+		} else {
+			if _, ok := childTasks[0].(*CopTask); ok {
+				state.limitCopExist = true
+				return true
+			}
+			// when we encounter rootTask type while still see no limitCopExist.
+			// that means there is no copTask valid before, we will consider rootTask here.
+			if _, ok := childTasks[0].(*RootTask); ok {
+				return true
+			}
 		}
 		if _, ok := childTasks[0].(*MppTask); ok {
 			return true
