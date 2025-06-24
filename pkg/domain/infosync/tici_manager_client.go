@@ -249,3 +249,63 @@ func (t *TiCIManagerCtx) Close() error {
 	}
 	return nil
 }
+
+// ModelTableToTiCITableInfo converts a model.TableInfo to a tici.TableInfo.
+// It extracts the necessary information from the model.TableInfo to create a tici.TableInfo
+// suitable for TiCI operations.
+func ModelTableToTiCITableInfo(tblInfo *model.TableInfo, schemaName string) *tici.TableInfo {
+	tableColumns := make([]*tici.ColumnInfo, 0)
+	for i := range tblInfo.Columns {
+		tableColumns = append(tableColumns, &tici.ColumnInfo{
+			ColumnId:     tblInfo.Columns[i].ID,
+			ColumnName:   tblInfo.Columns[i].Name.String(),
+			Type:         int32(tblInfo.Columns[i].GetType()),
+			ColumnLength: int32(tblInfo.Columns[i].FieldType.StorageLength()),
+			Decimal:      int32(tblInfo.Columns[i].GetDecimal()),
+			DefaultVal:   tblInfo.Columns[i].DefaultValueBit,
+			IsPrimaryKey: mysql.HasPriKeyFlag(tblInfo.Columns[i].GetFlag()),
+			IsArray:      len(tblInfo.Columns) > 1,
+		})
+	}
+
+	return &tici.TableInfo{
+		TableId:      tblInfo.ID,
+		TableName:    tblInfo.Name.L,
+		DatabaseName: schemaName,
+		Version:      int64(tblInfo.Version),
+		Columns:      tableColumns,
+	}
+}
+
+// ModelIndexToTiCIIndexInfo converts a model.IndexInfo to a tici.IndexInfo.
+// It extracts the necessary information from the model.IndexInfo and model.TableInfo
+// to create a tici.IndexInfo suitable for TiCI operations.
+func ModelIndexToTiCIIndexInfo(indexInfo *model.IndexInfo, tblInfo *model.TableInfo,
+) *tici.IndexInfo {
+	indexColumns := make([]*tici.ColumnInfo, 0)
+	for i := range indexInfo.Columns {
+		offset := indexInfo.Columns[i].Offset
+		indexColumns = append(indexColumns, &tici.ColumnInfo{
+			ColumnId:     tblInfo.Columns[offset].ID,
+			ColumnName:   tblInfo.Columns[offset].Name.String(),
+			Type:         int32(tblInfo.Columns[offset].GetType()),
+			ColumnLength: int32(tblInfo.Columns[offset].FieldType.StorageLength()),
+			Decimal:      int32(tblInfo.Columns[offset].GetDecimal()),
+			DefaultVal:   tblInfo.Columns[offset].DefaultValueBit,
+			IsPrimaryKey: mysql.HasPriKeyFlag(tblInfo.Columns[offset].GetFlag()),
+			IsArray:      len(indexInfo.Columns) > 1,
+		})
+	}
+
+	return &tici.IndexInfo{
+		TableId:   tblInfo.ID,
+		IndexId:   indexInfo.ID,
+		IndexName: indexInfo.Name.String(),
+		IndexType: tici.IndexType_FULL_TEXT,
+		Columns:   indexColumns,
+		IsUnique:  indexInfo.Unique,
+		ParserInfo: &tici.ParserInfo{
+			ParserType: tici.ParserType_DEFAULT_PARSER,
+		},
+	}
+}

@@ -33,6 +33,11 @@ import (
 // This buffer is used to avoid frequent allocations for each KV pair.
 var ticiFileWriterMemSizeLimit uint64 = 128 * units.MiB
 
+// ticiFileFormatVersion defines the version of the TiCI file format.
+// This is used to ensure compatibility with future versions of the TiCI file format.
+// If the format changes, this version should be incremented.
+const ticiFileFormatVersion uint8 = 1
+
 // TiCIMinUploadPartSize defines the minimum upload part size for external storage multipart uploads.
 // Both S3 and GCS require a minimum part size of 5MiB.
 var TiCIMinUploadPartSize int64 = 5 * units.MiB
@@ -136,9 +141,12 @@ func (w *TICIFileWriter) WriteHeader(ctx context.Context, tblInBytes []byte, idx
 		return errors.New("TICIFileWriter dataWriter is nil")
 	}
 
-	headerLen := 8 + len(tblInBytes) + 8 + len(idxInBytes) + 8
+	headerLen := 1 + 8 + len(tblInBytes) + 8 + len(idxInBytes) + 8
 	header := make([]byte, headerLen)
 	off := 0
+
+	header[off] = byte(ticiFileFormatVersion)
+	off += 1
 
 	binary.BigEndian.PutUint64(header[off:], uint64(len(tblInBytes)))
 	off += 8

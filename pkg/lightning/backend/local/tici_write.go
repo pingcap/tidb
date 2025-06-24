@@ -16,9 +16,9 @@ package local
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -282,17 +282,15 @@ func (w *TiCIDataWriter) WriteHeader(ctx context.Context, commitTS uint64) error
 		return errors.New("TICIFileWriter is not initialized")
 	}
 
-	var (
-		tblBytes []byte
-		idxBytes []byte
-		err      error
-	)
-	// Use json.Marshal to serialize TableInfo and IndexInfo.
-	tblBytes, err = json.Marshal(w.tblInfo)
+	tblPB := infosync.ModelTableToTiCITableInfo(w.tblInfo, w.schema)
+	idxPB := infosync.ModelIndexToTiCIIndexInfo(w.idxInfo, w.tblInfo)
+
+	// Use proto.Marshal to serialize TableInfo and IndexInfo.
+	tblBytes, err := proto.Marshal(tblPB)
 	if err != nil {
 		return errors.Annotate(err, "marshal TableInfo (json)")
 	}
-	idxBytes, err = json.Marshal(w.idxInfo)
+	idxBytes, err := proto.Marshal(idxPB)
 	if err != nil {
 		return errors.Annotate(err, "marshal IndexInfo (json)")
 	}
