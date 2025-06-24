@@ -144,8 +144,6 @@ type HashAggExec struct {
 	spillAction *AggSpillDiskAction
 	// isChildDrained indicates whether the all data from child has been taken out.
 	isChildDrained bool
-
-	invalidMemoryUsageForTrackingTest bool
 }
 
 // Close implements the Executor Close interface.
@@ -192,9 +190,7 @@ func (e *HashAggExec) Close() error {
 		channel.Clear(e.finalOutputCh)
 		e.executed = false
 		if e.memTracker != nil {
-			if e.memTracker.BytesConsumed() < 0 {
-				e.invalidMemoryUsageForTrackingTest = true
-			} else {
+			if e.memTracker.BytesConsumed() > 0 {
 				e.memTracker.ReplaceBytesUsed(0)
 			}
 		}
