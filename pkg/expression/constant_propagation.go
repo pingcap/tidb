@@ -35,24 +35,27 @@ import (
 var MaxPropagateColsCnt = 100
 
 type basePropConstSolver struct {
-	colMapper map[int64]int             // colMapper maps column to its index
-	eqMapper  map[int]*Constant         // if eqMapper[i] != nil, it means col_i = eqMapper[i]
-	unionSet  *disjointset.SimpleIntSet // unionSet stores the relations like col_i = col_j
-	columns   []*Column                 // columns stores all columns appearing in the conditions
-	ctx       exprctx.ExprContext
+	colMapper      map[int64]int             // colMapper maps column to its index
+	colCountMapper map[int64]int             // colCountMapper maps column to its count in the conditions
+	eqMapper       map[int]*Constant         // if eqMapper[i] != nil, it means col_i = eqMapper[i]
+	unionSet       *disjointset.SimpleIntSet // unionSet stores the relations like col_i = col_j
+	columns        []*Column                 // columns stores all columns appearing in the conditions
+	ctx            exprctx.ExprContext
 }
 
 func newBasePropConstSolver() basePropConstSolver {
 	return basePropConstSolver{
-		colMapper: make(map[int64]int, 4),
-		eqMapper:  make(map[int]*Constant, 4),
-		columns:   make([]*Column, 0, 4),
-		unionSet:  disjointset.NewIntSet(4),
+		colMapper:      make(map[int64]int, 4),
+		colCountMapper: make(map[int64]int, 4),
+		eqMapper:       make(map[int]*Constant, 4),
+		columns:        make([]*Column, 0, 4),
+		unionSet:       disjointset.NewIntSet(4),
 	}
 }
 
 func (s *basePropConstSolver) Clear() {
 	clear(s.colMapper)
+	clear(s.colCountMapper)
 	clear(s.eqMapper)
 	s.columns = s.columns[:0]
 	s.unionSet.Clear()
@@ -63,12 +66,26 @@ func (s *basePropConstSolver) getColID(col *Column) int {
 	return s.colMapper[col.UniqueID]
 }
 
+func (s *basePropConstSolver) getColCount(col *Column) int {
+	count, ok := s.colCountMapper[col.UniqueID]
+	if !ok {
+		return 0
+	}
+	return count
+}
+
 func (s *basePropConstSolver) insertCols(cols ...*Column) {
 	for _, col := range cols {
 		_, ok := s.colMapper[col.UniqueID]
 		if !ok {
 			s.colMapper[col.UniqueID] = len(s.colMapper)
 			s.columns = append(s.columns, col)
+		}
+		_, ok = s.colCountMapper[col.UniqueID]
+		if !ok {
+			s.colCountMapper[col.UniqueID] = 1
+		} else {
+			s.colCountMapper[col.UniqueID] += 1
 		}
 	}
 }
@@ -326,10 +343,13 @@ func (s *propConstSolver) propagateColumnEQ() {
 			rCol, rOk := fun.GetArgs()[1].(*Column)
 			// TODO: Enable hybrid types in ConstantPropagate.
 			if lOk && rOk && lCol.GetType(s.ctx.GetEvalCtx()).GetCollate() == rCol.GetType(s.ctx.GetEvalCtx()).GetCollate() && !lCol.GetType(s.ctx.GetEvalCtx()).Hybrid() && !rCol.GetType(s.ctx.GetEvalCtx()).Hybrid() {
-				lID := s.getColID(lCol)
-				rID := s.getColID(rCol)
-				s.unionSet.Union(lID, rID)
-				visited[i] = true
+				// a = column#2 and a < 10 and b < 10, column#2 is only used once in the conditions, so we don't need to propagate it.
+				if s.getColCount(lCol) > 1 && s.getColCount(rCol) > 1 {
+					lID := s.getColID(lCol)
+					rID := s.getColID(rCol)
+					s.unionSet.Union(lID, rID)
+					visited[i] = true
+				}
 			}
 		}
 	}
@@ -449,17 +469,6 @@ func PropagateConstant(ctx exprctx.ExprContext, conditions ...Expression) []Expr
 	return solver.PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), conditions)
 }
 
-var propOuterJoinConstSolverPool = sync.Pool{
-	New: func() any {
-		solver := &propOuterJoinConstSolver{
-			basePropConstSolver: newBasePropConstSolver(),
-			joinConds:           make([]Expression, 0, 4),
-			filterConds:         make([]Expression, 0, 4),
-		}
-		return solver
-	},
-}
-
 type propOuterJoinConstSolver struct {
 	basePropConstSolver
 	joinConds   []Expression
@@ -472,34 +481,16 @@ type propOuterJoinConstSolver struct {
 	nullSensitive bool
 }
 
-func newPropOuterJoinConstSolver() *propOuterJoinConstSolver {
-	solver := propOuterJoinConstSolverPool.Get().(*propOuterJoinConstSolver)
-	return solver
-}
-
-// clear resets the solver.
-func (s *propOuterJoinConstSolver) Clear() {
-	s.basePropConstSolver.Clear()
-	s.joinConds = s.joinConds[:0]
-	s.filterConds = s.filterConds[:0]
-	s.outerSchema = nil
-	s.innerSchema = nil
-	s.nullSensitive = false
-	propOuterJoinConstSolverPool.Put(s)
-}
-
 func (s *propOuterJoinConstSolver) setConds2ConstFalse(filterConds bool) {
-	s.joinConds = s.joinConds[:0]
-	s.joinConds = append(s.joinConds, &Constant{
+	s.joinConds = []Expression{&Constant{
 		Value:   types.NewDatum(false),
 		RetType: types.NewFieldType(mysql.TypeTiny),
-	})
+	}}
 	if filterConds {
-		s.filterConds = s.filterConds[:0]
-		s.filterConds = append(s.filterConds, &Constant{
+		s.filterConds = []Expression{&Constant{
 			Value:   types.NewDatum(false),
 			RetType: types.NewFieldType(mysql.TypeTiny),
-		})
+		}}
 	}
 }
 
@@ -775,7 +766,7 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 	s.propagateColumnEQ()
 	s.joinConds = propagateConstantDNF(s.ctx, s.joinConds...)
 	s.filterConds = propagateConstantDNF(s.ctx, s.filterConds...)
-	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
+	return s.joinConds, s.filterConds
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
@@ -800,13 +791,13 @@ func propagateConstantDNF(ctx exprctx.ExprContext, conds ...Expression) []Expres
 // expressions in join conditions and filter conditions;
 func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Expression,
 	outerSchema, innerSchema *Schema, nullSensitive bool) ([]Expression, []Expression) {
-	solver := newPropOuterJoinConstSolver()
-	defer func() {
-		solver.Clear()
-	}()
-	solver.outerSchema = outerSchema
-	solver.innerSchema = innerSchema
-	solver.nullSensitive = nullSensitive
+	solver := &propOuterJoinConstSolver{
+		basePropConstSolver: newBasePropConstSolver(),
+		outerSchema:         outerSchema,
+		innerSchema:         innerSchema,
+		nullSensitive:       nullSensitive,
+	}
+	solver.colMapper = make(map[int64]int)
 	solver.ctx = ctx
 	return solver.solve(joinConds, filterConds)
 }
