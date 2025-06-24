@@ -1438,9 +1438,11 @@ func (local *Backend) doImport(
 		log.FromContext(ctx).Error("do import meets error", zap.Error(err))
 	}
 
-	if local.ticiWriteGroup != nil {
+	if err == nil && local.ticiWriteGroup != nil {
 		// If the import is done, we can close the write group.
-		return local.ticiWriteGroup.MarkTableUploadFinished(ctx)
+		if err2 := local.ticiWriteGroup.MarkTableUploadFinished(ctx); err2 != nil {
+			err = err2 // mark upload itself failed
+		}
 	}
 
 	return err
