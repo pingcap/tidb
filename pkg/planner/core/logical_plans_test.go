@@ -117,7 +117,7 @@ func createPlannerSuite() (s *plannerSuite) {
 	if err := do.CreateStatsHandle(context.Background(), initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}
-	ctx.BindDomainAndSchValidator(do, do.GetSchemaValidator())
+	ctx.BindDomainAndSchValidator(do, nil)
 	ctx.SetInfoSchema(s.is)
 	s.ctx = ctx
 	s.sctx = ctx
