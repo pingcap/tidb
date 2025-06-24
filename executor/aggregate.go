@@ -289,8 +289,6 @@ func (e *HashAggExec) Close() error {
 		if e.memTracker != nil {
 			if e.memTracker.BytesConsumed() >= 0 {
 				e.memTracker.ReplaceBytesUsed(0)
-			} else {
-				logutil.BgLogger().Warn("Memory tracking is inaccurate", zap.Int64("memory consumption", e.memTracker.BytesConsumed()))
 			}
 		}
 	}
