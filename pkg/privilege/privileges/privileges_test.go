@@ -2339,3 +2339,29 @@ func TestUpdateColumnPrivilege(t *testing.T) {
 	userTk.MustExec(`UPDATE test.t1, test.t2 SET a = c WHERE b = d`)
 	userTk.MustExec(`UPDATE test.t1, (SELECT c FROM test.t2 WHERE d = 2) AS tt SET a = tt.c	`)
 }
+
+func TestColumnPrivilege4NonPreparePlanCache(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`CREATE USER 'testuser'@'localhost';`)
+	tk.MustExec(`CREATE TABLE test.t (a INT, b INT, KEY(b));`)
+	userTk := testkit.NewTestKit(t, store)
+	err := userTk.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil, nil)
+	require.NoError(t, err)
+
+	for _, planCacheON := range []string{"0", "1"} {
+		userTk.MustExec(fmt.Sprintf("SET tidb_enable_non_prepared_plan_cache = %s", planCacheON))
+		tk.MustExec("GRANT SELECT(a,b) ON test.t TO 'testuser'@'localhost';")
+
+		userTk.MustQuery(`SELECT * FROM test.t WHERE b < 5 AND a = 2;`)
+		userTk.MustQuery(`SELECT * FROM test.t WHERE b < 5 AND a = 2;`)
+		userTk.MustQuery(`SELECT @@last_plan_from_cache;`).Check(testkit.Rows(planCacheON))
+
+		tk.MustExec("REVOKE SELECT(a) ON test.t FROM 'testuser'@'localhost';")
+		userTk.MustGetErrCode(`SELECT * FROM test.t WHERE b < 5 AND a = 2;`, mysql.ErrColumnaccessDenied)
+
+		tk.MustExec("GRANT SELECT(a) ON test.t TO 'testuser'@'localhost';")
+		userTk.MustQuery(`SELECT * FROM test.t WHERE b < 5 AND a = 2;`)
+		userTk.MustQuery(`SELECT @@last_plan_from_cache;`).Check(testkit.Rows(planCacheON))
+	}
+}
