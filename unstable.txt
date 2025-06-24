@@ -26,3 +26,6 @@ pkg/statistics/handle/storage TestLoadGlobalStats
 pkg/statistics/handle/storage TestLoadPartitionStats
 pkg/statistics/handle/storage TestLoadPartitionStatsErrPanic
 pkg/statistics/handle/storage TestDumpPartitions
+pkg/executor TestAggPartialResultMapperB
+pkg/executor TestInfoschemaTablesSpecialOptimizationCovered
+pkg/planner/core/casetest/index TestRangeIntersection

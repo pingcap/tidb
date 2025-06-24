@@ -68,6 +68,8 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/util/timeutil.Sleep"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/ddl/notifier.(*DDLNotifier).start"),
 	}
 
 	goleak.VerifyTestMain(m, opts...)

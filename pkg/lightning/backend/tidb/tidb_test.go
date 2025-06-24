@@ -315,7 +315,7 @@ func TestWriteRowsCustomizeOnDup(t *testing.T) {
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TiDB: struct{ TableName string }{"`foo`.`bar`"}})
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.NoError(t, err)
