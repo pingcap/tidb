@@ -342,6 +342,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 			rCol, rOk := fun.GetArgs()[1].(*Column)
 			// TODO: Enable hybrid types in ConstantPropagate.
 			if lOk && rOk && lCol.GetType(s.ctx.GetEvalCtx()).GetCollate() == rCol.GetType(s.ctx.GetEvalCtx()).GetCollate() && !lCol.GetType(s.ctx.GetEvalCtx()).Hybrid() && !rCol.GetType(s.ctx.GetEvalCtx()).Hybrid() {
+				// a = column#2 and a < 10 and b < 10, column#2 is only used once in the conditions, so we don't need to propagate it.
 				if s.getColCount(lCol) > 1 && s.getColCount(rCol) > 1 {
 					lID := s.getColID(lCol)
 					rID := s.getColID(rCol)
