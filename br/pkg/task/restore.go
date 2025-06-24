@@ -76,6 +76,7 @@ const (
 	flagGranularity              = "granularity"
 	flagConcurrencyPerStore      = "tikv-max-restore-concurrency"
 	flagAllowPITRFromIncremental = "allow-pitr-from-incremental"
+	flagAbort                    = "abort"
 
 	// FlagMergeRegionSizeBytes is the flag name of merge small regions by size
 	FlagMergeRegionSizeBytes = "merge-region-size-bytes"
@@ -251,6 +252,7 @@ type RestoreConfig struct {
 	NoSchema           bool          `json:"no-schema" toml:"no-schema"`
 	LoadStats          bool          `json:"load-stats" toml:"load-stats"`
 	FastLoadSysTables  bool          `json:"fast-load-sys-tables" toml:"fast-load-sys-tables"`
+	Abort              bool          `json:"abort" toml:"abort"`
 	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
 	StatsConcurrency   uint          `json:"stats-concurrency" toml:"stats-concurrency"`
 	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
@@ -345,6 +347,7 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagNoSchema, false, "skip creating schemas and tables, reuse existing empty ones")
 	flags.Bool(flagLoadStats, true, "Run load stats or update stats_meta to trigger auto-analyze at end of snapshot restore task")
 	flags.Bool(flagFastLoadSysTables, true, "load system tables (including statistics) by renaming the temporary system tables")
+	flags.Bool(flagAbort, false, "abort a restore task with the same parameters and clean up registry entry and checkpoint data")
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
@@ -394,9 +397,6 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	// check if RestoreTS was explicitly specified by user
-	cfg.IsRestoredTSUserSpecified = flags.Changed(FlagStreamRestoreTS)
-
 	if cfg.FullBackupStorage, err = flags.GetString(FlagStreamFullBackupStorage); err != nil {
 		return errors.Trace(err)
 	}
@@ -430,6 +430,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 		return errors.Trace(err)
 	}
 	cfg.FastLoadSysTables, err = flags.GetBool(flagFastLoadSysTables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.Abort, err = flags.GetBool(flagAbort)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2572,4 +2576,78 @@ func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestore
 		}
 		log.Info("set tables to restore mode for filtered PiTR restore", zap.Int("table count", len(tables)))
 	}
+}
+
+// RunRestoreAbort aborts a restore task by finding it in the registry and cleaning up
+// Similar to resumeOrCreate, it first resolves the restoredTS then finds and deletes the matching paused task
+func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+	cfg.Adjust()
+	defer summary.Summary(cmdName)
+	ctx, cancel := context.WithCancel(c)
+	defer cancel()
+
+	keepaliveCfg := GetKeepalive(&cfg.Config)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, false, conn.NormalVersionChecker)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer mgr.Close()
+
+	// build restore registry
+	restoreRegistry, err := registry.NewRestoreRegistry(g, mgr.GetDomain())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer restoreRegistry.Close()
+
+	// determine if restoredTS was user-specified
+	// if RestoreTS is 0, it means user didn't specify it (similar to resumeOrCreate logic)
+	isRestoredTSUserSpecified := cfg.RestoreTS != 0
+
+	// create registration info from config to find matching tasks
+	registrationInfo := registry.RegistrationInfo{
+		FilterStrings:     cfg.FilterStr,
+		StartTS:           cfg.StartTS,
+		RestoredTS:        cfg.RestoreTS,
+		UpstreamClusterID: cfg.UpstreamClusterID,
+		WithSysTable:      cfg.WithSysTable,
+		Cmd:               cmdName,
+	}
+
+	// find and delete matching paused task atomically
+	// this will first resolve the restoredTS (similar to resumeOrCreate) then find and delete the task
+	deletedTaskID, err := restoreRegistry.FindAndDeleteMatchingTask(ctx, registrationInfo, isRestoredTSUserSpecified)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if deletedTaskID == 0 {
+		log.Info("no paused restore task found with matching parameters")
+		return nil
+	}
+
+	log.Info("successfully deleted matching paused restore task", zap.Uint64("task_id", deletedTaskID))
+
+	// clean up checkpoint data for the deleted task
+	log.Info("cleaning up checkpoint data", zap.Uint64("restoreId", deletedTaskID))
+
+	// update config with restore ID to clean up checkpoint
+	cfg.RestoreID = deletedTaskID
+
+	// initialize checkpoint managers for cleanup
+	if err := cfg.newTableCheckpointMetaManagerSnapshot(g, mgr.GetDomain(), deletedTaskID); err != nil {
+		log.Warn("failed to initialize snapshot checkpoint meta manager", zap.Error(err))
+	}
+
+	if IsStreamRestore(cmdName) {
+		if err := cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain(), deletedTaskID); err != nil {
+			log.Warn("failed to initialize log checkpoint meta manager", zap.Error(err))
+		}
+	}
+
+	// clean up checkpoint data
+	cleanUpCheckpoints(ctx, cfg)
+
+	log.Info("successfully aborted restore task and cleaned up checkpoint data", zap.Uint64("restoreId", deletedTaskID))
+	return nil
 }
