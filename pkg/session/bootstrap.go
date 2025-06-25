@@ -819,6 +819,7 @@ func bootstrap(s sessiontypes.Session) {
 			zap.Error(err))
 	}
 	dom := domain.GetDomain(s)
+	bootLogger := logutil.SampleLoggerFactory(30*time.Second, 1)()
 	for {
 		b, err := checkBootstrapped(s)
 		if err != nil {
@@ -842,6 +843,7 @@ func bootstrap(s sessiontypes.Session) {
 				zap.Duration("take time", time.Since(startTime)))
 			return
 		}
+		bootLogger.Info("bootstrap not done yet, waiting for owner to finish")
 		time.Sleep(200 * time.Millisecond)
 	}
 }
