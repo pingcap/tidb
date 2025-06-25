@@ -712,9 +712,9 @@ type DistributeTable struct {
 	baseSchemaProducer
 	TableInfo      *model.TableInfo
 	PartitionNames []ast.CIStr
-	Engine         ast.CIStr
-	Rule           ast.CIStr
-	Timeout        ast.CIStr
+	Engine         string
+	Rule           string
+	Timeout        string
 }
 
 // SplitRegion represents a split regions plan.
