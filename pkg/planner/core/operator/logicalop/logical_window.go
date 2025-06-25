@@ -16,6 +16,7 @@ package logicalop
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -309,8 +310,19 @@ func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column
 func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
 	canBePushed := make([]expression.Expression, 0, len(predicates))
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
+	equalConditions := make([]*expression.ScalarFunction, 0, len(predicates))
 	partitionCols := expression.NewSchema(p.GetPartitionByCols()...)
 	for _, cond := range predicates {
+		if expr, ok := cond.(*expression.ScalarFunction); ok && expr.FuncName.L == ast.EQ {
+			args := expr.GetArgs()
+			if len(args) == 2 {
+				_, ok1 := args[1].(*expression.Column)
+				_, ok0 := args[0].(*expression.Column)
+				if ok1 && ok0 {
+					equalConditions = append(equalConditions, expr)
+				}
+			}
+		}
 		// We can push predicate beneath Window, only if all of the
 		// extractedCols are part of partitionBy columns.
 		if expression.ExprFromSchema(cond, partitionCols) {
@@ -320,7 +332,84 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, op
 		}
 	}
 	p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
+	if len(equalConditions) > 0 && len(canNotBePushed) > 0 {
+		for _, equalCondition := range equalConditions {
+			canNotBePushed = DeleteConstantPropagation(p.SCtx().GetExprCtx().GetEvalCtx(), equalCondition, canBePushed, canNotBePushed)
+		}
+	}
 	return canNotBePushed, p
+}
+
+func DeleteConstantPropagation(ctx expression.EvalContext, equalConditions *expression.ScalarFunction, canBePushed []expression.Expression, canNotBePushed []expression.Expression) []expression.Expression {
+	cols := expression.ExtractColumns(equalConditions)
+	keepConds := make([]*expression.ScalarFunction, 0, len(canBePushed))
+	keepCol := make([]*expression.Column, 0, len(cols))
+	for _, col := range cols {
+		for _, cond := range canBePushed {
+			if expr, ok := cond.(*expression.ScalarFunction); ok {
+				switch expr.FuncName.L {
+				case ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT:
+					args := expr.GetArgs()
+					arg1, ok1 := args[1].(*expression.Column)
+					arg2, ok0 := args[0].(*expression.Column)
+					if (ok1 && col.Equal(ctx, arg1)) || (ok0 && col.Equal(ctx, arg2)) {
+						keepConds = append(keepConds, expr)
+						keepCol = append(keepCol, col)
+						break
+					}
+				}
+			}
+		}
+	}
+	if len(keepCol) == 2 {
+		return canNotBePushed
+	}
+	if len(keepCol) == 1 {
+		delCols := slices.DeleteFunc(cols, func(column *expression.Column) bool {
+			return column.Equals(keepCol[0])
+		})
+		return slices.DeleteFunc(canNotBePushed, func(cond expression.Expression) bool {
+			if expr, ok := cond.(*expression.ScalarFunction); ok && expr.FuncName.L == keepConds[0].FuncName.L {
+				args := expr.GetArgs()
+				arg1, ok := args[0].(*expression.Column)
+				if ok && delCols[0].Equals(arg1) && args[1].Equal(ctx, keepConds[0].GetArgs()[1]) {
+					return true
+				}
+			}
+			return false
+		})
+	}
+	return slices.DeleteFunc(canNotBePushed, func(cond expression.Expression) bool {
+		if len(cols) == 2 {
+			for _, col := range cols {
+				if expr, ok := cond.(*expression.ScalarFunction); ok {
+					switch expr.FuncName.L {
+					case ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT:
+						args := expr.GetArgs()
+						arg1, ok1 := args[1].(*expression.Column)
+						arg2, ok0 := args[0].(*expression.Column)
+						if (ok1 && col.Equal(ctx, arg1)) || (ok0 && col.Equal(ctx, arg2)) {
+							keepConds = append(keepConds, expr)
+							keepCol = append(keepCol, col)
+							cols = slices.DeleteFunc(cols, func(column *expression.Column) bool {
+								return column.Equals(col)
+							})
+							return false
+						}
+					}
+				}
+			}
+			return false
+		}
+		if expr, ok := cond.(*expression.ScalarFunction); ok && expr.FuncName.L == keepConds[0].FuncName.L {
+			args := expr.GetArgs()
+			arg1, ok := args[0].(*expression.Column)
+			if ok && cols[0].Equals(arg1) && args[1].Equal(ctx, keepConds[0].GetArgs()[1]) {
+				return true
+			}
+		}
+		return false
+	})
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
