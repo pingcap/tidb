@@ -337,7 +337,11 @@ func (p *LogicalWindow) transferPredicateByWindowsFunction(canNotBePushed []expr
 	if len(p.WindowFuncDescs) == 1 {
 		schema := p.Schema()
 		windowsOutputColumn := schema.Columns[len(schema.Columns)-1]
-		windowsInputColumn := p.WindowFuncDescs[0].Args[0]
+		args := p.WindowFuncDescs[0].Args
+		if len(args) < 1 {
+			return canNotBePushed
+		}
+		windowsInputColumn := args[0]
 		if _, ok := windowsInputColumn.(*expression.Column); ok {
 			for _, cond := range canNotBePushed {
 				if expr, ok := cond.(*expression.ScalarFunction); ok {
