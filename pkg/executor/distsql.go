@@ -1066,10 +1066,6 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 		}
 	}()
 	chk := w.idxLookup.AllocPool.Alloc(w.idxLookup.getRetTpsForIndexReader(), w.idxLookup.MaxChunkSize(), w.idxLookup.MaxChunkSize())
-	var tblChk *chunk.Chunk
-	if w.idxLookup.lookupPushDown {
-		tblChk = w.idxLookup.AllocPool.Alloc(w.idxLookup.RetFieldTypes(), w.idxLookup.MaxChunkSize(), w.idxLookup.MaxChunkSize())
-	}
 	idxID := w.idxLookup.getIndexPlanRootID()
 	if w.idxLookup.stmtRuntimeStatsColl != nil {
 		if idxID != w.idxLookup.ID() && w.idxLookup.stats != nil {
@@ -1083,8 +1079,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 			break
 		}
 		startTime := time.Now()
-		extractResult, err := w.extractTaskHandles(ctx, chk, tblChk, result)
-		tblChk = nil
+		extractResult, err := w.extractTaskHandles(ctx, chk, result)
 		finishFetch := time.Now()
 		if err != nil {
 			w.syncErr(err)
@@ -1294,7 +1289,7 @@ type extractTaskHandlesResult struct {
 	leftLimit   int
 }
 
-func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, reservedTblChk *chunk.Chunk, idxResult distsql.SelectResult) (result extractTaskHandlesResult, err error) {
+func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (result extractTaskHandlesResult, err error) {
 	numColsWithoutPid := chk.NumCols()
 	ok, err := w.idxLookup.needPartitionHandle(getHandleFromIndex)
 	if err != nil {
@@ -1327,14 +1322,8 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 
 		startTime := time.Now()
 		var tblChk *chunk.Chunk
-		if reservedTblChk != nil {
-			tblChk = reservedTblChk
-			reservedTblChk = nil
-		}
 		if w.idxLookup.lookupPushDown {
-			if tblChk == nil {
-				tblChk = w.idxLookup.AllocPool.Alloc(w.idxLookup.RetFieldTypes(), w.idxLookup.MaxChunkSize(), w.idxLookup.MaxChunkSize())
-			}
+			tblChk = w.idxLookup.NewChunk()
 			tblChk.SetRequiredRows(requiredRows, w.maxChunkSize)
 			err = errors.Trace(idxResult.Next(ctx, tblChk, chk))
 		} else {
