@@ -320,7 +320,35 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, op
 		}
 	}
 	p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
+	// you can simplify the canNotBePushed by the window function arguments
+	canNotBePushed = p.transferPredicateByWindowsFunction(canNotBePushed)
 	return canNotBePushed, p
+}
+
+// transferPredicateByWindowsFunction transfers predicates that can be pushed down to the window function arguments.
+// for example:
+//
+//	select a, b from (select a, b, min(a) over(partition by b) as min_a from t)as tt where a < 10 and b > 10 and b = min_a
+//
+// predicate pushdown with windows, it will be ``` column#5 < 10 and test.a > 10 and test.b > 10``` and `min(test.a)` is windows function.
+// so we can transfer the `min(test.a)` to `test.a` in the predicate. then predicate will be `test.a < 10 and test.a > 10 and test.b > 10`
+// this is useful. then  can simplify the predicate better
+func (p *LogicalWindow) transferPredicateByWindowsFunction(canNotBePushed []expression.Expression) []expression.Expression {
+	if len(p.WindowFuncDescs) == 1 {
+		schema := p.Schema()
+		windowsOutputColumn := schema.Columns[len(schema.Columns)-1]
+		windowsInputColumn := p.WindowFuncDescs[0].Args[0]
+		if _, ok := windowsInputColumn.(*expression.Column); ok {
+			for _, cond := range canNotBePushed {
+				if expr, ok := cond.(*expression.ScalarFunction); ok {
+					if windowsInputColumn.Equal(p.SCtx().GetExprCtx().GetEvalCtx(), expr.GetArgs()[0]) {
+						expr.GetArgs()[0] = windowsOutputColumn
+					}
+				}
+			}
+		}
+	}
+	return canNotBePushed
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
