@@ -421,14 +421,10 @@ func BuildHistAndTopN(
 
 	topn := &TopN{TopN: topNList}
 	lenTopN := int64(len(topn.TopN))
-	if hg.NDV <= lenTopN {
-		// If we've collected everything  - don't create any buckets
-		return hg, topn, nil
-	}
 
 	// Step2: exclude topn from samples
 	lenSamples := int64(len(samples))
-	if lenTopN > 0 && lenSamples > 0 {
+	if lenTopN > 0 && lenTopN < hg.NDV && lenSamples > 0 {
 		for i := int64(0); i < lenSamples; i++ {
 			sampleBytes, err := getComparedBytes(samples[i].Value)
 			if err != nil {
@@ -485,8 +481,6 @@ func BuildHistAndTopN(
 		}
 	}
 
-<<<<<<< HEAD
-	topn := &TopN{TopN: topNList}
 	topn.Scale(sampleFactor)
 
 	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
@@ -494,10 +488,6 @@ func BuildHistAndTopN(
 		return hg, topn, nil
 	}
 
-	// Step3: build histogram with the rest samples
-	if len(samples) > 0 {
-		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
-=======
 	// Step3: build histogram with the rest samples
 	if lenSamples > 0 {
 		remainingNDV := ndv - lenTopN
@@ -513,7 +503,6 @@ func BuildHistAndTopN(
 			topNTotalCount += topn.TopN[i].Count
 		}
 		_, err = buildHist(sc, hg, samples, count-int64(topNTotalCount), remainingNDV, int64(numBuckets), memTracker)
->>>>>>> 10296d1d1c5 (planner: Only count all topn when necessary (#61421))
 		if err != nil {
 			return nil, nil, err
 		}
