@@ -335,18 +335,21 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, op
 // this is useful. then  can simplify the predicate better
 func (p *LogicalWindow) transferPredicateByWindowsFunction(canNotBePushed []expression.Expression) []expression.Expression {
 	if len(p.WindowFuncDescs) == 1 {
-		schema := p.Schema()
-		windowsOutputColumn := schema.Columns[len(schema.Columns)-1]
-		args := p.WindowFuncDescs[0].Args
-		if len(args) < 1 {
-			return canNotBePushed
-		}
-		windowsInputColumn := args[0]
-		if _, ok := windowsInputColumn.(*expression.Column); ok {
-			for _, cond := range canNotBePushed {
-				if expr, ok := cond.(*expression.ScalarFunction); ok {
-					if windowsInputColumn.Equal(p.SCtx().GetExprCtx().GetEvalCtx(), expr.GetArgs()[0]) {
-						expr.GetArgs()[0] = windowsOutputColumn
+		switch p.WindowFuncDescs[0].Name {
+		case ast.AggFuncMax, ast.AggFuncMin:
+			schema := p.Schema()
+			windowsOutputColumn := schema.Columns[len(schema.Columns)-1]
+			args := p.WindowFuncDescs[0].Args
+			if len(args) < 1 {
+				return canNotBePushed
+			}
+			windowsInputColumn := args[0]
+			if _, ok := windowsInputColumn.(*expression.Column); ok {
+				for _, cond := range canNotBePushed {
+					if expr, ok := cond.(*expression.ScalarFunction); ok {
+						if windowsInputColumn.Equal(p.SCtx().GetExprCtx().GetEvalCtx(), expr.GetArgs()[0]) {
+							expr.GetArgs()[0] = windowsOutputColumn
+						}
 					}
 				}
 			}
