@@ -903,7 +903,8 @@ func (r *Registry) GlobalOperationAfterSetResettingStatus(ctx context.Context,
 
 // FindAndDeleteMatchingTask finds and deletes the registry entry that matches the given restore configuration
 // This is used for the abort functionality to clean up the matching task
-// Similar to ResumeOrCreateRegistration, it first resolves the restoredTS then finds and deletes the matching paused task
+// Similar to ResumeOrCreateRegistration, it first resolves the restoredTS then finds and deletes the matching
+// paused task
 // Returns the deleted task ID, or 0 if no matching task was found
 func (r *Registry) FindAndDeleteMatchingTask(ctx context.Context,
 	info RegistrationInfo, isRestoredTSUserSpecified bool) (uint64, error) {
