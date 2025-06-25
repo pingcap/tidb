@@ -17,7 +17,10 @@ package brietest
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
@@ -204,6 +207,132 @@ func TestRegistryBasicOperations(t *testing.T) {
 	rows = tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM %s.%s WHERE id IN (%d, %d)",
 		registry.RestoreRegistryDBName, registry.RestoreRegistryTableName, restoreID, newTaskID))
 	require.Equal(t, "0", rows.Rows()[0][0])
+}
+
+func TestRegistryConfigurationOperations(t *testing.T) {
+	tk, dom, g := initRegistryTest(t)
+	cleanupRegistryTable(tk)
+
+	// Create registry
+	r1, err := registry.NewRestoreRegistry(g, dom)
+	require.NoError(t, err)
+	defer r1.Close()
+	r2, err := registry.NewRestoreRegistry(g, dom)
+	require.NoError(t, err)
+	defer r2.Close()
+
+	ctx := context.Background()
+
+	putAndDrop := func() {
+		info1 := registry.RegistrationInfo{
+			FilterStrings:     []string{"db1.table1"},
+			StartTS:           100,
+			RestoredTS:        200,
+			UpstreamClusterID: 1,
+			WithSysTable:      true,
+			Cmd:               "restore",
+		}
+		info2 := registry.RegistrationInfo{
+			FilterStrings:     []string{"db2.table2"},
+			StartTS:           100,
+			RestoredTS:        200,
+			UpstreamClusterID: 1,
+			WithSysTable:      true,
+			Cmd:               "restore",
+		}
+		restoreID1, _, err := r1.ResumeOrCreateRegistration(ctx, info1, false)
+		require.NoError(t, err)
+		var restoreID2 uint64
+		var k int = 1
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			sleeptime := time.Millisecond * time.Duration(100+rand.IntN(200))
+			time.Sleep(sleeptime)
+
+			restoreID2, _, err = r2.ResumeOrCreateRegistration(ctx, info2, false)
+			require.NoError(t, err)
+			r2.OperationAfterWaitIDs(ctx, func() error {
+				k = -1
+				return nil
+			})
+		}()
+
+		go func() {
+			defer wg.Done()
+			sleeptime := time.Millisecond * time.Duration(100+rand.IntN(200))
+			time.Sleep(sleeptime)
+
+			r1.GlobalOperationAfterSetResettingStatus(ctx, restoreID1, func() error {
+				k = 1
+				return nil
+			})
+			r1.Unregister(ctx, restoreID1)
+		}()
+		wg.Wait()
+		require.Equal(t, int(-1), k)
+		// clean the registry
+		err = r2.Unregister(ctx, restoreID2)
+		require.NoError(t, err)
+	}
+
+	putAndDrop()
+
+	dropAndDrop := func() {
+		info1 := registry.RegistrationInfo{
+			FilterStrings:     []string{"db1.table1"},
+			StartTS:           100,
+			RestoredTS:        200,
+			UpstreamClusterID: 1,
+			WithSysTable:      true,
+			Cmd:               "restore",
+		}
+		info2 := registry.RegistrationInfo{
+			FilterStrings:     []string{"db2.table2"},
+			StartTS:           100,
+			RestoredTS:        200,
+			UpstreamClusterID: 1,
+			WithSysTable:      true,
+			Cmd:               "restore",
+		}
+		restoreID1, _, err := r1.ResumeOrCreateRegistration(ctx, info1, false)
+		require.NoError(t, err)
+		restoreID2, _, err := r2.ResumeOrCreateRegistration(ctx, info2, false)
+		require.NoError(t, err)
+		var k int = -1
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			sleeptime := time.Millisecond * time.Duration(100+rand.IntN(200))
+			time.Sleep(sleeptime)
+
+			r2.GlobalOperationAfterSetResettingStatus(ctx, restoreID2, func() error {
+				k = 1
+				return nil
+			})
+			err = r2.Unregister(ctx, restoreID2)
+			require.NoError(t, err)
+		}()
+
+		go func() {
+			defer wg.Done()
+			sleeptime := time.Millisecond * time.Duration(100+rand.IntN(200))
+			time.Sleep(sleeptime)
+
+			r1.GlobalOperationAfterSetResettingStatus(ctx, restoreID1, func() error {
+				k = 1
+				return nil
+			})
+			r1.Unregister(ctx, restoreID1)
+			require.NoError(t, err)
+		}()
+		wg.Wait()
+		require.Equal(t, int(1), k)
+	}
+
+	dropAndDrop()
 }
 
 func TestRegistryTableConflicts(t *testing.T) {
