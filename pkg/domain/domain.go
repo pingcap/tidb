@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -83,7 +84,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/store"
+	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -219,6 +220,11 @@ type Domain struct {
 	instancePlanCache sessionctx.InstancePlanCache // the instance level plan cache
 
 	statsOwner owner.Manager
+
+	// only used for nextgen
+	sysksInfoCache *infoschema.InfoCache
+	sysksISLoader  *issyncer.Loader
+	sysksSessPool  util.DestroyableSessionPool
 }
 
 // InfoCache export for test.
@@ -566,11 +572,19 @@ const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool wil
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
-	return NewDomainWithEtcdClient(store, schemaLease, statsLease, dumpFileGcLease, factory, nil)
+	return NewDomainWithEtcdClient(store, schemaLease, statsLease, dumpFileGcLease, factory, nil, nil)
 }
 
 // NewDomainWithEtcdClient creates a new domain with etcd client. Should not create multiple domains for the same store.
-func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory, etcdClient *clientv3.Client) *Domain {
+func NewDomainWithEtcdClient(
+	store kv.Storage,
+	schemaLease time.Duration,
+	statsLease time.Duration,
+	dumpFileGcLease time.Duration,
+	factory pools.Factory,
+	ksSessFactoryGetter func(currKSStore kv.Storage, targetKS string) pools.Factory,
+	etcdClient *clientv3.Client,
+) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
@@ -632,7 +646,36 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 		do.sysSessionPool,
 	)
 	do.initDomainSysVars()
+
+	if shouldLoadSysKSAdditionally(store) {
+		do.sysksInfoCache = infoschema.NewCache(kvstore.GetSystemStorage(), int(vardef.SchemaVersionCacheLimit.Load()))
+		do.sysksISLoader = issyncer.NewLoader(kvstore.GetSystemStorage(), do.sysksInfoCache)
+		// TODO register to a separate session manager when we start syncer for
+		// system keyspace.
+		do.sysksSessPool = util.NewSessionPool(
+			capacity, ksSessFactoryGetter(store, keyspace.System),
+			func(r pools.Resource) {
+				_, ok := r.(sessionctx.Context)
+				intest.Assert(ok)
+			},
+			func(r pools.Resource) {
+				sctx, ok := r.(sessionctx.Context)
+				intest.Assert(ok)
+				intest.AssertFunc(func() bool {
+					txn, _ := sctx.Txn(false)
+					return txn == nil || !txn.Valid()
+				})
+			},
+			func(r pools.Resource) {
+				intest.Assert(r != nil)
+			},
+		)
+	}
 	return do
+}
+
+func shouldLoadSysKSAdditionally(store kv.Storage) bool {
+	return kerneltype.IsNextGen() && store.GetKeyspace() != keyspace.System
 }
 
 const serverIDForStandalone = 1 // serverID for standalone deployment.
@@ -645,12 +688,12 @@ func (do *Domain) Init(
 ) error {
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
-	etcdStore, addrs, err := store.GetEtcdAddrs(do.store)
+	etcdStore, addrs, err := kvstore.GetEtcdAddrs(do.store)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if len(addrs) > 0 {
-		cli, err2 := store.NewEtcdCliWithAddrs(addrs, etcdStore)
+		cli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore)
 		if err2 != nil {
 			return errors.Trace(err2)
 		}
@@ -660,7 +703,7 @@ func (do *Domain) Init(
 
 		do.autoidClient = autoid.NewClientDiscover(cli)
 
-		unprefixedEtcdCli, err2 := store.NewEtcdCliWithAddrs(addrs, etcdStore)
+		unprefixedEtcdCli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore)
 		if err2 != nil {
 			return errors.Trace(err2)
 		}
@@ -818,7 +861,49 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 		return err
 	}
 
+	// right now we only allow access system keyspace info schema after fully bootstrap.
+	if shouldLoadSysKSAdditionally(do.store) && startMode == ddl.Normal {
+		if err = do.loadSysKSInfoSchema(); err != nil {
+			return err
+		}
+	}
+
 	return nil
+}
+
+// TODO: we should sync the system keyspace info schema, not just load it,
+// currently, we assume there is no upgrade, so we only load the info schema of
+// system keyspace once, and it will not change during the lifetime of the domain,
+// it's not right, but it's enough to push subtasks which depends on it forward,
+// we will fix it in the future.
+func (do *Domain) loadSysKSInfoSchema() error {
+	logutil.BgLogger().Info("loading system keyspace info schema")
+	sysksStore := kvstore.GetSystemStorage()
+	ver, err := sysksStore.CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return err
+	}
+
+	_, _, _, _, err = do.sysksISLoader.LoadWithTS(ver.Ver, false)
+	return err
+}
+
+// GetKSStore returns the kv.Storage for the given keyspace.
+func (*Domain) GetKSStore(targetKS string) kv.Storage {
+	if targetKS == keyspace.System {
+		return kvstore.GetSystemStorage()
+	}
+	// TODO, support loading store for other keyspaces.
+	panic("invalid call to GetKSStore, only system keyspace is supported now")
+}
+
+// GetKSInfoCache returns the system keyspace info cache.
+func (do *Domain) GetKSInfoCache(targetKS string) *infoschema.InfoCache {
+	if targetKS == keyspace.System {
+		return do.sysksInfoCache
+	}
+	// TODO, support loading info schema for other keyspaces.
+	panic("invalid call to GetKSInfoCache, only system keyspace is supported now")
 }
 
 // GetSchemaLease return the schema lease.

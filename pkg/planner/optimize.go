@@ -725,7 +725,11 @@ func init() {
 	core.IsReadOnly = IsReadOnly
 	indexadvisor.QueryPlanCostHook = queryPlanCost
 	bindinfo.GetBindingHandle = func(sctx sessionctx.Context) bindinfo.BindingHandle {
-		return domain.GetDomain(sctx).BindingHandle()
+		dom := domain.GetDomain(sctx)
+		if dom == nil {
+			return nil
+		}
+		return dom.BindingHandle()
 	}
 	bindinfo.CalculatePlanDigest = calculatePlanDigestFunc
 	bindinfo.RecordRelevantOptVarsAndFixes = recordRelevantOptVarsAndFixes

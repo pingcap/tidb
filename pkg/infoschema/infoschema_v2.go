@@ -785,7 +785,6 @@ var _ InfoSchema = &infoschemaV2{}
 
 type infoschemaV2 struct {
 	*infoSchema // in fact, we only need the infoSchemaMisc inside it, but the builder rely on it.
-	r           autoid.Requirement
 	factory     func() (pools.Resource, error)
 	ts          uint64
 	*Data
@@ -794,9 +793,8 @@ type infoschemaV2 struct {
 // NewInfoSchemaV2 create infoschemaV2.
 func NewInfoSchemaV2(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) infoschemaV2 {
 	return infoschemaV2{
-		infoSchema: newInfoSchema(),
+		infoSchema: newInfoSchema(r),
 		Data:       infoData,
-		r:          r,
 		factory:    factory,
 	}
 }

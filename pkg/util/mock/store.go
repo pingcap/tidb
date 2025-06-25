@@ -98,3 +98,8 @@ func (*Store) SetOption(_, _ any) {}
 func (*Store) GetClusterID() uint64 {
 	return 1
 }
+
+// GetKeyspace implements kv.Storage interface.
+func (*Store) GetKeyspace() string {
+	return ""
+}
