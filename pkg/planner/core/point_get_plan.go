@@ -386,16 +386,16 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 	}
 	row := make([]types.Datum, len(p.TblInfo.Columns))
 	if p.HandleConstant == nil && len(p.IndexValues) > 0 {
-		containsNonBinaryCollate := false
+		hasNonBinaryCollate := false
 		for _, col := range p.IdxCols {
 			if !collate.IsBinCollation(col.GetType(sctx.GetExprCtx().GetEvalCtx()).GetCollate()) {
-				containsNonBinaryCollate = true
+				hasNonBinaryCollate = true
 				break
 			}
 		}
 		indexValues := p.IndexValues
 		// If a non-binary collation is used, the values in `p.IndexValues` are sort keys and cannot be used for partition pruning.
-		if containsNonBinaryCollate {
+		if hasNonBinaryCollate {
 			r, err := ranger.DetachCondAndBuildRange(sctx.GetRangerCtx(), p.AccessConditions, p.IdxCols, p.IdxColLens, sctx.GetSessionVars().RangeMaxSize, false, true)
 			if err != nil {
 				return false, err
