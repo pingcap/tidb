@@ -2422,6 +2422,16 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	}
 }
 
+// Assume that there are two tables t and t1, which contain a and b columns individually. In MySQL:
+// -- Require `a` or `b` SELECT privilege
+// select count(*) from t;
+// select count(1) from t;
+// -- Require `a` SELECT privilege
+// select count(a) from t;
+// -- Require `b` SELECT privilege
+// select count(b) from t;
+// -- Require `SELCT` privilege of `t.a` and `t1.a`
+// select count(*) from t join t1 on t.a = t1.a;
 func (er *expressionRewriter) collectPrivsForCount() {
 	b := er.planCtx.builder
 	if b == nil {
