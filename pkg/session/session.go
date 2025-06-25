@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -190,8 +191,11 @@ type session struct {
 	currentPlan base.Plan
 
 	// dom is *domain.Domain, use `any` to avoid import cycle.
-	dom   any
-	store kv.Storage
+	// cross keyspace session doesn't have domain set.
+	dom             any
+	schemaValidator validatorapi.Validator
+	infoCache       *infoschema.InfoCache
+	store           kv.Storage
 
 	sessionPlanCache sessionctx.SessionPlanCache
 
@@ -1220,39 +1224,31 @@ func (s *session) sysSessionPool() util.SessionPool {
 	return domain.GetDomain(s).SysSessionPool()
 }
 
-func createSessionFunc(store kv.Storage) pools.Factory {
+func getSessionFactory(store kv.Storage) pools.Factory {
+	facWithDom := getSessionFactoryInternal(store, func(store kv.Storage, _ *domain.Domain) (*session, error) {
+		return createSession(store)
+	})
 	return func() (pools.Resource, error) {
-		se, err := createSession(store)
-		if err != nil {
-			return nil, err
-		}
-		err = se.sessionVars.SetSystemVar(vardef.AutoCommit, "1")
-		if err != nil {
-			return nil, err
-		}
-		err = se.sessionVars.SetSystemVar(vardef.MaxExecutionTime, "0")
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		err = se.sessionVars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(vardef.DefMaxAllowedPacket, 10))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		err = se.sessionVars.SetSystemVar(vardef.TiDBConstraintCheckInPlacePessimistic, vardef.On)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		se.sessionVars.CommonGlobalLoaded = true
-		se.sessionVars.InRestrictedSQL = true
-		// Internal session uses default format to prevent memory leak problem.
-		se.sessionVars.EnableChunkRPC = false
-		return se, nil
+		return facWithDom(nil)
 	}
 }
 
-func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.Resource, error) {
+func getSessionFactoryWithDom(store kv.Storage) func(*domain.Domain) (pools.Resource, error) {
+	return getSessionFactoryInternal(store, CreateSessionWithDomain)
+}
+
+func getCrossKSSessionFactory(currKSStore kv.Storage, targetKS string) pools.Factory {
+	facWithDom := getSessionFactoryInternal(currKSStore, func(store kv.Storage, _ *domain.Domain) (*session, error) {
+		return createCrossKSSession(store, targetKS)
+	})
+	return func() (pools.Resource, error) {
+		return facWithDom(nil)
+	}
+}
+
+func getSessionFactoryInternal(store kv.Storage, createSessFn func(store kv.Storage, dom *domain.Domain) (*session, error)) func(*domain.Domain) (pools.Resource, error) {
 	return func(dom *domain.Domain) (pools.Resource, error) {
-		se, err := CreateSessionWithDomain(store, dom)
+		se, err := createSessFn(store, dom)
 		if err != nil {
 			return nil, err
 		}
@@ -2161,7 +2157,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// infoschema there.
 	if sessVars.StmtCtx.ResourceGroupName != sessVars.ResourceGroupName {
 		// if target resource group doesn't exist, fallback to the origin resource group.
-		if _, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(ast.NewCIStr(sessVars.StmtCtx.ResourceGroupName)); !ok {
+		if _, ok := s.infoCache.GetLatest().ResourceGroupByName(ast.NewCIStr(sessVars.StmtCtx.ResourceGroupName)); !ok {
 			logutil.Logger(ctx).Warn("Unknown resource group from hint", zap.String("name", sessVars.StmtCtx.ResourceGroupName))
 			sessVars.StmtCtx.ResourceGroupName = sessVars.ResourceGroupName
 			if txn, err := s.Txn(false); err == nil && txn != nil && txn.Valid() {
@@ -2515,7 +2511,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	}()
 	if s.sessionVars.TxnCtx.InfoSchema == nil {
 		// We don't need to create a transaction for prepare statement, just get information schema will do.
-		s.sessionVars.TxnCtx.InfoSchema = domain.GetDomain(s).InfoSchema()
+		s.sessionVars.TxnCtx.InfoSchema = s.infoCache.GetLatest()
 	}
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
@@ -3217,16 +3213,16 @@ func CreateSession(store kv.Storage) (types.Session, error) {
 // CreateSessionWithOpt creates a new session environment with option.
 // Use default option if opt is nil.
 func CreateSessionWithOpt(store kv.Storage, opt *Opt) (types.Session, error) {
-	s, err := createSessionWithOpt(store, opt)
+	do, err := domap.Get(store)
+	if err != nil {
+		return nil, err
+	}
+	s, err := createSessionWithOpt(store, do, do.GetSchemaValidator(), do.InfoCache(), opt)
 	if err != nil {
 		return nil, err
 	}
 
 	// Add auth here.
-	do, err := domap.Get(store)
-	if err != nil {
-		return nil, err
-	}
 	extensions, err := extension.GetExtensions()
 	if err != nil {
 		return nil, err
@@ -3868,18 +3864,45 @@ func createSessionsImpl(store kv.Storage, cnt int) ([]*session, error) {
 // This means the min ts reporter is not aware of it and may report a wrong min start ts.
 // In most cases you should use a session pool in domain instead.
 func createSession(store kv.Storage) (*session, error) {
-	return createSessionWithOpt(store, nil)
-}
-
-func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	dom, err := domap.Get(store)
 	if err != nil {
 		return nil, err
 	}
+	return createSessionWithOpt(store, dom, dom.GetSchemaValidator(), dom.InfoCache(), nil)
+}
+
+func createCrossKSSession(currKSStore kv.Storage, targetKS string) (*session, error) {
+	if currKSStore.GetKeyspace() == targetKS {
+		return nil, errors.New("cannot create session for the same keyspace")
+	}
+	dom, err := domap.Get(currKSStore)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO: use the schema validator of the target keyspace when we implement
+	// the info schema syncer for cross keyspace access.
+	return createSessionWithOpt(dom.GetKSStore(targetKS), nil, dom.GetSchemaValidator(), dom.GetKSInfoCache(targetKS), nil)
+}
+
+func createSessionWithOpt(
+	store kv.Storage,
+	dom *domain.Domain,
+	schemaValidator validatorapi.Validator,
+	infoCache *infoschema.InfoCache,
+	opt *Opt,
+) (*session, error) {
+	var ddlOwnerMgr owner.Manager
+	if dom != nil {
+		// we don't set dom for cross keyspace access.
+		ddlOwnerMgr = dom.DDL().OwnerManager()
+	}
 	s := &session{
 		dom:                   dom,
+		schemaValidator:       schemaValidator,
+		infoCache:             infoCache,
 		store:                 store,
-		ddlOwnerManager:       dom.DDL().OwnerManager(),
+		ddlOwnerManager:       ddlOwnerMgr,
 		client:                store.GetClient(),
 		mppClient:             store.GetMPPClient(),
 		stmtStats:             stmtstats.CreateStatementStats(),
@@ -3940,25 +3963,7 @@ func detachStatsCollector(s *session) *session {
 // to change some system tables. But at that time, we have been already in
 // a lock context, which cause we can't call createSession directly.
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
-	s := &session{
-		dom:                   dom,
-		store:                 store,
-		sessionVars:           variable.NewSessionVars(nil),
-		client:                store.GetClient(),
-		mppClient:             store.GetMPPClient(),
-		stmtStats:             stmtstats.CreateStatementStats(),
-		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
-	}
-	s.exprctx = sessionexpr.NewExprContext(s)
-	s.pctx = newPlanContextImpl(s)
-	s.tblctx = tblsession.NewMutateContext(s)
-	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
-	s.mu.values = make(map[fmt.Stringer]any)
-	s.lockedTables = make(map[int64]model.TableLockTpInfo)
-	// session implements variable.GlobalVarAccessor. Bind it to ctx.
-	s.sessionVars.GlobalVarsAccessor = s
-	s.txn.init()
-	return s, nil
+	return createSessionWithOpt(store, dom, dom.GetSchemaValidator(), dom.InfoCache(), nil)
 }
 
 const (
@@ -4389,7 +4394,7 @@ func (s *session) GetInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	}
 
 	if is == nil {
-		is = domain.GetDomain(s).InfoSchema()
+		is = s.infoCache.GetLatest()
 	}
 
 	// Override the infoschema if the session has temporary table.
@@ -4397,9 +4402,17 @@ func (s *session) GetInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 }
 
 func (s *session) GetLatestInfoSchema() infoschemactx.MetaOnlyInfoSchema {
-	is := domain.GetDomain(s).InfoSchema()
+	is := s.infoCache.GetLatest()
 	extIs := &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, extIs)
+}
+
+func (s *session) GetLatestISWithoutSessExt() infoschemactx.MetaOnlyInfoSchema {
+	return s.infoCache.GetLatest()
+}
+
+func (s *session) GetSchemaValidator() validatorapi.Validator {
+	return s.schemaValidator
 }
 
 func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {

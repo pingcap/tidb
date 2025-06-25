@@ -975,7 +975,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		sc.InitMemTracker(memory.LabelForSQLText, -1)
 	}
-	logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota
+	sessDom := domain.GetDomain(ctx)
+	var logOnQueryExceedMemQuota func(uint64)
+	if sessDom != nil {
+		logOnQueryExceedMemQuota = sessDom.ExpensiveQueryHandle().LogOnQueryExceedMemQuota
+	}
 	switch vardef.OOMAction.Load() {
 	case vardef.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: vars.ConnectionID, Killer: vars.MemTracker.Killer}

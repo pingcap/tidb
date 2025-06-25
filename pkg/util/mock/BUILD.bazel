@@ -18,6 +18,7 @@ go_library(
         "//pkg/expression/sessionexpr",
         "//pkg/extension",
         "//pkg/infoschema/context",
+        "//pkg/infoschema/validatorapi",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/ast",

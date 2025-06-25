@@ -10,6 +10,7 @@ go_library(
         "//pkg/expression/exprctx",
         "//pkg/extension",
         "//pkg/infoschema/context",
+        "//pkg/infoschema/validatorapi",
         "//pkg/kv",
         "//pkg/lock/context",
         "//pkg/meta/model",

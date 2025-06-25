@@ -49,6 +49,9 @@ type PlanContext interface {
 	// except schema of physical schema objects, the information schema returned
 	// also includes the temporary table definitions stored in session.
 	GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema
+	// GetLatestISWithoutSessExt is same as GetLatestInfoSchema, except that it
+	// does NOT include the temporary table definitions stored in session.
+	GetLatestISWithoutSessExt() infoschema.MetaOnlyInfoSchema
 	// GetInfoSchema returns the current infoschema
 	GetInfoSchema() infoschema.MetaOnlyInfoSchema
 	// UpdateColStatsUsage updates the column stats usage.
