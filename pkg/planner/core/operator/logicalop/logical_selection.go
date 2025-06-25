@@ -100,7 +100,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	exprCtx := p.SCtx().GetExprCtx()
 	stmtCtx := p.SCtx().GetSessionVars().StmtCtx
 	predicates = constraint.DeleteTrueExprs(exprCtx, stmtCtx, predicates)
-	p.Conditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false)
+	p.Conditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.Conditions, true)
 	var child base.LogicalPlan
 	var retConditions []expression.Expression
 	var originConditions []expression.Expression
@@ -110,7 +110,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	retConditions = append(retConditions, canNotBePushDown...)
 	sctx := p.SCtx()
 	if len(retConditions) > 0 {
-		p.Conditions = utilfuncp.ApplyPredicateSimplification(sctx, retConditions, true)
+		p.Conditions = utilfuncp.ApplyPredicateSimplification(sctx, retConditions, false)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, p.Conditions)
 		if dual != nil {
