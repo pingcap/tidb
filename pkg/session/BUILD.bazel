@@ -21,7 +21,6 @@ go_library(
     deps = [
         "//pkg/bindinfo",
         "//pkg/config",
-        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/placement",
         "//pkg/ddl/schematracker",
@@ -44,7 +43,6 @@ go_library(
         "//pkg/extension/extensionimpl",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
-        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/metabuild",

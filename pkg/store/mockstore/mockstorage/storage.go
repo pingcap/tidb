@@ -168,7 +168,3 @@ type MockLockWaitSetter interface {
 func (s *mockStorage) SetMockLockWaits(lockWaits []*deadlockpb.WaitForEntry) {
 	s.LockWaits = lockWaits
 }
-
-func (s *mockStorage) GetClusterID() uint64 {
-	return 1
-}
