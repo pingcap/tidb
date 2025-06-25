@@ -2427,10 +2427,32 @@ func TestColumnPrivilege4Views(t *testing.T) {
 		"[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 'v6'")
 
 	// 3. testuser has SELECT privilege of test.v3, test.v4, test.v5, test.v6
+	tk.MustExec(`REVOKE SELECT(a) ON test.v1 from 'testuser'@'localhost';`)
+	tk.MustExec(`REVOKE SELECT(a) ON test.v2 from 'testuser'@'localhost';`)
 	tk.MustExec(`GRANT SELECT(a) ON test.v3 to 'testuser'@'localhost';`)
 	tk.MustExec(`GRANT SELECT(a) ON test.v4 to 'testuser'@'localhost';`)
 	tk.MustExec(`GRANT SELECT(a) ON test.v5 to 'testuser'@'localhost';`)
 	tk.MustExec(`GRANT SELECT(a) ON test.v6 to 'testuser'@'localhost';`)
+	userTk.MustContainErrMsg(`SELECT * FROM test.v1`,
+		"[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 'v1'")
+	userTk.MustContainErrMsg(`SELECT * FROM test.v2`,
+		"[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 'v2'")
+	userTk.MustQuery(`SELECT * FROM test.v3`)
+	userTk.MustContainErrMsg(`SELECT * FROM test.v4`,
+		"[planner:1356]View 'test.v4' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
+	userTk.MustQuery(`SELECT * FROM test.v5`)
+	userTk.MustContainErrMsg(`SELECT * FROM test.v6`,
+		"[planner:1356]View 'test.v6' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
+
+	// 4. testuser has SELECT privilege of test.v1, test.v2, test.v3, test.v4, test.v5, test.v6
+	tk.MustExec(`GRANT SELECT(a) ON test.v1 to 'testuser'@'localhost';`)
+	tk.MustExec(`GRANT SELECT(a) ON test.v2 to 'testuser'@'localhost';`)
+	tk.MustExec(`GRANT SELECT(a) ON test.v3 to 'testuser'@'localhost';`)
+	tk.MustExec(`GRANT SELECT(a) ON test.v4 to 'testuser'@'localhost';`)
+	tk.MustExec(`GRANT SELECT(a) ON test.v5 to 'testuser'@'localhost';`)
+	tk.MustExec(`GRANT SELECT(a) ON test.v6 to 'testuser'@'localhost';`)
+	userTk.MustQuery(`SELECT * FROM test.v1`)
+	userTk.MustQuery(`SELECT * FROM test.v2`)
 	userTk.MustQuery(`SELECT * FROM test.v3`)
 	userTk.MustQuery(`SELECT * FROM test.v4`)
 	userTk.MustQuery(`SELECT * FROM test.v5`)
