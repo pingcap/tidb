@@ -334,13 +334,13 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, op
 	p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
 	if len(equalConditions) > 0 && len(canNotBePushed) > 0 {
 		for _, equalCondition := range equalConditions {
-			canNotBePushed = DeleteConstantPropagation(p.SCtx().GetExprCtx().GetEvalCtx(), equalCondition, canBePushed, canNotBePushed)
+			canNotBePushed = deleteConstantPropagation(p.SCtx().GetExprCtx().GetEvalCtx(), equalCondition, canBePushed, canNotBePushed)
 		}
 	}
 	return canNotBePushed, p
 }
 
-func DeleteConstantPropagation(ctx expression.EvalContext, equalConditions *expression.ScalarFunction, canBePushed []expression.Expression, canNotBePushed []expression.Expression) []expression.Expression {
+func deleteConstantPropagation(ctx expression.EvalContext, equalConditions *expression.ScalarFunction, canBePushed []expression.Expression, canNotBePushed []expression.Expression) []expression.Expression {
 	cols := expression.ExtractColumns(equalConditions)
 	keepConds := make([]*expression.ScalarFunction, 0, len(canBePushed))
 	keepCol := make([]*expression.Column, 0, len(cols))
