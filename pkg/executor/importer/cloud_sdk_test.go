@@ -69,13 +69,12 @@ func (s *mockGCSSuite) TearDownSuite() {
 }
 
 func (s *mockGCSSuite) TestDumplingSource() {
-	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1-schema-create.sql"},
 		Content:     []byte("CREATE DATABASE IF NOT EXISTS db1;\n"),
 	})
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1-schema-create.sql"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db2-schema-create.sql"},
 		Content:     []byte("CREATE DATABASE IF NOT EXISTS db2;\n"),
 	})
 	// table1 in db1
@@ -179,13 +178,122 @@ func (s *mockGCSSuite) TestDumplingSource() {
 }
 
 func (s *mockGCSSuite) TestCSVSource() {
-	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "csv"})
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "csv", Name: "part1.csv"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "csv", Name: "db1-schema-create.sql"},
+		Content:     []byte("CREATE DATABASE IF NOT EXISTS db1;\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "csv", Name: "db2-schema-create.sql"},
+		Content:     []byte("CREATE DATABASE IF NOT EXISTS db2;\n"),
+	})
+	// table1 in db1
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "csv", Name: "db1.tb1-schema.sql"},
+		Content:     []byte("CREATE TABLE IF NOT EXISTS db1.tb1 (a INT, b VARCHAR(10));\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "csv", Name: "db1.tb1.001.csv"},
+		Content:     []byte("1,a\n2,b\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "csv", Name: "db1.tb1.002.csv"},
+		Content:     []byte("3,c\n4,d\n"),
+	})
+	// table2 in db2
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "csv", Name: "db2.tb2-schema.sql"},
+		Content:     []byte("CREATE TABLE IF NOT EXISTS db2.tb2 (x INT, y VARCHAR(10));\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "csv", Name: "db2.tb2.001.csv"},
+		Content:     []byte("5,e\n6,f\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "csv", Name: "db2.tb2.002.csv"},
+		Content:     []byte("7,g\n8,h\n"),
+	})
+
+	db, mock, err := sqlmock.New()
+	s.Require().NoError(err)
+	defer db.Close()
+
+	mock.ExpectQuery(`SELECT SCHEMA_NAME FROM information_schema.SCHEMATA`).
+		WillReturnRows(sqlmock.NewRows([]string{"SCHEMA_NAME"}))
+	mock.ExpectExec("CREATE DATABASE IF NOT EXISTS `db1`;").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("CREATE DATABASE IF NOT EXISTS `db2`;").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS `db1`.`tb1` (`a` INT,`b` VARCHAR(10));")).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS `db2`.`tb2` (`x` INT,`y` VARCHAR(10));")).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	importSDK, err := NewImportSDK(
+		context.Background(),
+		fmt.Sprintf("gs://csv?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
+		db,
+		WithConcurrency(1),
+	)
+	s.Require().NoError(err)
+	defer importSDK.Close()
+
+	err = importSDK.CreateSchemasAndTables(context.Background())
+	s.Require().NoError(err)
+
+	tablesMeta, err := importSDK.GetTablesMeta(context.Background())
+	s.Require().NoError(err)
+	s.Require().Len(tablesMeta, 2)
+
+	expected1 := &TableMeta{
+		Database:   "db1",
+		Table:      "tb1",
+		SchemaFile: "db1.tb1-schema.sql",
+		DataFiles: []DataFileMeta{
+			{Path: "db1.tb1.001.csv", Size: 8, Format: mydump.SourceTypeCSV, Compression: mydump.CompressionNone},
+			{Path: "db1.tb1.002.csv", Size: 8, Format: mydump.SourceTypeCSV, Compression: mydump.CompressionNone},
+		},
+		TotalSize:    16,
+		WildcardPath: "gcs://csv/db1.tb1.*.csv",
+	}
+	expected2 := &TableMeta{
+		Database:   "db2",
+		Table:      "tb2",
+		SchemaFile: "db2.tb2-schema.sql",
+		DataFiles: []DataFileMeta{
+			{Path: "db2.tb2.001.csv", Size: 8, Format: mydump.SourceTypeCSV, Compression: mydump.CompressionNone},
+			{Path: "db2.tb2.002.csv", Size: 8, Format: mydump.SourceTypeCSV, Compression: mydump.CompressionNone},
+		},
+		TotalSize:    16,
+		WildcardPath: "gcs://csv/db2.tb2.*.csv",
+	}
+	s.Require().Equal(expected1, tablesMeta[0])
+	s.Require().Equal(expected2, tablesMeta[1])
+
+	// verify GetTableMetaByName for each db
+	tm1, err := importSDK.GetTableMetaByName(context.Background(), "db1", "tb1")
+	s.Require().NoError(err)
+	s.Require().Equal(tm1, expected1)
+	tm2, err := importSDK.GetTableMetaByName(context.Background(), "db2", "tb2")
+	s.Require().NoError(err)
+	s.Require().Equal(tm2, expected2)
+
+	totalSize, err := importSDK.GetTotalSize(context.Background())
+	s.Require().NoError(err)
+	s.Require().Equal(totalSize, int64(32))
+
+	// check meets expectations
+	err = mock.ExpectationsWereMet()
+	s.Require().NoError(err)
+}
+
+func (s *mockGCSSuite) TestOnlyDataFiles() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "onlydata"})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "onlydata", Name: "part1.csv"},
 		Content:     []byte("a,b\n1,a\n2,b\n"),
 	})
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "csv", Name: "part2.csv"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "onlydata", Name: "part2.csv"},
 		Content:     []byte("a,b\n3,c\n4,d\n"),
 	})
 
@@ -201,7 +309,7 @@ func (s *mockGCSSuite) TestCSVSource() {
 		WillReturnRows(sqlmock.NewRows([]string{"Create Table"}).AddRow("CREATE TABLE `db`.`tb` (`a` INT, `b` VARCHAR(10));"))
 	importSDK, err := NewImportSDK(
 		context.Background(),
-		fmt.Sprintf("gs://csv?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
+		fmt.Sprintf("gs://onlydata?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
 		db,
 		WithCharset("utf8"),
 		WithConcurrency(8),
@@ -235,7 +343,7 @@ func (s *mockGCSSuite) TestCSVSource() {
 			{Path: "part2.csv", Size: 12, Format: mydump.SourceTypeCSV, Compression: mydump.CompressionNone},
 		},
 		TotalSize:    24,
-		WildcardPath: "gcs://csv/part*.csv",
+		WildcardPath: "gcs://onlydata/part*.csv",
 	}, tablesMeta[0])
 
 	tableMeta, err := importSDK.GetTableMetaByName(context.Background(), "db", "tb")

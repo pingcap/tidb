@@ -434,15 +434,10 @@ func generateMydumperPattern(paths []string) string {
 
 	// Check if there's a directory component in the paths
 	dirPrefix := extractCommonDirectory(paths)
+	// Determine file extension from first path
+	ext := filepath.Ext(paths[0])
 
-	// Generate pattern based on Mydumper format
-	if dirPrefix == "" {
-		// Files are in the current directory
-		return dbName + "." + tableName + ".*.sql"
-	}
-
-	// Files are in a specific directory
-	return dirPrefix + dbName + "." + tableName + ".*.sql"
+	return dirPrefix + dbName + "." + tableName + ".*" + ext
 }
 
 // extractMydumperNames extracts database and table names from Mydumper-formatted paths
@@ -465,12 +460,12 @@ func extractMydumperNames(paths []string) (dbName, tableName string) {
 			continue
 		}
 
-		// Skip non-SQL files (Mydumper typically produces .sql files)
-		if !strings.HasSuffix(filename, ".sql") {
+		// Mydumper typically produces sql/csv files
+		if !strings.HasSuffix(filename, ".sql") && !strings.HasSuffix(filename, ".csv") {
 			return "", ""
 		}
 
-		// Parse "{db}.{table}.sql" or "{db}.{table}.{part}.sql"
+		// Parse "{db}.{table}.sql|csv" or "{db}.{table}.{part}.sql|csv"
 		parts := strings.Split(filename, ".")
 		if len(parts) < 3 {
 			return "", "" // Not enough parts for Mydumper format
