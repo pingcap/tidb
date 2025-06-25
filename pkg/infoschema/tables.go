@@ -604,12 +604,6 @@ var referConstCols = []columnInfo{
 	{name: "REFERENCED_TABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/information-schema-variables-table.html
-var sessionVarCols = []columnInfo{
-	{name: "VARIABLE_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "VARIABLE_VALUE", tp: mysql.TypeVarchar, size: 1024},
-}
-
 // See https://dev.mysql.com/doc/refman/5.7/en/information-schema-plugins-table.html
 var pluginsCols = []columnInfo{
 	{name: "PLUGIN_NAME", tp: mysql.TypeVarchar, size: 64},

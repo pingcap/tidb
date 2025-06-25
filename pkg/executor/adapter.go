@@ -1982,7 +1982,9 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	}
 
 	// Internal SQLs must also be recorded to keep the consistency of `PrevStmt` and `PrevStmtDigest`.
-	if !stmtsummaryv2.Enabled() || ((sessVars.InRestrictedSQL || len(userString) == 0) && !stmtsummaryv2.EnabledInternal()) {
+	// If this SQL is under `explain explore {SQL}`, we still want to record them in stmt summary.
+	isInternalSQL := (sessVars.InRestrictedSQL || len(userString) == 0) && !sessVars.InExplainExplore
+	if !stmtsummaryv2.Enabled() || (isInternalSQL && !stmtsummaryv2.EnabledInternal()) {
 		sessVars.SetPrevStmtDigest("")
 		return
 	}
@@ -2080,7 +2082,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.MemMax = memMax
 	stmtExecInfo.DiskMax = diskMax
 	stmtExecInfo.StartTime = sessVars.StartTime
-	stmtExecInfo.IsInternal = sessVars.InRestrictedSQL
+	stmtExecInfo.IsInternal = isInternalSQL
 	stmtExecInfo.Succeed = succ
 	stmtExecInfo.PlanInCache = sessVars.FoundInPlanCache
 	stmtExecInfo.PlanInBinding = sessVars.FoundInBinding

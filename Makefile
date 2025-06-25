@@ -59,6 +59,7 @@ fmt: ## Format Go code using gofmt
 	@gofmt -s -l -w -r 'interface{} -> any' $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
 .PHONY: check-static
+check-static: ## Run static code analysis checks
 check-static: tools/bin/golangci-lint
 	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
 
@@ -345,8 +346,8 @@ tools/bin/errdoc-gen:
 
 .PHONY: tools/bin/golangci-lint
 tools/bin/golangci-lint:
-	# Build from source is not recommend. See https://golangci-lint.run/usage/install/
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.47.2
+	$(eval GOLANGCI_LINT_VERSION := $(shell grep 'github.com/golangci/golangci-lint/v2' go.mod | awk '{print $$2}'))
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 .PHONY: tools/bin/vfsgendev
 tools/bin/vfsgendev:

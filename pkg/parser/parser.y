@@ -5618,6 +5618,13 @@ ExplainStmt:
 			Format: "row",
 		}
 	}
+|	ExplainSym stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $2,
+			Format:     "row",
+		}
+	}
 |	ExplainSym "FOR" "CONNECTION" NUM
 	{
 		$$ = &ast.ExplainForStmt{
@@ -5653,6 +5660,20 @@ ExplainStmt:
 			Format: $4,
 		}
 	}
+|	ExplainSym "FORMAT" "=" ExplainFormatType stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $5,
+			Format:     $4,
+		}
+	}
+|	ExplainSym "FORMAT" "=" stringLit stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $5,
+			Format:     $4,
+		}
+	}
 |	ExplainSym "ANALYZE" ExplainableStmt
 	{
 		$$ = &ast.ExplainStmt{
@@ -5661,12 +5682,36 @@ ExplainStmt:
 			Analyze: true,
 		}
 	}
+|	ExplainSym "ANALYZE" stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $3,
+			Format:     "row",
+			Analyze:    true,
+		}
+	}
 |	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType ExplainableStmt
 	{
 		$$ = &ast.ExplainStmt{
 			Stmt:    $6,
 			Format:  $5,
 			Analyze: true,
+		}
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $6,
+			Format:     $5,
+			Analyze:    true,
+		}
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" stringLit stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $6,
+			Format:     $5,
+			Analyze:    true,
 		}
 	}
 |	ExplainSym "ANALYZE" "FORMAT" "=" stringLit ExplainableStmt
