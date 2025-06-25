@@ -1305,6 +1305,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	if len(handleOffset) == 0 {
 		handleOffset = []int{numColsWithoutPid - 1}
 	}
+	var reuseTblChk *chunk.Chunk
 	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
 	checkLimit := (w.PushedLimit != nil) && (w.checkIndexValue == nil)
 	for len(result.idxHandles)+len(result.tableRows) < w.batchSize {
@@ -1323,9 +1324,19 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		startTime := time.Now()
 		var tblChk *chunk.Chunk
 		if w.idxLookup.lookupPushDown {
-			tblChk = chunk.NewChunkWithCapacity(w.idxLookup.RetFieldTypes(), w.batchSize)
+			if reuseTblChk != nil {
+				tblChk = reuseTblChk
+				reuseTblChk = nil
+			} else {
+				tblChk = w.idxLookup.AllocPool.Alloc(w.idxLookup.RetFieldTypes(), w.batchSize, w.batchSize)
+			}
+			tblChk = w.idxLookup.AllocPool.Alloc(w.idxLookup.RetFieldTypes(), w.batchSize, w.batchSize)
 			tblChk.SetRequiredRows(requiredRows, w.maxChunkSize)
 			err = errors.Trace(idxResult.Next(ctx, tblChk, chk))
+			if tblChk != nil && tblChk.NumRows() == 0 {
+				reuseTblChk = tblChk
+				tblChk = nil
+			}
 		} else {
 			err = errors.Trace(idxResult.Next(ctx, chk))
 		}
