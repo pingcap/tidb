@@ -367,6 +367,7 @@ func (c *Context) GetLatestISWithoutSessExt() infoschema.MetaOnlyInfoSchema {
 	return c.GetLatestInfoSchema()
 }
 
+// GetSQLServer implements sessionctx.Context GetSQLServer interface.
 func (c *Context) GetSQLServer() sqlsvrapi.Server {
 	return c.dom.(sqlsvrapi.Server)
 }

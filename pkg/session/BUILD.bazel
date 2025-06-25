@@ -33,6 +33,7 @@ go_library(
         "//pkg/disttask/importinto",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/domain/sqlsvrapi",
         "//pkg/errno",
         "//pkg/executor",
         "//pkg/executor/staticrecordset",
