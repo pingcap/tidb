@@ -364,7 +364,12 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 		}()
 		metrics.UpdateMetricsForRunTask(task)
 		scheduler.ScheduleTask()
-		sm.finishCh <- struct{}{}
+		select {
+		case <-sm.ctx.Done():
+			sm.logger.Info("task scheduler context done", zap.Int64("task-id", task.ID))
+			return
+		case sm.finishCh <- struct{}{}:
+		}
 	})
 }
 
