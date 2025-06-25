@@ -17,6 +17,8 @@ package addindextest
 import (
 	"context"
 	"fmt"
+	"os"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -45,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	"golang.org/x/sync/errgroup"
 )
 
 func init() {
@@ -253,7 +256,28 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 	require.Equal(t, rowCnt, "3")
 }
 
+func dumpOnTimeout(t *testing.T, d time.Duration) {
+	eg := errgroup.Group{}
+	c := make(chan struct{})
+	eg.Go(func() error {
+		select {
+		case <-time.After(d):
+			t.Log("dumping all goroutines:")
+			_ = pprof.Lookup("goroutine").WriteTo(os.Stdout, 2)
+			panic("timeout")
+		case <-c:
+		}
+		return nil
+	})
+	t.Cleanup(func() {
+		close(c)
+		eg.Wait()
+	})
+}
+
 func TestGlobalSortDuplicateErrMsg(t *testing.T) {
+	dumpOnTimeout(t, 3*time.Minute)
+
 	testutil.ReduceCheckInterval(t)
 	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
 	opt := fakestorage.Options{
