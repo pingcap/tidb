@@ -490,13 +490,7 @@ func BuildHistAndTopN(
 
 	// Step3: build histogram with the rest samples
 	if lenSamples > 0 {
-		remainingNDV := ndv - lenTopN
-		var topNTotalCount uint64
-		for i := range topn.TopN {
-			topn.TopN[i].Count = uint64(float64(topn.TopN[i].Count) * sampleFactor)
-			topNTotalCount += topn.TopN[i].Count
-		}
-		_, err = buildHist(sc, hg, samples, count-int64(topNTotalCount), remainingNDV, int64(numBuckets), memTracker)
+		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
 		if err != nil {
 			return nil, nil, err
 		}
