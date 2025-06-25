@@ -779,3 +779,11 @@ select from_unixtime( if(col2 >9999999999, col2/1000, col2), '%Y-%m-%d %H:%i:%s'
 
 # TestIssue56641
 select ((exists (select 1)) * -5) as c1;
+
+# TestIssue59483
+CREATE TABLE test_59483 (c2 BIT(1));
+INSERT INTO test_59483 VALUES (0);
+SELECT 1 FROM test_59483
+WHERE INET6_NTOA(
+    CASE WHEN test_59483.c2 = 0 THEN test_59483.c2 END
+);
