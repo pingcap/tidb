@@ -50,15 +50,6 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		defer trace.TracerFinishSpan(ctx, store)
 	}
 
-	// handle abort flag - if set, abort the matching restore task and return
-	if cfg.Abort {
-		if err := task.RunRestoreAbort(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
-			log.Error("failed to abort restore task", zap.Error(err))
-			return errors.Trace(err)
-		}
-		return nil
-	}
-
 	if cfg.FullBackupType == task.FullBackupTypeEBS {
 		if cfg.Prepare {
 			if err := task.RunRestoreEBSMeta(GetDefaultContext(), gluetikv.Glue{}, cmdName, &cfg); err != nil {

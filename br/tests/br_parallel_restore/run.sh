@@ -60,6 +60,43 @@ verify_no_temporary_databases() {
     echo "Verification passed: No temporary databases found in $test_case"
 }
 
+verify_checkpoint_cleanup() {
+    local test_case="${1:-unknown test}"
+    local restore_id="${2:-}"
+    echo "Verifying checkpoint cleanup after abort in $test_case..."
+    
+    # Check for checkpoint databases
+    local checkpoint_dbs=$(run_sql "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME LIKE '%checkpoint%';" | grep -v "SCHEMA_NAME" | grep -v "^$" || true)
+    
+    if [ -n "$checkpoint_dbs" ]; then
+        echo "Found checkpoint databases (may be from other tests): $checkpoint_dbs"
+        
+        # Check for specific restore ID in checkpoint tables if provided
+        if [ -n "$restore_id" ]; then
+            local specific_checkpoint=$(run_sql "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA LIKE '%checkpoint%' AND TABLE_COMMENT LIKE '%$restore_id%';" 2>/dev/null || echo "0")
+            local specific_count=$(echo "$specific_checkpoint" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
+            specific_count=${specific_count:-0}
+            
+            if [ "$specific_count" -gt 0 ]; then
+                echo "ERROR: Found $specific_count checkpoint tables for restore ID $restore_id"
+                exit 1
+            else
+                echo "PASS: No checkpoint tables found for restore ID $restore_id"
+            fi
+        fi
+    else
+        echo "PASS: No checkpoint databases found"
+    fi
+    
+    # Check for any restore-related checkpoint tables
+    local restore_checkpoint_tables=$(run_sql "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA LIKE '%checkpoint%' AND TABLE_NAME LIKE '%restore%';" 2>/dev/null || echo "0")
+    local restore_table_count=$(echo "$restore_checkpoint_tables" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
+    restore_table_count=${restore_table_count:-0}
+    
+    echo "Found $restore_table_count restore-related checkpoint tables"
+    echo "Checkpoint cleanup verification completed for $test_case"
+}
+
 create_tables_with_values() {
     local prefix=$1    # table name prefix
     local count=$2     # number of tables to create
@@ -477,7 +514,8 @@ test_auto_restored_ts_conflict() {
 }
 
 test_restore_abort() {
-    echo "Test Case 6: Restore abort functionality"
+    echo "Test Case 6: Restore abort functionality using new subcommand structure"
+    echo "Testing 'br abort restore <type>' instead of 'br restore <type> --abort'"
 
     # use separate backup directories for this test
     ABORT_BACKUP_DIR="local://$TEST_DIR/abort_backup"
@@ -547,8 +585,8 @@ test_restore_abort() {
     
     echo "Test 2: Abort the paused restore task..."
     
-    # Use abort flag to delete the paused task
-    run_br restore point --abort --filter "$DB.*" --restored-ts $log_backup_ts --full-backup-storage "$ABORT_BACKUP_DIR" -s "$ABORT_LOG_BACKUP_DIR"
+    # Use abort subcommand to delete the paused task
+    run_br abort restore point --filter "$DB.*" --restored-ts $log_backup_ts --full-backup-storage "$ABORT_BACKUP_DIR" -s "$ABORT_LOG_BACKUP_DIR"
     
     echo "Abort command completed"
     
@@ -568,10 +606,13 @@ test_restore_abort() {
         exit 1
     fi
     
+    # Verify checkpoint cleanup
+    verify_checkpoint_cleanup "Test 2: PiTR restore abort"
+    
     echo "Test 3: Abort non-existent task (should succeed gracefully)..."
     
     # Try to abort when no matching task exists
-    run_br restore point --abort --filter "${DB}_nonexistent.*" --restored-ts $log_backup_ts --full-backup-storage "$ABORT_BACKUP_DIR" -s "$ABORT_LOG_BACKUP_DIR"
+    run_br abort restore point --filter "${DB}_nonexistent.*" --restored-ts $log_backup_ts --full-backup-storage "$ABORT_BACKUP_DIR" -s "$ABORT_LOG_BACKUP_DIR"
     
     echo "PASS: Abort of non-existent task completed gracefully"
     
@@ -600,7 +641,7 @@ test_restore_abort() {
     echo "Created paused task for $DB2"
     
     # Abort without specifying restored-ts (should use auto-detection)
-    run_br restore point --abort --filter "$DB2.*" --full-backup-storage "$ABORT_BACKUP_DIR" -s "$ABORT_LOG_BACKUP_DIR"
+    run_br abort restore point --filter "$DB2.*" --full-backup-storage "$ABORT_BACKUP_DIR" -s "$ABORT_LOG_BACKUP_DIR"
     
     # Verify task was deleted
     deleted_check2=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB2.*';" 2>/dev/null || echo "0")
@@ -642,7 +683,7 @@ test_restore_abort() {
     echo "Created running task for $DB3"
     
     # Try to abort the running task - should return gracefully without error
-    run_br restore point --abort --filter "$DB3.*" --restored-ts $log_backup_ts --full-backup-storage "$ABORT_BACKUP_DIR" -s "$ABORT_LOG_BACKUP_DIR"
+    run_br abort restore point --filter "$DB3.*" --restored-ts $log_backup_ts --full-backup-storage "$ABORT_BACKUP_DIR" -s "$ABORT_LOG_BACKUP_DIR"
     
     # Verify task still exists (wasn't deleted because it was running)
     still_running_check=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB3.*' AND status = 'running';" 2>/dev/null || echo "0")
@@ -684,7 +725,7 @@ test_restore_abort() {
     echo "Created paused full restore task for $DB4"
     
     # Abort the full restore task
-    run_br restore full --abort --filter "$DB4.*" -s "$ABORT_BACKUP_DIR"
+    run_br abort restore full --filter "$DB4.*" -s "$ABORT_BACKUP_DIR"
     
     # Verify task was deleted
     full_deleted_check=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry WHERE filter_strings = '$DB4.*';" 2>/dev/null || echo "0")
@@ -698,16 +739,106 @@ test_restore_abort() {
         exit 1
     fi
     
+    # Verify checkpoint data was cleaned up
+    verify_checkpoint_cleanup "Test 6: Full restore abort"
+    
+    echo "Test 7: Test abort for database restore..."
+    
+    # Create a paused db restore task
+    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/fail-at-end-of-restore=return(true)"
+    restore_fail=0
+    run_br restore db --db "$DB" -s "$ABORT_BACKUP_DIR" || restore_fail=1
+    if [ $restore_fail -ne 1 ]; then
+        echo 'expecting db restore to fail before completion but succeeded'
+        exit 1
+    fi
+    export GO_FAILPOINTS=""
+    
+    # Verify paused db restore task exists
+    db_paused_check=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry WHERE cmd = 'DataBase Restore' AND status = 'paused';" 2>/dev/null || echo "0")
+    db_paused_count=$(echo "$db_paused_check" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
+    db_paused_count=${db_paused_count:-0}
+    
+    if [ "$db_paused_count" -eq 0 ]; then
+        echo "ERROR: No paused db restore task found"
+        exit 1
+    fi
+    
+    echo "Created paused db restore task for $DB"
+    
+    # Abort the db restore task
+    run_br abort restore db --db "$DB" -s "$ABORT_BACKUP_DIR"
+    
+    # Verify task was deleted
+    db_deleted_check=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry WHERE cmd = 'DataBase Restore';" 2>/dev/null || echo "0")
+    db_deleted_count=$(echo "$db_deleted_check" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
+    db_deleted_count=${db_deleted_count:-0}
+    
+    if [ "$db_deleted_count" -eq 0 ]; then
+        echo "PASS: Database restore task was successfully aborted"
+    else
+        echo "ERROR: Database restore task still exists after abort"
+        exit 1
+    fi
+    
+    # Verify checkpoint cleanup
+    verify_checkpoint_cleanup "Test 7: Database restore abort"
+    
+    echo "Test 8: Test abort for table restore..."
+    
+    # Create a paused table restore task
+    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/fail-at-end-of-restore=return(true)"
+    restore_fail=0
+    run_br restore table --db "$DB2" --table "abort_1" -s "$ABORT_BACKUP_DIR" || restore_fail=1
+    if [ $restore_fail -ne 1 ]; then
+        echo 'expecting table restore to fail before completion but succeeded'
+        exit 1
+    fi
+    export GO_FAILPOINTS=""
+    
+    # Verify paused table restore task exists
+    table_paused_check=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry WHERE cmd = 'Table Restore' AND status = 'paused';" 2>/dev/null || echo "0")
+    table_paused_count=$(echo "$table_paused_check" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
+    table_paused_count=${table_paused_count:-0}
+    
+    if [ "$table_paused_count" -eq 0 ]; then
+        echo "ERROR: No paused table restore task found"
+        exit 1
+    fi
+    
+    echo "Created paused table restore task for $DB2.abort_1"
+    
+    # Abort the table restore task
+    run_br abort restore table --db "$DB2" --table "abort_1" -s "$ABORT_BACKUP_DIR"
+    
+    # Verify task was deleted
+    table_deleted_check=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry WHERE cmd = 'Table Restore';" 2>/dev/null || echo "0")
+    table_deleted_count=$(echo "$table_deleted_check" | grep -o 'COUNT.*: [0-9]*' | grep -o '[0-9]*')
+    table_deleted_count=${table_deleted_count:-0}
+    
+    if [ "$table_deleted_count" -eq 0 ]; then
+        echo "PASS: Table restore task was successfully aborted"
+    else
+        echo "ERROR: Table restore task still exists after abort"
+        exit 1
+    fi
+    
+    # Verify checkpoint cleanup
+    verify_checkpoint_cleanup "Test 8: Table restore abort"
+    
     # Final cleanup
     run_sql "DELETE FROM mysql.tidb_restore_registry WHERE filter_strings LIKE '$DB%';"
     
     echo "Restore abort functionality test completed successfully"
-    echo "This test validates the abort functionality:"
-    echo "1. Abort paused restore task and clean up registry"
-    echo "2. Abort non-existent task (graceful handling)"
-    echo "3. Abort with auto-detected restored-ts"
-    echo "4. Running task is not aborted (correct behavior)"
-    echo "5. Full restore abort works"
+    echo "This test validates the new abort subcommand functionality:"
+    echo "1. 'br abort restore point' - Abort paused PiTR restore task and clean up registry"
+    echo "2. 'br abort restore point' - Abort non-existent task (graceful handling)"
+    echo "3. 'br abort restore point' - Abort with auto-detected restored-ts"
+    echo "4. 'br abort restore point' - Running task is not aborted (correct behavior)"
+    echo "5. 'br abort restore full' - Full restore abort works"
+    echo "6. 'br abort restore full' - Checkpoint data cleanup verification"
+    echo "7. 'br abort restore db' - Database restore abort works"
+    echo "8. 'br abort restore table' - Table restore abort works"
     
     cleanup
 }

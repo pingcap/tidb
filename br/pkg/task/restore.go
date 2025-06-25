@@ -77,6 +77,7 @@ const (
 	flagConcurrencyPerStore      = "tikv-max-restore-concurrency"
 	flagAllowPITRFromIncremental = "allow-pitr-from-incremental"
 	flagAbort                    = "abort"
+	flagUpstreamClusterID        = "upstream-cluster-id"
 
 	// FlagMergeRegionSizeBytes is the flag name of merge small regions by size
 	FlagMergeRegionSizeBytes = "merge-region-size-bytes"
@@ -252,7 +253,6 @@ type RestoreConfig struct {
 	NoSchema           bool          `json:"no-schema" toml:"no-schema"`
 	LoadStats          bool          `json:"load-stats" toml:"load-stats"`
 	FastLoadSysTables  bool          `json:"fast-load-sys-tables" toml:"fast-load-sys-tables"`
-	Abort              bool          `json:"abort" toml:"abort"`
 	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
 	StatsConcurrency   uint          `json:"stats-concurrency" toml:"stats-concurrency"`
 	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
@@ -347,7 +347,7 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagNoSchema, false, "skip creating schemas and tables, reuse existing empty ones")
 	flags.Bool(flagLoadStats, true, "Run load stats or update stats_meta to trigger auto-analyze at end of snapshot restore task")
 	flags.Bool(flagFastLoadSysTables, true, "load system tables (including statistics) by renaming the temporary system tables")
-	flags.Bool(flagAbort, false, "abort a restore task with the same parameters and clean up registry entry and checkpoint data")
+
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
@@ -430,10 +430,6 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 		return errors.Trace(err)
 	}
 	cfg.FastLoadSysTables, err = flags.GetBool(flagFastLoadSysTables)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.Abort, err = flags.GetBool(flagAbort)
 	if err != nil {
 		return errors.Trace(err)
 	}
