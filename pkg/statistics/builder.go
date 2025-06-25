@@ -491,12 +491,6 @@ func BuildHistAndTopN(
 	// Step3: build histogram with the rest samples
 	if lenSamples > 0 {
 		remainingNDV := ndv - lenTopN
-		// if we pruned the topN, it means that there are no remaining skewed values in the samples
-		if lenTopN < int64(numTopN) && numBuckets == 256 {
-			// set the number of buckets to be the number of remaining distinct values divided by 2
-			// but no less than 1 and no more than the original number of buckets
-			numBuckets = int(min(max(1, remainingNDV/2), int64(numBuckets)))
-		}
 		var topNTotalCount uint64
 		for i := range topn.TopN {
 			topn.TopN[i].Count = uint64(float64(topn.TopN[i].Count) * sampleFactor)
