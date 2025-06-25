@@ -1323,7 +1323,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		startTime := time.Now()
 		var tblChk *chunk.Chunk
 		if w.idxLookup.lookupPushDown {
-			tblChk = w.idxLookup.NewChunk()
+			tblChk = w.idxLookup.NewChunkWithCapacity(w.idxLookup.RetFieldTypes(), min(requiredRows, w.idxLookup.InitCap()), w.maxChunkSize)
 			tblChk.SetRequiredRows(requiredRows, w.maxChunkSize)
 			err = errors.Trace(idxResult.Next(ctx, tblChk, chk))
 		} else {
