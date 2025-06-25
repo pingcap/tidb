@@ -1251,7 +1251,7 @@ func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, cos
 		operatorInfo = p.ExplainInfo()
 	}
 
-	flat := FlattenPhysicalPlan(p, false)
+	flat := FlattenPhysicalPlan(p, true)
 	_, planDigest := NormalizeFlatPlan(flat)
 	operatorInfo += ", " + planDigest.String()
 
