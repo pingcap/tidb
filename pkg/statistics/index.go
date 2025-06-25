@@ -93,10 +93,6 @@ func (idx *Index) DropUnnecessaryData() {
 	idx.evictedStatus = AllEvicted
 }
 
-func (idx *Index) isStatsInitialized() bool {
-	return idx.statsInitialized
-}
-
 // GetStatsVer returns the version of the current stats
 func (idx *Index) GetStatsVer() int64 {
 	return idx.StatsVer
