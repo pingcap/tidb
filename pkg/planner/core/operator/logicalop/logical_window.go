@@ -330,8 +330,8 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, op
 //
 //	select a, b from (select a, b, min(a) over(partition by b) as min_a from t)as tt where a < 10 and b > 10 and b = min_a
 //
-// predicate pushdown with windows, it will be ``` column#5 < 10 and test.a > 10 and test.b > 10``` and `min(test.a)` is windows function.
-// so we can transfer the `min(test.a)` to `test.a` in the predicate. then predicate will be `test.a < 10 and test.a > 10 and test.b > 10`
+// predicate pushdown with windows, it will be ``` column#5 > 10 and test.a > 10 and test.b > 10``` and `min(test.a)` is windows function.
+// so we can transfer the `min(test.a)` to `test.a` in the predicate. then predicate will be `column#5 < 10 and column#5 > 10 and test.b > 10`
 // this is useful. then  can simplify the predicate better
 func (p *LogicalWindow) transferPredicateByWindowsFunction(canNotBePushed []expression.Expression) []expression.Expression {
 	if len(p.WindowFuncDescs) == 1 {
