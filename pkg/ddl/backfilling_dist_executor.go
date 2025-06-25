@@ -191,7 +191,6 @@ type backfillDistExecutor struct {
 	d        *ddl
 	task     *proto.Task
 	taskMeta *BackfillTaskMeta
-	jobID    int64
 }
 
 func newBackfillDistExecutor(ctx context.Context, task *proto.Task, param taskexecutor.Param, d *ddl) taskexecutor.TaskExecutor {
