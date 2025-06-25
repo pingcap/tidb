@@ -4100,6 +4100,8 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	}
 	paging := b.ctx.GetSessionVars().EnablePaging
 
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
+
 	e := &IndexReaderExecutor{
 		indexReaderExecutorContext: newIndexReaderExecutorContext(b.ctx),
 		BaseExecutorV2:             exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID()),
@@ -4279,6 +4281,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		return nil, err
 	}
 
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
+
 	e := &IndexLookUpExecutor{
 		indexLookUpExecutorContext: newIndexLookUpExecutorContext(b.ctx),
 		BaseExecutorV2:             exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID()),
@@ -4433,6 +4437,8 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	if err != nil {
 		return nil, err
 	}
+
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 
 	e := &IndexMergeReaderExecutor{
 		BaseExecutor:             exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
