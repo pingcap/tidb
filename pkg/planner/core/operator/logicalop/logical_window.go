@@ -367,7 +367,7 @@ func deleteConstantPropagation(ctx expression.EvalContext, equalConditions *expr
 		if expr.FuncName.L == keepCond.FuncName.L {
 			args := expr.GetArgs()
 			arg1, ok := args[0].(*expression.Column)
-			if ok && cols[0].Equals(arg1) && args[1].Equal(ctx, keepConds[0].GetArgs()[1]) {
+			if ok && col.Equals(arg1) && args[1].Equal(ctx, keepCond.GetArgs()[1]) {
 				return true
 			}
 		}
@@ -404,7 +404,6 @@ func deleteConstantPropagation(ctx expression.EvalContext, equalConditions *expr
 				if expr, ok := cond.(*expression.ScalarFunction); ok {
 					if findFirstExprWithCol(expr, col) {
 						keepConds = append(keepConds, expr)
-						keepCol = append(keepCol, col)
 						cols = slices.DeleteFunc(cols, func(column *expression.Column) bool {
 							return column.Equals(col)
 						})
