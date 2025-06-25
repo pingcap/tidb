@@ -308,6 +308,11 @@ type PlanBuilder struct {
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
+
+	// SavedViews is a stack that saves all views when traversing the AST. We depend on it to:
+	// 1. know whether the AST node is under a view
+	// 2. report precise error in appendColNamesToVisitInfo.
+	SavedViews []*ast.TableName
 }
 
 type handleColHelper struct {
@@ -3986,10 +3991,8 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		if user != nil {
 			authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("INSERT", user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
 		}
-		for _, col := range tableInPlan.VisibleCols() {
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tnW.DBInfo.Name.L,
-				tableInfo.Name.L, col.Name.L, authErr)
-		}
+		b.visitInfo = appendMultiColumns2VisitInfo(b.visitInfo, mysql.InsertPriv, tnW.DBInfo.Name.L,
+			tableInfo.Name.L, tableInPlan.VisibleCols(), authErr)
 	}
 
 	// `REPLACE INTO` requires both INSERT + DELETE privilege
@@ -4015,10 +4018,8 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 			if user != nil {
 				authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("UPDATE", user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
 			}
-			for _, col := range tableInPlan.VisibleCols() {
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, tnW.DBInfo.Name.L,
-					tableInfo.Name.L, col.Name.L, authErr)
-			}
+			b.visitInfo = appendMultiColumns2VisitInfo(b.visitInfo, mysql.UpdatePriv, tnW.DBInfo.Name.L,
+				tableInfo.Name.L, tableInPlan.VisibleCols(), authErr)
 		}
 	}
 
@@ -4459,9 +4460,8 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	// Otherwise, the privilege of all visiable columns in the table is required.
 	if len(ld.Columns) == 0 {
 		insertErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", userName, hostName, p.Table.Name.O)
-		for _, col := range tableInPlan.VisibleCols() {
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.L, p.Table.Name.L, col.Name.L, insertErr)
-		}
+		b.visitInfo = appendMultiColumns2VisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.L,
+			p.Table.Name.L, tableInPlan.VisibleCols(), insertErr)
 	} else {
 		for _, col := range ld.Columns {
 			insertErr = plannererrors.ErrColumnaccessDenied.GenWithStackByArgs("INSERT", userName, hostName, col.Name.O, p.Table.Name.O)

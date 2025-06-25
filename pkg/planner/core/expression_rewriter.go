@@ -2423,12 +2423,12 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 }
 
 func (er *expressionRewriter) collectPrivsForCount() {
-	// dbName -> tableName
-	tableNames := make(map[string]map[string]any)
 	b := er.planCtx.builder
 	if b == nil {
 		return
 	}
+	// dbName -> tableName
+	tableNames := make(map[string]map[string]struct{})
 	for _, fieldName := range er.names {
 		tblName := &ast.TableName{
 			Name:   fieldName.OrigTblName,
@@ -2439,9 +2439,9 @@ func (er *expressionRewriter) collectPrivsForCount() {
 		}
 		if len(tblName.Name.L) > 0 && len(tblName.Schema.L) > 0 {
 			if _, ok := tableNames[tblName.Schema.L]; !ok {
-				tableNames[tblName.Schema.L] = make(map[string]any)
+				tableNames[tblName.Schema.L] = make(map[string]struct{})
 			}
-			tableNames[tblName.Schema.L][tblName.Name.L] = 0
+			tableNames[tblName.Schema.L][tblName.Name.L] = struct{}{}
 		}
 	}
 
@@ -2699,7 +2699,7 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 
 func (b *PlanBuilder) appendColNamesToVisitInfo(columnVisited []*ast.ColumnName) {
 	user, host := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
-	views := b.ctx.GetSessionVars().StmtCtx.SavedViews
+	views := b.SavedViews
 	switch {
 	case len(views) > 0:
 		view := views[len(views)-1]

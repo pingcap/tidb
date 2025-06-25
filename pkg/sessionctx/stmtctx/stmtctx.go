@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -201,7 +200,6 @@ type StatementContext struct {
 	// in stmtCtx
 	IsStaleness     bool
 	InRestrictedSQL bool
-	SavedViews      []*ast.TableName
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex

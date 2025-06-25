@@ -4943,10 +4943,10 @@ func (b *PlanBuilder) checkRecursiveView(dbName pmodel.CIStr, tableName pmodel.C
 // viewHints group the view hints based on the view's query block name.
 func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel.CIStr, tableInfo *model.TableInfo, qbNameMap4View map[string][]ast.HintTable, viewHints map[string][]*ast.TableOptimizerHint) (base.LogicalPlan, error) {
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
-	viewDepth := len(stmtCtx.SavedViews)
-	stmtCtx.SavedViews = append(stmtCtx.SavedViews, &ast.TableName{Schema: dbName, Name: tableInfo.Name})
+	viewDepth := len(b.SavedViews)
+	b.SavedViews = append(b.SavedViews, &ast.TableName{Schema: dbName, Name: tableInfo.Name})
 	defer func() {
-		stmtCtx.SavedViews = stmtCtx.SavedViews[:len(stmtCtx.SavedViews)-1]
+		b.SavedViews = b.SavedViews[:len(b.SavedViews)-1]
 	}()
 	deferFunc, err := b.checkRecursiveView(dbName, tableInfo.Name)
 	if err != nil {
@@ -5028,7 +5028,6 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel
 	}()
 	nodeW := resolve.NewNodeWWithCtx(selectNode, b.resolveCtx)
 	selectLogicalPlan, err := b.Build(ctx, nodeW)
-	errViewInvalid := plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 	if err != nil {
 		logutil.BgLogger().Error("build plan for view failed", zap.Error(err))
 		if terror.ErrorNotEqual(err, plannererrors.ErrViewRecursive) &&
@@ -5038,7 +5037,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel
 			terror.ErrorNotEqual(err, plannererrors.ErrMixOfGroupFuncAndFields) &&
 			terror.ErrorNotEqual(err, plannererrors.ErrViewNoExplain) &&
 			terror.ErrorNotEqual(err, plannererrors.ErrNotSupportedYet) {
-			err = errViewInvalid
+			err = plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		}
 		failpoint.Inject("BuildDataSourceFailed", func() {})
 		return nil, err
@@ -5055,7 +5054,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel
 			// DEFINER VIEWs always use default roles
 			for _, v := range b.visitInfo {
 				if !pm.RequestVerificationWithUser(v.db, v.table, v.column, v.privilege, tableInfo.View.Definer) {
-					return nil, errViewInvalid
+					return nil, plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 				}
 			}
 		}
@@ -5068,7 +5067,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel
 	}
 
 	if len(tableInfo.Columns) != selectLogicalPlan.Schema().Len() {
-		return nil, errViewInvalid
+		return nil, plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 	}
 
 	return b.buildProjUponView(ctx, dbName, tableInfo, selectLogicalPlan)
@@ -7130,6 +7129,20 @@ func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col stri
 		column:    col,
 		err:       err,
 	})
+}
+
+func appendMultiColumns2VisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl string, cols []*table.Column, err error) []visitInfo {
+	ret := vi
+	for _, col := range cols {
+		ret = append(ret, visitInfo{
+			privilege: priv,
+			db:        db,
+			table:     tbl,
+			column:    col.Name.L,
+			err:       err,
+		})
+	}
+	return ret
 }
 
 func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {

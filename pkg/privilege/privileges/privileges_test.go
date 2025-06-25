@@ -2365,3 +2365,74 @@ func TestColumnPrivilege4NonPreparePlanCache(t *testing.T) {
 		userTk.MustQuery(`SELECT @@last_plan_from_cache;`).Check(testkit.Rows(planCacheON))
 	}
 }
+
+func TestColumnPrivilege4Views(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`CREATE USER 'testuser'@'localhost';`)
+	tk.MustExec(`CREATE TABLE test.t (a INT);`)
+	tk.MustExec(`CREATE SQL SECURITY DEFINER VIEW test.v1 AS SELECT * FROM test.t`)
+	tk.MustExec(`CREATE SQL SECURITY INVOKER VIEW test.v2 AS SELECT * FROM test.t`)
+	tk.MustExec(`CREATE SQL SECURITY DEFINER VIEW test.v3 AS SELECT * FROM test.v1`)
+	tk.MustExec(`CREATE SQL SECURITY INVOKER VIEW test.v4 AS SELECT * FROM test.v1`)
+	tk.MustExec(`CREATE SQL SECURITY DEFINER VIEW test.v5 AS SELECT * FROM test.v2`)
+	tk.MustExec(`CREATE SQL SECURITY INVOKER VIEW test.v6 AS SELECT * FROM test.v2`)
+
+	// ┌─────┐     ┌─────┐     ┌─────┐     ┌─────┐
+	// │ v3  │     │ v4  │     │ v5  │     │ v6  │
+	// └─────┘     └─────┘     └─────┘     └─────┘
+	//     \          │           │          /
+	//       \        │           │        /
+	//         \   ┌─────┐     ┌─────┐   /
+	//           \ │ v1  │     │  v2 │/
+	//             └─────┘     └─────┘
+	//                 \          /
+	//                  \        /
+	//                   \─────┐/
+	//                   │  t  │
+	//                   └─────┘
+
+	userTk := testkit.NewTestKit(t, store)
+	err := userTk.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil, nil)
+	require.NoError(t, err)
+
+	// 1. testuser has only SELECT privilege of test.t
+	tk.MustExec(`GRANT SELECT(a) ON test.t to 'testuser'@'localhost';`)
+	userTk.MustQuery(`SELECT * FROM test.t`)
+	userTk.MustContainErrMsg("SELECT * FROM test.v1",
+		"[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 'v1'")
+	userTk.MustContainErrMsg("SELECT * FROM test.v2",
+		"[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 'v2'")
+	userTk.MustContainErrMsg("SELECT * FROM test.v3",
+		"[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 'v3'")
+	userTk.MustContainErrMsg("SELECT * FROM test.v4",
+		"[planner:1356]View 'test.v4' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
+	userTk.MustContainErrMsg("SELECT * FROM test.v5",
+		"[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 'v5'")
+	userTk.MustContainErrMsg("SELECT * FROM test.v6",
+		"[planner:1356]View 'test.v6' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
+
+	// 2. testuser has SELECT privilege of test.v1 and test.v2
+	tk.MustExec(`GRANT SELECT(a) ON test.v1 to 'testuser'@'localhost';`)
+	tk.MustExec(`GRANT SELECT(a) ON test.v2 to 'testuser'@'localhost';`)
+	userTk.MustQuery(`SELECT * FROM test.v1`)
+	userTk.MustQuery(`SELECT * FROM test.v2`)
+	userTk.MustContainErrMsg("SELECT * FROM test.v3",
+		"[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 'v3'")
+	userTk.MustContainErrMsg("SELECT * FROM test.v4",
+		"[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 'v4'")
+	userTk.MustContainErrMsg("SELECT * FROM test.v5",
+		"[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 'v5'")
+	userTk.MustContainErrMsg("SELECT * FROM test.v6",
+		"[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 'v6'")
+
+	// 3. testuser has SELECT privilege of test.v3, test.v4, test.v5, test.v6
+	tk.MustExec(`GRANT SELECT(a) ON test.v3 to 'testuser'@'localhost';`)
+	tk.MustExec(`GRANT SELECT(a) ON test.v4 to 'testuser'@'localhost';`)
+	tk.MustExec(`GRANT SELECT(a) ON test.v5 to 'testuser'@'localhost';`)
+	tk.MustExec(`GRANT SELECT(a) ON test.v6 to 'testuser'@'localhost';`)
+	userTk.MustQuery(`SELECT * FROM test.v3`)
+	userTk.MustQuery(`SELECT * FROM test.v4`)
+	userTk.MustQuery(`SELECT * FROM test.v5`)
+	userTk.MustQuery(`SELECT * FROM test.v6`)
+}
