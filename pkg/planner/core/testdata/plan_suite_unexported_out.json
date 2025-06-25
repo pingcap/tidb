@@ -99,7 +99,7 @@
       "DataScan(t)->Aggr(count(test.t.a),firstrow(test.t.a))->Sel([lt(Column#13, 1)])->Projection",
       "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection",
       "Dual->Projection",
-      "DataScan(t)->Projection->Projection->Window(min(test.t.a)->Column#14)->Sel([lt(Column#14, 10) eq(test.t.b, Column#14) gt(Column#14, 10)])->Projection->Projection",
+      "DataScan(t)->Projection->Projection->Window(min(test.t.a)->Column#14)->Sel([lt(test.t.a, 10) eq(test.t.b, Column#14)])->Projection->Projection",
       "DataScan(t)->Projection->Projection->Window(sum(cast(test.t.a, decimal(10,0) BINARY))->Column#14)->Sel([gt(Column#14, cast(test.t.b, decimal(10,0) BINARY))])->Projection->Projection"
     ]
   },

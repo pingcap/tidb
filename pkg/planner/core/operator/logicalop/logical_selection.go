@@ -100,7 +100,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	exprCtx := p.SCtx().GetExprCtx()
 	stmtCtx := p.SCtx().GetSessionVars().StmtCtx
 	predicates = constraint.DeleteTrueExprs(exprCtx, stmtCtx, predicates)
-	p.Conditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.Conditions, true)
+	p.Conditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false)
 	var child base.LogicalPlan
 	var retConditions []expression.Expression
 	var originConditions []expression.Expression
