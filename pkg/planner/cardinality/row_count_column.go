@@ -176,13 +176,13 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
 	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
 	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
-	if histNDV <= 0 || (c.IsFullLoad() && c.Histogram.NotNullCount() == 0) {
+	if histNDV <= 0 || c.Histogram.NotNullCount() == 0 {
 		// branch 1: all NDV's are in TopN, and no histograms
 		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
 		// c.NotNullCount rather than c.Histogram.NotNullCount() since the histograms are empty.
 		// c.Histogram.NDV stores the full NDV regardless of histograms empty or populated.
 		if histNDV > 0 && modifyCount == 0 {
-			return max(float64(c.TopN.MinCount()-1), 1), nil
+			return max(float64(c.TopN.MinCount()-1), histNDV), nil
 		}
 		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
 		return outOfRangeFullNDV(float64(c.Histogram.NDV), c.TotalRowCount(), c.NotNullCount(), float64(realtimeRowCount), increaseFactor, modifyCount), nil

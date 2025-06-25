@@ -430,11 +430,11 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
 	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
 	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
-	if histNDV <= 0 || (idx.IsFullLoad() && idx.Histogram.NotNullCount() == 0) {
+	if histNDV <= 0 || idx.Histogram.NotNullCount() == 0 {
 		// branch 1: all NDV's are in TopN, and no histograms
 		// special case of c.Histogram.NDV > c.TopN.Num() a little bit, but the histogram is still empty.
 		if histNDV > 0 && modifyCount == 0 {
-			return max(float64(idx.TopN.MinCount()-1), 1)
+			return max(float64(idx.TopN.MinCount()-1), histNDV)
 		}
 		// If histNDV is zero - we have all NDV's in TopN - and no histograms.
 		// The histogram wont have a NotNullCount - so it needs to be derived.
