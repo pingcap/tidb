@@ -359,7 +359,6 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 			if def.Name.L == p.PartitionNames[0].L {
 				idx := i
 				p.PartitionIdx = &idx
-				break
 			}
 		}
 		return false, nil
@@ -388,8 +387,12 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 	if p.HandleConstant == nil && len(p.IndexValues) > 0 {
 		hasNonBinaryCollate := false
 		for _, col := range p.IdxCols {
-			if !collate.IsBinCollation(col.GetType(sctx.GetExprCtx().GetEvalCtx()).GetCollate()) {
+			switch col.GetType(sctx.GetExprCtx().GetEvalCtx()).GetCollate() {
+			case "utf8mb4_bin", "binary", "ascii_bin", "latin1_bin", "utf8_bin", "utf8mb4_0900_bin":
+			default:
 				hasNonBinaryCollate = true
+			}
+			if hasNonBinaryCollate {
 				break
 			}
 		}
