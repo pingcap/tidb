@@ -20,7 +20,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -146,13 +145,7 @@ func getTTLUsageInfo(ctx context.Context, sctx sessionctx.Context) (counter *ttl
 		},
 	}
 
-	is, ok := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	if !ok {
-		// it should never happen
-		logutil.BgLogger().Error(fmt.Sprintf("GetDomainInfoSchema returns a invalid type: %T", is))
-		return
-	}
-
+	is := sctx.GetLatestInfoSchema()
 	ttlTables := make(map[int64]*model.TableInfo)
 	for _, db := range is.AllSchemas() {
 		tblInfos, err := is.SchemaTableInfos(ctx, db.Name)
