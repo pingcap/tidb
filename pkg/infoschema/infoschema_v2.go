@@ -82,12 +82,6 @@ func (si *schemaItem) Name() string {
 	return si.dbInfo.Name.L
 }
 
-// versionAndTimestamp is the tuple of schema version and timestamp.
-type versionAndTimestamp struct {
-	schemaVersion int64
-	timestamp     uint64
-}
-
 // btreeSet updates the btree.
 // Concurrent write is supported, but should be avoided as much as possible.
 func btreeSet[T any](ptr *atomic.Pointer[btree.BTreeG[T]], item T) {
@@ -133,12 +127,6 @@ type Data struct {
 
 	tableCache *Sieve[tableCacheKey, table.Table]
 
-	// sorted by both SchemaVersion and timestamp in descending order, assume they have same order
-	mu struct {
-		sync.RWMutex
-		versionTimestamps []versionAndTimestamp
-	}
-
 	// For information_schema/metrics_schema/performance_schema etc
 	specials sync.Map
 
@@ -171,41 +159,6 @@ type partitionItem struct {
 	schemaVersion int64
 	tableID       int64
 	tomb          bool
-}
-
-func (isd *Data) getVersionByTS(ts uint64) (int64, bool) {
-	isd.mu.RLock()
-	defer isd.mu.RUnlock()
-	return isd.getVersionByTSNoLock(ts)
-}
-
-func (isd *Data) getVersionByTSNoLock(ts uint64) (int64, bool) {
-	// search one by one instead of binary search, because the timestamp of a schema could be 0
-	// this is ok because the size of h.tableCache is small (currently set to 16)
-	// moreover, the most likely hit element in the array is the first one in steady mode
-	// thus it may have better performance than binary search
-	for i, vt := range isd.mu.versionTimestamps {
-		if vt.timestamp == 0 || ts < vt.timestamp {
-			// is.timestamp == 0 means the schema ts is unknown, so we can't use it, then just skip it.
-			// ts < is.timestamp means the schema is newer than ts, so we can't use it too, just skip it to find the older one.
-			continue
-		}
-		// ts >= is.timestamp must be true after the above condition.
-		if i == 0 {
-			// the first element is the latest schema, so we can return it directly.
-			return vt.schemaVersion, true
-		}
-		if isd.mu.versionTimestamps[i-1].schemaVersion == vt.schemaVersion+1 && isd.mu.versionTimestamps[i-1].timestamp > ts {
-			// This first condition is to make sure the schema version is continuous. If last(cache[i-1]) schema-version is 10,
-			// but current(cache[i]) schema-version is not 9, then current schema is not suitable for ts.
-			// The second condition is to make sure the cache[i-1].timestamp > ts >= cache[i].timestamp, then the current schema is suitable for ts.
-			return vt.schemaVersion, true
-		}
-		// current schema is not suitable for ts, then break the loop to avoid the unnecessary search.
-		break
-	}
-
-	return 0, false
 }
 
 type tableCacheKey struct {

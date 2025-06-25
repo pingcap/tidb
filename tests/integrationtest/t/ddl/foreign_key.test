@@ -211,7 +211,8 @@ alter table t2 rename index idx to idx0;
 delete from t1 where id=1;
 select * from t1;
 select * from t2;
-admin check table t1,t2;
+admin check table t1;
+admin check table t2;
 
 # TestCheckFKDatabaseRefWithSchemaSimpleTableInfos
 create database test_db_1;

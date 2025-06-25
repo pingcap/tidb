@@ -179,7 +179,7 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	pruneEmptyORBranches(sctx, simplifiedPredicate)
 	exprCtx := sctx.GetExprCtx()
-	simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate)
+	simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate...)
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
 	return simplifiedPredicate
 }
@@ -267,7 +267,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	}
 	newPredList := make([]expression.Expression, 0, 1)
 	newPredList = append(newPredList, newPred)
-	newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList)
+	newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList...)
 	return unsatisfiableExpression(ctx, newPredList[0])
 }
 

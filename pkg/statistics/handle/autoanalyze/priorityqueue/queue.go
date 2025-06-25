@@ -214,7 +214,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			return err
 		}
 
-		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 		// Get current timestamp from the session context.
 		currentTs, err := statsutil.GetStartTS(sctx)
 		if err != nil {
@@ -433,7 +433,7 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 		return errors.Trace(err)
 	}
 	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 
 	var job AnalysisJob
@@ -626,7 +626,7 @@ func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 			}
 		}()
 
-		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 		for tableID := range pq.syncFields.mustRetryJobs {
 			// Note: Delete the job first to ensure it can be added back to the queue
 			delete(pq.syncFields.mustRetryJobs, tableID)

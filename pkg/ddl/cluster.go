@@ -61,18 +61,6 @@ const (
 	flashbackTimeout    = 3 * time.Minute // 3min
 )
 
-const (
-	pdScheduleArgsOffset = 1 + iota
-	gcEnabledOffset
-	autoAnalyzeOffset
-	readOnlyOffset
-	totalLockedRegionsOffset
-	startTSOffset
-	commitTSOffset
-	ttlJobEnableOffSet
-	keyRangesOffset
-)
-
 func closePDSchedule(ctx context.Context) error {
 	closeMap := make(map[string]any)
 	for _, key := range pdScheduleKey {
@@ -374,7 +362,7 @@ func mergeContinuousKeyRanges(schemaKeyRanges []keyRangeMayExclude) []kv.KeyRang
 // It contains all non system table key ranges and meta data key ranges.
 // The time complexity is O(nlogn).
 func getFlashbackKeyRanges(ctx context.Context, sess sessionctx.Context, flashbackTS uint64) ([]kv.KeyRange, error) {
-	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	schemas := is.AllSchemas()
 
 	// get snapshot schema IDs.

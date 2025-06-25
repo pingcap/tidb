@@ -2186,6 +2186,29 @@ func handleFilterIndexJoinHints(p *logicalop.LogicalJoin, candidates []base.Phys
 	return filtered
 }
 
+func recordWarnings(lp base.LogicalPlan, prop *property.PhysicalProperty, inEnforce bool) error {
+	if err := recordIndexJoinHintWarnings(lp, prop, inEnforce); err != nil {
+		return err
+	}
+	return recordLimitToCopWarnings(lp)
+}
+
+func recordLimitToCopWarnings(lp base.LogicalPlan) error {
+	var preferPushDown *bool
+	switch lp := lp.(type) {
+	case *logicalop.LogicalTopN:
+		preferPushDown = &lp.PreferLimitToCop
+	case *logicalop.LogicalLimit:
+		preferPushDown = &lp.PreferLimitToCop
+	default:
+		return nil
+	}
+	if *preferPushDown {
+		return plannererrors.ErrInternal.FastGen("Optimizer Hint LIMIT_TO_COP is inapplicable")
+	}
+	return nil
+}
+
 // recordIndexJoinHintWarnings records the warnings msg if no valid preferred physic are picked.
 // todo: extend recordIndexJoinHintWarnings to support all kind of operator's warnings handling.
 func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalProperty, inEnforce bool) error {
@@ -2233,6 +2256,15 @@ func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalPro
 	return nil
 }
 
+func applyLogicalHintVarEigen(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, task base.Task, childTasks []base.Task) (preferred bool) {
+	return applyLogicalJoinHint(lp, task.Plan()) ||
+		applyLogicalTopNAndLimitHint(lp, state, pp, childTasks)
+}
+
+// Get the most preferred and efficient one by hint and low-cost priority.
+// since hint applicable plan may greater than 1, like inl_join can suit for:
+// index_join, index_hash_join, index_merge_join, we should chase the most efficient
+// one among them.
 // applyLogicalJoinHint is used to handle logic hint/prefer/variable, which is not a strong guide for optimization phase.
 // It is changed from handleForceIndexJoinHints to handle the preferred join hint among several valid physical plan choices.
 // It will return true if the hint can be applied when saw a real physic plan successfully built and returned up from child.
@@ -2240,6 +2272,74 @@ func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalPro
 // for the logic hint, we will return false and the optimizer will continue to return the normal low-cost one.
 func applyLogicalJoinHint(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
 	return preferMergeJoin(lp, physicPlan) || preferIndexJoinFamily(lp, physicPlan) || preferHashJoin(lp, physicPlan)
+}
+
+func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
+	hintPrefer, meetThreshold := pushLimitOrTopNForcibly(lp)
+	if hintPrefer {
+		// if there is a user hint control, try to get the copTask as the prior.
+		// here we don't assert task itself, because when topN attach 2 cop task, it will become root type automatically.
+		if _, ok := childTasks[0].(*CopTask); ok {
+			return true
+		}
+	}
+	if meetThreshold {
+		// previously, we set meetThreshold for pruning root task type but mpp task type. so:
+		// 1: when one copTask exists, we will ignore root task type.
+		// 2: mppTask always in the cbo comparing.
+		// 3: when none copTask exists, we will consider rootTask vs mppTask.
+		_, isTopN := pp.(*PhysicalTopN)
+		if isTopN {
+			if state.topNCopExist {
+				if _, ok := childTasks[0].(*RootTask); ok {
+					return false
+				}
+				// peer cop task should compare the cost with each other.
+				if _, ok := childTasks[0].(*CopTask); ok {
+					return true
+				}
+			} else {
+				if _, ok := childTasks[0].(*CopTask); ok {
+					state.topNCopExist = true
+					return true
+				}
+				// when we encounter rootTask type while still see no topNCopExist.
+				// that means there is no copTask valid before, we will consider rootTask here.
+				if _, ok := childTasks[0].(*RootTask); ok {
+					return true
+				}
+			}
+			if _, ok := childTasks[0].(*MppTask); ok {
+				return true
+			}
+			// shouldn't be here
+			return false
+		}
+		// limit case:
+		if state.limitCopExist {
+			if _, ok := childTasks[0].(*RootTask); ok {
+				return false
+			}
+			// peer cop task should compare the cost with each other.
+			if _, ok := childTasks[0].(*CopTask); ok {
+				return true
+			}
+		} else {
+			if _, ok := childTasks[0].(*CopTask); ok {
+				state.limitCopExist = true
+				return true
+			}
+			// when we encounter rootTask type while still see no limitCopExist.
+			// that means there is no copTask valid before, we will consider rootTask here.
+			if _, ok := childTasks[0].(*RootTask); ok {
+				return true
+			}
+		}
+		if _, ok := childTasks[0].(*MppTask); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func preferHashJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
@@ -2636,7 +2736,7 @@ func tryToGetMppHashJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProper
 	baseJoin.InnerChildIdx = preferredBuildIndex
 	childrenProps := make([]*property.PhysicalProperty, 2)
 	if useBCJ {
-		childrenProps[preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.BroadcastType, CanAddEnforcer: true, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+		childrenProps[preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.BroadcastType, CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus}
 		expCnt := math.MaxFloat64
 		if prop.ExpectedCnt < p.StatsInfo().RowCount {
 			expCntScale := prop.ExpectedCnt / p.StatsInfo().RowCount
@@ -2652,9 +2752,9 @@ func tryToGetMppHashJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProper
 			if len(matches) == 0 {
 				return nil
 			}
-			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.HashType, MPPPartitionCols: prop.MPPPartitionCols, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.HashType, MPPPartitionCols: prop.MPPPartitionCols, CTEProducerStatus: prop.CTEProducerStatus}
 		} else {
-			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.AnyType, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.AnyType, CTEProducerStatus: prop.CTEProducerStatus}
 		}
 	} else {
 		lPartitionKeys, rPartitionKeys := p.GetPotentialPartitionKeys()
@@ -2683,8 +2783,8 @@ func tryToGetMppHashJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProper
 			lPartitionKeys = choosePartitionKeys(lPartitionKeys, matches)
 			rPartitionKeys = choosePartitionKeys(rPartitionKeys, matches)
 		}
-		childrenProps[0] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: lPartitionKeys, CanAddEnforcer: true, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
-		childrenProps[1] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: rPartitionKeys, CanAddEnforcer: true, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+		childrenProps[0] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: lPartitionKeys, CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus}
+		childrenProps[1] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: rPartitionKeys, CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus}
 	}
 	join := PhysicalHashJoin{
 		basePhysicalJoin:  baseJoin,
@@ -2916,38 +3016,29 @@ func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.
 	return ret, true, nil
 }
 
-func pushLimitOrTopNForcibly(p base.LogicalPlan) bool {
-	var meetThreshold bool
-	var preferPushDown *bool
+func pushLimitOrTopNForcibly(p base.LogicalPlan) (meetThreshold bool, preferPushDown bool) {
 	switch lp := p.(type) {
 	case *logicalop.LogicalTopN:
-		preferPushDown = &lp.PreferLimitToCop
+		preferPushDown = lp.PreferLimitToCop
 		meetThreshold = lp.Count+lp.Offset <= uint64(lp.SCtx().GetSessionVars().LimitPushDownThreshold)
 	case *logicalop.LogicalLimit:
-		preferPushDown = &lp.PreferLimitToCop
+		preferPushDown = lp.PreferLimitToCop
 		meetThreshold = true // always push Limit down in this case since it has no side effect
 	default:
-		return false
+		return preferPushDown, meetThreshold
 	}
 
-	if *preferPushDown || meetThreshold {
-		if p.CanPushToCop(kv.TiKV) {
-			return true
-		}
-		if *preferPushDown {
-			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer Hint LIMIT_TO_COP is inapplicable")
-			*preferPushDown = false
-		}
-	}
-
-	return false
+	// we remove the child subTree check, each logical operator only focus on themselves.
+	// for current level, they prefer a push-down copTask.
+	return preferPushDown, meetThreshold
 }
 
 func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
-	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
-	if !pushLimitOrTopNForcibly(lt) {
-		allTaskTypes = append(allTaskTypes, property.RootTaskType)
-	}
+	// topN should always generate rootTaskType for:
+	// case1: after v7.5, since tiFlash Cop has been banned, mppTaskType may return invalid task when there are some root conditions.
+	// case2: for index merge case which can only be run in root type, topN and limit can't be pushed to the inside index merge when it's an intersection.
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
+	// we move the pushLimitOrTopNForcibly check to attach2Task to do the prefer choice.
 	mppAllowed := lt.SCtx().GetSessionVars().IsMPPAllowed()
 	if mppAllowed {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
@@ -3012,10 +3103,7 @@ func getPhysLimits(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) [
 		return nil
 	}
 
-	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
-	if !pushLimitOrTopNForcibly(lt) {
-		allTaskTypes = append(allTaskTypes, property.RootTaskType)
-	}
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), SortItems: p.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
@@ -3489,7 +3577,6 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 				MPPPartitionTp:    property.HashType,
 				MPPPartitionCols:  partitionCols,
 				CanAddEnforcer:    true,
-				RejectSort:        true,
 				CTEProducerStatus: prop.CTEProducerStatus,
 			}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
@@ -3511,7 +3598,6 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType,
 			ExpectedCnt:       math.MaxFloat64,
 			MPPPartitionTp:    property.AnyType,
-			RejectSort:        true,
 			CTEProducerStatus: prop.CTEProducerStatus,
 		}
 		agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
@@ -3527,7 +3613,6 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 			childProp := &property.PhysicalProperty{
 				TaskTp:            property.MppTaskType,
 				ExpectedCnt:       math.MaxFloat64,
-				RejectSort:        true,
 				CTEProducerStatus: prop.CTEProducerStatus,
 			}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
@@ -3539,7 +3624,6 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 		// TODO: support scalar agg in MPP, merge the final result to one node
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType,
 			ExpectedCnt:       math.MaxFloat64,
-			RejectSort:        true,
 			CTEProducerStatus: prop.CTEProducerStatus,
 		}
 
@@ -3769,10 +3853,7 @@ func getLimitPhysicalPlans(p *logicalop.LogicalLimit, prop *property.PhysicalPro
 		return nil, true, nil
 	}
 
-	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
-	if !pushLimitOrTopNForcibly(p) {
-		allTaskTypes = append(allTaskTypes, property.RootTaskType)
-	}
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
 	if p.CanPushToCop(kv.TiFlash) && p.SCtx().GetSessionVars().IsMPPAllowed() {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
@@ -3823,11 +3904,10 @@ func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.Ph
 			chReqProps = append(chReqProps, &property.PhysicalProperty{
 				ExpectedCnt:       prop.ExpectedCnt,
 				TaskTp:            property.MppTaskType,
-				RejectSort:        true,
 				CTEProducerStatus: prop.CTEProducerStatus,
 			})
 		} else {
-			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus})
+			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt, CTEProducerStatus: prop.CTEProducerStatus})
 		}
 	}
 	ua := PhysicalUnionAll{
@@ -3840,7 +3920,6 @@ func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.Ph
 			chReqProps = append(chReqProps, &property.PhysicalProperty{
 				ExpectedCnt:       prop.ExpectedCnt,
 				TaskTp:            property.MppTaskType,
-				RejectSort:        true,
 				CTEProducerStatus: prop.CTEProducerStatus,
 			})
 		}
@@ -3883,17 +3962,20 @@ func exhaustPhysicalPlans4LogicalSort(lp base.LogicalPlan, prop *property.Physic
 			}
 			return ret, true, nil
 		}
-	} else if prop.TaskTp == property.MppTaskType && prop.RejectSort {
+	} else if prop.TaskTp == property.MppTaskType {
 		if logicalop.CanPushToCopImpl(&ls.BaseLogicalPlan, kv.TiFlash) {
 			ps := getNominalSortSimple(ls, prop)
-			return []base.PhysicalPlan{ps}, true, nil
+			if ps != nil {
+				return []base.PhysicalPlan{ps}, true, nil
+			}
+			return nil, true, nil
 		}
 	}
 	return nil, true, nil
 }
 
 func getPhysicalSort(ls *logicalop.LogicalSort, prop *property.PhysicalProperty) base.PhysicalPlan {
-	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.QueryBlockOffset(), &property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus})
+	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.QueryBlockOffset(), &property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus})
 	return ps
 }
 
@@ -3902,7 +3984,6 @@ func getNominalSort(ls *logicalop.LogicalSort, reqProp *property.PhysicalPropert
 	if !canPass {
 		return nil
 	}
-	prop.RejectSort = true
 	prop.ExpectedCnt = reqProp.ExpectedCnt
 	ps := NominalSort{OnlyColumn: onlyColumn, ByItems: ls.ByItems}.Init(
 		ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.QueryBlockOffset(), prop)
@@ -3915,7 +3996,6 @@ func getNominalSortSimple(ls *logicalop.LogicalSort, reqProp *property.PhysicalP
 		return nil
 	}
 	newProp := reqProp.CloneEssentialFields()
-	newProp.RejectSort = true
 	newProp.SortItems = prop.SortItems
 	ps := NominalSort{OnlyColumn: true, ByItems: ls.ByItems}.Init(
 		ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(reqProp.ExpectedCnt), ls.QueryBlockOffset(), newProp)
@@ -3948,7 +4028,7 @@ func exhaustPhysicalPlans4LogicalCTE(lp base.LogicalPlan, prop *property.Physica
 func exhaustPhysicalPlans4LogicalSequence(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalSequence)
 	possibleChildrenProps := make([][]*property.PhysicalProperty, 0, 2)
-	anyType := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, CanAddEnforcer: true, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+	anyType := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus}
 	if prop.TaskTp == property.MppTaskType {
 		if prop.CTEProducerStatus == property.SomeCTEFailedMpp {
 			return nil, true, nil

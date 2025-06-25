@@ -89,7 +89,7 @@ func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expre
 		return
 	}
 	exprCtx := p.SCtx().GetExprCtx()
-	conditions = expression.PropagateConstant(exprCtx, conditions)
+	conditions = expression.PropagateConstant(exprCtx, conditions...)
 	// Return table dual when filter is constant false or null.
 	dual := Conds2TableDual(child, conditions)
 	if dual != nil {
@@ -166,30 +166,20 @@ func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool {
 		switch c := ch.(type) {
 		case *DataSource:
 			validDs := false
-			indexMergeIsIntersection := false
 			// since CanPushToCopImpl is only used in physical enumeration of physical plan phase.
 			// we definitely here should use the specific PossibleAccessPaths for each DS alternative.
 			for _, path := range c.PossibleAccessPaths {
 				if path.StoreType == storeTp {
 					validDs = true
 				}
-				if len(path.PartialIndexPaths) > 0 && path.IndexMergeIsIntersection {
-					indexMergeIsIntersection = true
-				}
 			}
 			ret = ret && validDs
-
-			_, isTopN := p.Self().(*LogicalTopN)
-			_, isLimit := p.Self().(*LogicalLimit)
-			if (isTopN || isLimit) && indexMergeIsIntersection {
-				return false // TopN and Limit cannot be pushed down to the intersection type IndexMerge
-			}
 
 			if c.TableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 				// Don't push to cop for cached table, it brings more harm than good:
 				// 1. Those tables are small enough, push to cop can't utilize several TiKV to accelerate computation.
 				// 2. Cached table use UnionScan to read the cache data, and push to cop is not supported when an UnionScan exists.
-				// Once aggregation is pushed to cop, the cache data can't be use any more.
+				// Once aggregation is pushed to cop, the cache data can't be use anymore.
 				return false
 			}
 		case *LogicalUnionAll:
