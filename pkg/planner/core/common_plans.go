@@ -814,7 +814,7 @@ type ExplainInfoForEncode struct {
 	AccessObject        string                  `json:"accessObject,omitempty"`
 	ExecuteInfo         string                  `json:"executeInfo,omitempty"`
 	OperatorInfo        string                  `json:"operatorInfo,omitempty"`
-	EstCost             string                  `json:"estCost,omitempty"`
+	Cost                string                  `json:"cost,omitempty"`
 	CostFormula         string                  `json:"costFormula,omitempty"`
 	MemoryInfo          string                  `json:"memoryInfo,omitempty"`
 	DiskInfo            string                  `json:"diskInfo,omitempty"`
@@ -1194,7 +1194,7 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id str
 		return nil
 	}
 
-	estRows, _, _, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	estRows, cost, _, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 	jsonRow := &ExplainInfoForEncode{
 		ID:           explainID,
 		EstRows:      estRows,
@@ -1202,6 +1202,7 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id str
 		AccessObject: accessObject,
 		OperatorInfo: operatorInfo,
 		SubOperators: make([]*ExplainInfoForEncode, 0),
+		Cost:         cost,
 	}
 
 	if e.Analyze || e.RuntimeStatsColl != nil {
