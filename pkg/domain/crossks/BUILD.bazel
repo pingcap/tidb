@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "crossks",
+    srcs = ["cross_ks.go"],
+    importpath = "github.com/pingcap/tidb/pkg/domain/crossks",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/infoschema",
+        "//pkg/infoschema/issyncer",
+        "//pkg/keyspace",
+        "//pkg/kv",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
+        "//pkg/util",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)

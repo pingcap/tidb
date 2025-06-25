@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -364,6 +365,10 @@ func (c *Context) GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema {
 // GetLatestISWithoutSessExt implements sessionctx.Context GetLatestISWithoutSessExt interface.
 func (c *Context) GetLatestISWithoutSessExt() infoschema.MetaOnlyInfoSchema {
 	return c.GetLatestInfoSchema()
+}
+
+func (c *Context) GetSQLServer() sqlsvrapi.Server {
+	return c.dom.(sqlsvrapi.Server)
 }
 
 // GetSchemaValidator implements sessionctx.Context GetSchemaValidator interface.
