@@ -110,7 +110,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	retConditions = append(retConditions, canNotBePushDown...)
 	sctx := p.SCtx()
 	if len(retConditions) > 0 {
-		p.Conditions = utilfuncp.ApplyPredicateSimplification(sctx, retConditions, false)
+		p.Conditions = utilfuncp.ApplyPredicateSimplification(sctx, retConditions, true)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, p.Conditions)
 		if dual != nil {
