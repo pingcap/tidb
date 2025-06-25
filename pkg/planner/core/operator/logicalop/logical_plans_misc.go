@@ -180,7 +180,7 @@ func CanSelfBeingPushedToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool
 			// Once aggregation is pushed to cop, the cache data can't be use anymore.
 			return false
 		}
-		return true
+		return ret
 	case *LogicalUnionAll:
 		return storeTp == kv.TiFlash
 	case *LogicalSort:
