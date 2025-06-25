@@ -2209,14 +2209,13 @@ func TestSelectColumnPrivilege(t *testing.T) {
 	userTk.MustQuery(`SELECT * FROM test.t3`).Check(testkit.Rows(`1 4`))
 
 	/* test `Select` column privilege in clause */
-	// No need to check `Select` column privilege in USING clause
-	userTk.MustExec(`SELECT test.t1.a FROM test.t1 JOIN test.t2 USING (a)`)
+	userTk.MustGetErrCode(`SELECT test.t1.a FROM test.t1 JOIN test.t2 USING (a)`, errno.ErrColumnaccessDenied)
 	// `Select` column privilege in ON and ORDER BY clause is needed
-	userTk.MustExec(`SELECT a FROM test.t1 NATURAL JOIN test.t4`)
-	userTk.MustGetErrCode(`SELECT * FROM test.t1 NATURAL JOIN test.t4`, errno.ErrTableaccessDenied)
+	userTk.MustGetErrCode(`SELECT a FROM test.t1 NATURAL JOIN test.t4`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`SELECT test.t1.a FROM test.t1 JOIN test.t2 ON test.t1.a = test.t2.a`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`SELECT test.t2.c FROM test.t2 ORDER BY a`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT SELECT(a) ON test.t2 TO 'testuser'@'localhost';`)
+	userTk.MustExec(`SELECT test.t1.a FROM test.t1 JOIN test.t2 USING (a)`)
 	userTk.MustExec(`SELECT test.t1.a FROM test.t1 JOIN test.t2 ON test.t1.a = test.t2.a`)
 	userTk.MustExec(`SELECT test.t2.c FROM test.t2 ORDER BY a`)
 	// HAVING and GROUP BY clauses also require `Select` column privilege
@@ -2224,6 +2223,8 @@ func TestSelectColumnPrivilege(t *testing.T) {
 	userTk.MustGetErrCode(`SELECT SUM(test.t1.a) FROM test.t1 GROUP BY test.t1.b HAVING count(test.t1.c) > 0`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT SELECT(b) ON test.t1 TO 'testuser'@'localhost';`)
 	userTk.MustGetErrCode(`SELECT SUM(test.t1.a) FROM test.t1 GROUP BY test.t1.b HAVING count(test.t1.c) > 0`, errno.ErrColumnaccessDenied)
+	tk.MustExec(`GRANT SELECT(b) ON test.t4 TO 'testuser'@'localhost';`)
+	userTk.MustExec(`SELECT a FROM test.t1 NATURAL JOIN test.t4`)
 	tk.MustExec(`GRANT SELECT(c) ON test.t1 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`SELECT SUM(test.t1.a) FROM test.t1 GROUP BY test.t1.b HAVING count(test.t1.c) > 0`)
 }
