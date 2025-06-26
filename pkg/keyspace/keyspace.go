@@ -91,8 +91,8 @@ func WrapZapcoreWithKeyspace() zap.Option {
 	})
 }
 
-// IsRunningOnUserKS return true if we are on nextgen, and keyspace of current
+// IsRunningOnUser return true if we are on nextgen, and keyspace of current
 // instance is a user keyspace.
-func IsRunningOnUserKS() bool {
+func IsRunningOnUser() bool {
 	return kerneltype.IsNextGen() && config.GetGlobalKeyspaceName() != System
 }

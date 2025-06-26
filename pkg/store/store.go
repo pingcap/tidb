@@ -142,7 +142,7 @@ func IsKeyspaceNotExistError(err error) bool {
 func MustInitStorage(keyspaceName string) kv.Storage {
 	defaultStore := mustInitStorage(keyspaceName)
 	if kerneltype.IsNextGen() {
-		if keyspace.IsRunningOnUserKS() {
+		if keyspace.IsRunningOnUser() {
 			systemStore = mustInitStorage(keyspace.System)
 		} else {
 			systemStore = defaultStore

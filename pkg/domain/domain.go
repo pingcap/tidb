@@ -841,7 +841,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	}
 
 	// right now we only allow access system keyspace info schema after fully bootstrap.
-	if keyspace.IsRunningOnUserKS() && startMode == ddl.Normal {
+	if keyspace.IsRunningOnUser() && startMode == ddl.Normal {
 		if err = do.loadSysKSInfoSchema(); err != nil {
 			return err
 		}
@@ -863,7 +863,7 @@ func (do *Domain) loadSysKSInfoSchema() error {
 
 // GetKSStore returns the kv.Storage for the given keyspace.
 func (do *Domain) GetKSStore(targetKS string) (store kv.Storage, err error) {
-	mgr, err := do.getOrCreateKSSessManager(targetKS)
+	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -872,7 +872,7 @@ func (do *Domain) GetKSStore(targetKS string) (store kv.Storage, err error) {
 
 // GetKSInfoCache returns the system keyspace info cache.
 func (do *Domain) GetKSInfoCache(targetKS string) (*infoschema.InfoCache, error) {
-	mgr, err := do.getOrCreateKSSessManager(targetKS)
+	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -881,28 +881,11 @@ func (do *Domain) GetKSInfoCache(targetKS string) (*infoschema.InfoCache, error)
 
 // GetKSSessPool returns the session pool for the given keyspace.
 func (do *Domain) GetKSSessPool(targetKS string) (util.DestroyableSessionPool, error) {
-	mgr, err := do.getOrCreateKSSessManager(targetKS)
+	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return mgr.SessPool(), nil
-}
-
-func (do *Domain) getOrCreateKSSessManager(targetKS string) (*crossks.SessionManager, error) {
-	return do.crossKSSessMgr.GetOrCreate(targetKS,
-		func() (store kv.Storage, err error) {
-			if targetKS == keyspace.System {
-				store = kvstore.GetSystemStorage()
-			} else {
-				store, err = kvstore.InitStorage(targetKS)
-				if err != nil {
-					return nil, err
-				}
-			}
-			return store, nil
-		},
-		do.crossKSSessFactoryGetter,
-	)
 }
 
 // GetSchemaLease return the schema lease.

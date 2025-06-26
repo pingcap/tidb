@@ -57,11 +57,13 @@ func TestManager(t *testing.T) {
 	})
 
 	t.Run("failed to get store in cross keyspace manager", func(t *testing.T) {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeGetStore", func(ks string, fnP *func() (store kv.Storage, err error)) {
-			*fnP = func() (store kv.Storage, err error) {
-				return nil, errors.New("failed to get store")
-			}
-		})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeGetStore",
+			func(fnP *func(string) (store kv.Storage, err error)) {
+				*fnP = func(string) (store kv.Storage, err error) {
+					return nil, errors.New("failed to get store")
+				}
+			},
+		)
 		_, err := sysKSDom.GetKSSessPool("ks1")
 		require.ErrorContains(t, err, "failed to get store")
 	})
@@ -72,11 +74,13 @@ func TestManager(t *testing.T) {
 		// TODO use a shared storage for all Store instances.
 		storeMap := make(map[string]kv.Storage, 4)
 		storeMap[keyspace.System] = sysKSStore
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeGetStore", func(ks string, fnP *func() (store kv.Storage, err error)) {
-			*fnP = func() (store kv.Storage, err error) {
-				return storeMap[ks], nil
-			}
-		})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeGetStore",
+			func(fnP *func(string) (store kv.Storage, err error)) {
+				*fnP = func(ks string) (store kv.Storage, err error) {
+					return storeMap[ks], nil
+				}
+			},
+		)
 
 		for _, ks := range []string{"ks1", "ks2", "ks3"} {
 			userKSStore, _ := testkit.CreateNextgenMockStoreAndDomain(t, ks)

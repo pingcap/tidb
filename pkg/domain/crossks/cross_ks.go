@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -64,7 +65,6 @@ func (m *Manager) getWithoutLock(ks string) (*SessionManager, bool) {
 // GetOrCreate gets or creates a session manager for the specified keyspace.
 func (m *Manager) GetOrCreate(
 	ks string,
-	getStoreFn func() (store kv.Storage, err error),
 	ksSessFactoryGetter func(string) pools.Factory,
 ) (_ *SessionManager, err error) {
 	if kerneltype.IsClassic() || config.GetGlobalKeyspaceName() == ks {
@@ -80,8 +80,9 @@ func (m *Manager) GetOrCreate(
 		return mgr, nil
 	}
 
-	failpoint.InjectCall("beforeGetStore", ks, &getStoreFn)
-	store, err := getStoreFn()
+	getStoreFn := getOrCreateStore
+	failpoint.InjectCall("beforeGetStore", &getStoreFn)
+	store, err := getStoreFn(ks)
 	if err != nil {
 		return nil, err
 	}
@@ -152,6 +153,13 @@ func (m *Manager) Close() {
 		}
 	}
 	m.sessMgrs = make(map[string]*SessionManager)
+}
+
+func getOrCreateStore(targetKS string) (kv.Storage, error) {
+	if targetKS == keyspace.System {
+		return kvstore.GetSystemStorage(), nil
+	}
+	return kvstore.InitStorage(targetKS)
 }
 
 // SessionManager manages sessions for a specific keyspace.
