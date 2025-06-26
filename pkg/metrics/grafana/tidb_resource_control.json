@@ -1624,7 +1624,7 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "Cross AZ Traffic Bytes for Read",
+               "title": "Cross AZ Traffic Bytes (Read)",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
@@ -1717,7 +1717,7 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "Cross AZ Traffic Bytes for Write",
+               "title": "Cross AZ Traffic Bytes (Write)",
                "tooltip": {
                   "shared": true,
                   "sort": 0,

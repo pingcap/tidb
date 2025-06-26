@@ -595,7 +595,7 @@ local SQLCPUTimePanel = graphPanel.new(
 );
 
 local CrossAZTrafficRead = graphPanel.new(
-  title="Cross AZ Traffic Bytes for Read",
+  title="Cross AZ Traffic Bytes (Read)",
   datasource=myDS,
   legend_rightSide=true,
   legend_min=false,
@@ -619,7 +619,7 @@ local CrossAZTrafficRead = graphPanel.new(
 );
 
 local CrossAZTrafficWrite = graphPanel.new(
-  title="Cross AZ Traffic Bytes for Write",
+  title="Cross AZ Traffic Bytes (Write)",
   datasource=myDS,
   legend_rightSide=true,
   legend_min=false,
