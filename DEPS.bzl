@@ -7233,13 +7233,13 @@ def go_deps():
         build_tags = ["nextgen"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sha256 = "734b5a3b046c015049f5136ae0bb25a23bec040549a0b67ba625536874a36b9a",
-        strip_prefix = "github.com/glorv/client-go/v2@v2.0.1-0.20250625084121-6be28e07f160",
+        sha256 = "b7043bcd8eb286b03fa61f49f039eba9d99b0ee059b3e9761270cd3d9588cdb9",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20250625212854-143015881044",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/glorv/client-go/v2/com_github_glorv_client_go_v2-v2.0.1-0.20250625084121-6be28e07f160.zip",
-            "http://ats.apps.svc/gomod/github.com/glorv/client-go/v2/com_github_glorv_client_go_v2-v2.0.1-0.20250625084121-6be28e07f160.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/glorv/client-go/v2/com_github_glorv_client_go_v2-v2.0.1-0.20250625084121-6be28e07f160.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/glorv/client-go/v2/com_github_glorv_client_go_v2-v2.0.1-0.20250625084121-6be28e07f160.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250625212854-143015881044.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250625212854-143015881044.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250625212854-143015881044.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250625212854-143015881044.zip",
         ],
     )
     go_repository(
