@@ -106,7 +106,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	// to DXF service after creating the job, as DXF service runs in SYSTEM keyspace.
 	// TODO: we need to cleanup the job, if we failed to submit the task to DXF service.
 	dxfTaskMgr := taskManager
-	if keyspace.IsRunningOnUserKS() {
+	if keyspace.IsRunningOnUser() {
 		var err2 error
 		dxfTaskMgr, err2 = handle.GetTaskMgrToAccessDXFService()
 		if err2 != nil {
