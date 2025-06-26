@@ -20584,7 +20584,7 @@
 		"targets": [
 		{
 			"exemplar": true,
-			"expr": "max by (type) (tidb_tikvclient_safepoint{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"} / (2^18))",
+			"expr": "max by (type) tidb_tikvclient_safepoint{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
 			"format": "time_series",
 			"interval": "",
 			"intervalFactor": 2,

@@ -1255,7 +1255,8 @@ func (w *GCWorker) broadcastGCSafePoint(ctx context.Context, gcSafePoint uint64)
 			zap.Error(err))
 		return errors.Trace(err)
 	}
-	metrics.SafePointGauge.WithLabelValues("gc").Set(float64(result.NewGCSafePoint))
+	gcSafePointInMillisec := oracle.ExtractPhysical(result.NewGCSafePoint)
+	metrics.SafePointGauge.WithLabelValues("gc").Set(float64(gcSafePointInMillisec))
 
 	if result.NewGCSafePoint != gcSafePoint {
 		logutil.Logger(ctx).Warn("gc safe point not advanced to the expected value",
