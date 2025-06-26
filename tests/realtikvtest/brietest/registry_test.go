@@ -308,7 +308,7 @@ func TestRegistryConfigurationOperations(t *testing.T) {
 			sleeptime := time.Millisecond * time.Duration(100+rand.IntN(200))
 			time.Sleep(sleeptime)
 
-			err := r2.GlobalOperationAfterSetResettingStatus(ctx, restoreID2, func() error {
+			err = r2.GlobalOperationAfterSetResettingStatus(ctx, restoreID2, func() error {
 				k = 1
 				return nil
 			})
