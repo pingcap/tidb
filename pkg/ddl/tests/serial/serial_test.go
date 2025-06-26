@@ -764,44 +764,22 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 	tk.MustQuery("select * from t_recover").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 }
 
-func TestCancelJobByErrorCountLimit(t *testing.T) {
-	store := createMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockExceedErrorLimit", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockExceedErrorLimit"))
-	}()
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-
-	limit := vardef.GetDDLErrorCountLimit()
-	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 16")
-	err := util.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
-	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
-
-	err = tk.ExecToErr("create table t (a int)")
-	require.EqualError(t, err, "[ddl:-1]DDL job rollback, error msg: mock do job error")
-}
-
 func TestTruncateTableUpdateSchemaVersionErr(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockTruncateTableUpdateVersionError", `return(true)`))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockTruncateTableUpdateVersionError", `return(true)`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
 	limit := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 5")
-	err := util.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
 
 	tk.MustExec("create table t (a int)")
-	err = tk.ExecToErr("truncate table t")
+	err := tk.ExecToErr("truncate table t")
 	require.EqualError(t, err, "[ddl:-1]DDL job rollback, error msg: mock update version error")
 	// Disable fail point.
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockTruncateTableUpdateVersionError"))
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockTruncateTableUpdateVersionError")
 	tk.MustExec("truncate table t")
 }
 

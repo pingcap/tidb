@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -43,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -725,16 +723,10 @@ func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 	}
 	job.ErrorCount++
 
-	logger := jobCtx.logger
-	// Load global DDL variables.
-	if err1 := loadDDLVars(w); err1 != nil {
-		logger.Error("load DDL global variable failed", zap.Error(err1))
-	}
 	errorCount := vardef.GetDDLErrorCountLimit()
-
 	if job.ErrorCount > errorCount {
 		msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCount)
-		logger.Warn(msg)
+		jobCtx.logger.Warn(msg)
 		job.Error = toTError(errors.New(msg))
 		job.State = model.JobStateCancelled
 	}
@@ -753,10 +745,6 @@ func (w *worker) countForError(jobCtx *jobContext, job *model.Job, err error) er
 	}
 	logger.Warn("run DDL job error", zap.Error(err))
 
-	// Load global DDL variables.
-	if err1 := loadDDLVars(w); err1 != nil {
-		logger.Error("load DDL global variable failed", zap.Error(err1))
-	}
 	// Check error limit to avoid falling into an infinite loop.
 	if job.ErrorCount > vardef.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && job.IsRollbackable() {
 		logger.Warn("DDL job error count exceed the limit, cancelling it now", zap.Int64("errorCountLimit", vardef.GetDDLErrorCountLimit()))
@@ -1069,17 +1057,6 @@ func (w *worker) runOneJobStep(
 		err = w.countForError(jobCtx, job, err)
 	}
 	return ver, updateRawArgs, err
-}
-
-func loadDDLVars(w *worker) error {
-	// Get sessionctx from context resource pool.
-	var ctx sessionctx.Context
-	ctx, err := w.sessPool.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer w.sessPool.Put(ctx)
-	return util.LoadDDLVars(ctx)
 }
 
 func toTError(err error) *terror.Error {

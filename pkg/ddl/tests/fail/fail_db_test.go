@@ -394,7 +394,7 @@ func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.Test
 	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/checkBackfillWorkerNum", `return(true)`))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/checkBackfillWorkerNum", `return(true)`)
 
 	testutil.SessionExecInGoroutine(s.store, "test_db", "create index c3_index on test_add_index (c3)", done)
 	checkNum := 0
@@ -415,7 +415,7 @@ func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.Test
 	}
 
 	require.Greater(t, checkNum, 1)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/checkBackfillWorkerNum"))
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/checkBackfillWorkerNum")
 	tk.MustExec("admin check table test_add_index")
 	tk.MustExec("drop table test_add_index")
 }

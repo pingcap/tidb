@@ -391,7 +391,7 @@ type Job struct {
 	SQLMode mysql.SQLMode `json:"sql_mode"`
 
 	// SessionVars store session variables
-	SessionVars map[string]string `json:"session_vars,omitempty"`
+	SessionVars map[string]any `json:"session_vars,omitempty"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -697,14 +697,23 @@ func (job *Job) InFinalState() bool {
 }
 
 // AddSessionVars add a session variable in DDL job.
-func (job *Job) AddSessionVars(name, value string) {
+func (job *Job) AddSessionVars(name string, value any) {
 	job.SessionVars[name] = value
 }
 
 // GetSessionVars get a session variable in DDL job.
-func (job *Job) GetSessionVars(name string) (string, bool) {
+func GetSessionVarFromJob[T any](job *Job, name string) (T, bool) {
 	value, ok := job.SessionVars[name]
-	return value, ok
+	if !ok {
+		var zero T
+		return zero, false
+	}
+	tValue, ok := value.(T)
+	if !ok {
+		var zero T
+		return zero, false
+	}
+	return tValue, true
 }
 
 // MayNeedReorg indicates that this job may need to reorganize the data.

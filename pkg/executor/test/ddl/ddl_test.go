@@ -17,7 +17,6 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"math"
 	"strconv"
 	"testing"
 	"time"
@@ -851,33 +850,6 @@ func TestSetDDLReorgBatchSize(t *testing.T) {
 	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 256;")
 	tk.MustQuery("select @@tidb_ddl_reorg_batch_size").Check(testkit.Rows("256"))
 	tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size").Check(testkit.Rows("1000"))
-}
-
-func TestSetDDLErrorCountLimit(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	err := ddlutil.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int64(vardef.DefTiDBDDLErrorCountLimit), vardef.GetDDLErrorCountLimit())
-
-	tk.MustExec("set @@global.tidb_ddl_error_count_limit = -1")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '-1'"))
-	err = ddlutil.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int64(0), vardef.GetDDLErrorCountLimit())
-	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", uint64(math.MaxInt64)+1))
-	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '%d'", uint64(math.MaxInt64)+1)))
-	err = ddlutil.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int64(math.MaxInt64), vardef.GetDDLErrorCountLimit())
-	tk.MustGetDBError("set @@global.tidb_ddl_error_count_limit = invalid_val", variable.ErrWrongTypeForVar)
-	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 100")
-	err = ddlutil.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int64(100), vardef.GetDDLErrorCountLimit())
-	res := tk.MustQuery("select @@global.tidb_ddl_error_count_limit")
-	res.Check(testkit.Rows("100"))
 }
 
 func TestSetDDLReorgMaxWriteSpeed(t *testing.T) {

@@ -193,11 +193,6 @@ func LoadDDLReorgVars(ctx context.Context, sctx sessionctx.Context) error {
 	return loadGlobalVars(ctx, sctx, []string{vardef.TiDBDDLReorgWorkerCount, vardef.TiDBDDLReorgBatchSize, vardef.TiDBRowFormatVersion})
 }
 
-// LoadDDLVars loads ddl variable from mysql.global_variables.
-func LoadDDLVars(ctx sessionctx.Context) error {
-	return loadGlobalVars(context.Background(), ctx, []string{vardef.TiDBDDLErrorCountLimit})
-}
-
 // loadGlobalVars loads global variable from mysql.global_variables.
 func loadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
