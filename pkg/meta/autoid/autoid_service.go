@@ -97,10 +97,21 @@ func (d *ClientDiscover) GetClient(ctx context.Context, keyspaceID uint32) (auto
 	if d.mu.AutoIDAllocClient != nil {
 		return d.mu.AutoIDAllocClient, atomic.LoadUint64(&d.version), nil
 	}
-
-	resp, err := d.etcdCli.Get(ctx, GetAutoIDServiceLeaderEtcdPath(keyspaceID), clientv3.WithFirstCreate()...)
-	if err != nil {
-		return nil, 0, errors.Trace(err)
+	// write a for loop to retry in case of etcd connection error.
+	var resp *clientv3.GetResponse
+	var err error
+	for range []int{0, 1} {
+		resp, err = d.etcdCli.Get(ctx, GetAutoIDServiceLeaderEtcdPath(keyspaceID), clientv3.WithFirstCreate()...)
+		if err != nil {
+			return nil, 0, errors.Trace(err)
+		}
+		if len(resp.Kvs) == 0 {
+			// If the key is not found, it means the autoid service leader is not elected yet.
+			// We can retry to get the leader.
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		break
 	}
 	if len(resp.Kvs) == 0 {
 		return nil, 0, errors.New("autoid service leader not found")
@@ -143,13 +154,14 @@ func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offs
 	}
 
 	var bo backoffer
+	start := time.Now()
 retry:
 	cli, ver, err := sp.GetClient(ctx, sp.keyspaceID)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 
-	start := time.Now()
+	clientStart := time.Now()
 	resp, err := cli.AllocAutoID(ctx, &autoid.AutoIDRequest{
 		DbID:       sp.dbID,
 		TblID:      sp.tblID,
@@ -159,7 +171,7 @@ retry:
 		IsUnsigned: sp.isUnsigned,
 		KeyspaceID: sp.keyspaceID,
 	})
-	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
+	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(clientStart).Seconds())
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
 			sp.resetConn(ver, err)
@@ -179,7 +191,7 @@ retry:
 	return resp.Min, resp.Max, err
 }
 
-const backoffMin = 200 * time.Millisecond
+const backoffMin = 5 * time.Millisecond
 const backoffMax = 5 * time.Second
 
 type backoffer struct {
