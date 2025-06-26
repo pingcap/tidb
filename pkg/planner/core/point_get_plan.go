@@ -389,16 +389,8 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 		indexValues := p.IndexValues
 
 		evalCtx := sctx.GetExprCtx().GetEvalCtx()
-		binaryCollations := map[string]struct{}{
-			"utf8mb4_bin":      {},
-			"binary":           {},
-			"ascii_bin":        {},
-			"latin1_bin":       {},
-			"utf8_bin":         {},
-			"utf8mb4_0900_bin": {},
-		}
 		for _, col := range p.IdxCols {
-			if _, exists := binaryCollations[col.GetType(evalCtx).GetCollate()]; !exists {
+			if !collate.IsBinCollation(col.GetType(evalCtx).GetCollate()) {
 				// If a non-binary collation is used, the values in `p.IndexValues` are sort keys and cannot be used for partition pruning.
 				r, err := ranger.DetachCondAndBuildRangeForPartition(sctx.GetRangerCtx(), p.AccessConditions, p.IdxCols, p.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
 				if err != nil {
