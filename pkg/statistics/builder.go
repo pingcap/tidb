@@ -419,12 +419,24 @@ func BuildHistAndTopN(
 		topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
 	}
 
+	topn := &TopN{TopN: topNList}
+	lenTopN := int64(len(topn.TopN))
+
 	// Step2: exclude topn from samples
-	if numTopN != 0 {
-		for i := int64(0); i < int64(len(samples)); i++ {
+	lenSamples := int64(len(samples))
+	if lenTopN > 0 && lenTopN < hg.NDV && lenSamples > 0 {
+		for i := int64(0); i < lenSamples; i++ {
 			sampleBytes, err := getComparedBytes(samples[i].Value)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
+			}
+			// Safety:
+			// When a sample value matches an entry in the topN list, it is removed from the samples array,
+			// so it can never match the previous sample. Therefore, this equality check will never be true
+			// in that case. For values not found in topN, we don't need keep checking the same value.
+			if i > 0 && bytes.Equal(sampleBytes, samples[i-1].Value.GetBytes()) {
+				// If the sample is the same as the previous one, we can skip it.
+				continue
 			}
 			// For debugging invalid sample data.
 			var (
@@ -460,6 +472,7 @@ func BuildHistAndTopN(
 					// Found the same value in topn: need to skip over this value in samples.
 					copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
 					samples = samples[:uint64(len(samples))-topNList[j].Count]
+					lenSamples = int64(len(samples))
 					i--
 					foundTwice = true
 					continue
@@ -468,7 +481,6 @@ func BuildHistAndTopN(
 		}
 	}
 
-	topn := &TopN{TopN: topNList}
 	topn.Scale(sampleFactor)
 
 	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
@@ -477,7 +489,7 @@ func BuildHistAndTopN(
 	}
 
 	// Step3: build histogram with the rest samples
-	if len(samples) > 0 {
+	if lenSamples > 0 {
 		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
 		if err != nil {
 			return nil, nil, err
