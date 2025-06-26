@@ -359,6 +359,7 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 			if def.Name.L == p.PartitionNames[0].L {
 				idx := i
 				p.PartitionIdx = &idx
+				break
 			}
 		}
 		return false, nil
@@ -401,7 +402,7 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 		}
 		// If a non-binary collation is used, the values in `p.IndexValues` are sort keys and cannot be used for partition pruning.
 		if hasNonBinaryCollate {
-			r, err := ranger.DetachCondAndBuildRange(sctx.GetRangerCtx(), p.AccessConditions, p.IdxCols, p.IdxColLens, sctx.GetSessionVars().RangeMaxSize, false, true)
+			r, err := ranger.DetachCondAndBuildRangeForPartition(sctx.GetRangerCtx(), p.AccessConditions, p.IdxCols, p.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
 			if err != nil {
 				return false, err
 			}
