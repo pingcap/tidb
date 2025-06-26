@@ -387,7 +387,6 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 	row := make([]types.Datum, len(p.TblInfo.Columns))
 	if p.HandleConstant == nil && len(p.IndexValues) > 0 {
 		indexValues := p.IndexValues
-
 		evalCtx := sctx.GetExprCtx().GetEvalCtx()
 		for _, col := range p.IdxCols {
 			if !collate.IsBinCollation(col.GetType(evalCtx).GetCollate()) {
