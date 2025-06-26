@@ -40,6 +40,7 @@ import (
 )
 
 func TestSubmitTaskNextgen(t *testing.T) {
+	t.Skip("to run this test, we need DXF service ready")
 	if kerneltype.IsClassic() {
 		t.Skip("This test is only for nextgen")
 	}
