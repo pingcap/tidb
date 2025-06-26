@@ -574,7 +574,7 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 			return base.InvalidTask, 0, nil
 		}
 	}
-	if !checkOpSelfSatisfyPropTaskTypeRequirement(lp, prop) {
+	if !checkOpSelfSatisfyPropTaskTypeRequirement(p.Self(), prop) {
 		// Currently all plan cannot totally push down to TiKV.
 		p.StoreTask(prop, base.InvalidTask)
 		return base.InvalidTask, 0, nil

@@ -197,7 +197,7 @@ func CanSelfBeingPushedToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool
 		// logical aggregation has an additional variable to care about.
 		return !c.NoCopPushDown
 	case *LogicalSelection, *LogicalJoin, *LogicalWindow:
-		return storeTp != kv.TiFlash
+		return storeTp == kv.TiFlash
 	case *LogicalLimit, *LogicalTopN:
 		// since these check is inside subtree, it's check for whether this subtree can be totally pushed to tikv/tiFlash.
 		// currently logicalLimit and logicalTopN can not be fully pushed down to tiFlash. ref: issues/61961
