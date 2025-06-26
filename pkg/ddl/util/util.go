@@ -20,7 +20,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -31,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -184,42 +182,6 @@ func UpdateDeleteRange(sctx sessionctx.Context, dr DelRangeTask, newStartKey, ol
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
 	return errors.Trace(err)
-}
-
-// LoadDDLReorgVars loads ddl reorg variable from mysql.global_variables.
-func LoadDDLReorgVars(ctx context.Context, sctx sessionctx.Context) error {
-	// close issue #21391
-	// variable.TiDBRowFormatVersion is used to encode the new row for column type change.
-	return loadGlobalVars(ctx, sctx, []string{vardef.TiDBDDLReorgWorkerCount, vardef.TiDBDDLReorgBatchSize, vardef.TiDBRowFormatVersion})
-}
-
-// loadGlobalVars loads global variable from mysql.global_variables.
-func loadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
-	e := sctx.GetRestrictedSQLExecutor()
-	var buf strings.Builder
-	buf.WriteString(loadGlobalVarsSQL)
-	paramNames := make([]any, 0, len(varNames))
-	for i, name := range varNames {
-		if i > 0 {
-			buf.WriteString(", ")
-		}
-		buf.WriteString("%?")
-		paramNames = append(paramNames, name)
-	}
-	buf.WriteString(")")
-	rows, _, err := e.ExecRestrictedSQL(ctx, nil, buf.String(), paramNames...)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, row := range rows {
-		varName := row.GetString(0)
-		varValue := row.GetString(1)
-		if err = sctx.GetSessionVars().SetSystemVarWithoutValidation(varName, varValue); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // GetTimeZone gets the session location's zone name and offset.
