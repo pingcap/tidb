@@ -557,7 +557,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 	logutil.Logger(w.ctx).Info("start a table scan task",
 		zap.Int("id", task.ID), zap.Stringer("task", task))
 
-	var idxResult IndexRecordChunk
+	var idxResults []IndexRecordChunk
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
 		failpoint.Inject("mockScanRecordError", func() {
 			failpoint.Return(errors.New("mock scan record error"))
@@ -580,17 +580,19 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				terror.Call(rs.Close)
 				return err
 			}
-			idxResult = IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx}
+			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx})
 			if w.cpOp != nil {
 				w.cpOp.UpdateChunk(task.ID, srcChk.NumRows(), done)
 			}
 			w.totalCount.Add(int64(srcChk.NumRows()))
-			sender(idxResult)
 		}
 		return rs.Close()
 	})
 	if err != nil {
 		w.ctx.onError(err)
+	}
+	for _, idxResult := range idxResults {
+		sender(idxResult)
 	}
 }
 

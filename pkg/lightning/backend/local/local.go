@@ -1218,6 +1218,7 @@ func (local *Backend) ImportEngine(
 		zap.Int64("size", lfTotalSize))
 
 	failpoint.Inject("ReadyForImportEngine", func() {})
+	failpoint.InjectCall("duringBackendImportEngine")
 
 	err = local.doImport(ctx, e, splitKeys, regionSplitSize, regionSplitKeys)
 	if err == nil {
