@@ -11,6 +11,7 @@ go_test(
         "operator_test.go",
         "pitr_test.go",
         "registry_test.go",
+        "scheduler_test.go",
     ],
     flaky = True,
     race = "on",
