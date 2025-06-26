@@ -1121,3 +1121,203 @@ func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
 		require.Equal(t, testCase.expect, covered, testCase.sql)
 	}
 }
+<<<<<<< HEAD
+=======
+
+func TestIndexUsageWithData(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Some bad tests will set the global variable to 0, and they don't set it back. So even if the default value for this variable is 1,
+	// we'll need to set it to 1 here.
+	tk.MustExec("set global tidb_enable_collect_execution_info=1;")
+	tk.RefreshSession()
+
+	insertDataAndScanToT := func(indexName string) {
+		// insert 1000 rows
+		tk.MustExec("INSERT into t WITH RECURSIVE cte AS (select 1 as n UNION ALL select n+1 FROM cte WHERE n < 1000) select n from cte;")
+		tk.MustExec("ANALYZE TABLE t")
+
+		// full scan
+		sql := fmt.Sprintf("SELECT * FROM t use index(%s) ORDER BY a", indexName)
+		rows := tk.MustQuery(sql).Rows()
+		require.Len(t, rows, 1000)
+		for i, r := range rows {
+			require.Equal(t, r[0], strconv.Itoa(i+1))
+		}
+
+		logutil.BgLogger().Info("execute with plan",
+			zap.String("sql", sql),
+			zap.String("plan", tk.MustQuery("explain "+sql).String()))
+
+		// scan 1/4 of the rows
+		sql = fmt.Sprintf("SELECT * FROM t use index(%s) WHERE a <= 250 ORDER BY a", indexName)
+		rows = tk.MustQuery(sql).Rows()
+		require.Len(t, rows, 250)
+		for i, r := range rows {
+			require.Equal(t, r[0], strconv.Itoa(i+1))
+		}
+
+		logutil.BgLogger().Info("execute with plan",
+			zap.String("sql", sql),
+			zap.String("plan", tk.MustQuery("explain "+sql).String()))
+	}
+
+	checkIndexUsage := func(startQuery time.Time, endQuery time.Time) {
+		require.Eventually(t, func() bool {
+			rows := tk.MustQuery("select QUERY_TOTAL,PERCENTAGE_ACCESS_20_50,PERCENTAGE_ACCESS_100,LAST_ACCESS_TIME from information_schema.tidb_index_usage where table_schema = 'test'").Rows()
+
+			if len(rows) != 1 {
+				return false
+			}
+			if rows[0][0] != "2" || rows[0][1] != "1" || rows[0][2] != "1" {
+				return false
+			}
+			lastAccessTime, err := time.ParseInLocation(time.DateTime, rows[0][3].(string), time.Local)
+			if err != nil {
+				return false
+			}
+			if lastAccessTime.Unix() < startQuery.Unix() || lastAccessTime.Unix() > endQuery.Unix() {
+				return false
+			}
+
+			return true
+		}, 5*time.Second, 100*time.Millisecond)
+	}
+
+	t.Run("test index usage with normal index", func(t *testing.T) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t (a int, index idx(a));")
+		defer tk.MustExec("drop table t")
+
+		tk.MustQuery("select * from information_schema.tidb_index_usage where table_schema = 'test'").Check(testkit.Rows(
+			"test t idx 0 0 0 0 0 0 0 0 0 0 <nil>",
+		))
+
+		startQuery := time.Now()
+		insertDataAndScanToT("idx")
+		endQuery := time.Now()
+
+		checkIndexUsage(startQuery, endQuery)
+	})
+
+	t.Run("test index usage with integer primary key", func(t *testing.T) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t (a int primary key);")
+		defer tk.MustExec("drop table t")
+
+		tk.MustQuery("select * from information_schema.tidb_index_usage where table_schema = 'test'").Check(testkit.Rows(
+			"test t primary 0 0 0 0 0 0 0 0 0 0 <nil>",
+		))
+
+		startQuery := time.Now()
+		insertDataAndScanToT("primary")
+		endQuery := time.Now()
+
+		checkIndexUsage(startQuery, endQuery)
+	})
+
+	t.Run("test index usage with integer clustered primary key", func(t *testing.T) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t (a bigint primary key clustered);")
+		defer tk.MustExec("drop table t")
+
+		tk.MustQuery("select * from information_schema.tidb_index_usage where table_schema = 'test'").Check(testkit.Rows(
+			"test t primary 0 0 0 0 0 0 0 0 0 0 <nil>",
+		))
+
+		startQuery := time.Now()
+		insertDataAndScanToT("primary")
+		endQuery := time.Now()
+
+		checkIndexUsage(startQuery, endQuery)
+	})
+
+	t.Run("test index usage with string primary key", func(t *testing.T) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t (a varchar(16) primary key clustered);")
+		defer tk.MustExec("drop table t")
+
+		tk.MustQuery("select * from information_schema.tidb_index_usage where table_schema = 'test'").Check(testkit.Rows(
+			"test t primary 0 0 0 0 0 0 0 0 0 0 <nil>",
+		))
+
+		tk.MustExec("INSERT into t WITH RECURSIVE cte AS (select 1 as n UNION ALL select n+1 FROM cte WHERE n < 1000) select n from cte;")
+		tk.MustExec("ANALYZE TABLE t")
+
+		// full scan
+		rows := tk.MustQuery("SELECT * FROM t ORDER BY a").Rows()
+		require.Len(t, rows, 1000)
+
+		// scan 1/4 of the rows
+		startQuery := time.Now()
+		rows = tk.MustQuery("select * from t where a < '3'").Rows()
+		require.Len(t, rows, 223)
+		endQuery := time.Now()
+
+		checkIndexUsage(startQuery, endQuery)
+	})
+
+	t.Run("test index usage with nonclustered primary key", func(t *testing.T) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t (a int primary key nonclustered);")
+		defer tk.MustExec("drop table t")
+
+		tk.MustQuery("select * from information_schema.tidb_index_usage where table_schema = 'test'").Check(testkit.Rows(
+			"test t primary 0 0 0 0 0 0 0 0 0 0 <nil>",
+		))
+
+		startQuery := time.Now()
+		insertDataAndScanToT("primary")
+		endQuery := time.Now()
+
+		checkIndexUsage(startQuery, endQuery)
+	})
+}
+
+func TestKeyspaceMeta(t *testing.T) {
+	keyspaceID := rand.Uint32() >> 8
+	keyspaceName := fmt.Sprintf("keyspace-%d", keyspaceID)
+	cfg := map[string]string{
+		"key_a": "a",
+		"key_b": "b",
+	}
+
+	keyspaceMeta := &keyspacepb.KeyspaceMeta{
+		Id:     keyspaceID,
+		Name:   keyspaceName,
+		Config: cfg,
+	}
+
+	store := testkit.CreateMockStore(t, mockstore.WithKeyspaceMeta(keyspaceMeta))
+	tk := testkit.NewTestKit(t, store)
+
+	rows := tk.MustQuery("select * from information_schema.keyspace_meta").Rows()
+	require.Equal(t, 1, len(rows))
+	require.Equal(t, keyspaceMeta.Name, rows[0][0])
+	require.Equal(t, fmt.Sprintf("%d", keyspaceMeta.Id), rows[0][1])
+	actualCfg := make(map[string]string)
+	err := json.Unmarshal([]byte(rows[0][2].(string)), &actualCfg)
+	require.Nil(t, err)
+	require.Equal(t, cfg, actualCfg)
+}
+
+func TestStatisticShowPublicIndexes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.Type != model.ActionAddIndex || job.SchemaState == model.StatePublic {
+			return
+		}
+		rs := tk1.MustQuery(`SELECT count(1) FROM INFORMATION_SCHEMA.STATISTICS where 
+			TABLE_SCHEMA = 'test' and table_name = 't' and index_name = 'idx';`).Rows()
+		require.Equal(t, "0", rs[0][0].(string))
+	})
+	tk.MustExec("alter table t add index idx(b);")
+}
+>>>>>>> 78e306d3781 (executor: filter non-public indexes for I_S.statistics (#61285))
