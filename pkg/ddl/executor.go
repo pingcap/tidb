@@ -1161,17 +1161,15 @@ func getSharedInvolvingSchemaInfo(info *model.TableInfo) []model.InvolvingSchema
 }
 
 func (e *executor) createTableWithInfoPost(
-	ctx sessionctx.Context,
 	tbInfo *model.TableInfo,
-	schemaID int64,
-	job *model.Job,
+	jobW *JobWrapper,
 ) error {
 	var err error
 	var partitions []model.PartitionDefinition
 	if pi := tbInfo.GetPartitionInfo(); pi != nil {
 		partitions = pi.Definitions
 	}
-	preSplitAndScatter(e.store, tbInfo, partitions, job)
+	preSplitAndScatter(e.store, tbInfo, partitions, jobW.Job)
 	if tbInfo.AutoIncID > 1 {
 		// Default tableAutoIncID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
@@ -1182,13 +1180,13 @@ func (e *executor) createTableWithInfoPost(
 		} else {
 			allocType = autoid.RowIDAllocType
 		}
-		if err = e.handleAutoIncID(tbInfo, schemaID, newEnd, allocType); err != nil {
+		if err = e.handleAutoIncID(tbInfo, jobW.SchemaID, newEnd, allocType); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	// For issue https://github.com/pingcap/tidb/issues/46093
 	if tbInfo.AutoIncIDExtra != 0 {
-		if err = e.handleAutoIncID(tbInfo, schemaID, tbInfo.AutoIncIDExtra-1, autoid.RowIDAllocType); err != nil {
+		if err = e.handleAutoIncID(tbInfo, jobW.SchemaID, tbInfo.AutoIncIDExtra-1, autoid.RowIDAllocType); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1196,7 +1194,7 @@ func (e *executor) createTableWithInfoPost(
 		// Default tableAutoRandID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
 		newEnd := tbInfo.AutoRandID - 1
-		err = e.handleAutoIncID(tbInfo, schemaID, newEnd, autoid.AutoRandomType)
+		err = e.handleAutoIncID(tbInfo, jobW.SchemaID, newEnd, autoid.AutoRandomType)
 	}
 	return err
 }
@@ -1226,7 +1224,7 @@ func (e *executor) CreateTableWithInfo(
 			err = nil
 		}
 	} else {
-		err = e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID, jobW.Job)
+		err = e.createTableWithInfoPost(tbInfo, jobW)
 	}
 
 	return errors.Trace(err)
@@ -1319,7 +1317,7 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		return errors.Trace(err)
 	}
 	for _, tblArgs := range args.Tables {
-		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID, jobW.Job); err != nil {
+		if err = e.createTableWithInfoPost(tblArgs.TableInfo, jobW); err != nil {
 			return errors.Trace(err)
 		}
 	}

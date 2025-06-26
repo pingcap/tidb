@@ -81,7 +81,7 @@ func (sg *Pool) Put(ctx sessionctx.Context) {
 		return txn == nil || !txn.Valid()
 	})
 	ctx.RollbackTxn(context.Background())
-	ctx.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
+	ctx.GetSessionVars().ClearDiskFullOpt()
 	sg.resPool.Put(ctx.(pools.Resource))
 	infosync.DeleteInternalSession(ctx)
 }

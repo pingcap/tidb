@@ -151,6 +151,46 @@ func (c *jobContext) notifyDone() {
 	}
 }
 
+// countForPanic records the error count for DDL job.
+func countForPanic(jobCtx *jobContext, job *model.Job) {
+	// If run DDL job panic, just cancel the DDL jobs.
+	if job.State == model.JobStateRollingback {
+		job.State = model.JobStateCancelled
+	} else {
+		job.State = model.JobStateCancelling
+	}
+	job.ErrorCount++
+
+	errorCount := vardef.GetDDLErrorCountLimit()
+	if job.ErrorCount > errorCount {
+		msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCount)
+		jobCtx.logger.Warn(msg)
+		job.Error = toTError(errors.New(msg))
+		job.State = model.JobStateCancelled
+	}
+}
+
+// countForError records the error count for DDL job.
+func countForError(jobCtx *jobContext, job *model.Job, err error) error {
+	job.Error = toTError(err)
+	job.ErrorCount++
+
+	logger := jobCtx.logger
+	// If job is cancelled, we shouldn't return an error and shouldn't load DDL variables.
+	if job.State == model.JobStateCancelled {
+		logger.Info("DDL job is cancelled normally", zap.Error(err))
+		return nil
+	}
+	logger.Warn("run DDL job error", zap.Error(err))
+
+	// Check error limit to avoid falling into an infinite loop.
+	if job.ErrorCount > vardef.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && job.IsRollbackable() {
+		logger.Warn("DDL job error count exceed the limit, cancelling it now", zap.Int64("errorCountLimit", vardef.GetDDLErrorCountLimit()))
+		job.State = model.JobStateCancelling
+	}
+	return err
+}
+
 type workerType byte
 
 const (
@@ -713,46 +753,6 @@ func chooseLeaseTime(t, maxv time.Duration) time.Duration {
 	return t
 }
 
-// countForPanic records the error count for DDL job.
-func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
-	// If run DDL job panic, just cancel the DDL jobs.
-	if job.State == model.JobStateRollingback {
-		job.State = model.JobStateCancelled
-	} else {
-		job.State = model.JobStateCancelling
-	}
-	job.ErrorCount++
-
-	errorCount := vardef.GetDDLErrorCountLimit()
-	if job.ErrorCount > errorCount {
-		msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCount)
-		jobCtx.logger.Warn(msg)
-		job.Error = toTError(errors.New(msg))
-		job.State = model.JobStateCancelled
-	}
-}
-
-// countForError records the error count for DDL job.
-func (w *worker) countForError(jobCtx *jobContext, job *model.Job, err error) error {
-	job.Error = toTError(err)
-	job.ErrorCount++
-
-	logger := jobCtx.logger
-	// If job is cancelled, we shouldn't return an error and shouldn't load DDL variables.
-	if job.State == model.JobStateCancelled {
-		logger.Info("DDL job is cancelled normally", zap.Error(err))
-		return nil
-	}
-	logger.Warn("run DDL job error", zap.Error(err))
-
-	// Check error limit to avoid falling into an infinite loop.
-	if job.ErrorCount > vardef.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && job.IsRollbackable() {
-		logger.Warn("DDL job error count exceed the limit, cancelling it now", zap.Int64("errorCountLimit", vardef.GetDDLErrorCountLimit()))
-		job.State = model.JobStateCancelling
-	}
-	return err
-}
-
 func (*worker) processJobPausingRequest(jobCtx *jobContext, job *model.Job) (isRunnable bool, err error) {
 	if job.IsPaused() {
 		jobCtx.logger.Debug("paused DDL job ", zap.String("job", job.String()))
@@ -795,7 +795,7 @@ func (w *worker) runOneJobStep(
 ) (ver int64, updateRawArgs bool, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runOneJobStep", w),
 		func() {
-			w.countForPanic(jobCtx, job)
+			countForPanic(jobCtx, job)
 		}, false)
 
 	// Mock for run ddl job panic.
@@ -1054,7 +1054,7 @@ func (w *worker) runOneJobStep(
 
 	// Save errors in job if any, so that others can know errors happened.
 	if err != nil {
-		err = w.countForError(jobCtx, job, err)
+		err = countForError(jobCtx, job, err)
 	}
 	return ver, updateRawArgs, err
 }
