@@ -67,6 +67,10 @@ func (m *Manager) GetOrCreate(
 	ks string,
 	ksSessFactoryGetter func(string) pools.Factory,
 ) (_ *SessionManager, err error) {
+	// misusing this function might cause data written to the wrong keyspace, or
+	// corrupt user data, and it's harder to diagnose those issues, so we use
+	// runtime check instead of intest.Assert here, in case some code path are not
+	// covered by tests.
 	if kerneltype.IsClassic() || config.GetGlobalKeyspaceName() == ks {
 		return nil, errors.New("cross keyspace session manager is not available in classic kernel or current keyspace")
 	}
