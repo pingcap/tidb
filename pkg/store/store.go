@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -87,9 +88,13 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	}
 
 	var s kv.Storage
+	samLogger := logutil.SampleLoggerFactory(30*time.Second, 1, zap.String("path", path))()
 	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
 		logutil.BgLogger().Info("new store", zap.String("path", path))
 		s, err = d.Open(path)
+		if err != nil {
+			samLogger.Info("open store failed, retrying", zap.Error(err))
+		}
 		return isNewStoreRetryableError(err), err
 	})
 

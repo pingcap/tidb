@@ -287,6 +287,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "invalid config: keyspace name is not supported for classic TiDB")
 		os.Exit(0)
 	}
+
+	signal.SetupUSR1Handler()
 	registerStores()
 	err := metricsutil.RegisterMetrics()
 	terror.MustNil(err)
