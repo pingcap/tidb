@@ -6,15 +6,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	goerrors "errors"
 	"flag"
 	"fmt"
 	"io"
-<<<<<<< HEAD
-=======
 	"net/http"
 	"net/http/httptest"
 	"net/url"
->>>>>>> 7424255fef7 (external store: use separate ctx for GCS clients (#60402))
 	"os"
 	"testing"
 	"time"
@@ -576,8 +574,6 @@ func TestSpeedReadManyFiles(t *testing.T) {
 	require.NoError(t, eg.Wait())
 	t.Logf("read %d large files cost %v", len(testFiles), time.Since(now))
 }
-<<<<<<< HEAD
-=======
 
 func TestGCSShouldRetry(t *testing.T) {
 	require.True(t, shouldRetry(&url.Error{Err: goerrors.New("http2: server sent GOAWAY and closed the connectiont"), Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))

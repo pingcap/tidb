@@ -424,20 +424,12 @@ func (s *GCSStorage) Reset(ctx context.Context) error {
 
 	s.cancelAndCloseGCSClients()
 
-<<<<<<< HEAD
-	s.clients = make([]*storage.Client, gcsClientCnt)
-	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	for i := range s.clients {
-		i := i
-		eg.Go(func() error {
-			client, err := storage.NewClient(egCtx, s.clientOps...)
-=======
 	clientCtx, clientCancel := context.WithCancel(context.Background())
 	s.clients = make([]*storage.Client, 0, gcsClientCnt)
 	wg := util.WaitGroupWrapper{}
 	cliCh := make(chan *storage.Client)
 	wg.RunWithLog(func() {
-		for range gcsClientCnt {
+		for i := 0; i < gcsClientCnt; i++ {
 			select {
 			case cli := <-cliCh:
 				s.clients = append(s.clients, cli)
@@ -450,26 +442,19 @@ func (s *GCSStorage) Reset(ctx context.Context) error {
 		}
 	})
 	firstErr := atomic.NewError(nil)
-	for range gcsClientCnt {
+	for i := 0; i < gcsClientCnt; i++ {
 		wg.RunWithLog(func() {
 			client, err := storage.NewClient(clientCtx, s.clientOps...)
->>>>>>> 7424255fef7 (external store: use separate ctx for GCS clients (#60402))
 			if err != nil {
 				firstErr.CompareAndSwap(nil, err)
 				clientCancel()
 				return
 			}
-<<<<<<< HEAD
-			client.SetRetry(storage.WithErrorFunc(shouldRetry))
-			s.clients[i] = client
-			return nil
-=======
 			client.SetRetry(storage.WithErrorFunc(shouldRetry), storage.WithPolicy(storage.RetryAlways))
 			select {
 			case cliCh <- client:
 			case <-clientCtx.Done():
 			}
->>>>>>> 7424255fef7 (external store: use separate ctx for GCS clients (#60402))
 		})
 	}
 	wg.Wait()
