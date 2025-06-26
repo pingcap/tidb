@@ -30,7 +30,6 @@ go_library(
         "//pkg/disttask/framework/taskexecutor",
         "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/disttask/operator",
-        "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/errno",
         "//pkg/executor/importer",
