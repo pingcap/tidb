@@ -1462,7 +1462,7 @@ func restoreStream(
 	mgr *conn.Mgr,
 	g glue.Glue,
 	cfg *LogRestoreConfig,
-) (err error) {
+) (restoreErr error) {
 	var (
 		totalKVCount           uint64
 		totalSize              uint64
@@ -1474,8 +1474,8 @@ func restoreStream(
 		startTime              = time.Now()
 	)
 	defer func() {
-		if err != nil {
-			summary.Log("restore log failed summary", zap.Error(err))
+		if restoreErr != nil {
+			summary.Log("restore log failed summary", zap.Error(restoreErr))
 		} else {
 			totalDureTime := time.Since(startTime)
 			summary.Log("restore log success summary",
@@ -1569,9 +1569,13 @@ func restoreStream(
 		err = cfg.RestoreRegistry.GlobalOperationAfterSetResettingStatus(ctx, cfg.RestoreID, func() error {
 			if err := restoreGCFunc(oldGCRatio); err != nil {
 				log.Error("failed to restore gc", zap.Error(err))
+				return errors.Trace(err)
 			}
 			return nil
 		})
+		if err != nil {
+			restoreErr = err
+		}
 		log.Info("finish restoring gc")
 	}()
 
