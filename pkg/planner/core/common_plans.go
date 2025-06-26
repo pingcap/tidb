@@ -942,14 +942,11 @@ func (e *Explain) prepareSchema() error {
 
 func (e *Explain) renderResultForExplore() error {
 	bindingHandle := domain.GetDomain(e.SCtx()).BindingHandle()
-	charset, collation := e.SCtx().GetSessionVars().GetCharsetInfo()
-	currentDB := e.SCtx().GetSessionVars().CurrentDB
-
 	sqlOrDigest := e.SQLDigest
 	if sqlOrDigest == "" {
 		sqlOrDigest = e.ExecStmt.Text()
 	}
-	plans, err := bindingHandle.ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation, e.Analyze)
+	plans, err := bindingHandle.ExplorePlansForSQL(e.SCtx(), sqlOrDigest, e.Analyze)
 	if err != nil {
 		return err
 	}

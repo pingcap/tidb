@@ -16,6 +16,8 @@ package bindinfo
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"slices"
 	"strings"
 
@@ -68,7 +70,7 @@ type BindingPlanEvolution interface {
 	// TODO: RecordHistPlansAsBindings records the history plans as bindings for qualified queries.
 
 	// ExplorePlansForSQL explores plans for this SQL.
-	ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation string, analyze bool) ([]*BindingPlanInfo, error)
+	ExplorePlansForSQL(stmtSCtx base.PlanContext, sqlOrDigest string, analyze bool) ([]*BindingPlanInfo, error)
 }
 
 type bindingAuto struct {
@@ -91,7 +93,9 @@ func newBindingAuto(sPool util.DestroyableSessionPool) BindingPlanEvolution {
 // 1. get historical plan candidates.
 // 2. generate new plan candidates.
 // 3. score all historical and newly-generated plan candidates and recommend the best one.
-func (ba *bindingAuto) ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation string, analyze bool) ([]*BindingPlanInfo, error) {
+func (ba *bindingAuto) ExplorePlansForSQL(stmtSCtx base.PlanContext, sqlOrDigest string, analyze bool) ([]*BindingPlanInfo, error) {
+	currentDB := stmtSCtx.GetSessionVars().CurrentDB
+	charset, collation := stmtSCtx.GetSessionVars().GetCharsetInfo()
 	historicalPlans, err := ba.getBindingPlanInfo(currentDB, sqlOrDigest, charset, collation)
 	if err != nil {
 		return nil, err
@@ -101,7 +105,7 @@ func (ba *bindingAuto) ExplorePlansForSQL(currentDB, sqlOrDigest, charset, colla
 	if err != nil {
 		return nil, err
 	}
-	generatedPlans, err = ba.recordIntoStmtStats(generatedPlans)
+	generatedPlans, err = ba.recordIntoStmtStats(stmtSCtx, generatedPlans)
 	if err != nil {
 		return nil, err
 	}
@@ -122,19 +126,22 @@ func (ba *bindingAuto) ExplorePlansForSQL(currentDB, sqlOrDigest, charset, colla
 }
 
 // recordIntoStmtStats records these plans into information_schema.tidb_statements_stats table for later usage.
-func (ba *bindingAuto) recordIntoStmtStats(plans []*BindingPlanInfo) (reproduciblePlans []*BindingPlanInfo, err error) {
+func (ba *bindingAuto) recordIntoStmtStats(stmtSCtx base.PlanContext, plans []*BindingPlanInfo) (reproduciblePlans []*BindingPlanInfo, err error) {
+	currentUser := stmtSCtx.GetSessionVars().User
 	reproduciblePlans = make([]*BindingPlanInfo, 0, len(plans))
 	for _, plan := range plans {
 		if err := callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
 			vars := sctx.GetSessionVars()
-			defer func(db string, usePlanBaselines, inExplainExplore bool) {
+			defer func(db string, usePlanBaselines, inExplainExplore bool, user *auth.UserIdentity) {
 				vars.CurrentDB = db
 				vars.UsePlanBaselines = usePlanBaselines
 				vars.InExplainExplore = inExplainExplore
-			}(vars.CurrentDB, vars.UsePlanBaselines, vars.InExplainExplore)
+				vars.User = user
+			}(vars.CurrentDB, vars.UsePlanBaselines, vars.InExplainExplore, vars.User)
 			vars.CurrentDB = plan.Binding.Db
 			vars.UsePlanBaselines = false
 			vars.InExplainExplore = true
+			vars.User = currentUser
 			_, _, err := execRows(sctx, plan.BindSQL)
 			if err != nil {
 				return err
