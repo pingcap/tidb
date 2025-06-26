@@ -187,18 +187,7 @@ func enumeratePhysicalPlans4Task(
 	if _, ok := p.Self().(*logicalop.LogicalSequence); ok {
 		iteration = iterateChildPlan4LogicalSequence
 	}
-<<<<<<< HEAD
 
-=======
-	var fd *funcdep.FDSet
-	if addEnforcer && len(physicalPlans) != 0 {
-		switch logicalPlan := p.Self().(type) {
-		case *logicalop.LogicalJoin, *logicalop.LogicalAggregation:
-			// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
-			fd = logicalPlan.ExtractFD()
-		}
-	}
->>>>>>> 35c1e21115c (planner,expression: fix wrong copy args to avoid breaking origin expression when to EvaluateExprWithNull (#61630))
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()
