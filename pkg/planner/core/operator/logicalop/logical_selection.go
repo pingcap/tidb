@@ -118,9 +118,8 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 			return nil, dual
 		}
 		return nil, p
-	} else {
-		p.Conditions = p.Conditions[:0]
 	}
+	p.Conditions = p.Conditions[:0]
 	appendSelectionPredicatePushDownTraceStep(p, originConditions, opt)
 	return nil, child
 }
