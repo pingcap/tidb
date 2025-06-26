@@ -180,6 +180,11 @@ func rebuildChildTasks(p *logicalop.BaseLogicalPlan, childTasks *[]base.Task, pp
 	return nil
 }
 
+type enumerateState struct {
+	topNCopExist  bool
+	limitCopExist bool
+}
+
 // @first: indicates the best task returned.
 // @second: indicates the plan cnt in this subtree.
 // @third: indicates whether this plan apply the hint.
@@ -210,6 +215,7 @@ func enumeratePhysicalPlans4Task(
 			fd = logicalPlan.ExtractFD()
 		}
 	}
+	initState := &enumerateState{}
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()
@@ -245,15 +251,10 @@ func enumeratePhysicalPlans4Task(
 			curTask = curTask.ConvertToRootTask(p.SCtx())
 		}
 
-		// Get the most preferred and efficient one by hint and low-cost priority.
-		// since hint applicable plan may greater than 1, like inl_join can suit for:
-		// index_join, index_hash_join, index_merge_join, we should chase the most efficient
-		// one among them.
-		//
 		// we need to check the hint is applicable before enforcing the property. otherwise
 		// what we get is Sort ot Exchanger kind of operators.
 		// todo: extend applyLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
-		hintApplicable := applyLogicalJoinHint(p.Self(), curTask.Plan())
+		hintApplicable := applyLogicalHintVarEigen(p.Self(), initState, pp, curTask, childTasks)
 
 		// Enforce curTask property
 		if addEnforcer {
@@ -297,7 +298,7 @@ func enumeratePhysicalPlans4Task(
 	}
 	// if there is no valid preferred low-cost physical one, return the normal low one.
 	// if the hint is specified without any valid plan, we should also record the warnings.
-	if warn := recordIndexJoinHintWarnings(p.Self(), prop, addEnforcer); warn != nil {
+	if warn := recordWarnings(p.Self(), prop, addEnforcer); warn != nil {
 		bestTask.AppendWarning(warn)
 	}
 	// return the normal lowest-cost physical one.
@@ -1296,7 +1297,6 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		fixcontrol.Fix52869,
 		false,
 	)
-	ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix52869)
 	if preferRange {
 		// Override preferRange with the following limitations to scope
 		preferRange = preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
@@ -1305,8 +1305,11 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		// If a candidate path is TiFlash-path or forced-path or MV index or global index, we just keep them. For other
 		// candidate paths, if there exists any range scan path, we remove full scan paths and keep range scan paths.
 		preferredPaths := make([]*candidatePath, 0, len(candidates))
-		var hasRangeScanPath bool
+		var hasRangeScanPath, hasMultiRange bool
 		for _, c := range candidates {
+			if len(c.path.Ranges) > 1 {
+				hasMultiRange = true
+			}
 			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && (c.path.Index.Global || c.path.Index.MVIndex)) {
 				preferredPaths = append(preferredPaths, c)
 				continue
@@ -1319,6 +1322,10 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 					hasRangeScanPath = true
 				}
 			}
+		}
+		if hasMultiRange {
+			// Only log the fix control if we had multiple ranges
+			ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix52869)
 		}
 		if hasRangeScanPath {
 			return preferredPaths

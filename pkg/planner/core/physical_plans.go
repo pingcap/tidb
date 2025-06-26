@@ -940,8 +940,6 @@ type PhysicalTableScan struct {
 	// ByItems only for partition table with orderBy + pushedLimit
 	ByItems []*util.ByItems
 
-	isChildOfIndexLookUp bool
-
 	PlanPartInfo *PhysPlanPartInfo
 
 	SampleInfo *tablesampler.TableSampleInfo `plan-cache-clone:"must-nil"`

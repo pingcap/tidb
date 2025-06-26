@@ -84,7 +84,7 @@ func (m *txnManager) GetTxnInfoSchema() infoschema.InfoSchema {
 		return m.ctxProvider.GetTxnInfoSchema()
 	}
 
-	if is := m.sctx.GetDomainInfoSchema(); is != nil {
+	if is := m.sctx.GetLatestInfoSchema(); is != nil {
 		return is.(infoschema.InfoSchema)
 	}
 

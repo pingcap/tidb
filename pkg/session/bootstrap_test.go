@@ -177,6 +177,8 @@ func TestBootstrapWithError(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, dom.Start(ddl.Bootstrap))
 		se.dom = dom
+		se.infoCache = dom.InfoCache()
+		se.schemaValidator = dom.GetSchemaValidator()
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
 		require.NoError(t, err)
@@ -2247,12 +2249,13 @@ func TestTiDBUpgradeToVer211(t *testing.T) {
 	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err = getBootstrapVersion(seV210)
+
+	newSe := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(newSe)
 	require.NoError(t, err)
 	require.Less(t, int64(ver210), ver)
 
-	seV210.(*session).dom = dom
-	r := MustExecToRecodeSet(t, seV210, "select count(summary) from mysql.tidb_background_subtask_history;")
+	r := MustExecToRecodeSet(t, newSe, "select count(summary) from mysql.tidb_background_subtask_history;")
 	req := r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
@@ -2321,6 +2324,20 @@ func TestTiDBUpgradeToVer212(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 	// the columns are changed automatically
 	MustExec(t, seCurVer, "select sample_sql, start_time, plan_digest from mysql.tidb_runaway_queries")
+}
+
+func TestIssue61890(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	s1 := CreateSessionAndSetID(t, store)
+	MustExec(t, s1, "drop table mysql.global_variables")
+	MustExec(t, s1, "create table mysql.global_variables(`VARIABLE_NAME` varchar(64) NOT NULL PRIMARY KEY clustered, `VARIABLE_VALUE` varchar(16383) DEFAULT NULL)")
+
+	s2 := CreateSessionAndSetID(t, store)
+	initGlobalVariableIfNotExists(s2, vardef.TiDBEnableINLJoinInnerMultiPattern, vardef.Off)
+
+	dom.Close()
 }
 
 func TestIndexJoinMultiPatternByUpgrade650To840(t *testing.T) {

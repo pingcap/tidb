@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
+	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -556,7 +557,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	// must set plan according to the `Execute` plan before getting planDigest
 	a.inheritContextFromExecuteStmt()
-	if rm := domain.GetDomain(sctx).RunawayManager(); vardef.EnableResourceControl.Load() && rm != nil {
+	var rm *runaway.Manager
+	dom := domain.GetDomain(sctx)
+	if dom != nil {
+		rm = dom.RunawayManager()
+	}
+	if vardef.EnableResourceControl.Load() && rm != nil {
 		sessionVars := sctx.GetSessionVars()
 		stmtCtx := sessionVars.StmtCtx
 		_, planDigest := GetPlanDigest(stmtCtx)
@@ -1749,22 +1755,26 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		if len(stmtCtx.TableIDs) > 0 {
 			tableIDs = strings.ReplaceAll(fmt.Sprintf("%v", stmtCtx.TableIDs), " ", ",")
 		}
-		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
-			SQL:        sql.String(),
-			Digest:     digest.String(),
-			Start:      sessVars.StartTime,
-			Duration:   costTime,
-			Detail:     stmtCtx.GetExecDetails(),
-			Succ:       succ,
-			ConnID:     sessVars.ConnectionID,
-			SessAlias:  sessVars.SessionAlias,
-			TxnTS:      txnTS,
-			User:       userString,
-			DB:         sessVars.CurrentDB,
-			TableIDs:   tableIDs,
-			IndexNames: indexNames,
-			Internal:   sessVars.InRestrictedSQL,
-		})
+		// TODO log slow query for cross keyspace query?
+		dom := domain.GetDomain(a.Ctx)
+		if dom != nil {
+			dom.LogSlowQuery(&domain.SlowQueryInfo{
+				SQL:        sql.String(),
+				Digest:     digest.String(),
+				Start:      sessVars.StartTime,
+				Duration:   costTime,
+				Detail:     stmtCtx.GetExecDetails(),
+				Succ:       succ,
+				ConnID:     sessVars.ConnectionID,
+				SessAlias:  sessVars.SessionAlias,
+				TxnTS:      txnTS,
+				User:       userString,
+				DB:         sessVars.CurrentDB,
+				TableIDs:   tableIDs,
+				IndexNames: indexNames,
+				Internal:   sessVars.InRestrictedSQL,
+			})
+		}
 	}
 }
 
@@ -1939,7 +1949,9 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	}
 
 	// Internal SQLs must also be recorded to keep the consistency of `PrevStmt` and `PrevStmtDigest`.
-	if !stmtsummaryv2.Enabled() || ((sessVars.InRestrictedSQL || len(userString) == 0) && !stmtsummaryv2.EnabledInternal()) {
+	// If this SQL is under `explain explore {SQL}`, we still want to record them in stmt summary.
+	isInternalSQL := (sessVars.InRestrictedSQL || len(userString) == 0) && !sessVars.InExplainExplore
+	if !stmtsummaryv2.Enabled() || (isInternalSQL && !stmtsummaryv2.EnabledInternal()) {
 		sessVars.SetPrevStmtDigest("")
 		return
 	}
@@ -2037,7 +2049,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.MemMax = memMax
 	stmtExecInfo.DiskMax = diskMax
 	stmtExecInfo.StartTime = sessVars.StartTime
-	stmtExecInfo.IsInternal = sessVars.InRestrictedSQL
+	stmtExecInfo.IsInternal = isInternalSQL
 	stmtExecInfo.Succeed = succ
 	stmtExecInfo.PlanInCache = sessVars.FoundInPlanCache
 	stmtExecInfo.PlanInBinding = sessVars.FoundInBinding

@@ -75,16 +75,6 @@ import (
 //	|  512M |       256M(2) |       512M(1) |
 const writeStepMemShareCount = 6.5
 
-// during test on ks3, we found that we can open about 8000 connections to ks3,
-// bigger than that, we might receive "connection reset by peer" error, and
-// the read speed will be very slow, still investigating the reason.
-// Also open too many connections will take many memory in kernel, and the
-// test is based on k8s pod, not sure how it will behave on EC2.
-// but, ks3 supporter says there's no such limit on connections.
-// And our target for global sort is AWS s3, this default value might not fit well.
-// TODO: adjust it according to cloud storage.
-const maxCloudStorageConnections = 1000
-
 type memKVsAndBuffers struct {
 	mu  sync.Mutex
 	kvs []kvPair
