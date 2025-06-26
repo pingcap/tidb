@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -204,6 +205,48 @@ func (s *semImpl) overrideRestrictedVariable() {
 	}
 }
 
+func buildSEMSqlValidateFunction(sqlRestriction *SQLRestriction) func(ast.StmtNode) bool {
+	if sqlRestriction == nil {
+		return nil
+	}
+
+	sqlRules := make(map[string]SQLRule, len(sqlRestriction.Rule))
+	for _, ruleName := range sqlRestriction.Rule {
+		if rule, ok := sqlRuleNameMap[ruleName]; ok {
+			sqlRules[ruleName] = rule
+		} else {
+			// should never happen
+			logutil.BgLogger().Warn("unknown SQL rule", zap.String("rule", ruleName))
+			intest.Assert(false, "unknown SQL rule: %s", ruleName)
+		}
+	}
+
+	sqlCommands := make(map[string]struct{}, len(sqlRestriction.SQL))
+	for _, sql := range sqlRestriction.SQL {
+		sql = strings.TrimSpace(strings.ToUpper(sql))
+		if sql == "" {
+			continue
+		}
+		sqlCommands[sql] = struct{}{}
+	}
+
+	return func(stmt ast.StmtNode) bool {
+		// check SQL commands
+		if _, ok := sqlCommands[stmt.SEMCommand()]; ok {
+			return true
+		}
+
+		// check SQL rules
+		for _, rule := range sqlRules {
+			if rule(stmt) {
+				return true
+			}
+		}
+
+		return false
+	}
+}
+
 func buildSEMFromConfig(cfg *Config) *semImpl {
 	sem := &semImpl{
 		restrictedDatabases:       make(map[string]struct{}, len(cfg.RestrictedDatabases)),
@@ -241,10 +284,7 @@ func buildSEMFromConfig(cfg *Config) *semImpl {
 		sem.restrictedPrivileges[priv] = struct{}{}
 	}
 
-	sem.restrictedSQL = func(_ ast.StmtNode) bool {
-		// TODO: Implement the logic to check if the SQL statement is restricted.
-		return false
-	}
+	sem.restrictedSQL = buildSEMSqlValidateFunction(&cfg.RestrictedSQL)
 
 	return sem
 }
