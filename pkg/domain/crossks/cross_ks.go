@@ -19,6 +19,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -70,7 +71,6 @@ func (m *Manager) GetOrCreate(
 		return nil, errors.New("cross keyspace session manager is not available in classic kernel or current keyspace")
 	}
 	if mgr, ok := m.get(ks); ok {
-		// already exists, no need to add again
 		return mgr, nil
 	}
 	m.mu.Lock()
@@ -80,6 +80,7 @@ func (m *Manager) GetOrCreate(
 		return mgr, nil
 	}
 
+	failpoint.InjectCall("beforeGetStore", ks, &getStoreFn)
 	store, err := getStoreFn()
 	if err != nil {
 		return nil, err
@@ -142,7 +143,7 @@ func (m *Manager) Close() {
 	for ks, mgr := range m.sessMgrs {
 		mgr.sessPool.Close()
 		if ks == keyspace.System {
-			// SYSTEM store is closed in main
+			// lifecycle of SYSTEM store is managed outside, skip close.
 			continue
 		}
 		err := mgr.store.Close()

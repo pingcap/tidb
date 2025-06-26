@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -153,6 +154,16 @@ func MustInitStorage(keyspaceName string) kv.Storage {
 // GetSystemStorage returns the kv.Storage for the SYSTEM keyspace.
 func GetSystemStorage() kv.Storage {
 	return systemStore
+}
+
+// SetSystemStorage returns the kv.Storage for the SYSTEM keyspace.
+// it's only used in test.
+func SetSystemStorage(s kv.Storage) {
+	if s != nil {
+		intest.Assert(systemStore == nil, "systemStore should not be set twice")
+		intest.Assert(s.GetKeyspace() == keyspace.System, "systemStore should be set with SYSTEM keyspace")
+	}
+	systemStore = s
 }
 
 func mustInitStorage(keyspaceName string) kv.Storage {
