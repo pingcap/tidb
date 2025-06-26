@@ -585,16 +585,13 @@ func constructIndexJoinStatic(
 	// Record the variable usage for explain explore.
 	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
 	outerRowCount := p.Children()[outerIdx].StatsInfo().RowCount
-	currentRowCount := p.StatsInfo().RowCount
-	if (prop.ExpectedCnt < p.StatsInfo().RowCount) ||
-		(orderRatio > 0 && outerRowCount > max(prop.ExpectedCnt, currentRowCount)) {
-		rowsToMeetFirst := 0.0
-		if orderRatio > 0 && outerRowCount > currentRowCount {
-			// Apply the orderRatio to recognize that a large outer table scan may
-			// read additional rows before the inner table reaches the limit values
-			rowsToMeetFirst = (outerRowCount - currentRowCount) * orderRatio
-		}
-		expCntScale := prop.ExpectedCnt / currentRowCount
+	estimatedRowCount := p.StatsInfo().RowCount
+	if (prop.ExpectedCnt < estimatedRowCount) ||
+		(orderRatio > 0 && outerRowCount > min(prop.ExpectedCnt, estimatedRowCount) && prop.ExpectedCnt < max(outerRowCount, estimatedRowCount)) {
+		// Apply the orderRatio to recognize that a large outer table scan may
+		// read additional rows before the inner table reaches the limit values
+		rowsToMeetFirst := max(0.0, (outerRowCount-estimatedRowCount)*orderRatio)
+		expCntScale := prop.ExpectedCnt / estimatedRowCount
 		expectedCnt := (outerRowCount * expCntScale) + rowsToMeetFirst
 		chReqProps[outerIdx].ExpectedCnt = expectedCnt
 	}
