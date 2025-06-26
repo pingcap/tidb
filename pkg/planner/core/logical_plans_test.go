@@ -134,7 +134,6 @@ func (p *plannerSuite) Close() {
 }
 
 func TestPredicatePushDown(t *testing.T) {
-	t.Skip("This test is skipped because it is not stable and may fail in some environments.")
 	var input, output []string
 	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	s := createPlannerSuite()
