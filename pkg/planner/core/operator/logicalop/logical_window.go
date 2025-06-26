@@ -16,7 +16,6 @@ package logicalop
 
 import (
 	"fmt"
-	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -310,14 +309,8 @@ func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column
 func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
 	canBePushed := make([]expression.Expression, 0, len(predicates))
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
-	equalConditions := make([]*expression.ScalarFunction, 0, len(predicates))
 	partitionCols := expression.NewSchema(p.GetPartitionByCols()...)
 	for _, cond := range predicates {
-		if expr, ok := cond.(*expression.ScalarFunction); ok {
-			if isEqCondition(expr) {
-				equalConditions = append(equalConditions, expr)
-			}
-		}
 		// We can push predicate beneath Window, only if all of the
 		// extractedCols are part of partitionBy columns.
 		if expression.ExprFromSchema(cond, partitionCols) {
@@ -327,103 +320,7 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, op
 		}
 	}
 	p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
-	if len(equalConditions) > 0 && len(canNotBePushed) > 0 {
-		for _, equalCondition := range equalConditions {
-			canNotBePushed = deleteConstantPropagation(p.SCtx().GetExprCtx().GetEvalCtx(), equalCondition, canBePushed, canNotBePushed)
-		}
-	}
 	return canNotBePushed, p
-}
-
-// isEqCondition checks if the expression is an equality condition between two columns.
-func isEqCondition(expr *expression.ScalarFunction) bool {
-	if expr.FuncName.L == ast.EQ {
-		args := expr.GetArgs()
-		if len(args) == 2 {
-			_, ok1 := args[1].(*expression.Column)
-			_, ok0 := args[0].(*expression.Column)
-			return ok1 && ok0
-		}
-	}
-	return false
-}
-
-// deleteConstantPropagation removes constant propagation conditions from the list of conditions that cannot be pushed down.
-// for example:
-//
-//	eqCondition: [col#1 = col#2], push down [col#1 > 10], not push down [col#2 > 10], so we can remove [col#2 > 10].
-//	eqCondition: [col#1 = col#2], not push down [col#1 > 10, col#2 > 10], so we can remove [col#2 > 10].
-func deleteConstantPropagation(ctx expression.EvalContext, equalConditions *expression.ScalarFunction, canBePushed []expression.Expression, canNotBePushed []expression.Expression) []expression.Expression {
-	cols := expression.ExtractColumns(equalConditions)
-	keepConds := make([]*expression.ScalarFunction, 0, len(canBePushed))
-	keepCol := make([]*expression.Column, 0, len(cols))
-	findFirstExprWithCol := func(expr *expression.ScalarFunction, col *expression.Column) bool {
-		switch expr.FuncName.L {
-		case ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT:
-			args := expr.GetArgs()
-			arg1, ok1 := args[1].(*expression.Column)
-			arg2, ok0 := args[0].(*expression.Column)
-			if (ok1 && col.Equal(ctx, arg1)) || (ok0 && col.Equal(ctx, arg2)) {
-				return true
-			}
-		}
-		return false
-	}
-	findSecondExprWithCol := func(expr *expression.ScalarFunction, keepCond *expression.ScalarFunction, col *expression.Column) bool {
-		if expr.FuncName.L == keepCond.FuncName.L {
-			args := expr.GetArgs()
-			arg1, ok := args[0].(*expression.Column)
-			if ok && col.Equals(arg1) && args[1].Equal(ctx, keepCond.GetArgs()[1]) {
-				return true
-			}
-		}
-		return false
-	}
-	for _, col := range cols {
-		for _, cond := range canBePushed {
-			if expr, ok := cond.(*expression.ScalarFunction); ok {
-				if findFirstExprWithCol(expr, col) {
-					keepConds = append(keepConds, expr)
-					keepCol = append(keepCol, col)
-					break
-				}
-			}
-		}
-	}
-	if len(keepCol) == 2 {
-		return canNotBePushed
-	}
-	if len(keepCol) == 1 {
-		delCols := slices.DeleteFunc(cols, func(column *expression.Column) bool {
-			return column.Equals(keepCol[0])
-		})
-		return slices.DeleteFunc(canNotBePushed, func(cond expression.Expression) bool {
-			if expr, ok := cond.(*expression.ScalarFunction); ok && expr.FuncName.L == keepConds[0].FuncName.L {
-				return findSecondExprWithCol(expr, keepConds[0], delCols[0])
-			}
-			return false
-		})
-	}
-	return slices.DeleteFunc(canNotBePushed, func(cond expression.Expression) bool {
-		if len(cols) == 2 {
-			for _, col := range cols {
-				if expr, ok := cond.(*expression.ScalarFunction); ok {
-					if findFirstExprWithCol(expr, col) {
-						keepConds = append(keepConds, expr)
-						cols = slices.DeleteFunc(cols, func(column *expression.Column) bool {
-							return column.Equals(col)
-						})
-						return false
-					}
-				}
-			}
-			return false
-		}
-		if expr, ok := cond.(*expression.ScalarFunction); ok {
-			return findSecondExprWithCol(expr, keepConds[0], cols[0])
-		}
-		return false
-	})
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.

@@ -178,6 +178,13 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	exprCtx := sctx.GetExprCtx()
 	if propagateConstant {
 		simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate...)
+	} else {
+		exprs := expression.PropagateConstant(exprCtx, simplifiedPredicate...)
+		if len(exprs) == 1 {
+			if c, ok := exprs[0].(*expression.Constant); ok {
+				return []expression.Expression{c}
+			}
+		}
 	}
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
