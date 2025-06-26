@@ -303,7 +303,7 @@ func GetTaskMgrToAccessDXFService() (*storage.TaskManager, error) {
 //	if err != nil {
 //		return nil, err
 //	}
-//	if !keyspace.IsRunningOnUserKS() {
+//	if !keyspace.IsRunningOnUser() {
 //		return taskMgr, nil
 //	}
 //	if err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
