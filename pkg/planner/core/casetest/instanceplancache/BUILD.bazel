@@ -11,12 +11,8 @@ go_test(
         "others_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 18,
-=======
     race = "on",
-    shard_count = 40,
->>>>>>> 80b34784bf5 (planner: fix possible read-write DATA RACE on Instance Plan Cache (#58328))
+    shard_count = 18,
     deps = [
         "//pkg/parser/auth",
         "//pkg/testkit",
