@@ -20,12 +20,21 @@ go_library(
 go_test(
     name = "compat_test",
     timeout = "short",
-    srcs = ["compat_test.go"],
+    srcs = [
+        "compat_test.go",
+        "sem_integration_test.go",
+    ],
     embed = [":compat"],
     flaky = True,
     deps = [
+        "//br/pkg/storage",
+        "//pkg/parser/auth",
         "//pkg/parser/mysql",
+        "//pkg/planner/core",
         "//pkg/sessionctx/vardef",
+        "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
     ],
 )

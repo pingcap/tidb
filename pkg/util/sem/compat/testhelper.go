@@ -139,5 +139,17 @@ var compatibleSEMV2Config = `{
 
 		"RESTRICTED_PRIV3",
 		"RESTRICTED_CUSTOM_DYN_PRIV_2"
-	]
+	],
+	"restricted_sql": {
+		"rule": [
+			"time_to_live",
+			"alter_table_attributes",
+			"import_with_external_id"
+		],
+		"sql": [
+			"BACKUP",
+			"RESTORE",
+			"ALTER RESOURCE GROUP"
+		]
+	}
 }`
