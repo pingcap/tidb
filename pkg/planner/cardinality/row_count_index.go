@@ -424,38 +424,44 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	if matched {
 		return histCnt
 	}
-	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
-	// branch1: histDNV <= 0 means that all NDV's are in TopN, and no histograms.
-	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
-	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
-	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
-	if histNDV <= 0 || idx.Histogram.NotNullCount() == 0 {
-		// branch 1: all NDV's are in TopN, and no histograms
-		// special case of c.Histogram.NDV > c.TopN.Num() a little bit, but the histogram is still empty.
-		if histNDV > 0 && modifyCount == 0 {
-			return max(float64(idx.TopN.MinCount()-1), histNDV)
-		}
-		// If histNDV is zero - we have all NDV's in TopN - and no histograms.
-		// The histogram wont have a NotNullCount - so it needs to be derived.
-		notNullCount := idx.Histogram.NotNullCount()
-		if notNullCount <= 0 {
-			notNullCount = idx.TotalRowCount() - float64(idx.Histogram.NullCount)
-		}
-		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
-		return outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
-	}
-	// branch 2: some NDV's are in histograms
-	// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
 	avgRowEstimate := idx.Histogram.NotNullCount() / histNDV
-	skewEstimate := float64(0)
+	minTopN := float64(idx.TopN.MinCount())
+	// Remaining cases will estimate based upon an average or out-of-range assumption. 
+	// None of these cases are backed by an accurate topn or histogram.
+	//
+	// 3. histNDV <= 0 means that all NDV's are in TopN, and no histograms.
+	//    NotNullCount() == 0 means the histograms are empty, implying that sampling
+	//    results in TopN containing all sampled NDVs, but there are values that were
+	//    not sampled. This is a special case of c.Histogram.NDV > c.TopN.Num().
+	if histNDV <= 0 || avgRowEstimate <= 0 {
+		if histNDV > 0 && modifyCount == 0 {
+			avgRowEstimate = max(minTopN, histNDV)
+		} else {
+			// If histNDV is zero - we have all NDV's in TopN - and no histograms.
+			// The histogram wont have a NotNullCount - so it needs to be derived.
+			notNullCount := idx.Histogram.NotNullCount()
+			if notNullCount <= 0 {
+				notNullCount = idx.TotalRowCount() - float64(idx.Histogram.NullCount)
+			}
+			increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
+			avgRowEstimate = outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
+		}
+	} else {
+		// 4. use uniform distribution assumption for the rest.
+		// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
+		avgRowEstimate = 
+	}
+	if minTopN > 0 {
+		// The estimate cannot be larger than the minimum TopN value.
+		avgRowEstimate = min(avgRowEstimate, minTopN)
+	}
 	// skewRatio determines how much of the potential skew should be considered
 	skewRatio := sctx.GetSessionVars().RiskEqSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskEqSkewRatio)
 	if skewRatio > 0 {
 		// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
-		skewEstimate = idx.Histogram.NotNullCount() - (histNDV - 1)
-		minTopN := idx.TopN.MinCount()
+		skewEstimate := idx.Histogram.NotNullCount() - (histNDV - 1)
 		if minTopN > 0 {
 			// The skewEstimate should not be larger than the minimum TopN value.
 			skewEstimate = min(skewEstimate, float64(minTopN))
