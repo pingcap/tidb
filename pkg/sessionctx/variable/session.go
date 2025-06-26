@@ -2186,16 +2186,10 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
-<<<<<<< HEAD
 		GroupConcatMaxLen:             DefGroupConcatMaxLen,
 		EnableRedactLog:               DefTiDBRedactLog,
 		EnableWindowFunction:          DefEnableWindowFunction,
-=======
-		GroupConcatMaxLen:             vardef.DefGroupConcatMaxLen,
-		EnableRedactLog:               vardef.DefTiDBRedactLog,
-		EnableWindowFunction:          vardef.DefEnableWindowFunction,
-		CostModelVersion:              vardef.DefTiDBCostModelVer,
->>>>>>> 1ef4c269cd7 (planner: set the default of the tidb_cost_model_version correctly (#61608))
+		CostModelVersion:              DefTiDBCostModelVer,
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
