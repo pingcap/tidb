@@ -55,7 +55,6 @@ type ImportStepMeta struct {
 	ID       int32
 	Chunks   []importer.Chunk   `external:"true"`
 	Checksum map[int64]Checksum // see KVGroupChecksum for definition of map key.
-	Result   Result
 	// MaxIDs stores the max id that have been used during encoding for each allocator type.
 	// the max id is same among all allocator types for now, since we're using same base, see
 	// NewPanickingAllocators for more info.
@@ -102,8 +101,6 @@ type WriteIngestStepMeta struct {
 	RangeJobKeys          [][]byte `json:"range-job-keys" external:"true"`
 	RangeSplitKeys        [][]byte `json:"range-split-keys" external:"true"`
 	TS                    uint64   `json:"ts"`
-
-	Result Result
 }
 
 // Marshal marshals the write ingest step meta to JSON.

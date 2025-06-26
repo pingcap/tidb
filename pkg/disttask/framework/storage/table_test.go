@@ -16,6 +16,7 @@ package storage_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sort"
@@ -284,6 +285,52 @@ func TestSwitchTaskStep(t *testing.T) {
 	// start time should not change
 	require.Equal(t, taskStartTime, task.StartTime)
 	checkAfterSwitchStep(t, startTime, task, subtasksStepTwo, proto.StepTwo)
+}
+
+func TestGetSubtaskSummaries(t *testing.T) {
+	store, tm, ctx := testutil.InitTableTest(t)
+	tk := testkit.NewTestKit(t, store)
+
+	require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
+	taskID, err := tm.CreateTask(ctx, "test", "test", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	require.NoError(t, err)
+
+	subtasks := make([]*proto.Subtask, 3)
+	for i := range subtasks {
+		subtasks[i] = proto.NewSubtask(proto.StepOne, taskID, proto.TaskTypeExample,
+			":4000", 11, fmt.Appendf(nil, "%d", i), i+1)
+	}
+
+	task, err := tm.GetTaskByID(ctx, taskID)
+	require.NoError(t, err)
+	require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task, proto.TaskStateRunning, proto.StepOne, subtasks))
+
+	summary := &execute.SubtaskSummary{
+		RowCnt: *atomic.NewInt64(100),
+		Bytes:  *atomic.NewInt64(200),
+	}
+	bytes, err := json.Marshal(summary)
+	require.NoError(t, err)
+
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_background_subtask set summary = '%s' where task_key = %d", string(bytes), task.ID))
+	summaries, err := tm.GetAllSubtaskSummaryByStep(ctx, subtasks[0].TaskID, proto.StepOne)
+	require.NoError(t, err)
+	require.Len(t, summaries, len(subtasks))
+	for _, summary := range summaries {
+		require.EqualValues(t, 100, summary.RowCnt.Load())
+		require.EqualValues(t, 200, summary.Bytes.Load())
+	}
+
+	// If the JSON value is wrong, we still get an empty summary.
+	// This can only happen if the summary field is manually updated.
+	// It's acceptable, as the correct summary will be set by the executor later.
+	tk.MustExec(fmt.Sprintf(`update mysql.tidb_background_subtask set summary = '{"wrong_key": 123}' where task_key = %d`, task.ID))
+	summaries, err = tm.GetAllSubtaskSummaryByStep(ctx, subtasks[0].TaskID, proto.StepOne)
+	require.NoError(t, err)
+	for _, summary := range summaries {
+		require.EqualValues(t, 0, summary.RowCnt.Load())
+		require.EqualValues(t, 0, summary.Bytes.Load())
+	}
 }
 
 func TestSwitchTaskStepInBatch(t *testing.T) {
