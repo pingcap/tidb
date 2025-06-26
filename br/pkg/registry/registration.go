@@ -131,11 +131,14 @@ const (
 	//   readTs<2>[4] > commitTs<2>[3] > readTs<1>[4] > commitTs<1>[3] so <2>[4] cannot get process<1>
 	//
 
+	// maxWaitRemainingResettingTasksCount is the retry count threshold to wait the resetting tasks finishing
+	maxWaitRemainingResettingTasksTime = 75
+
 	// selectResettingStatusTasksSQLTemplate is the SQL template for finding tasks with resetting status
 	selectResettingStatusTasksSQLTemplate = `SELECT id FROM %s.%s WHERE status = 'resetting'`
 
 	// selectLeftTasksSQLTemplate is the SQL template for finding the left tasks of the tasks whose IDs are given
-	selectLeftTasksSQLTemplate = `SELECT id FROM %s.%s WHERE id in (%s) AND status = 'resetting'`
+	selectRemainingResettingTasksSQLTemplate = `SELECT id FROM %s.%s WHERE id in (%s) AND status = 'resetting'`
 
 	// selectRunningTaskSQLTemplate is the SQL template for finding any running tasks
 	selectAnyUnfinishedTaskSQLTemplate = `SELECT id FROM %s.%s WHERE status != 'resetting' LIMIT 1`
@@ -156,7 +159,7 @@ const (
 	TaskStatusRunning TaskStatus = "running"
 	// TaskStatusPaused indicates the task is temporarily stopped
 	TaskStatusPaused TaskStatus = "paused"
-	// TaskStatusResetting indicates the task is prepared to reset configuration
+	// TaskStatusResetting indicates the task is prepared to reset cluster configuration back before finishing
 	TaskStatusResetting TaskStatus = "resetting"
 )
 
@@ -310,7 +313,7 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 				return errors.New("invalid task ID: got 0 from lookup")
 			}
 
-			// if task exists and is running, return error
+			// if task exists and is running or resetting, return error
 			if status == string(TaskStatusRunning) || status == string(TaskStatusResetting) {
 				log.Warn("task already exists and is running",
 					zap.Uint64("restore_id", existingTaskID))
@@ -839,20 +842,19 @@ func (r *Registry) transitionStaleTaskToPaused(ctx context.Context, taskID uint6
 
 // OperationAfterWaitIDs do the specified operations until the resetting tasks is removed
 func (r *Registry) OperationAfterWaitIDs(ctx context.Context, fn func() error) error {
+	retryCount := 0
 	for ids := range slices.Chunk(r.waitIDs, 10) {
 		idStrs := make([]string, 0, len(ids))
 		for _, id := range ids {
 			idStrs = append(idStrs, fmt.Sprintf("%d", id))
 		}
 		idsStr := strings.Join(idStrs, ",")
-		lookupSQL := fmt.Sprintf(selectLeftTasksSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName, idsStr)
+		lookupSQL := fmt.Sprintf(selectRemainingResettingTasksSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName, idsStr)
 		for {
 			rows, _, err := r.se.GetSessionCtx().GetRestrictedSQLExecutor().ExecRestrictedSQL(
 				kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
 				nil,
 				lookupSQL,
-				selectLeftTasksSQLTemplate,
-				RestoreRegistryDBName, RestoreRegistryTableName, idsStr,
 			)
 			if err != nil {
 				return errors.Trace(err)
@@ -861,7 +863,12 @@ func (r *Registry) OperationAfterWaitIDs(ctx context.Context, fn func() error) e
 				break
 			}
 			leftId := rows[0].GetUint64(0)
-			log.Info("wait for the task finishing resetting", zap.Uint64("task id", leftId))
+			retryCount += 1
+			if retryCount > maxWaitRemainingResettingTasksTime {
+				log.Warn("failed to wait for the task finishing resetting, timeout")
+				return fn()
+			}
+			log.Info("wait for the task finishing resetting", zap.Uint64("task id", leftId), zap.Int("retry count", retryCount))
 			time.Sleep(5 * time.Second)
 		}
 	}
