@@ -1695,6 +1695,8 @@ func (networkTraffic *TiFlashNetworkTrafficSummary) mergeExecSummary(summary *ti
 	networkTraffic.interZoneReceiveBytes += *summary.InterZoneReceiveBytes
 }
 
+// GetInterZoneTrafficBytes returns the inter zone network traffic bytes involved
+// between tiflash instances.
 func (networkTraffic *TiFlashNetworkTrafficSummary) GetInterZoneTrafficBytes() uint64 {
 	return networkTraffic.interZoneSendBytes + networkTraffic.interZoneReceiveBytes
 }
