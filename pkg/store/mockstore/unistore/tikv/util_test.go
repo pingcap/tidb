@@ -15,7 +15,6 @@
 package tikv
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -194,27 +193,6 @@ func TestSafeCopy(t *testing.T) {
 				if len(original) > 0 && original[0] != 255 {
 					assert.NotEqual(t, tt.input[0], result[0])
 				}
-			}
-		})
-	}
-}
-
-// Benchmark tests for performance-critical functions
-func BenchmarkSortAndDedupHashVals(b *testing.B) {
-	sizes := []int{10, 100, 1000, 10000}
-
-	for _, size := range sizes {
-		b.Run(fmt.Sprintf("size_%d", size), func(b *testing.B) {
-			testData := make([]uint64, size)
-			for i := 0; i < size; i++ {
-				testData[i] = uint64(i % (size / 2))
-			}
-
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				input := make([]uint64, len(testData))
-				copy(input, testData)
-				_ = sortAndDedupHashVals(input)
 			}
 		})
 	}
