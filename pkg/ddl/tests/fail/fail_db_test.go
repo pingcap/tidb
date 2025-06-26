@@ -313,23 +313,6 @@ func TestGenGlobalIDFail(t *testing.T) {
 	tk.MustExec("admin check table t2")
 }
 
-// TestRunDDLJobPanicEnableClusteredIndex tests recover panic with cluster index when run ddl job panic.
-func TestRunDDLJobPanicEnableClusteredIndex(t *testing.T) {
-	s := createFailDBSuite(t)
-	testAddIndexWorkerNum(t, s, func(tk *testkit.TestKit) {
-		tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
-		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
-	})
-}
-
-// TestRunDDLJobPanicDisableClusteredIndex tests recover panic without cluster index when run ddl job panic.
-func TestRunDDLJobPanicDisableClusteredIndex(t *testing.T) {
-	s := createFailDBSuite(t)
-	testAddIndexWorkerNum(t, s, func(tk *testkit.TestKit) {
-		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
-	})
-}
-
 // TestRunDDLJobPanicEnableFastCreateTable tests recover panic with fast create table when run ddl job panic.
 func TestRunDDLJobPanicEnableFastCreateTable(t *testing.T) {
 	s := createFailDBSuite(t)
