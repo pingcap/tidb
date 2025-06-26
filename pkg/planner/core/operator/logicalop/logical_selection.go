@@ -99,6 +99,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	exprCtx := p.SCtx().GetExprCtx()
 	stmtCtx := p.SCtx().GetSessionVars().StmtCtx
 	predicates = constraint.DeleteTrueExprs(exprCtx, stmtCtx, predicates)
+	p.Conditions = expression.PropagateConstant(exprCtx, p.Conditions...)
 	p.Conditions = constraint.DeleteTrueExprs(exprCtx, stmtCtx, p.Conditions)
 	var child base.LogicalPlan
 	var retConditions []expression.Expression
