@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
@@ -52,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
@@ -3484,7 +3484,7 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // - start domain and other routines.
 func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersionWithCache(store)
-	if kerneltype.IsNextGen() && keyspace.IsRunningOnUser() {
+	if keyspace.IsRunningOnUser() {
 		systemKSVer := mustGetStoreBootstrapVersion(kvstore.GetSystemStorage())
 		if systemKSVer == notBootstrapped {
 			logutil.BgLogger().Fatal("SYSTEM keyspace is not bootstrapped")
@@ -3851,9 +3851,17 @@ func createCrossKSSession(currKSStore kv.Storage, targetKS string) (*session, er
 		return nil, err
 	}
 
+	store, err := dom.GetKSStore(targetKS)
+	if err != nil {
+		return nil, err
+	}
+	infoCache, err := dom.GetKSInfoCache(targetKS)
+	if err != nil {
+		return nil, err
+	}
 	// TODO: use the schema validator of the target keyspace when we implement
 	// the info schema syncer for cross keyspace access.
-	return createSessionWithOpt(dom.GetKSStore(targetKS), nil, dom.GetSchemaValidator(), dom.GetKSInfoCache(targetKS), nil)
+	return createSessionWithOpt(store, nil, dom.GetSchemaValidator(), infoCache, nil)
 }
 
 func createSessionWithOpt(
@@ -4379,6 +4387,10 @@ func (s *session) GetLatestInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 
 func (s *session) GetLatestISWithoutSessExt() infoschemactx.MetaOnlyInfoSchema {
 	return s.infoCache.GetLatest()
+}
+
+func (s *session) GetSQLServer() sqlsvrapi.Server {
+	return s.dom.(sqlsvrapi.Server)
 }
 
 func (s *session) GetSchemaValidator() validatorapi.Validator {

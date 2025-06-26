@@ -21,7 +21,6 @@ go_library(
     deps = [
         "//pkg/bindinfo",
         "//pkg/config",
-        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/placement",
         "//pkg/ddl/schematracker",
@@ -34,6 +33,7 @@ go_library(
         "//pkg/disttask/importinto",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/domain/sqlsvrapi",
         "//pkg/errno",
         "//pkg/executor",
         "//pkg/executor/staticrecordset",

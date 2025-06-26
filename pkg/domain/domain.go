@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -51,8 +50,10 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/domain/crossks"
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
@@ -222,10 +223,11 @@ type Domain struct {
 	statsOwner owner.Manager
 
 	// only used for nextgen
-	sysksInfoCache *infoschema.InfoCache
-	sysksISLoader  *issyncer.Loader
-	sysksSessPool  util.DestroyableSessionPool
+	crossKSSessMgr           *crossks.Manager
+	crossKSSessFactoryGetter func(targetKS string) pools.Factory
 }
+
+var _ sqlsvrapi.Server = (*Domain)(nil)
 
 // InfoCache export for test.
 func (do *Domain) InfoCache() *infoschema.InfoCache {
@@ -565,6 +567,8 @@ func (do *Domain) Close() {
 		handle.Close()
 	}
 
+	do.crossKSSessMgr.Close()
+
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -582,7 +586,7 @@ func NewDomainWithEtcdClient(
 	statsLease time.Duration,
 	dumpFileGcLease time.Duration,
 	factory pools.Factory,
-	ksSessFactoryGetter func(currKSStore kv.Storage, targetKS string) pools.Factory,
+	crossKSSessFactoryGetter func(targetKS string) pools.Factory,
 	etcdClient *clientv3.Client,
 ) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
@@ -615,6 +619,8 @@ func NewDomainWithEtcdClient(
 		schemaLease:       schemaLease,
 		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
+
+		crossKSSessFactoryGetter: crossKSSessFactoryGetter,
 	}
 
 	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(capacity, func() (syssession.SessionContext, error) {
@@ -647,35 +653,8 @@ func NewDomainWithEtcdClient(
 	)
 	do.initDomainSysVars()
 
-	if shouldLoadSysKSAdditionally(store) {
-		do.sysksInfoCache = infoschema.NewCache(kvstore.GetSystemStorage(), int(vardef.SchemaVersionCacheLimit.Load()))
-		do.sysksISLoader = issyncer.NewLoader(kvstore.GetSystemStorage(), do.sysksInfoCache)
-		// TODO register to a separate session manager when we start syncer for
-		// system keyspace.
-		do.sysksSessPool = util.NewSessionPool(
-			capacity, ksSessFactoryGetter(store, keyspace.System),
-			func(r pools.Resource) {
-				_, ok := r.(sessionctx.Context)
-				intest.Assert(ok)
-			},
-			func(r pools.Resource) {
-				sctx, ok := r.(sessionctx.Context)
-				intest.Assert(ok)
-				intest.AssertFunc(func() bool {
-					txn, _ := sctx.Txn(false)
-					return txn == nil || !txn.Valid()
-				})
-			},
-			func(r pools.Resource) {
-				intest.Assert(r != nil)
-			},
-		)
-	}
+	do.crossKSSessMgr = crossks.NewManager()
 	return do
-}
-
-func shouldLoadSysKSAdditionally(store kv.Storage) bool {
-	return kerneltype.IsNextGen() && store.GetKeyspace() != keyspace.System
 }
 
 const serverIDForStandalone = 1 // serverID for standalone deployment.
@@ -862,7 +841,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	}
 
 	// right now we only allow access system keyspace info schema after fully bootstrap.
-	if shouldLoadSysKSAdditionally(do.store) && startMode == ddl.Normal {
+	if keyspace.IsRunningOnUser() && startMode == ddl.Normal {
 		if err = do.loadSysKSInfoSchema(); err != nil {
 			return err
 		}
@@ -878,32 +857,35 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 // we will fix it in the future.
 func (do *Domain) loadSysKSInfoSchema() error {
 	logutil.BgLogger().Info("loading system keyspace info schema")
-	sysksStore := kvstore.GetSystemStorage()
-	ver, err := sysksStore.CurrentVersion(kv.GlobalTxnScope)
-	if err != nil {
-		return err
-	}
-
-	_, _, _, _, err = do.sysksISLoader.LoadWithTS(ver.Ver, false)
+	_, err := do.GetKSStore(keyspace.System)
 	return err
 }
 
 // GetKSStore returns the kv.Storage for the given keyspace.
-func (*Domain) GetKSStore(targetKS string) kv.Storage {
-	if targetKS == keyspace.System {
-		return kvstore.GetSystemStorage()
+func (do *Domain) GetKSStore(targetKS string) (store kv.Storage, err error) {
+	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	// TODO, support loading store for other keyspaces.
-	panic("invalid call to GetKSStore, only system keyspace is supported now")
+	return mgr.Store(), nil
 }
 
 // GetKSInfoCache returns the system keyspace info cache.
-func (do *Domain) GetKSInfoCache(targetKS string) *infoschema.InfoCache {
-	if targetKS == keyspace.System {
-		return do.sysksInfoCache
+func (do *Domain) GetKSInfoCache(targetKS string) (*infoschema.InfoCache, error) {
+	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	// TODO, support loading info schema for other keyspaces.
-	panic("invalid call to GetKSInfoCache, only system keyspace is supported now")
+	return mgr.InfoCache(), nil
+}
+
+// GetKSSessPool returns the session pool for the given keyspace.
+func (do *Domain) GetKSSessPool(targetKS string) (util.DestroyableSessionPool, error) {
+	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return mgr.SessPool(), nil
 }
 
 // GetSchemaLease return the schema lease.
