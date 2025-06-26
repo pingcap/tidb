@@ -1983,6 +1983,7 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	return false
 }
 
+// TxnSchemaRef is used to store the schema version and db id of a table in the current transaction.
 type TxnSchemaRef struct {
 	SchemaVersion int64
 	DBID          int64
