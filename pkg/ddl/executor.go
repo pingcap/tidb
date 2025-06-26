@@ -1132,7 +1132,7 @@ func (e *executor) createTableWithInfoJob(
 		SessionVars:         make(map[string]any),
 	}
 	job.AddSessionVars(vardef.TiDBScatterRegion, getSystemVariableFromSession(ctx, vardef.TiDBScatterRegion))
-	job.AddSessionVars(vardef.TiDBWaitSplitRegionTimeout, ctx.GetSessionVars().GetSplitRegionTimeout())
+	job.AddSessionVars(vardef.TiDBWaitSplitRegionTimeout, ctx.GetSessionVars().WaitSplitRegionTimeout)
 	args := &model.CreateTableArgs{
 		TableInfo:      tbInfo,
 		OnExistReplace: cfg.OnExist == OnExistReplace,
@@ -1171,7 +1171,7 @@ func (e *executor) createTableWithInfoPost(
 	if pi := tbInfo.GetPartitionInfo(); pi != nil {
 		partitions = pi.Definitions
 	}
-	preSplitAndScatter(ctx, e.store, tbInfo, partitions, job)
+	preSplitAndScatter(e.store, tbInfo, partitions, job)
 	if tbInfo.AutoIncID > 1 {
 		// Default tableAutoIncID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
@@ -1383,7 +1383,6 @@ func (e *executor) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy 
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
 // If `pi` is not nil, will only split region for `pi`, this is used when add partition.
 func preSplitAndScatter(
-	ctx sessionctx.Context,
 	store kv.Storage,
 	tbInfo *model.TableInfo,
 	parts []model.PartitionDefinition,
@@ -1393,10 +1392,11 @@ func preSplitAndScatter(
 	if val, ok := model.GetSessionVarFromJob[string](job, vardef.TiDBScatterRegion); ok {
 		scatterScope = val
 	}
-	timeout := vardef.DefWaitSplitRegionTimeout * time.Second
-	if val, ok := model.GetSessionVarFromJob[time.Duration](job, vardef.TiDBWaitSplitRegionTimeout); ok {
-		timeout = val
+	timeoutSecond := uint64(vardef.DefWaitSplitRegionTimeout)
+	if val, ok := model.GetSessionVarFromJob[uint64](job, vardef.TiDBWaitSplitRegionTimeout); ok {
+		timeoutSecond = val
 	}
+	timeout := time.Duration(timeoutSecond) * time.Second
 
 	failpoint.InjectCall("preSplitAndScatter", scatterScope)
 	if tbInfo.TempTableType != model.TempTableNone {
@@ -1408,7 +1408,7 @@ func preSplitAndScatter(
 	}
 	var preSplit func()
 	if len(parts) > 0 {
-		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scatterScope, timeout) }
+		preSplit = func() { splitPartitionTableRegion(sp, tbInfo, parts, scatterScope, timeout) }
 	} else {
 		preSplit = func() { splitTableRegion(sp, tbInfo, scatterScope, timeout) }
 	}
@@ -2302,7 +2302,7 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 		SessionVars:    make(map[string]any),
 	}
 	job.AddSessionVars(vardef.TiDBScatterRegion, getSystemVariableFromSession(ctx, vardef.TiDBScatterRegion))
-	job.AddSessionVars(vardef.TiDBWaitSplitRegionTimeout, ctx.GetSessionVars().GetSplitRegionTimeout())
+	job.AddSessionVars(vardef.TiDBWaitSplitRegionTimeout, ctx.GetSessionVars().WaitSplitRegionTimeout)
 	args := &model.TablePartitionArgs{
 		PartInfo: partInfo,
 	}
@@ -2466,7 +2466,7 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]any),
 	}
-	job.AddSessionVars(vardef.TiDBWaitSplitRegionTimeout, ctx.GetSessionVars().GetSplitRegionTimeout())
+	job.AddSessionVars(vardef.TiDBWaitSplitRegionTimeout, ctx.GetSessionVars().WaitSplitRegionTimeout)
 	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {
 		return err
@@ -2537,7 +2537,7 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]any),
 	}
-	job.AddSessionVars(vardef.TiDBWaitSplitRegionTimeout, ctx.GetSessionVars().GetSplitRegionTimeout())
+	job.AddSessionVars(vardef.TiDBWaitSplitRegionTimeout, ctx.GetSessionVars().WaitSplitRegionTimeout)
 	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -2608,7 +2608,7 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]any),
 	}
-	job.AddSessionVars(vardef.TiDBWaitSplitRegionTimeout, ctx.GetSessionVars().GetSplitRegionTimeout())
+	job.AddSessionVars(vardef.TiDBWaitSplitRegionTimeout, ctx.GetSessionVars().WaitSplitRegionTimeout)
 	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -2822,7 +2822,7 @@ func (e *executor) TruncateTablePartition(ctx sessionctx.Context, ident ast.Iden
 		SessionVars:    make(map[string]any),
 	}
 	job.AddSessionVars(vardef.TiDBScatterRegion, getSystemVariableFromSession(ctx, vardef.TiDBScatterRegion))
-	job.AddSessionVars(vardef.TiDBWaitSplitRegionTimeout, ctx.GetSessionVars().GetSplitRegionTimeout())
+	job.AddSessionVars(vardef.TiDBWaitSplitRegionTimeout, ctx.GetSessionVars().WaitSplitRegionTimeout)
 	args := &model.TruncateTableArgs{
 		OldPartitionIDs: pids,
 		// job submitter will fill new partition IDs.
@@ -4327,7 +4327,7 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		SessionVars:    make(map[string]any),
 	}
 	job.AddSessionVars(vardef.TiDBScatterRegion, getSystemVariableFromSession(ctx, vardef.TiDBScatterRegion))
-	job.AddSessionVars(vardef.TiDBWaitSplitRegionTimeout, ctx.GetSessionVars().GetSplitRegionTimeout())
+	job.AddSessionVars(vardef.TiDBWaitSplitRegionTimeout, ctx.GetSessionVars().WaitSplitRegionTimeout)
 	args := &model.TruncateTableArgs{
 		FKCheck:         fkCheck,
 		OldPartitionIDs: oldPartitionIDs,
@@ -4994,7 +4994,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(err)
 	}
 
-	job.AddSessionVars(vardef.TiDBWaitSplitRegionTimeout, ctx.GetSessionVars().GetSplitRegionTimeout())
+	job.AddSessionVars(vardef.TiDBWaitSplitRegionTimeout, ctx.GetSessionVars().WaitSplitRegionTimeout)
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
 			Unique:                  unique,

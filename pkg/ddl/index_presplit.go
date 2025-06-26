@@ -262,10 +262,11 @@ func splitIndexRegionAndWait(
 		return nil
 	}
 	start := time.Now()
-	timeout := vardef.DefWaitSplitRegionTimeout * time.Second
-	if val, ok := model.GetSessionVarFromJob[time.Duration](job, vardef.TiDBWaitSplitRegionTimeout); ok {
-		timeout = val
+	timeoutSecond := uint64(vardef.DefWaitSplitRegionTimeout)
+	if val, ok := model.GetSessionVarFromJob[uint64](job, vardef.TiDBWaitSplitRegionTimeout); ok {
+		timeoutSecond = val
 	}
+	timeout := time.Duration(timeoutSecond) * time.Second
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	regionIDs, err := s.SplitRegions(ctxWithTimeout, splitIdxKeys, true, &tblInfo.ID)

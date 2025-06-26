@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -33,7 +32,6 @@ import (
 )
 
 func splitPartitionTableRegion(
-	ctx sessionctx.Context,
 	store kv.SplittableStore,
 	tbInfo *model.TableInfo,
 	parts []model.PartitionDefinition,
