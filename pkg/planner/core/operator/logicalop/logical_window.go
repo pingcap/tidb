@@ -335,6 +335,7 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, op
 	return canNotBePushed, p
 }
 
+// isEqCondition checks if the expression is an equality condition between two columns.
 func isEqCondition(expr *expression.ScalarFunction) bool {
 	if expr.FuncName.L == ast.EQ {
 		args := expr.GetArgs()
@@ -347,6 +348,11 @@ func isEqCondition(expr *expression.ScalarFunction) bool {
 	return false
 }
 
+// deleteConstantPropagation removes constant propagation conditions from the list of conditions that cannot be pushed down.
+// for example:
+//
+//	eqCondition: [col#1 = col#2], push down [col#1 > 10], not push down [col#2 > 10], so we can remove [col#2 > 10].
+//	eqCondition: [col#1 = col#2], not push down [col#1 > 10, col#2 > 10], so we can remove [col#2 > 10].
 func deleteConstantPropagation(ctx expression.EvalContext, equalConditions *expression.ScalarFunction, canBePushed []expression.Expression, canNotBePushed []expression.Expression) []expression.Expression {
 	cols := expression.ExtractColumns(equalConditions)
 	keepConds := make([]*expression.ScalarFunction, 0, len(canBePushed))
