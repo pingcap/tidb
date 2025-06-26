@@ -132,5 +132,17 @@ var compatibleSEMV2Config = `{
 	"restricted_privileges": [
 		"FILE",
 		"BACKUP_ADMIN"
-	]
+	],
+	"restricted_sql": {
+		"rule": [
+			"time_to_live",
+			"alter_table_attributes",
+			"import_with_external_id"
+		],
+		"sql": [
+			"BACKUP",
+			"RESTORE",
+			"ALTER RESOURCE GROUP"
+		]
+	}
 }`

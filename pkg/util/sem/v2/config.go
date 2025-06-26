@@ -52,13 +52,7 @@ type Config struct {
 	RestrictedPrivileges []string `json:"restricted_privileges"`
 
 	// RestrictedSQL contains restricted SQL statements and rules
-	RestrictedSQL struct {
-		// SQL is the list of restricted SQL statements
-		SQL []string `json:"sql"`
-
-		// Rule is the list of restricted SQL rules
-		Rule []string `json:"rule"`
-	} `json:"restricted_sql"`
+	RestrictedSQL SQLRestriction `json:"restricted_sql"`
 }
 
 // TableRestriction defines the configuration for a restricted table
@@ -99,6 +93,15 @@ type VariableRestriction struct {
 
 	// Value is the value to be set for the variable
 	Value string `json:"value"`
+}
+
+// SQLRestriction defines the configuration for restricted SQL statements and rules
+type SQLRestriction struct {
+	// SQL is the list of restricted SQL statements
+	SQL []string `json:"sql"`
+
+	// Rule is the list of restricted SQL rules
+	Rule []string `json:"rule"`
 }
 
 // parseSEMConfigFromFile reads a SEM configuration from a file and returns a SEMConfig instance.
@@ -142,6 +145,13 @@ func validateSEMConfig(cfg *Config) error {
 		}
 		if varDef.Value != "" && sysVar.Scope != vardef.ScopeNone {
 			return fmt.Errorf("restricted variable %s has a value set, but it is not a readonly variable", varDef.Name)
+		}
+	}
+
+	// validate the SQL rules exist
+	for _, ruleName := range cfg.RestrictedSQL.Rule {
+		if _, ok := sqlRuleNameMap[ruleName]; !ok {
+			return fmt.Errorf("unknown SQL rule: %s", ruleName)
 		}
 	}
 
