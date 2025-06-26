@@ -581,18 +581,20 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				return err
 			}
 			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx})
-			if w.cpOp != nil {
-				w.cpOp.UpdateChunk(task.ID, srcChk.NumRows(), done)
-			}
-			w.totalCount.Add(int64(srcChk.NumRows()))
 		}
 		return rs.Close()
 	})
 	if err != nil {
 		w.ctx.onError(err)
 	}
-	for _, idxResult := range idxResults {
+	for i, idxResult := range idxResults {
 		sender(idxResult)
+		rowCnt := idxResult.Chunk.NumRows()
+		if w.cpOp != nil {
+			done := i == len(idxResults)-1
+			w.cpOp.UpdateChunk(task.ID, rowCnt, done)
+		}
+		w.totalCount.Add(int64(rowCnt))
 	}
 }
 
