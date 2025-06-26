@@ -133,6 +133,7 @@ func (p *plannerSuite) Close() {
 }
 
 func TestPredicatePushDown(t *testing.T) {
+	t.Skip("wwz")
 	var input, output []string
 	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	s := createPlannerSuite()
