@@ -118,7 +118,7 @@ const (
 	// [3] UPDATE status = 'resetting' WHERE this restore id
 	// [4] anyID = $(SELECT id WHERE status != 'resetting' LIMIT 1)
 	//
-	// SET gc.ratio-threshold = 1.1 if anyID exists
+	// SET gc.ratio-threshold = 1.1 if no ID exists
 	//
 	// Case 1: There are 2 processes to update configuration
 	// The process<1> is [1] [2] and the process<2> is [3] [4]
@@ -127,8 +127,9 @@ const (
 	//
 	// Case 2: There are 2 process to reset configuration
 	// The process<1> is [3] [4] and the process<2> is [3] [4]
-	// If readTs<1>[4] < commitTs<2>[3] (<1>[4] can get process<2>),
-	//   readTs<2>[4] > commitTs<2>[3] > readTs<1>[4] > commitTs<1>[3] so <2>[4] cannot get process<1>
+	// If readTs<1>[4] < commitTs<2>[3] (<1>[4] can get process<2>{running} so that <1> won't reset),
+	//   readTs<2>[4] > commitTs<2>[3] > readTs<1>[4] > commitTs<1>[3]
+	// so <2>[4] can get process<1>{resetting} and reset.
 	//
 
 	// maxWaitRemainingResettingTasksCount is the retry count threshold to wait the resetting tasks finishing
@@ -894,6 +895,7 @@ func (r *Registry) GlobalOperationAfterSetResettingStatus(ctx context.Context,
 		return errors.Trace(err)
 	}
 	if len(rows) == 0 {
+		log.Info("there is no task running, so execute the global operation")
 		return fn()
 	}
 	return nil
