@@ -17,6 +17,7 @@ package registry
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -56,7 +57,8 @@ const (
 		AND upstream_cluster_id = %%?
 		AND with_sys_table = %%?
 		AND cmd = %%?
-		ORDER BY id DESC`
+		ORDER BY id DESC
+		FOR UPDATE`
 
 	// updateStatusSQLTemplate is the SQL template for updating a task's status
 	updateStatusSQLTemplate = `
@@ -88,39 +90,66 @@ const (
 		 with_sys_table, status, cmd, task_start_time, last_heartbeat_time)
 		VALUES (%%?, MD5(%%?), %%?, %%?, %%?, %%?, 'running', %%?, %%?, %%?)`
 
-	// selectStaleRunningTasksSQLTemplate is the SQL template for finding potentially stale running tasks
-	selectStaleRunningTasksSQLTemplate = `
-		SELECT id, last_heartbeat_time
-		FROM %s.%s
-		WHERE status = 'running'
-		AND last_heartbeat_time < DATE_SUB(NOW(), INTERVAL %%? MINUTE)
-		ORDER BY id ASC`
-
 	// selectTaskHeartbeatSQLTemplate is the SQL template for getting a specific task's heartbeat time
 	selectTaskHeartbeatSQLTemplate = `
 		SELECT last_heartbeat_time
 		FROM %s.%s
 		WHERE id = %%?`
 
-	// selectConflictingTaskSQLTemplate is the SQL template for finding tasks with same parameters except restoredTS
+	// selectConflictingTaskSQLTemplate is the SQL template for finding tasks with same parameters
 	selectConflictingTaskSQLTemplate = `
-		SELECT id, restored_ts, status FROM %s.%s
+		SELECT id, restored_ts, status, last_heartbeat_time FROM %s.%s
 		WHERE filter_hash = MD5(%%?)
 		AND start_ts = %%?
 		AND upstream_cluster_id = %%?
 		AND with_sys_table = %%?
 		AND cmd = %%?
-		AND restored_ts != %%?
-		AND status IN ('running', 'paused')
 		ORDER BY id DESC
 		LIMIT 1`
+
+	// The following is a complete SQLs process to update configuration:
+	// [1] INSERT INTO the task with status = 'running'
+	// [2] waitIDs = $(SELECT id WHERE status = 'resetting')
+	//
+	// WAIT UNTIL any restore task with id of waitIDs is not in the status of 'resetting'
+	// SET gc.ratio-threshold = -1.0
+	// LOG RESTORE...
+	//
+	// [3] UPDATE status = 'resetting' WHERE this restore id
+	// [4] anyID = $(SELECT id WHERE status != 'resetting' LIMIT 1)
+	//
+	// SET gc.ratio-threshold = 1.1 if no ID exists
+	//
+	// Case 1: There are 2 processes to update configuration
+	// The process<1> is [1] [2] and the process<2> is [3] [4]
+	// If commitTs[1] < commitTs[3], readTs[4] > commitTs[3] > commitTs[1] so [4] can get process<1>
+	// If commitTs[1] > commitTs[3], readTs[2] > commitTs[1] > commitTs[3] so [2] can get process<2>
+	//
+	// Case 2: There are 2 process to reset configuration
+	// The process<1> is [3] [4] and the process<2> is [3] [4]
+	// If readTs<1>[4] < commitTs<2>[3] (<1>[4] can get process<2>{running} so that <1> won't reset),
+	//   readTs<2>[4] > commitTs<2>[3] > readTs<1>[4] > commitTs<1>[3]
+	// so <2>[4] can get process<1>{resetting} and reset.
+	//
+
+	// maxWaitRemainingResettingTasksCount is the retry count threshold to wait the resetting tasks finishing
+	maxWaitRemainingResettingTasksTime = 75
+
+	// selectResettingStatusTasksSQLTemplate is the SQL template for finding tasks with resetting status
+	selectResettingStatusTasksSQLTemplate = `SELECT id FROM %s.%s WHERE status = 'resetting'`
+
+	// selectLeftTasksSQLTemplate is the SQL template for finding the left tasks of the tasks whose IDs are given
+	selectRemainingResettingTasksSQLTemplate = `SELECT id FROM %s.%s WHERE id in (%s) AND status = 'resetting'`
+
+	// selectRunningTaskSQLTemplate is the SQL template for finding any running tasks
+	selectAnyUnfinishedTaskSQLTemplate = `SELECT id FROM %s.%s WHERE status != 'resetting' LIMIT 1`
 
 	// transitionStaleTaskToPausedSQLTemplate is the SQL template for atomically transitioning a
 	// stale running task to paused
 	transitionStaleTaskToPausedSQLTemplate = `
 		UPDATE %s.%s
 		SET status = 'paused'
-		WHERE id = %%? AND status = 'running' AND last_heartbeat_time = %%?`
+		WHERE id = %%? AND status IN ('running', 'resetting') AND last_heartbeat_time = %%?`
 )
 
 // TaskStatus represents the current state of a restore task
@@ -131,6 +160,8 @@ const (
 	TaskStatusRunning TaskStatus = "running"
 	// TaskStatusPaused indicates the task is temporarily stopped
 	TaskStatusPaused TaskStatus = "paused"
+	// TaskStatusResetting indicates the task is prepared to reset cluster configuration back before finishing
+	TaskStatusResetting TaskStatus = "resetting"
 )
 
 // RegistrationInfo contains information about a registered restore
@@ -162,6 +193,8 @@ type Registry struct {
 	se               glue.Session
 	heartbeatSession glue.Session
 	heartbeatManager *HeartbeatManager
+
+	waitIDs []uint64
 }
 
 // NewRestoreRegistry creates a new registry using TiDB's session
@@ -281,8 +314,8 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 				return errors.New("invalid task ID: got 0 from lookup")
 			}
 
-			// if task exists and is running, return error
-			if status == string(TaskStatusRunning) {
+			// if task exists and is running or resetting, return error
+			if status == string(TaskStatusRunning) || status == string(TaskStatusResetting) {
 				log.Warn("task already exists and is running",
 					zap.Uint64("restore_id", existingTaskID))
 				return errors.Annotatef(berrors.ErrInvalidArgument,
@@ -347,10 +380,34 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 	})
 
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, errors.Trace(err)
+	}
+
+	if err := r.collectResettingStatusTasks(ctx); err != nil {
+		return 0, 0, errors.Trace(err)
 	}
 
 	return taskID, resolvedRestoreTS, nil
+}
+
+func (r *Registry) collectResettingStatusTasks(ctx context.Context) error {
+	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	// find the tasks with resetting status
+	lookupSQL := fmt.Sprintf(selectResettingStatusTasksSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+	rows, _, err := execCtx.ExecRestrictedSQL(ctx, nil, lookupSQL)
+	if err != nil {
+		return errors.Annotate(err, "failed to look up tasks with resetting status")
+	}
+	var waitIDs []uint64
+	if len(rows) > 0 {
+		waitIDs = make([]uint64, 0, len(rows))
+		for _, row := range rows {
+			waitIDs = append(waitIDs, row.GetUint64(0))
+		}
+	}
+	r.waitIDs = waitIDs
+	return nil
 }
 
 // updateTaskStatusConditional updates a task's status only if its current status matches the expected status
@@ -567,20 +624,20 @@ func (r *Registry) resolveRestoreTS(ctx context.Context,
 
 	filterStrings := strings.Join(info.FilterStrings, FilterSeparator)
 
-	// look for tasks with same filter, startTS, cluster, sysTable, cmd but different restoredTS
+	// look for tasks with same filter, startTS, cluster, sysTable, cmd
 	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 
 	checkSQL := fmt.Sprintf(selectConflictingTaskSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 	rows, _, err := execCtx.ExecRestrictedSQL(ctx, nil, checkSQL,
-		filterStrings, info.StartTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd, info.RestoredTS)
+		filterStrings, info.StartTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
 	if err != nil {
-		return 0, errors.Annotate(err, "failed to check for existing tasks with different restoredTS")
+		return 0, errors.Annotate(err, "failed to check for existing tasks with same parameters")
 	}
 
 	// no conflicting task found, use the current restoredTS
 	if len(rows) == 0 {
-		log.Info("no existing tasks found with different restoredTS",
+		log.Info("no existing tasks found with same parameters",
 			zap.Uint64("restored_ts", info.RestoredTS))
 		return info.RestoredTS, nil
 	}
@@ -588,14 +645,26 @@ func (r *Registry) resolveRestoreTS(ctx context.Context,
 	conflictingTaskID := rows[0].GetUint64(0)
 	existingRestoredTS := rows[0].GetUint64(1)
 	existingStatus := rows[0].GetString(2)
+	initialHeartbeatTime := rows[0].GetTime(3).String()
 
-	log.Info("found existing task with different restoredTS",
+	log.Info("found existing task with same parameters",
 		zap.Uint64("existing_task_id", conflictingTaskID),
 		zap.Uint64("existing_restored_ts", existingRestoredTS),
 		zap.String("existing_status", existingStatus),
 		zap.Uint64("current_restored_ts", info.RestoredTS),
 		zap.Strings("filters", info.FilterStrings),
-		zap.Uint64("start_ts", info.StartTS))
+		zap.Uint64("start_ts", info.StartTS),
+		zap.String("last heartbeat time", initialHeartbeatTime),
+	)
+
+	// if restoredTS values are different and user explicitly specified it, use current restoredTS
+	if isRestoredTSUserSpecified && existingRestoredTS != info.RestoredTS {
+		log.Info("existing task has different restoredTS than user-specified, using current restoredTS",
+			zap.Uint64("existing_task_id", conflictingTaskID),
+			zap.Uint64("existing_restored_ts", existingRestoredTS),
+			zap.Uint64("current_restored_ts", info.RestoredTS))
+		return info.RestoredTS, nil
+	}
 
 	// if existing task is paused, reuse its restoredTS
 	if existingStatus == string(TaskStatusPaused) {
@@ -606,29 +675,11 @@ func (r *Registry) resolveRestoreTS(ctx context.Context,
 	}
 
 	// if existing task is running, check if it's stale
-	if existingStatus == string(TaskStatusRunning) {
+	if existingStatus == string(TaskStatusRunning) || existingStatus == string(TaskStatusResetting) {
 		log.Info("existing task is running, checking if it's stale",
 			zap.Uint64("existing_task_id", conflictingTaskID))
 
-		// First, get the current heartbeat time for atomic transition
-		selectHeartbeatSQL := fmt.Sprintf(selectTaskHeartbeatSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
-		heartbeatRows, _, err := execCtx.ExecRestrictedSQL(ctx, nil, selectHeartbeatSQL, conflictingTaskID)
-		if err != nil {
-			log.Warn("failed to get task heartbeat, using current restoredTS",
-				zap.Uint64("task_id", conflictingTaskID),
-				zap.Error(err))
-			return info.RestoredTS, nil
-		}
-
-		if len(heartbeatRows) == 0 {
-			log.Info("task not found during heartbeat check, using current restoredTS",
-				zap.Uint64("task_id", conflictingTaskID))
-			return info.RestoredTS, nil
-		}
-
-		currentHeartbeatTime := heartbeatRows[0].GetTime(0).String()
-
-		isStale, err := r.isTaskStale(ctx, conflictingTaskID)
+		isStale, err := r.isTaskStale(ctx, conflictingTaskID, initialHeartbeatTime)
 		if err != nil {
 			log.Warn("failed to check if task is stale, using current restoredTS",
 				zap.Uint64("task_id", conflictingTaskID),
@@ -642,7 +693,7 @@ func (r *Registry) resolveRestoreTS(ctx context.Context,
 				zap.Uint64("existing_restored_ts", existingRestoredTS))
 
 			// atomically transition the stale task to paused state
-			transitioned, transitionErr := r.transitionStaleTaskToPaused(ctx, conflictingTaskID, currentHeartbeatTime)
+			transitioned, transitionErr := r.transitionStaleTaskToPaused(ctx, conflictingTaskID, initialHeartbeatTime)
 			if transitionErr != nil {
 				log.Warn("failed to transition stale task to paused, using current restoredTS",
 					zap.Uint64("task_id", conflictingTaskID),
@@ -674,23 +725,9 @@ func (r *Registry) resolveRestoreTS(ctx context.Context,
 }
 
 // isTaskStale checks if a running task is stale by waiting up to 5 minutes and checking if heartbeat updates
-func (r *Registry) isTaskStale(ctx context.Context, taskID uint64) (bool, error) {
+func (r *Registry) isTaskStale(ctx context.Context, taskID uint64, initialHeartbeatTime string) (bool, error) {
 	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
-
-	// get initial heartbeat time
-	selectHeartbeatSQL := fmt.Sprintf(selectTaskHeartbeatSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
-	initialRows, _, err := execCtx.ExecRestrictedSQL(ctx, nil, selectHeartbeatSQL, taskID)
-	if err != nil {
-		return false, errors.Annotate(err, "failed to get initial heartbeat time")
-	}
-
-	if len(initialRows) == 0 {
-		return false, nil // task not found (might have been deleted), proceed with user's restoredTS
-	}
-
-	initialHeartbeatTime := initialRows[0].GetTime(0).String()
-
 	log.Info("checking if task is stale, will check heartbeat every minute up to 5 minutes",
 		zap.Uint64("task_id", taskID),
 		zap.String("initial_heartbeat", initialHeartbeatTime))
@@ -699,6 +736,7 @@ func (r *Registry) isTaskStale(ctx context.Context, taskID uint64) (bool, error)
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 
+	selectHeartbeatSQL := fmt.Sprintf(selectTaskHeartbeatSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 	remainingMinutes := StaleTaskThresholdMinutes
 	for remainingMinutes > 0 {
 		select {
@@ -801,4 +839,64 @@ func (r *Registry) transitionStaleTaskToPaused(ctx context.Context, taskID uint6
 	}
 
 	return transitioned, nil
+}
+
+// OperationAfterWaitIDs do the specified operations until the resetting tasks is removed
+func (r *Registry) OperationAfterWaitIDs(ctx context.Context, fn func() error) error {
+	retryCount := 0
+	for ids := range slices.Chunk(r.waitIDs, 10) {
+		idStrs := make([]string, 0, len(ids))
+		for _, id := range ids {
+			idStrs = append(idStrs, fmt.Sprintf("%d", id))
+		}
+		idsStr := strings.Join(idStrs, ",")
+		lookupSQL := fmt.Sprintf(selectRemainingResettingTasksSQLTemplate,
+			RestoreRegistryDBName, RestoreRegistryTableName, idsStr)
+		for {
+			rows, _, err := r.se.GetSessionCtx().GetRestrictedSQLExecutor().ExecRestrictedSQL(
+				kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+				nil,
+				lookupSQL,
+			)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if len(rows) == 0 {
+				break
+			}
+			leftId := rows[0].GetUint64(0)
+			retryCount += 1
+			if retryCount > maxWaitRemainingResettingTasksTime {
+				log.Warn("failed to wait for the task finishing resetting, timeout")
+				return fn()
+			}
+			log.Info("wait for the task finishing resetting", zap.Uint64("task id", leftId), zap.Int("retry count", retryCount))
+			time.Sleep(5 * time.Second)
+		}
+	}
+	return fn()
+}
+
+// GlobalOperationAfterSetResettingStatus do the global operation if there is no running task and set resetting
+// status for the task
+func (r *Registry) GlobalOperationAfterSetResettingStatus(ctx context.Context,
+	restoreID uint64, fn func() error) error {
+	updateSQL := fmt.Sprintf(updateStatusSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+	if err := r.se.ExecuteInternal(ctx, updateSQL, TaskStatusResetting, restoreID, TaskStatusRunning); err != nil {
+		return errors.Annotatef(err, "failed to conditionally update task status from %s to %s",
+			TaskStatusRunning, TaskStatusResetting)
+	}
+
+	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	lookupSQL := fmt.Sprintf(selectAnyUnfinishedTaskSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+	rows, _, err := execCtx.ExecRestrictedSQL(ctx, nil, lookupSQL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		log.Info("there is no task running, so execute the global operation")
+		return fn()
+	}
+	return nil
 }
