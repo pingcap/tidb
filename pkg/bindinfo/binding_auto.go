@@ -168,6 +168,7 @@ func (ba *bindingAuto) recordIntoStmtStats(stmtSCtx base.PlanContext, plans []*B
 // runToGetExecInfo runs these plans to get their execution info.
 func (ba *bindingAuto) runToGetExecInfo(plans []*BindingPlanInfo) error {
 	// TODO: support setting timeout
+	// TODO: support killing since this process might be very time-consuming.
 	for _, plan := range plans {
 		if plan.ExecTimes > 0 {
 			// already has execution info, no need to run again.
