@@ -563,8 +563,8 @@ func (hg *Histogram) LessRowCount(sctx planctx.PlanContext, value types.Datum) f
 // BetweenRowCount estimates the row count where column greater or equal to a and less than b.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum) float64 {
-	lessCountA := hg.LessRowCount(sctx, a)
-	lessCountB := hg.LessRowCount(sctx, b)
+	lessCountA, bktIndexA := hg.LessRowCountWithBktIdx(sctx, a)
+	lessCountB, bktIndexB := hg.LessRowCountWithBktIdx(sctx, b)
 	rangeEst := lessCountB - lessCountA
 	lowEqual, _ := hg.EqualRowCount(sctx, a, false)
 	ndvAvg := hg.NotNullCount() / float64(hg.NDV)
@@ -573,7 +573,23 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 	// not be less than both the low+high - or the lesser of the estimate for the individual range of a or b is used as a bound.
 	if rangeEst < math.Max(lowEqual, ndvAvg) && hg.NDV > 0 {
 		result := math.Min(lessCountB, hg.NotNullCount()-lessCountA)
-		return math.Min(result, lowEqual+ndvAvg)
+		rangeEst = math.Min(result, lowEqual+ndvAvg)
+	}
+	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
+	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
+	//If values in the same bucket, use skewRatio to adjust the range estimate to account for potential skew.
+	if skewRatio > 0 && bktIndexA == bktIndexB {
+		// Worst case skew is if the range includes all the rows in the bucket
+		skewEstimate := hg.Buckets[bktIndexA].Count
+		if bktIndexA > 0 {
+			skewEstimate -= hg.Buckets[bktIndexA-1].Count
+		}
+		// If range does not include last value of its bucket, remove the repeat count from the skew estimate.
+		if lessCountB <= float64(hg.Buckets[bktIndexB].Count-hg.Buckets[bktIndexB].Repeat) {
+			skewEstimate -= hg.Buckets[bktIndexB].Repeat
+		}
+		//Add a scaled ratio of the worst case skewed estimate to our regular estimate
+		return rangeEst + max(0, (float64(skewEstimate)-rangeEst)*skewRatio)
 	}
 	return rangeEst
 }

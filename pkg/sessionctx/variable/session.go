@@ -1021,6 +1021,9 @@ type SessionVars struct {
 	// RiskEqSkewRatio is used to control the ratio of skew that is applied to equal predicates not found in TopN/buckets.
 	RiskEqSkewRatio float64
 
+	// RiskRangeSkewRatio is used to control the ratio of skew that is applied to range predicates that fall within a single bucket.
+	RiskRangeSkewRatio float64
+
 	// cpuFactor is the CPU cost of processing one expression for one row.
 	cpuFactor float64
 	// copCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
@@ -2198,6 +2201,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		CorrelationThreshold:          vardef.DefOptCorrelationThreshold,
 		CorrelationExpFactor:          vardef.DefOptCorrelationExpFactor,
 		RiskEqSkewRatio:               vardef.DefOptRiskEqSkewRatio,
+		RiskRangeSkewRatio:            vardef.DefOptRiskRangeSkewRatio,
 		cpuFactor:                     vardef.DefOptCPUFactor,
 		copCPUFactor:                  vardef.DefOptCopCPUFactor,
 		CopTiFlashConcurrencyFactor:   vardef.DefOptTiFlashConcurrencyFactor,
