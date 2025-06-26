@@ -141,6 +141,18 @@ func TestValidateConfig(t *testing.T) {
 			}`,
 			errMsg: "restricted variable autocommit has a value set, but it is not a readonly variable",
 		},
+		{
+			name: "invalid restricted SQL rule",
+			config: `{
+				"version": "1.0",
+				"tidb_version": "v6.0.0",
+				"restricted_sql": {
+					"sql": ["DROP DATABASE"],
+					"rule": ["unknown_rule"]
+				}
+			}`,
+			errMsg: "unknown SQL rule: unknown_rule",
+		},
 	}
 
 	for _, tc := range cases {
