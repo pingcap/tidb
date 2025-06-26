@@ -114,7 +114,7 @@ type HashJoinV1Exec struct {
 }
 
 // Close implements the Executor Close interface.
-func (e *HashJoinV1Exec) Close() error {
+func (e *HashJoinV1Exec) Close() (err error) {
 	if e.closeCh != nil {
 		close(e.closeCh)
 	}
@@ -138,7 +138,7 @@ func (e *HashJoinV1Exec) Close() error {
 			channel.Clear(e.ProbeWorkers[i].joinChkResourceCh)
 		}
 		e.ProbeSideTupleFetcher.probeChkResourceCh = nil
-		terror.CallWithRecover(e.RowContainer.Close)
+		err = terror.CallWithRecover(e.RowContainer.Close)
 		e.HashJoinCtxV1.SessCtx.GetSessionVars().MemTracker.UnbindActionFromHardLimit(e.RowContainer.ActionSpill())
 		e.waiterWg.Wait()
 	}
@@ -159,7 +159,10 @@ func (e *HashJoinV1Exec) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
-	err := e.BaseExecutor.Close()
+	childErr := e.BaseExecutor.Close()
+	if childErr != nil {
+		return childErr
+	}
 	return err
 }
 
