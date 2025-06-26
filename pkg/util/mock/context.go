@@ -668,14 +668,8 @@ func newContext() *Context {
 	vars.StmtCtx.MemTracker.AttachTo(vars.MemTracker)
 	vars.StmtCtx.DiskTracker.AttachTo(vars.DiskTracker)
 	vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
-<<<<<<< HEAD
 	vars.EnablePaging = variable.DefTiDBEnablePaging
 	vars.MinPagingSize = variable.DefMinPagingSize
-	vars.CostModelVersion = variable.DefTiDBCostModelVer
-=======
-	vars.EnablePaging = vardef.DefTiDBEnablePaging
-	vars.MinPagingSize = vardef.DefMinPagingSize
->>>>>>> 1ef4c269cd7 (planner: set the default of the tidb_cost_model_version correctly (#61608))
 	vars.EnableChunkRPC = true
 	vars.DivPrecisionIncrement = variable.DefDivPrecisionIncrement
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
