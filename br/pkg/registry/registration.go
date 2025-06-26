@@ -849,7 +849,8 @@ func (r *Registry) OperationAfterWaitIDs(ctx context.Context, fn func() error) e
 			idStrs = append(idStrs, fmt.Sprintf("%d", id))
 		}
 		idsStr := strings.Join(idStrs, ",")
-		lookupSQL := fmt.Sprintf(selectRemainingResettingTasksSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName, idsStr)
+		lookupSQL := fmt.Sprintf(selectRemainingResettingTasksSQLTemplate,
+			RestoreRegistryDBName, RestoreRegistryTableName, idsStr)
 		for {
 			rows, _, err := r.se.GetSessionCtx().GetRestrictedSQLExecutor().ExecRestrictedSQL(
 				kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
