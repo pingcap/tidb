@@ -16,14 +16,14 @@ package bindinfo
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
