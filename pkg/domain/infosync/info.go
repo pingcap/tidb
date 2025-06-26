@@ -1312,7 +1312,7 @@ func GetTiFlashStoresStat(ctx context.Context) (*pdhttp.StoresInfo, error) {
 
 // CreateFullTextIndex create fulltext infex on TiCI.
 func CreateFullTextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
-	ticiManager, err := NewTiCIManager(GetEtcdClient())
+	ticiManager, err := NewTiCIManager("127.0.0.1", "50061")
 	if err != nil {
 		return err
 	}
@@ -1322,7 +1322,7 @@ func CreateFullTextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInf
 
 // DropFullTextIndex drop fulltext infex on TiCI.
 func DropFullTextIndex(ctx context.Context, tableID int64, indexID int64) error {
-	ticiManager, err := NewTiCIManager(GetEtcdClient())
+	ticiManager, err := NewTiCIManager("127.0.0.1", "50061")
 	if err != nil {
 		return err
 	}

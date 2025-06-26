@@ -16,6 +16,7 @@ package infosync
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -43,20 +44,18 @@ type TiCIManagerCtx struct {
 const MetaServiceEelectionKey = "/tici/metaserivce/election"
 
 // NewTiCIManager creates a new TiCI manager.
-func NewTiCIManager(client *clientv3.Client) (*TiCIManagerCtx, error) {
+func NewTiCIManager(ticiHost string, ticiPort string) (*TiCIManagerCtx, error) {
 	ctx := context.Background()
-	metaServiceClient, err := createMetaServiceClient(ctx, client)
+	conn, err := grpc.NewClient(fmt.Sprintf("%s:%s", ticiHost, ticiPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create meta service client")
 	}
-	managerCtx := &TiCIManagerCtx{
+	metaServiceClient := tici.NewMetaServiceClient(conn)
+	return &TiCIManagerCtx{
+		conn:              conn,
 		metaServiceClient: metaServiceClient,
 		ctx:               ctx,
-	}
-	opt := clientv3.WithPrefix()
-	ch := client.Watch(managerCtx.ctx, MetaServiceEelectionKey, opt)
-	go managerCtx.updateClient(ch)
-	return managerCtx, nil
+	}, nil
 }
 
 func createMetaServiceClient(ctx context.Context, client *clientv3.Client) (tici.MetaServiceClient, error) {
