@@ -609,48 +609,31 @@ func (c *TopN) Copy() *TopN {
 	}
 }
 
-<<<<<<< HEAD
-=======
-// MinCount returns the minimum count in the TopN.
-func (c *TopN) MinCount() uint64 {
-	if c == nil || len(c.TopN) == 0 {
-		return 0
-	}
-	c.calculateMinCountAndCount()
-	return c.minCount
-}
-
-func (c *TopN) calculateMinCountAndCount() {
+func (c *TopN) calculateCount() {
 	if intest.InTest {
 		// In test, After the sync.Once is called, topN will not be modified anymore.
-		minCount, totalCount := c.calculateMinCountAndCountInternal()
-		c.onceCalculateMinCountAndCount()
-		intest.Assert(minCount == c.minCount, "minCount should be equal to the calculated minCount")
+		totalCount := c.calculateCountInternal()
+		c.onceCalculateCount()
 		intest.Assert(totalCount == c.totalCount, "totalCount should be equal to the calculated totalCount")
 		return
 	}
-	c.onceCalculateMinCountAndCount()
+	c.onceCalculateCount()
 }
 
-func (c *TopN) onceCalculateMinCountAndCount() {
+func (c *TopN) onceCalculateCount() {
 	c.once.Do(func() {
 		// Initialize to the first value in TopN
-		minCount, total := c.calculateMinCountAndCountInternal()
-		c.minCount = minCount
-		c.totalCount = total
+		c.totalCount = c.calculateCountInternal()
 	})
 }
 
-func (c *TopN) calculateMinCountAndCountInternal() (minCount, total uint64) {
-	minCount = c.TopN[0].Count
+func (c *TopN) calculateCountInternal() (total uint64) {
 	for _, t := range c.TopN {
-		minCount = min(minCount, t.Count)
 		total += t.Count
 	}
-	return minCount, total
+	return total
 }
 
->>>>>>> 5c86ca816c5 (statistics: the totalCount/minCount of TopN is calculated only once (#61340))
 // TopNMeta stores the unit of the TopN.
 type TopNMeta struct {
 	Encoded []byte
@@ -761,7 +744,7 @@ func (c *TopN) TotalCount() uint64 {
 	if c == nil || len(c.TopN) == 0 {
 		return 0
 	}
-	c.calculateMinCountAndCount()
+	c.calculateCount()
 	return c.totalCount
 }
 
