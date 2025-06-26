@@ -607,4 +607,3 @@ func TestCtxUsage(t *testing.T) {
 	// before the fix, it's context canceled error
 	require.ErrorContains(t, err, "invalid_request")
 }
->>>>>>> 7424255fef7 (external store: use separate ctx for GCS clients (#60402))
