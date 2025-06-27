@@ -2189,11 +2189,8 @@ func IsNullWithNotNullColumn(ctx EvalContext, expr Expression) bool {
 			if len(e.GetArgs()) == 1 {
 				return mysql.HasNotNullFlag(expr.GetType(ctx).GetFlag())
 			}
-		case ast.UnaryNot:
-			if len(e.GetArgs()) == 1 {
-				return !IsNullWithNotNullColumn(ctx, e.GetArgs()[0])
-			}
-		}
+		default:
+			return false
 	}
 	return false
 }
