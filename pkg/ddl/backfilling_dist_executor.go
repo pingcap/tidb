@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -151,8 +152,8 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 
 	store := ddlObj.store
 	sessPool := ddlObj.sessPool
-	if keyspace.IsRunningOnSystem() {
-		taskKS := s.task.Keyspace
+	taskKS := s.task.Keyspace
+	if keyspace.IsRunningOnSystem() && taskKS != config.GetGlobalKeyspaceName() {
 		taskMgr, err := disttaskStorage.GetTaskManager()
 		if err != nil {
 			return nil, errors.Trace(err)
