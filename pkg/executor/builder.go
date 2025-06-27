@@ -5613,6 +5613,7 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 		b.err = err
 		return nil
 	}
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 	e := &TableSampleExecutor{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		table:        v.TableInfo,
