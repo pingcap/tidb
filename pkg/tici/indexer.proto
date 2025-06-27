@@ -56,8 +56,8 @@ enum ParserType {
 
 message ShardManifestHeader {
   uint64 shard_id = 1;
-  string start_key = 2;
-  string end_key = 3;
+  bytes start_key = 2;
+  bytes end_key = 3;
   uint64 epoch = 4;
 }
 
