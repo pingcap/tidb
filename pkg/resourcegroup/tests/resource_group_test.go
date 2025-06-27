@@ -70,7 +70,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("alter resource group `default` BURSTABLE")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW MODERATED <nil> <nil>"))
 	tk.MustExec("alter resource group `default` BURSTABLE=OFF")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW DISABLE <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW OFF <nil> <nil>"))
 	tk.MustExec("alter resource group `default` BURSTABLE=MODERATED")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW MODERATED <nil> <nil>"))
 	tk.MustExec("alter resource group `default` BURSTABLE=UNLIMITED")
@@ -137,7 +137,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
 	re.Equal(int64(2000), g.GetBurstLimitAdjusted())
 
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 MEDIUM DISABLE EXEC_ELAPSED='20s', ACTION=DRYRUN, WATCH=SIMILAR DURATION=UNLIMITED <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 MEDIUM OFF EXEC_ELAPSED='20s', ACTION=DRYRUN, WATCH=SIMILAR DURATION=UNLIMITED <nil>"))
 
 	tk.MustExec("alter resource group x RU_PER_SEC= unlimited QUERY_LIMIT=(EXEC_ELAPSED='15s' ACTION SWITCH_GROUP(y) WATCH SIMILAR DURATION '10m0s')")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
@@ -149,7 +149,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	re.Equal(ast.WatchSimilar, g.Runaway.WatchType)
 	re.Equal(int64(time.Minute*10/time.Millisecond), g.Runaway.WatchDurationMs)
 
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x UNLIMITED MEDIUM DISABLE EXEC_ELAPSED='15s', ACTION=SWITCH_GROUP(y), WATCH=SIMILAR DURATION='10m0s' <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x UNLIMITED MEDIUM OFF EXEC_ELAPSED='15s', ACTION=SWITCH_GROUP(y), WATCH=SIMILAR DURATION='10m0s' <nil>"))
 	re.Equal(int64(-1), g.GetBurstLimitAdjusted())
 
 	tk.MustExec("drop resource group x")
@@ -239,7 +239,7 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	// Check information schema table information_schema.resource_groups
 	tk.MustExec("create resource group x RU_PER_SEC=1000 PRIORITY=LOW")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 1000 LOW DISABLE <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 1000 LOW OFF <nil> <nil>"))
 	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE QUERY_LIMIT=(EXEC_ELAPSED='15s' PROCESSED_KEYS=100 action kill)")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 LOW MODERATED EXEC_ELAPSED='15s', PROCESSED_KEYS=100, ACTION=KILL <nil>"))
 	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE=UNLIMITED QUERY_LIMIT=(EXEC_ELAPSED='15s' PROCESSED_KEYS=100 action kill)")
@@ -247,7 +247,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE=MODERATEd QUERY_LIMIT=(EXEC_ELAPSED='15s' PROCESSED_KEYS=100 action kill)")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 LOW MODERATED EXEC_ELAPSED='15s', PROCESSED_KEYS=100, ACTION=KILL <nil>"))
 	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE=OFF QUERY_LIMIT=(EXEC_ELAPSED='15s' PROCESSED_KEYS=100 action kill)")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 LOW DISABLE EXEC_ELAPSED='15s', PROCESSED_KEYS=100, ACTION=KILL <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 LOW OFF EXEC_ELAPSED='15s', PROCESSED_KEYS=100, ACTION=KILL <nil>"))
 	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE QUERY_LIMIT=(EXEC_ELAPSED='15s' PROCESSED_KEYS=100 RU=100 action kill)")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 LOW MODERATED EXEC_ELAPSED='15s', PROCESSED_KEYS=100, RU=100, ACTION=KILL <nil>"))
 	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE QUERY_LIMIT=(PROCESSED_KEYS=200 RU=300 action kill)")
@@ -259,19 +259,19 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("CREATE RESOURCE GROUP `x_new` RU_PER_SEC=2000 PRIORITY=LOW BURSTABLE=UNLIMITED QUERY_LIMIT=(EXEC_ELAPSED=\"15s\" ACTION=KILL)")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'x_new'").Check(testkit.Rows("x_new 2000 LOW UNLIMITED EXEC_ELAPSED='15s', ACTION=KILL <nil>"))
 	tk.MustExec("alter resource group x BURSTABLE=OFF RU_PER_SEC=3000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 3000 LOW DISABLE EXEC_ELAPSED='15s', ACTION=KILL <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 3000 LOW OFF EXEC_ELAPSED='15s', ACTION=KILL <nil>"))
 	tk.MustQuery("show create resource group x").Check(testkit.Rows("x CREATE RESOURCE GROUP `x` RU_PER_SEC=3000, PRIORITY=LOW, QUERY_LIMIT=(EXEC_ELAPSED=\"15s\" ACTION=KILL)"))
 
 	tk.MustExec("create resource group y BURSTABLE RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='1s' action COOLDOWN WATCH EXACT duration '1h')")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 2000 MEDIUM MODERATED EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=2000, PRIORITY=MEDIUM, BURSTABLE(MODERATED), QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH=EXACT DURATION=\"1h0m0s\")"))
 	tk.MustExec("CREATE RESOURCE GROUP `y_new` RU_PER_SEC=2000 PRIORITY=MEDIUM QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH EXACT DURATION=\"1h0m0s\")")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y_new'").Check(testkit.Rows("y_new 2000 MEDIUM DISABLE EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y_new'").Check(testkit.Rows("y_new 2000 MEDIUM OFF EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
 	tk.MustExec("alter resource group y_new RU_PER_SEC=3000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y_new'").Check(testkit.Rows("y_new 3000 MEDIUM DISABLE EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y_new'").Check(testkit.Rows("y_new 3000 MEDIUM OFF EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
 
 	tk.MustExec("CREATE RESOURCE GROUP `z` RU_PER_SEC=2000 PRIORITY=MEDIUM QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH PLAN DURATION=\"1h0m0s\")")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'z'").Check(testkit.Rows("z 2000 MEDIUM DISABLE EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=PLAN DURATION='1h0m0s' <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'z'").Check(testkit.Rows("z 2000 MEDIUM OFF EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=PLAN DURATION='1h0m0s' <nil>"))
 
 	tk.MustExec("alter resource group y RU_PER_SEC=4000")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 MEDIUM MODERATED EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
@@ -286,7 +286,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000, PRIORITY=HIGH, BURSTABLE(MODERATED), QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH=EXACT DURATION=\"1h0m0s\")"))
 
 	tk.MustExec("alter resource group y RU_PER_SEC=4000 PRIORITY=HIGH BURSTABLE=OFF")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 HIGH DISABLE EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 HIGH OFF EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000, PRIORITY=HIGH, QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH=EXACT DURATION=\"1h0m0s\")"))
 
 	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("6"))

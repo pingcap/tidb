@@ -3856,7 +3856,7 @@ func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) e
 const (
 	burstableModeratedStr = "MODERATED"
 	burstableUnlimitedStr = "UNLIMITED"
-	burstdisableStr       = "DISABLE"
+	burstdisableStr       = "OFF"
 	unlimitedFillRate     = "UNLIMITED"
 )
 
