@@ -22,9 +22,9 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -34,11 +34,11 @@ type Pool struct {
 		sync.Mutex
 		closed bool
 	}
-	resPool *pools.ResourcePool
+	resPool util.SessionPool
 }
 
 // NewSessionPool creates a new Session pool.
-func NewSessionPool(resPool *pools.ResourcePool) *Pool {
+func NewSessionPool(resPool util.SessionPool) *Pool {
 	intest.AssertNotNil(resPool)
 	return &Pool{resPool: resPool}
 }
@@ -66,7 +66,6 @@ func (sg *Pool) Get() (sessionctx.Context, error) {
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	ctx.GetSessionVars().InRestrictedSQL = true
 	ctx.GetSessionVars().StmtCtx.SetTimeZone(ctx.GetSessionVars().Location())
-	infosync.StoreInternalSession(ctx)
 	return ctx, nil
 }
 
@@ -80,7 +79,6 @@ func (sg *Pool) Put(ctx sessionctx.Context) {
 	})
 	ctx.RollbackTxn(context.Background())
 	sg.resPool.Put(ctx.(pools.Resource))
-	infosync.DeleteInternalSession(ctx)
 }
 
 // Close clean up the Pool.

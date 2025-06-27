@@ -96,3 +96,7 @@ func WrapZapcoreWithKeyspace() zap.Option {
 func IsRunningOnUser() bool {
 	return kerneltype.IsNextGen() && config.GetGlobalKeyspaceName() != System
 }
+
+func IsRunningOnSystem() bool {
+	return kerneltype.IsNextGen() && config.GetGlobalKeyspaceName() == System
+}
