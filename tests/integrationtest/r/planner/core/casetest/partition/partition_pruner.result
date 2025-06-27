@@ -879,18 +879,18 @@ abc	2
 explain select * from t where b in (1,2);
 id	estRows	task	access object	operator info
 PartitionUnion_8	3.00	root		
-├─Batch_Point_Get_9	2.00	root	table:t, partition:p1, index:PRIMARY(b)	keep order:false, desc:false
-└─Batch_Point_Get_10	1.00	root	table:t, partition:p2, index:PRIMARY(b)	keep order:false, desc:false
+├─Batch_Point_Get_10	2.00	root	table:t, partition:p1, index:PRIMARY(b)	keep order:false, desc:false
+└─Batch_Point_Get_11	1.00	root	table:t, partition:p2, index:PRIMARY(b)	keep order:false, desc:false
 select * from t where b in (1,2) and a like '%a%';
 a	b
 abc	2
 explain select * from t where b in (1,2) and a like '%a%';
 id	estRows	task	access object	operator info
 PartitionUnion_8	2.60	root		
-├─Selection_10	1.60	root		like(issue42135.t.a, "%a%", 92)
-│ └─Batch_Point_Get_9	2.00	root	table:t, partition:p1, index:PRIMARY(b)	keep order:false, desc:false
-└─Selection_12	1.00	root		like(issue42135.t.a, "%a%", 92)
-  └─Batch_Point_Get_11	1.00	root	table:t, partition:p2, index:PRIMARY(b)	keep order:false, desc:false
+├─Selection_11	1.60	root		like(issue42135.t.a, "%a%", 92)
+│ └─Batch_Point_Get_10	2.00	root	table:t, partition:p1, index:PRIMARY(b)	keep order:false, desc:false
+└─Selection_13	1.00	root		like(issue42135.t.a, "%a%", 92)
+  └─Batch_Point_Get_12	1.00	root	table:t, partition:p2, index:PRIMARY(b)	keep order:false, desc:false
 set @@tidb_partition_prune_mode=Default;
 select * from t where b in (1,2);
 a	b
