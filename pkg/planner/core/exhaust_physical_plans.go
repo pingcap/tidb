@@ -1095,14 +1095,15 @@ type indexJoinInnerChildWrapper struct {
 }
 
 func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *property.PhysicalProperty) bool {
-	if prop.TaskTp == property.MppTaskType {
+	switch prop.TaskTp {
+	case property.MppTaskType:
 		// when parent operator ask current op to be mppTaskType, check operator itself here.
 		return logicalop.CanSelfBeingPushedToCopImpl(p, kv.TiFlash)
-	}
-	if prop.TaskTp == property.CopSingleReadTaskType || prop.TaskTp == property.CopMultiReadTaskType {
+	case property.CopSingleReadTaskType, property.CopMultiReadTaskType:
 		return logicalop.CanSelfBeingPushedToCopImpl(p, kv.TiKV)
+	default:
+		return true
 	}
-	return true
 }
 
 // admitIndexJoinInnerChildPattern is used to check whether current physical choosing is under an index join's
