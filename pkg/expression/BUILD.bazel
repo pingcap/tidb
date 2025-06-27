@@ -64,7 +64,6 @@ go_library(
         "grouping_sets.go",
         "helper.go",
         "infer_pushdown.go",
-        "pkdb_builtin_info.go",
         "scalar_function.go",
         "schema.go",
         "simple_rewriter.go",

@@ -60,6 +60,9 @@ func PrintTiDBInfo() {
 
 // GetTiDBInfo returns the git hash and build time of this tidb-server binary.
 func GetTiDBInfo() string {
+	if versioninfo.TiDBXMode {
+		return versioninfo.GetTiDBXInfo()
+	}
 	enterpriseVersion := ""
 	if versioninfo.TiDBEnterpriseExtensionGitHash != "" {
 		enterpriseVersion = fmt.Sprintf("\nEnterprise Extension Commit Hash: %s", versioninfo.TiDBEnterpriseExtensionGitHash)
