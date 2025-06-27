@@ -392,9 +392,7 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 		// and the fast path does not convert the values to `sortKey`.
 		for _, col := range p.IdxCols {
 			// TODO: We could check whether `col` belongs to the partition columns to avoid unnecessary ranger building.
-			// However, we currently don't have a safe and reliable way to do that.
-			// `col` is of type `expression.Column`, while the IDs from `pt.GetPartitionColumnIDs()` are derived from `t.Cols()`
-			// which type is `table.Column`. It's not always correctly to compare them.
+			// https://github.com/pingcap/tidb/pull/62002#discussion_r2171420731
 			if !collate.IsBinCollation(col.GetType(evalCtx).GetCollate()) {
 				// If a non-binary collation is used, the values in `p.IndexValues` are sort keys and cannot be used for partition pruning.
 				r, err := ranger.DetachCondAndBuildRangeForPartition(sctx.GetRangerCtx(), p.AccessConditions, p.IdxCols, p.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
