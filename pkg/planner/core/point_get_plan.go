@@ -111,7 +111,7 @@ type PointGetPlan struct {
 	Columns          []*model.ColumnInfo `plan-cache-clone:"shallow"`
 	cost             float64
 
-	// unfoldFromWildCard indicates whether the FieldName in 'names' is unfolded from wildcard
+	// unfoldFromWildCard indicates whether the FieldName in 'outputNames' is unfolded from wildcard
 	// It is used by checking column privileges
 	unfoldFromWildCard []bool
 	colsInWhereClause  []string
@@ -535,7 +535,7 @@ type BatchPointGetPlan struct {
 	Columns       []*model.ColumnInfo `plan-cache-clone:"shallow"`
 	cost          float64
 
-	// unfoldFromWildCard indicates whether the FieldName in 'names' is unfolded from wildcard
+	// unfoldFromWildCard indicates whether the FieldName in 'outputNames' is unfolded from wildcard
 	// It is used by checking column privileges
 	unfoldFromWildCard []bool
 	// columns in the where clause should be check privilege
@@ -1049,6 +1049,7 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 	return nil
 }
 
+// getVisitInfo requirements from outputNames and colsInWhere
 func getVisitInfo(user, host, db, tbl string, outputNames types.NameSlice, unfold []bool, colsInWhere []string) (res []visitInfo) {
 	if len(outputNames) != len(unfold) {
 		if intest.InTest {
@@ -1745,6 +1746,9 @@ func newPointGetPlan(ctx base.PlanContext, dbName string, schema *expression.Sch
 	return p
 }
 
+// checkFastPlanPrivilege checks two types of privilege:
+// 1. user meets all visitInfos requirement
+// 2. all tables can pass the check in CheckTableLock
 func checkFastPlanPrivilege(ctx base.PlanContext, visitInfos ...visitInfo) error {
 	pm := privilege.GetPrivilegeManager(ctx)
 	lockVisitInfos := make([]visitInfo, 0, len(visitInfos))
@@ -1767,7 +1771,6 @@ func checkFastPlanPrivilege(ctx base.PlanContext, visitInfos ...visitInfo) error
 	return CheckTableLock(ctx, infoSchema, lockVisitInfos)
 }
 
-// The return 'unfold' is a flag to indicate whether the FieldName is unfolded from wildcard
 func buildSchemaFromFields(
 	dbName pmodel.CIStr,
 	tbl *model.TableInfo,
@@ -1780,8 +1783,8 @@ func buildSchemaFromFields(
 ) {
 	columns := make([]*expression.Column, 0, len(tbl.Columns)+1)
 	names = make([]*types.FieldName, 0, len(tbl.Columns)+1)
+	unfold = make([]bool, 0, len(tbl.Columns)+1)
 	if len(fields) > 0 {
-		unfold := make([]bool, 0, len(tbl.Columns)+1)
 		for _, field := range fields {
 			if field.WildCard != nil {
 				if field.WildCard.Table.L != "" && field.WildCard.Table.L != tblName.L {
