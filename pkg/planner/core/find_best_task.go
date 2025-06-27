@@ -799,6 +799,9 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
 		return 0, false
 	}
+	if lhs.path.FtsQueryInfo != nil || rhs.path.FtsQueryInfo != nil {
+		return 0, false
+	}
 	// lhsPseudo == lhs has pseudo (no) stats for the table or index for the lhs path.
 	// rhsPseudo == rhs has pseudo (no) stats for the table or index for the rhs path.
 	//
@@ -1281,7 +1284,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		if path.IsTablePath() {
 			currentCandidate = getTableCandidate(ds, path, prop)
 		} else {
-			if !(len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan) {
+			if !(len(path.AccessConds) > 0 || path.FtsQueryInfo != nil || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan) {
 				continue
 			}
 			// We will use index to generate physical plan if any of the following conditions is satisfied:
@@ -1532,6 +1535,11 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 
 	t = base.InvalidTask
 	candidates := skylinePruning(ds, prop)
+	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
+		logutil.BgLogger().Warn("candidate count after pruning", zap.Int("count", len(candidates)),
+			zap.String("prop", prop.String()),
+		)
+	}
 	pruningInfo := getPruningInfo(ds, candidates, prop)
 	defer func() {
 		if err == nil && t != nil && !t.Invalid() && pruningInfo != "" {
@@ -2187,6 +2195,16 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		// TODO: make IndexReader support accessing MVIndex directly.
 		return base.InvalidTask, nil
 	}
+	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
+		logutil.BgLogger().Warn("0")
+	}
+	// TiCI currently can not set the order property.
+	if candidate.path.FtsQueryInfo != nil && !prop.IsSortItemEmpty() {
+		return base.InvalidTask, nil
+	}
+	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
+		logutil.BgLogger().Warn("1")
+	}
 	if !candidate.path.IsSingleScan {
 		// If it's parent requires single read task, return max cost.
 		if prop.TaskTp == property.CopSingleReadTaskType {
@@ -2195,6 +2213,9 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	} else if prop.TaskTp == property.CopMultiReadTaskType {
 		// If it's parent requires double read task, return max cost.
 		return base.InvalidTask, nil
+	}
+	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
+		logutil.BgLogger().Warn("2")
 	}
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return base.InvalidTask, nil
@@ -2206,6 +2227,9 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	// If we don't need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
 	if !prop.IsSortItemEmpty() && candidate.path.ForceNoKeepOrder {
 		return base.InvalidTask, nil
+	}
+	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
+		logutil.BgLogger().Warn("3")
 	}
 	path := candidate.path
 	is := getOriginalPhysicalIndexScan(ds, prop, path, candidate.isMatchProp, candidate.path.IsSingleScan)
@@ -2302,6 +2326,8 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		task = task.ConvertToRootTask(ds.SCtx())
 	} else if _, ok := task.(*RootTask); ok {
 		return base.InvalidTask, nil
+	} else if is.FtsQueryInfo != nil {
+		cop.finishIndexPlan()
 	}
 	return task, nil
 }
@@ -2480,6 +2506,9 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *logicalop.DataSource, path *util.AccessPath, finalStats *property.StatsInfo) error {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		logutil.BgLogger().Warn("add pushed down selection", zap.String("table filters", fmt.Sprintf("%v", path.TableFilters)))
+	}
 	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
 
 	var newRootConds []expression.Expression
@@ -2677,6 +2706,10 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			if index.State == model.StatePublic && index.InvertedInfo != nil {
 				ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildInvertedIndexExtra(candidate.path.Index, index.InvertedInfo.ColumnID, index.ID))
 			}
+		}
+		if ds.MatchedFTS != nil {
+			ts.MatchedFTS = ds.MatchedFTS
+			ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildTextInvertedIndexExtra(ds.FtsIndexes[0], ds.MatchedFTS))
 		}
 	}
 
@@ -3093,10 +3126,6 @@ func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 
 func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool, isSingleScan bool) *PhysicalIndexScan {
 	idx := path.Index
-	if path.Index.IsFulltextIndex() {
-		prop.FullTextProp.QueryColumns = path.QueryColumns
-		prop.FullTextProp.QueryJSONStr = path.QueryJSONStr
-	}
 	is := PhysicalIndexScan{
 		Table:            ds.TableInfo,
 		TableAsName:      ds.TableAsName,
@@ -3105,7 +3134,7 @@ func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		Index:            idx,
 		IdxCols:          path.IdxCols,
 		IdxColLens:       path.IdxColLens,
-		FullText:         idx.IsFulltextIndex(),
+		FullText:         idx.IsFulltextIndexOnTiCI(),
 		AccessCondition:  path.AccessConds,
 		Ranges:           path.Ranges,
 		dataSourceSchema: ds.Schema(),
@@ -3116,7 +3145,11 @@ func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		constColsByCond:  path.ConstCols,
 		prop:             prop,
 		StoreType:        path.StoreType,
+		FtsQueryInfo:     path.FtsQueryInfo,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	if is.FtsQueryInfo != nil {
+		is.StoreType = kv.TiFlash
+	}
 	rowCount := path.CountAfterAccess
 	is.initSchema(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)
 

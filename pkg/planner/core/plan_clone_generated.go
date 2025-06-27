@@ -52,6 +52,9 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	if op.UsedColumnarIndexes != nil {
 		return nil, false
 	}
+	if op.MatchedFTS != nil {
+		return nil, false
+	}
 	return cloned, true
 }
 
