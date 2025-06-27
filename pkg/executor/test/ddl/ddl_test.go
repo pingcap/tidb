@@ -774,7 +774,7 @@ func TestSetDDLErrorCountLimit(t *testing.T) {
 	tk.MustExec("use test")
 
 	reloadFunc := func() {
-		require.NoError(ddlutil.LoadGlobalVars(tk.Session(), vardef.TiDBDDLErrorCountLimit))
+		require.NoError(t, ddlutil.LoadGlobalVars(tk.Session(), vardef.TiDBDDLErrorCountLimit))
 	}
 
 	reloadFunc()
