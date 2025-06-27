@@ -181,11 +181,7 @@ func CanSelfBeingPushedToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool
 			return false
 		}
 		return ret
-	case *LogicalUnionAll:
-		return storeTp == kv.TiFlash
-	case *LogicalSort:
-		return storeTp == kv.TiFlash
-	case *LogicalProjection:
+	case *LogicalUnionAll, *LogicalSort, *LogicalProjection, *LogicalSequence:
 		return storeTp == kv.TiFlash
 	case *LogicalExpand:
 		// Expand itself only contains simple col ref and literal projection. (always ok, check its child)
@@ -202,8 +198,6 @@ func CanSelfBeingPushedToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool
 		// since these check is inside subtree, it's check for whether this subtree can be totally pushed to tikv/tiFlash.
 		// currently logicalLimit and logicalTopN can not be fully pushed down to tiFlash. ref: issues/61961
 		return false
-	case *LogicalSequence:
-		return storeTp == kv.TiFlash
 	case *LogicalCTE:
 		if storeTp != kv.TiFlash {
 			return false
