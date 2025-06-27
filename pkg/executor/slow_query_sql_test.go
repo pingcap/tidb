@@ -467,14 +467,16 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 	defer func() {
 		tk.MustExec("set tidb_slow_log_threshold=300;")
 	}()
-
 	tk.MustExec("use test")
+
+	// Query that only reads from TiKV
 	tk.MustExec("create table t_tikv (a int)")
 	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ a from t_tikv")
 	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
 		"where query like 'select%t_tikv;'").
 		Check(testkit.Rows("1 0"))
 
+	// Query that only reads from TiFlash
 	tk.MustExec("create table t_tiflash (a int)")
 	tk.MustExec("alter table t_tiflash set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t_tiflash")
@@ -484,15 +486,43 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 		"where query like 'select%t_tiflash;'").
 		Check(testkit.Rows("0 1"))
 
+	// Query that reads from both TiKV and TiFlash
 	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ t_tikv.a, /*+ read_from_storage(tiflash[t_tiflash]) */ t_tiflash.a from t_tikv, t_tiflash")
 	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
 		"where query like 'select%t_tikv, t_tiflash;'").
 		Check(testkit.Rows("1 1"))
 
-	// Test that point get queries register as reading from TiKV
+	// Point get queries should register as reading from TiKV
 	tk.MustExec("create table t_pointget (a int primary key)")
-	tk.MustExec("select a from t_pointget where a = 1")
+	query := "select a from t_pointget where a = 1"
+	tk.MustHavePlan(query, "Point_Get")
+	tk.MustExec(query)
 	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
 		"where query like 'select%t_pointget%;'").
+		Check(testkit.Rows("1 0"))
+
+	// Index readers should register as reading from TiKV
+	tk.MustExec("create table t_index_reader (a int, key (a))")
+	query = "select a from t_index_reader where a = 1"
+	tk.MustHavePlan(query, "IndexReader")
+	tk.MustQuery(query)
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query like 'select%t_index_reader%;'").
+		Check(testkit.Rows("1 0"))
+
+	// Index lookups should register as reading from TiKV
+	tk.MustExec("create table t_index_lookup (a int, b int, index (a))")
+	tk.MustIndexLookup("select a, b from t_index_lookup where a = 1")
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query like 'select%t_index_lookup%;'").
+		Check(testkit.Rows("1 0"))
+
+	// Index merge readers should register as reading from TiKV
+	tk.MustExec("create table t_index_merge(a int, b int, primary key (a), unique key (b))")
+	query = "select /*+ use_index_merge(t_index_merge, a, b) */ * from t_index_merge where a = 1 or b = 1"
+	tk.MustHavePlan(query, "IndexMerge")
+	tk.MustExec(query)
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query like 'select%t_index_merge%;'").
 		Check(testkit.Rows("1 0"))
 }
