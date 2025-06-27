@@ -1169,7 +1169,6 @@ func TestVisitInfo(t *testing.T) {
 }
 
 func testNormalVisitInfo(t *testing.T) {
-	variable.EnableMDL.Store(false)
 	tests := []struct {
 		sql string
 		ans []visitInfo
@@ -1536,7 +1535,6 @@ func testNormalVisitInfo(t *testing.T) {
 }
 
 func testColumnPrivilegeVisitInfo(t *testing.T) {
-	variable.EnableMDL.Store(false)
 	tests := []struct {
 		sql string
 		ans []visitInfo
@@ -2383,7 +2381,6 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 
 func testColumnPrivilegePointGetVisitInfo(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/point-get-visit-info", `return(true)`)
-	variable.EnableMDL.Store(false)
 	tests := []struct {
 		sql string
 		ans []visitInfo
