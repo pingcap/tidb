@@ -2191,7 +2191,7 @@ func IsNullWithNotNullColumn(ctx EvalContext, expr Expression) bool {
 			}
 		case ast.UnaryNot:
 			if len(e.GetArgs()) == 1 {
-				return IsNullWithNotNullColumn(ctx, e.GetArgs()[0])
+				return !IsNullWithNotNullColumn(ctx, e.GetArgs()[0])
 			}
 		}
 	}
