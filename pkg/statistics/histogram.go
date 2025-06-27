@@ -571,25 +571,29 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 	// If values fall in the same bucket, we may underestimate the fractional result. So estimate the low value (a) as an equals, and
 	// estimate the high value as the default (because the input high value may be "larger" than the true high value). The range should
 	// not be less than both the low+high - or the lesser of the estimate for the individual range of a or b is used as a bound.
-	if rangeEst < math.Max(lowEqual, ndvAvg) && hg.NDV > 0 {
-		result := math.Min(lessCountB, hg.NotNullCount()-lessCountA)
-		rangeEst = math.Min(result, lowEqual+ndvAvg)
+	if rangeEst < max(lowEqual, ndvAvg) && hg.NDV > 0 {
+		result := min(lessCountB, hg.NotNullCount()-lessCountA)
+		rangeEst = min(result, lowEqual+ndvAvg)
 	}
-	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
-	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
 	//If values in the same bucket, use skewRatio to adjust the range estimate to account for potential skew.
-	if skewRatio > 0 && bktIndexA == bktIndexB {
-		// Worst case skew is if the range includes all the rows in the bucket
-		skewEstimate := hg.Buckets[bktIndexA].Count
-		if bktIndexA > 0 {
-			skewEstimate -= hg.Buckets[bktIndexA-1].Count
+	if len(hg.Buckets) != 0 && bktIndexA == bktIndexB {
+		if sctx != nil {
+			skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
+			sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
+			if skewRatio > 0 {
+				// Worst case skew is if the range includes all the rows in the bucket
+				skewEstimate := hg.Buckets[bktIndexA].Count
+				if bktIndexA > 0 {
+					skewEstimate -= hg.Buckets[bktIndexA-1].Count
+				}
+				// If range does not include last value of its bucket, remove the repeat count from the skew estimate.
+				if lessCountB <= float64(hg.Buckets[bktIndexA].Count-hg.Buckets[bktIndexA].Repeat) {
+					skewEstimate -= hg.Buckets[bktIndexA].Repeat
+				}
+				//Add a scaled ratio of the worst case skewed estimate to our regular estimate
+				return rangeEst + max(0, (float64(skewEstimate)-rangeEst)*skewRatio)
+			}
 		}
-		// If range does not include last value of its bucket, remove the repeat count from the skew estimate.
-		if lessCountB <= float64(hg.Buckets[bktIndexB].Count-hg.Buckets[bktIndexB].Repeat) {
-			skewEstimate -= hg.Buckets[bktIndexB].Repeat
-		}
-		//Add a scaled ratio of the worst case skewed estimate to our regular estimate
-		return rangeEst + max(0, (float64(skewEstimate)-rangeEst)*skewRatio)
 	}
 	return rangeEst
 }
