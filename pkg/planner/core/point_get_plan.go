@@ -388,7 +388,13 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 	if p.HandleConstant == nil && len(p.IndexValues) > 0 {
 		indexValues := p.IndexValues
 		evalCtx := sctx.GetExprCtx().GetEvalCtx()
+		pColIDs := pt.GetPartitionColumnIDs()
+		// If the plan is created via the fast path, `IdxCols` will be nil here,
+		// and the fast path does not convert the values to `sortKey`.
 		for _, col := range p.IdxCols {
+			if !slices.Contains(pColIDs, col.ID) {
+				continue
+			}
 			if !collate.IsBinCollation(col.GetType(evalCtx).GetCollate()) {
 				// If a non-binary collation is used, the values in `p.IndexValues` are sort keys and cannot be used for partition pruning.
 				r, err := ranger.DetachCondAndBuildRangeForPartition(sctx.GetRangerCtx(), p.AccessConditions, p.IdxCols, p.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
