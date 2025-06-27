@@ -18,6 +18,8 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 )
 
@@ -27,14 +29,31 @@ func DeleteTrueExprs(buildCtx expression.BuildContext, stmtCtx *stmtctx.Statemen
 		return conds
 	}
 	return slices.DeleteFunc(conds, func(cond expression.Expression) bool {
-		con, ok := cond.(*expression.Constant)
-		if !ok {
-			return false
+		switch con := cond.(type) {
+		case *expression.ScalarFunction:
+			if con.FuncName.L == ast.UnaryNot {
+				// isnull(not null) is always false, so we can remove it.
+				return IsNullWithNotNullColumn(buildCtx.GetEvalCtx(), con.GetArgs()[0])
+			}
+		case *expression.Constant:
+			if expression.MaybeOverOptimized4PlanCache(buildCtx, con) {
+				return false
+			}
+			isTrue, err := con.Value.ToBool(stmtCtx.TypeCtx())
+			return err == nil && isTrue == 1
 		}
-		if expression.MaybeOverOptimized4PlanCache(buildCtx, con) {
-			return false
-		}
-		isTrue, err := con.Value.ToBool(stmtCtx.TypeCtx())
-		return err == nil && isTrue == 1
+		return false
 	})
+}
+
+// IsNullWithNotNullColumn checks if the expression is `isnull()` or `not(isnull())` with a not null column.
+func IsNullWithNotNullColumn(ctx expression.EvalContext, expr expression.Expression) bool {
+	if e, ok := expr.(*expression.ScalarFunction); ok && e.FuncName.L == ast.IsNull {
+		if args := e.GetArgs(); len(args) == 1 {
+			if col, ok := args[0].(*expression.Column); ok && mysql.HasNotNullFlag(col.GetType(ctx).GetFlag()) {
+				return true
+			}
+		}
+	}
+	return false
 }
