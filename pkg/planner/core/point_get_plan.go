@@ -2168,7 +2168,8 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 		if defaultExpr != nil {
 			defaultExpr.Name = assign.Column
 		}
-		expr, err := rewriteAstExprWithPlanCtx(ctx, assign.Expr, plan.Schema(), plan.OutputNames(), false)
+		// FIXME(cbc): we will implement column-privilege for PointGet in next PR
+		expr, _, err := rewriteAstExprWithPlanCtx(ctx, assign.Expr, plan.Schema(), plan.OutputNames(), false)
 		if err != nil {
 			return nil, true
 		}

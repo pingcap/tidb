@@ -1401,8 +1401,7 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 	}
 
 	for _, r := range roleList {
-		tableRecord := p.matchTables(r.Username, r.Hostname, db, table)
-		if tableRecord != nil {
+		if tableRecord := p.matchTables(r.Username, r.Hostname, db, table); tableRecord != nil {
 			tablePriv |= tableRecord.TablePriv
 			if column != "" {
 				columnPriv |= tableRecord.TablePriv
