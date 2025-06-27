@@ -15,6 +15,7 @@
 package privileges
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -29,6 +30,7 @@ import (
 	"github.com/lestrrat-go/jwx/v2/jwt/openid"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -43,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -393,11 +396,16 @@ func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) 
 }
 
 // MatchUserResourceGroupName implements the Manager interface.
-func (p *UserPrivileges) MatchUserResourceGroupName(resourceGroupName string) (u string, success bool) {
-	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.matchResoureGroup(resourceGroupName)
-	if record != nil {
-		return record.User, true
+func (p *UserPrivileges) MatchUserResourceGroupName(exec sqlexec.RestrictedSQLExecutor, resourceGroupName string) (u string, success bool) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	sql := "SELECT user FROM mysql.user WHERE json_extract(user_attributes, '$.resource_group') = %? LIMIT 1"
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, resourceGroupName)
+	if err != nil {
+		logutil.BgLogger().Error("execute sql error", zap.String("sql", sql), zap.Error(err))
+		return "", false
+	}
+	if len(rows) > 0 {
+		return rows[0].GetString(0), true
 	}
 	return "", false
 }
@@ -930,8 +938,7 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 	return
 }
 
-// FetchColumnPrivileges implements privilege.Manager interface.
-func (p *UserPrivileges) FetchColumnPrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error) {
+func (p *UserPrivileges) fetchPrivilege(user *auth.UserIdentity, accessAll bool, fetchFunc func(users, hosts []string) [][]types.Datum) ([][]types.Datum, error) {
 	if SkipWithGrant {
 		return nil, ErrNonexistingGrant.GenWithStackByArgs("root", "%")
 	}
@@ -941,66 +948,48 @@ func (p *UserPrivileges) FetchColumnPrivileges(sctx sessionctx.Context, user *au
 	hosts := make([]string, 0, 1)
 
 	u, h := auth.GetUserAndHostName(user)
-	if u == "" || p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "columns_priv", "", mysql.SelectPriv) &&
-		p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv) {
-		for _, u := range mysqlPrivilege.user {
-			users = append(users, u.User)
-			hosts = append(hosts, u.Host)
-		}
+	if u == "" || accessAll {
+		mysqlPrivilege.user.Ascend(func(itm itemUser) bool {
+			for _, u := range itm.data {
+				users = append(users, u.User)
+				hosts = append(hosts, u.Host)
+			}
+			return true
+		})
 	} else {
 		users = append(users, u)
 		hosts = append(hosts, h)
 	}
 
-	return mysqlPrivilege.fetchColumnPrivileges(users, hosts), nil
+	return fetchFunc(users, hosts), nil
+}
+
+// FetchColumnPrivileges implements privilege.Manager interface.
+func (p *UserPrivileges) FetchColumnPrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error) {
+	return p.fetchPrivilege(
+		user,
+		p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "columns_priv", "", mysql.SelectPriv) &&
+			p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv),
+		p.Handle.Get().fetchColumnPrivileges,
+	)
 }
 
 // FetchTablePrivileges implements privilege.Manager interface.
 func (p *UserPrivileges) FetchTablePrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error) {
-	if SkipWithGrant {
-		return nil, ErrNonexistingGrant.GenWithStackByArgs("root", "%")
-	}
-
-	mysqlPrivilege := p.Handle.Get()
-	users := make([]string, 0, 1)
-	hosts := make([]string, 0, 1)
-
-	u, h := auth.GetUserAndHostName(user)
-	if u == "" || p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv) {
-		for _, u := range mysqlPrivilege.user {
-			users = append(users, u.User)
-			hosts = append(hosts, u.Host)
-		}
-	} else {
-		users = append(users, u)
-		hosts = append(hosts, h)
-	}
-
-	return mysqlPrivilege.fetchTablePrivileges(users, hosts), nil
+	return p.fetchPrivilege(
+		user,
+		p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv),
+		p.Handle.Get().fetchTablePrivileges,
+	)
 }
 
 // FetchSchemaPrivileges implements privilege.Manager interface.
 func (p *UserPrivileges) FetchSchemaPrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error) {
-	if SkipWithGrant {
-		return nil, ErrNonexistingGrant.GenWithStackByArgs("root", "%")
-	}
-
-	mysqlPrivilege := p.Handle.Get()
-	users := make([]string, 0, 1)
-	hosts := make([]string, 0, 1)
-
-	u, h := auth.GetUserAndHostName(user)
-	if u == "" || p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "db", "", mysql.SelectPriv) {
-		for _, u := range mysqlPrivilege.user {
-			users = append(users, u.User)
-			hosts = append(hosts, u.Host)
-		}
-	} else {
-		users = append(users, u)
-		hosts = append(hosts, h)
-	}
-
-	return mysqlPrivilege.fetchSchemaPrivileges(users, hosts), nil
+	return p.fetchPrivilege(
+		user,
+		p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "db", "", mysql.SelectPriv),
+		p.Handle.Get().fetchSchemaPrivileges,
+	)
 }
 
 // ActiveRoles implements privilege.Manager ActiveRoles interface.
