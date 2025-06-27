@@ -2183,14 +2183,10 @@ func IsConstNull(expr Expression) bool {
 
 // IsNullWithNotNullColumn checks if the expression is `isnull()` or `not(isnull())` with a not null column.
 func IsNullWithNotNullColumn(ctx EvalContext, expr Expression) bool {
-	if e, ok := expr.(*ScalarFunction); ok {
-		switch e.FuncName.L {
-		case ast.IsNull:
-			if len(e.GetArgs()) == 1 {
-				return mysql.HasNotNullFlag(expr.GetType(ctx).GetFlag())
-			}
-		default:
-			return false
+	if e, ok := expr.(*ScalarFunction); ok && e.FuncName.L == ast.IsNull {
+		if len(e.GetArgs()) == 1 {
+			return mysql.HasNotNullFlag(expr.GetType(ctx).GetFlag())
+		}
 	}
 	return false
 }
