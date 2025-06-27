@@ -18,11 +18,9 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
-	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -32,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -471,73 +468,6 @@ func (sch *importScheduler) updateCurrentTask(task *proto.Task) {
 // ModifyMeta implements scheduler.Extension interface.
 func (*importScheduler) ModifyMeta(oldMeta []byte, _ []proto.Modification) ([]byte, error) {
 	return oldMeta, nil
-}
-
-// nolint:deadcode
-func dropTableIndexes(ctx context.Context, handle storage.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
-	tblInfo := taskMeta.Plan.TableInfo
-
-	remainIndexes, dropIndexes := common.GetDropIndexInfos(tblInfo)
-	for _, idxInfo := range dropIndexes {
-		sqlStr := common.BuildDropIndexSQL(taskMeta.Plan.DBName, tblInfo.Name.L, idxInfo)
-		if err := executeSQL(ctx, handle, logger, sqlStr); err != nil {
-			if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
-				switch merr.Number {
-				case errno.ErrCantDropFieldOrKey, errno.ErrDropIndexNeededInForeignKey:
-					remainIndexes = append(remainIndexes, idxInfo)
-					logger.Warn("can't drop index, skip", zap.String("index", idxInfo.Name.O), zap.Error(err))
-					continue
-				}
-			}
-			return err
-		}
-	}
-	if len(remainIndexes) < len(tblInfo.Indices) {
-		taskMeta.Plan.TableInfo = taskMeta.Plan.TableInfo.Clone()
-		taskMeta.Plan.TableInfo.Indices = remainIndexes
-	}
-	return nil
-}
-
-// nolint:deadcode
-func createTableIndexes(ctx context.Context, executor storage.SessionExecutor, taskMeta *TaskMeta, logger *zap.Logger) error {
-	tableName := common.UniqueTable(taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L)
-	singleSQL, multiSQLs := common.BuildAddIndexSQL(tableName, taskMeta.Plan.TableInfo, taskMeta.Plan.DesiredTableInfo)
-	logger.Info("build add index sql", zap.String("singleSQL", singleSQL), zap.Strings("multiSQLs", multiSQLs))
-	if len(multiSQLs) == 0 {
-		return nil
-	}
-
-	err := executeSQL(ctx, executor, logger, singleSQL)
-	if err == nil {
-		return nil
-	}
-	if !common.IsDupKeyError(err) {
-		// TODO: refine err msg and error code according to spec.
-		return errors.Errorf("Failed to create index: %v, please execute the SQL manually, sql: %s", err, singleSQL)
-	}
-	if len(multiSQLs) == 1 {
-		return nil
-	}
-	logger.Warn("cannot add all indexes in one statement, try to add them one by one", zap.Strings("sqls", multiSQLs), zap.Error(err))
-
-	for i, ddl := range multiSQLs {
-		err := executeSQL(ctx, executor, logger, ddl)
-		if err != nil && !common.IsDupKeyError(err) {
-			// TODO: refine err msg and error code according to spec.
-			return errors.Errorf("Failed to create index: %v, please execute the SQLs manually, sqls: %s", err, strings.Join(multiSQLs[i:], ";"))
-		}
-	}
-	return nil
-}
-
-// TODO: return the result of sql.
-func executeSQL(ctx context.Context, executor storage.SessionExecutor, logger *zap.Logger, sql string, args ...any) (err error) {
-	logger.Info("execute sql", zap.String("sql", sql), zap.Any("args", args))
-	return executor.WithNewSession(func(se sessionctx.Context) error {
-		_, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql, args...)
-		return err
-	})
 }
 
 func updateMeta(task *proto.Task, taskMeta *TaskMeta) error {
