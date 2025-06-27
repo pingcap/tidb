@@ -643,14 +643,13 @@ func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context, tbls
 			for _, def := range pi.Definitions {
 				tableIDs = append(tableIDs, def.ID)
 			}
-		} else {
-			tableIDs = append(tableIDs, tbl.ID)
 		}
+		tableIDs = append(tableIDs, tbl.ID)
 	}
 	// Even for partitioned tables, we must update the stats cache for the main table itself.
 	// This is necessary because the global index length from the table also needs to be included.
 	// For further details, see: https://github.com/pingcap/tidb/issues/54173
-	err := cache.TableRowStatsCache.UpdateByID(sctx, tableIDs)
+	err := cache.TableRowStatsCache.UpdateByID(sctx, tableIDs...)
 	if err != nil {
 		logutil.BgLogger().Warn("cannot update stats cache for tables", zap.Error(err))
 	}

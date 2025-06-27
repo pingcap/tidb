@@ -62,7 +62,7 @@ func (c *StatsTableRowCache) GetColLength(id tableHistID) uint64 {
 }
 
 // UpdateByID tries to update the cache by table ID.
-func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, ids []int64) error {
+func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, ids ...int64) error {
 	tableRows, err := getRowCountTables(sctx, ids...)
 	if err != nil {
 		return err
