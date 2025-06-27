@@ -703,14 +703,13 @@ func (job *Job) AddSessionVars(name string, value any) {
 
 // GetSessionVarFromJob get a session variable stored DDL job.
 func GetSessionVarFromJob[T any](job *Job, name string) (T, bool) {
+	var zero T
 	value, ok := job.SessionVars[name]
 	if !ok {
-		var zero T
 		return zero, false
 	}
 	tValue, ok := value.(T)
 	if !ok {
-		var zero T
 		return zero, false
 	}
 	return tValue, true
