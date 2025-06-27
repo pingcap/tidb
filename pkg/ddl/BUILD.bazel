@@ -76,6 +76,7 @@ go_library(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl/copr",
         "//pkg/ddl/ingest",
         "//pkg/ddl/label",
@@ -315,6 +316,7 @@ go_test(
         "//pkg/expression",
         "//pkg/expression/exprstatic",
         "//pkg/infoschema",
+        "//pkg/infoschema/validatorapi",
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/lightning/backend/external",

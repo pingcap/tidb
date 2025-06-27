@@ -712,9 +712,9 @@ type DistributeTable struct {
 	baseSchemaProducer
 	TableInfo      *model.TableInfo
 	PartitionNames []ast.CIStr
-	Engine         ast.CIStr
-	Rule           ast.CIStr
-	Timeout        ast.CIStr
+	Engine         string
+	Rule           string
+	Timeout        string
 }
 
 // SplitRegion represents a split regions plan.
@@ -921,7 +921,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"TiDB_JSON"}
 	case e.Explore:
 		fieldNames = []string{"statement", "binding_hint", "plan", "plan_digest", "avg_latency", "exec_times", "avg_scan_rows",
-			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason"}
+			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason",
+			"explain_analyze", "binding"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -941,14 +942,11 @@ func (e *Explain) prepareSchema() error {
 
 func (e *Explain) renderResultForExplore() error {
 	bindingHandle := domain.GetDomain(e.SCtx()).BindingHandle()
-	charset, collation := e.SCtx().GetSessionVars().GetCharsetInfo()
-	currentDB := e.SCtx().GetSessionVars().CurrentDB
-
 	sqlOrDigest := e.SQLDigest
 	if sqlOrDigest == "" {
 		sqlOrDigest = e.ExecStmt.Text()
 	}
-	plans, err := bindingHandle.ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation)
+	plans, err := bindingHandle.ExplorePlansForSQL(e.SCtx(), sqlOrDigest, e.Analyze)
 	if err != nil {
 		return err
 	}
@@ -970,7 +968,9 @@ func (e *Explain) renderResultForExplore() error {
 			strconv.FormatFloat(p.LatencyPerReturnRow, 'f', -1, 64),
 			strconv.FormatFloat(p.ScanRowsPerReturnRow, 'f', -1, 64),
 			p.Recommend,
-			p.Reason})
+			p.Reason,
+			fmt.Sprintf("EXPLAIN ANALYZE '%v'", p.PlanDigest),
+			fmt.Sprintf("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST '%v'", p.PlanDigest)})
 	}
 	return nil
 }

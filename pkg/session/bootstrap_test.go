@@ -177,6 +177,8 @@ func TestBootstrapWithError(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, dom.Start(ddl.Bootstrap))
 		se.dom = dom
+		se.infoCache = dom.InfoCache()
+		se.schemaValidator = dom.GetSchemaValidator()
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
 		require.NoError(t, err)
@@ -2247,12 +2249,13 @@ func TestTiDBUpgradeToVer211(t *testing.T) {
 	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err = getBootstrapVersion(seV210)
+
+	newSe := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(newSe)
 	require.NoError(t, err)
 	require.Less(t, int64(ver210), ver)
 
-	seV210.(*session).dom = dom
-	r := MustExecToRecodeSet(t, seV210, "select count(summary) from mysql.tidb_background_subtask_history;")
+	r := MustExecToRecodeSet(t, newSe, "select count(summary) from mysql.tidb_background_subtask_history;")
 	req := r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
@@ -2321,6 +2324,20 @@ func TestTiDBUpgradeToVer212(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 	// the columns are changed automatically
 	MustExec(t, seCurVer, "select sample_sql, start_time, plan_digest from mysql.tidb_runaway_queries")
+}
+
+func TestIssue61890(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	s1 := CreateSessionAndSetID(t, store)
+	MustExec(t, s1, "drop table mysql.global_variables")
+	MustExec(t, s1, "create table mysql.global_variables(`VARIABLE_NAME` varchar(64) NOT NULL PRIMARY KEY clustered, `VARIABLE_VALUE` varchar(16383) DEFAULT NULL)")
+
+	s2 := CreateSessionAndSetID(t, store)
+	initGlobalVariableIfNotExists(s2, vardef.TiDBEnableINLJoinInnerMultiPattern, vardef.Off)
+
+	dom.Close()
 }
 
 func TestIndexJoinMultiPatternByUpgrade650To840(t *testing.T) {
@@ -2500,50 +2517,6 @@ func TestTiDBUpgradeToVer240(t *testing.T) {
 	require.Equal(t, 1, chk.NumRows())
 	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_state")
 	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_partition_state")
-}
-
-// testExampleAFunc is a example func for TestGetFuncName
-func testExampleAFunc(s sessiontypes.Session, i int64) {}
-
-// testExampleBFunc is a example func for TestGetFuncName
-func testExampleBFunc(s sessiontypes.Session, i int64) {}
-
-func TestGetFuncName(t *testing.T) {
-	// Test case 1: Pass a valid function
-	t.Run("Valid function", func(t *testing.T) {
-		name, err := getFunctionName(testExampleAFunc)
-		if err != nil {
-			t.Fatalf("Expected no error, got: %v", err)
-		}
-		if name != "testExampleAFunc" {
-			t.Errorf("Expected function name 'testExampleAFunc', got: %s", name)
-		}
-	})
-
-	// Test case 2: Pass another valid function
-	t.Run("Another valid function", func(t *testing.T) {
-		name, err := getFunctionName(testExampleBFunc)
-		if err != nil {
-			t.Fatalf("Expected no error, got: %v", err)
-		}
-		if name != "testExampleBFunc" {
-			t.Errorf("Expected function name 'testExampleBFunc', got: %s", name)
-		}
-	})
-
-	// Test case 3: Pass nil as the function
-	t.Run("Nil function", func(t *testing.T) {
-		name, err := getFunctionName(nil)
-		if err == nil {
-			t.Fatalf("Expected an error, got nil")
-		}
-		if name != "" {
-			t.Errorf("Expected empty function name, got: %s", name)
-		}
-		if err.Error() != "function is nil" {
-			t.Errorf("Expected error 'function is nil', got: %v", err)
-		}
-	})
 }
 
 func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {

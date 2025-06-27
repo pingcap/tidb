@@ -44,6 +44,7 @@ go_library(
         "//br/pkg/version",
         "//pkg/ddl/util",
         "//pkg/domain",
+        "//pkg/infoschema/issyncer",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",

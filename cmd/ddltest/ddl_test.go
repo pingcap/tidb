@@ -1163,5 +1163,5 @@ func addEnvPath(newPath string) {
 }
 
 func init() {
-	_ = store.Register(config.StoreTypeTiKV, tidbdriver.TiKVDriver{})
+	_ = store.Register(config.StoreTypeTiKV, &tidbdriver.TiKVDriver{})
 }

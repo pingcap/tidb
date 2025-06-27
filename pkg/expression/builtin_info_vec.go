@@ -425,7 +425,7 @@ func (b *builtinTiDBDecodeKeySig) vecEvalString(ctx EvalContext, input *chunk.Ch
 	}
 	result.ReserveString(n)
 
-	is, err := b.GetDomainInfoSchema(ctx)
+	is, err := b.GetLatestInfoSchema(ctx)
 	if err != nil {
 		return err
 	}

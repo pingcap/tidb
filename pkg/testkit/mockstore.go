@@ -24,24 +24,30 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/resourcemanager"
 	"github.com/pingcap/tidb/pkg/session"
+	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
@@ -271,6 +277,41 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	})
 	store = schematracker.UnwrapStorage(store)
 	_ = store.(helper.Storage)
+	return store, dom
+}
+
+var keyspaceIDAlloc atomic.Int32
+
+// CreateNextgenMockStoreAndDomain return a new mock kv.Storage and *domain.Domain
+// for nextgen.
+func CreateNextgenMockStoreAndDomain(t testing.TB, ks string, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
+	intest.Assert(kerneltype.IsNextGen(), "CreateNextgenMockStoreAndDomain should only be used in nextgen kernel tests")
+
+	bak := *config.GetGlobalConfig()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(&bak)
+	})
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = ks
+	})
+
+	sysKSOpt := mockstore.WithKeyspaceMeta(&keyspacepb.KeyspaceMeta{
+		Id:   uint32(0xFFFFFF) - 1,
+		Name: keyspace.System,
+	})
+	ksOpt := sysKSOpt
+	if ks != keyspace.System {
+		ksOpt = mockstore.WithKeyspaceMeta(&keyspacepb.KeyspaceMeta{
+			Id:   uint32(keyspaceIDAlloc.Add(1)),
+			Name: ks,
+		})
+	}
+
+	ksOpts := append(opts, ksOpt)
+	store, dom := CreateMockStoreAndDomain(t, ksOpts...)
+	if ks == keyspace.System {
+		kvstore.SetSystemStorage(store)
+	}
 	return store, dom
 }
 

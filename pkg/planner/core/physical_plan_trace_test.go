@@ -54,10 +54,10 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		{
 			sql: "select max(b) from t",
 			physicalList: []string{
-				"IndexFullScan_19",
-				"Limit_20",
-				"IndexReader_21",
-				"Limit_14",
+				"IndexFullScan_23",
+				"Limit_24",
+				"IndexReader_25",
+				"Limit_15",
 				"StreamAgg_10",
 				"Projection_8",
 			},
@@ -78,6 +78,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 		plan, err := builder.Build(context.TODO(), nodeW)
 		require.NoError(t, err)
+		plan.SCtx().GetSessionVars().StmtCtx.OriginalSQL = testcase.sql
 		_, _, err = core.DoOptimize(context.TODO(), sctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
 		require.NoError(t, err)
 		otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical

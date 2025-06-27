@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package domain
+package isvalidator
 
 import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -39,7 +40,7 @@ func subTestSchemaValidatorGeneral(t *testing.T) {
 	var wg util.WaitGroupWrapper
 	wg.Run(func() { serverFunc(leaseGrantCh, exit) })
 
-	validator := NewSchemaValidator(lease, nil).(*schemaValidator)
+	validator := New(lease).(*validator)
 	require.True(t, validator.IsStarted())
 
 	for range 3 {
@@ -56,7 +57,7 @@ func subTestSchemaValidatorGeneral(t *testing.T) {
 		item.schemaVer,
 		&transaction.RelatedSchemaChange{PhyTblIDS: []int64{10}, ActionTypes: []uint64{10}})
 	_, valid := validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10}, true)
-	require.Equal(t, ResultSucc, valid)
+	require.Equal(t, validatorapi.ResultSucc, valid)
 
 	// Stop the validator, validator's items value is nil.
 	validator.Stop()
@@ -64,23 +65,23 @@ func subTestSchemaValidatorGeneral(t *testing.T) {
 	isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, []int64{10})
 	require.True(t, isTablesChanged)
 	_, valid = validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10}, true)
-	require.Equal(t, ResultUnknown, valid)
-	validator.Restart()
+	require.Equal(t, validatorapi.ResultUnknown, valid)
+	validator.Restart(validator.restartSchemaVer)
 
 	// Increase the current time by 2 leases, check schema is invalid.
 	after2LeaseTime := time.Now().Add(2 * lease)
 	ts := uint64(after2LeaseTime.UnixNano()) // Make sure that ts has timed out a lease.
 	_, valid = validator.Check(ts, item.schemaVer, []int64{10}, true)
-	require.Equalf(t, ResultUnknown, valid, "validator latest schema ver %v, time %v, item schema ver %v, ts %v", validator.latestSchemaVer, validator.latestSchemaExpire, 0, oracle.GetTimeFromTS(ts))
+	require.Equalf(t, validatorapi.ResultUnknown, valid, "validator latest schema ver %v, time %v, item schema ver %v, ts %v", validator.latestSchemaVer, validator.latestSchemaExpire, 0, oracle.GetTimeFromTS(ts))
 
 	// Make sure newItem's version is greater than item.schema.
 	newItem := getGreaterVersionItem(t, leaseGrantCh, item.schemaVer)
 	currVer := newItem.schemaVer
 	validator.Update(newItem.leaseGrantTS, newItem.oldVer, currVer, nil)
 	_, valid = validator.Check(ts, item.schemaVer, nil, true)
-	require.Equalf(t, ResultFail, valid, "currVer %d, newItem %v", currVer, item)
+	require.Equalf(t, validatorapi.ResultFail, valid, "currVer %d, newItem %v", currVer, item)
 	_, valid = validator.Check(ts, item.schemaVer, []int64{0}, true)
-	require.Equalf(t, ResultFail, valid, "currVer %d, newItem %v", currVer, item)
+	require.Equalf(t, validatorapi.ResultFail, valid, "currVer %d, newItem %v", currVer, item)
 
 	// Check the latest schema version must changed.
 	require.Less(t, item.schemaVer, validator.latestSchemaVer)
@@ -102,7 +103,7 @@ func subTestSchemaValidatorGeneral(t *testing.T) {
 	// All schema versions is expired.
 	ts = uint64(after2LeaseTime.Add(2 * lease).UnixNano())
 	_, valid = validator.Check(ts, newItem.schemaVer, nil, true)
-	require.Equal(t, ResultUnknown, valid, "schemaVer %v, validator %#v", newItem.schemaVer, validator)
+	require.Equal(t, validatorapi.ResultUnknown, valid, "schemaVer %v, validator %#v", newItem.schemaVer, validator)
 
 	close(exit)
 	wg.Wait()
@@ -114,7 +115,7 @@ func subTestEnqueue(t *testing.T) {
 	originalCnt := vardef.GetMaxDeltaSchemaCount()
 	defer vardef.SetMaxDeltaSchemaCount(originalCnt)
 
-	validator := NewSchemaValidator(lease, nil).(*schemaValidator)
+	validator := New(lease).(*validator)
 	require.True(t, validator.IsStarted())
 
 	// maxCnt is 0.
@@ -174,7 +175,7 @@ func subTestEnqueueActionType(t *testing.T) {
 	originalCnt := vardef.GetMaxDeltaSchemaCount()
 	defer vardef.SetMaxDeltaSchemaCount(originalCnt)
 
-	validator := NewSchemaValidator(lease, nil).(*schemaValidator)
+	validator := New(lease).(*validator)
 	require.True(t, validator.IsStarted())
 
 	// maxCnt is 0.
