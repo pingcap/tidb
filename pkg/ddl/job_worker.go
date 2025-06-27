@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -149,46 +151,6 @@ func (c *jobContext) notifyDone() {
 		// create table is enabled.
 		close(c.notifyCh)
 	}
-}
-
-// countForPanic records the error count for DDL job.
-func countForPanic(jobCtx *jobContext, job *model.Job) {
-	// If run DDL job panic, just cancel the DDL jobs.
-	if job.State == model.JobStateRollingback {
-		job.State = model.JobStateCancelled
-	} else {
-		job.State = model.JobStateCancelling
-	}
-	job.ErrorCount++
-
-	errorCount := vardef.GetDDLErrorCountLimit()
-	if job.ErrorCount > errorCount {
-		msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCount)
-		jobCtx.logger.Warn(msg)
-		job.Error = toTError(errors.New(msg))
-		job.State = model.JobStateCancelled
-	}
-}
-
-// countForError records the error count for DDL job.
-func countForError(jobCtx *jobContext, job *model.Job, err error) error {
-	job.Error = toTError(err)
-	job.ErrorCount++
-
-	logger := jobCtx.logger
-	// If job is cancelled, we shouldn't return an error and shouldn't load DDL variables.
-	if job.State == model.JobStateCancelled {
-		logger.Info("DDL job is cancelled normally", zap.Error(err))
-		return nil
-	}
-	logger.Warn("run DDL job error", zap.Error(err))
-
-	// Check error limit to avoid falling into an infinite loop.
-	if job.ErrorCount > vardef.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && job.IsRollbackable() {
-		logger.Warn("DDL job error count exceed the limit, cancelling it now", zap.Int64("errorCountLimit", vardef.GetDDLErrorCountLimit()))
-		job.State = model.JobStateCancelling
-	}
-	return err
 }
 
 type workerType byte
@@ -753,6 +715,56 @@ func chooseLeaseTime(t, maxv time.Duration) time.Duration {
 	return t
 }
 
+// countForPanic records the error count for DDL job.
+func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
+	// If run DDL job panic, just cancel the DDL jobs.
+	if job.State == model.JobStateRollingback {
+		job.State = model.JobStateCancelled
+	} else {
+		job.State = model.JobStateCancelling
+	}
+	job.ErrorCount++
+
+	logger := jobCtx.logger
+	// Load global DDL variables.
+	if err1 := w.loadGlobalVars(vardef.TiDBDDLErrorCountLimit); err1 != nil {
+		logger.Error("load DDL global variable failed", zap.Error(err1))
+	}
+	errorCount := vardef.GetDDLErrorCountLimit()
+
+	if job.ErrorCount > errorCount {
+		msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCount)
+		logger.Warn(msg)
+		job.Error = toTError(errors.New(msg))
+		job.State = model.JobStateCancelled
+	}
+}
+
+// countForError records the error count for DDL job.
+func (w *worker) countForError(jobCtx *jobContext, job *model.Job, err error) error {
+	job.Error = toTError(err)
+	job.ErrorCount++
+
+	logger := jobCtx.logger
+	// If job is cancelled, we shouldn't return an error and shouldn't load DDL variables.
+	if job.State == model.JobStateCancelled {
+		logger.Info("DDL job is cancelled normally", zap.Error(err))
+		return nil
+	}
+	logger.Warn("run DDL job error", zap.Error(err))
+
+	// Load global DDL variables.
+	if err1 := w.loadGlobalVars(vardef.TiDBDDLErrorCountLimit); err1 != nil {
+		logger.Error("load DDL global variable failed", zap.Error(err1))
+	}
+	// Check error limit to avoid falling into an infinite loop.
+	if job.ErrorCount > vardef.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && job.IsRollbackable() {
+		logger.Warn("DDL job error count exceed the limit, cancelling it now", zap.Int64("errorCountLimit", vardef.GetDDLErrorCountLimit()))
+		job.State = model.JobStateCancelling
+	}
+	return err
+}
+
 func (*worker) processJobPausingRequest(jobCtx *jobContext, job *model.Job) (isRunnable bool, err error) {
 	if job.IsPaused() {
 		jobCtx.logger.Debug("paused DDL job ", zap.String("job", job.String()))
@@ -795,7 +807,7 @@ func (w *worker) runOneJobStep(
 ) (ver int64, updateRawArgs bool, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runOneJobStep", w),
 		func() {
-			countForPanic(jobCtx, job)
+			w.countForPanic(jobCtx, job)
 		}, false)
 
 	// Mock for run ddl job panic.
@@ -1054,9 +1066,22 @@ func (w *worker) runOneJobStep(
 
 	// Save errors in job if any, so that others can know errors happened.
 	if err != nil {
-		err = countForError(jobCtx, job, err)
+		err = w.countForError(jobCtx, job, err)
 	}
 	return ver, updateRawArgs, err
+}
+
+// loadGlobalVars loads global variables from system table
+// and store in vardef if possible.
+func (w *worker) loadGlobalVars(varName ...string) error {
+	// Get sessionctx from context resource pool.
+	var ctx sessionctx.Context
+	ctx, err := w.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.Put(ctx)
+	return util.LoadGlobalVars(ctx, varName...)
 }
 
 func toTError(err error) *terror.Error {

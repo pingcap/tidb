@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -182,6 +183,35 @@ func UpdateDeleteRange(sctx sessionctx.Context, dr DelRangeTask, newStartKey, ol
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
 	return errors.Trace(err)
+}
+
+// LoadGlobalVars loads global variable from mysql.global_variables.
+func LoadGlobalVars(sctx sessionctx.Context, varNames ...string) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	e := sctx.GetRestrictedSQLExecutor()
+	var buf strings.Builder
+	buf.WriteString(loadGlobalVarsSQL)
+	paramNames := make([]any, 0, len(varNames))
+	for i, name := range varNames {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("%?")
+		paramNames = append(paramNames, name)
+	}
+	buf.WriteString(")")
+	rows, _, err := e.ExecRestrictedSQL(ctx, nil, buf.String(), paramNames...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, row := range rows {
+		varName := row.GetString(0)
+		varValue := row.GetString(1)
+		if err = sctx.GetSessionVars().SetSystemVarWithoutValidation(varName, varValue); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetTimeZone gets the session location's zone name and offset.
