@@ -244,6 +244,12 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromPlanCache(ctx, sctx, true)
 		case infoschema.TableKeyspaceMeta:
 			err = e.setDataForKeyspaceMeta(sctx)
+		case infoschema.TableColumnPrivileges:
+			err = e.setDataFromColumnPrivileges(sctx)
+		case infoschema.TableTablePrivileges:
+			err = e.setDataFromTablePrivileges(sctx)
+		case infoschema.TableSchemaPrivileges:
+			err = e.setDataFromSchemaPrivileges(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -4149,6 +4155,21 @@ func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx session
 	return nil
 }
 
+func (e *memtableRetriever) setDataFromColumnPrivileges(sctx sessionctx.Context) error {
+	user := sctx.GetSessionVars().User
+	pm := privilege.GetPrivilegeManager(sctx)
+	if pm == nil {
+		return nil
+	}
+	rows, err := pm.FetchColumnPrivileges(sctx, user)
+	if err != nil {
+		return err
+	}
+
+	e.rows = rows
+	return nil
+}
+
 func (e *memtableRetriever) setDataForKeyspaceMeta(sctx sessionctx.Context) (err error) {
 	meta := sctx.GetStore().GetCodec().GetKeyspaceMeta()
 	var (
@@ -4184,6 +4205,36 @@ func (e *memtableRetriever) setDataForKeyspaceMeta(sctx sessionctx.Context) (err
 	row[2] = types.NewJSONDatum(bj)
 	e.rows = [][]types.Datum{row}
 	return
+}
+
+func (e *memtableRetriever) setDataFromTablePrivileges(sctx sessionctx.Context) error {
+	user := sctx.GetSessionVars().User
+	pm := privilege.GetPrivilegeManager(sctx)
+	if pm == nil {
+		return nil
+	}
+	rows, err := pm.FetchTablePrivileges(sctx, user)
+	if err != nil {
+		return err
+	}
+
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromSchemaPrivileges(sctx sessionctx.Context) error {
+	user := sctx.GetSessionVars().User
+	pm := privilege.GetPrivilegeManager(sctx)
+	if pm == nil {
+		return nil
+	}
+	rows, err := pm.FetchSchemaPrivileges(sctx, user)
+	if err != nil {
+		return err
+	}
+
+	e.rows = rows
+	return nil
 }
 
 func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string, err error) {
