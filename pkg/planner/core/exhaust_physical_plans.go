@@ -587,7 +587,7 @@ func constructIndexJoinStatic(
 	outerRowCount := p.Children()[outerIdx].StatsInfo().RowCount
 	estimatedRowCount := p.StatsInfo().RowCount
 	if (prop.ExpectedCnt < estimatedRowCount) ||
-		(orderRatio > 0 && outerRowCount > min(prop.ExpectedCnt, estimatedRowCount) && prop.ExpectedCnt < max(outerRowCount, estimatedRowCount)) {
+		(orderRatio > 0 && outerRowCount > estimatedRowCount && prop.ExpectedCnt < outerRowCount && estimatedRowCount > 0) {
 		// Apply the orderRatio to recognize that a large outer table scan may
 		// read additional rows before the inner table reaches the limit values
 		rowsToMeetFirst := max(0.0, (outerRowCount-estimatedRowCount)*orderRatio)
