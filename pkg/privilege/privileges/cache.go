@@ -1686,6 +1686,148 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	return gs
 }
 
+func (p *MySQLPrivilege) fetchColumnPrivileges(users, hosts []string) (rows [][]types.Datum) {
+	rows = make([][]types.Datum, 0, len(users))
+	// We use a 2-level map to record if a `username`@`hostname` is grantable on table/column level
+	// grantableUser records: username -> hostname -> grantable
+	grantableUser := make(map[string]map[string]struct{}, 4)
+	isGrantable := func(username, hostname string) string {
+		if hostNames, exists := grantableUser[username]; exists {
+			if _, exists = hostNames[hostname]; exists {
+				return "YES"
+			}
+		}
+		return "NO"
+	}
+
+	for i := range users {
+		userName, hostName := users[i], hosts[i]
+		columnsPrivRecords, exists := p.ColumnsPrivMap[userName]
+		if !exists {
+			continue
+		}
+
+		// need to get "grantable" information from mysql.tables_priv
+		if _, exists := grantableUser[userName]; !exists {
+			grantableUser[userName] = make(map[string]struct{}, 1)
+			if tablesPrivRecords, exists := p.TablesPrivMap[userName]; exists {
+				for _, tablesPrivRecord := range tablesPrivRecords {
+					if tablesPrivRecord.TablePriv&mysql.GrantPriv > 0 {
+						grantableUser[tablesPrivRecord.User][tablesPrivRecord.Host] = struct{}{}
+					}
+				}
+			}
+		}
+
+		for _, columnsPrivRecord := range columnsPrivRecords {
+			if columnsPrivRecord.Host != hostName {
+				continue
+			}
+
+			for _, columnPriv := range mysql.AllColumnPrivs {
+				if columnsPrivRecord.ColumnPriv&columnPriv > 0 {
+					rows = append(rows, types.MakeDatums(
+						fmt.Sprintf("'%s'@'%s'", userName, hostName),
+						"def",
+						columnsPrivRecord.DB,
+						columnsPrivRecord.TableName,
+						columnsPrivRecord.ColumnName,
+						strings.ToUpper(columnPriv.String()),
+						isGrantable(userName, hostName),
+					))
+				}
+			}
+		}
+	}
+
+	return rows
+}
+
+func (p *MySQLPrivilege) fetchTablePrivileges(users, hosts []string) (rows [][]types.Datum) {
+	rows = make([][]types.Datum, 0, len(users))
+	for i := range users {
+		userName, hostName := users[i], hosts[i]
+		tablesPrivRecords, exists := p.TablesPrivMap[userName]
+		if !exists {
+			continue
+		}
+
+		for _, tablesPrivRecord := range tablesPrivRecords {
+			// If a user only has column-level privilege but not table-level, there still exists a record
+			// in mysql.tables_priv, with an empty Table_priv field.
+			if tablesPrivRecord.Host != hostName || tablesPrivRecord.TablePriv == 0 {
+				continue
+			}
+			// GrantPriv only shows in IS_GRANTABLE, not in PRIVILEGE_TYPE,
+			// so we need to remove GrantPriv.
+			curTablePriv := tablesPrivRecord.TablePriv
+			isGrantable := "NO"
+			if curTablePriv&mysql.GrantPriv > 0 {
+				isGrantable = "YES"
+			}
+			curTablePriv &= ^mysql.GrantPriv
+			if curTablePriv == 0 {
+				continue
+			}
+			for _, tablePriv := range mysql.AllTablePrivs {
+				if curTablePriv&tablePriv > 0 {
+					rows = append(rows, types.MakeDatums(
+						fmt.Sprintf("'%s'@'%s'", userName, hostName),
+						"def",
+						tablesPrivRecord.DB,
+						tablesPrivRecord.TableName,
+						strings.ToUpper(tablePriv.String()),
+						isGrantable,
+					))
+				}
+			}
+		}
+	}
+
+	return rows
+}
+
+func (p *MySQLPrivilege) fetchSchemaPrivileges(users, hosts []string) (rows [][]types.Datum) {
+	rows = make([][]types.Datum, 0, len(users))
+	for i := range users {
+		userName, hostName := users[i], hosts[i]
+		dbRecords, exists := p.DBMap[userName]
+		if !exists {
+			continue
+		}
+
+		for _, dbRecord := range dbRecords {
+			if dbRecord.Host != hostName || dbRecord.Privileges == 0 {
+				continue
+			}
+			// GrantPriv only shows in IS_GRANTABLE, not in PRIVILEGE_TYPE,
+			// so we need to remove GrantPriv.
+			curDBPriv := dbRecord.Privileges
+			isGrantable := "NO"
+			if curDBPriv&mysql.GrantPriv > 0 {
+				isGrantable = "YES"
+			}
+			curDBPriv &= ^mysql.GrantPriv
+			if curDBPriv == 0 {
+				continue
+			}
+			for _, dbPriv := range mysql.AllDBPrivs {
+				if curDBPriv&dbPriv > 0 {
+					rows = append(rows, types.MakeDatums(
+						fmt.Sprintf("'%s'@'%s'", userName, hostName),
+						"def",
+						dbRecord.DB,
+						strings.ToUpper(dbPriv.String()),
+						isGrantable,
+					))
+				}
+			}
+		}
+	}
+
+	return rows
+}
+
 type columnStr = string
 type columnStrs = []columnStr
 type privOnColumns = map[mysql.PrivilegeType]columnStrs
