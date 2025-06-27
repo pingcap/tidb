@@ -223,9 +223,23 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(
 	childTasks := make([]task, 0, len(p.children))
 	childCnts := make([]int64, len(p.children))
 	cntPlan = 0
+<<<<<<< HEAD
 	iteration := p.iteratePhysicalPlan
 	if seq, ok := p.self.(*LogicalSequence); ok {
 		iteration = seq.iterateChildPlan
+=======
+	iteration := iteratePhysicalPlan4BaseLogical
+	if _, ok := p.Self().(*logicalop.LogicalSequence); ok {
+		iteration = iterateChildPlan4LogicalSequence
+	}
+	var fd *funcdep.FDSet
+	if addEnforcer && len(physicalPlans) != 0 {
+		switch logicalPlan := p.Self().(type) {
+		case *logicalop.LogicalJoin, *logicalop.LogicalAggregation:
+			// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
+			fd = logicalPlan.ExtractFD()
+		}
+>>>>>>> 35c1e21115c (planner,expression: fix wrong copy args to avoid breaking origin expression when to EvaluateExprWithNull (#61630))
 	}
 
 	for _, pp := range physicalPlans {
