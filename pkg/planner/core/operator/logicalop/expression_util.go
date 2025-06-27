@@ -25,8 +25,9 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 		return nil
 	}
 	exprCtx := p.SCtx().GetExprCtx()
+	evalCtx := exprCtx.GetEvalCtx()
 	for _, cond := range conds {
-		if expression.IsConstNull(cond) {
+		if expression.IsConstNull(cond) || expression.IsNullWithNotNullColumn(evalCtx, cond) {
 			if expression.MaybeOverOptimized4PlanCache(exprCtx, conds...) {
 				return nil
 			}

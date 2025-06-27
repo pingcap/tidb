@@ -2180,3 +2180,20 @@ func IsConstNull(expr Expression) bool {
 	}
 	return false
 }
+
+// IsNullWithNotNullColumn checks if the expression is `isnull()` or `not(isnull())` with a not null column.
+func IsNullWithNotNullColumn(ctx EvalContext, expr Expression) bool {
+	if e, ok := expr.(*ScalarFunction); ok {
+		switch e.FuncName.L {
+		case ast.IsNull:
+			if len(e.GetArgs()) == 1 {
+				return mysql.HasNotNullFlag(expr.GetType(ctx).GetFlag())
+			}
+		case ast.UnaryNot:
+			if len(e.GetArgs()) == 1 {
+				return IsNullWithNotNullColumn(ctx, e.GetArgs()[0])
+			}
+		}
+	}
+	return false
+}
