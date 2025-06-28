@@ -4,6 +4,7 @@ go_library(
     name = "physicalop",
     srcs = [
         "base_physical_plan.go",
+        "nominal_sort.go",
         "physical_schema_producer.go",
         "physical_sort.go",
     ],

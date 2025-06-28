@@ -63,6 +63,8 @@ func init() {
 	utilfuncp.Attach2Task4PhysicalSort = attach2Task4PhysicalSort
 	utilfuncp.GetPlanCostVer14PhysicalSort = getPlanCostVer14PhysicalSort
 	utilfuncp.GetPlanCostVer24PhysicalSort = getPlanCostVer24PhysicalSort
+	// for nominal sort.
+	utilfuncp.Attach2Task4NominalSort = attach2Task4NominalSort
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.IsSingleScan = isSingleScan

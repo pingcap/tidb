@@ -65,7 +65,7 @@ var (
 	_ base.PhysicalPlan = &PhysicalTableDual{}
 	_ base.PhysicalPlan = &PhysicalUnionAll{}
 	_ base.PhysicalPlan = &physicalop.PhysicalSort{}
-	_ base.PhysicalPlan = &NominalSort{}
+	_ base.PhysicalPlan = &physicalop.NominalSort{}
 	_ base.PhysicalPlan = &PhysicalLock{}
 	_ base.PhysicalPlan = &PhysicalLimit{}
 	_ base.PhysicalPlan = &PhysicalIndexScan{}
@@ -2314,32 +2314,6 @@ func (p *PhysicalStreamAgg) MemoryUsage() (sum int64) {
 	}
 
 	return p.basePhysicalAgg.MemoryUsage()
-}
-
-// NominalSort asks sort properties for its child. It is a fake operator that will not
-// appear in final physical operator tree. It will be eliminated or converted to Projection.
-type NominalSort struct {
-	physicalop.BasePhysicalPlan
-
-	// These two fields are used to switch ScalarFunctions to Constants. For these
-	// NominalSorts, we need to converted to Projections check if the ScalarFunctions
-	// are out of bounds. (issue #11653)
-	ByItems    []*util.ByItems
-	OnlyColumn bool
-}
-
-// MemoryUsage return the memory usage of NominalSort
-func (ns *NominalSort) MemoryUsage() (sum int64) {
-	if ns == nil {
-		return
-	}
-
-	sum = ns.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(ns.ByItems))*size.SizeOfPointer +
-		size.SizeOfBool
-	for _, byItem := range ns.ByItems {
-		sum += byItem.MemoryUsage()
-	}
-	return
 }
 
 // PhysicalUnionScan represents a union scan operator.

@@ -186,6 +186,9 @@ var ToPB4PhysicalSort func(pp base.PhysicalPlan, ctx *base.BuildPBContext,
 // ResolveIndicesForSort will be called by PhysicalSort in physicalOp pkg.
 var ResolveIndicesForSort func(p base.PhysicalPlan) (err error)
 
+// Attach2Task4NominalSort will be called by NominalSort in physicalOp pkg.
+var Attach2Task4NominalSort func(base.PhysicalPlan, ...base.Task) base.Task
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
