@@ -41,6 +41,8 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 		tk.MustExec("insert into t1(a,b,c,t) select a,b,c,t from t1;")
 	}
 	tk.MustExec("analyze table t1 all columns;")
+	h := dom.StatsHandle()
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// Create virtual `tiflash` replica info.
