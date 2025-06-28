@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -939,8 +941,9 @@ func (p *PhysicalLimit) sinkIntoIndexMerge(t base.Task) bool {
 	return true
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalSort) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalSort is basic logic of Attach2Task which implements PhysicalPlan interface.
+func attach2Task4PhysicalSort(p base.PhysicalPlan, tasks ...base.Task) base.Task {
+	intest.Assert(p.(*physicalop.PhysicalSort) != nil)
 	t := tasks[0].Copy()
 	t = attachPlan2Task(p, t)
 	return t

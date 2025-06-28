@@ -64,7 +64,7 @@ var (
 	_ base.PhysicalPlan = &PhysicalMaxOneRow{}
 	_ base.PhysicalPlan = &PhysicalTableDual{}
 	_ base.PhysicalPlan = &PhysicalUnionAll{}
-	_ base.PhysicalPlan = &PhysicalSort{}
+	_ base.PhysicalPlan = &physicalop.PhysicalSort{}
 	_ base.PhysicalPlan = &NominalSort{}
 	_ base.PhysicalPlan = &PhysicalLock{}
 	_ base.PhysicalPlan = &PhysicalLimit{}
@@ -2314,55 +2314,6 @@ func (p *PhysicalStreamAgg) MemoryUsage() (sum int64) {
 	}
 
 	return p.basePhysicalAgg.MemoryUsage()
-}
-
-// PhysicalSort is the physical operator of sort, which implements a memory sort.
-type PhysicalSort struct {
-	physicalop.BasePhysicalPlan
-
-	ByItems []*util.ByItems
-	// whether this operator only need to sort the data of one partition.
-	// it is true only if it is used to sort the sharded data of the window function.
-	IsPartialSort bool
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (ls *PhysicalSort) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalSort)
-	cloned.SetSCtx(newCtx)
-	cloned.IsPartialSort = ls.IsPartialSort
-	base, err := ls.BasePhysicalPlan.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.BasePhysicalPlan = *base
-	for _, it := range ls.ByItems {
-		cloned.ByItems = append(cloned.ByItems, it.Clone())
-	}
-	return cloned, nil
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (ls *PhysicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(ls.ByItems))
-	for _, item := range ls.ByItems {
-		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
-	}
-	return corCols
-}
-
-// MemoryUsage return the memory usage of PhysicalSort
-func (ls *PhysicalSort) MemoryUsage() (sum int64) {
-	if ls == nil {
-		return
-	}
-
-	sum = ls.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(ls.ByItems))*size.SizeOfPointer +
-		size.SizeOfBool
-	for _, byItem := range ls.ByItems {
-		sum += byItem.MemoryUsage()
-	}
-	return
 }
 
 // NominalSort asks sort properties for its child. It is a fake operator that will not

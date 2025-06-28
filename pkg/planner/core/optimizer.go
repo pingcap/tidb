@@ -849,7 +849,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 		// which will break data partition.
 		helper.updateTarget(window, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalSort:
+	case *physicalop.PhysicalSort:
 		if x.IsPartialSort {
 			// Partial sort will keep the data partition.
 			helper.plans = append(helper.plans, &x.BasePhysicalPlan)

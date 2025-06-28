@@ -17,6 +17,7 @@ package core
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -596,7 +597,9 @@ func (p *basePhysicalAgg) ResolveIndices() (err error) {
 	return
 }
 
-func resolveIndicesForSort(p physicalop.BasePhysicalPlan) (err error) {
+// resolveIndicesForSort is a helper function to resolve indices for sort operators.
+func resolveIndicesForSort(pp base.PhysicalPlan) (err error) {
+	p := pp.(*physicalop.BasePhysicalPlan)
 	err = p.ResolveIndices()
 	if err != nil {
 		return err
@@ -604,7 +607,7 @@ func resolveIndicesForSort(p physicalop.BasePhysicalPlan) (err error) {
 
 	var byItems []*util.ByItems
 	switch x := p.Self.(type) {
-	case *PhysicalSort:
+	case *physicalop.PhysicalSort:
 		byItems = x.ByItems
 	case *NominalSort:
 		byItems = x.ByItems
@@ -621,13 +624,8 @@ func resolveIndicesForSort(p physicalop.BasePhysicalPlan) (err error) {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalSort) ResolveIndices() (err error) {
-	return resolveIndicesForSort(p.BasePhysicalPlan)
-}
-
-// ResolveIndices implements Plan interface.
 func (p *NominalSort) ResolveIndices() (err error) {
-	return resolveIndicesForSort(p.BasePhysicalPlan)
+	return resolveIndicesForSort(&p.BasePhysicalPlan)
 }
 
 // ResolveIndices implements Plan interface.

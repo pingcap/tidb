@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 )
@@ -68,7 +69,7 @@ func (pe *projInjector) inject(plan base.PhysicalPlan) base.PhysicalPlan {
 		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
 	case *PhysicalStreamAgg:
 		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
-	case *PhysicalSort:
+	case *physicalop.PhysicalSort:
 		plan = InjectProjBelowSort(p, p.ByItems)
 	case *PhysicalTopN:
 		plan = InjectProjBelowSort(p, p.ByItems)
