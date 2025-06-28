@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -716,8 +717,9 @@ func (p *PhysicalWindow) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) 
 	}, nil
 }
 
-// ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalSort) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
+// toPB4PhysicalSort implements PhysicalPlan ToPB interface.
+func toPB4PhysicalSort(pp base.PhysicalPlan, ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
+	p := pp.(*physicalop.PhysicalSort)
 	if !p.IsPartialSort {
 		return nil, errors.Errorf("sort %s can't convert to pb, because it isn't a partial sort", p.Plan.ExplainID())
 	}

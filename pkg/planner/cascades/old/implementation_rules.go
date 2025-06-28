@@ -304,7 +304,7 @@ func (*ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalPro
 			ls.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), ls.QueryBlockOffset(), newProp)
 		return []memo.Implementation{impl.NewNominalSortImpl(ns)}, nil
 	}
-	ps := plannercore.PhysicalSort{ByItems: ls.ByItems}.Init(
+	ps := plannerphysicalop.PhysicalSort{ByItems: ls.ByItems}.Init(
 		ls.SCtx(),
 		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
 		ls.QueryBlockOffset(),

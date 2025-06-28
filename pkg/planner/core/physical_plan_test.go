@@ -440,7 +440,7 @@ func testDAGPlanBuilderSplitAvg(t *testing.T, root base.PhysicalPlan) {
 
 func TestPhysicalPlanMemoryTrace(t *testing.T) {
 	// PhysicalSort
-	ls := core.PhysicalSort{}
+	ls := physicalop.PhysicalSort{}
 	size := ls.MemoryUsage()
 	ls.ByItems = append(ls.ByItems, &util.ByItems{})
 	require.Greater(t, ls.MemoryUsage(), size)

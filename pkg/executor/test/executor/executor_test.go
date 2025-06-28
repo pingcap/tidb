@@ -798,7 +798,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalHashAgg{},
 		&plannercore.PhysicalStreamAgg{},
 		&plannercore.PhysicalLimit{},
-		&plannercore.PhysicalSort{},
+		&plannerphysicalop.PhysicalSort{},
 		&plannercore.PhysicalTopN{},
 		&plannercore.PhysicalCTE{},
 		&plannercore.PhysicalCTETable{},

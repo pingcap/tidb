@@ -489,16 +489,6 @@ func (p *PhysicalTableDual) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalSort) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	buffer = util.ExplainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems)
-	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		fmt.Fprintf(buffer, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalLimit) ExplainInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	redact := p.SCtx().GetSessionVars().EnableRedactLog

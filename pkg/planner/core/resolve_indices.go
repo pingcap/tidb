@@ -604,7 +604,7 @@ func resolveIndicesForSort(p physicalop.BasePhysicalPlan) (err error) {
 
 	var byItems []*util.ByItems
 	switch x := p.Self.(type) {
-	case *PhysicalSort:
+	case *physicalop.PhysicalSort:
 		byItems = x.ByItems
 	case *NominalSort:
 		byItems = x.ByItems
@@ -618,11 +618,6 @@ func resolveIndicesForSort(p physicalop.BasePhysicalPlan) (err error) {
 		}
 	}
 	return err
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalSort) ResolveIndices() (err error) {
-	return resolveIndicesForSort(p.BasePhysicalPlan)
 }
 
 // ResolveIndices implements Plan interface.
