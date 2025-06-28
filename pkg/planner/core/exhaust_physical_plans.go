@@ -3967,7 +3967,8 @@ func exhaustPhysicalPlans4LogicalTopN(lp base.LogicalPlan, prop *property.Physic
 
 func exhaustPhysicalPlans4LogicalSort(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	ls := lp.(*logicalop.LogicalSort)
-	if prop.TaskTp == property.RootTaskType {
+	switch prop.TaskTp {
+	case property.RootTaskType:
 		if MatchItems(prop, ls.ByItems) {
 			ret := make([]base.PhysicalPlan, 0, 2)
 			ret = append(ret, getPhysicalSort(ls, prop))
@@ -3977,12 +3978,13 @@ func exhaustPhysicalPlans4LogicalSort(lp base.LogicalPlan, prop *property.Physic
 			}
 			return ret, true, nil
 		}
-	} else if prop.TaskTp == property.MppTaskType {
+	case property.MppTaskType:
 		// just enumerate mpp task type requirement for child.
 		ps := getNominalSortSimple(ls, prop)
 		if ps != nil {
 			return []base.PhysicalPlan{ps}, true, nil
 		}
+	default:
 		return nil, true, nil
 	}
 	return nil, true, nil
