@@ -16,16 +16,15 @@ package utilfuncp
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tipb/go-tipb"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // this file is used for passing function pointer at init(){} to avoid some import cycles.
@@ -182,7 +181,7 @@ var GetPlanCostVer24PhysicalSort func(pp base.PhysicalPlan, taskType property.Ta
 var ToPB4PhysicalSort func(pp base.PhysicalPlan, ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error)
 
 // ResolveIndicesForSort will be called by PhysicalSort in physicalOp pkg.
-var ResolveIndicesForSort func(p physicalop.BasePhysicalPlan) (err error)
+var ResolveIndicesForSort func(p base.PhysicalPlan) (err error)
 
 // ****************************************** task related ***********************************************
 

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	impl "github.com/pingcap/tidb/pkg/planner/implementation"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -304,7 +305,7 @@ func (*ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalPro
 			ls.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), ls.QueryBlockOffset(), newProp)
 		return []memo.Implementation{impl.NewNominalSortImpl(ns)}, nil
 	}
-	ps := plannerphysicalop.PhysicalSort{ByItems: ls.ByItems}.Init(
+	ps := physicalop.PhysicalSort{ByItems: ls.ByItems}.Init(
 		ls.SCtx(),
 		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
 		ls.QueryBlockOffset(),

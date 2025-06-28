@@ -9,7 +9,6 @@ go_library(
         "//pkg/expression",
         "//pkg/kv",
         "//pkg/planner/core/base",
-        "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/property",
         "//pkg/planner/util/costusage",
         "//pkg/planner/util/optimizetrace",

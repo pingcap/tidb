@@ -15,10 +15,10 @@
 package implementation
 
 import (
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"math"
 
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 )
 

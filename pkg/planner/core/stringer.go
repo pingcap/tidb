@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"strings"
 
 	perrors "github.com/pingcap/errors"
@@ -189,7 +190,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *logicalop.LogicalShowDDLJobs, *PhysicalShowDDLJobs:
 		str = "ShowDDLJobs"
-	case *logicalop.LogicalSort, *PhysicalSort:
+	case *logicalop.LogicalSort, *physicalop.PhysicalSort:
 		str = "Sort"
 	case *logicalop.LogicalJoin:
 		last := len(idxs) - 1
