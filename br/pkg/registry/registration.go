@@ -66,6 +66,13 @@ const (
 		SET status = %%?
 		WHERE id = %%? AND status = %%?`
 
+	// updateStatusFromMultipleSQLTemplate is the SQL template for updating a task's status
+	// when the current status can be one of multiple values
+	updateStatusFromMultipleSQLTemplate = `
+		UPDATE %s.%s
+		SET status = %%?
+		WHERE id = %%? AND status IN (%s)`
+
 	// resumeTaskByIDSQLTemplate is the SQL template for resuming a paused task by its ID
 	resumeTaskByIDSQLTemplate = `
 		UPDATE %s.%s
@@ -429,6 +436,43 @@ func (r *Registry) updateTaskStatusConditional(ctx context.Context, restoreID ui
 	return nil
 }
 
+// updateTaskStatusFromMultiple updates a task's status only if its current status matches one of the expected statuses
+func (r *Registry) updateTaskStatusFromMultiple(ctx context.Context, restoreID uint64, currentStatuses []TaskStatus,
+	newStatus TaskStatus) error {
+	if len(currentStatuses) == 0 {
+		return errors.New("currentStatuses cannot be empty")
+	}
+
+	// build the status list for the IN clause
+	statusList := make([]string, len(currentStatuses))
+	for i, status := range currentStatuses {
+		statusList[i] = fmt.Sprintf("'%s'", string(status))
+	}
+	statusInClause := strings.Join(statusList, ", ")
+
+	log.Info("attempting to update task status from multiple possible statuses",
+		zap.Uint64("restore_id", restoreID),
+		zap.Strings("current_statuses", func() []string {
+			result := make([]string, len(currentStatuses))
+			for i, s := range currentStatuses {
+				result[i] = string(s)
+			}
+			return result
+		}()),
+		zap.String("new_status", string(newStatus)))
+
+	// use where to update only when status is one of the expected values
+	updateSQL := fmt.Sprintf(updateStatusFromMultipleSQLTemplate,
+		RestoreRegistryDBName, RestoreRegistryTableName, statusInClause)
+
+	if err := r.se.ExecuteInternal(ctx, updateSQL, newStatus, restoreID); err != nil {
+		return errors.Annotatef(err, "failed to conditionally update task status from %v to %s",
+			currentStatuses, newStatus)
+	}
+
+	return nil
+}
+
 // Unregister removes a restore registration
 func (r *Registry) Unregister(ctx context.Context, restoreID uint64) error {
 	// first stop heartbeat manager
@@ -443,11 +487,12 @@ func (r *Registry) Unregister(ctx context.Context, restoreID uint64) error {
 	return nil
 }
 
-// PauseTask marks a task as paused only if it's currently running
+// PauseTask marks a task as paused only if it's currently running or resetting
 func (r *Registry) PauseTask(ctx context.Context, restoreID uint64) error {
 	// first stop heartbeat manager
 	r.StopHeartbeatManager()
-	return r.updateTaskStatusConditional(ctx, restoreID, TaskStatusRunning, TaskStatusPaused)
+	return r.updateTaskStatusFromMultiple(ctx, restoreID,
+		[]TaskStatus{TaskStatusRunning, TaskStatusResetting}, TaskStatusPaused)
 }
 
 // GetRegistrationsByMaxID returns all registrations with IDs smaller than maxID
@@ -965,15 +1010,54 @@ func (r *Registry) FindAndDeleteMatchingTask(ctx context.Context,
 			zap.Uint64("task_id", taskID),
 			zap.String("status", status))
 
-		// only delete paused tasks, if running just log and return
-		if status == string(TaskStatusRunning) {
-			log.Info("task is currently running, cannot abort",
-				zap.Uint64("task_id", taskID))
-			return nil
-		}
+		// handle different task statuses
+		if status == string(TaskStatusPaused) {
+			// paused tasks can be directly deleted
+		} else if status == string(TaskStatusRunning) || status == string(TaskStatusResetting) {
+			// for running/resetting tasks, check if they are stale (dead processes)
+			log.Info("task is running/resetting, checking if it's stale before abort",
+				zap.Uint64("task_id", taskID),
+				zap.String("status", status))
 
-		if status != string(TaskStatusPaused) {
-			log.Warn("task is in unexpected status, cannot abort",
+			// get the task's heartbeat time to check if it's stale
+			heartbeatSQL := fmt.Sprintf(selectTaskHeartbeatSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+			heartbeatRows, _, heartbeatErr := execCtx.ExecRestrictedSQL(ctx, sessionOpts, heartbeatSQL, taskID)
+			if heartbeatErr != nil {
+				log.Warn("failed to check task heartbeat during abort, skipping",
+					zap.Uint64("task_id", taskID),
+					zap.Error(heartbeatErr))
+				return nil
+			}
+
+			if len(heartbeatRows) == 0 {
+				log.Warn("task not found when checking heartbeat, skipping abort",
+					zap.Uint64("task_id", taskID))
+				return nil
+			}
+
+			initialHeartbeatTime := heartbeatRows[0].GetTime(0).String()
+
+			// check if the task is stale (not updating heartbeat)
+			isStale, staleErr := r.isTaskStale(ctx, taskID, initialHeartbeatTime)
+			if staleErr != nil {
+				log.Warn("failed to determine if task is stale, skipping abort",
+					zap.Uint64("task_id", taskID),
+					zap.Error(staleErr))
+				return nil
+			}
+
+			if !isStale {
+				log.Info("task is actively running, cannot abort",
+					zap.Uint64("task_id", taskID),
+					zap.String("status", status))
+				return nil
+			}
+
+			log.Info("task is stale, proceeding with abort",
+				zap.Uint64("task_id", taskID),
+				zap.String("status", status))
+		} else {
+			log.Error("task is in unexpected status, cannot abort",
 				zap.Uint64("task_id", taskID),
 				zap.String("status", status))
 			return nil

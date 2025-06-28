@@ -1,11 +1,10 @@
-// Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
+// Copyright 2025 PingCAP, Inc. Licensed under Apache-2.0.
 
 package main
 
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/version/build"
@@ -133,9 +132,6 @@ func runAbortRestoreCommand(command *cobra.Command, cmdName string) error {
 		ctx, store = trace.TracerStartSpan(ctx)
 		defer trace.TracerFinishSpan(ctx, store)
 	}
-
-	summary.SetUnit(summary.RestoreUnit)
-	defer summary.Summary(cmdName + " Abort")
 
 	if err := task.RunRestoreAbort(ctx, tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to abort restore task", zap.Error(err))
