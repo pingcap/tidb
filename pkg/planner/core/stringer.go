@@ -17,13 +17,13 @@ package core
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"strings"
 
 	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
