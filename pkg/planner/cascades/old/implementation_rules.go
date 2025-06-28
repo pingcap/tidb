@@ -301,7 +301,7 @@ func (*ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalPro
 	ls := expr.ExprNode.(*logicalop.LogicalSort)
 	if newProp, canUseNominal := plannercore.GetPropByOrderByItems(ls.ByItems); canUseNominal {
 		newProp.ExpectedCnt = reqProp.ExpectedCnt
-		ns := plannercore.NominalSort{}.Init(
+		ns := physicalop.NominalSort{}.Init(
 			ls.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), ls.QueryBlockOffset(), newProp)
 		return []memo.Implementation{impl.NewNominalSortImpl(ns)}, nil
 	}

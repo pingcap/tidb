@@ -949,8 +949,9 @@ func attach2Task4PhysicalSort(p base.PhysicalPlan, tasks ...base.Task) base.Task
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *NominalSort) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4NominalSort implements PhysicalPlan interface.
+func attach2Task4NominalSort(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.NominalSort)
 	if p.OnlyColumn {
 		return tasks[0]
 	}
