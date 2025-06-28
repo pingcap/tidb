@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 )
 
 //go:generate go run ../../generator/hash64_equals/hash64_equals_generator.go -- hash64_equals_generated.go
@@ -88,19 +88,16 @@ func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expre
 		p.Children()[chIdx] = child
 		return
 	}
-	exprCtx := p.SCtx().GetExprCtx()
-	conditions = expression.PropagateConstant(exprCtx, conditions...)
+	conditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), conditions)
+	if len(conditions) == 0 {
+		p.Children()[chIdx] = child
+		return
+	}
 	// Return table dual when filter is constant false or null.
 	dual := Conds2TableDual(child, conditions)
 	if dual != nil {
 		p.Children()[chIdx] = dual
 		AppendTableDualTraceStep(child, dual, conditions, opt)
-		return
-	}
-
-	conditions = constraint.DeleteTrueExprs(exprCtx, p.SCtx().GetSessionVars().StmtCtx, conditions)
-	if len(conditions) == 0 {
-		p.Children()[chIdx] = child
 		return
 	}
 	selection := LogicalSelection{Conditions: conditions}.Init(p.SCtx(), p.QueryBlockOffset())
