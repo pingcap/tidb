@@ -1095,6 +1095,18 @@ type indexJoinInnerChildWrapper struct {
 	zippedChildren []base.LogicalPlan
 }
 
+func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *property.PhysicalProperty) bool {
+	switch prop.TaskTp {
+	case property.MppTaskType:
+		// when parent operator ask current op to be mppTaskType, check operator itself here.
+		return logicalop.CanSelfBeingPushedToCopImpl(p, kv.TiFlash)
+	case property.CopSingleReadTaskType, property.CopMultiReadTaskType:
+		return logicalop.CanSelfBeingPushedToCopImpl(p, kv.TiKV)
+	default:
+		return true
+	}
+}
+
 // admitIndexJoinInnerChildPattern is used to check whether current physical choosing is under an index join's
 // probe side. If it is, and we ganna check the original inner pattern check here to keep compatible with the old.
 // the @first bool indicate whether current logical plan is valid of index join inner side.
@@ -2287,8 +2299,10 @@ func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp
 	if meetThreshold {
 		// previously, we set meetThreshold for pruning root task type but mpp task type. so:
 		// 1: when one copTask exists, we will ignore root task type.
-		// 2: mppTask always in the cbo comparing.
-		// 3: when none copTask exists, we will consider rootTask vs mppTask.
+		// 2: when one copTask exists, another copTask should be cost compared with.
+		// 3: mppTask is always in the cbo comparing.
+		// 4: when none copTask exists, we will consider rootTask vs mppTask.
+		// the following check priority logic is compatible with former pushLimitOrTopNForcibly prop pruning logic.
 		_, isTopN := pp.(*PhysicalTopN)
 		if isTopN {
 			if state.topNCopExist {
@@ -2945,8 +2959,8 @@ func exhaustPhysicalPlans4LogicalExpand(lp base.LogicalPlan, prop *property.Phys
 	}
 	var physicalExpands []base.PhysicalPlan
 	// for property.RootTaskType and property.MppTaskType with no partition option, we can give an MPP Expand.
-	canPushToTiFlash := p.CanPushToCop(kv.TiFlash)
-	if p.SCtx().GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
+	// we just remove whether subtree can be pushed to tiFlash check, and left child handle itself.
+	if p.SCtx().GetSessionVars().IsMPPAllowed() {
 		mppProp := prop.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType
 		expand := PhysicalExpand{
@@ -3898,7 +3912,8 @@ func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.Ph
 	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
 		return nil, true, nil
 	}
-	canUseMpp := p.SCtx().GetSessionVars().IsMPPAllowed() && logicalop.CanPushToCopImpl(&p.BaseLogicalPlan, kv.TiFlash)
+	// when arrived here, operator itself has already checked checkOpSelfSatisfyPropTaskTypeRequirement, we only need to feel allowMPP here.
+	canUseMpp := p.SCtx().GetSessionVars().IsMPPAllowed()
 	chReqProps := make([]*property.PhysicalProperty, 0, p.ChildLen())
 	for range p.Children() {
 		if canUseMpp && prop.TaskTp == property.MppTaskType {
@@ -3953,7 +3968,8 @@ func exhaustPhysicalPlans4LogicalTopN(lp base.LogicalPlan, prop *property.Physic
 
 func exhaustPhysicalPlans4LogicalSort(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	ls := lp.(*logicalop.LogicalSort)
-	if prop.TaskTp == property.RootTaskType {
+	switch prop.TaskTp {
+	case property.RootTaskType:
 		if MatchItems(prop, ls.ByItems) {
 			ret := make([]base.PhysicalPlan, 0, 2)
 			ret = append(ret, getPhysicalSort(ls, prop))
@@ -3963,14 +3979,14 @@ func exhaustPhysicalPlans4LogicalSort(lp base.LogicalPlan, prop *property.Physic
 			}
 			return ret, true, nil
 		}
-	} else if prop.TaskTp == property.MppTaskType {
-		if logicalop.CanPushToCopImpl(&ls.BaseLogicalPlan, kv.TiFlash) {
-			ps := getNominalSortSimple(ls, prop)
-			if ps != nil {
-				return []base.PhysicalPlan{ps}, true, nil
-			}
-			return nil, true, nil
+	case property.MppTaskType:
+		// just enumerate mpp task type requirement for child.
+		ps := getNominalSortSimple(ls, prop)
+		if ps != nil {
+			return []base.PhysicalPlan{ps}, true, nil
 		}
+	default:
+		return nil, true, nil
 	}
 	return nil, true, nil
 }
