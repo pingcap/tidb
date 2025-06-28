@@ -139,7 +139,11 @@ type importScheduler struct {
 	currTaskID            atomic.Int64
 	disableTiKVImportMode atomic.Bool
 
-	storeWithPD kv.StorageWithPD
+	store kv.Storage
+	// below fields are only used when the task keyspace doesn't equal to current
+	// instance keyspace.
+	taskKS         string
+	taskKSSessPool util.SessionPool
 }
 
 var _ scheduler.Extension = (*importScheduler)(nil)
@@ -149,13 +153,14 @@ func NewImportScheduler(
 	ctx context.Context,
 	task *proto.Task,
 	param scheduler.Param,
-	storeWithPD kv.StorageWithPD,
+	store kv.Storage,
 ) scheduler.Scheduler {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	sch := &importScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(subCtx, task, param),
-		storeWithPD:   storeWithPD,
+		store:         store,
+		taskKS:        task.Keyspace,
 	}
 	return sch
 }
@@ -168,15 +173,26 @@ func NewImportSchedulerForTest(globalSort bool) scheduler.Scheduler {
 }
 
 func (sch *importScheduler) Init() (err error) {
+	task := sch.GetTask()
 	defer func() {
 		if err != nil {
 			// if init failed, close is not called, so we need to unregister here.
-			metricsManager.unregister(sch.GetTask().ID)
+			metricsManager.unregister(task.ID)
 		}
 	}()
 	taskMeta := &TaskMeta{}
-	if err = json.Unmarshal(sch.BaseScheduler.GetTask().Meta, taskMeta); err != nil {
+	if err = json.Unmarshal(task.Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
+	}
+
+	if task.Keyspace != tidb.GetGlobalKeyspaceName() {
+		if err = sch.BaseScheduler.WithNewSession(func(se sessionctx.Context) error {
+			var err2 error
+			sch.taskKSSessPool, err2 = se.GetSQLServer().GetKSSessPool(task.Keyspace)
+			return err2
+		}); err != nil {
+			return errors.Annotatef(err, "get session pool for keyspace %s failed", task.Keyspace)
+		}
 	}
 
 	sch.GlobalSort = taskMeta.Plan.CloudStorageURI != ""
@@ -232,7 +248,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
-	pdHTTPCli := sch.storeWithPD.GetPDHTTPClient()
+	pdHTTPCli := sch.store.(kv.StorageWithPD).GetPDHTTPClient()
 	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
 
 	switcher.ToImportMode(ctx)
@@ -284,7 +300,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		if sch.GlobalSort {
 			jobStep = importer.JobStepGlobalSorting
 		}
-		if err = startJob(ctx, logger, taskHandle, taskMeta, jobStep); err != nil {
+		if err = sch.startJob(ctx, logger, taskMeta, jobStep); err != nil {
 			return nil, err
 		}
 	case proto.ImportStepMergeSort:
@@ -309,7 +325,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		}
 		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = encodeAndSortMetas
 		previousSubtaskMetas[proto.ImportStepMergeSort] = mergeSortMetas
-		if err = job2Step(ctx, logger, taskMeta, importer.JobStepImporting); err != nil {
+		if err = sch.job2Step(ctx, logger, taskMeta, importer.JobStepImporting); err != nil {
 			return nil, err
 		}
 	case proto.ImportStepPostProcess:
@@ -317,7 +333,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		failpoint.Inject("clearLastSwitchTime", func() {
 			sch.lastSwitchTime.Store(time.Time{})
 		})
-		if err = job2Step(ctx, logger, taskMeta, importer.JobStepValidating); err != nil {
+		if err = sch.job2Step(ctx, logger, taskMeta, importer.JobStepValidating); err != nil {
 			return nil, err
 		}
 		failpoint.Inject("failWhenDispatchPostProcessSubtask", func() {
@@ -347,7 +363,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		GlobalSort:           sch.GlobalSort,
 		NextTaskStep:         nextStep,
 		ExecuteNodesCnt:      len(execIDs),
-		Store:                sch.storeWithPD,
+		Store:                sch.store,
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(task.Meta); err != nil {
@@ -366,7 +382,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 }
 
 // OnDone implements scheduler.Extension interface.
-func (sch *importScheduler) OnDone(ctx context.Context, handle storage.TaskHandle, task *proto.Task) error {
+func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
@@ -382,13 +398,13 @@ func (sch *importScheduler) OnDone(ctx context.Context, handle storage.TaskHandl
 		errMsg := ""
 		if task.Error != nil {
 			if scheduler.IsCancelledErr(task.Error) {
-				return sch.cancelJob(ctx, handle, task, taskMeta, logger)
+				return sch.cancelJob(ctx, task, taskMeta, logger)
 			}
 			errMsg = task.Error.Error()
 		}
-		return sch.failJob(ctx, handle, task, taskMeta, logger, errMsg)
+		return sch.failJob(ctx, task, taskMeta, logger, errMsg)
 	}
-	return sch.finishJob(ctx, logger, handle, task, taskMeta)
+	return sch.finishJob(ctx, logger, task, taskMeta)
 }
 
 // GetEligibleInstances implements scheduler.Extension interface.
@@ -449,7 +465,7 @@ func (sch *importScheduler) switchTiKV2NormalMode(ctx context.Context, task *pro
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
-	pdHTTPCli := sch.storeWithPD.GetPDHTTPClient()
+	pdHTTPCli := sch.store.(kv.StorageWithPD).GetPDHTTPClient()
 	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
 
 	switcher.ToNormalMode(ctx)
@@ -604,16 +620,20 @@ func getLoadedRowCountOnGlobalSort(handle storage.TaskHandle, task *proto.Task) 
 	return loadedRowCount, nil
 }
 
-func startJob(ctx context.Context, logger *zap.Logger, taskHandle storage.TaskHandle, taskMeta *TaskMeta, jobStep string) error {
+func (sch *importScheduler) startJob(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, jobStep string) error {
 	failpoint.InjectCall("syncBeforeJobStarted", taskMeta.JobID)
+	taskManager, err := sch.getTaskMgrForAccessingImportJob()
+	if err != nil {
+		return err
+	}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	// we consider all errors as retryable errors, except context done.
 	// the errors include errors happened when communicate with PD and TiKV.
 	// we didn't consider system corrupt cases like system table dropped/altered.
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
-	err := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
+	err = handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
+			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.GetSQLExecutor()
 				return importer.StartJob(ctx, exec, taskMeta.JobID, jobStep)
 			})
@@ -623,8 +643,8 @@ func startJob(ctx context.Context, logger *zap.Logger, taskHandle storage.TaskHa
 	return err
 }
 
-func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step string) error {
-	taskManager, err := storage.GetTaskManager()
+func (sch *importScheduler) job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step string) error {
+	taskManager, err := sch.getTaskMgrForAccessingImportJob()
 	if err != nil {
 		return err
 	}
@@ -643,15 +663,19 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 }
 
 func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
-	taskHandle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta) error {
+	task *proto.Task, taskMeta *TaskMeta) error {
 	// we have already switch import-mode when switch to post-process step.
 	sch.unregisterTask(ctx, task)
+	taskManager, err := sch.getTaskMgrForAccessingImportJob()
+	if err != nil {
+		return err
+	}
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
+			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
 				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, &importer.JobImportResult{
 					Affected: taskMeta.Result.LoadedRowCnt,
 				}); err != nil {
@@ -664,15 +688,19 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 	)
 }
 
-func (sch *importScheduler) failJob(ctx context.Context, taskHandle storage.TaskHandle, task *proto.Task,
+func (sch *importScheduler) failJob(ctx context.Context, task *proto.Task,
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
 	sch.switchTiKV2NormalMode(ctx, task, logger)
 	sch.unregisterTask(ctx, task)
+	taskManager, err := sch.getTaskMgrForAccessingImportJob()
+	if err != nil {
+		return err
+	}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
+			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.GetSQLExecutor()
 				return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg)
 			})
@@ -680,20 +708,31 @@ func (sch *importScheduler) failJob(ctx context.Context, taskHandle storage.Task
 	)
 }
 
-func (sch *importScheduler) cancelJob(ctx context.Context, taskHandle storage.TaskHandle, task *proto.Task,
+func (sch *importScheduler) cancelJob(ctx context.Context, task *proto.Task,
 	meta *TaskMeta, logger *zap.Logger) error {
 	sch.switchTiKV2NormalMode(ctx, task, logger)
 	sch.unregisterTask(ctx, task)
+	taskManager, err := sch.getTaskMgrForAccessingImportJob()
+	if err != nil {
+		return err
+	}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
+			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.GetSQLExecutor()
 				return importer.CancelJob(ctx, exec, meta.JobID)
 			})
 		},
 	)
+}
+
+func (sch *importScheduler) getTaskMgrForAccessingImportJob() (*storage.TaskManager, error) {
+	if sch.taskKS == tidb.GetGlobalKeyspaceName() {
+		return storage.GetTaskManager()
+	}
+	return storage.NewTaskManager(sch.taskKSSessPool), nil
 }
 
 func redactSensitiveInfo(task *proto.Task, taskMeta *TaskMeta) {
