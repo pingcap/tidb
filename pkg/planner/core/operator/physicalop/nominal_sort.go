@@ -44,14 +44,14 @@ func (p NominalSort) Init(ctx base.PlanContext, stats *property.StatsInfo, offse
 }
 
 // MemoryUsage return the memory usage of NominalSort
-func (ns *NominalSort) MemoryUsage() (sum int64) {
-	if ns == nil {
+func (p *NominalSort) MemoryUsage() (sum int64) {
+	if p == nil {
 		return
 	}
 
-	sum = ns.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(ns.ByItems))*size.SizeOfPointer +
+	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(p.ByItems))*size.SizeOfPointer +
 		size.SizeOfBool
-	for _, byItem := range ns.ByItems {
+	for _, byItem := range p.ByItems {
 		sum += byItem.MemoryUsage()
 	}
 	return
