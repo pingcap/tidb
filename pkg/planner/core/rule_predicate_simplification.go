@@ -205,7 +205,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	var otherPred expression.Expression
 	col1, p1Type := findPredicateType(p1)
 	col2, p2Type := findPredicateType(p2)
-	if col1 != col2 || col1 == nil {
+	if col1 == nil || !col1.Equals(col2) {
 		return false
 	}
 	if p1Type == equalPredicate {
