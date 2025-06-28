@@ -97,7 +97,7 @@ func TestIsIPv4(t *testing.T) {
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
-	testutil.DatumEqual(t, types.NewDatum(0), r)
+	require.True(t, r.IsNull())
 }
 
 func TestIsUUID(t *testing.T) {
@@ -209,7 +209,7 @@ func TestIsIPv6(t *testing.T) {
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
-	testutil.DatumEqual(t, types.NewDatum(0), r)
+	require.True(t, r.IsNull())
 }
 
 func TestInetNtoa(t *testing.T) {
@@ -344,7 +344,7 @@ func TestIsIPv4Mapped(t *testing.T) {
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
-	testutil.DatumEqual(t, types.NewDatum(int64(0)), r)
+	require.True(t, r.IsNull())
 }
 
 func TestIsIPv4Compat(t *testing.T) {
@@ -374,7 +374,7 @@ func TestIsIPv4Compat(t *testing.T) {
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
-	testutil.DatumEqual(t, types.NewDatum(0), r)
+	require.True(t, r.IsNull())
 }
 
 func TestNameConst(t *testing.T) {
