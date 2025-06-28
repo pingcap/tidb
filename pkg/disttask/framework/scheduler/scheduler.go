@@ -85,7 +85,6 @@ type BaseScheduler struct {
 	// when RegisterSchedulerFactory, the factory MUST initialize this fields.
 	Extension
 
-	balanceSubtaskTick int
 	// rand is for generating random selection of nodes.
 	rand *rand.Rand
 }

@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -37,10 +36,6 @@ import (
 
 const (
 	maxWaitDuration = 30 * time.Second
-
-	// we use a larger block size for data KV group to support larger row.
-	// TODO: make it configurable?
-	dataKVGroupBlockSize = 32 * units.MiB
 )
 
 // encodeAndSortOperator is an operator that encodes and sorts data.
