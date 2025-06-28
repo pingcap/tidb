@@ -385,7 +385,7 @@ drop hypo index hypo_a on t;
 create unique index hypo_a type hypo on t (a);
 explain select a from t where a = 1;
 id	estRows	task	access object	operator info
-Point_Get_5	1.00	root	table:t, index:hypo_a(a)	
+Point_Get_5	1.00	root	table:t, index:hypo_a(a)	condition: [eq(planner__core__plan.t.a, 1)]
 drop table if exists t;
 create table t (a int);
 explain select a from t;
