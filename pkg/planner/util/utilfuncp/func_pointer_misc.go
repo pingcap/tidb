@@ -172,13 +172,16 @@ var Attach2Task4PhysicalSort func(p base.PhysicalPlan, tasks ...base.Task) base.
 var GetCost4PhysicalSort func(p base.PhysicalPlan, count float64, schema *expression.Schema) float64
 
 // GetPlanCostVer14PhysicalSort will be called by PhysicalSort in physicalOp pkg.
-var GetPlanCostVer14PhysicalSort func(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error)
+var GetPlanCostVer14PhysicalSort func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
 
 // GetPlanCostVer24PhysicalSort represents the cost of a physical sort operation in version 2.
-var GetPlanCostVer24PhysicalSort func(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+var GetPlanCostVer24PhysicalSort func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
 
 // ToPB4PhysicalSort will be called by PhysicalSort in physicalOp pkg.
-var ToPB4PhysicalSort func(pp base.PhysicalPlan, ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error)
+var ToPB4PhysicalSort func(pp base.PhysicalPlan, ctx *base.BuildPBContext,
+	storeType kv.StoreType) (*tipb.Executor, error)
 
 // ResolveIndicesForSort will be called by PhysicalSort in physicalOp pkg.
 var ResolveIndicesForSort func(p base.PhysicalPlan) (err error)
