@@ -75,7 +75,7 @@ func generateIndexMergePath(ds *logicalop.DataSource) error {
 		return nil
 	}
 
-	if ds.TableInfo.TempTableType == model.TempTableLocal {
+	if ds.TableInfo.TempTableType.HasLocalData() {
 		warningMsg = "IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table."
 		return nil
 	}
