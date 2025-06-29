@@ -70,7 +70,6 @@ type reorgCtx struct {
 		warnings      map[errors.ErrorID]*terror.Error
 		warningsCount map[errors.ErrorID]int64
 	}
-
 	references atomicutil.Int32
 }
 

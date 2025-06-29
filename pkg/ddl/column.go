@@ -697,6 +697,7 @@ func (w *worker) doModifyColumnTypeWithData(
 	targetCol := changingCol.Clone()
 	targetCol.Name = colName
 	changingIdxs := buildRelatedIndexInfos(tblInfo, changingCol.ID)
+	analyzeSync := len(changingIdxs) > 0
 	switch changingCol.State {
 	case model.StateNone:
 		// Column from null to not null.
@@ -774,35 +775,50 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 
-		var done bool
-		if job.MultiSchemaInfo != nil {
-			done, ver, err = doReorgWorkForModifyColumnMultiSchema(w, d, t, job, tbl, oldCol, changingCol, changingIdxs)
-		} else {
-			done, ver, err = doReorgWorkForModifyColumn(w, d, t, job, tbl, oldCol, changingCol, changingIdxs)
-		}
-		if !done {
-			return ver, err
-		}
+		switch job.ReorgMeta.AnalyzeState {
+		case model.AnalyzeStateNone:
+			var done bool
+			if job.MultiSchemaInfo != nil {
+				done, ver, err = doReorgWorkForModifyColumnMultiSchema(w, d, t, job, tbl, oldCol, changingCol, changingIdxs)
+			} else {
+				done, ver, err = doReorgWorkForModifyColumn(w, d, t, job, tbl, oldCol, changingCol, changingIdxs)
+			}
+			if !done {
+				return ver, err
+			}
+			if analyzeSync {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+			} else {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+			}
+		case model.AnalyzeStateRunning:
+			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+			}
+		case model.AnalyzeStateDone:
+			rmIdxIDs = append(buildRelatedIndexIDs(tblInfo, oldCol.ID), rmIdxIDs...)
 
-		rmIdxIDs = append(buildRelatedIndexIDs(tblInfo, oldCol.ID), rmIdxIDs...)
+			err = adjustTableInfoAfterModifyColumnWithData(tblInfo, pos, oldCol, changingCol, colName, changingIdxs)
+			if err != nil {
+				job.State = model.JobStateRollingback
+				return ver, errors.Trace(err)
+			}
 
-		err = adjustTableInfoAfterModifyColumnWithData(tblInfo, pos, oldCol, changingCol, colName, changingIdxs)
-		if err != nil {
-			job.State = model.JobStateRollingback
-			return ver, errors.Trace(err)
+			updateChangingObjState(changingCol, changingIdxs, model.StatePublic)
+			ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != changingCol.State)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+
+			// Finish this job.
+			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			// Refactor the job args to add the old index ids into delete range table.
+			job.Args = []interface{}{rmIdxIDs, getPartitionIDs(tblInfo)}
+			if !analyzeSync {
+				asyncNotifyEvent(d, &ddlutil.Event{Tp: model.ActionModifyColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{changingCol}})
+			}
 		}
-
-		updateChangingObjState(changingCol, changingIdxs, model.StatePublic)
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != changingCol.State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		// Refactor the job args to add the old index ids into delete range table.
-		job.Args = []interface{}{rmIdxIDs, getPartitionIDs(tblInfo)}
-		asyncNotifyEvent(d, &ddlutil.Event{Tp: model.ActionModifyColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{changingCol}})
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}
