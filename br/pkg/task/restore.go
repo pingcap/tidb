@@ -2182,8 +2182,7 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 // tweakLocalConfForRestore tweaks some of configs of TiDB to make the restore progress go well.
 // return a function that could restore the config to origin.
 func tweakLocalConfForRestore() func() {
-	restoreConfig := config.RestoreFunc()
-	config.UpdateGlobal(func(conf *config.Config) {
+	return config.UpdateGlobal(func(conf *config.Config) {
 		// set max-index-length before execute DDLs and create tables
 		// we set this value to max(3072*4), otherwise we might not restore table
 		// when upstream and downstream both set this value greater than default(3072)
@@ -2194,7 +2193,6 @@ func tweakLocalConfForRestore() func() {
 		conf.TableColumnCountLimit = config.DefMaxOfTableColumnCountLimit
 		log.Warn("set table-column-count to max(4096) to skip check column count in DDL")
 	})
-	return restoreConfig
 }
 
 func getTiFlashNodeCount(ctx context.Context, pdClient pd.Client) (uint64, error) {
