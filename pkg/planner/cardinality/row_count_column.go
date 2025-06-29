@@ -283,26 +283,10 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		//   where null is the lower bound.
 		// And because we use (2, MaxValue] to represent expressions like a > 2 and use [MinNotNull, 3) to represent
 		//   expressions like b < 3, we need to exclude the special values.
-		if rg.LowExclude && !lowVal.IsNull() && lowVal.Kind() != types.KindMaxValue && lowVal.Kind() != types.KindMinNotNull {
-			lowCnt, err := equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			cnt -= lowCnt
-			cnt = mathutil.Clamp(cnt, 0, c.NotNullCount())
+		cnt, err = adjustRowCountForBoundaries(sctx, c, cnt, rg, lowVal, highVal, lowEncoded, highEncoded, realtimeRowCount, modifyCount)
+		if err != nil {
+			return 0, errors.Trace(err)
 		}
-		if !rg.LowExclude && lowVal.IsNull() {
-			cnt += float64(c.NullCount)
-		}
-		if !rg.HighExclude && highVal.Kind() != types.KindMaxValue && highVal.Kind() != types.KindMinNotNull {
-			highCnt, err := equalRowCountOnColumn(sctx, c, highVal, highEncoded, realtimeRowCount, modifyCount)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			cnt += highCnt
-		}
-
-		cnt = mathutil.Clamp(cnt, 0, c.TotalRowCount())
 
 		// If the current table row count has changed, we should scale the row count accordingly.
 		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
@@ -344,6 +328,39 @@ func betweenRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, l, 
 		return histBetweenCnt
 	}
 	return float64(c.TopN.BetweenCount(sctx, lowEncoded, highEncoded)) + histBetweenCnt
+}
+
+// adjustRowCountForBoundaries adjusts the row count for boundary conditions after betweenRowCountOnColumn.
+// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boundaries here.
+// Note that, `cnt` does not include null values, we need specially handle cases
+//
+//	where null is the lower bound.
+//
+// And because we use (2, MaxValue] to represent expressions like a > 2 and use [MinNotNull, 3) to represent
+//
+//	expressions like b < 3, we need to exclude the special values.
+func adjustRowCountForBoundaries(sctx planctx.PlanContext, c *statistics.Column, cnt float64, rg *ranger.Range, lowVal, highVal types.Datum, lowEncoded, highEncoded []byte, realtimeRowCount, modifyCount int64) (float64, error) {
+	if rg.LowExclude && !lowVal.IsNull() && lowVal.Kind() != types.KindMaxValue && lowVal.Kind() != types.KindMinNotNull {
+		lowCnt, err := equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		cnt -= lowCnt
+		cnt = mathutil.Clamp(cnt, 0, c.NotNullCount())
+	}
+	if !rg.LowExclude && lowVal.IsNull() {
+		cnt += float64(c.NullCount)
+	}
+	if !rg.HighExclude && highVal.Kind() != types.KindMaxValue && highVal.Kind() != types.KindMinNotNull {
+		highCnt, err := equalRowCountOnColumn(sctx, c, highVal, highEncoded, realtimeRowCount, modifyCount)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		cnt += highCnt
+	}
+
+	cnt = mathutil.Clamp(cnt, 0, c.TotalRowCount())
+	return cnt, nil
 }
 
 // functions below are mainly for testing.

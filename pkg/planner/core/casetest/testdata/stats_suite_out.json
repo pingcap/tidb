@@ -153,9 +153,9 @@
       {
         "SQL": "select count(1) from t1 where a > 0 group by a, b",
         "Plan": [
-          "StreamAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(1)->Column#4",
-          "└─IndexReader 4.00 root  index:IndexRangeScan",
-          "  └─IndexRangeScan 4.00 cop[tikv] table:t1, index:a(a, b) range:(0,+inf], keep order:true"
+          "StreamAgg 2.00 root  group by:test.t1.a, test.t1.b, funcs:count(1)->Column#4",
+          "└─IndexReader 2.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 2.00 cop[tikv] table:t1, index:a(a, b) range:(0,+inf], keep order:true"
         ]
       },
       {
