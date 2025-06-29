@@ -67,6 +67,10 @@ func statsMetaCountAndModifyCount(
 	tableID int64,
 	forUpdate bool,
 ) (count, modifyCount int64, isNull bool, err error) {
+	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "get modify count"))
+	defer func() {
+		logutil.BgLogger().Info("[stats_meta] end")
+	}()
 	sql := "select count, modify_count from mysql.stats_meta where table_id = %?"
 	if forUpdate {
 		sql += " for update"
@@ -897,6 +901,10 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 // StatsMetaByTableIDFromStorage gets the stats meta of a table from storage.
 func StatsMetaByTableIDFromStorage(sctx sessionctx.Context, tableID int64, snapshot uint64) (version uint64, modifyCount, count int64, err error) {
 	var rows []chunk.Row
+	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "stats meta by table id"))
+	defer func() {
+		logutil.BgLogger().Info("[stats_meta] end")
+	}()
 	if snapshot == 0 {
 		rows, _, err = util.ExecRows(sctx,
 			"SELECT version, modify_count, count from mysql.stats_meta where table_id = %? order by version", tableID)

@@ -26,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
+	"go.uber.org/zap"
 )
 
 // TableRowStatsCache is the cache of table row count.
@@ -111,6 +113,10 @@ func (c *StatsTableRowCache) EstimateDataLength(table *model.TableInfo) (
 func getRowCountTables(sctx sessionctx.Context, tableIDs ...int64) (map[int64]uint64, error) {
 	var rows []chunk.Row
 	var err error
+	logutil.BgLogger().Info("[stats_meta] start", zap.String("sql", "select table_id, count from mysql.stats_meta"))
+	defer func() {
+		logutil.BgLogger().Info("[stats_meta] end")
+	}()
 	if len(tableIDs) == 0 {
 		rows, _, err = util.ExecWithOpts(sctx, nil, "select table_id, count from mysql.stats_meta")
 	} else {

@@ -125,6 +125,10 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	if err != nil {
 		return 0, err
 	}
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "save analyze"))
+	defer func() {
+		statslogutil.StatsLogger().Info("[stats_meta] end")
+	}()
 	version := txn.StartTS()
 	// 1. Save mysql.stats_meta.
 	var rs sqlexec.RecordSet
@@ -322,7 +326,10 @@ func SaveColOrIdxStatsToStorage(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "savecoloridxstats"))
+	defer func() {
+		statslogutil.StatsLogger().Info("[stats_meta] end")
+	}()
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
 		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values (%?, %?, %?, %?, %?)", version, tableID, count, modifyCount, version)
@@ -376,6 +383,10 @@ func SaveMetaToStorage(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "save stats meta"))
+	defer func() {
+		statslogutil.StatsLogger().Info("[stats_meta] end")
+	}()
 	var sql string
 	values := make([]string, 0, len(metaUpdates))
 	if refreshLastHistVer {
@@ -408,7 +419,10 @@ func InsertColStats2KV(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "insert col stats 2 kv"))
+	defer func() {
+		statslogutil.StatsLogger().Info("[stats_meta] end")
+	}()
 	// First of all, we update the version.
 	_, err = util.ExecWithCtx(
 		ctx, sctx,
@@ -500,13 +514,15 @@ func InsertTableStats2KV(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if _, err = util.ExecWithCtx(
-		ctx, sctx,
-		"insert ignore into mysql.stats_meta (version, table_id, last_stats_histograms_version) values(%?, %?, %?)",
-		startTS, physicalID, startTS,
-	); err != nil {
-		return 0, errors.Trace(err)
-	}
+	/*
+		if _, err = util.ExecWithCtx(
+			ctx, sctx,
+			"insert ignore into mysql.stats_meta (version, table_id, last_stats_histograms_version) values(%?, %?, %?)",
+			startTS, physicalID, startTS,
+		); err != nil {
+			return 0, errors.Trace(err)
+		}
+	*/
 	for _, col := range info.Columns {
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
