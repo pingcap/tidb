@@ -727,7 +727,7 @@ func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 
 	logger := jobCtx.logger
 	// Load global DDL variables.
-	if err1 := loadDDLVars(w); err1 != nil {
+	if err1 := w.loadGlobalVars(vardef.TiDBDDLErrorCountLimit); err1 != nil {
 		logger.Error("load DDL global variable failed", zap.Error(err1))
 	}
 	errorCount := vardef.GetDDLErrorCountLimit()
@@ -754,7 +754,7 @@ func (w *worker) countForError(jobCtx *jobContext, job *model.Job, err error) er
 	logger.Warn("run DDL job error", zap.Error(err))
 
 	// Load global DDL variables.
-	if err1 := loadDDLVars(w); err1 != nil {
+	if err1 := w.loadGlobalVars(vardef.TiDBDDLErrorCountLimit); err1 != nil {
 		logger.Error("load DDL global variable failed", zap.Error(err1))
 	}
 	// Check error limit to avoid falling into an infinite loop.
@@ -1071,7 +1071,9 @@ func (w *worker) runOneJobStep(
 	return ver, updateRawArgs, err
 }
 
-func loadDDLVars(w *worker) error {
+// loadGlobalVars loads global variables from system table
+// and store in vardef if possible.
+func (w *worker) loadGlobalVars(varName ...string) error {
 	// Get sessionctx from context resource pool.
 	var ctx sessionctx.Context
 	ctx, err := w.sessPool.Get()
@@ -1079,7 +1081,7 @@ func loadDDLVars(w *worker) error {
 		return errors.Trace(err)
 	}
 	defer w.sessPool.Put(ctx)
-	return util.LoadDDLVars(ctx)
+	return util.LoadGlobalVars(ctx, varName...)
 }
 
 func toTError(err error) *terror.Error {
