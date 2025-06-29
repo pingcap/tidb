@@ -1117,6 +1117,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			candidates = append(candidates, getIndexMergeCandidate(ds, path, prop))
 			continue
 		}
+
 		// if we already know the range of the scan is empty, just return a TableDual
 		if len(path.Ranges) == 0 {
 			return []*candidatePath{{path: path}}

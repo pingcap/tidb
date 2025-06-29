@@ -141,7 +141,7 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	idxNames := make([]string, 0, len(e.indexInfos))
 	for _, idx := range e.indexInfos {
-		if idx.MVIndex || idx.VectorInfo != nil {
+		if idx.MVIndex || idx.VectorInfo != nil || len(idx.NoNullIdxColOffsets) != 0 {
 			continue
 		}
 		idxNames = append(idxNames, idx.Name.O)
@@ -164,7 +164,7 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	// TODO: Make the value of concurrency adjustable. And we can consider the number of records.
 	if len(e.srcs) == 1 {
 		err = e.checkIndexHandle(ctx, e.srcs[0])
-		if err == nil && e.srcs[0].index.MVIndex {
+		if err == nil && shouldCheckTableRecordForIndex(e.srcs[0].index) {
 			err = e.checkTableRecord(ctx, 0)
 		}
 		if err != nil {
@@ -188,7 +188,7 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 					select {
 					case src := <-taskCh:
 						err1 := e.checkIndexHandle(ctx, src)
-						if err1 == nil && src.index.MVIndex {
+						if err1 == nil && shouldCheckTableRecordForIndex(e.srcs[0].index) {
 							for offset, idx := range e.indexInfos {
 								if idx.ID == src.index.ID {
 									err1 = e.checkTableRecord(ctx, offset)
@@ -217,6 +217,10 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	default:
 		return nil
 	}
+}
+
+func shouldCheckTableRecordForIndex(idx *model.IndexInfo) bool {
+	return idx.MVIndex || len(idx.NoNullIdxColOffsets) != 0
 }
 
 func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) error {
