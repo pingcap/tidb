@@ -316,6 +316,7 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 		if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
 			return nil, err
 		}
+		parser.SetScannedPos(chunk.Chunk.RealOffset)
 	}
 	return parser, nil
 }
