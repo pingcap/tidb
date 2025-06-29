@@ -2476,6 +2476,20 @@ func TestTiDBUpgradeToVer212(t *testing.T) {
 	MustExec(t, seCurVer, "select sample_sql, start_time, plan_digest from mysql.tidb_runaway_queries")
 }
 
+func TestIssue61890(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	s1 := CreateSessionAndSetID(t, store)
+	MustExec(t, s1, "drop table mysql.global_variables")
+	MustExec(t, s1, "create table mysql.global_variables(`VARIABLE_NAME` varchar(64) NOT NULL PRIMARY KEY clustered, `VARIABLE_VALUE` varchar(16383) DEFAULT NULL)")
+
+	s2 := CreateSessionAndSetID(t, store)
+	initGlobalVariableIfNotExists(s2, variable.TiDBEnableINLJoinInnerMultiPattern, variable.Off)
+
+	dom.Close()
+}
+
 func TestIndexJoinMultiPatternByUpgrade650To840(t *testing.T) {
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
