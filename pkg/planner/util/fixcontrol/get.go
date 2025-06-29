@@ -74,7 +74,7 @@ const (
 	// Fix56318 controls whether to do HeavyFunctionOptimize. The HeavyFunctionOptimize eliminate the usage of
 	// the function in TopN operators
 	Fix56318 uint64 = 56318
-	// Fix61556 controls whether to allow elimination of aggregation functions in join operations.
+	// Fix61556 allows agg elimination on composite PK/UK in joins.
 	Fix61556 uint64 = 61556
 )
 
