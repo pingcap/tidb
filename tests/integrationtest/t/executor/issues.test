@@ -779,3 +779,8 @@ select from_unixtime( if(col2 >9999999999, col2/1000, col2), '%Y-%m-%d %H:%i:%s'
 
 # TestIssue56641
 select ((exists (select 1)) * -5) as c1;
+
+# TestIssue59457
+SELECT IS_UUID(' 6ccd780c-baba-1026-8567-4cc3505b2a62 ');
+-- error 1411
+SELECT UUID_TO_BIN(' 6ccd780c-baba-1026-9564-5b8c656024db ');
