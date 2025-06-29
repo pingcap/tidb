@@ -380,7 +380,7 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 					colSet[col.UniqueID] = true
 				}
 				for _, key := range pkOrUK {
-					// currently, we only consider the exact match and don't consider the superset match
+					// Currently, only exact matches are considered; superset matches are not.
 					if len(key) != len(cols) {
 						continue
 					}
