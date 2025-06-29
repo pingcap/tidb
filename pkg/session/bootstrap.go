@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -1332,6 +1331,7 @@ var (
 	SupportUpgradeHTTPOpVer int64 = version174
 )
 
+<<<<<<< HEAD
 func checkDistTask(s sessiontypes.Session, ver int64) {
 	if ver > version195 {
 		// since version195 we enable dist task by default, no need to check
@@ -1375,6 +1375,33 @@ func checkDistTask(s sessiontypes.Session, ver int64) {
 	if req.NumRows() > 0 {
 		logutil.BgLogger().Fatal("check dist task failed, some distributed tasks is still running", zap.Error(err))
 	}
+=======
+func acquireLock(store kv.Storage) (func(), error) {
+	etcdCli, err := storepkg.NewEtcdCli(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if etcdCli == nil {
+		// Special handling for test.
+		logutil.BgLogger().Warn("skip acquire ddl owner lock for uni-store")
+		return func() {
+			// do nothing
+		}, nil
+	}
+	releaseFn, err := owner.AcquireDistributedLock(context.Background(), etcdCli, bootstrapOwnerKey, 10)
+	if err != nil {
+		if err2 := etcdCli.Close(); err2 != nil {
+			logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
+		}
+		return nil, errors.Trace(err)
+	}
+	return func() {
+		releaseFn()
+		if err2 := etcdCli.Close(); err2 != nil {
+			logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
+		}
+	}, nil
+>>>>>>> fc8bdb54c60 (session: remove distributed tasks limitation from upgrade (#56773))
 }
 
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
@@ -1387,7 +1414,6 @@ func upgrade(s sessiontypes.Session) {
 		return
 	}
 
-	checkDistTask(s, ver)
 	printClusterState(s, ver)
 
 	// Only upgrade from under version92 and this TiDB is not owner set.
