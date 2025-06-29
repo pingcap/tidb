@@ -2303,6 +2303,12 @@ func applyLogicalAggregationHint(lp base.LogicalPlan, physicPlan base.PhysicalPl
 			if _, ok := childTasks[0].(*CopTask); ok {
 				return true
 			}
+		} else {
+			// If the distinct agg can't be allowed to push down, we will consider root task type.
+			// which is try to get the same behavior as before like types := {RootTask} only.
+			if _, ok := childTasks[0].(*RootTask); ok {
+				return true
+			}
 		}
 	} else if la.PreferAggToCop {
 		// If the aggregation is preferred to be pushed down to coprocessor, we will prefer it.
