@@ -1162,7 +1162,12 @@ func isTiKVIndexByName(idxName ast.CIStr, indexInfo *model.IndexInfo, tblInfo *m
 	return indexInfo != nil && !indexInfo.IsColumnarIndex()
 }
 
-func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
+func getPossibleAccessPaths(
+	ctx base.PlanContext,
+	tableHints *hint.PlanHints,
+	indexHints []*ast.IndexHint,
+	tbl table.Table, dbName, tblName ast.CIStr,
+	check, hasFlagPartitionProcessor, enableMVIndexScan bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1371,7 +1376,10 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			break
 		}
 	}
-	if allMVIIndexPath {
+
+	// If we want to build MV Index scan, don't add table scan to possible access path,
+	// otherwise we can't guarantee index scan is chosen after cost estimation.
+	if allMVIIndexPath && !enableMVIndexScan {
 		available = append(available, tablePath)
 	}
 
