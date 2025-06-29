@@ -2692,6 +2692,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			ResourceGroupName:             sc.ResourceGroupName,
 			LoadBasedReplicaReadThreshold: vars.LoadBasedReplicaReadThreshold,
 			RunawayChecker:                sc.RunawayChecker,
+			RUConsumptionReporter:         s.GetDomain().(*domain.Domain).ResourceGroupsController(),
 			TiKVClientReadTimeout:         vars.GetTiKVClientReadTimeout(),
 			MaxExecutionTime:              vars.GetMaxExecutionTime(),
 

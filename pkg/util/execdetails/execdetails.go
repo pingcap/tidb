@@ -1695,6 +1695,12 @@ func (networkTraffic *TiFlashNetworkTrafficSummary) mergeExecSummary(summary *ti
 	networkTraffic.interZoneReceiveBytes += *summary.InterZoneReceiveBytes
 }
 
+// GetInterZoneTrafficBytes returns the inter zone network traffic bytes involved
+// between tiflash instances.
+func (networkTraffic *TiFlashNetworkTrafficSummary) GetInterZoneTrafficBytes() uint64 {
+	return networkTraffic.interZoneSendBytes + networkTraffic.interZoneReceiveBytes
+}
+
 // BasicRuntimeStats is the basic runtime stats.
 type BasicRuntimeStats struct {
 	// the count of executors with the same id
