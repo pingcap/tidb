@@ -1098,7 +1098,7 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
 	}()
 	toCh := make(chan *regionJob, 1)
-	worker := bak.newRegionJobWorker(1, toCh, make(chan *regionJob, 1), nil, nil)
+	worker := bak.newRegionJobWorker(1, toCh, make(chan *regionJob, 1), nil, nil, nil)
 
 	toCh <- &regionJob{}
 	err := worker.run(context.Background())
@@ -1302,7 +1302,7 @@ func TestCheckPeersBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		worker := local.newRegionJobWorker(1, jobCh, jobOutCh, nil, nil)
+		worker := local.newRegionJobWorker(1, jobCh, jobOutCh, nil, nil, nil)
 		err := worker.run(ctx)
 		require.NoError(t, err)
 	}()
@@ -1410,7 +1410,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		worker := local.newRegionJobWorker(1, jobCh, jobOutCh, &jobWg, nil)
+		worker := local.newRegionJobWorker(1, jobCh, jobOutCh, &jobWg, nil, nil)
 		err := worker.run(ctx)
 		require.NoError(t, err)
 	}()
@@ -1511,7 +1511,7 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		worker := local.newRegionJobWorker(1, jobCh, jobOutCh, &jobWg, nil)
+		worker := local.newRegionJobWorker(1, jobCh, jobOutCh, &jobWg, nil, nil)
 		err := worker.run(ctx)
 		require.NoError(t, err)
 	}()
@@ -1633,7 +1633,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		worker := local.newRegionJobWorker(1, jobCh, jobOutCh, &jobWg, nil)
+		worker := local.newRegionJobWorker(1, jobCh, jobOutCh, &jobWg, nil, nil)
 		err := worker.run(ctx)
 		require.NoError(t, err)
 	}()
