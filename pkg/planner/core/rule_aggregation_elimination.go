@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -48,129 +47,6 @@ type aggregationEliminateChecker struct {
 	oldAggEliminationCheck bool
 }
 
-// isKeyFullyCoveredByJoinColumns checks if all columns in key are uniquely covered by joinColumnPairs on the given side (0: left, 1: right)
-func isKeyFullyCoveredByJoinColumns(key expression.KeyInfo, joinColumnPairs [][2]*expression.Column, side int) bool {
-	if len(joinColumnPairs) != len(key) {
-		return false
-	}
-	matched := make(map[int]bool)
-	for i, keyCol := range key {
-		found := false
-		for _, pair := range joinColumnPairs {
-			if pair[side].Equal(nil, keyCol) {
-				if matched[i] {
-					return false
-				}
-				matched[i] = true
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return len(matched) == len(key)
-}
-
-func hasJoinEqConditionCoveringUK(keys []expression.KeyInfo, joinPairs [][2]*expression.Column, side int) bool {
-	for _, key := range keys {
-		if isKeyFullyCoveredByJoinColumns(key, joinPairs, side) {
-			return true
-		}
-	}
-	return false
-}
-
-// collectDataSourceUniqueKeys recursively traverses the logical plan tree to find all DataSource nodes
-// and returns their primary key or unique key information (PKOrUK).
-func collectDataSourceUniqueKeys(p base.LogicalPlan) [][]expression.KeyInfo {
-	if ds, ok := p.(*logicalop.DataSource); ok {
-		if keys := ds.Schema().PKOrUK; keys != nil {
-			return [][]expression.KeyInfo{keys}
-		}
-		return nil
-	}
-	allKeys := make([][]expression.KeyInfo, 0, len(p.Children()))
-	for _, child := range p.Children() {
-		if childKeys := collectDataSourceUniqueKeys(child); childKeys != nil {
-			allKeys = append(allKeys, childKeys...)
-		}
-	}
-	return allKeys
-}
-
-// checkJoinChildUniqueKeyCoverage checks if a child of a join satisfies the unique key coverage condition.
-func checkJoinChildUniqueKeyCoverage(child base.LogicalPlan, joinPairs [][2]*expression.Column, side int) bool {
-	switch child.(type) {
-	case *logicalop.DataSource, *logicalop.LogicalProjection:
-		// For DataSource or Projection, we trace back to the underlying DataSources to find unique keys.
-		allUniqueKeys := collectDataSourceUniqueKeys(child)
-		if len(allUniqueKeys) == 0 {
-			return false
-		}
-		isCovered := false
-		for _, keys := range allUniqueKeys {
-			if hasJoinEqConditionCoveringUK(keys, joinPairs, side) {
-				isCovered = true
-				break
-			}
-		}
-		if !isCovered {
-			return false
-		}
-	case *logicalop.LogicalJoin:
-		// The uniqueness of a LogicalJoin child is checked by the recursive call to checkAllJoinsUniqueByEqCondition,
-		// so we don't need to check its keys here. It is considered valid.
-	default:
-		// Any other operator type means the uniqueness is not guaranteed.
-		return false
-	}
-	return true
-}
-
-// checkAllJoinsUniqueByEqCondition recursively checks from the bottom up whether all joins in the plan
-// have their PKOrUK fully covered by join equal conditions.
-// Returns false immediately if any join does not satisfy the uniqueness condition.
-func checkAllJoinsUniqueByEqCondition(p base.LogicalPlan) bool {
-	for _, child := range p.Children() {
-		if _, ok := child.(*logicalop.LogicalJoin); ok {
-			if !checkAllJoinsUniqueByEqCondition(child) {
-				return false
-			}
-		}
-	}
-
-	join, ok := p.(*logicalop.LogicalJoin)
-	if !ok {
-		return false
-	}
-
-	if len(join.EqualConditions) == 0 {
-		return false
-	}
-	joinPairs := make([][2]*expression.Column, 0, len(join.EqualConditions))
-	for _, cond := range join.EqualConditions {
-		if cond.FuncName.L != ast.EQ {
-			return false
-		}
-		col1, ok1 := cond.GetArgs()[0].(*expression.Column)
-		col2, ok2 := cond.GetArgs()[1].(*expression.Column)
-		if !ok1 || !ok2 {
-			return false
-		}
-		joinPairs = append(joinPairs, [2]*expression.Column{col1, col2})
-	}
-
-	if !checkJoinChildUniqueKeyCoverage(join.Children()[0], joinPairs, 0) {
-		return false
-	}
-	if !checkJoinChildUniqueKeyCoverage(join.Children()[1], joinPairs, 1) {
-		return false
-	}
-	return true
-}
-
 // tryToEliminateAggregation will eliminate aggregation grouped by unique key.
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
@@ -191,8 +67,8 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 		}
 	}
 	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
-	var uniqueKey expression.KeyInfo
 	coveredByUniqueKey := false
+	var uniqueKey expression.KeyInfo
 	for _, key := range agg.Children()[0].Schema().PKOrUK {
 		if schemaByGroupby.ColumnsIndices(key) != nil {
 			coveredByUniqueKey = true
@@ -200,33 +76,6 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 			break
 		}
 	}
-	allowEliminateAgg4Join := fixcontrol.GetBoolWithDefault(agg.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix61556, true)
-	// Handle the multi-table join case: check if a unique key from a base table is covered and preserved through all joins.
-	if !coveredByUniqueKey && allowEliminateAgg4Join {
-		// The GROUP BY columns may cover a unique key from a base table.
-		allDataSourceKeys := collectDataSourceUniqueKeys(agg.Children()[0])
-		for _, keys := range allDataSourceKeys {
-			for _, key := range keys {
-				if schemaByGroupby.ColumnsIndices(key) != nil {
-					coveredByUniqueKey = true
-					uniqueKey = key
-					break
-				}
-			}
-			if coveredByUniqueKey {
-				break
-			}
-		}
-
-		if coveredByUniqueKey {
-			// We have found a unique key from a data source that is covered by the GROUP BY columns.
-			// Then, we need to check if the uniqueness is preserved by all intermediate join operations.
-			if !checkAllJoinsUniqueByEqCondition(agg.Children()[0]) {
-				coveredByUniqueKey = false
-			}
-		}
-	}
-
 	if coveredByUniqueKey {
 		if a.oldAggEliminationCheck && !CheckCanConvertAggToProj(agg) {
 			return nil

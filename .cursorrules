@@ -1,0 +1,30 @@
+# Cursor Rules for TiDB Project
+
+## Go Language Server Configuration
+- Enable gopls language server for better Go code intelligence
+- Configure workspace settings for optimal function navigation
+- Set up proper module resolution for the TiDB monorepo
+
+## Function Navigation Settings
+- Enable "Go to Definition" with Ctrl/Cmd + Click
+- Enable "Go to Implementation" for interface methods
+- Enable "Find All References" for comprehensive code analysis
+- Configure symbol search to include all Go files in the workspace
+
+## PR Review Enhancements
+- Enable diff view with syntax highlighting
+- Configure inline comments and suggestions
+- Set up proper file comparison tools
+- Enable code folding for better readability during reviews
+
+## Performance Optimizations
+- Exclude build artifacts and temporary files from indexing
+- Configure proper file watching for large codebases
+- Optimize memory usage for large Go projects
+- Enable incremental compilation for faster feedback
+
+## Code Intelligence
+- Enable auto-completion for Go packages and functions
+- Configure import suggestions and auto-import
+- Enable error detection and quick fixes
+- Set up proper debugging configuration for Go applications 

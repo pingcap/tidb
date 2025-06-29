@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
@@ -338,27 +339,68 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		}
 		lOk := false
 		rOk := false
-		// Such as 'select * from t1 join t2 where t1.a = t2.a and t1.b = t2.b'.
-		// If one sides (a, b) is a unique key, then the unique key information is remained.
-		// But we don't consider this situation currently.
-		// Only key made by one column is considered now.
-		evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-		for _, expr := range p.EqualConditions {
-			ln := expr.GetArgs()[0].(*expression.Column)
-			rn := expr.GetArgs()[1].(*expression.Column)
-			for _, key := range childSchema[0].PKOrUK {
-				if len(key) == 1 && key[0].Equal(evalCtx, ln) {
-					lOk = true
-					break
+		// Use the fix control to control whether to support composite PKOrUK
+		allowEliminateAgg4Join := fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix61556, true)
+		if !allowEliminateAgg4Join {
+			// Such as 'select * from t1 join t2 where t1.a = t2.a and t1.b = t2.b'.
+			// If one sides (a, b) is a unique key, then the unique key information is remained.
+			// But we don't consider this situation currently.
+			// Only key made by one column is considered now.
+			evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+			for _, expr := range p.EqualConditions {
+				ln := expr.GetArgs()[0].(*expression.Column)
+				rn := expr.GetArgs()[1].(*expression.Column)
+				for _, key := range childSchema[0].PKOrUK {
+					if len(key) == 1 && key[0].Equal(evalCtx, ln) {
+						lOk = true
+						break
+					}
+				}
+				for _, key := range childSchema[1].PKOrUK {
+					if len(key) == 1 && key[0].Equal(evalCtx, rn) {
+						rOk = true
+						break
+					}
 				}
 			}
-			for _, key := range childSchema[1].PKOrUK {
-				if len(key) == 1 && key[0].Equal(evalCtx, rn) {
-					rOk = true
-					break
-				}
+		} else {
+			// Extract all left and right columns from equal conditions
+			leftCols := make([]*expression.Column, 0, len(p.EqualConditions))
+			rightCols := make([]*expression.Column, 0, len(p.EqualConditions))
+			for _, expr := range p.EqualConditions {
+				leftCols = append(leftCols, expr.GetArgs()[0].(*expression.Column))
+				rightCols = append(rightCols, expr.GetArgs()[1].(*expression.Column))
 			}
+			checkColumnsMatchPKOrUK := func(cols []*expression.Column, pkOrUK []expression.KeyInfo) bool {
+				if len(pkOrUK) == 0 {
+					return false
+				}
+				colSet := make(map[int64]bool, len(cols))
+				for _, col := range cols {
+					colSet[col.UniqueID] = true
+				}
+				for _, key := range pkOrUK {
+					// currently, we only consider the exact match and don't consider the superset match
+					if len(key) != len(cols) {
+						continue
+					}
+					allMatch := true
+					for _, k := range key {
+						if !colSet[k.UniqueID] {
+							allMatch = false
+							break
+						}
+					}
+					if allMatch {
+						return true
+					}
+				}
+				return false
+			}
+			lOk = checkColumnsMatchPKOrUK(leftCols, childSchema[0].PKOrUK)
+			rOk = checkColumnsMatchPKOrUK(rightCols, childSchema[1].PKOrUK)
 		}
+
 		// For inner join, if one side of one equal condition is unique key,
 		// another side's unique key information will all be reserved.
 		// If it's an outer join, NULL value will fill some position, which will destroy the unique key information.
