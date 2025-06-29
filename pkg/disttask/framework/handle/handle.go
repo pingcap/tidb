@@ -281,8 +281,9 @@ func GetCloudStorageURI(ctx context.Context, store kv.Storage) string {
 			u.Path = path.Join(u.Path, strconv.FormatUint(s.GetPDClient().GetClusterID(ctx), 10))
 			return u.String()
 		}
+	} else {
+		logutil.BgLogger().Warn("Can't get cluster id from store, use default cloud storage uri")
 	}
-	logutil.BgLogger().Error("Can't get cluster id from store, use default cloud storage uri")
 	return cloudURI
 }
 
