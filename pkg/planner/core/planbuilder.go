@@ -1083,6 +1083,9 @@ func getPathByIndexName(paths []*util.AccessPath, idxName pmodel.CIStr, tblInfo 
 		if path.IsTiKVTablePath() && isPrimaryIndex(idxName) && tblInfo.HasClusteredIndex() {
 			return path
 		}
+		if path.StoreType == kv.TiFlash && idxName.L == "tiflash" {
+			return path
+		}
 		// If it's not a tikv table path and the index is nil, it could not be any index path.
 		if path.Index == nil {
 			continue

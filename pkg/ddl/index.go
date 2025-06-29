@@ -358,6 +358,9 @@ func BuildIndexInfo(
 		return nil, errors.Trace(err)
 	}
 
+	// Primary index is not null, so it's fine to use no_null_index even if it's a primary index (as it'll have no effect).
+	idxInfo.NoNullIdxColOffsets = buildNoNullIdxColOffsets(idxInfo.Columns, allTableColumns)
+
 	if indexOption != nil {
 		idxInfo.Comment = indexOption.Comment
 		if indexOption.Visibility == ast.IndexVisibilityInvisible {
@@ -435,6 +438,18 @@ func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 		Dimension:      uint64(colInfo.FieldType.GetFlen()),
 		DistanceMetric: distanceMetric,
 	}, exprStr, nil
+}
+
+func buildNoNullIdxColOffsets(indexColumns []*model.IndexColumn, allTableColumns []*model.ColumnInfo) []int {
+	var noNullIdxColOffsets []int
+
+	for i, col := range indexColumns {
+		if allTableColumns[col.Offset].NoNullIndex {
+			noNullIdxColOffsets = append(noNullIdxColOffsets, i)
+		}
+	}
+
+	return noNullIdxColOffsets
 }
 
 // AddIndexColumnFlag aligns the column flags of columns in TableInfo to IndexInfo.
