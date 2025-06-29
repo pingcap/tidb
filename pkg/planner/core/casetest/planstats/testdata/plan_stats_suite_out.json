@@ -143,5 +143,19 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestPlanStatsLoadForCTE",
+    "Cases": [
+      {
+        "Query": "explain format= brief with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3",
+        "Result": [
+          "Projection 1.60 root  plus(test.t.d, 1)->Column#12, test.t.b",
+          "└─TableReader 1.60 root  data:Selection",
+          "  └─Selection 1.60 cop[tikv]  gt(test.t.c, 1), lt(plus(test.t.d, 1), 3)",
+          "    └─TableFullScan 3.00 cop[tikv] table:t keep order:false"
+        ]
+      }
+    ]
   }
 ]
