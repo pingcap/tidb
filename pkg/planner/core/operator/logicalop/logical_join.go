@@ -379,11 +379,9 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 				for _, col := range cols {
 					colSet[col.UniqueID] = true
 				}
+				// Check if any key is a subset of the join key columns
+				// A match is considered valid if join key columns contain all columns of any PKOrUK
 				for _, key := range pkOrUK {
-					// Currently, only exact matches are considered; superset matches are not.
-					if len(key) != len(cols) {
-						continue
-					}
 					allMatch := true
 					for _, k := range key {
 						if !colSet[k.UniqueID] {
