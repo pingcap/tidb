@@ -40,6 +40,8 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 	for range 13 {
 		tk.MustExec("insert into t1(a,b,c,t) select a,b,c,t from t1;")
 	}
+	h := dom.StatsHandle()
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t1 all columns;")
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
