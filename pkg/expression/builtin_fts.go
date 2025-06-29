@@ -81,3 +81,56 @@ func (b *builtinFtsMatchWordSig) evalReal(ctx EvalContext, row chunk.Row) (float
 	// Reject executing match against in TiDB side.
 	return 0, false, errors.Errorf("cannot use 'FTS_MATCH_WORD()' outside of fulltext index")
 }
+
+type ftsMatchPrefixFunctionClass struct {
+	baseFunctionClass
+}
+
+type builtinFtsMatchPrefixSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinFtsMatchPrefixSig) Clone() builtinFunc {
+	newSig := &builtinFtsMatchPrefixSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (c *ftsMatchPrefixFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	argAgainst := args[0]
+	argAgainstConstant, ok := argAgainst.(*Constant)
+	if !ok {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("match against a non-constant string")
+	}
+	if argAgainstConstant.Value.Kind() != types.KindString {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("match against a non-constant string")
+	}
+	argsMatch := args[1:]
+	for _, arg := range argsMatch {
+		_, ok := arg.(*Column)
+		if !ok {
+			return nil, ErrNotSupportedYet.GenWithStackByArgs("not matching a column")
+		}
+	}
+
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETString, types.ETString)
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, argTps...)
+	if err != nil {
+		return nil, err
+	}
+
+	sig := &builtinFtsMatchPrefixSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_FTSMatchPrefix)
+	return sig, nil
+}
+
+func (b *builtinFtsMatchPrefixSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
+	// Reject executing match against in TiDB side.
+	return 0, false, errors.Errorf("cannot use 'FTS_MATCH_PREFIX()' outside of fulltext index")
+}
