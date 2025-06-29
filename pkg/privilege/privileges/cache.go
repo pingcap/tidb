@@ -761,19 +761,27 @@ func compareColumnsPrivRecord(x, y columnsPrivRecord) int {
 func compareHost(x, y string) int {
 	// The more-specific, the smaller it is.
 	// The pattern '%' means “any host” and is least specific.
-	if y == `%` {
-		if x == `%` {
+	if x == "%" || y == "%" {
+		if x == "%" && y == "%" {
 			return 0
 		}
-		return -1
+		if y == `%` {
+			return -1
+		}
+		// x == '%'
+		return 1
 	}
 
 	// The empty string '' also means “any host” but sorts after '%'.
-	if y == "" {
-		if x == "" {
+	if x == `` || y == `` {
+		if x == `` && y == `` {
 			return 0
 		}
-		return -1
+		if y == "" {
+			return -1
+		}
+		// x == ``
+		return 1
 	}
 
 	// One of them end with `%`.
@@ -796,11 +804,10 @@ func compareHost(x, y string) int {
 	}
 
 	// For other case, the order is nondeterministic.
-	switch x < y {
-	case true:
-		return -1
-	case false:
+	if x > y {
 		return 1
+	} else if x < y {
+		return -1
 	}
 	return 0
 }
@@ -1392,7 +1399,7 @@ func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
 	return record.baseRecord.match(user, host) &&
 		strings.EqualFold(record.DB, db) &&
 		strings.EqualFold(record.TableName, table) &&
-		strings.EqualFold(record.ColumnName, col)
+		(strings.EqualFold(record.ColumnName, col) || col == "*")
 }
 
 // patternMatch matches "%" the same way as ".*" in regular expression, for example,
@@ -1578,6 +1585,7 @@ func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIden
 }
 
 // RequestVerification checks whether the user have sufficient privileges to do the operation.
+// `column == "*"` means it matches ANY column in the table.
 func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, user, host, db, table, column string, priv mysql.PrivilegeType) bool {
 	if priv == mysql.UsagePriv {
 		return true
@@ -1612,15 +1620,14 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 		if tableRecord != nil {
 			tablePriv |= tableRecord.TablePriv
 			if column != "" {
-				columnPriv |= tableRecord.ColumnPriv
+				columnPriv |= tableRecord.TablePriv
 			}
 		}
 	}
-	if tablePriv&priv > 0 || columnPriv&priv > 0 {
+	if tablePriv&priv > 0 {
 		return true
 	}
 
-	columnPriv = 0
 	for _, r := range roleList {
 		columnRecord := p.matchColumns(r.Username, r.Hostname, db, table, column)
 		if columnRecord != nil {
