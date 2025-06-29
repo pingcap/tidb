@@ -725,14 +725,6 @@ func (d SchemaTracker) handleModifyColumn(
 	tblInfo.AutoRandomBits = updatedAutoRandomBits
 	oldCol := table.FindCol(t.Cols(), originalColName.L).ColumnInfo
 
-	originDefVal, err := ddl.GetOriginDefaultValueForModifyColumn(sctx, newColInfo, oldCol)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err = newColInfo.SetOriginDefaultValue(originDefVal); err != nil {
-		return errors.Trace(err)
-	}
-
 	// replace old column and its related index column in-place.
 	newColInfo.ID = ddl.AllocateColumnID(tblInfo)
 	newColInfo.Offset = oldCol.Offset
