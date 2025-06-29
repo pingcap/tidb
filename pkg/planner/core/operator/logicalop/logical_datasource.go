@@ -159,6 +159,11 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
 	// TODO: remove it to the place building logical plan
 	predicates = utilfuncp.AddPrefix4ShardIndexes(ds, ds.SCtx(), predicates)
+	checkMap := make(map[int64]*expression.Column, len(predicates))
+	for _, column := range ds.Schema().Columns {
+		checkMap[column.UniqueID] = column
+	}
+	fixReturnType(checkMap, predicates...)
 	ds.AllConds = predicates
 	dual := Conds2TableDual(ds, ds.AllConds)
 	if dual != nil {
@@ -168,6 +173,24 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
 	return predicates, ds
+}
+
+// fixReturnType fixes the return type of the column in the predicates.
+// We will remove the flags of the column in the schema such as not null when to deal with outer join.
+// so we need to fix the return type of the column in the predicates to make sure it has the same flags as the column in the schema.
+func fixReturnType(schemaMap map[int64]*expression.Column, predicates ...expression.Expression) {
+	for _, predicate := range predicates {
+		switch p := predicate.(type) {
+		case *expression.ScalarFunction:
+			for _, arg := range p.GetArgs() {
+				fixReturnType(schemaMap, arg)
+			}
+		case *expression.Column:
+			if col, ok := schemaMap[p.UniqueID]; ok {
+				p.RetType.AddFlag(col.RetType.GetFlag())
+			}
+		}
+	}
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
