@@ -336,13 +336,7 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		if len(p.EqualConditions) == 0 {
 			return
 		}
-		// When both sides match different unique keys (e.g., left side matches unique key setA, right side matches unique key setB),
-		// we can derive additional functional dependencies through join conditions:
-		// 1. Original FDs: setA -> left row, setB -> right row
-		// 2. Join condition: setA from left = setA from right
-		// 3. By augmentation rule (X->Y implies XZ->YZ): setA from right + setB -> left row + setB
-		// 4. By transitivity rule (X->Y and Y->Z implies X->Z): setA from right + setB -> left row + right row
-		// This allows us to preserve unique key information from both sides when join keys provide stronger uniqueness guarantees.		// Extract all left and right columns from equal conditions
+		// Extract all left and right columns from equal conditions
 		leftCols := make([]*expression.Column, 0, len(p.EqualConditions))
 		rightCols := make([]*expression.Column, 0, len(p.EqualConditions))
 		for _, expr := range p.EqualConditions {
