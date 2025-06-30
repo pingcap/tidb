@@ -19,7 +19,7 @@ go_library(
         "backfilling_merge_sort.go",
         "backfilling_operators.go",
         "backfilling_read_index.go",
-        "backfilling_txn_executor.go",
+        "backfilling_scheduler.go",
         "bdr.go",
         "callback.go",
         "cluster.go",
