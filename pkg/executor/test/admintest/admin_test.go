@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"regexp"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	ast "github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -1347,6 +1349,65 @@ func TestAdminCheckWithSnapshot(t *testing.T) {
 	tk.MustExec("admin check table admin_t_s;")
 	tk.MustExec("admin check index admin_t_s a;")
 	tk.MustExec("drop table if exists admin_t_s")
+}
+
+func TestAdminCheckTableWithSnapshot(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+	conn2 := server.CreateMockConn(t, sv)
+	tk2 := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1), (2), (3);")
+	tk.MustExec("alter table t add index(a)")
+	tk2.MustExec("use test")
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+			ON DUPLICATE KEY UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var tso uint64
+	unit := 500 * time.Millisecond
+
+	go func() {
+		time.Sleep(unit)
+
+		for range 5 {
+			tk2.MustExec(fmt.Sprintf("set @@tidb_snapshot = '%d'", tso))
+			tk2.MustExec("ADMIN CHECK TABLE t")
+			time.Sleep(2 * unit)
+		}
+		tk2.MustExec("set @@tidb_snapshot = ''")
+		tk2.MustExec("ADMIN CHECK TABLE t")
+		wg.Done()
+	}()
+
+	for i := range 4 {
+		tk.MustExec("BEGIN")
+		tso = tk.Session().GetSessionVars().TxnCtx.StartTS
+		if i%2 == 0 {
+			tk.MustExec("ALTER TABLE t MODIFY COLUMN a VARCHAR(4)")
+		} else {
+			tk.MustExec("ALTER TABLE t MODIFY COLUMN a INT")
+		}
+		tk.MustExec("COMMIT")
+		time.Sleep(2 * unit)
+	}
+
+	wg.Wait()
 }
 
 func TestAdminCheckTableFailed(t *testing.T) {
