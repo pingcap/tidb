@@ -463,7 +463,9 @@ func IsFastPlan(p base.Plan) bool {
 
 func syncInternalSystemVariable(sctx *variable.SessionVars) {
 	if sctx.GetSessionVars().InRestrictedSQL {
-		val, _ := sctx.GetSessionVars().GetSystemVar(vardef.TiDBAdaptiveClosestReadThreshold)
+		val, _ := sctx.GetSessionVars().GetSystemVar(vardef.TiDBReplicaRead)
+		sctx.GetSessionVars().SetReplicaReadByString(val)
+		val, _ = sctx.GetSessionVars().GetSystemVar(vardef.TiDBAdaptiveClosestReadThreshold)
 		sctx.GetSessionVars().ReplicaClosestReadThreshold = variable.TidbOptInt64(val, vardef.DefAdaptiveClosestReadThreshold)
 	}
 }
