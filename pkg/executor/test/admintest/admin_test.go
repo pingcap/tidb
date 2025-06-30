@@ -1377,35 +1377,39 @@ func TestAdminCheckTableWithSnapshot(t *testing.T) {
 			ON DUPLICATE KEY UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
 
-	var wg sync.WaitGroup
+	var (
+		wg      sync.WaitGroup
+		startTS uint64
+	)
 	wg.Add(1)
-	var tso uint64
-	unit := 500 * time.Millisecond
+	ch := make(chan uint64)
 
 	go func() {
-		time.Sleep(unit)
+		defer wg.Done()
 
-		for range 5 {
+		for tso := range ch {
 			tk2.MustExec(fmt.Sprintf("set @@tidb_snapshot = '%d'", tso))
 			tk2.MustExec("ADMIN CHECK TABLE t")
-			time.Sleep(2 * unit)
 		}
+
 		tk2.MustExec("set @@tidb_snapshot = ''")
 		tk2.MustExec("ADMIN CHECK TABLE t")
-		wg.Done()
 	}()
 
-	for i := range 4 {
+	for _, alterTableSQL := range []string{
+		"ALTER TABLE t MODIFY COLUMN a VARCHAR(4)",
+		"ALTER TABLE t MODIFY COLUMN a INT",
+		"ALTER TABLE t RENAME COLUMN a TO aa",
+		"ALTER TABLE t ADD INDEX idx(aa)",
+		"ALTER TABLE t DROP INDEX idx",
+	} {
 		tk.MustExec("BEGIN")
-		tso = tk.Session().GetSessionVars().TxnCtx.StartTS
-		if i%2 == 0 {
-			tk.MustExec("ALTER TABLE t MODIFY COLUMN a VARCHAR(4)")
-		} else {
-			tk.MustExec("ALTER TABLE t MODIFY COLUMN a INT")
-		}
+		startTS = tk.Session().GetSessionVars().TxnCtx.StartTS
+		tk.MustExec(alterTableSQL)
 		tk.MustExec("COMMIT")
-		time.Sleep(2 * unit)
+		ch <- startTS
 	}
+	close(ch)
 
 	wg.Wait()
 }

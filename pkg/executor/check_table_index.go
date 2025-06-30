@@ -319,9 +319,23 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 
 	sessVars.OptimizerUseInvisibleIndexes = true
 	sessVars.MemQuotaQuery = w.sctx.GetSessionVars().MemQuotaQuery
+	snapshot := w.e.Ctx().GetSessionVars().SnapshotTS
+	if snapshot != 0 {
+		_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, fmt.Sprintf("set session tidb_snapshot = %d", snapshot))
+		if err != nil {
+			logutil.BgLogger().Error("fail to set tidb_snapshot", zap.Error(err), zap.Uint64("snapshot ts", snapshot))
+		}
+	}
+
 	return func() {
 		sessVars.OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
 		sessVars.MemQuotaQuery = originMemQuotaQuery
+		if snapshot != 0 {
+			_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, "set session tidb_snapshot = 0")
+			if err != nil {
+				logutil.BgLogger().Error("fail to set tidb_snapshot to 0", zap.Error(err))
+			}
+		}
 	}
 }
 
@@ -393,19 +407,6 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	lookupCheckThreshold := int64(100)
 	checkOnce := false
 
-	if snapshot := w.e.Ctx().GetSessionVars().SnapshotTS; snapshot != 0 {
-		_, err = se.GetSQLExecutor().ExecuteInternal(ctx, fmt.Sprintf("set session tidb_snapshot = %d", snapshot))
-		if err != nil {
-			trySaveErr(err)
-			return
-		}
-		defer func() {
-			_, err = se.GetSQLExecutor().ExecuteInternal(ctx, "set session tidb_snapshot = 0")
-			if err != nil {
-				logutil.BgLogger().Error("fail to set tidb_snapshot to 0", zap.Error(err))
-			}
-		}()
-	}
 	_, err = se.GetSQLExecutor().ExecuteInternal(ctx, "begin")
 	if err != nil {
 		trySaveErr(err)
