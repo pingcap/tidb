@@ -408,7 +408,7 @@ func getDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, 
 	return res
 }
 
-func (p *PhysicalTableReader) accessObject(sctx base.PlanContext) base.AccessObject {
+func (p *PhysicalTableReader) AccessObject(sctx base.PlanContext) base.AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
@@ -477,15 +477,15 @@ func getAccessObjectFromIndexScan(sctx base.PlanContext, is *PhysicalIndexScan, 
 	return DynamicPartitionAccessObjects{res}
 }
 
-func (p *PhysicalIndexReader) accessObject(sctx base.PlanContext) base.AccessObject {
+func (p *PhysicalIndexReader) AccessObject(sctx base.PlanContext) base.AccessObject {
 	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), p.PlanPartInfo)
 }
 
-func (p *PhysicalIndexLookUpReader) accessObject(sctx base.PlanContext) base.AccessObject {
+func (p *PhysicalIndexLookUpReader) AccessObject(sctx base.PlanContext) base.AccessObject {
 	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), p.PlanPartInfo)
 }
 
-func (p *PhysicalIndexMergeReader) accessObject(sctx base.PlanContext) base.AccessObject {
+func (p *PhysicalIndexMergeReader) AccessObject(sctx base.PlanContext) base.AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
