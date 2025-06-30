@@ -128,8 +128,8 @@ func (t *TiCIManagerCtx) Close() {
 	t.err = errors.New("TiCIManagerCtx closed")
 }
 
-// CreateFullTextIndex creates fulltext index on TiCI.
-func (t *TiCIManagerCtx) CreateFullTextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
+// CreateFulltextIndex creates fulltext index on TiCI.
+func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
 	indexColumns := make([]*tici.ColumnInfo, 0)
 	for i := range indexInfo.Columns {
 		offset := indexInfo.Columns[i].Offset

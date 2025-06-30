@@ -888,7 +888,7 @@ func onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver int64, err e
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			err = infosync.CreateFullTextIndex(jobCtx.stepCtx, tblInfo, indexInfo, job.SchemaName)
+			err = infosync.CreateFulltextIndex(jobCtx.stepCtx, tblInfo, indexInfo, job.SchemaName)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
