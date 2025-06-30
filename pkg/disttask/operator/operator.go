@@ -131,7 +131,7 @@ func (s *asyncWorker[T, R]) HandleTask(task T, rsFn func(R)) {
 
 func (*asyncWorker[T, R]) Close() {}
 
-// OperatorCtx is the context used for worker pool
+// Context is the context used for worker pool
 type Context struct {
 	context.Context
 	cancel context.CancelFunc
@@ -217,6 +217,6 @@ func (s *SimpleOperator[T]) Close() error {
 }
 
 // String implements the Operator's String interface.
-func (s *SimpleOperator[T]) String() string {
+func (*SimpleOperator[T]) String() string {
 	return "simpleOperator"
 }

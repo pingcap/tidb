@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pkg/errors"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -149,29 +148,6 @@ func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)
 }
 
 func (*mergeWorker) Close() {}
-
-// TestOperatorCtx is the context for AddIndexIngestPipeline.
-// This is used to cancel the pipeline and collect errors.
-type TestOperatorCtx struct {
-	context.Context
-	cancel context.CancelFunc
-	err    atomic.Pointer[error]
-}
-
-// NewDistTaskOperatorCtx is used for adding index with dist framework.
-func NewTaskOperatorCtx(
-	ctx context.Context,
-	taskID, subtaskID int64,
-) (*TestOperatorCtx, context.CancelFunc) {
-	opCtx, cancel := context.WithCancel(ctx)
-	opCtx = logutil.WithFields(opCtx,
-		zap.Int64("task-id", taskID),
-		zap.Int64("subtask-id", subtaskID))
-	return &TestOperatorCtx{
-		Context: opCtx,
-		cancel:  cancel,
-	}, cancel
-}
 
 // MergeOverlappingFiles reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
