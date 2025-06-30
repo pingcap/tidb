@@ -194,8 +194,8 @@ func NewAddIndexIngestPipeline(
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, cpMgr)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, cpMgr,
 		reorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())), rm)
-	ingestOp := NewIndexIngestOperator(ctx, copCtx, backendCtx, sessPool,
-		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta, cpMgr, rowCntListener)
+	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool,
+		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta, cpMgr)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, cpMgr, rowCntListener)
 
 	operator.Compose(srcOp, scanOp)
@@ -710,7 +710,6 @@ type IndexWriteResult struct {
 	ID    int
 	Added int
 	Total int
-	Next  kv.Key
 }
 
 // IndexIngestOperator writes index records to ingest engine.
@@ -722,7 +721,6 @@ type IndexIngestOperator struct {
 func NewIndexIngestOperator(
 	ctx *OperatorCtx,
 	copCtx copr.CopContext,
-	backendCtx ingest.BackendCtx,
 	sessPool opSessPool,
 	tbl table.PhysicalTable,
 	indexes []table.Index,
@@ -731,7 +729,6 @@ func NewIndexIngestOperator(
 	concurrency int,
 	reorgMeta *model.DDLReorgMeta,
 	cpMgr *ingest.CheckpointManager,
-	rowCntListener RowCountListener,
 ) *IndexIngestOperator {
 	writerCfg := getLocalWriterConfig(len(indexes), concurrency)
 
@@ -766,13 +763,11 @@ func NewIndexIngestOperator(
 					srcChunkPool: srcChunkPool,
 					reorgMeta:    reorgMeta,
 				},
-				backendCtx:     backendCtx,
-				rowCntListener: rowCntListener,
-				cpMgr:          cpMgr,
+				cpMgr: cpMgr,
 			}
 		})
 	return &IndexIngestOperator{
-		AsyncOperator: operator.NewAsyncOperator[IndexRecordChunk, IndexWriteResult](ctx, pool),
+		AsyncOperator: operator.NewAsyncOperator(ctx, pool),
 	}
 }
 
@@ -822,9 +817,8 @@ func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(Index
 		return
 	}
 	if w.cpMgr != nil {
-		totalCnt, nextKey := w.cpMgr.Status()
+		totalCnt, _ := w.cpMgr.Status()
 		rs.Total = totalCnt
-		rs.Next = nextKey
 		w.cpMgr.UpdateWrittenKeys(ck.ID, rs.Added)
 		w.cpMgr.AdvanceWatermark(flushed, imported)
 	}
@@ -858,7 +852,7 @@ func (w *indexIngestBaseWorker) HandleTask(rs IndexRecordChunk) (IndexWriteResul
 		ID: rs.ID,
 	}
 	w.initSessCtx()
-	count, nextKey, err := w.WriteChunk(&rs)
+	count, _, err := w.WriteChunk(&rs)
 	if err != nil {
 		w.ctx.onError(err)
 		return result, err
@@ -871,7 +865,6 @@ func (w *indexIngestBaseWorker) HandleTask(rs IndexRecordChunk) (IndexWriteResul
 		w.totalCount.Add(int64(count))
 	}
 	result.Added = count
-	result.Next = nextKey
 	if ResultCounterForTest != nil {
 		ResultCounterForTest.Add(1)
 	}
@@ -979,7 +972,7 @@ func (s *indexWriteResultSink) collectResult() error {
 		select {
 		case <-s.ctx.Done():
 			return s.ctx.Err()
-		case _, ok := <-s.source.Channel():
+		case rs, ok := <-s.source.Channel():
 			if !ok {
 				err := s.flush()
 				if err != nil {
@@ -991,6 +984,7 @@ func (s *indexWriteResultSink) collectResult() error {
 				}
 				return err
 			}
+			s.rowCntListener.Written(rs.Added)
 		}
 	}
 }
