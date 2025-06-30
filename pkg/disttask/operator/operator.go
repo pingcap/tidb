@@ -154,6 +154,14 @@ func (ctx *Context) OperatorErr() error {
 	return *err
 }
 
+// Cancel cancels the context of the operator.
+// It's used in test.
+func (ctx *Context) Cancel() {
+	if ctx.cancel != nil {
+		ctx.cancel()
+	}
+}
+
 // NewContext creates a new Context
 func NewContext(
 	ctx context.Context,
@@ -208,6 +216,7 @@ func (s *SimpleOperator[T]) SetSink(ch DataChannel[T]) {
 
 // Close implements the Operator's Close interface.
 func (s *SimpleOperator[T]) Close() error {
+	//nolint: errcheck
 	s.eg.Wait()
 	close(s.ch)
 	return s.ctx.OperatorErr()

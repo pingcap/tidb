@@ -16,6 +16,7 @@ package external
 
 import (
 	"context"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
@@ -247,11 +248,17 @@ func mergeOverlappingFilesInternal(
 	onDup engineapi.OnDuplicateKey,
 ) (err error) {
 	failpoint.Inject("mergeOverlappingFilesInternal", func(val failpoint.Value) {
-		if v, ok := val.(bool); ok {
-			if v {
-				failpoint.Return(errors.New("mock error in mergeOverlappingFilesInternal"))
-			} else {
+		if v, ok := val.(int); ok {
+			switch v {
+			case 1:
+				failpoint.Return(errors.Errorf("mock error in mergeOverlappingFilesInternal"))
+			case 2:
 				panic("mock panic in mergeOverlappingFilesInternal")
+			case 3:
+				time.Sleep(time.Second * 5)
+				failpoint.Return(ctx.Err())
+			default:
+				failpoint.Return(nil)
 			}
 		}
 	})
