@@ -417,25 +417,6 @@ func (r *Registry) collectResettingStatusTasks(ctx context.Context) error {
 	return nil
 }
 
-// updateTaskStatusConditional updates a task's status only if its current status matches the expected status
-func (r *Registry) updateTaskStatusConditional(ctx context.Context, restoreID uint64, currentStatus,
-	newStatus TaskStatus) error {
-	log.Info("attempting to update task status",
-		zap.Uint64("restore_id", restoreID),
-		zap.String("current_status", string(currentStatus)),
-		zap.String("new_status", string(newStatus)))
-
-	// use where to update only when status is what we want
-	updateSQL := fmt.Sprintf(updateStatusSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
-
-	if err := r.se.ExecuteInternal(ctx, updateSQL, newStatus, restoreID, currentStatus); err != nil {
-		return errors.Annotatef(err, "failed to conditionally update task status from %s to %s",
-			currentStatus, newStatus)
-	}
-
-	return nil
-}
-
 // updateTaskStatusFromMultiple updates a task's status only if its current status matches one of the expected statuses
 func (r *Registry) updateTaskStatusFromMultiple(ctx context.Context, restoreID uint64, currentStatuses []TaskStatus,
 	newStatus TaskStatus) error {
