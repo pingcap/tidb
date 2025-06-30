@@ -775,7 +775,28 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 	s.propagateColumnEQ()
 	s.joinConds = propagateConstantDNF(s.ctx, s.joinConds...)
 	s.filterConds = propagateConstantDNF(s.ctx, s.filterConds...)
+	s.filterConds = slices.DeleteFunc(s.filterConds, func(item Expression) bool {
+		// If the expression is `isnull(not null column)`, we can remove it.
+		return s.isNullWithNotNullColumn(s.ctx.GetEvalCtx(), item)
+	})
 	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
+}
+
+// isNullWithNotNullColumn checks if the expression is `isnull(not null column)`.
+func (s *propOuterJoinConstSolver) isNullWithNotNullColumn(ctx EvalContext, expr Expression) bool {
+	if e, ok := expr.(*ScalarFunction); ok && e.FuncName.L == ast.IsNull {
+		if args := e.GetArgs(); len(args) == 1 {
+			if col, ok := args[0].(*Column); ok {
+				if retrieveColumn := s.innerSchema.RetrieveColumn(col); retrieveColumn != nil {
+					return mysql.HasNotNullFlag(retrieveColumn.GetType(ctx).GetFlag())
+				}
+				if retrieveColumn := s.outerSchema.RetrieveColumn(col); retrieveColumn != nil {
+					return mysql.HasNotNullFlag(retrieveColumn.GetType(ctx).GetFlag())
+				}
+			}
+		}
+	}
+	return false
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
