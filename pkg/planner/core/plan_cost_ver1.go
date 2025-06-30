@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -1018,8 +1019,9 @@ func (p *PhysicalHashAgg) GetPlanCostVer1(taskType property.TaskType, option *op
 	return p.PlanCost, nil
 }
 
-// GetCost computes the cost of in memory sort.
-func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64 {
+// getCost4PhysicalSort computes the cost of in memory sort.
+func getCost4PhysicalSort(pp base.PhysicalPlan, count float64, schema *expression.Schema) float64 {
+	p := pp.(*physicalop.PhysicalSort)
 	if count < 2.0 {
 		count = 2.0
 	}
@@ -1040,8 +1042,9 @@ func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64
 	return cpuCost + memoryCost + diskCost
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalSort) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer14PhysicalSort calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PhysicalSort(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalSort)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -691,17 +692,17 @@ func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
 	require.Equal(t, ok, true)
 	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
 
-	sort := &core.PhysicalSort{}
+	sort := &physicalop.PhysicalSort{}
 	newPlan, err = sort.Clone(nil)
 	require.NoError(t, err)
-	newSort, ok := newPlan.(*core.PhysicalSort)
+	newSort, ok := newPlan.(*physicalop.PhysicalSort)
 	require.Equal(t, ok, true)
 	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
 
 	sort.TiFlashFineGrainedShuffleStreamCount = 8
 	newPlan, err = sort.Clone(nil)
 	require.NoError(t, err)
-	newSort, ok = newPlan.(*core.PhysicalSort)
+	newSort, ok = newPlan.(*physicalop.PhysicalSort)
 	require.Equal(t, ok, true)
 	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
 }
