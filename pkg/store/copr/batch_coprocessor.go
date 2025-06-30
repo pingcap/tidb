@@ -1532,7 +1532,13 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 		}
 		stores = filterAliveStores(bo.GetCtx(), stores, ttl, kvStore)
 		if len(stores) == 0 {
-			return nil, errors.New("tiflash_compute node is unavailable")
+			logutil.BgLogger().Info("buildBatchCopTasksConsistentHashForPD retry because no alive tiflash", zap.Int("retryNum", retryNum))
+			cache.ForceRefreshAllStores(bo.GetCtx())
+			if err := bo.Backoff(tikv.BoTiFlashRPC(), errors.New("tiflash_compute node is unavailable")); err != nil {
+				return nil, errors.Trace(err)
+			}
+			getStoreElapsed += time.Since(getStoreStart)
+			continue
 		}
 		getStoreElapsed = time.Since(getStoreStart)
 
@@ -1553,8 +1559,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 		}
 		if rpcCtxs == nil {
 			logutil.BgLogger().Info("buildBatchCopTasksConsistentHashForPD retry because rcpCtx is nil", zap.Int("retryNum", retryNum))
-			err := bo.Backoff(tikv.BoTiFlashRPC(), errors.New("Cannot find region with TiFlash peer"))
-			if err != nil {
+			if err := bo.Backoff(tikv.BoTiFlashRPC(), errors.New("Cannot find region with TiFlash peer")); err != nil {
 				return nil, errors.Trace(err)
 			}
 			continue
