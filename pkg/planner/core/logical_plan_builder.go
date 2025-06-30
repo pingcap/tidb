@@ -685,9 +685,6 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		// Keep these expressions as a LogicalSelection upon the inner join, in order to apply
 		// possible decorrelate optimizations. The ON clause is actually treated as a WHERE clause now.
 		if joinPlan.JoinType == logicalop.InnerJoin {
-			if !b.ctx.GetSessionVars().InRestrictedSQL {
-				fmt.Println("wwz")
-			}
 			sel := logicalop.LogicalSelection{Conditions: onCondition}.Init(b.ctx, b.getSelectOffset())
 			sel.SetChildren(joinPlan)
 			return sel, nil
