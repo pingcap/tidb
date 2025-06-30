@@ -341,60 +341,6 @@ func (p *PointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 	loadTableStats(ctx, p.TblInfo, tableID)
 }
 
-// needsPartitionPruning checks if IndexValues can be used by GetPartitionIdxByRow() or if they have already been
-// converted to SortKey and would need GetPartitionIdxByRow() to be refactored to work, since it will unconditionally
-// convert it again.
-// Returns:
-// Matching partition
-// if done Partition pruning (else not needed, can use GetPartitionIdxByRow() instead)
-// error
-// TODO: Also supporting BatchPointGet? Problem is that partition ID must be mapped to handle/IndexValue.
-func needsPartitionPruning(sctx sessionctx.Context, tblInfo *model.TableInfo, pt table.PartitionedTable, dbName string, indexInfo *model.IndexInfo, indexCols []*expression.Column, indexValues []types.Datum, conds []expression.Expression, partitionNames []pmodel.CIStr) ([]int, bool, error) {
-	for i := range indexValues {
-		if tblInfo.Columns[indexInfo.Columns[i].Offset].FieldType.EvalType() != types.ETString ||
-			indexValues[i].Collation() == tblInfo.Columns[indexInfo.Columns[i].Offset].GetCollate() {
-			return nil, false, nil
-		}
-	}
-	// convertToPointGet will have the IndexValues already converted to SortKey,
-	// which will be converted again by GetPartitionIdxByRow, so we need to re-run the pruner
-	// with the conditions.
-
-	// TODO: Is there a simpler way, or existing function for this?!?
-	tblCols := make([]*expression.Column, 0, len(indexInfo.Columns))
-	var partNameSlice types.NameSlice
-	for _, tblCol := range tblInfo.Columns {
-		found := false
-		for _, idxCol := range indexCols {
-			if idxCol.ID == tblCol.ID {
-				tblCols = append(tblCols, idxCol)
-				found = true
-				break
-			}
-		}
-		partNameSlice = append(partNameSlice, &types.FieldName{
-			ColName:     tblCol.Name,
-			TblName:     tblInfo.Name,
-			DBName:      pmodel.NewCIStr(dbName),
-			OrigTblName: tblInfo.Name,
-			OrigColName: tblCol.Name,
-		})
-		if !found {
-			tblCols = append(tblCols, &expression.Column{
-				ID:       tblCol.ID,
-				OrigName: tblCol.Name.O,
-				RetType:  tblCol.FieldType.Clone(),
-			})
-		}
-	}
-
-	partIdx, err := PartitionPruning(sctx.GetPlanCtx(), pt, conds, partitionNames, tblCols, partNameSlice)
-	if err != nil || len(partIdx) != 1 {
-		return nil, true, err
-	}
-	return partIdx, true, nil
-}
-
 // PrunePartitions will check which partition to use
 // returns true if no matching partition
 func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
