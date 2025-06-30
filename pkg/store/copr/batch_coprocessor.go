@@ -983,6 +983,23 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			usedTiFlashStores = append(usedTiFlashStores, allStores)
 		}
 
+		if !needRetry {
+			aliveStores = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, usedTiFlashStoresMap, ttl, store, tiflashReplicaReadPolicy, tidbZone)
+			if len(aliveStores.storesInAllZones) == 0 {
+				// Refresh region cache and try again.
+				logutil.BgLogger().Info("retry for TiFlash because no alive tiflash stores")
+				cache.ForceRefreshAllStores(bo.GetCtx())
+				needRetry = true
+			} else if tiflashReplicaReadPolicy.IsClosestReplicas() {
+				// Will not retry when closest_replica policy has set.
+				// User can use closest_adaptive instead to avoid this error.
+				if len(aliveStores.storeIDsInTiDBZone) == 0 {
+					return nil, errors.Errorf("There is no region in tidb zone(%s)", tidbZone)
+				}
+				maxRemoteReadCountAllowed = len(aliveStores.storeIDsInTiDBZone) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
+			}
+		}
+
 		if needRetry {
 			// As mentioned above, nil rpcCtx is always attributed to failed stores.
 			// It's equal to long poll the store but get no response. Here we'd better use
@@ -992,14 +1009,6 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				return nil, errors.Trace(err)
 			}
 			continue
-		}
-
-		aliveStores = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, usedTiFlashStoresMap, ttl, store, tiflashReplicaReadPolicy, tidbZone)
-		if tiflashReplicaReadPolicy.IsClosestReplicas() {
-			if len(aliveStores.storeIDsInTiDBZone) == 0 {
-				return nil, errors.Errorf("There is no region in tidb zone(%s)", tidbZone)
-			}
-			maxRemoteReadCountAllowed = len(aliveStores.storeIDsInTiDBZone) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
 		}
 
 		var batchTasks []*batchCopTask
