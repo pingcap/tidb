@@ -30,6 +30,11 @@ type SimpleDataSource[T workerpool.TaskMayPanic] struct {
 }
 
 // NewSimpleDataSource creates a new SimpleOperator with the given inputs.
+// The input Operator.Context is used to quit this operator.
+// As the source of the pipeline, this operator should be able to quit
+// if any of the downstream operators encounter an error or panic.
+// So we need to call ctx.OnError in other operators when they encounter
+// an error or panic.
 func NewSimpleDataSource[T workerpool.TaskMayPanic](
 	ctx *Context,
 	inputs []T,
@@ -44,8 +49,6 @@ func NewSimpleDataSource[T workerpool.TaskMayPanic](
 // Open implements the Operator interface.
 func (s *SimpleDataSource[T]) Open() error {
 	s.errGroup.Go(func() error {
-		// To make this part of code work, we need to call ctx.OnError
-		// in downstream operators when they encounter an error or panic.
 		for _, input := range s.inputs {
 			select {
 			case s.target.Channel() <- input:

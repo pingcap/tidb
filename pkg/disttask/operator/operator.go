@@ -131,6 +131,8 @@ func (s *asyncWorker[T, R]) HandleTask(task T, rsFn func(R)) {
 func (*asyncWorker[T, R]) Close() {}
 
 // Context is the context used for worker pool
+// TODO(joechenrh): use this context in WorkerPool to simplify
+// the error handling logic of pipelines.
 type Context struct {
 	context.Context
 	cancel context.CancelFunc
