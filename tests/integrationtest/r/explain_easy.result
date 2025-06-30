@@ -805,10 +805,9 @@ explain format = 'brief' select (select count(n.a) from t) from t n;
 id	estRows	task	access object	operator info
 Projection	1.00	root		Column#11->Column#12
 └─Apply	1.00	root		CARTESIAN left outer join, left side:StreamAgg
-  ├─StreamAgg(Build)	1.00	root		funcs:count(Column#16)->Column#7
-  │ └─TableReader	1.00	root		data:StreamAgg
-  │   └─StreamAgg	1.00	cop[tikv]		funcs:count(explain_easy.t.a)->Column#16
-  │     └─TableFullScan	10000.00	cop[tikv]	table:n	keep order:false, stats:pseudo
+  ├─StreamAgg(Build)	1.00	root		funcs:count(explain_easy.t.a)->Column#7
+  │ └─TableReader	10000.00	root		data:TableFullScan
+  │   └─TableFullScan	10000.00	cop[tikv]	table:n	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	1.00	root		
     └─Projection	2.00	root		Column#7->Column#11
       └─TableReader	2.00	root		data:TableFullScan
@@ -817,14 +816,13 @@ explain format = 'brief' select (select sum((select count(a)))) from t;
 id	estRows	task	access object	operator info
 Projection	1.00	root		Column#7->Column#8
 └─Apply	1.00	root		CARTESIAN left outer join, left side:StreamAgg
-  ├─StreamAgg(Build)	1.00	root		funcs:count(Column#15)->Column#5
-  │ └─TableReader	1.00	root		data:StreamAgg
-  │   └─StreamAgg	1.00	cop[tikv]		funcs:count(explain_easy.t.a)->Column#15
-  │     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  ├─StreamAgg(Build)	1.00	root		funcs:count(explain_easy.t.a)->Column#5
+  │ └─TableReader	10000.00	root		data:TableFullScan
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─HashAgg(Probe)	1.00	root		funcs:sum(Column#12)->Column#7
     └─HashJoin	1.00	root		CARTESIAN left outer join, left side:TableDual
-      ├─HashAgg(Build)	1.00	root		group by:1, funcs:sum(Column#16)->Column#12
-      │ └─Projection	1.00	root		cast(Column#6, decimal(20,0) BINARY)->Column#16
+      ├─HashAgg(Build)	1.00	root		group by:1, funcs:sum(Column#14)->Column#12
+      │ └─Projection	1.00	root		cast(Column#6, decimal(20,0) BINARY)->Column#14
       │   └─MaxOneRow	1.00	root		
       │     └─Projection	1.00	root		Column#5->Column#6
       │       └─TableDual	1.00	root		rows:1
@@ -842,12 +840,11 @@ explain format = 'brief' select (select sum(count(a))) from t;
 id	estRows	task	access object	operator info
 Projection	1.00	root		Column#5->Column#6
 └─Apply	1.00	root		CARTESIAN left outer join, left side:StreamAgg
-  ├─StreamAgg(Build)	1.00	root		funcs:count(Column#8)->Column#4
-  │ └─TableReader	1.00	root		data:StreamAgg
-  │   └─StreamAgg	1.00	cop[tikv]		funcs:count(explain_easy.t.a)->Column#8
-  │     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	1.00	root		funcs:sum(Column#9)->Column#5
-    └─Projection	1.00	root		cast(Column#4, decimal(20,0) BINARY)->Column#9
+  ├─StreamAgg(Build)	1.00	root		funcs:count(explain_easy.t.a)->Column#4
+  │ └─TableReader	10000.00	root		data:TableFullScan
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─StreamAgg(Probe)	1.00	root		funcs:sum(Column#7)->Column#5
+    └─Projection	1.00	root		cast(Column#4, decimal(20,0) BINARY)->Column#7
       └─TableDual	1.00	root		rows:1
 explain format = 'brief' select sum(a), (select sum(a)), count(a) from t group by b order by (select count(a));
 id	estRows	task	access object	operator info

@@ -2036,8 +2036,8 @@ Projection	1.00	root		Column#9, Column#12, Column#15, Column#18
 └─Apply	1.00	root		CARTESIAN left outer join, left side:Apply
   ├─Apply(Build)	1.00	root		CARTESIAN left outer join, left side:Apply
   │ ├─Apply(Build)	1.00	root		CARTESIAN left outer join, left side:HashAgg
-  │ │ ├─HashAgg(Build)	1.00	root		funcs:sum(Column#30)->Column#9, funcs:firstrow(Column#31)->executor__aggregate.test.a
-  │ │ │ └─Projection	1.00	root		cast(executor__aggregate.test.a, decimal(10,0) BINARY)->Column#30, executor__aggregate.test.a->Column#31
+  │ │ ├─HashAgg(Build)	1.00	root		funcs:sum(Column#28)->Column#9, funcs:firstrow(Column#29)->executor__aggregate.test.a
+  │ │ │ └─Projection	1.00	root		cast(executor__aggregate.test.a, decimal(10,0) BINARY)->Column#28, executor__aggregate.test.a->Column#29
   │ │ │   └─TableReader	1.00	root		data:TableFullScan
   │ │ │     └─TableFullScan	1.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
   │ │ └─Projection(Probe)	1.00	root		<nil>->Column#12

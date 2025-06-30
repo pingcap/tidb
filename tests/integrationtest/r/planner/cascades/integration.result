@@ -855,9 +855,9 @@ id	estRows	task	access object	operator info
 Projection	1.00	root		Column#7, planner__cascades__integration.t1.a, planner__cascades__integration.t1.b
 └─Apply	1.00	root		CARTESIAN left outer join, left side:Apply
   ├─Apply(Build)	1.00	root		CARTESIAN left outer join, left side:StreamAgg
-  │ ├─StreamAgg(Build)	1.00	root		funcs:sum(Column#15)->Column#7, funcs:firstrow(Column#16)->planner__cascades__integration.t2.a, funcs:firstrow(Column#17)->planner__cascades__integration.t2.b
-  │ │ └─TableReader	1.00	root		data:StreamAgg
-  │ │   └─StreamAgg	1.00	cop[tikv]		funcs:sum(planner__cascades__integration.t2.a)->Column#15, funcs:firstrow(planner__cascades__integration.t2.a)->Column#16, funcs:firstrow(planner__cascades__integration.t2.b)->Column#17
+  │ ├─StreamAgg(Build)	1.00	root		funcs:sum(Column#12)->Column#7, funcs:firstrow(Column#13)->planner__cascades__integration.t2.a, funcs:firstrow(Column#14)->planner__cascades__integration.t2.b
+  │ │ └─Projection	10000.00	root		cast(planner__cascades__integration.t2.a, decimal(10,0) BINARY)->Column#12, planner__cascades__integration.t2.a->Column#13, planner__cascades__integration.t2.b->Column#14
+  │ │   └─TableReader	10000.00	root		data:TableFullScan
   │ │     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   │ └─Limit(Probe)	1.00	root		offset:0, count:1
   │   └─TableReader	0.10	root		data:Limit

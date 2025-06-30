@@ -308,6 +308,11 @@ func enumeratePhysicalPlans4Task(
 // todo: remove the taskTypeSatisfied function, it is only used to check the task type in the root, cop, mpp task.
 func taskTypeSatisfied(propRequired *property.PhysicalProperty, childTask base.Task) bool {
 	// check the root, cop, mpp task type matched the required property.
+	if childTask == nil || propRequired == nil {
+		// index join v1 may occur that propRequired is nil, and return task is nil too. Return true
+		// to make sure let it walk through the following logic.
+		return true
+	}
 	_, isRoot := childTask.(*RootTask)
 	_, isCop := childTask.(*CopTask)
 	_, isMpp := childTask.(*MppTask)
