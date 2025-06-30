@@ -1842,6 +1842,7 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+
 		if isColumnarIndex {
 			if isFullTextIndex {
 				// Send sync schema notification to TiCI.

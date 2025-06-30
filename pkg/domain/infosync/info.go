@@ -1316,7 +1316,7 @@ func CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInf
 	if err != nil {
 		return err
 	}
-	defer ticiManager.Close()
+	defer ticiManager.conn.Close()
 	return ticiManager.CreateFulltextIndex(ctx, tblInfo, indexInfo, schemaName)
 }
 
@@ -1326,7 +1326,7 @@ func DropFullTextIndex(ctx context.Context, tableID int64, indexID int64) error 
 	if err != nil {
 		return err
 	}
-	defer ticiManager.Close()
+	defer ticiManager.conn.Close()
 	return ticiManager.DropFullTextIndex(ctx, tableID, indexID)
 }
 
