@@ -1763,7 +1763,7 @@ func TestMPP47766(t *testing.T) {
 		"      └─TableFullScan_18 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo"))
 	tk.MustQuery("explain select /*+ read_from_storage(tiflash[traces]) */ date(test_time) as test_date, count(1) from `traces` group by 1").
 		Check(testkit.Rows(
-			"TableReader_31 8000.00 root  MppVersion: 3, data:ExchangeSender_30",
+			"TableReader_31 8000.00 root  MppVersion: 2, data:ExchangeSender_30",
 			"└─ExchangeSender_30 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
 			"  └─Projection_5 8000.00 mpp[tiflash]  date(test.traces.test_time)->Column#5, Column#4",
 			"    └─Projection_26 8000.00 mpp[tiflash]  Column#4, test.traces.test_time",
