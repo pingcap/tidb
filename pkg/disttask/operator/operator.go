@@ -192,11 +192,11 @@ func (s *SimpleOperator[T]) Open() error {
 			select {
 			case s.ch <- input:
 			case <-s.ctx.Done():
-				return s.ctx.OperatorErr()
+				return nil
 			}
 		}
 
-		return s.ctx.OperatorErr()
+		return nil
 	})
 	return nil
 }
@@ -208,11 +208,8 @@ func (s *SimpleOperator[T]) SetSink(ch DataChannel[T]) {
 
 // Close implements the Operator's Close interface.
 func (s *SimpleOperator[T]) Close() error {
-	err := s.eg.Wait()
+	s.eg.Wait()
 	close(s.ch)
-	if err != nil {
-		return err
-	}
 	return s.ctx.OperatorErr()
 }
 

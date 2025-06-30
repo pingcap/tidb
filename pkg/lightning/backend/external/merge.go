@@ -55,6 +55,7 @@ func (t *mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, 
 
 // MergeOperator is the operator that merges overlapping files.
 type MergeOperator struct {
+	ctx *operator.Context
 	*operator.AsyncOperator[*mergeMinimalTask, workerpool.None]
 }
 
@@ -97,6 +98,7 @@ func NewMergeOperator(
 	)
 
 	return &MergeOperator{
+		ctx:           ctx,
 		AsyncOperator: operator.NewAsyncOperator(ctx, pool),
 	}
 }
@@ -113,7 +115,9 @@ func (op *MergeOperator) Open() error {
 
 // Close closes the operator and waits for all workers to finish.
 func (op *MergeOperator) Close() error {
-	return op.AsyncOperator.Close()
+	//nolint:errcheck
+	op.AsyncOperator.Close()
+	return op.ctx.OperatorErr()
 }
 
 type mergeWorker struct {
