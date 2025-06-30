@@ -1278,6 +1278,9 @@ func RunStreamRestore(
 	// if not set by user, restore to the max TS available
 	if cfg.RestoreTS == 0 {
 		cfg.RestoreTS = logInfo.logMaxTS
+		cfg.IsRestoredTSUserSpecified = false
+	} else {
+		cfg.IsRestoredTSUserSpecified = true
 	}
 	cfg.UpstreamClusterID = logInfo.clusterID
 
@@ -1502,13 +1505,14 @@ func restoreStream(
 			oldGCRatio = utils.DefaultGcRatioVal
 		}
 		log.Info("start to restore gc", zap.String("ratio", oldGCRatio))
-		err = cfg.RestoreRegistry.GlobalOperationAfterSetResettingStatus(ctx, cfg.RestoreID, func() error {
+		rerr := cfg.RestoreRegistry.GlobalOperationAfterSetResettingStatus(ctx, cfg.RestoreID, func() error {
 			if err := restoreGCFunc(oldGCRatio); err != nil {
 				log.Error("failed to restore gc", zap.Error(err))
 				return errors.Trace(err)
 			}
 			return nil
 		})
+		err = multierr.Append(err, rerr)
 		log.Info("finish restoring gc")
 	}()
 
