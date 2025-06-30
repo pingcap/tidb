@@ -47,6 +47,16 @@ func GetFulltextIndexes(tbl *model.TableInfo) []*model.IndexInfo {
 	return result
 }
 
+// GetPrimaryIndex returns the primary key IndexInfo of the table, or nil if not found.
+func GetPrimaryIndex(tbl *model.TableInfo) *model.IndexInfo {
+	for _, idx := range tbl.Indices {
+		if idx.Primary {
+			return idx
+		}
+	}
+	return nil
+}
+
 // TiCIDataWriter handles S3 path management and upload notifications via TiCI Meta Service.
 type TiCIDataWriter struct {
 	tblInfo        *model.TableInfo
@@ -284,6 +294,7 @@ func (w *TiCIDataWriter) WriteHeader(ctx context.Context, commitTS uint64) error
 
 	tblPB := infosync.ModelTableToTiCITableInfo(w.tblInfo, w.schema)
 	idxPB := infosync.ModelIndexToTiCIIndexInfo(w.idxInfo, w.tblInfo)
+	pkIdxPB := infosync.ModelPrimaryKeyToTiCIIndexInfo(w.tblInfo)
 
 	// Use proto.Marshal to serialize TableInfo and IndexInfo.
 	tblBytes, err := proto.Marshal(tblPB)
@@ -294,7 +305,19 @@ func (w *TiCIDataWriter) WriteHeader(ctx context.Context, commitTS uint64) error
 	if err != nil {
 		return errors.Annotate(err, "marshal IndexInfo (proto)")
 	}
-	return w.ticiFileWriter.WriteHeader(ctx, tblBytes, idxBytes, commitTS)
+
+	var pkIdxBytes []byte
+	// If the primary key index is nil, we can skip writing it.
+	if pkIdxPB == nil {
+		pkIdxBytes = nil
+	} else {
+		pkIdxBytes, err = proto.Marshal(pkIdxPB)
+		if err != nil {
+			return errors.Annotate(err, "marshal PKIndexInfo (proto)")
+		}
+	}
+
+	return w.ticiFileWriter.WriteHeader(ctx, tblBytes, idxBytes, pkIdxBytes, commitTS)
 }
 
 // WritePairs writes a batch of KV Pairs to the S3 file using the underlying TICIFileWriter.

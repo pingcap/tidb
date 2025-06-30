@@ -93,6 +93,7 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 			DatabaseName: schemaName,
 			Version:      int64(tblInfo.Version),
 			Columns:      tableColumns,
+			IsClustered:  tblInfo.PKIsHandle || tblInfo.IsCommonHandle,
 		},
 	}
 	resp, err := t.metaServiceClient.CreateIndex(ctx, req)
@@ -163,6 +164,7 @@ func (t *TiCIManagerCtx) GetCloudStoragePath(
 		DatabaseName: schemaName,
 		Version:      int64(tblInfo.Version),
 		Columns:      tableColumns,
+		IsClustered:  tblInfo.PKIsHandle || tblInfo.IsCommonHandle,
 	}
 
 	req := &tici.GetCloudStoragePathRequest{
@@ -274,6 +276,7 @@ func ModelTableToTiCITableInfo(tblInfo *model.TableInfo, schemaName string) *tic
 		DatabaseName: schemaName,
 		Version:      int64(tblInfo.Version),
 		Columns:      tableColumns,
+		IsClustered:  tblInfo.PKIsHandle || tblInfo.IsCommonHandle,
 	}
 }
 
@@ -307,5 +310,51 @@ func ModelIndexToTiCIIndexInfo(indexInfo *model.IndexInfo, tblInfo *model.TableI
 		ParserInfo: &tici.ParserInfo{
 			ParserType: tici.ParserType_DEFAULT_PARSER,
 		},
+	}
+}
+
+// ModelPrimaryKeyToTiCIIndexInfo returns a tici.IndexInfo describing the
+// primary key index of the table. If the table has no primary key, returns nil.
+func ModelPrimaryKeyToTiCIIndexInfo(
+	tblInfo *model.TableInfo,
+) *tici.IndexInfo {
+	var pkIndex *model.IndexInfo
+	for _, idx := range tblInfo.Indices {
+		if idx.Primary {
+			pkIndex = idx
+			break
+		}
+	}
+	if pkIndex == nil ||
+		pkIndex.Name.String() == "" ||
+		len(pkIndex.Columns) == 0 {
+		return nil
+	}
+
+	pkColumns := make([]*tici.ColumnInfo, 0, len(pkIndex.Columns))
+	for _, idxCol := range pkIndex.Columns {
+		offset := idxCol.Offset
+		if offset < 0 || offset >= len(tblInfo.Columns) {
+			return nil
+		}
+		col := tblInfo.Columns[offset]
+		pkColumns = append(pkColumns, &tici.ColumnInfo{
+			ColumnId:     col.ID,
+			ColumnName:   col.Name.String(),
+			Type:         int32(col.GetType()),
+			ColumnLength: int32(col.FieldType.StorageLength()),
+			Decimal:      int32(col.GetDecimal()),
+			DefaultVal:   col.DefaultValueBit,
+			IsPrimaryKey: true,
+			IsArray:      false,
+		})
+	}
+
+	return &tici.IndexInfo{
+		TableId:   tblInfo.ID,
+		IndexId:   pkIndex.ID,
+		IndexName: pkIndex.Name.String(),
+		Columns:   pkColumns,
+		IsUnique:  pkIndex.Unique,
 	}
 }

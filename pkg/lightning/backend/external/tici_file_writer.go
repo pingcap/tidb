@@ -93,6 +93,7 @@ func (w *TICIFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) er
 			return errors.Errorf("tici_writer failed to allocate kv buffer: %d", length)
 		}
 	}
+
 	encodeKVForTICI(buf, idxKey, idxVal)
 	writeStartTime := time.Now()
 	_, err := w.dataWriter.Write(ctx, buf[:length])
@@ -126,14 +127,24 @@ func (w *TICIFileWriter) Close(ctx context.Context) error {
 	return nil
 }
 
-// WriteHeader serializes and writes the header containing TableInfo, IndexInfo, and CommitTS.
+// WriteHeader serializes and writes the header containing TableInfo, IndexInfo,
+// PKIndexInfo, and CommitTS.
 // The format is:
+// [1 byte]  Format version
 // [8 bytes] Length of TableInfo (big endian uint64)
 // [N bytes] TableInfo (serialized)
 // [8 bytes] Length of IndexInfo (big endian uint64)
 // [M bytes] IndexInfo (serialized)
+// [8 bytes] Length of PKIndexInfo (big endian uint64)
+// [P bytes] PKIndexInfo (serialized, may be zero length)
 // [8 bytes] CommitTS (big endian uint64)
-func (w *TICIFileWriter) WriteHeader(ctx context.Context, tblInBytes []byte, idxInBytes []byte, commitTS uint64) error {
+func (w *TICIFileWriter) WriteHeader(
+	ctx context.Context,
+	tblInBytes []byte,
+	idxInBytes []byte,
+	pkIdxInBytes []byte,
+	commitTS uint64,
+) error {
 	if w.headerWritten {
 		return errors.New("TICIFileWriter header already written")
 	}
@@ -141,7 +152,12 @@ func (w *TICIFileWriter) WriteHeader(ctx context.Context, tblInBytes []byte, idx
 		return errors.New("TICIFileWriter dataWriter is nil")
 	}
 
-	headerLen := 1 + 8 + len(tblInBytes) + 8 + len(idxInBytes) + 8
+	pkLen := 0
+	if pkIdxInBytes != nil {
+		pkLen = len(pkIdxInBytes)
+	}
+	headerLen := 1 + 8 + len(tblInBytes) + 8 + len(idxInBytes) +
+		8 + pkLen + 8
 	header := make([]byte, headerLen)
 	off := 0
 
@@ -157,6 +173,13 @@ func (w *TICIFileWriter) WriteHeader(ctx context.Context, tblInBytes []byte, idx
 	off += 8
 	copy(header[off:], idxInBytes)
 	off += len(idxInBytes)
+
+	binary.BigEndian.PutUint64(header[off:], uint64(pkLen))
+	off += 8
+	if pkLen > 0 {
+		copy(header[off:], pkIdxInBytes)
+		off += pkLen
+	}
 
 	binary.BigEndian.PutUint64(header[off:], commitTS)
 	off += 8

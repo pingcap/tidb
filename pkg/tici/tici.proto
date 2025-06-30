@@ -338,9 +338,9 @@ message CreateIndexResponse {
 // DropIndexRequest is a request to drop an index
 message DropIndexRequest {
   // Table ID
-  string table_id = 1;
+  int64  table_id = 1;
   // Index ID
-  string index_id = 2;
+  int64  index_id = 2;
 }
 
 // DropIndexResponse is a response to the index drop request
@@ -363,6 +363,8 @@ message TableInfo {
   int64 version = 4;
   // Column information
   repeated ColumnInfo columns = 5;
+  // Whether the table is clustered
+  bool is_clustered = 6;
 }
 
 // ColumnInfo represents column information
@@ -380,7 +382,7 @@ message ColumnInfo {
   // Decimal places
   int32 decimal = 6;
   // Flags
-  int32 flag = 7;
+  uint32 flag = 7;
   // Enum elements
   repeated string elems = 8;
   // Default value

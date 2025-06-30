@@ -1927,9 +1927,9 @@ func (x *CreateIndexResponse) GetIndexId() string {
 type DropIndexRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Table ID
-	TableId string `protobuf:"bytes,1,opt,name=table_id,json=tableId,proto3" json:"table_id,omitempty"`
+	TableId int64 `protobuf:"varint,1,opt,name=table_id,json=tableId,proto3" json:"table_id,omitempty"`
 	// Index ID
-	IndexId       string `protobuf:"bytes,2,opt,name=index_id,json=indexId,proto3" json:"index_id,omitempty"`
+	IndexId       int64 `protobuf:"varint,2,opt,name=index_id,json=indexId,proto3" json:"index_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1964,18 +1964,18 @@ func (*DropIndexRequest) Descriptor() ([]byte, []int) {
 	return file_tici_proto_rawDescGZIP(), []int{28}
 }
 
-func (x *DropIndexRequest) GetTableId() string {
+func (x *DropIndexRequest) GetTableId() int64 {
 	if x != nil {
 		return x.TableId
 	}
-	return ""
+	return 0
 }
 
-func (x *DropIndexRequest) GetIndexId() string {
+func (x *DropIndexRequest) GetIndexId() int64 {
 	if x != nil {
 		return x.IndexId
 	}
-	return ""
+	return 0
 }
 
 // DropIndexResponse is a response to the index drop request
@@ -2045,7 +2045,9 @@ type TableInfo struct {
 	// Table version
 	Version int64 `protobuf:"varint,4,opt,name=version,proto3" json:"version,omitempty"`
 	// Column information
-	Columns       []*ColumnInfo `protobuf:"bytes,5,rep,name=columns,proto3" json:"columns,omitempty"`
+	Columns []*ColumnInfo `protobuf:"bytes,5,rep,name=columns,proto3" json:"columns,omitempty"`
+	// Whether the table is clustered
+	IsClustered   bool `protobuf:"varint,6,opt,name=is_clustered,json=isClustered,proto3" json:"is_clustered,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2115,6 +2117,13 @@ func (x *TableInfo) GetColumns() []*ColumnInfo {
 	return nil
 }
 
+func (x *TableInfo) GetIsClustered() bool {
+	if x != nil {
+		return x.IsClustered
+	}
+	return false
+}
+
 // ColumnInfo represents column information
 type ColumnInfo struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -2131,7 +2140,7 @@ type ColumnInfo struct {
 	// Decimal places
 	Decimal int32 `protobuf:"varint,6,opt,name=decimal,proto3" json:"decimal,omitempty"`
 	// Flags
-	Flag int32 `protobuf:"varint,7,opt,name=flag,proto3" json:"flag,omitempty"`
+	Flag uint32 `protobuf:"varint,7,opt,name=flag,proto3" json:"flag,omitempty"`
 	// Enum elements
 	Elems []string `protobuf:"bytes,8,rep,name=elems,proto3" json:"elems,omitempty"`
 	// Default value
@@ -2216,7 +2225,7 @@ func (x *ColumnInfo) GetDecimal() int32 {
 	return 0
 }
 
-func (x *ColumnInfo) GetFlag() int32 {
+func (x *ColumnInfo) GetFlag() uint32 {
 	if x != nil {
 		return x.Flag
 	}
@@ -2698,18 +2707,19 @@ const file_tici_proto_rawDesc = "" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12\x19\n" +
 	"\bindex_id\x18\x03 \x01(\tR\aindexId\"H\n" +
 	"\x10DropIndexRequest\x12\x19\n" +
-	"\btable_id\x18\x01 \x01(\tR\atableId\x12\x19\n" +
-	"\bindex_id\x18\x02 \x01(\tR\aindexId\"P\n" +
+	"\btable_id\x18\x01 \x01(\x03R\atableId\x12\x19\n" +
+	"\bindex_id\x18\x02 \x01(\x03R\aindexId\"P\n" +
 	"\x11DropIndexResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\x05R\x06status\x12#\n" +
-	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\"\xb0\x01\n" +
+	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\"\xd3\x01\n" +
 	"\tTableInfo\x12\x19\n" +
 	"\btable_id\x18\x01 \x01(\x03R\atableId\x12\x1d\n" +
 	"\n" +
 	"table_name\x18\x02 \x01(\tR\ttableName\x12#\n" +
 	"\rdatabase_name\x18\x03 \x01(\tR\fdatabaseName\x12\x18\n" +
 	"\aversion\x18\x04 \x01(\x03R\aversion\x12*\n" +
-	"\acolumns\x18\x05 \x03(\v2\x10.tici.ColumnInfoR\acolumns\"\xc7\x02\n" +
+	"\acolumns\x18\x05 \x03(\v2\x10.tici.ColumnInfoR\acolumns\x12!\n" +
+	"\fis_clustered\x18\x06 \x01(\bR\visClustered\"\xc7\x02\n" +
 	"\n" +
 	"ColumnInfo\x12\x1b\n" +
 	"\tcolumn_id\x18\x01 \x01(\x03R\bcolumnId\x12\x1f\n" +
@@ -2719,7 +2729,7 @@ const file_tici_proto_rawDesc = "" +
 	"\tcollation\x18\x04 \x01(\x05R\tcollation\x12#\n" +
 	"\rcolumn_length\x18\x05 \x01(\x05R\fcolumnLength\x12\x18\n" +
 	"\adecimal\x18\x06 \x01(\x05R\adecimal\x12\x12\n" +
-	"\x04flag\x18\a \x01(\x05R\x04flag\x12\x14\n" +
+	"\x04flag\x18\a \x01(\rR\x04flag\x12\x14\n" +
 	"\x05elems\x18\b \x03(\tR\x05elems\x12\x1f\n" +
 	"\vdefault_val\x18\t \x01(\fR\n" +
 	"defaultVal\x12$\n" +
