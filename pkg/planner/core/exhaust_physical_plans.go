@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -3481,6 +3482,10 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 		// The table read of "CopDoubleReadTaskType" can't promises the sort
 		// property that the stream aggregation required, no need to consider.
 		taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.RootTaskType}
+		// aggregation has a special case that it can be pushed down to TiKV which is indicated by the la.NoCopPushDown
+		if la.NoCopPushDown {
+			taskTypes = []property.TaskType{property.RootTaskType}
+		}
 		if la.HasDistinct() && la.SCtx().GetSessionVars().AllowDistinctAggPushDown && !la.DistinctArgsMeetsProperty() {
 			// if distinct agg push down is allowed, while the distinct args doesn't meet the required property, continue
 			// to next possible property check.
@@ -3716,6 +3721,10 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 	}
 	hashAggs := make([]base.PhysicalPlan, 0, len(prop.GetAllPossibleChildTaskTypes()))
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
+	// aggregation has a special case that it can be pushed down to TiKV which is indicated by the la.NoCopPushDown
+	if la.NoCopPushDown {
+		taskTypes = []property.TaskType{property.RootTaskType}
+	}
 	// lift the recursive check of canPushToCop(tiFlash)
 	canPushDownToMPP := la.SCtx().GetSessionVars().IsMPPAllowed() && checkCanPushDownToMPP(la)
 	if canPushDownToMPP {
@@ -3768,6 +3777,9 @@ func exhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property
 				"Optimizer Hint AGG_TO_COP is inapplicable")
 			la.PreferAggToCop = false
 		}
+	}
+	if strings.Contains(lp.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain format = 'brief' select /*+ straight_join() */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1") {
+		fmt.Println(1)
 	}
 	preferHash, preferStream := la.ResetHintIfConflicted()
 	hashAggs := getHashAggs(la, prop)

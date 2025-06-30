@@ -4403,6 +4403,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	b.optFlag |= rule.FlagPredicateSimplification
 	dbName := tn.Schema
 	sessionVars := b.ctx.GetSessionVars()
+	if tn.Name.L == "t" {
+		fmt.Println(1)
+	}
 
 	if dbName.L == "" {
 		// Try CTE.

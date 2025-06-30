@@ -305,6 +305,26 @@ func enumeratePhysicalPlans4Task(
 	return bestTask, cntPlan, false, nil
 }
 
+// todo: remove the taskTypeSatisfied function, it is only used to check the task type in the root, cop, mpp task.
+func taskTypeSatisfied(propRequired *property.PhysicalProperty, childTask base.Task) bool {
+	// check the root, cop, mpp task type matched the required property.
+	_, isRoot := childTask.(*RootTask)
+	_, isCop := childTask.(*CopTask)
+	_, isMpp := childTask.(*MppTask)
+	switch propRequired.TaskTp {
+	case property.RootTaskType:
+		// If the required property is root task type, root, cop, and mpp task are all satisfied.
+		return isRoot || isCop || isMpp
+	case property.CopSingleReadTaskType, property.CopMultiReadTaskType:
+		return isCop
+	case property.MppTaskType:
+		return isMpp
+	default:
+		// shouldn't be here
+		return false
+	}
+}
+
 // iteratePhysicalPlan4BaseLogical is used to iterate the physical plan and get all child tasks.
 func iteratePhysicalPlan4BaseLogical(
 	p *logicalop.BaseLogicalPlan,
@@ -324,6 +344,10 @@ func iteratePhysicalPlan4BaseLogical(
 		childCnts[j] = cnt
 		if err != nil {
 			return nil, 0, childCnts, err
+		}
+		if !taskTypeSatisfied(childProp, childTask) {
+			// If the task type is not satisfied, we should skip this plan.
+			return nil, 0, childCnts, nil
 		}
 		curCntPlan = curCntPlan * cnt
 		if childTask != nil && childTask.Invalid() {
