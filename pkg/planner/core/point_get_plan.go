@@ -196,7 +196,7 @@ func (p *PointGetPlan) ExplainNormalizedInfo() string {
 	return accessObject + ", " + operatorInfo
 }
 
-// OperatorInfo implements dataAccesser interface.
+// OperatorInfo implements DataAccesser interface.
 func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 	if p.Handle == nil && !p.Lock {
 		return ""
@@ -543,7 +543,7 @@ func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
 	return p.AccessObject().NormalizedString() + ", " + p.OperatorInfo(true)
 }
 
-// OperatorInfo implements dataAccesser interface.
+// OperatorInfo implements DataAccesser interface.
 func (p *BatchPointGetPlan) OperatorInfo(normalized bool) string {
 	var buffer strings.Builder
 	if p.IndexInfo == nil {

@@ -28,22 +28,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// A plan is dataAccesser means it can access underlying data.
-// Include `PhysicalTableScan`, `PhysicalIndexScan`, `PointGetPlan`, `BatchPointScan` and `PhysicalMemTable`.
-// ExplainInfo = AccessObject + OperatorInfo
-type dataAccesser interface {
-
-	// AccessObject return plan's `table`, `partition` and `index`.
-	AccessObject() base.AccessObject
-
-	// OperatorInfo return other operator information to be explained.
-	OperatorInfo(normalized bool) string
-}
-
-type partitionAccesser interface {
-	accessObject(base.PlanContext) base.AccessObject
-}
-
 // DynamicPartitionAccessObject represents the partitions accessed by the children of this operator.
 // It's mainly used in dynamic pruning mode.
 type DynamicPartitionAccessObject struct {
@@ -233,7 +217,7 @@ func (o OtherAccessObject) SetIntoPB(pb *tipb.ExplainOperator) {
 	}
 }
 
-// AccessObject implements dataAccesser interface.
+// AccessObject implements DataAccesser interface.
 func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
 	res := &ScanAccessObject{
 		Database: p.DBName.O,
@@ -266,7 +250,7 @@ func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
 	return res
 }
 
-// AccessObject implements dataAccesser interface.
+// AccessObject implements DataAccesser interface.
 func (p *PhysicalTableScan) AccessObject() base.AccessObject {
 	res := &ScanAccessObject{
 		Database: p.DBName.O,
@@ -305,7 +289,7 @@ func (p *PhysicalTableScan) AccessObject() base.AccessObject {
 	return res
 }
 
-// AccessObject implements dataAccesser interface.
+// AccessObject implements DataAccesser interface.
 func (p *PhysicalMemTable) AccessObject() base.AccessObject {
 	return &ScanAccessObject{
 		Database: p.DBName.O,
@@ -313,7 +297,7 @@ func (p *PhysicalMemTable) AccessObject() base.AccessObject {
 	}
 }
 
-// AccessObject implements dataAccesser interface.
+// AccessObject implements DataAccesser interface.
 func (p *PointGetPlan) AccessObject() base.AccessObject {
 	res := &ScanAccessObject{
 		Database: p.dbName,
