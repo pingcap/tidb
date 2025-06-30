@@ -218,7 +218,6 @@ type backfillDistExecutor struct {
 	d        *ddl
 	task     *proto.Task
 	taskMeta *BackfillTaskMeta
-	jobID    int64
 }
 
 func newBackfillDistExecutor(
