@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
@@ -130,29 +129,47 @@ func TestSplitDataFiles(t *testing.T) {
 }
 
 func TestMergeOperator(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mergeOverlappingFilesInternal", "return(true)")
+	// test both error and panic during merge sort
+	for _, v := range []bool{true, false} {
+		testfailpoint.Enable(t,
+			"github.com/pingcap/tidb/pkg/lightning/backend/external/mergeOverlappingFilesInternal",
+			fmt.Sprintf("return(%t)", v),
+		)
 
-	op := NewMergeOperator(
-		context.Background(),
-		nil,
-		0,
-		"",
-		0,
-		nil,
-		1,
-		false,
-		engineapi.OnDuplicateKeyIgnore,
-	)
+		opCtx, _ := operator.NewContext(context.Background())
 
-	source := operator.NewSimpleDataChannel(make(chan *mergeMinimalTask))
-	op.SetSource(source)
-	require.NoError(t, op.Open())
+		op := NewMergeOperator(
+			opCtx,
+			nil,
+			0,
+			"",
+			0,
+			nil,
+			1,
+			false,
+			engineapi.OnDuplicateKeyIgnore,
+		)
 
-	// cancel on error
-	source.Channel() <- &mergeMinimalTask{}
-	require.Eventually(t, func() bool {
-		return op.hasError()
-	}, 3*time.Second, 300*time.Millisecond)
-	<-op.ctx.Done()
-	require.Error(t, op.Close())
+		oldMaxMergingFilesPerThread := MaxMergingFilesPerThread
+		MaxMergingFilesPerThread = 2
+		defer func() {
+			MaxMergingFilesPerThread = oldMaxMergingFilesPerThread
+		}()
+
+		datas := []string{
+			"/tmp/1",
+			"/tmp/2",
+			"/tmp/3",
+			"/tmp/4",
+			"/tmp/5",
+			"/tmp/6",
+		}
+
+		require.Error(t, MergeOverlappingFiles(
+			opCtx,
+			datas,
+			1,
+			op,
+		))
+	}
 }

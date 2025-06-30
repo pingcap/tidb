@@ -366,11 +366,12 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		partSize = m.indexKVPartSize
 	}
 
-	mergeCtx := logutil.WithFields(ctx, zap.String("kv-group", sm.KVGroup))
 	concurrency := int(m.GetResource().CPU.Capacity())
 
+	opCtx, _ := operator.NewContext(ctx)
+
 	op := external.NewMergeOperator(
-		mergeCtx,
+		opCtx,
 		m.sortStore,
 		partSize,
 		prefix,
@@ -382,7 +383,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	)
 
 	if err = external.MergeOverlappingFiles(
-		mergeCtx,
+		opCtx,
 		sm.DataFiles,
 		concurrency,
 		op,

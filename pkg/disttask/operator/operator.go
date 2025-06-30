@@ -17,9 +17,12 @@ package operator
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
+	"golang.org/x/sync/errgroup"
 )
 
 // Operator is the basic operation unit in the task execution.
@@ -127,3 +130,93 @@ func (s *asyncWorker[T, R]) HandleTask(task T, rsFn func(R)) {
 }
 
 func (*asyncWorker[T, R]) Close() {}
+
+// OperatorCtx is the context used for worker pool
+type Context struct {
+	context.Context
+	cancel context.CancelFunc
+	err    atomic.Pointer[error]
+}
+
+// OnError is called when an error occurs in the operator.
+func (ctx *Context) OnError(err error) {
+	tracedErr := errors.Trace(err)
+	ctx.err.CompareAndSwap(nil, &tracedErr)
+	ctx.cancel()
+}
+
+// OperatorErr returns the error of the operator.
+func (ctx *Context) OperatorErr() error {
+	err := ctx.err.Load()
+	if err == nil {
+		return nil
+	}
+	return *err
+}
+
+// NewContext creates a new Context
+func NewContext(
+	ctx context.Context,
+) (*Context, context.CancelFunc) {
+	opCtx, cancel := context.WithCancel(ctx)
+	return &Context{
+		Context: opCtx,
+		cancel:  cancel,
+	}, cancel
+}
+
+// SimpleOperator is a simple operator that sends inputs to a channel.
+type SimpleOperator[T workerpool.TaskMayPanic] struct {
+	inputs []T
+	eg     *errgroup.Group
+	ctx    *Context
+	ch     chan T
+}
+
+// NewSimpleOperator creates a new SimpleOperator with the given inputs.
+func NewSimpleOperator[T workerpool.TaskMayPanic](
+	ctx *Context,
+	inputs []T,
+) *SimpleOperator[T] {
+	return &SimpleOperator[T]{
+		inputs: inputs,
+		eg:     &errgroup.Group{},
+		ctx:    ctx,
+	}
+}
+
+// Open implements the Operator's Open interface.
+func (s *SimpleOperator[T]) Open() error {
+	s.eg.Go(func() error {
+		for _, input := range s.inputs {
+			select {
+			case s.ch <- input:
+			case <-s.ctx.Done():
+				return s.ctx.OperatorErr()
+			}
+		}
+
+		return s.ctx.OperatorErr()
+	})
+	return nil
+}
+
+// SetSink implements the SetSink interface.
+func (s *SimpleOperator[T]) SetSink(ch DataChannel[T]) {
+	s.ch = ch.Channel()
+}
+
+// Close implements the Operator's Close interface.
+func (s *SimpleOperator[T]) Close() error {
+	err := s.eg.Wait()
+	close(s.ch)
+	if err != nil {
+		return err
+	}
+	return s.ctx.OperatorErr()
+}
+
+// String implements the Operator's String interface.
+func (s *SimpleOperator[T]) String() string {
+	return "simpleOperator"
+}

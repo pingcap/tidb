@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pkg/errors"
 	"go.uber.org/atomic"
@@ -44,32 +43,25 @@ var (
 )
 
 type mergeMinimalTask struct {
-	files    []string
-	panicked *atomic.Bool
+	files []string
+	ctx   *operator.Context
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
 func (t *mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
 	return "mergeSortOperator", "RecoverArgs", func() {
-		t.panicked.Store(true)
+		t.ctx.OnError(errors.Errorf("panic occurred during merge sort operator"))
 	}, false
 }
 
 // MergeOperator is the operator that merges overlapping files.
 type MergeOperator struct {
 	*operator.AsyncOperator[*mergeMinimalTask, workerpool.None]
-	wg       tidbutil.WaitGroupWrapper
-	firstErr atomic.Error
-
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	errCh chan error
 }
 
 // NewMergeOperator creates a new MergeOperator instance.
 func NewMergeOperator(
-	ctx context.Context,
+	ctx *operator.Context,
 	store storage.ExternalStorage,
 	partSize int64,
 	newFilePrefix string,
@@ -87,12 +79,6 @@ func NewMergeOperator(
 	logutil.Logger(ctx).Info("merge operator get part size",
 		zap.Int64("part-size", partSize))
 
-	subCtx, cancel := context.WithCancel(ctx)
-	op := &MergeOperator{
-		ctx:    subCtx,
-		cancel: cancel,
-		errCh:  make(chan error),
-	}
 	pool := workerpool.NewWorkerPool(
 		"mergeOperator",
 		util.ImportInto,
@@ -100,7 +86,6 @@ func NewMergeOperator(
 		func() workerpool.Worker[*mergeMinimalTask, workerpool.None] {
 			return &mergeWorker{
 				ctx:           ctx,
-				op:            op,
 				store:         store,
 				partSize:      partSize,
 				newFilePrefix: newFilePrefix,
@@ -111,8 +96,10 @@ func NewMergeOperator(
 			}
 		},
 	)
-	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
-	return op
+
+	return &MergeOperator{
+		AsyncOperator: operator.NewAsyncOperator(ctx, pool),
+	}
 }
 
 // String implements the Operator interface.
@@ -122,43 +109,16 @@ func (*MergeOperator) String() string {
 
 // Open opens the operator and starts the worker pool.
 func (op *MergeOperator) Open() error {
-	op.wg.Run(func() {
-		for err := range op.errCh {
-			if op.firstErr.CompareAndSwap(nil, err) {
-				op.cancel()
-			} else {
-				if errors.Cause(err) != context.Canceled {
-					logutil.Logger(op.ctx).Error("error on encode and sort", zap.Error(err))
-				}
-			}
-		}
-	})
 	return op.AsyncOperator.Open()
 }
 
 // Close closes the operator and waits for all workers to finish.
 func (op *MergeOperator) Close() error {
-	op.cancel()
-	//nolint:errcheck
-	op.AsyncOperator.Close()
-	close(op.errCh)
-	op.wg.Wait()
-	return op.firstErr.Load()
-}
-
-// onError is called when an error occurs in the operator.
-func (op *MergeOperator) onError(err error) {
-	op.errCh <- err
-}
-
-// Done returns the done channel of the operator.
-func (op *MergeOperator) Done() <-chan struct{} {
-	return op.ctx.Done()
+	return op.AsyncOperator.Close()
 }
 
 type mergeWorker struct {
-	ctx context.Context
-	op  *MergeOperator
+	ctx *operator.Context
 
 	store         storage.ExternalStorage
 	partSize      int64
@@ -184,7 +144,7 @@ func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)
 	)
 
 	if err != nil {
-		w.op.onError(err)
+		w.ctx.OnError(err)
 	}
 }
 
@@ -216,7 +176,7 @@ func NewTaskOperatorCtx(
 // MergeOverlappingFiles reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
 func MergeOverlappingFiles(
-	ctx context.Context,
+	ctx *operator.Context,
 	paths []string,
 	concurrency int,
 	op *MergeOperator,
@@ -227,34 +187,23 @@ func MergeOverlappingFiles(
 		zap.Int("file-groups", len(dataFilesSlice)),
 		zap.Int("concurrency", concurrency))
 
-	source := operator.NewSimpleDataChannel(make(chan *mergeMinimalTask))
-	op.SetSource(source)
-
-	if err := op.Open(); err != nil {
-		return err
-	}
-
-	panicked := atomic.Bool{}
-outer:
+	mergeTasks := make([]*mergeMinimalTask, 0, len(dataFilesSlice))
 	for _, files := range dataFilesSlice {
-		select {
-		case source.Channel() <- &mergeMinimalTask{
-			files:    files,
-			panicked: &panicked,
-		}:
-		case <-op.Done():
-			break outer
-		}
+		mergeTasks = append(mergeTasks, &mergeMinimalTask{
+			files: files,
+			ctx:   ctx,
+		})
 	}
-	source.Finish()
 
-	if err := op.Close(); err != nil {
+	sourceOp := operator.NewSimpleOperator[*mergeMinimalTask](ctx, mergeTasks)
+	operator.Compose(sourceOp, op)
+
+	pipe := operator.NewAsyncPipeline(sourceOp, op)
+	if err := pipe.Execute(); err != nil {
 		return err
 	}
-	if panicked.Load() {
-		return errors.Errorf("panic occurred during import, please check log")
-	}
-	return nil
+
+	return pipe.Close()
 }
 
 // split input data files into multiple shares evenly, with the max number files
@@ -317,10 +266,15 @@ func mergeOverlappingFilesInternal(
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
 ) (err error) {
-	failpoint.Inject("mergeOverlappingFilesInternal", func() {
-		failpoint.Return(errors.New("mock error"))
+	failpoint.Inject("mergeOverlappingFilesInternal", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok {
+			if v {
+				failpoint.Return(errors.New("mock error in mergeOverlappingFilesInternal"))
+			} else {
+				panic("mock panic in mergeOverlappingFilesInternal")
+			}
+		}
 	})
-
 	task := log.BeginTask(logutil.Logger(ctx).With(
 		zap.String("writer-id", writerID),
 		zap.Int("file-count", len(paths)),
