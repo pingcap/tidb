@@ -18,7 +18,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	hash2 "hash"
-	"reflect"
 	"strings"
 	"sync"
 	"unsafe"
@@ -155,12 +154,7 @@ type sqlDigester struct {
 }
 
 func (d *sqlDigester) doDigestNormalized(normalized string) (digest *Digest) {
-	hdr := *(*reflect.StringHeader)(unsafe.Pointer(&normalized))
-	b := *(*[]byte)(unsafe.Pointer(&reflect.SliceHeader{
-		Data: hdr.Data,
-		Len:  hdr.Len,
-		Cap:  hdr.Len,
-	}))
+	b := unsafe.Slice(unsafe.StringData(normalized), len(normalized))
 	d.hasher.Write(b)
 	digest = NewDigest(d.hasher.Sum(nil))
 	d.hasher.Reset()
