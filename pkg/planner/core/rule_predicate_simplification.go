@@ -185,7 +185,7 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 		exprs := expression.PropagateConstant(exprCtx, simplifiedPredicate...)
 		if len(exprs) == 1 {
 			if _, ok := exprs[0].(*expression.Constant); ok {
-				return constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, exprs)
+				simplifiedPredicate = exprs
 			}
 		}
 	}
