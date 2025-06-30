@@ -66,6 +66,13 @@ const (
 		SET status = %%?
 		WHERE id = %%? AND status = %%?`
 
+	// updateStatusFromMultipleSQLTemplate is the SQL template for updating a task's status
+	// when the current status can be one of multiple values
+	updateStatusFromMultipleSQLTemplate = `
+		UPDATE %s.%s
+		SET status = %%?
+		WHERE id = %%? AND status IN (%s)`
+
 	// resumeTaskByIDSQLTemplate is the SQL template for resuming a paused task by its ID
 	resumeTaskByIDSQLTemplate = `
 		UPDATE %s.%s
@@ -410,20 +417,38 @@ func (r *Registry) collectResettingStatusTasks(ctx context.Context) error {
 	return nil
 }
 
-// updateTaskStatusConditional updates a task's status only if its current status matches the expected status
-func (r *Registry) updateTaskStatusConditional(ctx context.Context, restoreID uint64, currentStatus,
+// updateTaskStatusFromMultiple updates a task's status only if its current status matches one of the expected statuses
+func (r *Registry) updateTaskStatusFromMultiple(ctx context.Context, restoreID uint64, currentStatuses []TaskStatus,
 	newStatus TaskStatus) error {
-	log.Info("attempting to update task status",
+	if len(currentStatuses) == 0 {
+		return errors.New("currentStatuses cannot be empty")
+	}
+
+	// build the status list for the IN clause
+	statusList := make([]string, len(currentStatuses))
+	for i, status := range currentStatuses {
+		statusList[i] = fmt.Sprintf("'%s'", string(status))
+	}
+	statusInClause := strings.Join(statusList, ", ")
+
+	log.Info("attempting to update task status from multiple possible statuses",
 		zap.Uint64("restore_id", restoreID),
-		zap.String("current_status", string(currentStatus)),
+		zap.Strings("current_statuses", func() []string {
+			result := make([]string, len(currentStatuses))
+			for i, s := range currentStatuses {
+				result[i] = string(s)
+			}
+			return result
+		}()),
 		zap.String("new_status", string(newStatus)))
 
-	// use where to update only when status is what we want
-	updateSQL := fmt.Sprintf(updateStatusSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+	// use where to update only when status is one of the expected values
+	updateSQL := fmt.Sprintf(updateStatusFromMultipleSQLTemplate,
+		RestoreRegistryDBName, RestoreRegistryTableName, statusInClause)
 
-	if err := r.se.ExecuteInternal(ctx, updateSQL, newStatus, restoreID, currentStatus); err != nil {
-		return errors.Annotatef(err, "failed to conditionally update task status from %s to %s",
-			currentStatus, newStatus)
+	if err := r.se.ExecuteInternal(ctx, updateSQL, newStatus, restoreID); err != nil {
+		return errors.Annotatef(err, "failed to conditionally update task status from %v to %s",
+			currentStatuses, newStatus)
 	}
 
 	return nil
@@ -443,11 +468,12 @@ func (r *Registry) Unregister(ctx context.Context, restoreID uint64) error {
 	return nil
 }
 
-// PauseTask marks a task as paused only if it's currently running
+// PauseTask marks a task as paused only if it's currently running or resetting
 func (r *Registry) PauseTask(ctx context.Context, restoreID uint64) error {
 	// first stop heartbeat manager
 	r.StopHeartbeatManager()
-	return r.updateTaskStatusConditional(ctx, restoreID, TaskStatusRunning, TaskStatusPaused)
+	return r.updateTaskStatusFromMultiple(ctx, restoreID,
+		[]TaskStatus{TaskStatusRunning, TaskStatusResetting}, TaskStatusPaused)
 }
 
 // GetRegistrationsByMaxID returns all registrations with IDs smaller than maxID
@@ -899,4 +925,145 @@ func (r *Registry) GlobalOperationAfterSetResettingStatus(ctx context.Context,
 		return fn()
 	}
 	return nil
+}
+
+// FindAndDeleteMatchingTask finds and deletes the registry entry that matches the given restore configuration
+// This is used for the abort functionality to clean up the matching task
+// Similar to ResumeOrCreateRegistration, it first resolves the restoredTS then finds and deletes the matching
+// paused task
+// Returns the deleted task ID, or 0 if no matching task was found
+func (r *Registry) FindAndDeleteMatchingTask(ctx context.Context,
+	info RegistrationInfo, isRestoredTSUserSpecified bool) (uint64, error) {
+	// resolve which restoredTS to use
+	resolvedRestoreTS, err := r.resolveRestoreTS(ctx, info, isRestoredTSUserSpecified)
+	if err != nil {
+		return 0, err
+	}
+
+	// update info with resolved restoredTS if different
+	if resolvedRestoreTS != info.RestoredTS {
+		log.Info("using resolved restoredTS for abort operation",
+			zap.Uint64("original_restored_ts", info.RestoredTS),
+			zap.Uint64("resolved_restored_ts", resolvedRestoreTS))
+		info.RestoredTS = resolvedRestoreTS
+	}
+
+	filterStrings := strings.Join(info.FilterStrings, FilterSeparator)
+
+	log.Info("searching for matching task to delete",
+		zap.String("filter_strings", filterStrings),
+		zap.Uint64("start_ts", info.StartTS),
+		zap.Uint64("restored_ts", info.RestoredTS),
+		zap.Uint64("upstream_cluster_id", info.UpstreamClusterID),
+		zap.Bool("with_sys_table", info.WithSysTable),
+		zap.String("cmd", info.Cmd))
+
+	var deletedTaskID uint64
+
+	err = r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor,
+		sessionOpts []sqlexec.OptionFuncAlias) error {
+		// find and lock the task that matches the configuration
+		lookupSQL := fmt.Sprintf(lookupRegistrationSQLTemplate,
+			RestoreRegistryDBName, RestoreRegistryTableName)
+		rows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, lookupSQL,
+			filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
+		if err != nil {
+			return errors.Annotate(err, "failed to lookup matching task")
+		}
+
+		if len(rows) == 0 {
+			log.Info("no matching task found to delete")
+			return nil
+		}
+
+		if len(rows) > 1 {
+			log.Error("multiple matching tasks found, this is unexpected and indicates a bug",
+				zap.Int("count", len(rows)))
+			return errors.Annotatef(berrors.ErrInvalidArgument,
+				"found %d matching tasks, expected exactly 1", len(rows))
+		}
+
+		// get the single matching task (now locked)
+		taskID := rows[0].GetUint64(0)
+		status := rows[0].GetString(1)
+
+		log.Info("found and locked matching task",
+			zap.Uint64("task_id", taskID),
+			zap.String("status", status))
+
+		// handle different task statuses
+		if status == string(TaskStatusPaused) {
+			// paused tasks can be directly deleted
+		} else if status == string(TaskStatusRunning) || status == string(TaskStatusResetting) {
+			// for running/resetting tasks, check if they are stale (dead processes)
+			log.Info("task is running/resetting, checking if it's stale before abort",
+				zap.Uint64("task_id", taskID),
+				zap.String("status", status))
+
+			// get the task's heartbeat time to check if it's stale
+			heartbeatSQL := fmt.Sprintf(selectTaskHeartbeatSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+			heartbeatRows, _, heartbeatErr := execCtx.ExecRestrictedSQL(ctx, sessionOpts, heartbeatSQL, taskID)
+			if heartbeatErr != nil {
+				log.Warn("failed to check task heartbeat during abort, skipping",
+					zap.Uint64("task_id", taskID),
+					zap.Error(heartbeatErr))
+				return nil
+			}
+
+			if len(heartbeatRows) == 0 {
+				log.Warn("task not found when checking heartbeat, skipping abort",
+					zap.Uint64("task_id", taskID))
+				return nil
+			}
+
+			initialHeartbeatTime := heartbeatRows[0].GetTime(0).String()
+
+			// check if the task is stale (not updating heartbeat)
+			isStale, staleErr := r.isTaskStale(ctx, taskID, initialHeartbeatTime)
+			if staleErr != nil {
+				log.Warn("failed to determine if task is stale, skipping abort",
+					zap.Uint64("task_id", taskID),
+					zap.Error(staleErr))
+				return nil
+			}
+
+			if !isStale {
+				log.Info("task is actively running, cannot abort",
+					zap.Uint64("task_id", taskID),
+					zap.String("status", status))
+				return nil
+			}
+
+			log.Info("task is stale, proceeding with abort",
+				zap.Uint64("task_id", taskID),
+				zap.String("status", status))
+		} else {
+			log.Error("task is in unexpected status, cannot abort",
+				zap.Uint64("task_id", taskID),
+				zap.String("status", status))
+			return nil
+		}
+
+		// delete the paused task
+		deleteSQL := fmt.Sprintf(deleteRegistrationSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+		_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, deleteSQL, taskID)
+		if err != nil {
+			return errors.Annotatef(err, "failed to delete task %d", taskID)
+		}
+
+		deletedTaskID = taskID
+		log.Info("successfully deleted matching paused task", zap.Uint64("task_id", taskID))
+
+		return nil
+	})
+
+	if err != nil {
+		return 0, err
+	}
+
+	if deletedTaskID != 0 {
+		log.Info("successfully deleted matching task", zap.Uint64("task_id", deletedTaskID))
+	}
+
+	return deletedTaskID, nil
 }

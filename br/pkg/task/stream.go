@@ -1313,6 +1313,9 @@ func RunStreamRestore(
 	// if not set by user, restore to the max TS available
 	if cfg.RestoreTS == 0 {
 		cfg.RestoreTS = logInfo.logMaxTS
+		cfg.IsRestoredTSUserSpecified = false
+	} else {
+		cfg.IsRestoredTSUserSpecified = true
 	}
 	cfg.UpstreamClusterID = logInfo.clusterID
 
