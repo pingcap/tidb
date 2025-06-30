@@ -330,7 +330,7 @@ test_cover_all_ddl() {
     run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$TASK_NAME/log"
     run_br backup full -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
 
-    run_sql_file $CUR/sqls/log.sql
+    run_sql_file $CUR/sqls/log.sql -v
 
     . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
 
