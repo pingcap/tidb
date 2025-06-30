@@ -41,7 +41,6 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 		tk.MustExec("insert into t1(a,b,c,t) select a,b,c,t from t1;")
 	}
 	tk.MustExec("analyze table t1 all columns;")
-	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// Create virtual `tiflash` replica info.
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
@@ -78,7 +77,7 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 			output[i].SQL = tt
 			output[i].Plan = normalizedPlanRows
 		})
-		compareStringSlice(t, normalizedPlanRows, output[i].Plan)
+		require.Equal(t, normalizedPlanRows, output[i].Plan)
 	}
 }
 
