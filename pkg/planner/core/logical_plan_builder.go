@@ -921,6 +921,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 	if b.curClause != havingClause {
 		b.curClause = whereClause
 	}
+
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
 	selection := logicalop.LogicalSelection{}.Init(b.ctx, b.getSelectOffset())
