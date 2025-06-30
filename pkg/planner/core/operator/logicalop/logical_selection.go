@@ -100,6 +100,8 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	exprCtx := p.SCtx().GetExprCtx()
 	stmtCtx := p.SCtx().GetSessionVars().StmtCtx
 	predicates = constraint.DeleteTrueExprs(exprCtx, stmtCtx, predicates)
+	// Apply predicate simplification to the conditions. because propagateConstant has been dealed in the ConstantPropagationSolver
+	// so we don't need to do it again.
 	p.Conditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false)
 	var child base.LogicalPlan
 	var retConditions []expression.Expression

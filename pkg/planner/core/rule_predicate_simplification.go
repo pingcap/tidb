@@ -176,13 +176,16 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool) []expression.Expression {
 	simplifiedPredicate := shortCircuitLogicalConstants(sctx, predicates)
 	exprCtx := sctx.GetExprCtx()
+	// In some scenarios, we need to perform constant propagation,
+	// while in others, we merely aim to achieve simplification.
+	// Thus, we utilize a switch to govern this particular logic.
 	if propagateConstant {
 		simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate...)
 	} else {
 		exprs := expression.PropagateConstant(exprCtx, simplifiedPredicate...)
 		if len(exprs) == 1 {
-			if c, ok := exprs[0].(*expression.Constant); ok {
-				return []expression.Expression{c}
+			if _, ok := exprs[0].(*expression.Constant); ok {
+				return constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, exprs)
 			}
 		}
 	}
