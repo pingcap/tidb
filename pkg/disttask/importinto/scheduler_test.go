@@ -138,7 +138,7 @@ func (s *importIntoSuite) TestGetStepOfEncode() {
 }
 
 func (s *importIntoSuite) TestIsRetryable() {
-	ext := &ImportSchedulerExt{}
+	ext := &importScheduler{}
 	require.True(s.T(), ext.IsRetryableErr(drivererr.ErrRegionUnavailable))
 }
 
