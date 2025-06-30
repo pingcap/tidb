@@ -310,8 +310,6 @@ explain select * from t where b in (1,2);
 --sorted_result
 select * from t where b in (1,2) and a like '%a%';
 explain select * from t where b in (1,2) and a like '%a%';
-<<<<<<< HEAD
-=======
 
 # Test issue 61726
 drop table if exists t;
@@ -348,4 +346,3 @@ insert into t values ('58y-j)84-&Y*'), ('WNe(rS5uwmvIvFnHw'), ('j9FsMawX5uBro%$p
 explain format='brief' select t.col_95 as r0 from t where t.col_95 between 'Dyw=*7nigCMh' and 'Im0*7sZ' or t.col_95 in ( '58y-j)84-&Y*' ,'WNe(rS5uwmvIvFnHw' ,'j9FsMawX5uBro%$p' ,'C(#EQm@J' ) group by t.col_95  having t.col_95 between '%^2' and '38ABfC-' or t.col_95 between 'eKCAE$d2x_hxscj' and 'zcw35^ATEEp1md=L';
 select t.col_95 as r0 from t where t.col_95 between 'Dyw=*7nigCMh' and 'Im0*7sZ' or t.col_95 in ( '58y-j)84-&Y*' ,'WNe(rS5uwmvIvFnHw' ,'j9FsMawX5uBro%$p' ,'C(#EQm@J' ) group by t.col_95  having t.col_95 between '%^2' and '38ABfC-' or t.col_95 between 'eKCAE$d2x_hxscj' and 'zcw35^ATEEp1md=L';
 
->>>>>>> ce538d6759f (planner: fix `PointGetPlan.PrunePartitions` function works with non-binary collate (#62002))
