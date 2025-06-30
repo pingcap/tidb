@@ -22,44 +22,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type simpleSource[T comparable] struct {
-	errGroup  errgroup.Group
-	generator func() T
-	sink      DataChannel[T]
-}
-
-func newSimpleSource[T comparable](generator func() T) *simpleSource[T] {
-	return &simpleSource[T]{generator: generator}
-}
-
-func (s *simpleSource[T]) Open() error {
-	s.errGroup.Go(func() error {
-		var zT T
-		for {
-			res := s.generator()
-			if res == zT {
-				break
-			}
-			s.sink.Channel() <- res
-		}
-		s.sink.Finish()
-		return nil
-	})
-	return nil
-}
-
-func (s *simpleSource[T]) Close() error {
-	return s.errGroup.Wait()
-}
-
-func (s *simpleSource[T]) SetSink(ch DataChannel[T]) {
-	s.sink = ch
-}
-
-func (*simpleSource[T]) String() string {
-	return "simpleSource"
-}
-
 type simpleSink[R any] struct {
 	errGroup errgroup.Group
 	drainer  func(R)

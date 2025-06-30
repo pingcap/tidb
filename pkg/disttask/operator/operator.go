@@ -173,29 +173,31 @@ func NewContext(
 	}, cancel
 }
 
-// SimpleOperator is a simple operator that sends inputs to a channel.
-type SimpleOperator[T workerpool.TaskMayPanic] struct {
+// SimpleDataSource is a simple operator which use the given input slice as the data source.
+type SimpleDataSource[T workerpool.TaskMayPanic] struct {
 	inputs []T
 	eg     *errgroup.Group
 	ctx    *Context
 	ch     chan T
 }
 
-// NewSimpleOperator creates a new SimpleOperator with the given inputs.
-func NewSimpleOperator[T workerpool.TaskMayPanic](
+// NewSimpleDataSource creates a new SimpleOperator with the given inputs.
+func NewSimpleDataSource[T workerpool.TaskMayPanic](
 	ctx *Context,
 	inputs []T,
-) *SimpleOperator[T] {
-	return &SimpleOperator[T]{
+) *SimpleDataSource[T] {
+	return &SimpleDataSource[T]{
 		inputs: inputs,
 		eg:     &errgroup.Group{},
 		ctx:    ctx,
 	}
 }
 
-// Open implements the Operator's Open interface.
-func (s *SimpleOperator[T]) Open() error {
+// Open implements the Operator interface.
+func (s *SimpleDataSource[T]) Open() error {
 	s.eg.Go(func() error {
+		// To make this part of code work, we need to call ctx.OnError
+		// in downstream operators when they encounter an error or panic.
 		for _, input := range s.inputs {
 			select {
 			case s.ch <- input:
@@ -209,20 +211,21 @@ func (s *SimpleOperator[T]) Open() error {
 	return nil
 }
 
-// SetSink implements the SetSink interface.
-func (s *SimpleOperator[T]) SetSink(ch DataChannel[T]) {
-	s.ch = ch.Channel()
-}
-
-// Close implements the Operator's Close interface.
-func (s *SimpleOperator[T]) Close() error {
+// Close implements the Operator interface.
+func (s *SimpleDataSource[T]) Close() error {
 	//nolint: errcheck
 	s.eg.Wait()
 	close(s.ch)
 	return s.ctx.OperatorErr()
 }
 
-// String implements the Operator's String interface.
-func (*SimpleOperator[T]) String() string {
-	return "simpleOperator"
+// String implements the Operator interface.
+func (*SimpleDataSource[T]) String() string {
+	var zT T
+	return fmt.Sprintf("SimpleDataSource[%T]", zT)
+}
+
+// SetSink implements the WithSink interface.
+func (s *SimpleDataSource[T]) SetSink(ch DataChannel[T]) {
+	s.ch = ch.Channel()
 }

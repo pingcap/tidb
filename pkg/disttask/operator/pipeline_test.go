@@ -15,6 +15,7 @@
 package operator
 
 import (
+	"context"
 	"regexp"
 	"strings"
 	"sync"
@@ -23,24 +24,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPipelineAsyncMultiOperators(t *testing.T) {
+func TestPipelineAsyncMultiOperatorsWithoutError(t *testing.T) {
 	words := `Bob hiT a ball, the hIt BALL flew far after it was hit.`
+	splitted := strings.Split(words, " ")
+
+	tasks := make([]stringTask, len(splitted))
+	for i, word := range splitted {
+		tasks[i] = stringTask(word)
+	}
+
+	opCtx, _ := NewContext(context.Background())
+
 	var mostCommonWord stringTask
-	splitter := makeSplitter(words)
+	source := NewSimpleDataSource(opCtx, tasks)
 	lower := makeLower()
 	trimmer := makeTrimmer()
 	counter := makeCounter()
 	collector := makeCollector(&mostCommonWord)
 
-	Compose[stringTask](splitter, lower)
+	Compose[stringTask](source, lower)
 	Compose[stringTask](lower, trimmer)
 	Compose[stringTask](trimmer, counter)
 	Compose[strCnt](counter, collector)
 
-	pipeline := NewAsyncPipeline(splitter, lower, trimmer, counter, collector)
+	pipeline := NewAsyncPipeline(source, lower, trimmer, counter, collector)
 	require.Equal(
 		t,
-		"AsyncPipeline[simpleSource -> simpleOperator(AsyncOp[operator.stringTask, operator.stringTask]) -> simpleOperator(AsyncOp[operator.stringTask, operator.stringTask]) -> simpleOperator(AsyncOp[operator.stringTask, operator.strCnt]) -> simpleSink]",
+		"AsyncPipeline[SimpleDataSource[operator.stringTask] -> simpleOperator(AsyncOp[operator.stringTask, operator.stringTask]) -> simpleOperator(AsyncOp[operator.stringTask, operator.stringTask]) -> simpleOperator(AsyncOp[operator.stringTask, operator.strCnt]) -> simpleSink]",
 		pipeline.String(),
 	)
 	err := pipeline.Execute()
@@ -53,19 +63,6 @@ func TestPipelineAsyncMultiOperators(t *testing.T) {
 type strCnt struct {
 	str stringTask
 	cnt int
-}
-
-func makeSplitter(s string) *simpleSource[stringTask] {
-	ss := strings.Split(s, " ")
-	src := newSimpleSource(func() stringTask {
-		if len(ss) == 0 {
-			return ""
-		}
-		ret := ss[0]
-		ss = ss[1:]
-		return stringTask(ret)
-	})
-	return src
 }
 
 type stringTask string

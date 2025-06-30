@@ -176,7 +176,7 @@ func MergeOverlappingFiles(
 		})
 	}
 
-	sourceOp := operator.NewSimpleOperator[*mergeMinimalTask](ctx, mergeTasks)
+	sourceOp := operator.NewSimpleDataSource(ctx, mergeTasks)
 	operator.Compose(sourceOp, op)
 
 	pipe := operator.NewAsyncPipeline(sourceOp, op)
