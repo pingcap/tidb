@@ -43,8 +43,8 @@ var (
 )
 
 type mergeMinimalTask struct {
-	files []string
 	ctx   *operator.Context
+	files []string
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
@@ -171,8 +171,8 @@ func MergeOverlappingFiles(
 	mergeTasks := make([]*mergeMinimalTask, 0, len(dataFilesSlice))
 	for _, files := range dataFilesSlice {
 		mergeTasks = append(mergeTasks, &mergeMinimalTask{
-			files: files,
 			ctx:   ctx,
+			files: files,
 		})
 	}
 

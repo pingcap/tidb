@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
-	"golang.org/x/sync/errgroup"
 )
 
 // Operator is the basic operation unit in the task execution.
@@ -154,14 +153,6 @@ func (ctx *Context) OperatorErr() error {
 	return *err
 }
 
-// Cancel cancels the context of the operator.
-// It's used in test.
-func (ctx *Context) Cancel() {
-	if ctx.cancel != nil {
-		ctx.cancel()
-	}
-}
-
 // NewContext creates a new Context
 func NewContext(
 	ctx context.Context,
@@ -171,61 +162,4 @@ func NewContext(
 		Context: opCtx,
 		cancel:  cancel,
 	}, cancel
-}
-
-// SimpleDataSource is a simple operator which use the given input slice as the data source.
-type SimpleDataSource[T workerpool.TaskMayPanic] struct {
-	inputs []T
-	eg     *errgroup.Group
-	ctx    *Context
-	ch     chan T
-}
-
-// NewSimpleDataSource creates a new SimpleOperator with the given inputs.
-func NewSimpleDataSource[T workerpool.TaskMayPanic](
-	ctx *Context,
-	inputs []T,
-) *SimpleDataSource[T] {
-	return &SimpleDataSource[T]{
-		inputs: inputs,
-		eg:     &errgroup.Group{},
-		ctx:    ctx,
-	}
-}
-
-// Open implements the Operator interface.
-func (s *SimpleDataSource[T]) Open() error {
-	s.eg.Go(func() error {
-		// To make this part of code work, we need to call ctx.OnError
-		// in downstream operators when they encounter an error or panic.
-		for _, input := range s.inputs {
-			select {
-			case s.ch <- input:
-			case <-s.ctx.Done():
-				return nil
-			}
-		}
-
-		return nil
-	})
-	return nil
-}
-
-// Close implements the Operator interface.
-func (s *SimpleDataSource[T]) Close() error {
-	//nolint: errcheck
-	s.eg.Wait()
-	close(s.ch)
-	return s.ctx.OperatorErr()
-}
-
-// String implements the Operator interface.
-func (*SimpleDataSource[T]) String() string {
-	var zT T
-	return fmt.Sprintf("SimpleDataSource[%T]", zT)
-}
-
-// SetSink implements the WithSink interface.
-func (s *SimpleDataSource[T]) SetSink(ch DataChannel[T]) {
-	s.ch = ch.Channel()
 }
