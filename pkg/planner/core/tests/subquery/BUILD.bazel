@@ -1,9 +1,0 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
-
-go_test(
-    name = "subquery_test",
-    timeout = "short",
-    srcs = ["subquery_test.go"],
-    flaky = True,
-    deps = ["//pkg/testkit"],
-)
