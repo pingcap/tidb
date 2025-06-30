@@ -2646,7 +2646,9 @@ func (s *session) GetTableCtx() tblctx.MutateContext {
 func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	vars := s.GetSessionVars()
 	sc := vars.StmtCtx
-
+	if intest.InTest && s.GetSessionVars().InRestrictedSQL {
+		intest.Assert(vars.ReplicaClosestReadThreshold != 0, "ReplicaClosestReadThreshold should not be 0 in restricted SQL")
+	}
 	dctx := sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
 		return &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
