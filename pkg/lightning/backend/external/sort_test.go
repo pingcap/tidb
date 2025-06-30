@@ -171,9 +171,8 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	defaultReadBufferSize = 100
 	defaultOneWriterMemSizeLimit = uint64(mergeMemSize)
 	for _, group := range dataGroup {
-		require.NoError(t, MergeOverlappingFiles(
+		op := NewMergeOperator(
 			ctx,
-			group,
 			memStore,
 			int64(5*size.MB),
 			"/test2",
@@ -182,6 +181,13 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			1,
 			true,
 			engineapi.OnDuplicateKeyIgnore,
+		)
+
+		require.NoError(t, MergeOverlappingFiles(
+			ctx,
+			group,
+			1,
+			op,
 		))
 	}
 
