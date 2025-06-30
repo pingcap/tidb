@@ -341,7 +341,6 @@ func (p *PointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 	loadTableStats(ctx, p.TblInfo, tableID)
 }
 
-<<<<<<< HEAD
 // needsPartitionPruning checks if IndexValues can be used by GetPartitionIdxByRow() or if they have already been
 // converted to SortKey and would need GetPartitionIdxByRow() to be refactored to work, since it will unconditionally
 // convert it again.
@@ -396,8 +395,6 @@ func needsPartitionPruning(sctx sessionctx.Context, tblInfo *model.TableInfo, pt
 	return partIdx, true, nil
 }
 
-=======
->>>>>>> ce538d6759f (planner: fix `PointGetPlan.PrunePartitions` function works with non-binary collate (#62002))
 // PrunePartitions will check which partition to use
 // returns true if no matching partition
 func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
