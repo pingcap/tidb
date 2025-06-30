@@ -330,7 +330,7 @@ func (p *PointGetPlan) AccessObject() base.AccessObject {
 	return res
 }
 
-// AccessObject implements physicalScan interface.
+// AccessObject implements DataAccesser interface.
 func (p *BatchPointGetPlan) AccessObject() base.AccessObject {
 	res := &ScanAccessObject{
 		Database: p.dbName,
@@ -408,6 +408,7 @@ func getDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, 
 	return res
 }
 
+// AccessObject implements PartitionAccesser interface.
 func (p *PhysicalTableReader) AccessObject(sctx base.PlanContext) base.AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
@@ -477,14 +478,17 @@ func getAccessObjectFromIndexScan(sctx base.PlanContext, is *PhysicalIndexScan, 
 	return DynamicPartitionAccessObjects{res}
 }
 
+// AccessObject implements PartitionAccesser interface.
 func (p *PhysicalIndexReader) AccessObject(sctx base.PlanContext) base.AccessObject {
 	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), p.PlanPartInfo)
 }
 
+// AccessObject implements PartitionAccesser interface.
 func (p *PhysicalIndexLookUpReader) AccessObject(sctx base.PlanContext) base.AccessObject {
 	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), p.PlanPartInfo)
 }
 
+// AccessObject implements PartitionAccesser interface.
 func (p *PhysicalIndexMergeReader) AccessObject(sctx base.PlanContext) base.AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
@@ -501,7 +505,7 @@ func (p *PhysicalIndexMergeReader) AccessObject(sctx base.PlanContext) base.Acce
 	return DynamicPartitionAccessObjects{res}
 }
 
-// AccessObject implements physicalScan interface.
+// AccessObject implements DataAccesser interface.
 func (p *PhysicalCTE) AccessObject() base.AccessObject {
 	if p.cteName == p.cteAsName {
 		return OtherAccessObject(fmt.Sprintf("CTE:%s", p.cteName.L))
