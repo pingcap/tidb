@@ -561,6 +561,12 @@ func (sf *ScalarFunction) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (typ
 // HashCode implements Expression interface.
 func (sf *ScalarFunction) HashCode() []byte {
 	if len(sf.hashcode) > 0 {
+		if intest.InTest {
+			copyhashcode := make([]byte, len(sf.hashcode))
+			copy(copyhashcode, sf.hashcode)
+			ReHashCode(sf)
+			intest.Assert(bytes.Equal(sf.hashcode, copyhashcode))
+		}
 		return sf.hashcode
 	}
 	ReHashCode(sf)
