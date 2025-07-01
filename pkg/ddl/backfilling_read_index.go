@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -54,6 +55,8 @@ type readIndexExecutor struct {
 	curRowCount *atomic.Int64
 
 	subtaskSummary sync.Map // subtaskID => readIndexSummary
+
+	metric *lightningmetric.Common
 }
 
 type readIndexSummary struct {
@@ -62,30 +65,35 @@ type readIndexSummary struct {
 }
 
 func newReadIndexExecutor(
+	ctx context.Context,
 	d *ddl,
 	job *model.Job,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	jc *JobContext,
-	bcGetter func() (ingest.BackendCtx, error),
+	bcGetter func(context.Context) (ingest.BackendCtx, error),
 	cloudStorageURI string,
 	avgRowSize int,
-) (*readIndexExecutor, error) {
-	bc, err := bcGetter()
-	if err != nil {
-		return nil, err
-	}
-	return &readIndexExecutor{
+) (r *readIndexExecutor, err error) {
+	r = &readIndexExecutor{
 		d:               d,
 		job:             job,
 		indexes:         indexes,
 		ptbl:            ptbl,
 		jc:              jc,
-		bc:              bc,
 		cloudStorageURI: cloudStorageURI,
 		avgRowSize:      avgRowSize,
 		curRowCount:     &atomic.Int64{},
-	}, nil
+	}
+	if !r.isGlobalSort() {
+		r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
+		ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
+	}
+	r.bc, err = bcGetter(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
 }
 
 func (*readIndexExecutor) Init(_ context.Context) error {
@@ -152,7 +160,14 @@ func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	tidblogutil.Logger(ctx).Info("read index executor cleanup subtask exec env")
 	// cleanup backend context
 	ingest.LitBackCtxMgr.Unregister(r.job.ID)
+	if !r.isGlobalSort() {
+		metrics.UnregisterLightningCommonMetricsForDDL(r.job.ID, r.metric)
+	}
 	return nil
+}
+
+func (r *readIndexExecutor) isGlobalSort() bool {
+	return len(r.cloudStorageURI) > 0
 }
 
 // MockDMLExecutionAddIndexSubTaskFinish is used to mock DML execution during distributed add index.
