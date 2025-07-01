@@ -19,11 +19,13 @@ import (
 	"strings"
 
 	"github.com/gogo/protobuf/proto"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -352,12 +354,16 @@ func (w *TiCIDataWriter) CloseFileWriter(ctx context.Context) error {
 
 // TiCIDataWriterGroup manages a group of TiCIDataWriter, each responsible for a fulltext index in a table.
 type TiCIDataWriterGroup struct {
-	writers []*TiCIDataWriter
+	writers  []*TiCIDataWriter
+	writable bool
 }
 
 // WriteHeader writes the header to all writers in the group.
 // commitTS is the commit timestamp to include in the header.
 func (g *TiCIDataWriterGroup) WriteHeader(ctx context.Context, commitTS uint64) error {
+	if !g.writable {
+		return nil
+	}
 	for _, w := range g.writers {
 		if err := w.WriteHeader(ctx, commitTS); err != nil {
 			return err
@@ -369,6 +375,9 @@ func (g *TiCIDataWriterGroup) WriteHeader(ctx context.Context, commitTS uint64) 
 // WritePairs writes a batch of KV Pairs to all writers in the group.
 // Logs detailed errors for each writer using the logger.
 func (g *TiCIDataWriterGroup) WritePairs(ctx context.Context, pairs []*sst.Pair, count int) error {
+	if !g.writable {
+		return nil
+	}
 	logger := logutil.Logger(ctx)
 	for _, w := range g.writers {
 		if err := w.WritePairs(ctx, pairs, count); err != nil {
@@ -400,12 +409,44 @@ func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schem
 	for _, idx := range fulltextIndexes {
 		writers = append(writers, NewTiCIDataWriter(ctx, tblInfo, idx, schema))
 	}
-	return &TiCIDataWriterGroup{writers: writers}
+	return &TiCIDataWriterGroup{
+		writers:  writers,
+		writable: true,
+	}
+}
+
+// SetTiCIDataWriterGroupWritable sets the writable state for the TiCIDataWriterGroup.
+func SetTiCIDataWriterGroupWritable(
+	ctx context.Context,
+	g *TiCIDataWriterGroup,
+	engineUUID uuid.UUID,
+	engineID int32,
+) {
+	if g == nil {
+		// Ignore the logic if we are not dealing with full-text
+		// indexes within this engine.
+		return
+	}
+
+	writable := engineID != common.IndexEngineID
+	g.writable = writable
+
+	logger := logutil.Logger(ctx)
+	if logger != nil {
+		logger.Info("setting TiCIDataWriterGroup writable",
+			zap.Bool("writable", writable),
+			zap.String("engine UUID", engineUUID.String()),
+			zap.Int32("engine ID", engineID),
+		)
+	}
 }
 
 // InitTICIFileWriters initializes the ticiFileWriter for all writers in the group.
 // cloudStoreURI is the S3 URI, logger is taken from context.
 func (g *TiCIDataWriterGroup) InitTICIFileWriters(ctx context.Context) error {
+	if !g.writable {
+		return nil
+	}
 	logger := logutil.Logger(ctx)
 	for _, w := range g.writers {
 		err := w.InitTICIFileWriter(ctx, logger)
@@ -430,6 +471,9 @@ func (g *TiCIDataWriterGroup) GetCloudStoragePath(
 	ctx context.Context,
 	lowerBound, upperBound []byte,
 ) error {
+	if !g.writable {
+		return nil
+	}
 	for _, w := range g.writers {
 		_, err := w.GetCloudStoragePath(ctx, lowerBound, upperBound)
 		if err != nil {
@@ -444,6 +488,9 @@ func (g *TiCIDataWriterGroup) GetCloudStoragePath(
 func (g *TiCIDataWriterGroup) MarkPartitionUploadFinished(
 	ctx context.Context,
 ) error {
+	if !g.writable {
+		return nil
+	}
 	for _, w := range g.writers {
 		if err := w.MarkPartitionUploadFinished(ctx); err != nil {
 			return err
@@ -456,6 +503,7 @@ func (g *TiCIDataWriterGroup) MarkPartitionUploadFinished(
 func (g *TiCIDataWriterGroup) MarkTableUploadFinished(
 	ctx context.Context,
 ) error {
+
 	logger := logutil.Logger(ctx)
 	for _, w := range g.writers {
 		if err := w.MarkTableUploadFinished(ctx); err != nil {
@@ -473,6 +521,9 @@ func (g *TiCIDataWriterGroup) MarkTableUploadFinished(
 
 // CloseFileWriters closes the underlying TICIFileWriter for each writer in the group.
 func (g *TiCIDataWriterGroup) CloseFileWriters(ctx context.Context) error {
+	if !g.writable {
+		return nil
+	}
 	logger := logutil.Logger(ctx)
 	for _, w := range g.writers {
 		if err := w.CloseFileWriter(ctx); err != nil {
