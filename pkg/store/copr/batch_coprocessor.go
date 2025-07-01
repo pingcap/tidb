@@ -909,7 +909,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 	var (
 		aliveStores               *aliveStoresBundle
 		maxRemoteReadCountAllowed int
-		retryNum int
+		retryNum                  int
 	)
 	if !isTiDBLabelZoneSet {
 		tiflashReplicaReadPolicy = tiflash.AllReplicas
