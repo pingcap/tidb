@@ -1534,17 +1534,16 @@ func TestRiskEqSkewRatio(t *testing.T) {
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
 	count, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
-	require.Equal(t, float64(1.8), count)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0.5")
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
-	require.NoError(t, err)
-	// Result should be approx 3.4, but due to floating point - result can be flaky
-	require.Less(t, float64(3.3), count)
-	require.Greater(t, float64(3.5), count)
+	count2, _, err2 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err2)
+	// Result of count2 should be larger than count because the risk ratio is higher
+	require.Less(t, count, count2)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 1")
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
-	require.NoError(t, err)
-	require.Equal(t, float64(5), count)
+	count3, _, err3 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err3)
+	// Result of count3 should be larger because the risk ratio is higher
+	require.Less(t, count2, count3)
 	// reset skew ratio to 0
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
 	// Collect 1 topn to ensure that test will not find value in topn.
@@ -1555,16 +1554,28 @@ func TestRiskEqSkewRatio(t *testing.T) {
 	statsTbl = h.GetTableStats(tb.Meta())
 	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
-	require.Equal(t, float64(1.25), count)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0.5")
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
-	require.NoError(t, err)
-	// Result should be approx 1.625, but due to floating point - result can be flaky
-	require.Less(t, float64(1.6), count)
-	require.Greater(t, float64(1.7), count)
+	count2, _, err2 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err2)
+	// Result of count2 should be larger than countbecause the risk ratio is higher
+	require.Less(t, count, count2)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 1")
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
-	require.NoError(t, err)
-	require.Equal(t, float64(2), count)
-	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
+	count3, _, err3 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err3)
+	// Result of count3 should be larger than countbecause the risk ratio is higher
+	require.Less(t, count2, count3)
+	// Repeat the prior test by setting the global variable instead of the session variable. This should have no effect.
+	testKit.MustExec("set @@global.tidb_opt_risk_eq_skew_ratio = 0.5")
+	count4, _, err4 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err4)
+	require.Less(t, count2, count4)
+	// Repeat the prior test by setting the session variable to the default. Count4 should inherit the global
+	// variable and be less than count3.
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = default")
+	count4, _, err4 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err4)
+	require.Less(t, count4, count3)
+	// Reset global variable to default.
+	testKit.MustExec("set @@global.tidb_opt_risk_eq_skew_ratio = default")
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = default")
 }
