@@ -16,10 +16,6 @@ package core
 
 import (
 	"fmt"
-	"math"
-	"slices"
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
@@ -46,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"math"
+	"slices"
 )
 
 func exhaustPhysicalPlans4LogicalUnionScan(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
@@ -2201,10 +2199,24 @@ func handleFilterIndexJoinHints(p *logicalop.LogicalJoin, candidates []base.Phys
 }
 
 func recordWarnings(lp base.LogicalPlan, prop *property.PhysicalProperty, inEnforce bool) error {
-	if err := recordIndexJoinHintWarnings(lp, prop, inEnforce); err != nil {
-		return err
+	switch x := lp.(type) {
+	case *logicalop.LogicalAggregation:
+		return recordAggregationHintWarnings(x)
+	case *logicalop.LogicalTopN, *logicalop.LogicalLimit:
+		return recordLimitToCopWarnings(lp)
+	case *logicalop.LogicalJoin:
+		return recordIndexJoinHintWarnings(x, prop, inEnforce)
+	default:
+		// no warnings to record
+		return nil
 	}
-	return recordLimitToCopWarnings(lp)
+}
+
+func recordAggregationHintWarnings(la *logicalop.LogicalAggregation) error {
+	if la.PreferAggToCop {
+		return plannererrors.ErrInternal.FastGen("Optimizer Hint AGG_TO_COP is inapplicable")
+	}
+	return nil
 }
 
 func recordLimitToCopWarnings(lp base.LogicalPlan) error {
@@ -2225,11 +2237,7 @@ func recordLimitToCopWarnings(lp base.LogicalPlan) error {
 
 // recordIndexJoinHintWarnings records the warnings msg if no valid preferred physic are picked.
 // todo: extend recordIndexJoinHintWarnings to support all kind of operator's warnings handling.
-func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalProperty, inEnforce bool) error {
-	p, ok := lp.(*logicalop.LogicalJoin)
-	if !ok {
-		return nil
-	}
+func recordIndexJoinHintWarnings(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, inEnforce bool) error {
 	if !p.PreferAny(h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
 		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner) {
 		return nil // no force index join hints
@@ -3762,13 +3770,6 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 
 func exhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	la := lp.(*logicalop.LogicalAggregation)
-	if la.PreferAggToCop {
-		if !la.CanPushToCop(kv.TiKV) {
-			la.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
-				"Optimizer Hint AGG_TO_COP is inapplicable")
-			la.PreferAggToCop = false
-		}
-	}
 	preferHash, preferStream := la.ResetHintIfConflicted()
 	hashAggs := getHashAggs(la, prop)
 	if len(hashAggs) > 0 && preferHash {
