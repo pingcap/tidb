@@ -311,7 +311,7 @@ func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) 
 			return true
 		}
 		logutil.BgLogger().Error("The upstream does not perform good predicate simplification",
-			zap.Any("expected", expected), zap.Any("actual", actual))
+			zap.Any("expected", expected), zap.Any("actual", actual), zap.String("sql", p.SCtx().GetSessionVars().StmtCtx.OriginalSQL))
 		return false
 	})
 	intest.AssertFunc(func() bool {
@@ -328,7 +328,7 @@ func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) 
 			return true
 		}
 		logutil.BgLogger().Error("The upstream does not perform good predicate simplification",
-			zap.Any("expected", expected), zap.Any("actual", actual))
+			zap.Any("expected", expected), zap.Any("actual", actual), zap.String("sql", p.SCtx().GetSessionVars().StmtCtx.OriginalSQL))
 		return false
 	})
 	return p
