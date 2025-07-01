@@ -103,8 +103,8 @@ func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableID int64, in
 			ret = append(ret, ShardWithAddr{
 				Shard{
 					ShardID:  s.Shard.ShardId,
-					StartKey: string(s.Shard.StartKey),
-					EndKey:   string(s.Shard.EndKey),
+					StartKey: s.Shard.StartKey,
+					EndKey:   s.Shard.EndKey,
 					Epoch:    s.Shard.Epoch,
 				},
 				s.LocalCacheAddrs,
