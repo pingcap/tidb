@@ -42,7 +42,9 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"go.uber.org/zap"
 )
 
 // DataSource represents a tableScan without condition push down.
@@ -305,7 +307,12 @@ func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) 
 		for _, cond := range actualExprs {
 			actual = append(actual, cond.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
-		return slices.Equal(expected, actual)
+		if slices.Equal(expected, actual) {
+			return true
+		}
+		logutil.BgLogger().Error("The upstream does not perform good predicate simplification",
+			zap.Any("expected", expected), zap.Any("actual", actual))
+		return false
 	})
 	intest.AssertFunc(func() bool {
 		expected := make([]string, 0, len(p.AllConds))
@@ -317,7 +324,12 @@ func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) 
 		for _, cond := range actualExprs {
 			actual = append(actual, cond.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
-		return slices.Equal(expected, actual)
+		if slices.Equal(expected, actual) {
+			return true
+		}
+		logutil.BgLogger().Error("The upstream does not perform good predicate simplification",
+			zap.Any("expected", expected), zap.Any("actual", actual))
+		return false
 	})
 	return p
 }
