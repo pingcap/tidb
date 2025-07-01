@@ -115,6 +115,12 @@ func CreateMockStoreAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption
 
 // CreateMockStoreAndDomainAndSetup return a new kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
+	if kerneltype.IsNextGen() && *KeyspaceName == "" {
+		// in nextgen kernel, SYSTEM keyspace must be bootstrapped first, if we
+		// don't specify a keyspace which normally is not specified, we use SYSTEM
+		// keyspace as default to make sure test cases can run correctly.
+		*KeyspaceName = keyspace.System
+	}
 	return Setup(t, *KeyspaceName, opts...)
 }
 
