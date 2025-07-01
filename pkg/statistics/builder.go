@@ -353,7 +353,6 @@ func BuildHistAndTopN(
 			curCnt++
 			continue
 		}
-		// Track the NDV within the sample.
 		sampleNDV++
 		// case 2, meet a different value: counting for the "current" is complete
 		// case 2-1, do not add a count of 1 if we're sampling or if we've already collected 10% of the topN
@@ -412,23 +411,27 @@ func BuildHistAndTopN(
 			topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
 			if len(topNList) > numTopN {
 				topNList = topNList[:numTopN]
-			} else if allowPruning && sampleFactor > 1 && ndv > sampleNDV && len(topNList) == int(sampleNDV) {
-				// If we're sampling, and TopN contains everything in the sample - trim TopN to 1 less. This can
-				// help address issues in optimizer cardinality estimation if TopN contains all values in the sample,
-				// but the length of the TopN is less than the true column/index NDV.
-				topNList = topNList[:len(topNList)-1]
+			} else if sampleFactor > 1 && ndv > sampleNDV && len(topNList) == int(sampleNDV) {
+				// If we're sampling, and TopN contains everything in the sample - trim TopN so that buckets will be
+				// built. This can help address issues in optimizer cardinality estimation if TopN contains all values
+				// in the sample, but the length of the TopN is less than the true column/index NDV.
+				// Ensure that we keep at least one item in the topN list. If the sampleNDV is small, all remaining
+				// values are likely to added as the last value of a bucket such that skew will still be recognized.
+				keepTopN := int(max(1, len(topNList)-int(ndv-sampleNDV)))
+				topNList = topNList[:keepTopN]
+				allowPruning = true
 			}
 		}
 	}
 
 	if allowPruning {
-		topNList = pruneTopNItem(topNList, sampleNDV, nullCount, sampleNum, count)
+		topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
 	}
 
 	topn := &TopN{TopN: topNList}
 	lenTopN := int64(len(topn.TopN))
 
-	// Step2: exclude TopN from samples if the sample NDV is larger than the number of topN items.
+	// Step2: exclude TopN from samples if the NDV is larger than the number of topN items.
 	lenSamples := int64(len(samples))
 	if lenTopN > 0 && lenTopN < sampleNDV && lenSamples > 0 {
 		for i := int64(0); i < lenSamples; i++ {
@@ -500,7 +503,7 @@ func BuildHistAndTopN(
 
 	// Step3: build histogram with the rest samples
 	if lenSamples > 0 {
-		remainingNDV := sampleNDV - lenTopN
+		remainingNDV := ndv - lenTopN
 		// if we pruned the topN, it means that there are no remaining skewed values in the samples
 		if lenTopN < int64(numTopN) && numBuckets == 256 {
 			// set the number of buckets to be the number of remaining distinct values divided by 2
