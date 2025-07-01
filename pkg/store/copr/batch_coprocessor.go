@@ -909,12 +909,14 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 	var (
 		aliveStores               *aliveStoresBundle
 		maxRemoteReadCountAllowed int
+		retryNum int
 	)
 	if !isTiDBLabelZoneSet {
 		tiflashReplicaReadPolicy = tiflash.AllReplicas
 	}
 
 	for {
+		retryNum++
 		var tasks []*copTask
 		var tasksForPartitions [][]*copTask = make([][]*copTask, len(rangesForEachPhysicalTable))
 		rangesLen = 0
@@ -985,6 +987,11 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 
 		if !needRetry {
 			aliveStores = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, usedTiFlashStoresMap, ttl, store, tiflashReplicaReadPolicy, tidbZone)
+			failpoint.Inject("mockNoAliveTiFlash", func(val failpoint.Value) {
+				if val.(bool) && retryNum <= 1 {
+					aliveStores.storesInAllZones = []*tikv.Store{}
+				}
+			})
 			if len(aliveStores.storesInAllZones) == 0 {
 				// Refresh region cache and try again.
 				logutil.BgLogger().Info("retry for TiFlash because no alive tiflash stores")
@@ -1083,7 +1090,8 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				zap.Duration("elapsed", elapsed),
 				zap.Duration("balanceElapsed", balanceElapsed),
 				zap.Int("range len", rangesLen),
-				zap.Int("task len", len(batchTasks)))
+				zap.Int("task len", len(batchTasks)),
+				zap.Int("retry num", retryNum))
 		}
 		metrics.TxnRegionsNumHistogramWithBatchCoprocessor.Observe(float64(len(batchTasks)))
 		return batchTasks, nil
