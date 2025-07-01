@@ -294,7 +294,7 @@
         "└─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
       ],
       [
-        "Batch_Point_Get_5 2.00 root table:t handle:[1 2], keep order:false, desc:false"
+        "Batch_Point_Get_6 2.00 root table:t handle:[1 2], keep order:false, desc:false"
       ],
       [
         "TableReader_11 2.00 root  MppVersion: 3, data:ExchangeSender_10",
