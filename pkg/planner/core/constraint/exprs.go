@@ -42,6 +42,7 @@ func DeleteTrueExprs(buildCtx expression.BuildContext, stmtCtx *stmtctx.Statemen
 }
 
 // DeleteTrueExprsBySchema delete true expressions such as not(isnull(not null column)).
+// It is used in the predicate pushdown optimization to remove unnecessary conditions which will be pushed down to child operators.
 func DeleteTrueExprsBySchema(ctx expression.EvalContext, schema *expression.Schema, conds []expression.Expression) []expression.Expression {
 	return slices.DeleteFunc(conds, func(item expression.Expression) bool {
 		if expr, ok := item.(*expression.ScalarFunction); ok && expr.FuncName.L == ast.UnaryNot {
