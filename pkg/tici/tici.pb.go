@@ -21,12 +21,11 @@
 package tici
 
 import (
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
-
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -329,12 +328,9 @@ func (x *ReaderNodeStatus) GetCacheHitRate() float64 {
 // Some fields may be duplicated with ShardManifestHeader,
 // however, just leave them here.
 type WorkerNodeShardStatus struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	StartKey []byte `protobuf:"bytes,1,opt,name=start_key,json=startKey,proto3" json:"start_key,omitempty"`
-	EndKey   []byte `protobuf:"bytes,2,opt,name=end_key,json=endKey,proto3" json:"end_key,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	StartKey []byte                 `protobuf:"bytes,1,opt,name=start_key,json=startKey,proto3" json:"start_key,omitempty"`
+	EndKey   []byte                 `protobuf:"bytes,2,opt,name=end_key,json=endKey,proto3" json:"end_key,omitempty"`
 	// TODO shard_id is unique across tables and indexes.
 	// We still need them because in meta service we are not currently maintain this correspondence.
 	TableId       int64  `protobuf:"varint,3,opt,name=table_id,json=tableId,proto3" json:"table_id,omitempty"`
@@ -908,12 +904,10 @@ func (x *AppendFragMetaResponse) GetStatus() int32 {
 // Key range definition for shard cache queries
 type KeyRange struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	StartKey      string                 `protobuf:"bytes,1,opt,name=start_key,json=startKey,proto3" json:"start_key,omitempty"`
-	EndKey        string                 `protobuf:"bytes,2,opt,name=end_key,json=endKey,proto3" json:"end_key,omitempty"`
+	StartKey      []byte                 `protobuf:"bytes,1,opt,name=start_key,json=startKey,proto3" json:"start_key,omitempty"`
+	EndKey        []byte                 `protobuf:"bytes,2,opt,name=end_key,json=endKey,proto3" json:"end_key,omitempty"`
 	unknownFields protoimpl.UnknownFields
-
-	StartKey []byte `protobuf:"bytes,1,opt,name=start_key,json=startKey,proto3" json:"start_key,omitempty"`
-	EndKey   []byte `protobuf:"bytes,2,opt,name=end_key,json=endKey,proto3" json:"end_key,omitempty"`
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *KeyRange) Reset() {
@@ -1595,8 +1589,8 @@ func (x *MarkTableUploadFinishedResponse) GetErrorMessage() string {
 type ShardManifestHeader struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ShardId       uint64                 `protobuf:"varint,1,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
-	StartKey      string                 `protobuf:"bytes,2,opt,name=start_key,json=startKey,proto3" json:"start_key,omitempty"`
-	EndKey        string                 `protobuf:"bytes,3,opt,name=end_key,json=endKey,proto3" json:"end_key,omitempty"`
+	StartKey      []byte                 `protobuf:"bytes,2,opt,name=start_key,json=startKey,proto3" json:"start_key,omitempty"`
+	EndKey        []byte                 `protobuf:"bytes,3,opt,name=end_key,json=endKey,proto3" json:"end_key,omitempty"`
 	Epoch         uint64                 `protobuf:"varint,4,opt,name=epoch,proto3" json:"epoch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1639,18 +1633,18 @@ func (x *ShardManifestHeader) GetShardId() uint64 {
 	return 0
 }
 
-func (x *ShardManifestHeader) GetStartKey() string {
+func (x *ShardManifestHeader) GetStartKey() []byte {
 	if x != nil {
 		return x.StartKey
 	}
-	return ""
+	return nil
 }
 
-func (x *ShardManifestHeader) GetEndKey() string {
+func (x *ShardManifestHeader) GetEndKey() []byte {
 	if x != nil {
 		return x.EndKey
 	}
-	return ""
+	return nil
 }
 
 func (x *ShardManifestHeader) GetEpoch() uint64 {
@@ -2600,8 +2594,8 @@ const file_tici_proto_rawDesc = "" +
 	"\x11requests_in_cycle\x18\x03 \x01(\rR\x0frequestsInCycle\x12$\n" +
 	"\x0ecache_hit_rate\x18\x04 \x01(\x01R\fcacheHitRate\"\xc6\x01\n" +
 	"\x15WorkerNodeShardStatus\x12\x1b\n" +
-	"\tstart_key\x18\x01 \x01(\tR\bstartKey\x12\x17\n" +
-	"\aend_key\x18\x02 \x01(\tR\x06endKey\x12\x19\n" +
+	"\tstart_key\x18\x01 \x01(\fR\bstartKey\x12\x17\n" +
+	"\aend_key\x18\x02 \x01(\fR\x06endKey\x12\x19\n" +
 	"\btable_id\x18\x03 \x01(\x03R\atableId\x12\x19\n" +
 	"\bindex_id\x18\x04 \x01(\x03R\aindexId\x12\x19\n" +
 	"\bshard_id\x18\x05 \x01(\x04R\ashardId\x12\x14\n" +
@@ -2640,8 +2634,8 @@ const file_tici_proto_rawDesc = "" +
 	"\x16AppendFragMetaResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\x05R\x06status\"@\n" +
 	"\bKeyRange\x12\x1b\n" +
-	"\tstart_key\x18\x01 \x01(\tR\bstartKey\x12\x17\n" +
-	"\aend_key\x18\x02 \x01(\tR\x06endKey\"r\n" +
+	"\tstart_key\x18\x01 \x01(\fR\bstartKey\x12\x17\n" +
+	"\aend_key\x18\x02 \x01(\fR\x06endKey\"r\n" +
 	"\x13ShardLocalCacheInfo\x12/\n" +
 	"\x05shard\x18\x01 \x01(\v2\x19.tici.ShardManifestHeaderR\x05shard\x12*\n" +
 	"\x11local_cache_addrs\x18\x02 \x03(\tR\x0flocalCacheAddrs\"\x96\x01\n" +
@@ -2687,8 +2681,8 @@ const file_tici_proto_rawDesc = "" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\"|\n" +
 	"\x13ShardManifestHeader\x12\x19\n" +
 	"\bshard_id\x18\x01 \x01(\x04R\ashardId\x12\x1b\n" +
-	"\tstart_key\x18\x02 \x01(\tR\bstartKey\x12\x17\n" +
-	"\aend_key\x18\x03 \x01(\tR\x06endKey\x12\x14\n" +
+	"\tstart_key\x18\x02 \x01(\fR\bstartKey\x12\x17\n" +
+	"\aend_key\x18\x03 \x01(\fR\x06endKey\x12\x14\n" +
 	"\x05epoch\x18\x04 \x01(\x04R\x05epoch\"\xe7\x02\n" +
 	"\x0fAddShardRequest\x12/\n" +
 	"\x05shard\x18\x01 \x01(\v2\x19.tici.ShardManifestHeaderR\x05shard\x12.\n" +
