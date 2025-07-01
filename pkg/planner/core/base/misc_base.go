@@ -73,7 +73,6 @@ type MemTablePredicateExtractor interface {
 // Include `PhysicalTableScan`, `PhysicalIndexScan`, `PointGetPlan`, `BatchPointScan` and `PhysicalMemTable`.
 // ExplainInfo = AccessObject + OperatorInfo
 type DataAccesser interface {
-
 	// AccessObject return plan's `table`, `partition` and `index`.
 	AccessObject() AccessObject
 
