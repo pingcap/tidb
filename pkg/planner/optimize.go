@@ -183,15 +183,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 					sessVars.StmtCtx.AppendWarning(err)
 				}
 			}
-
-			// Handle SetVars hints for cached plans.
-			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
-				oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)
-				if err != nil {
-					sessVars.StmtCtx.AppendWarning(err)
-				}
-				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
-			}
 		}
 	}()
 
