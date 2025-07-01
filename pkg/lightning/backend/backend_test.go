@@ -63,6 +63,7 @@ func TestOpenCloseImportCleanUpEngine(t *testing.T) {
 	defer s.tearDownTest()
 	ctx := context.Background()
 	engineUUID := uuid.MustParse("902efee3-a3f9-53d4-8c82-f12fb1900cd1")
+	engineID := int32(0)
 
 	openCall := s.mockBackend.EXPECT().
 		OpenEngine(ctx, &backend.EngineConfig{}, engineUUID).
@@ -72,7 +73,7 @@ func TestOpenCloseImportCleanUpEngine(t *testing.T) {
 		Return(nil).
 		After(openCall)
 	importCall := s.mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID, gomock.Any(), gomock.Any()).
+		ImportEngine(ctx, engineUUID, engineID, gomock.Any(), gomock.Any()).
 		Return(nil).
 		After(closeCall)
 	s.mockBackend.EXPECT().
@@ -276,7 +277,7 @@ func TestImportFailedNoRetry(t *testing.T) {
 
 	s.mockBackend.EXPECT().CloseEngine(ctx, nil, gomock.Any()).Return(nil)
 	s.mockBackend.EXPECT().
-		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any()).
+		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.Annotate(context.Canceled, "fake unrecoverable import error"))
 
 	closedEngine, err := s.engineMgr.UnsafeCloseEngine(ctx, nil, "`db`.`table`", 1)
@@ -294,7 +295,7 @@ func TestImportFailedWithRetry(t *testing.T) {
 
 	s.mockBackend.EXPECT().CloseEngine(ctx, nil, gomock.Any()).Return(nil)
 	s.mockBackend.EXPECT().
-		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any()).
+		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.Annotate(driver.ErrBadConn, "fake recoverable import error")).
 		MinTimes(2)
 	s.mockBackend.EXPECT().RetryImportDelay().Return(time.Duration(0)).AnyTimes()
@@ -314,10 +315,10 @@ func TestImportFailedRecovered(t *testing.T) {
 
 	s.mockBackend.EXPECT().CloseEngine(ctx, nil, gomock.Any()).Return(nil)
 	s.mockBackend.EXPECT().
-		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any()).
+		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(gmysql.ErrInvalidConn)
 	s.mockBackend.EXPECT().
-		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any()).
+		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 	s.mockBackend.EXPECT().RetryImportDelay().Return(time.Duration(0)).AnyTimes()
 

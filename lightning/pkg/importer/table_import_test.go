@@ -876,12 +876,13 @@ func (s *tableRestoreSuite) TestImportKVSuccess() {
 
 	ctx := context.Background()
 	engineUUID := uuid.New()
+	engineID := int32(0)
 
 	mockBackend.EXPECT().
 		CloseEngine(ctx, nil, engineUUID).
 		Return(nil)
 	mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID, gomock.Any(), gomock.Any()).
+		ImportEngine(ctx, engineUUID, engineID, gomock.Any(), gomock.Any()).
 		Return(nil)
 	mockBackend.EXPECT().
 		CleanupEngine(ctx, engineUUID).
@@ -911,12 +912,13 @@ func (s *tableRestoreSuite) TestImportKVFailure() {
 
 	ctx := context.Background()
 	engineUUID := uuid.New()
+	engineID := int32(0)
 
 	mockBackend.EXPECT().
 		CloseEngine(ctx, nil, engineUUID).
 		Return(nil)
 	mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID, gomock.Any(), gomock.Any()).
+		ImportEngine(ctx, engineUUID, engineID, gomock.Any(), gomock.Any()).
 		Return(errors.Annotate(context.Canceled, "fake import error"))
 
 	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID, 0)
@@ -987,7 +989,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	backendObj := mock.NewMockBackend(controller)
 	backendObj.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	backendObj.EXPECT().CloseEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	backendObj.EXPECT().ImportEngine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	backendObj.EXPECT().ImportEngine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	backendObj.EXPECT().CleanupEngine(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	backendObj.EXPECT().ShouldPostProcess().Return(false).AnyTimes()
 	backendObj.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockEngineWriter, nil).AnyTimes()
