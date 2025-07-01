@@ -3411,16 +3411,7 @@ func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.Phys
 		// empty
 		return enforcedAggs
 	}
-	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
-	if la.HasDistinct() {
-		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
-		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
-		if !la.CanPushToCop(kv.TiKV) || !la.SCtx().GetSessionVars().AllowDistinctAggPushDown {
-			taskTypes = []property.TaskType{property.RootTaskType}
-		}
-	} else if !la.PreferAggToCop {
-		taskTypes = append(taskTypes, property.RootTaskType)
-	}
+	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
 	// only admit special types for index join prop
 	taskTypes = admitIndexJoinTypes(taskTypes, prop)
 	for _, taskTp := range taskTypes {
@@ -3777,9 +3768,6 @@ func exhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property
 				"Optimizer Hint AGG_TO_COP is inapplicable")
 			la.PreferAggToCop = false
 		}
-	}
-	if strings.Contains(lp.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain format = 'brief' select /*+ straight_join() */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1") {
-		fmt.Println(1)
 	}
 	preferHash, preferStream := la.ResetHintIfConflicted()
 	hashAggs := getHashAggs(la, prop)
