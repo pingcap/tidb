@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,36 +16,52 @@ package collate
 
 import (
 	"bytes"
+	"unicode/utf8"
 
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"golang.org/x/text/encoding"
 )
 
-// gbkBinCollator is collator for gbk_bin.
-type gbkBinCollator struct {
+// Each of these runes is 3 bytes in utf8. But since some characters is translated in customGB18030Encoder,
+// when we meet these runes, we should use 4 bytes to represent them.
+var fourBytesRune = map[rune]struct{}{
+	'\ue78d': {}, '\ue78e': {}, '\ue78f': {}, '\ue790': {}, '\ue791': {}, '\ue792': {},
+	'\ue793': {}, '\ue794': {}, '\ue795': {}, '\ue796': {}, '\ue7c7': {}, '\ue81e': {},
+	'\ue826': {}, '\ue82b': {}, '\ue82c': {}, '\ue832': {}, '\ue843': {}, '\ue854': {},
+	'\ue864': {},
+}
+
+// gb18030BinCollator is collator for gb18030_bin.
+type gb18030BinCollator struct {
 	e *encoding.Encoder
 }
 
+// Clone implements Collator interface.
+func (*gb18030BinCollator) Clone() Collator {
+	return &gb18030BinCollator{charset.NewCustomGB18030Encoder()}
+}
+
 // Compare implement Collator interface.
-func (g *gbkBinCollator) Compare(a, b string) int {
+func (g *gb18030BinCollator) Compare(a, b string) int {
 	a = truncateTailingSpace(a)
 	b = truncateTailingSpace(b)
 
 	// compare the character one by one.
 	for len(a) > 0 && len(b) > 0 {
 		aLen, bLen := min(len(a), runeLen(a[0])), min(len(b), runeLen(b[0]))
-		aGbk, err := g.e.Bytes(hack.Slice(a[:aLen]))
+		aGb18030, err := g.e.Bytes(hack.Slice(a[:aLen]))
 		// if convert error happened, we use '?'(0x3F) replace it.
 		// It should not happen.
 		if err != nil {
-			aGbk = []byte{0x3F}
+			aGb18030 = []byte{0x3F}
 		}
-		bGbk, err := g.e.Bytes(hack.Slice(b[:bLen]))
+		bGb18030, err := g.e.Bytes(hack.Slice(b[:bLen]))
 		if err != nil {
-			bGbk = []byte{0x3F}
+			bGb18030 = []byte{0x3F}
 		}
 
-		compare := bytes.Compare(aGbk, bGbk)
+		compare := bytes.Compare(aGb18030, bGb18030)
 		if compare != 0 {
 			return compare
 		}
@@ -57,20 +73,28 @@ func (g *gbkBinCollator) Compare(a, b string) int {
 }
 
 // Key implement Collator interface.
-func (g *gbkBinCollator) Key(str string) []byte {
+func (g *gb18030BinCollator) Key(str string) []byte {
 	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
 }
 
 // KeyWithoutTrimRightSpace implement Collator interface.
-func (g *gbkBinCollator) KeyWithoutTrimRightSpace(str string) []byte {
+func (g *gb18030BinCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str))
 	for len(str) > 0 {
 		l := min(len(str), runeLen(str[0]))
-		gbk, err := g.e.Bytes(hack.Slice(str[:l]))
+		r, _ := utf8.DecodeRuneInString(str[:l])
+		var buf1 []byte
+		if _, ok := fourBytesRune[r]; ok {
+			buf1 = make([]byte, 4)
+		} else {
+			buf1 = make([]byte, l)
+		}
+		copy(buf1, str[:l])
+		gb18030, err := g.e.Bytes(buf1)
 		if err != nil {
 			buf = append(buf, byte('?'))
 		} else {
-			buf = append(buf, gbk...)
+			buf = append(buf, gb18030...)
 		}
 		str = str[l:]
 	}
@@ -79,11 +103,11 @@ func (g *gbkBinCollator) KeyWithoutTrimRightSpace(str string) []byte {
 }
 
 // Pattern implements Collator interface.
-func (*gbkBinCollator) Pattern() WildcardPattern {
-	return &gbkBinPattern{}
+func (*gb18030BinCollator) Pattern() WildcardPattern {
+	return &gb18030BinPattern{}
 }
 
 // use binPattern directly, they are totally same.
-type gbkBinPattern struct {
-	derivedBinPattern
+type gb18030BinPattern struct {
+	binPattern
 }
