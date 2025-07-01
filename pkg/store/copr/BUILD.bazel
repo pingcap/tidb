@@ -87,6 +87,7 @@ go_test(
         "key_ranges_test.go",
         "main_test.go",
         "mpp_probe_test.go",
+        "tici_shard_cache_test.go",
     ],
     embed = [":copr"],
     flaky = True,
