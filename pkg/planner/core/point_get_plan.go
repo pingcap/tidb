@@ -112,7 +112,9 @@ type PointGetPlan struct {
 	cost             float64
 
 	// unfoldFromWildCard indicates whether the FieldName in 'outputNames' is unfolded from wildcard
-	// It is used by checking column privileges
+	// It is used by checking column privileges. Why do not add the field name to visitInfo onsite?
+	// Because if the PointGetPlan is inside UPDATE or DELETE, we need not to check the SelectPriv of
+	// all output names. In the above two statements, only columns in WHERE clause are needed to check.
 	unfoldFromWildCard []bool
 	colsInWhereClause  []string
 
@@ -536,7 +538,9 @@ type BatchPointGetPlan struct {
 	cost          float64
 
 	// unfoldFromWildCard indicates whether the FieldName in 'outputNames' is unfolded from wildcard
-	// It is used by checking column privileges
+	// It is used by checking column privileges. Why do not add the field name to visitInfo onsite?
+	// Because if the BatchPointGetPlan is inside UPDATE or DELETE, we need not to check the SelectPriv of
+	// all output names. In the above two statements, only columns in WHERE clause are needed to check.
 	unfoldFromWildCard []bool
 	// columns in the where clause should be check privilege
 	colsInWhereClause []string
@@ -1049,7 +1053,10 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 	return nil
 }
 
-// getVisitInfo requirements from outputNames and colsInWhere
+// getVisitInfo collects 2 source of visitInfos:
+//  1. output names. To distinguish between table-level and column-level privilege error report, unfoldFromWildCard is needed.
+//     If the PointPlan is inside UPDATE or DELETE statements, the checking of output names should be ignored.
+//  2. columns in WHERE clause.
 func getVisitInfo(user, host, db, tbl string, outputNames types.NameSlice, unfold []bool, colsInWhere []string) (res []visitInfo) {
 	if len(outputNames) != len(unfold) {
 		if intest.InTest {
@@ -1057,11 +1064,9 @@ func getVisitInfo(user, host, db, tbl string, outputNames types.NameSlice, unfol
 		}
 		logutil.BgLogger().Error("outputNames length %d not equal to unfold length %d",
 			zap.Int("outputNames", len(outputNames)), zap.Int("unfold", len(unfold)), zap.Stack("stack"))
-		if len(outputNames) < len(unfold) {
-			unfold = unfold[:len(outputNames)]
-		} else {
-			outputNames = outputNames[:len(unfold)]
-		}
+		minLen := min(len(outputNames), len(unfold))
+		unfold = unfold[:minLen]
+		outputNames = outputNames[:minLen]
 	}
 	for i, name := range outputNames {
 		var authErr error
@@ -1184,12 +1189,11 @@ func newBatchPointGetPlan(
 		}
 
 		p := &BatchPointGetPlan{
-			TblInfo:           tbl,
-			Handles:           handles,
-			HandleParams:      handleParams,
-			HandleType:        &handleCol.FieldType,
-			HandleColOffset:   handleCol.Offset,
-			colsInWhereClause: whereColNames,
+			TblInfo:         tbl,
+			Handles:         handles,
+			HandleParams:    handleParams,
+			HandleType:      &handleCol.FieldType,
+			HandleColOffset: handleCol.Offset,
 		}
 
 		return p.Init(ctx, statsInfo, schema, names, 0)
@@ -1344,12 +1348,11 @@ func newBatchPointGetPlan(
 	}
 
 	p := &BatchPointGetPlan{
-		TblInfo:           tbl,
-		IndexInfo:         matchIdxInfo,
-		IndexValues:       indexValues,
-		IndexValueParams:  indexValueParams,
-		IndexColTypes:     indexTypes,
-		colsInWhereClause: whereColNames,
+		TblInfo:          tbl,
+		IndexInfo:        matchIdxInfo,
+		IndexValues:      indexValues,
+		IndexValueParams: indexValueParams,
+		IndexColTypes:    indexTypes,
 	}
 
 	return p.Init(ctx, statsInfo, schema, names, 0)
@@ -1462,6 +1465,7 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 	}
 	p.dbName = dbName
 	p.unfoldFromWildCard = unfold
+	p.colsInWhereClause = whereColNames
 	return p
 }
 
@@ -1472,7 +1476,7 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 // 2. It must be a single table select.
 // 3. All the columns must be public and not generated.
 // 4. The condition is an access path that the range is a unique key.
-func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *resolve.Context, check bool) *PointGetPlan {
+func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *resolve.Context, check bool) (p *PointGetPlan) {
 	if selStmt.Having != nil || selStmt.OrderBy != nil {
 		return nil
 	} else if selStmt.Limit != nil {
@@ -1520,6 +1524,12 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	if pairs == nil && !isTableDual {
 		return nil
 	}
+	defer func() {
+		if p != nil {
+			p.colsInWhereClause = pairsToColumnNames(pairs)
+			p.unfoldFromWildCard = unfold
+		}
+	}()
 
 	handlePair, fieldType := findPKHandle(tbl, pairs)
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 &&
@@ -1534,8 +1544,6 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 		if isTableDual {
 			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
-			p.colsInWhereClause = pairsToColumnNames(pairs)
-			p.unfoldFromWildCard = unfold
 			return p
 		}
 
@@ -1546,14 +1554,12 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 		p.HandleConstant = handlePair.con
 		p.HandleColOffset = pkColOffset
 		p.PartitionNames = tblName.PartitionNames
-		p.colsInWhereClause = pairsToColumnNames(pairs)
-		p.unfoldFromWildCard = unfold
 		return p
 	} else if handlePair.value.Kind() != types.KindNull {
 		return nil
 	}
 
-	return checkTblIndexForPointPlan(ctx, tnW, schema, tblAlias.L, selStmt.TableHints, names, pairs, isTableDual, check, unfold)
+	return checkTblIndexForPointPlan(ctx, tnW, schema, tblAlias.L, selStmt.TableHints, names, pairs, isTableDual, check)
 }
 
 func pairsToColumnNames(pairs []nameValuePair) (res []string) {
@@ -1565,7 +1571,7 @@ func pairsToColumnNames(pairs []nameValuePair) (res []string) {
 
 func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW, schema *expression.Schema,
 	tblAlias string, tblHints []*ast.TableOptimizerHint,
-	names []*types.FieldName, pairs []nameValuePair, isTableDual, check bool, unfold []bool) *PointGetPlan {
+	names []*types.FieldName, pairs []nameValuePair, isTableDual, check bool) *PointGetPlan {
 	check = check || ctx.GetSessionVars().IsIsolation(ast.ReadCommitted)
 	check = check && ctx.GetSessionVars().ConnectionID > 0
 	var latestIndexes map[int64]*model.IndexInfo
@@ -1611,8 +1617,6 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 			}
 			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
-			p.colsInWhereClause = pairsToColumnNames(pairs)
-			p.unfoldFromWildCard = unfold
 			return p
 		}
 		idxValues, idxConstant, colsFieldType := getIndexValues(idxInfo, pairs)
@@ -1637,8 +1641,6 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 		p.IndexConstants = idxConstant
 		p.ColsFieldType = colsFieldType
 		p.PartitionNames = tblName.PartitionNames
-		p.colsInWhereClause = pairsToColumnNames(pairs)
-		p.unfoldFromWildCard = unfold
 		return p
 	}
 	return nil
