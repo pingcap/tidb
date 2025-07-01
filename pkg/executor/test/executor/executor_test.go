@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -798,7 +799,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalHashAgg{},
 		&plannercore.PhysicalStreamAgg{},
 		&plannercore.PhysicalLimit{},
-		&plannercore.PhysicalSort{},
+		&physicalop.PhysicalSort{},
 		&plannercore.PhysicalTopN{},
 		&plannercore.PhysicalCTE{},
 		&plannercore.PhysicalCTETable{},

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
@@ -517,7 +518,7 @@ func extractTableAsName(p base.PhysicalPlan) (db *ast.CIStr, table *ast.CIStr) {
 			return &is.DBName, is.TableAsName
 		}
 		return &is.DBName, &is.Table.Name
-	case *PhysicalSort, *PhysicalSelection, *PhysicalUnionScan, *PhysicalProjection,
+	case *physicalop.PhysicalSort, *PhysicalSelection, *PhysicalUnionScan, *PhysicalProjection,
 		*PhysicalHashAgg, *PhysicalStreamAgg:
 		return extractTableAsName(p.Children()[0])
 	}
