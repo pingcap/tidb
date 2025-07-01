@@ -154,7 +154,7 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 	sessPool := ddlObj.sessPool
 	taskKS := s.task.Keyspace
 	// Although taskKS != config.GetGlobalKeyspaceName() implies running on the system keyspace,
-	// we still check kernel type explicity to avoid unexpected executions.
+	// we still check kernel type explicitly to avoid unexpected executions.
 	if keyspace.IsRunningOnSystem() && taskKS != config.GetGlobalKeyspaceName() {
 		taskMgr, err := disttaskStorage.GetTaskManager()
 		if err != nil {
