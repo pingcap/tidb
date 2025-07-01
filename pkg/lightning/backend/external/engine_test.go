@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -370,60 +371,55 @@ func TestEngineOnDup(t *testing.T) {
 func TestChangeEngineConcurrency(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
 
-	e := &Engine{jobKeys: make([][]byte, 32)}
-	e.workerConcurrency.Store(4)
+	e := &Engine{
+		jobKeys:           make([][]byte, 16),
+		workerConcurrency: *atomic.NewInt32(2),
+	}
 
-	ctx := context.Background()
-	outCh := make(chan engineapi.DataAndRanges, 4)
+	var (
+		ctx    context.Context
+		cancel context.CancelFunc
+		outCh  chan engineapi.DataAndRanges
+		eg     errgroup.Group
+	)
 
-	var eg errgroup.Group
+	resetFn := func() {
+		ctx, cancel = context.WithCancel(context.Background())
+		outCh = make(chan engineapi.DataAndRanges, 4)
+		eg = errgroup.Group{}
 
-	// Load the data
-	eg.Go(func() error {
-		defer close(outCh)
-		return e.LoadIngestData(ctx, outCh)
+		// Load and consume the data
+		eg.Go(func() error {
+			defer close(outCh)
+			return e.LoadIngestData(ctx, outCh)
+		})
+		eg.Go(func() error {
+			for data := range outCh {
+				// mock some time consuming job
+				data.Data.IncRef()
+				time.Sleep(time.Millisecond * 100)
+				data.Data.DecRef()
+			}
+			return nil
+		})
+	}
+
+	t.Run("cancel after reducing concurrency", func(t *testing.T) {
+		resetFn()
+
+		// Directly call cancel after UpdateResource, and generator should not be blocked
+		time.Sleep(time.Millisecond * 300)
+		e.UpdateResource(1, 1024)
+		cancel()
+
+		require.ErrorIs(t, eg.Wait(), context.Canceled)
 	})
 
-	// Change concurrency after the channel is filled
-	time.Sleep(time.Second)
-	e.UpdateResource(1, 1<<10)
+	t.Run("reduce concurrency", func(t *testing.T) {
+		resetFn()
 
-	eg.Go(func() error {
-		for data := range outCh {
-			// mock generate job
-			data.Data.IncRef()
-			data.Data.IncRef()
-			// mock job finish
-			data.Data.DecRef()
-			data.Data.DecRef()
-		}
-		return nil
+		time.Sleep(time.Millisecond * 300)
+		e.UpdateResource(1, 1024)
+		require.NoError(t, eg.Wait())
 	})
-
-	// Should not be blocked
-	require.NoError(t, eg.Wait())
-}
-
-func TestChangeEngineConcurrencyWithCancel(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
-
-	e := &Engine{jobKeys: make([][]byte, 32)}
-	e.workerConcurrency.Store(4)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	outCh := make(chan engineapi.DataAndRanges, 16)
-
-	var eg errgroup.Group
-
-	// Load the data and didn't consume it
-	eg.Go(func() error {
-		defer close(outCh)
-		return e.LoadIngestData(ctx, outCh)
-	})
-
-	e.UpdateResource(1, 1<<10)
-	cancel()
-
-	// Should not be blocked
-	require.Error(t, eg.Wait())
 }

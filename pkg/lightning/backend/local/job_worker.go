@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	rutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
+	"github.com/pingcap/tidb/pkg/util"
 	putil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -54,12 +55,13 @@ type regionJobWorker interface {
 
 	Close()
 
+	// run is used in test to minimize the code change,
+	// all inputs will be sent to jobInCh.
 	run() error
 }
 
 type regionJobBaseWorker struct {
-	ctx context.Context
-	op  *jobOperator
+	ctx *operator.Context
 
 	// Note: jobInCh is only used in unit test, to minimize the code change
 	jobInCh  chan *regionJob
@@ -79,19 +81,24 @@ type regionJobBaseWorker struct {
 	) ([]*regionJob, error)
 }
 
-// run get jobs from the job channel and process them.
-// run will return nil if it's expected to stop, where the cases are all jobs are
-// finished or the context canceled because other components report error. It will
-// return not nil error when it unexpectedly stops. run must call job.done() if
-// it doesn't put the job into jobOutCh.
+// HandleTask get jobs from the job channel and process them.
+// It will return not nil error when it unexpectedly stops. run must call job.done()
+// if it can't put the job into jobOutCh to make worker group quit gracefully.
 func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) {
+	// In the worker, we use opCtx to detect context cancel
+	// and clean up the job (job.Done). So we use the channel directly
+	// instead of using sender function provided by the worker pool.
+	defer util.Recover("fast_check_table", "handleTableScanTaskWithRecover", func() {
+		w.ctx.OnError(errors.Errorf("region job worker panic"))
+		job.done(w.jobWg)
+	}, false)
+
 	failpoint.Inject("injectPanicForRegionJob", func() {
 		panic("mock panic")
 	})
-
 	err := w.process(job)
 	if err != nil {
-		w.op.onError(err)
+		w.ctx.OnError(err)
 	}
 }
 
@@ -431,18 +438,12 @@ type jobOperator struct {
 	ctx *operator.Context
 	*operator.AsyncOperator[*regionJob, *regionJob]
 
-	workerCtx   context.Context
+	// cancel is used to close the worker pool
+	cancel      context.CancelFunc
 	workerGroup *putil.ErrorGroupWithRecover
-	jobWg       *sync.WaitGroup
-
-	subCtx context.Context
-	cancel context.CancelFunc
-
-	firstErr atomic.Error
-	errCh    chan error
 }
 
-func newJobWorker(
+func newJobOperator(
 	workerCtx context.Context,
 	workGroup *putil.ErrorGroupWithRecover,
 	jobWg *sync.WaitGroup,
@@ -451,22 +452,11 @@ func newJobWorker(
 	jobToWorkerCh, jobFromWorkerCh chan *regionJob,
 	clusterID uint64,
 ) *jobOperator {
-	opCtx, _ := operator.NewContext(workerCtx)
-
-	subCtx, cancel := context.WithCancel(workerCtx)
-
+	opCtx, cancel := operator.NewContext(workerCtx)
 	var (
 		sourceChannel   = jobToWorkerCh
 		afterExecuteJob func([]*metapb.Peer)
 	)
-
-	op := &jobOperator{
-		workerCtx:   workerCtx,
-		workerGroup: workGroup,
-		subCtx:      subCtx,
-		cancel:      cancel,
-		errCh:       make(chan error),
-	}
 
 	if balancer != nil {
 		afterExecuteJob = balancer.releaseStoreLoad
@@ -478,14 +468,16 @@ func newJobWorker(
 		rutil.DistTask,
 		local.Concurrency(),
 		func() workerpool.Worker[*regionJob, *regionJob] {
-			// In each worker, we use workerCtx to detect context cancel
-			// and clean up the job (job.Done). So we use the channel directly
-			// instead of using sender function provided by the worker pool.
-			return local.newRegionJobWorker(workerCtx, clusterID, sourceChannel, jobFromWorkerCh, jobWg, afterExecuteJob)
+			return local.newRegionJobWorker(opCtx, clusterID, sourceChannel, jobFromWorkerCh, jobWg, afterExecuteJob)
 		},
 	)
 
-	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
+	op := &jobOperator{
+		ctx:           opCtx,
+		AsyncOperator: operator.NewAsyncOperator(opCtx, pool),
+		workerGroup:   workGroup,
+		cancel:        cancel,
+	}
 	op.SetSink(operator.NewSimpleDataChannel(jobFromWorkerCh))
 	op.SetSource(operator.NewSimpleDataChannel(sourceChannel))
 	return op
@@ -495,34 +487,26 @@ func (*jobOperator) String() string {
 	return "jobOperator"
 }
 
+// Open starts the job operator.
+// Besides, it will also start a goroutine to monitor the context cancellation.
+// If the context is canceled, it will return the error catched in the worker pool.
 func (j *jobOperator) Open() error {
-	// This goroutine is used to expose the internal error in the worker pool
-	// so other components can quit normally.
+	// In happy path, this goroutine will exit when we call j.Close().
+	// In error case:
+	// 1. if other goroutine in the worker group returns error, j.ctx will be canceled
+	// 2. if this worker pool meets error, this context will also be canceed by
+	//     j.ctx.OnError(err). In this senario, we need to expose the error to the
+	//     worker pool. So that other components can quit normally.
 	j.workerGroup.Go(func() error {
-		select {
-		case <-j.workerCtx.Done():
-			return nil
-		case err, ok := <-j.errCh:
-			if !ok || j.firstErr.CompareAndSwap(nil, err) {
-				return j.firstErr.Load()
-			}
-			if errors.Cause(err) != context.Canceled {
-				log.FromContext(j.workerCtx).Error("error on ingest", zap.Error(err))
-			}
-		}
-		return nil
+		<-j.ctx.Done()
+		return j.ctx.OperatorErr()
 	})
 	return j.AsyncOperator.Open()
 }
 
 func (j *jobOperator) Close() error {
 	j.cancel()
-	// nolint:errcheck
+	//nolint: errcheck
 	j.AsyncOperator.Close()
-	close(j.errCh)
-	return j.firstErr.Load()
-}
-
-func (j *jobOperator) onError(err error) {
-	j.errCh <- err
+	return j.ctx.OperatorErr()
 }

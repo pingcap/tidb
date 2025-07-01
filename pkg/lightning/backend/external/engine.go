@@ -465,7 +465,7 @@ func (e *Engine) checkConcurrencyChange(ctx context.Context, currBatchSize int) 
 		return currBatchSize
 	}
 
-	logutil.Logger(ctx).Info("wait ingest data batch size change",
+	logutil.Logger(ctx).Info("waiting ingest data batch size change",
 		zap.Int("prev batch size", currBatchSize),
 		zap.Int("new batch size", newBatchSize),
 	)
@@ -484,7 +484,9 @@ OUTER:
 			allReleased := true
 			for _, data := range e.generatedData {
 				// We can't rely on refCnt to check if the data is released, because
-				// the refCnt is zero when the data is not used.
+				// the refCnt is initialized to zero when the data is generated.
+				// If the data is discarded without calling Ref(), it means we meet
+				// an error in LoadIngestData, and the input context will be canceled.
 				if !data.released.Load() {
 					allReleased = false
 					break
@@ -593,6 +595,7 @@ func (e *Engine) buildIngestData(kvs []kvPair, buf []*membuf.Buffer) *MemoryInge
 
 // UpdateResource changes the concurrency of this engine.
 func (e *Engine) UpdateResource(concurrency int, memCapacity int64) {
+	// New values will be applied in the next call of LoadIngestData
 	e.workerConcurrency.Store(int32(concurrency))
 	e.memLimit = int(float64(memCapacity) / writeStepMemShareCount * 3)
 	logutil.BgLogger().Info("set new memlimit for load range data",
