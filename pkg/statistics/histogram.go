@@ -561,7 +561,7 @@ func (hg *Histogram) LessRowCount(sctx planctx.PlanContext, value types.Datum) f
 }
 
 // BetweenRowCount estimates the row count where column greater or equal to a and less than b.
-// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+// The input sctx is required for stats version 2. For version 1, it is just for debug trace, you can pass nil safely.
 func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum) float64 {
 	lessCountA, bktIndexA := hg.LessRowCountWithBktIdx(sctx, a)
 	lessCountB, bktIndexB := hg.LessRowCountWithBktIdx(sctx, b)
@@ -577,6 +577,7 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 	}
 	//If values in the same bucket, use skewRatio to adjust the range estimate to account for potential skew.
 	if len(hg.Buckets) != 0 && bktIndexA == bktIndexB {
+		// sctx may be nil for stats version 1
 		if sctx != nil {
 			skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 			sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
