@@ -17,7 +17,6 @@ package ingest
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"go.uber.org/goleak"
 )
 
@@ -31,7 +30,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
-		goleak.Cleanup(testutil.CheckIngestLeakageForTest),
+		goleak.Cleanup(CheckIngestLeakageForTest),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }
