@@ -973,6 +973,22 @@ type PointPlanVal struct {
 
 var pointGetVisitInfo4Test []visitInfo
 
+func setVisitInfo4Test(vs []visitInfo) {
+	failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
+		if val.(bool) {
+			pointGetVisitInfo4Test = vs
+		}
+	})
+}
+
+func appendVisitInfo4Test(vs []visitInfo) {
+	failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
+		if val.(bool) {
+			pointGetVisitInfo4Test = append(pointGetVisitInfo4Test, vs...)
+		}
+	})
+}
+
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 	if checkStableResultMode(ctx) || fixcontrol.GetBoolWithDefault(ctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix52592, false) {
@@ -1006,11 +1022,7 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
 		if fp := tryWhereIn2BatchPointGet(ctx, x, node.GetResolveContext()); fp != nil {
 			visitInfos := getVisitInfo(userName, hostName, fp.dbName, fp.TblInfo.Name.L, fp.names, fp.unfoldFromWildCard, fp.colsInWhereClause)
-			failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
-				if val.(bool) {
-					pointGetVisitInfo4Test = visitInfos
-				}
-			})
+			setVisitInfo4Test(visitInfos)
 			if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 				return nil
 			}
@@ -1023,11 +1035,7 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 		}
 		if fp := tryPointGetPlan(ctx, x, node.GetResolveContext(), isForUpdateReadSelectLock(x.LockInfo)); fp != nil {
 			visitInfos := getVisitInfo(userName, hostName, fp.dbName, fp.TblInfo.Name.L, fp.outputNames, fp.unfoldFromWildCard, fp.colsInWhereClause)
-			failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
-				if val.(bool) {
-					pointGetVisitInfo4Test = visitInfos
-				}
-			})
+			setVisitInfo4Test(visitInfos)
 			if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 				return nil
 			}
@@ -2197,11 +2205,7 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolv
 		// We don't check the output names, since they are expended to all columns of the table.
 		// See the comment in buildSchemaFromFields
 		visitInfos := getVisitInfo(userName, hostName, dbName, tbl.Name.L, nil, nil, colsInWhereClause)
-		failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
-			if val.(bool) {
-				pointGetVisitInfo4Test = visitInfos
-			}
-		})
+		setVisitInfo4Test(visitInfos)
 		if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 			return nil
 		}
@@ -2226,11 +2230,7 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 			err:       plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", userName, hostName, assign.ColName.L, tbl.Name.L),
 		})
 	}
-	failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
-		if val.(bool) {
-			pointGetVisitInfo4Test = append(pointGetVisitInfo4Test, visitInfos...)
-		}
-	})
+	appendVisitInfo4Test(visitInfos)
 	if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 		return nil
 	}
@@ -2364,11 +2364,7 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 		// We don't check the output names, since they are expended to all columns of the table.
 		// See the comment in buildSchemaFromFields
 		visitInfos := getVisitInfo(userName, hostName, dbName, tbl.Name.L, nil, nil, colsInWhereClause)
-		failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
-			if val.(bool) {
-				pointGetVisitInfo4Test = visitInfos
-			}
-		})
+		setVisitInfo4Test(visitInfos)
 		if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 			return nil
 		}
@@ -2388,11 +2384,7 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 		privilege: mysql.DeletePriv,
 		err:       plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", userName, hostName, tbl.Name.L),
 	}}
-	failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
-		if val.(bool) {
-			pointGetVisitInfo4Test = append(pointGetVisitInfo4Test, visitInfos...)
-		}
-	})
+	appendVisitInfo4Test(visitInfos)
 	if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 		return nil
 	}
