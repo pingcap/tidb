@@ -49,10 +49,15 @@ require (
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/protobuf v1.5.4
 	github.com/golang/snappy v0.0.4
+<<<<<<< HEAD
 	github.com/golangci/gofmt v0.0.0-20240816233607-d8596aa466a9
 	github.com/golangci/golangci-lint v1.61.1-0.20240915150923-7187c89d4091
+=======
+	github.com/golangci/gofmt v0.0.0-20250106114630-d62b90e6713d
+	github.com/golangci/golangci-lint/v2 v2.2.1
+>>>>>>> da30472a541 (build(deps): bump github.com/golangci/golangci-lint/v2 from 2.1.6 to 2.2.1 (#62090))
 	github.com/golangci/gosec v0.0.0-20180901114220-8afd9cbb6cfb
-	github.com/golangci/misspell v0.6.0
+	github.com/golangci/misspell v0.7.0
 	github.com/golangci/prealloc v0.0.0-20180630174525-215b22d4de21
 	github.com/google/btree v1.1.2
 	github.com/google/pprof v0.0.0-20241001023024-f4c0cfd0cf1d
@@ -73,6 +78,10 @@ require (
 	github.com/kisielk/errcheck v1.7.0
 	github.com/klauspost/compress v1.17.9
 	github.com/ks3sdklib/aws-sdk-go v1.2.9
+<<<<<<< HEAD
+=======
+	github.com/ldez/exptostd v0.4.4
+>>>>>>> da30472a541 (build(deps): bump github.com/golangci/golangci-lint/v2 from 2.1.6 to 2.2.1 (#62090))
 	github.com/lestrrat-go/jwx/v2 v2.0.21
 	github.com/mgechev/revive v1.4.0
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
@@ -130,6 +139,7 @@ require (
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
+<<<<<<< HEAD
 	golang.org/x/net v0.30.0
 	golang.org/x/oauth2 v0.23.0
 	golang.org/x/sync v0.8.0
@@ -139,6 +149,17 @@ require (
 	golang.org/x/time v0.7.0
 	golang.org/x/tools v0.26.0
 	google.golang.org/api v0.169.0
+=======
+	golang.org/x/net v0.41.0
+	golang.org/x/oauth2 v0.30.0
+	golang.org/x/sync v0.15.0
+	golang.org/x/sys v0.33.0
+	golang.org/x/term v0.32.0
+	golang.org/x/text v0.26.0
+	golang.org/x/time v0.12.0
+	golang.org/x/tools v0.34.0
+	google.golang.org/api v0.170.0
+>>>>>>> da30472a541 (build(deps): bump github.com/golangci/golangci-lint/v2 from 2.1.6 to 2.2.1 (#62090))
 	google.golang.org/grpc v1.63.2
 	gopkg.in/yaml.v2 v2.4.0
 	gorm.io/driver/mysql v1.5.7
@@ -298,9 +319,15 @@ require (
 	go.opentelemetry.io/otel/sdk v1.24.0 // indirect
 	go.opentelemetry.io/otel/trace v1.24.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.1.0 // indirect
+<<<<<<< HEAD
 	golang.org/x/crypto v0.28.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20240314144324-c7f7c6466f7f // indirect
 	golang.org/x/mod v0.21.0 // indirect
+=======
+	golang.org/x/crypto v0.39.0 // indirect
+	golang.org/x/exp/typeparams v0.0.0-20250210185358-939b2ce775ac // indirect
+	golang.org/x/mod v0.25.0 // indirect
+>>>>>>> da30472a541 (build(deps): bump github.com/golangci/golangci-lint/v2 from 2.1.6 to 2.2.1 (#62090))
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	google.golang.org/genproto v0.0.0-20240227224415-6ceb2ff114de // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240318140521-94a12d6c2237 // indirect
