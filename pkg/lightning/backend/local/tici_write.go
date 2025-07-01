@@ -503,7 +503,6 @@ func (g *TiCIDataWriterGroup) MarkPartitionUploadFinished(
 func (g *TiCIDataWriterGroup) MarkTableUploadFinished(
 	ctx context.Context,
 ) error {
-
 	logger := logutil.Logger(ctx)
 	for _, w := range g.writers {
 		if err := w.MarkTableUploadFinished(ctx); err != nil {
