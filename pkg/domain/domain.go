@@ -1065,15 +1065,7 @@ func (do *Domain) InitDistTaskLoop() error {
 		}
 	})
 
-	distTaskSessPool := do.sysSessionPool
-	if keyspace.IsRunningOnUser() {
-		sp, err := do.GetKSSessPool(keyspace.System)
-		if err != nil {
-			return err
-		}
-		distTaskSessPool = sp
-	}
-	taskManager := storage.NewTaskManager(distTaskSessPool)
+	taskManager := storage.NewTaskManager(do.sysSessionPool)
 	var serverID string
 	if intest.InTest {
 		do.InitInfo4Test()
