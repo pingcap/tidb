@@ -1540,6 +1540,10 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 		}
 		stores = filterAliveStores(bo.GetCtx(), stores, ttl, kvStore)
 		if len(stores) == 0 {
+			if intest.InTest {
+				// To keep retrying and make CI slow.
+                return nil, errors.New("tiflash_compute node is unavailable")
+			}
 			logutil.BgLogger().Info("buildBatchCopTasksConsistentHashForPD retry because no alive tiflash", zap.Int("retryNum", retryNum))
 			cache.ForceRefreshAllStores(bo.GetCtx())
 			if err := bo.Backoff(tikv.BoTiFlashRPC(), errors.New("tiflash_compute node is unavailable")); err != nil {
