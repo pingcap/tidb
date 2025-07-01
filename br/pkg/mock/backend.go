@@ -24,6 +24,7 @@ import (
 type MockTargetInfoGetter struct {
 	ctrl     *gomock.Controller
 	recorder *MockTargetInfoGetterMockRecorder
+	isgomock struct{}
 }
 
 // MockTargetInfoGetterMockRecorder is the mock recorder for MockTargetInfoGetter.
@@ -52,7 +53,7 @@ func (m *MockTargetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *
 }
 
 // CheckRequirements indicates an expected call of CheckRequirements.
-func (mr *MockTargetInfoGetterMockRecorder) CheckRequirements(ctx, checkCtx interface{}) *gomock.Call {
+func (mr *MockTargetInfoGetterMockRecorder) CheckRequirements(ctx, checkCtx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckRequirements", reflect.TypeOf((*MockTargetInfoGetter)(nil).CheckRequirements), ctx, checkCtx)
 }
@@ -67,7 +68,7 @@ func (m *MockTargetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*mode
 }
 
 // FetchRemoteDBModels indicates an expected call of FetchRemoteDBModels.
-func (mr *MockTargetInfoGetterMockRecorder) FetchRemoteDBModels(ctx interface{}) *gomock.Call {
+func (mr *MockTargetInfoGetterMockRecorder) FetchRemoteDBModels(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteDBModels", reflect.TypeOf((*MockTargetInfoGetter)(nil).FetchRemoteDBModels), ctx)
 }
@@ -82,7 +83,7 @@ func (m *MockTargetInfoGetter) FetchRemoteTableModels(ctx context.Context, schem
 }
 
 // FetchRemoteTableModels indicates an expected call of FetchRemoteTableModels.
-func (mr *MockTargetInfoGetterMockRecorder) FetchRemoteTableModels(ctx, schemaName, tableNames interface{}) *gomock.Call {
+func (mr *MockTargetInfoGetterMockRecorder) FetchRemoteTableModels(ctx, schemaName, tableNames any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteTableModels", reflect.TypeOf((*MockTargetInfoGetter)(nil).FetchRemoteTableModels), ctx, schemaName, tableNames)
 }
@@ -91,6 +92,7 @@ func (mr *MockTargetInfoGetterMockRecorder) FetchRemoteTableModels(ctx, schemaNa
 type MockBackend struct {
 	ctrl     *gomock.Controller
 	recorder *MockBackendMockRecorder
+	isgomock struct{}
 }
 
 // MockBackendMockRecorder is the mock recorder for MockBackend.
@@ -119,7 +121,7 @@ func (m *MockBackend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) e
 }
 
 // CleanupEngine indicates an expected call of CleanupEngine.
-func (mr *MockBackendMockRecorder) CleanupEngine(ctx, engineUUID interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) CleanupEngine(ctx, engineUUID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanupEngine", reflect.TypeOf((*MockBackend)(nil).CleanupEngine), ctx, engineUUID)
 }
@@ -145,7 +147,7 @@ func (m *MockBackend) CloseEngine(ctx context.Context, config *backend.EngineCon
 }
 
 // CloseEngine indicates an expected call of CloseEngine.
-func (mr *MockBackendMockRecorder) CloseEngine(ctx, config, engineUUID interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) CloseEngine(ctx, config, engineUUID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CloseEngine", reflect.TypeOf((*MockBackend)(nil).CloseEngine), ctx, config, engineUUID)
 }
@@ -159,7 +161,7 @@ func (m *MockBackend) FlushAllEngines(ctx context.Context) error {
 }
 
 // FlushAllEngines indicates an expected call of FlushAllEngines.
-func (mr *MockBackendMockRecorder) FlushAllEngines(ctx interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) FlushAllEngines(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushAllEngines", reflect.TypeOf((*MockBackend)(nil).FlushAllEngines), ctx)
 }
@@ -173,7 +175,7 @@ func (m *MockBackend) FlushEngine(ctx context.Context, engineUUID uuid.UUID) err
 }
 
 // FlushEngine indicates an expected call of FlushEngine.
-func (mr *MockBackendMockRecorder) FlushEngine(ctx, engineUUID interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) FlushEngine(ctx, engineUUID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushEngine", reflect.TypeOf((*MockBackend)(nil).FlushEngine), ctx, engineUUID)
 }
@@ -187,7 +189,7 @@ func (m *MockBackend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, en
 }
 
 // ImportEngine indicates an expected call of ImportEngine.
-func (mr *MockBackendMockRecorder) ImportEngine(ctx, engineUUID, engineID, regionSplitSize, regionSplitKeys interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) ImportEngine(ctx, engineUUID, engineID, regionSplitSize, regionSplitKeys any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportEngine", reflect.TypeOf((*MockBackend)(nil).ImportEngine), ctx, engineUUID, engineID, regionSplitSize, regionSplitKeys)
 }
@@ -202,7 +204,7 @@ func (m *MockBackend) LocalWriter(ctx context.Context, cfg *backend.LocalWriterC
 }
 
 // LocalWriter indicates an expected call of LocalWriter.
-func (mr *MockBackendMockRecorder) LocalWriter(ctx, cfg, engineUUID interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) LocalWriter(ctx, cfg, engineUUID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LocalWriter", reflect.TypeOf((*MockBackend)(nil).LocalWriter), ctx, cfg, engineUUID)
 }
@@ -216,7 +218,7 @@ func (m *MockBackend) OpenEngine(ctx context.Context, config *backend.EngineConf
 }
 
 // OpenEngine indicates an expected call of OpenEngine.
-func (mr *MockBackendMockRecorder) OpenEngine(ctx, config, engineUUID interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) OpenEngine(ctx, config, engineUUID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OpenEngine", reflect.TypeOf((*MockBackend)(nil).OpenEngine), ctx, config, engineUUID)
 }
@@ -253,6 +255,7 @@ func (mr *MockBackendMockRecorder) ShouldPostProcess() *gomock.Call {
 type MockChunkFlushStatus struct {
 	ctrl     *gomock.Controller
 	recorder *MockChunkFlushStatusMockRecorder
+	isgomock struct{}
 }
 
 // MockChunkFlushStatusMockRecorder is the mock recorder for MockChunkFlushStatus.
@@ -290,6 +293,7 @@ func (mr *MockChunkFlushStatusMockRecorder) Flushed() *gomock.Call {
 type MockEngineWriter struct {
 	ctrl     *gomock.Controller
 	recorder *MockEngineWriterMockRecorder
+	isgomock struct{}
 }
 
 // MockEngineWriterMockRecorder is the mock recorder for MockEngineWriter.
@@ -318,7 +322,7 @@ func (m *MockEngineWriter) AppendRows(ctx context.Context, columnNames []string,
 }
 
 // AppendRows indicates an expected call of AppendRows.
-func (mr *MockEngineWriterMockRecorder) AppendRows(ctx, columnNames, rows interface{}) *gomock.Call {
+func (mr *MockEngineWriterMockRecorder) AppendRows(ctx, columnNames, rows any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendRows", reflect.TypeOf((*MockEngineWriter)(nil).AppendRows), ctx, columnNames, rows)
 }
@@ -333,7 +337,7 @@ func (m *MockEngineWriter) Close(ctx context.Context) (backend.ChunkFlushStatus,
 }
 
 // Close indicates an expected call of Close.
-func (mr *MockEngineWriterMockRecorder) Close(ctx interface{}) *gomock.Call {
+func (mr *MockEngineWriterMockRecorder) Close(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockEngineWriter)(nil).Close), ctx)
 }
