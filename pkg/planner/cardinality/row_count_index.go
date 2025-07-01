@@ -39,7 +39,7 @@ import (
 )
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
-func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, corrResult float64, err error) {
+func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, corrResult float64, riskCount float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -70,7 +70,7 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 		if err == nil && sc.EnableOptimizerCETrace && idx != nil {
 			ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats-Pseudo", uint64(result))
 		}
-		return result, 0, err
+		return result, 0, 0, err
 	}
 	realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
@@ -84,12 +84,12 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
 		result, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
 	} else {
-		result, corrResult, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, realtimeCnt, modifyCount)
+		result, corrResult, riskCount, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, realtimeCnt, modifyCount)
 	}
 	if sc.EnableOptimizerCETrace {
 		ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats", uint64(result))
 	}
-	return result, corrResult, errors.Trace(err)
+	return result, corrResult, riskCount, errors.Trace(err)
 }
 
 func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range) (float64, error) {
@@ -119,7 +119,7 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
 			realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
-			count, _, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, realtimeCnt, modifyCount)
+			count, _, _, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, realtimeCnt, modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -183,9 +183,9 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 			// prefer index stats over column stats
 			if idxIDs, ok := coll.ColUniqueID2IdxIDs[colUniqueID]; ok && len(idxIDs) > 0 {
 				idxID := idxIDs[0]
-				count, _, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang})
+				count, _, _, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang})
 			} else {
-				count, err = GetRowCountByColumnRanges(sctx, coll, colUniqueID, []*ranger.Range{&rang})
+				count, _, err = GetRowCountByColumnRanges(sctx, coll, colUniqueID, []*ranger.Range{&rang})
 			}
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -217,7 +217,7 @@ func isSingleColIdxNullRange(idx *statistics.Index, ran *ranger.Range) bool {
 }
 
 // It uses the modifyCount to validate, and realtimeRowCount to adjust the influence of modifications on the table.
-func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (totalCount float64, corrCount float64, err error) {
+func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (totalCount float64, corrCount float64, riskCount float64, err error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -231,12 +231,12 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		lb, err = codec.EncodeKey(sc.TimeZone(), nil, indexRange.LowVal...)
 		err = sc.HandleError(err)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
 		rb, err = codec.EncodeKey(sc.TimeZone(), nil, indexRange.HighVal...)
 		err = sc.HandleError(err)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
 		if debugTrace {
 			debugTraceStartEstimateRange(sctx, indexRange, lb, rb, totalCount)
@@ -298,7 +298,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 			var expBackoffSel, corrSel float64
 			expBackoffSel, corrSel, expBackoffSuccess, err = expBackoffEstimation(sctx, idx, coll, indexRange)
 			if err != nil {
-				return 0, 0, err
+				return 0, 0, 0, err
 			}
 			if expBackoffSuccess {
 				expBackoffCnt := expBackoffSel * idx.TotalRowCount()
@@ -354,15 +354,16 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
 				if isSingleColRange && c != nil && c.Histogram.NDV > 0 {
 					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
-					count += c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], realtimeRowCount, modifyCount, histNDV)
+					riskCount = c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], realtimeRowCount, modifyCount, histNDV)
 				} else {
 					// TODO: Extend original datatype out-of-range estimation to multi-column
 					histNDV -= int64(idx.TopN.Num())
-					count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV)
+					riskCount = idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV)
 				}
 			} else {
-				count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV)
+				riskCount = idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV)
 			}
+			count += riskCount
 		}
 
 		if debugTrace {
@@ -381,7 +382,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		// Don't allow the final result to go below 1 row
 		totalCount = mathutil.Clamp(totalCount, 1, float64(realtimeRowCount))
 	}
-	return totalCount, corrCount, nil
+	return totalCount, corrCount, riskCount, nil
 }
 
 var nullKeyBytes, _ = codec.EncodeKey(time.UTC, nil, types.NewDatum(nil))
@@ -510,7 +511,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		)
 		if !statistics.ColumnStatsIsInvalid(coll.GetCol(colID), sctx, coll, colID) {
 			foundStats = true
-			count, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
+			count, _, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
 			selectivity = count / float64(coll.RealtimeCount)
 		}
 		if idxIDs, ok := coll.ColUniqueID2IdxIDs[colID]; ok && !foundStats && len(indexRange.LowVal) > 1 {
@@ -523,7 +524,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 					continue
 				}
 				foundStats = true
-				count, _, err = GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan)
+				count, _, _, err = GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan)
 				if err == nil {
 					break
 				}
