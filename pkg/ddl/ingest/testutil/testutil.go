@@ -15,13 +15,10 @@
 package testutil
 
 import (
-	"fmt"
-	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 )
@@ -43,15 +40,4 @@ func InjectMockBackendMgr(t *testing.T, store kv.Storage) (restore func()) {
 		ingest.LitBackCtxMgr = oldLitBackendMgr
 		ingest.LitInitialized = oldInitialized
 	}
-}
-
-// CheckIngestLeakageForTest is only used in test.
-func CheckIngestLeakageForTest(exitCode int) {
-	if exitCode == 0 {
-		if registeredJob := metrics.GetRegisteredJob(); len(registeredJob) > 0 {
-			fmt.Fprintf(os.Stderr, "add index metrics leakage: %v\n", registeredJob)
-			os.Exit(1)
-		}
-	}
-	os.Exit(exitCode)
 }
