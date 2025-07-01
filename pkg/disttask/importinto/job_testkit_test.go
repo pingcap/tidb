@@ -46,7 +46,7 @@ func TestSubmitTaskNextgen(t *testing.T) {
 	}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	require.NoError(t, kvstore.Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{}))
-	sysKSStore, _ := testkit.CreateNextgenMockStoreAndDomain(t, keyspace.System)
+	sysKSStore, _ := testkit.CreateMockStoreAndDomainForKS(t, keyspace.System)
 	sysKSTK := testkit.NewTestKit(t, sysKSStore)
 	// in uni-store, Store instances are completely isolated, even they have the
 	// same keyspace name, so we store them here and mock the GetStore
@@ -60,7 +60,7 @@ func TestSubmitTaskNextgen(t *testing.T) {
 			}
 		},
 	)
-	userKSStore, _ := testkit.CreateNextgenMockStoreAndDomain(t, "ks")
+	userKSStore, _ := testkit.CreateMockStoreAndDomainForKS(t, "ks")
 	storeMap["ks"] = userKSStore
 	userKSTK := testkit.NewTestKit(t, userKSStore)
 
