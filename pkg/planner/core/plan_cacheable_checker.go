@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/filter"
-	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -90,30 +89,6 @@ type cacheableChecker struct {
 // Enter implements Visitor interface.
 func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
-	case *ast.SelectStmt:
-		for _, hints := range node.TableHints {
-			if hints.HintName.L == h.HintIgnorePlanCache {
-				checker.cacheable = false
-				checker.reason = "ignore plan cache by hint"
-				return in, true
-			}
-		}
-	case *ast.DeleteStmt:
-		for _, hints := range node.TableHints {
-			if hints.HintName.L == h.HintIgnorePlanCache {
-				checker.cacheable = false
-				checker.reason = "ignore plan cache by hint"
-				return in, true
-			}
-		}
-	case *ast.UpdateStmt:
-		for _, hints := range node.TableHints {
-			if hints.HintName.L == h.HintIgnorePlanCache {
-				checker.cacheable = false
-				checker.reason = "ignore plan cache by hint"
-				return in, true
-			}
-		}
 	case *ast.InsertStmt:
 		if node.Select == nil {
 			nRows := len(node.Lists)
@@ -127,13 +102,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				return in, true
 			}
 		}
-		for _, hints := range node.TableHints {
-			if hints.HintName.L == h.HintIgnorePlanCache {
-				checker.cacheable = false
-				checker.reason = "ignore plan cache by hint"
-				return in, true
-			}
-		}
+
 	case *ast.PatternInExpr:
 		checker.sumInListLen += len(node.List)
 		if checker.sumInListLen > checker.maxNumParam { // to save memory
