@@ -79,9 +79,13 @@ import (
 )
 
 type visitInfo struct {
-	privilege     mysql.PrivilegeType
-	db            string
-	table         string
+	privilege mysql.PrivilegeType
+	// if db is "", it means this is a global-level privilege
+	// if db is not "" and table is "", it means this is a db-level privilege
+	db string
+	// if table is not "" and column is "", it means this is a table-level privilege
+	table string
+	// if column is not "", it means this is a column-level privilege
 	column        string
 	err           error
 	alterWritable bool

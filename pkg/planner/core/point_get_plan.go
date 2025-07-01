@@ -2195,6 +2195,7 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolv
 
 	if pointPlan != nil {
 		// We don't check the output names, since they are expended to all columns of the table.
+		// See the comment in buildSchemaFromFields
 		visitInfos := getVisitInfo(userName, hostName, dbName, tbl.Name.L, nil, nil, colsInWhereClause)
 		failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
 			if val.(bool) {
@@ -2361,6 +2362,7 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 	}
 	if pointPlan != nil {
 		// We don't check the output names, since they are expended to all columns of the table.
+		// See the comment in buildSchemaFromFields
 		visitInfos := getVisitInfo(userName, hostName, dbName, tbl.Name.L, nil, nil, colsInWhereClause)
 		failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
 			if val.(bool) {
