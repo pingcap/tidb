@@ -35,7 +35,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
@@ -1093,15 +1092,12 @@ func TestMultiIngest(t *testing.T) {
 
 func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	bak := Backend{}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)")
 	toCh := make(chan *regionJob, 1)
-	worker := bak.newRegionJobWorker(1, toCh, make(chan *regionJob, 1), nil, nil)
+	worker := bak.newRegionJobWorker(context.Background(), 1, toCh, make(chan *regionJob, 1), nil, nil)
 
 	toCh <- &regionJob{}
-	err := worker.run(context.Background())
+	err := worker.run()
 	require.Error(t, err)
 	require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
 	require.Len(t, toCh, 0)
@@ -1302,8 +1298,8 @@ func TestCheckPeersBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		worker := local.newRegionJobWorker(1, jobCh, jobOutCh, nil, nil)
-		err := worker.run(ctx)
+		worker := local.newRegionJobWorker(ctx, 1, jobCh, jobOutCh, nil, nil)
+		err := worker.run()
 		require.NoError(t, err)
 	}()
 
@@ -1410,8 +1406,8 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		worker := local.newRegionJobWorker(1, jobCh, jobOutCh, &jobWg, nil)
-		err := worker.run(ctx)
+		worker := local.newRegionJobWorker(ctx, 1, jobCh, jobOutCh, &jobWg, nil)
+		err := worker.run()
 		require.NoError(t, err)
 	}()
 
@@ -1511,8 +1507,8 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		worker := local.newRegionJobWorker(1, jobCh, jobOutCh, &jobWg, nil)
-		err := worker.run(ctx)
+		worker := local.newRegionJobWorker(ctx, 1, jobCh, jobOutCh, &jobWg, nil)
+		err := worker.run()
 		require.NoError(t, err)
 	}()
 
@@ -1633,8 +1629,8 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		worker := local.newRegionJobWorker(1, jobCh, jobOutCh, &jobWg, nil)
-		err := worker.run(ctx)
+		worker := local.newRegionJobWorker(ctx, 1, jobCh, jobOutCh, &jobWg, nil)
+		err := worker.run()
 		require.NoError(t, err)
 	}()
 
@@ -1706,7 +1702,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 			panicSplitRegionClient{}, // make sure no further split region
 		),
 	}
-	local.BackendConfig.WorkerConcurrency = 1
+	local.WorkerConcurrency.Store(1)
 	db, tmpPath := makePebbleDB(t, nil)
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	ctx := context.Background()
@@ -1768,7 +1764,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 			panicSplitRegionClient{}, // make sure no further split region
 		),
 	}
-	local.BackendConfig.WorkerConcurrency = 1
+	local.WorkerConcurrency.Store(1)
 
 	keys := make([][]byte, 0, 10)
 	value := make([][]byte, 0, 10)
@@ -1863,12 +1859,8 @@ func TestDoImport(t *testing.T) {
 		maxRetryBackoffSecond = backup
 	})
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
-	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs")
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
 
 	// test that
 	// - one job need rescan when ingest
@@ -1968,7 +1960,7 @@ func TestDoImport(t *testing.T) {
 	ctx := context.Background()
 	l := &Backend{
 		BackendConfig: BackendConfig{
-			WorkerConcurrency: 2,
+			WorkerConcurrency: toAtomic(2),
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
@@ -2049,7 +2041,7 @@ func TestDoImport(t *testing.T) {
 
 	// test write meet unretryable error
 	maxRetryBackoffSecond = 100
-	l.WorkerConcurrency = 1
+	l.WorkerConcurrency.Store(1)
 	fakeRegionJobs = map[[2]string]struct {
 		jobs []*regionJob
 		err  error
@@ -2103,12 +2095,8 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 		maxRetryBackoffSecond = backup
 	})
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
-	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs")
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
 
 	// test that job need rescan when ingest
 
@@ -2174,7 +2162,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 	ctx := context.Background()
 	l := &Backend{
 		BackendConfig: BackendConfig{
-			WorkerConcurrency: 2,
+			WorkerConcurrency: toAtomic(2),
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
@@ -2194,16 +2182,10 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 		maxRetryBackoffSecond = backup
 	})
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/beforeGenerateJob", "sleep(1000)")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
-	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/beforeGenerateJob")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace")
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/beforeGenerateJob", "sleep(1000)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
 
 	initRegionKeys := [][]byte{{'c'}, {'d'}, {'e'}}
 	fakeRegionJobs = map[[2]string]struct {
@@ -2233,7 +2215,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 	ctx := context.Background()
 	l := &Backend{
 		BackendConfig: BackendConfig{
-			WorkerConcurrency: 1,
+			WorkerConcurrency: toAtomic(1),
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
@@ -2248,23 +2230,17 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 		maxRetryBackoffSecond = backup
 	})
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/sendDummyJob", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/mockGetFirstAndLastKey", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
-	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/sendDummyJob")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/mockGetFirstAndLastKey")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace")
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/sendDummyJob", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/mockGetFirstAndLastKey", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
 
 	initRegionKeys := [][]byte{{'c'}, {'d'}}
 
 	ctx := context.Background()
 	l := &Backend{
 		BackendConfig: BackendConfig{
-			WorkerConcurrency: 1,
+			WorkerConcurrency: toAtomic(1),
 		},
 		splitCli: initTestSplitClient(
 			[][]byte{{1}, {11}},
@@ -2338,7 +2314,7 @@ func TestExternalEngine(t *testing.T) {
 	hook := &recordScanRegionsHook{}
 	local := &Backend{
 		BackendConfig: BackendConfig{
-			WorkerConcurrency: 2,
+			WorkerConcurrency: toAtomic(2),
 			LocalStoreDir:     path.Join(t.TempDir(), "sorted-kv"),
 		},
 		splitCli: initTestSplitClient([][]byte{

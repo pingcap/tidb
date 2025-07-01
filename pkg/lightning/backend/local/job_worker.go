@@ -26,24 +26,42 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	rutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
+	putil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
+// util function to create atomic variable
+func toAtomic(v int) atomic.Int32 {
+	return *atomic.NewInt32(int32(v))
+}
+
 type regionJobWorker interface {
-	run(ctx context.Context) error
+	HandleTask(job *regionJob, f func(*regionJob))
+
+	Close()
+
+	run() error
 }
 
 type regionJobBaseWorker struct {
+	ctx context.Context
+	op  *jobOperator
+
+	// Note: jobInCh is only used in unit test, to minimize the code change
 	jobInCh  chan *regionJob
 	jobOutCh chan *regionJob
 	jobWg    *sync.WaitGroup
@@ -66,8 +84,19 @@ type regionJobBaseWorker struct {
 // finished or the context canceled because other components report error. It will
 // return not nil error when it unexpectedly stops. run must call job.done() if
 // it doesn't put the job into jobOutCh.
-func (w *regionJobBaseWorker) run(ctx context.Context) error {
-	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
+func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) {
+	failpoint.Inject("injectPanicForRegionJob", func() {
+		panic("mock panic")
+	})
+
+	err := w.process(job)
+	if err != nil {
+		w.op.onError(err)
+	}
+}
+
+func (w *regionJobBaseWorker) run() error {
+	ctx := w.ctx
 	for {
 		select {
 		case <-ctx.Done():
@@ -76,66 +105,77 @@ func (w *regionJobBaseWorker) run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-
-			var peers []*metapb.Peer
-			// in unit test, we may not have the real peers
-			if job.region != nil && job.region.Region != nil {
-				peers = job.region.Region.GetPeers()
-			}
-			failpoint.InjectCall("beforeExecuteRegionJob", ctx)
-			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
-			err := w.runJob(ctx, job)
-			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
-
-			if w.afterRunJobFn != nil {
-				w.afterRunJobFn(peers)
-			}
-			switch job.stage {
-			case regionScanned, wrote, ingested:
-				select {
-				case <-ctx.Done():
-					job.done(w.jobWg)
-					return nil
-				case w.jobOutCh <- job:
-				}
-			case needRescan:
-				newJobs, err2 := w.regenerateJobsFn(
-					ctx,
-					job.ingestData,
-					[]engineapi.Range{job.keyRange},
-					job.regionSplitSize,
-					job.regionSplitKeys,
-				)
-				if err2 != nil {
-					// Don't need to put the job back to retry, because regenerateJobsFn
-					// has done the retry internally. Here just done for the "needRescan"
-					// job and exit directly.
-					job.done(w.jobWg)
-					return err2
-				}
-				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
-				newJobCnt := len(newJobs) - 1
-				for newJobCnt > 0 {
-					job.ref(w.jobWg)
-					newJobCnt--
-				}
-				for _, newJob := range newJobs {
-					newJob.lastRetryableErr = job.lastRetryableErr
-					select {
-					case <-ctx.Done():
-						newJob.done(w.jobWg)
-						// don't exit here, we mark done for each job and exit in
-						// the outer loop
-					case w.jobOutCh <- newJob:
-					}
-				}
-			}
-
+			err := w.process(job)
 			if err != nil {
 				return err
 			}
 		}
 	}
+	return nil
+}
+
+func (w *regionJobBaseWorker) process(job *regionJob) error {
+	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
+
+	ctx := w.ctx
+	var peers []*metapb.Peer
+	// in unit test, we may not have the real peers
+	if job.region != nil && job.region.Region != nil {
+		peers = job.region.Region.GetPeers()
+	}
+	failpoint.InjectCall("beforeProcessRegionJob", ctx)
+	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
+	err := w.runJob(ctx, job)
+	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
+
+	if w.afterRunJobFn != nil {
+		w.afterRunJobFn(peers)
+	}
+	switch job.stage {
+	case regionScanned, wrote, ingested:
+		select {
+		case <-ctx.Done():
+			job.done(w.jobWg)
+			return nil
+		case w.jobOutCh <- job:
+		}
+	case needRescan:
+		newJobs, err2 := w.regenerateJobsFn(
+			ctx,
+			job.ingestData,
+			[]engineapi.Range{job.keyRange},
+			job.regionSplitSize,
+			job.regionSplitKeys,
+		)
+		if err2 != nil {
+			// Don't need to put the job back to retry, because regenerateJobsFn
+			// has done the retry internally. Here just done for the "needRescan"
+			// job and exit directly.
+			job.done(w.jobWg)
+			return err2
+		}
+		// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
+		newJobCnt := len(newJobs) - 1
+		for newJobCnt > 0 {
+			job.ref(w.jobWg)
+			newJobCnt--
+		}
+		for _, newJob := range newJobs {
+			newJob.lastRetryableErr = job.lastRetryableErr
+			select {
+			case <-ctx.Done():
+				newJob.done(w.jobWg)
+				// don't exit here, we mark done for each job and exit in
+				// the outer loop
+			case w.jobOutCh <- newJob:
+			}
+		}
+	}
+
+	return err
+}
+
+func (w *regionJobBaseWorker) Close() {
 }
 
 // doRunJob handles a regionJob and tries to convert it to ingested stage.
@@ -143,6 +183,11 @@ func (w *regionJobBaseWorker) run(ctx context.Context) error {
 // If retryable error occurs, it will return nil and caller should check the stage
 // of the regionJob to determine what to do with it.
 func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error {
+	failpoint.Inject("mockRunJobSucceed", func(_ failpoint.Value) {
+		job.convertStageTo(regionScanned)
+		failpoint.Return(nil)
+	})
+
 	if err := w.preRunJobFn(ctx, job); err != nil {
 		return err
 	}
@@ -380,4 +425,104 @@ func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) er
 		return err
 	}
 	return nil
+}
+
+type jobOperator struct {
+	ctx *operator.Context
+	*operator.AsyncOperator[*regionJob, *regionJob]
+
+	workerCtx   context.Context
+	workerGroup *putil.ErrorGroupWithRecover
+	jobWg       *sync.WaitGroup
+
+	subCtx context.Context
+	cancel context.CancelFunc
+
+	firstErr atomic.Error
+	errCh    chan error
+}
+
+func newJobWorker(
+	workerCtx context.Context,
+	workGroup *putil.ErrorGroupWithRecover,
+	jobWg *sync.WaitGroup,
+	local *Backend,
+	balancer *storeBalancer,
+	jobToWorkerCh, jobFromWorkerCh chan *regionJob,
+	clusterID uint64,
+) *jobOperator {
+	opCtx, _ := operator.NewContext(workerCtx)
+
+	subCtx, cancel := context.WithCancel(workerCtx)
+
+	var (
+		sourceChannel   = jobToWorkerCh
+		afterExecuteJob func([]*metapb.Peer)
+	)
+
+	op := &jobOperator{
+		workerCtx:   workerCtx,
+		workerGroup: workGroup,
+		subCtx:      subCtx,
+		cancel:      cancel,
+		errCh:       make(chan error),
+	}
+
+	if balancer != nil {
+		afterExecuteJob = balancer.releaseStoreLoad
+		sourceChannel = balancer.innerJobToWorkerCh
+	}
+
+	pool := workerpool.NewWorkerPool(
+		"IngestJobOperator",
+		rutil.DistTask,
+		local.Concurrency(),
+		func() workerpool.Worker[*regionJob, *regionJob] {
+			// In each worker, we use workerCtx to detect context cancel
+			// and clean up the job (job.Done). So we use the channel directly
+			// instead of using sender function provided by the worker pool.
+			return local.newRegionJobWorker(workerCtx, clusterID, sourceChannel, jobFromWorkerCh, jobWg, afterExecuteJob)
+		},
+	)
+
+	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
+	op.SetSink(operator.NewSimpleDataChannel(jobFromWorkerCh))
+	op.SetSource(operator.NewSimpleDataChannel(sourceChannel))
+	return op
+}
+
+func (*jobOperator) String() string {
+	return "jobOperator"
+}
+
+func (j *jobOperator) Open() error {
+	// This goroutine is used to expose the internal error in the worker pool
+	// so other components can quit normally.
+	j.workerGroup.Go(func() error {
+		select {
+		case <-j.workerCtx.Done():
+			return nil
+		case err, ok := <-j.errCh:
+			if !ok || j.firstErr.CompareAndSwap(nil, err) {
+				return j.firstErr.Load()
+			}
+			if errors.Cause(err) != context.Canceled {
+				log.FromContext(j.workerCtx).Error("error on ingest", zap.Error(err))
+			}
+		}
+		return nil
+	})
+	return j.AsyncOperator.Open()
+}
+
+func (j *jobOperator) Close() error {
+	j.cancel()
+	// nolint:errcheck
+	j.AsyncOperator.Close()
+	close(j.errCh)
+	return j.firstErr.Load()
+}
+
+func (j *jobOperator) onError(err error) {
+	j.errCh <- err
 }

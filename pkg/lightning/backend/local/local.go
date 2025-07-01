@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	goerrors "errors"
 	"math"
 	"net"
 	"net/http"
@@ -67,6 +68,7 @@ import (
 	"github.com/tikv/pd/client/pkg/caller"
 	"github.com/tikv/pd/client/pkg/retry"
 	sd "github.com/tikv/pd/client/servicediscovery"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -431,7 +433,7 @@ type BackendConfig struct {
 	// compress type when write or ingest into tikv
 	ConnCompressType config.CompressionType
 	// concurrency of generateJobForRange and import(write & ingest) workers
-	WorkerConcurrency int
+	WorkerConcurrency atomic.Int32
 	// batch kv size when writing to TiKV
 	KVWriteBatchSize       int64
 	RegionSplitBatchSize   int
@@ -482,7 +484,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		LocalStoreDir:               cfg.TikvImporter.SortedKVDir,
 		MaxConnPerStore:             cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:            cfg.TikvImporter.CompressKVPairs,
-		WorkerConcurrency:           cfg.TikvImporter.RangeConcurrency * 2,
+		WorkerConcurrency:           *atomic.NewInt32(int32(cfg.TikvImporter.RangeConcurrency) * 2),
 		BlockSize:                   int(cfg.TikvImporter.BlockSize),
 		KVWriteBatchSize:            int64(cfg.TikvImporter.SendKVSize),
 		RegionSplitBatchSize:        cfg.TikvImporter.RegionSplitBatchSize,
@@ -509,6 +511,16 @@ func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
 }
 
+// SetConcurrency sets the concurrency of the backend
+func (c *BackendConfig) SetConcurrency(concurrency int) {
+	c.WorkerConcurrency.Store(int32(concurrency))
+}
+
+// Concurrency gets the current concurrency of the backend
+func (c *BackendConfig) Concurrency() int {
+	return int(c.WorkerConcurrency.Load())
+}
+
 // Backend is a local backend.
 type Backend struct {
 	pdCli     pd.Client
@@ -523,6 +535,10 @@ type Backend struct {
 
 	supportMultiIngest  bool
 	importClientFactory importClientFactory
+
+	// workers store all running workers for this backend to tune pool size.
+	// It is expected to have at most one worker at each time.
+	workers sync.Map
 
 	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
@@ -760,6 +776,36 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory impor
 	return true, nil
 }
 
+// UpdateResource update the concurrency of current running job.
+// The engineUUID is used to get corresponding engine.
+// If there is no running job, or the concurrency change is not allowed, it will return an error.
+func (local *Backend) UpdateResource(ctx context.Context, engineUUID uuid.UUID, concurrency int, memCapacity int64) error {
+	engine, ok := local.engineMgr.getExternalEngine(engineUUID)
+	if !ok {
+		return goerrors.New("changing concurrency is only supported on external engine")
+	}
+
+	v, ok := local.workers.Load(engine.ID())
+	if !ok {
+		// let framework retry
+		return goerrors.New("worker not running")
+	}
+
+	e, _ := engine.(*external.Engine)
+	worker, _ := v.(*jobOperator)
+	worker.TuneWorkerPoolSize(int32(concurrency), true)
+	e.UpdateResource(concurrency, memCapacity)
+	local.SetConcurrency(concurrency)
+
+	log.FromContext(ctx).Info("update concurrency finished",
+		zap.String("engine", engine.ID()),
+		zap.Int("concurrency", concurrency),
+		zap.Int64("memCapacity", memCapacity),
+	)
+
+	return nil
+}
+
 func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
 	if !local.ShouldCheckTiKV {
 		return
@@ -967,7 +1013,7 @@ func (local *Backend) generateAndSendJob(
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	dataAndRangeCh := make(chan engineapi.DataAndRanges)
-	conn := local.WorkerConcurrency
+	conn := int(local.WorkerConcurrency.Load())
 	if _, ok := engine.(*external.Engine); ok {
 		// currently external engine will generate a large IngestData, se we lower the
 		// concurrency to pass backpressure to the LoadIngestData goroutine to avoid OOM
@@ -1372,29 +1418,21 @@ func (local *Backend) doImport(
 		}
 	})
 
-	var (
-		toCh            = jobToWorkerCh
-		afterExecuteJob func([]*metapb.Peer)
-		clusterID       uint64
-	)
+	var clusterID uint64
 	if local.pdCli != nil {
 		clusterID = local.pdCli.GetClusterID(ctx)
 	}
 
+	workerpool := newJobWorker(
+		workerCtx, workGroup, &jobWg,
+		local, balancer,
+		jobFromWorkerCh, jobToWorkerCh,
+		clusterID,
+	)
+
 	failpoint.Inject("skipStartWorker", func() {
 		failpoint.Goto("afterStartWorker")
 	})
-
-	if balancer != nil {
-		toCh = balancer.innerJobToWorkerCh
-		afterExecuteJob = balancer.releaseStoreLoad
-	}
-	for range local.WorkerConcurrency {
-		worker := local.newRegionJobWorker(clusterID, toCh, jobFromWorkerCh, &jobWg, afterExecuteJob)
-		workGroup.Go(func() error {
-			return worker.run(workerCtx)
-		})
-	}
 
 	failpoint.Label("afterStartWorker")
 
@@ -1438,12 +1476,14 @@ func (local *Backend) doImport(
 }
 
 func (local *Backend) newRegionJobWorker(
+	workerCtx context.Context,
 	clusterID uint64,
 	toCh, jobFromWorkerCh chan *regionJob,
 	jobWg *sync.WaitGroup,
 	afterExecuteJob func([]*metapb.Peer),
 ) regionJobWorker {
 	base := &regionJobBaseWorker{
+		ctx:              workerCtx,
 		jobInCh:          toCh,
 		jobOutCh:         jobFromWorkerCh,
 		jobWg:            jobWg,

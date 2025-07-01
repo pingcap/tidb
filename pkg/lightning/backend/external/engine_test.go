@@ -19,12 +19,15 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
 )
 
 func testGetFirstAndLastKey(
@@ -362,4 +365,65 @@ func TestEngineOnDup(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestChangeEngineConcurrency(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
+
+	e := &Engine{jobKeys: make([][]byte, 32)}
+	e.workerConcurrency.Store(4)
+
+	ctx := context.Background()
+	outCh := make(chan engineapi.DataAndRanges, 4)
+
+	var eg errgroup.Group
+
+	// Load the data
+	eg.Go(func() error {
+		defer close(outCh)
+		return e.LoadIngestData(ctx, outCh)
+	})
+
+	// Change concurrency after the channel is filled
+	time.Sleep(time.Second)
+	e.UpdateResource(1, 1<<10)
+
+	eg.Go(func() error {
+		for data := range outCh {
+			// mock generate job
+			data.Data.IncRef()
+			data.Data.IncRef()
+			// mock job finish
+			data.Data.DecRef()
+			data.Data.DecRef()
+		}
+		return nil
+	})
+
+	// Should not be blocked
+	require.NoError(t, eg.Wait())
+}
+
+func TestChangeEngineConcurrencyWithCancel(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
+
+	e := &Engine{jobKeys: make([][]byte, 32)}
+	e.workerConcurrency.Store(4)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	outCh := make(chan engineapi.DataAndRanges, 16)
+
+	var eg errgroup.Group
+
+	// Load the data and didn't consume it
+	eg.Go(func() error {
+		defer close(outCh)
+		return e.LoadIngestData(ctx, outCh)
+	})
+
+	e.UpdateResource(1, 1<<10)
+	cancel()
+
+	// Should not be blocked
+	require.Error(t, eg.Wait())
 }
