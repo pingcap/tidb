@@ -233,10 +233,6 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 		sessVars.StmtCtx.AppendWarning(warn)
 	}
 
-	if sessVars.StmtCtx.StmtHints.HasResourceGroup {
-		sessVars.StmtCtx.SetSkipPlanCache("resource_group is used in the SQL")
-	}
-
 	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
 		oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)
 		if err != nil {
@@ -303,10 +299,6 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 				setVarHintChecker, hypoIndexChecker(ctx, is),
 				sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
-
-			if sessVars.StmtCtx.StmtHints.HasResourceGroup {
-				sessVars.StmtCtx.SetSkipPlanCache("resource_group is used in the SQL binding")
-			}
 
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
 				oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)
