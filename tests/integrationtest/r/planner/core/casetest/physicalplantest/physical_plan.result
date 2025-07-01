@@ -3838,10 +3838,10 @@ id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:min(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304)->Column#2
 └─Limit	1.00	root		offset:0, count:1
   └─IndexMerge	1.00	root		type: union
+    ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, stats:pseudo
+    ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:("PE",+inf], keep order:true, stats:pseudo
     ├─Selection(Build)	0.00	cop[tikv]		1
     │ └─TableRangeScan	0.00	cop[tikv]	table:tbl_43	range:["LUBGzGMA","LUBGzGMA"], keep order:true, stats:pseudo
-    ├─IndexRangeScan(Build)	0.42	cop[tikv]	table:tbl_43, index:idx_261(col_304)	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, stats:pseudo
-    ├─IndexRangeScan(Build)	0.42	cop[tikv]	table:tbl_43, index:idx_262(col_304)	range:("PE",+inf], keep order:true, stats:pseudo
     ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:[-inf,"MFWmuOsoyDv"), keep order:true, stats:pseudo
     ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:("TSeMYpDXnFIyp",+inf], keep order:true, stats:pseudo
     └─Selection(Probe)	1.00	cop[tikv]		or(or(lt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "YEpfYfPVvhMlHGHSMKm"), gt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "PE")), or(and(eq(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "LUBGzGMA"), 1), or(lt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "MFWmuOsoyDv"), gt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "TSeMYpDXnFIyp"))))
@@ -3854,10 +3854,10 @@ id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304)->Column#2
 └─Limit	1.00	root		offset:0, count:1
   └─IndexMerge	1.00	root		type: union
+    ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, desc, stats:pseudo
+    ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:("PE",+inf], keep order:true, desc, stats:pseudo
     ├─Selection(Build)	0.00	cop[tikv]		1
     │ └─TableRangeScan	0.00	cop[tikv]	table:tbl_43	range:["LUBGzGMA","LUBGzGMA"], keep order:true, desc, stats:pseudo
-    ├─IndexRangeScan(Build)	0.42	cop[tikv]	table:tbl_43, index:idx_261(col_304)	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, desc, stats:pseudo
-    ├─IndexRangeScan(Build)	0.42	cop[tikv]	table:tbl_43, index:idx_262(col_304)	range:("PE",+inf], keep order:true, desc, stats:pseudo
     ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:[-inf,"MFWmuOsoyDv"), keep order:true, desc, stats:pseudo
     ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:("TSeMYpDXnFIyp",+inf], keep order:true, desc, stats:pseudo
     └─Selection(Probe)	1.00	cop[tikv]		or(or(lt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "YEpfYfPVvhMlHGHSMKm"), gt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "PE")), or(and(eq(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "LUBGzGMA"), 1), or(lt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "MFWmuOsoyDv"), gt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "TSeMYpDXnFIyp"))))
