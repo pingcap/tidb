@@ -31,7 +31,7 @@ import (
 )
 
 type cloudImportExecutor struct {
-	taskexecutor.EmptyStepExecutor
+	taskexecutor.BaseStepExecutor
 	job           *model.Job
 	index         *model.IndexInfo
 	ptbl          table.PhysicalTable
@@ -118,10 +118,5 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
 	// cleanup backend context
 	ingest.LitBackCtxMgr.Unregister(m.job.ID)
-	return nil
-}
-
-func (*cloudImportExecutor) OnFinished(ctx context.Context, _ *proto.Subtask) error {
-	logutil.Logger(ctx).Info("cloud import executor finish subtask")
 	return nil
 }

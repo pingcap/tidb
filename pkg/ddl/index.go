@@ -2023,15 +2023,6 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 	return nil
 }
 
-// MockDMLExecutionOnTaskFinished is used to mock DML execution when tasks finished.
-var MockDMLExecutionOnTaskFinished func()
-
-// MockDMLExecutionOnDDLPaused is used to mock DML execution when ddl job paused.
-var MockDMLExecutionOnDDLPaused func()
-
-// TestSyncChan is used to sync the test.
-var TestSyncChan = make(chan struct{})
-
 func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
@@ -2119,9 +2110,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 		g.Go(func() error {
 			defer close(done)
 			err := submitAndWaitTask(ctx, taskKey, taskType, concurrency, reorgInfo.ReorgMeta.TargetScope, metaData)
-			failpoint.Inject("pauseAfterDistTaskFinished", func() {
-				MockDMLExecutionOnTaskFinished()
-			})
+			failpoint.InjectCall("pauseAfterDistTaskFinished")
 			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
 				if dbterror.ErrPausedDDLJob.Equal(err) {
 					logutil.DDLLogger().Warn("job paused by user", zap.Error(err))
@@ -2149,10 +2138,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 							logutil.DDLLogger().Error("pause task error", zap.String("task_key", taskKey), zap.Error(err))
 							continue
 						}
-						failpoint.Inject("syncDDLTaskPause", func() {
-							// make sure the task is paused.
-							TestSyncChan <- struct{}{}
-						})
+						failpoint.InjectCall("syncDDLTaskPause")
 					}
 					if !dbterror.ErrCancelledDDLJob.Equal(err) {
 						return errors.Trace(err)

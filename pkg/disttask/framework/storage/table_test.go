@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -300,7 +301,7 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 	checkAfterSwitchStep(t, startTime, task1, subtasks1, proto.StepOne)
 
 	// mock another scheduler inserted some subtasks
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/waitBeforeInsertSubtasks", `1*return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/waitBeforeInsertSubtasks", `1*return(true)`)
 	task2, subtasks2 := prepare("key2")
 	go func() {
 		storage.TestChannel <- struct{}{}
@@ -368,6 +369,7 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 		proto.TaskStatePending,
 		proto.TaskStatePending,
 		proto.TaskStatePending,
+		proto.TaskStateModifying,
 	}
 	for i, state := range taskStates {
 		taskKey := fmt.Sprintf("key/%d", i)
@@ -402,17 +404,26 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 		rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 				select count(1) from mysql.tidb_global_task`)
 		require.Len(t, rs, 1)
-		require.Equal(t, int64(12), rs[0].GetInt64(0))
+		require.Equal(t, int64(13), rs[0].GetInt64(0))
 		return err
 	}))
+	getTaskKeys := func(tasks []*proto.TaskBase) []string {
+		taskKeys := make([]string, 0, len(tasks))
+		for _, task := range tasks {
+			taskKeys = append(taskKeys, task.Key)
+		}
+		return taskKeys
+	}
 	tasks, err := gm.GetTopUnfinishedTasks(ctx)
 	require.NoError(t, err)
 	require.Len(t, tasks, 8)
-	taskKeys := make([]string, 0, len(tasks))
-	for _, task := range tasks {
-		taskKeys = append(taskKeys, task.Key)
-	}
-	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9"}, taskKeys)
+	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9"}, getTaskKeys(tasks))
+
+	proto.MaxConcurrentTask = 6
+	tasks, err = gm.GetTopUnfinishedTasks(ctx)
+	require.NoError(t, err)
+	require.Len(t, tasks, 11)
+	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9", "key/10", "key/11", "key/12"}, getTaskKeys(tasks))
 }
 
 func TestGetUsedSlotsOnNodes(t *testing.T) {
@@ -507,10 +518,6 @@ func TestSubTaskTable(t *testing.T) {
 	require.Len(t, cntByStates, 1)
 	require.Equal(t, int64(1), cntByStates[proto.SubtaskStatePending])
 
-	ok, err := sm.HasSubtasksInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending)
-	require.NoError(t, err)
-	require.True(t, ok)
-
 	ts := time.Now()
 	time.Sleep(time.Second)
 	require.NoError(t, sm.StartSubtask(ctx, 1, "tidb1"))
@@ -544,15 +551,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(0), cntByStates[proto.SubtaskStatePending])
 
-	ok, err = sm.HasSubtasksInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending)
-	require.NoError(t, err)
-	require.False(t, ok)
-
 	require.NoError(t, testutil.DeleteSubtasksByTaskID(ctx, sm, 1))
-
-	ok, err = sm.HasSubtasksInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending, proto.SubtaskStateRunning)
-	require.NoError(t, err)
-	require.False(t, ok)
 
 	testutil.CreateSubTask(t, sm, 2, proto.StepOne, "tidb1", []byte("test"), proto.TaskTypeExample, 11)
 
@@ -696,14 +695,14 @@ func TestDistFrameworkMeta(t *testing.T) {
 	// when no node
 	_, err := sm.GetCPUCountOfNode(ctx)
 	require.ErrorContains(t, err, "no managed nodes")
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(0)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(0)")
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
 	_, err = sm.GetCPUCountOfNode(ctx)
 	require.ErrorContains(t, err, "no managed node have enough resource")
 
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
 	require.NoError(t, sm.InitMeta(ctx, ":4001", ""))
 	require.NoError(t, sm.InitMeta(ctx, ":4002", "background"))
 	nodes, err := sm.GetAllNodes(ctx)
@@ -714,7 +713,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4002", Role: "background", CPUCount: 8},
 	}, nodes)
 
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
 	require.NoError(t, sm.InitMeta(ctx, ":4002", ""))
 	require.NoError(t, sm.InitMeta(ctx, ":4003", "background"))
 
@@ -824,7 +823,9 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	require.Len(t, subTasks, 3)
 
 	// test GC history table.
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", func(interval *int) {
+		*interval = 1
+	})
 	time.Sleep(2 * time.Second)
 
 	testutil.CreateSubTask(t, sm, taskID2, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, 11)
