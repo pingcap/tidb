@@ -7,6 +7,7 @@ go_library(
         "nominal_sort.go",
         "physical_schema_producer.go",
         "physical_sort.go",
+        "physical_union_all.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/physicalop",
     visibility = ["//visibility:public"],

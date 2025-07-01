@@ -509,15 +509,3 @@ func (op *PhysicalUnionScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	}
 	return cloned, true
 }
-
-// CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalUnionAll) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalUnionAll)
-	*cloned = *op
-	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	return cloned, true
-}

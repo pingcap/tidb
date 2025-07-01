@@ -189,6 +189,17 @@ var ResolveIndicesForSort func(p base.PhysicalPlan) (err error)
 // Attach2Task4NominalSort will be called by NominalSort in physicalOp pkg.
 var Attach2Task4NominalSort func(base.PhysicalPlan, ...base.Task) base.Task
 
+// Attach2Task4PhysicalUnionAll will be called by PhysicalUnionAll in physicalOp pkg.
+var Attach2Task4PhysicalUnionAll func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// GetPlanCostVer14PhysicalUnionAll will be called by PhysicalUnionAll in physicalOp pkg.
+var GetPlanCostVer14PhysicalUnionAll func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalUnionAll will be called by PhysicalUnionAll in physicalOp pkg.
+var GetPlanCostVer24PhysicalUnionAll func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
