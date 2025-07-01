@@ -17,8 +17,8 @@ package ddl
 import (
 	"context"
 	"encoding/json"
+	"sync/atomic"
 
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -31,12 +31,14 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 type cloudImportExecutor struct {
@@ -50,7 +52,7 @@ type cloudImportExecutor struct {
 	backend         *local.Backend
 	taskConcurrency int
 	metric          *lightningmetric.Common
-	engineUUID      uuid.UUID
+	engine          atomic.Pointer[external.Engine]
 }
 
 func newCloudImportExecutor(
@@ -138,7 +140,14 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-	e.engineUUID = engineUUID
+
+	eng := localBackend.GetExternalEngine(engineUUID)
+	if eng == nil {
+		return errors.Errorf("external engine %s not found", engineUUID)
+	}
+	e.engine.Store(eng)
+	defer e.engine.Store(nil)
+
 	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded
@@ -192,11 +201,26 @@ func (e *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []by
 
 // ResourceModified change the concurrency for ingest
 func (e *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
+	eng := e.engine.Load()
+	if eng == nil {
+		return nil
+	}
+
 	logutil.Logger(ctx).Info("cloud import executor update resource")
 	newConcurrency := int(newResource.CPU.Capacity())
-	if newConcurrency != e.backend.Concurrency() {
-		return e.backend.UpdateResource(ctx, e.engineUUID, newConcurrency, newResource.Mem.Capacity())
+	if newConcurrency == e.backend.Concurrency() {
+		return nil
 	}
+
+	// We need to update the memory usaage of external engine and the concurrency of backend.
+	eng.UpdateResource(newConcurrency, newResource.Mem.Capacity())
+	e.backend.SetConcurrency(newConcurrency, eng.ID())
+	log.FromContext(ctx).Info("update concurrency finished",
+		zap.String("engine", eng.ID()),
+		zap.Int("concurrency", newConcurrency),
+		zap.Int64("memCapacity", newResource.Mem.Capacity()),
+	)
+
 	return nil
 }
 func getIndexInfoAndID(eleIDs []int64, indexes []*model.IndexInfo) (currentIdx *model.IndexInfo, idxID int64, err error) {

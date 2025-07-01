@@ -129,7 +129,7 @@ type regionJob struct {
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (r *regionJob) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
+func (*regionJob) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
 	return "regionJob", "regionJob", nil, false
 }
 

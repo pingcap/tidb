@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	rutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
-	"github.com/pingcap/tidb/pkg/util"
 	putil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -88,7 +87,7 @@ func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) {
 	// In the worker, we use opCtx to detect context cancel
 	// and clean up the job (job.Done). So we use the channel directly
 	// instead of using sender function provided by the worker pool.
-	defer util.Recover("fast_check_table", "handleTableScanTaskWithRecover", func() {
+	defer putil.Recover("fast_check_table", "handleTableScanTaskWithRecover", func() {
 		w.ctx.OnError(errors.Errorf("region job worker panic"))
 		job.done(w.jobWg)
 	}, false)
@@ -118,7 +117,6 @@ func (w *regionJobBaseWorker) run() error {
 			}
 		}
 	}
-	return nil
 }
 
 func (w *regionJobBaseWorker) process(job *regionJob) error {
@@ -182,7 +180,7 @@ func (w *regionJobBaseWorker) process(job *regionJob) error {
 	return err
 }
 
-func (w *regionJobBaseWorker) Close() {
+func (*regionJobBaseWorker) Close() {
 }
 
 // doRunJob handles a regionJob and tries to convert it to ingested stage.

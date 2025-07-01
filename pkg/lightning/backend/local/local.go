@@ -512,11 +512,6 @@ func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
 }
 
-// SetConcurrency sets the concurrency of the backend
-func (c *BackendConfig) SetConcurrency(concurrency int) {
-	c.WorkerConcurrency.Store(int32(concurrency))
-}
-
 // Concurrency gets the current concurrency of the backend
 func (c *BackendConfig) Concurrency() int {
 	return int(c.WorkerConcurrency.Load())
@@ -777,33 +772,17 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory impor
 	return true, nil
 }
 
-// UpdateResource update the concurrency of current running job.
-// The engineUUID is used to get corresponding engine.
-// If there is no running job, or the concurrency change is not allowed, it will return an error.
-func (local *Backend) UpdateResource(ctx context.Context, engineUUID uuid.UUID, concurrency int, memCapacity int64) error {
-	engine, ok := local.engineMgr.getExternalEngine(engineUUID)
+// SetConcurrency sets the concurrency of the backend
+// It will return an error if the worker with the given id is not started.
+func (b *Backend) SetConcurrency(concurrency int, eid string) error {
+	v, ok := b.workers.Load(eid)
 	if !ok {
-		return goerrors.New("changing concurrency is only supported on external engine")
-	}
-
-	v, ok := local.workers.Load(engine.ID())
-	if !ok {
-		// let framework retry
+		// worker not created, let framework retry
 		return goerrors.New("worker not running")
 	}
-
-	e, _ := engine.(*external.Engine)
 	worker, _ := v.(*jobOperator)
 	worker.TuneWorkerPoolSize(int32(concurrency), true)
-	e.UpdateResource(concurrency, memCapacity)
-	local.SetConcurrency(concurrency)
-
-	log.FromContext(ctx).Info("update concurrency finished",
-		zap.String("engine", engine.ID()),
-		zap.Int("concurrency", concurrency),
-		zap.Int64("memCapacity", memCapacity),
-	)
-
+	b.WorkerConcurrency.Store(int32(concurrency))
 	return nil
 }
 
@@ -1172,6 +1151,21 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 			storeType, store.Store.Address, storeType)
 	}
 	return nil
+}
+
+// GetExternalEngine returns the external engine by uuid.
+// If the engine is not found or not an external engine, it returns nil.
+// It's used to dynamically update the resource used by the external engine
+func (local *Backend) GetExternalEngine(engineUUID uuid.UUID) *external.Engine {
+	e, ok := local.engineMgr.getExternalEngine(engineUUID)
+	if !ok {
+		return nil
+	}
+	ext, ok := e.(*external.Engine)
+	if !ok {
+		return nil
+	}
+	return ext
 }
 
 // ImportEngine imports an engine to TiKV.
