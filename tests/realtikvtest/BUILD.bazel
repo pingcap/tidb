@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/ddl",
+        "//pkg/ddl/ingest/testutil",
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/session",

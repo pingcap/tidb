@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -51,9 +52,12 @@ type readIndexExecutor struct {
 	cloudStorageURI string
 
 	bc          ingest.BackendCtx
+	bcGetter    func(context.Context) (ingest.BackendCtx, error)
 	curRowCount *atomic.Int64
 
 	subtaskSummary sync.Map // subtaskID => readIndexSummary
+
+	metric *lightningmetric.Common
 }
 
 type readIndexSummary struct {
@@ -67,28 +71,34 @@ func newReadIndexExecutor(
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	jc *ReorgContext,
-	bcGetter func() (ingest.BackendCtx, error),
+	ctx context.Context,
+	bcGetter func(context.Context) (ingest.BackendCtx, error),
 	cloudStorageURI string,
 	avgRowSize int,
 ) (*readIndexExecutor, error) {
-	bc, err := bcGetter()
-	if err != nil {
-		return nil, err
-	}
-	return &readIndexExecutor{
+	r := &readIndexExecutor{
 		d:               d,
 		job:             job,
 		indexes:         indexes,
 		ptbl:            ptbl,
 		jc:              jc,
-		bc:              bc,
 		cloudStorageURI: cloudStorageURI,
 		avgRowSize:      avgRowSize,
 		curRowCount:     &atomic.Int64{},
-	}, nil
+	}
+	if !r.isGlobalSort() {
+		r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
+		ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
+	}
+	bc, err := bcGetter(ctx)
+	if err != nil {
+		return nil, err
+	}
+	r.bc = bc
+	return r, nil
 }
 
-func (*readIndexExecutor) Init(_ context.Context) error {
+func (readIndexExecutor) Init(_ context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
 	return nil
 }
@@ -145,6 +155,9 @@ func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	tidblogutil.Logger(ctx).Info("read index executor cleanup subtask exec env")
 	// cleanup backend context
 	ingest.LitBackCtxMgr.Unregister(r.job.ID)
+	if !r.isGlobalSort() {
+		metrics.UnregisterLightningCommonMetricsForDDL(r.job.ID, r.metric)
+	}
 	return nil
 }
 
@@ -182,6 +195,10 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 	}
 	subtask.Meta = meta
 	return nil
+}
+
+func (r *readIndexExecutor) isGlobalSort() bool {
+	return len(r.cloudStorageURI) > 0
 }
 
 func (r *readIndexExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (

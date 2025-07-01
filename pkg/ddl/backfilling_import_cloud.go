@@ -26,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -39,26 +41,31 @@ type cloudImportExecutor struct {
 	ptbl          table.PhysicalTable
 	bc            ingest.BackendCtx
 	cloudStoreURI string
+	metric        *lightningmetric.Common
 }
 
 func newCloudImportExecutor(
 	job *model.Job,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
-	bcGetter func() (ingest.BackendCtx, error),
+	ctx context.Context,
+	bcGetter func(context.Context) (ingest.BackendCtx, error),
 	cloudStoreURI string,
 ) (*cloudImportExecutor, error) {
-	bc, err := bcGetter()
-	if err != nil {
-		return nil, err
-	}
-	return &cloudImportExecutor{
+	c := &cloudImportExecutor{
 		job:           job,
 		indexes:       indexes,
 		ptbl:          ptbl,
-		bc:            bc,
 		cloudStoreURI: cloudStoreURI,
-	}, nil
+	}
+	c.metric = metrics.RegisterLightningCommonMetricsForDDL(c.job.ID)
+	ctx = lightningmetric.WithCommonMetric(ctx, c.metric)
+	bc, err := bcGetter(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c.bc = bc
+	return c, nil
 }
 
 func (*cloudImportExecutor) Init(ctx context.Context) error {
@@ -140,6 +147,7 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
 	// cleanup backend context
 	ingest.LitBackCtxMgr.Unregister(m.job.ID)
+	metrics.UnregisterLightningCommonMetricsForDDL(m.job.ID, m.metric)
 	return nil
 }
 
