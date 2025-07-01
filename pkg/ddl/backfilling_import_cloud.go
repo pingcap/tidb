@@ -45,26 +45,25 @@ type cloudImportExecutor struct {
 }
 
 func newCloudImportExecutor(
+	ctx context.Context,
 	job *model.Job,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
-	ctx context.Context,
 	bcGetter func(context.Context) (ingest.BackendCtx, error),
 	cloudStoreURI string,
-) (*cloudImportExecutor, error) {
-	c := &cloudImportExecutor{
+) (c *cloudImportExecutor, err error) {
+	c = &cloudImportExecutor{
 		job:           job,
 		indexes:       indexes,
 		ptbl:          ptbl,
 		cloudStoreURI: cloudStoreURI,
+		metric:        metrics.RegisterLightningCommonMetricsForDDL(job.ID),
 	}
-	c.metric = metrics.RegisterLightningCommonMetricsForDDL(c.job.ID)
 	ctx = lightningmetric.WithCommonMetric(ctx, c.metric)
-	bc, err := bcGetter(ctx)
+	c.bc, err = bcGetter(ctx)
 	if err != nil {
 		return nil, err
 	}
-	c.bc = bc
 	return c, nil
 }
 

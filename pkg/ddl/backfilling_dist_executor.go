@@ -124,14 +124,14 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.BaseTaskExecutor.Ctx(), s.getBackendCtx, cloudStorageURI, estRowSize)
+		return newReadIndexExecutor(s.BaseTaskExecutor.Ctx(), ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(jobMeta.ID, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return newCloudImportExecutor(jobMeta, indexInfos, tbl, s.BaseTaskExecutor.Ctx(), s.getBackendCtx, cloudStorageURI)
+		return newCloudImportExecutor(s.BaseTaskExecutor.Ctx(), jobMeta, indexInfos, tbl, s.getBackendCtx, cloudStorageURI)
 	default:
 		// should not happen, caller has checked the stage
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)

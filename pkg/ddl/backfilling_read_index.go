@@ -52,7 +52,6 @@ type readIndexExecutor struct {
 	cloudStorageURI string
 
 	bc          ingest.BackendCtx
-	bcGetter    func(context.Context) (ingest.BackendCtx, error)
 	curRowCount *atomic.Int64
 
 	subtaskSummary sync.Map // subtaskID => readIndexSummary
@@ -66,17 +65,17 @@ type readIndexSummary struct {
 }
 
 func newReadIndexExecutor(
+	ctx context.Context,
 	d *ddl,
 	job *model.Job,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	jc *ReorgContext,
-	ctx context.Context,
 	bcGetter func(context.Context) (ingest.BackendCtx, error),
 	cloudStorageURI string,
 	avgRowSize int,
-) (*readIndexExecutor, error) {
-	r := &readIndexExecutor{
+) (r *readIndexExecutor, err error) {
+	r = &readIndexExecutor{
 		d:               d,
 		job:             job,
 		indexes:         indexes,
@@ -90,15 +89,14 @@ func newReadIndexExecutor(
 		r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
 		ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
 	}
-	bc, err := bcGetter(ctx)
+	r.bc, err = bcGetter(ctx)
 	if err != nil {
 		return nil, err
 	}
-	r.bc = bc
 	return r, nil
 }
 
-func (readIndexExecutor) Init(_ context.Context) error {
+func (*readIndexExecutor) Init(_ context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
 	return nil
 }
