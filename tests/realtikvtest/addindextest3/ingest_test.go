@@ -486,7 +486,7 @@ func testAddIndexDiskQuotaTS(t *testing.T, tk *testkit.TestKit) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackAfterFn", func() {
 		counter--
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/duringBackendImportEngine", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/ReadyForImportEngine", func() {
 		assert.Equal(t, counter, 0)
 	})
 	tk.MustExec("alter table t add index idx_test2(b);")
