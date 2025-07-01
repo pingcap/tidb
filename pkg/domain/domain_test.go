@@ -27,12 +27,9 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -499,21 +496,5 @@ func TestIsAnalyzeTableSQL(t *testing.T) {
 
 	for _, tt := range tests {
 		require.True(t, isAnalyzeTableSQL(tt.sql))
-	}
-}
-
-func TestShouldLoadSysKSAdditionally(t *testing.T) {
-	if kerneltype.IsClassic() {
-		require.False(t, shouldLoadSysKSAdditionally(nil))
-	} else {
-		ksMeta := keyspacepb.KeyspaceMeta{}
-		ksMeta.Id = 2
-		ksMeta.Name = "ks1"
-		s, err := mockstore.NewMockStore(mockstore.WithKeyspaceMeta(&ksMeta))
-		require.NoError(t, err)
-		require.True(t, shouldLoadSysKSAdditionally(s))
-
-		ksMeta.Name = keyspace.System
-		require.False(t, shouldLoadSysKSAdditionally(s))
 	}
 }

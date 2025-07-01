@@ -14,6 +14,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/distsql/context",
+        "//pkg/domain/sqlsvrapi",
         "//pkg/expression/exprctx",
         "//pkg/expression/sessionexpr",
         "//pkg/extension",

@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -119,6 +120,8 @@ type Context interface {
 	GetLatestISWithoutSessExt() infoschema.MetaOnlyInfoSchema
 	// GetSchemaValidator returns the schema validator.
 	GetSchemaValidator() validatorapi.Validator
+	// GetSQLServer returns the sqlsvrapi.Server.
+	GetSQLServer() sqlsvrapi.Server
 
 	GetSessionVars() *variable.SessionVars
 
