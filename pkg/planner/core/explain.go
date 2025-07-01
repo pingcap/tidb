@@ -78,7 +78,7 @@ func (p *PhysicalIndexScan) ExplainNormalizedInfo() string {
 	return p.AccessObject().NormalizedString() + ", " + p.OperatorInfo(true)
 }
 
-// OperatorInfo implements dataAccesser interface.
+// OperatorInfo implements DataAccesser interface.
 func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	redact := p.SCtx().GetSessionVars().EnableRedactLog
@@ -188,7 +188,7 @@ func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
 	return p.AccessObject().NormalizedString() + ", " + p.OperatorInfo(true)
 }
 
-// OperatorInfo implements dataAccesser interface.
+// OperatorInfo implements DataAccesser interface.
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	if infoschema.IsClusterTableByName(p.DBName.L, p.Table.Name.L) {
 		return ""
@@ -1020,7 +1020,7 @@ func (p *PhysicalMemTable) ExplainInfo() string {
 	return accessObject + ", " + operatorInfo
 }
 
-// OperatorInfo implements dataAccesser interface.
+// OperatorInfo implements DataAccesser interface.
 func (p *PhysicalMemTable) OperatorInfo(_ bool) string {
 	if p.Extractor != nil {
 		return p.Extractor.ExplainInfo(p)
