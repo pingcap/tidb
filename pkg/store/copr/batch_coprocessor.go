@@ -1137,7 +1137,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store.kvStore, keyRanges, req.StoreType, false, 0, false, 0, partitionIDs, tiflashcompute.DispatchPolicyInvalid, option.TiFlashReplicaRead, option.AppendWarning)
 	} else {
 		if req.StoreType == kv.TiFlash && req.FullText {
-			ranges := NewKeyRanges([]kv.KeyRange{{StartKey: nil, EndKey: nil}}) // Mock Range, -inf to inf
+			ranges := NewKeyRanges(req.KeyRanges.FirstPartitionRange())
 			tasks, err = buildBatchCopTasksForFullText(c.store.kvStore, req.FullTextInfo.TableID, req.FullTextInfo.IndexID, req.FullTextInfo.ExecutorID, ranges)
 		} else {
 			// TODO: merge the if branch.
@@ -1613,8 +1613,9 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 
 func buildBatchCopTasksForFullText(store *kvStore, tableID int64, indexID int64, executorID string, keyRanges *KeyRanges) ([]*batchCopTask, error) {
 	cmdType := tikvrpc.CmdBatchCop
+	cache := store.GetTiCIShardCache()
 	tasks := make([]*batchCopTask, 0)
-	ret, err := store.GetTiCIShardCache().ScanRanges(context.TODO(), tableID, indexID, keyRanges.ToRanges(), 100)
+	ret, err := cache.BatchLocateKeyRanges(context.TODO(), tableID, indexID, keyRanges.ToRanges())
 	if err != nil {
 		return nil, err
 	}
@@ -1628,7 +1629,11 @@ func buildBatchCopTasksForFullText(store *kvStore, tableID int64, indexID int64,
 		if _, ok := storeShard[shard.localCacheAddrs[0]]; !ok {
 			storeShard[shard.localCacheAddrs[0]] = make([]*coprocessor.ShardInfo, 0)
 		}
-		storeShard[shard.localCacheAddrs[0]] = append(storeShard[shard.localCacheAddrs[0]], &shard.ShardInfo)
+		storeShard[shard.localCacheAddrs[0]] = append(storeShard[shard.localCacheAddrs[0]], &coprocessor.ShardInfo{
+			ShardId:    shard.ShardID,
+			ShardEpoch: shard.Epoch,
+			Ranges:     shard.Ranges.ToPBRanges(),
+		})
 	}
 
 	for addr, shardInfos := range storeShard {

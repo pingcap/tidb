@@ -21,11 +21,12 @@
 package tici
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -904,8 +905,8 @@ func (x *AppendFragMetaResponse) GetStatus() int32 {
 // Key range definition for shard cache queries
 type KeyRange struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	StartKey      string                 `protobuf:"bytes,1,opt,name=start_key,json=startKey,proto3" json:"start_key,omitempty"`
-	EndKey        string                 `protobuf:"bytes,2,opt,name=end_key,json=endKey,proto3" json:"end_key,omitempty"`
+	StartKey      []byte                 `protobuf:"bytes,1,opt,name=start_key,json=startKey,proto3" json:"start_key,omitempty"`
+	EndKey        []byte                 `protobuf:"bytes,2,opt,name=end_key,json=endKey,proto3" json:"end_key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -940,18 +941,18 @@ func (*KeyRange) Descriptor() ([]byte, []int) {
 	return file_tici_proto_rawDescGZIP(), []int{11}
 }
 
-func (x *KeyRange) GetStartKey() string {
+func (x *KeyRange) GetStartKey() []byte {
 	if x != nil {
 		return x.StartKey
 	}
-	return ""
+	return nil
 }
 
-func (x *KeyRange) GetEndKey() string {
+func (x *KeyRange) GetEndKey() []byte {
 	if x != nil {
 		return x.EndKey
 	}
-	return ""
+	return nil
 }
 
 // Shard local cache information
@@ -1589,8 +1590,8 @@ func (x *MarkTableUploadFinishedResponse) GetErrorMessage() string {
 type ShardManifestHeader struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ShardId       uint64                 `protobuf:"varint,1,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
-	StartKey      string                 `protobuf:"bytes,2,opt,name=start_key,json=startKey,proto3" json:"start_key,omitempty"`
-	EndKey        string                 `protobuf:"bytes,3,opt,name=end_key,json=endKey,proto3" json:"end_key,omitempty"`
+	StartKey      []byte                 `protobuf:"bytes,2,opt,name=start_key,json=startKey,proto3" json:"start_key,omitempty"`
+	EndKey        []byte                 `protobuf:"bytes,3,opt,name=end_key,json=endKey,proto3" json:"end_key,omitempty"`
 	Epoch         uint64                 `protobuf:"varint,4,opt,name=epoch,proto3" json:"epoch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1633,18 +1634,18 @@ func (x *ShardManifestHeader) GetShardId() uint64 {
 	return 0
 }
 
-func (x *ShardManifestHeader) GetStartKey() string {
+func (x *ShardManifestHeader) GetStartKey() []byte {
 	if x != nil {
 		return x.StartKey
 	}
-	return ""
+	return nil
 }
 
-func (x *ShardManifestHeader) GetEndKey() string {
+func (x *ShardManifestHeader) GetEndKey() []byte {
 	if x != nil {
 		return x.EndKey
 	}
-	return ""
+	return nil
 }
 
 func (x *ShardManifestHeader) GetEpoch() uint64 {
