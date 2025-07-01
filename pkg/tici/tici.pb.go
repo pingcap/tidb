@@ -330,8 +330,8 @@ func (x *ReaderNodeStatus) GetCacheHitRate() float64 {
 // however, just leave them here.
 type WorkerNodeShardStatus struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
-	StartKey string                 `protobuf:"bytes,1,opt,name=start_key,json=startKey,proto3" json:"start_key,omitempty"`
-	EndKey   string                 `protobuf:"bytes,2,opt,name=end_key,json=endKey,proto3" json:"end_key,omitempty"`
+	StartKey []byte                 `protobuf:"bytes,1,opt,name=start_key,json=startKey,proto3" json:"start_key,omitempty"`
+	EndKey   []byte                 `protobuf:"bytes,2,opt,name=end_key,json=endKey,proto3" json:"end_key,omitempty"`
 	// TODO shard_id is unique across tables and indexes.
 	// We still need them because in meta service we are not currently maintain this correspondence.
 	TableId       int64  `protobuf:"varint,3,opt,name=table_id,json=tableId,proto3" json:"table_id,omitempty"`
@@ -373,18 +373,18 @@ func (*WorkerNodeShardStatus) Descriptor() ([]byte, []int) {
 	return file_tici_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *WorkerNodeShardStatus) GetStartKey() string {
+func (x *WorkerNodeShardStatus) GetStartKey() []byte {
 	if x != nil {
 		return x.StartKey
 	}
-	return ""
+	return nil
 }
 
-func (x *WorkerNodeShardStatus) GetEndKey() string {
+func (x *WorkerNodeShardStatus) GetEndKey() []byte {
 	if x != nil {
 		return x.EndKey
 	}
-	return ""
+	return nil
 }
 
 func (x *WorkerNodeShardStatus) GetTableId() int64 {
