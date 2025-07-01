@@ -332,6 +332,8 @@ func BuildHistAndTopN(
 		return nil, nil, errors.Trace(err)
 	}
 	curCnt := float64(0)
+	// sampleNDV is the number of distinct values in the samples, which may differ from the real NDV due to sampling.
+	sampleNDV := int64(0)
 	var corrXYSum float64
 
 	// Iterate through the samples
@@ -351,6 +353,8 @@ func BuildHistAndTopN(
 			curCnt++
 			continue
 		}
+		// Track the NDV within the sample.
+		sampleNDV++
 		// case 2, meet a different value: counting for the "current" is complete
 		// case 2-1, do not add a count of 1 if we're sampling or if we've already collected 10% of the topN
 		if curCnt == 1 && allowPruning && (len(topNList) >= (numTopN/10) || sampleFactor > 1) {
@@ -408,20 +412,25 @@ func BuildHistAndTopN(
 			topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
 			if len(topNList) > numTopN {
 				topNList = topNList[:numTopN]
+			} else if allowPruning && sampleFactor > 1 && ndv > sampleNDV && len(topNList) == int(sampleNDV) {
+				// If we're sampling, and TopN contains everything in the sample - trim TopN to 1 less. This can
+				// help address issues in optimizer cardinality estimation if TopN contains all values in the sample,
+				// but the length of the TopN is less than the true column/index NDV.
+				topNList = topNList[:len(topNList)-1]
 			}
 		}
 	}
 
 	if allowPruning {
-		topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
+		topNList = pruneTopNItem(topNList, sampleNDV, nullCount, sampleNum, count)
 	}
 
 	topn := &TopN{TopN: topNList}
 	lenTopN := int64(len(topn.TopN))
 
-	// Step2: exclude TopN from samples if the NDV is larger than the number of topN items.
+	// Step2: exclude TopN from samples if the sample NDV is larger than the number of topN items.
 	lenSamples := int64(len(samples))
-	if lenTopN > 0 && lenTopN < hg.NDV && lenSamples > 0 {
+	if lenTopN > 0 && lenTopN < sampleNDV && lenSamples > 0 {
 		for i := int64(0); i < lenSamples; i++ {
 			sampleBytes, err := getComparedBytes(samples[i].Value)
 			if err != nil {
@@ -484,14 +493,14 @@ func BuildHistAndTopN(
 		topNTotalCount += topn.TopN[i].Count
 	}
 
-	if hg.NDV <= lenTopN {
+	if sampleNDV <= lenTopN {
 		// If we've collected everything  - don't create any buckets
 		return hg, topn, nil
 	}
 
 	// Step3: build histogram with the rest samples
 	if lenSamples > 0 {
-		remainingNDV := ndv - lenTopN
+		remainingNDV := sampleNDV - lenTopN
 		// if we pruned the topN, it means that there are no remaining skewed values in the samples
 		if lenTopN < int64(numTopN) && numBuckets == 256 {
 			// set the number of buckets to be the number of remaining distinct values divided by 2
