@@ -140,10 +140,6 @@ func doRecoveryData(ctx context.Context, resolveTS uint64, allStores []*metapb.S
 		return totalRegions, recoveryError{error: err, atStage: StageRecovering}
 	}
 
-	if err := recovery.WaitApply(ctx); err != nil {
-		return totalRegions, recoveryError{error: err, atStage: StageRecovering}
-	}
-
 	if err := recovery.PrepareFlashbackToVersion(ctx, resolveTS, restoreTS-1); err != nil {
 		return totalRegions, recoveryError{error: err, atStage: StageFlashback}
 	}
@@ -228,7 +224,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 	totalStores := len(recovery.allStores)
 	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, common.MaxStoreConcurrency)), "Collect Region Meta") // TODO: int overflow?
 
-	// TODO: optimize the ErroGroup when TiKV is panic
+	// TODO: optimize the ErrorGroup when TiKV is panic
 	metaChan := make(chan StoreMeta, 1024)
 	defer close(metaChan)
 
@@ -399,6 +395,7 @@ func (recovery *Recovery) SpawnTiKVShutDownWatchers(ctx context.Context) {
 	go mainLoop()
 }
 
+<<<<<<< HEAD
 // WaitApply send wait apply to all tikv ensure all region peer apply log into the last
 func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
@@ -435,6 +432,8 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 	return eg.Wait()
 }
 
+=======
+>>>>>>> bf8d4740700 (restore_data: remove wait apply phase (#50316))
 // prepare the region for flashback the data, the purpose is to stop region service, put region in flashback state
 func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, resolveTS uint64, startTS uint64) (err error) {
 	retryState := utils.InitialRetryState(utils.FlashbackRetryTime, utils.FlashbackWaitInterval, utils.FlashbackMaxWaitInterval)
