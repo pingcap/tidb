@@ -63,7 +63,6 @@ func TestOpenCloseImportCleanUpEngine(t *testing.T) {
 	defer s.tearDownTest()
 	ctx := context.Background()
 	engineUUID := uuid.MustParse("902efee3-a3f9-53d4-8c82-f12fb1900cd1")
-	engineID := int32(0)
 
 	openCall := s.mockBackend.EXPECT().
 		OpenEngine(ctx, &backend.EngineConfig{}, engineUUID).
@@ -73,7 +72,7 @@ func TestOpenCloseImportCleanUpEngine(t *testing.T) {
 		Return(nil).
 		After(openCall)
 	importCall := s.mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID, engineID, gomock.Any(), gomock.Any()).
+		ImportEngine(ctx, engineUUID, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil).
 		After(closeCall)
 	s.mockBackend.EXPECT().
