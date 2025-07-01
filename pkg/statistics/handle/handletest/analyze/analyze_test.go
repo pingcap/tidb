@@ -212,6 +212,7 @@ func TestAnalyzeWithDynamicPartitionPruneMode(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
 	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	tk.MustExec(`create table t (a int, key(a)) partition by range(a)
 					(partition p0 values less than (10),
 					partition p1 values less than (22))`)
