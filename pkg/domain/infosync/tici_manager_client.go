@@ -57,6 +57,7 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 			Type:         int32(tblInfo.Columns[offset].GetType()),
 			ColumnLength: int32(tblInfo.Columns[offset].FieldType.StorageLength()),
 			Decimal:      int32(tblInfo.Columns[offset].GetDecimal()),
+			Flag:         uint32(tblInfo.Columns[offset].GetFlag()),
 			DefaultVal:   tblInfo.Columns[offset].DefaultValueBit,
 			IsPrimaryKey: mysql.HasPriKeyFlag(tblInfo.Columns[offset].GetFlag()),
 			IsArray:      len(indexInfo.Columns) > 1,
@@ -93,6 +94,7 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 			DatabaseName: schemaName,
 			Version:      int64(tblInfo.Version),
 			Columns:      tableColumns,
+			IsClustered:  tblInfo.HasClusteredIndex(),
 		},
 	}
 	resp, err := t.metaServiceClient.CreateIndex(ctx, req)
