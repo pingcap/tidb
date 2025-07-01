@@ -599,7 +599,7 @@ func UpdateTiDBConfig() {
 		if kerneltype.IsNextGen() {
 			conf.TiKVWorkerURL = "localhost:19000"
 			conf.KeyspaceName = keyspace.System
-			conf.Instance.TiDBServiceScope = handle.NextgenSEMTargetScope
+			conf.Instance.TiDBServiceScope = handle.NextGenTargetScope
 		}
 	})
 }
