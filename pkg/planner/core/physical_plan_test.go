@@ -552,7 +552,7 @@ func TestAvoidColumnEvaluatorForProjBelowUnion(t *testing.T) {
 			return projsBelowUnion, normalProjs
 		}
 		switch v := p.(type) {
-		case *core.PhysicalUnionAll:
+		case *physicalop.PhysicalUnionAll:
 			for _, child := range v.Children() {
 				if proj, ok := child.(*core.PhysicalProjection); ok {
 					projsBelowUnion = append(projsBelowUnion, proj)
