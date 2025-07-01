@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -581,10 +582,21 @@ func constructIndexJoinStatic(
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	// outer side expected cnt will be amplified by the prop.ExpectedCnt / p.StatsInfo().RowCount with same ratio.
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
-	if prop.ExpectedCnt < p.StatsInfo().RowCount {
-		expCntScale := prop.ExpectedCnt / p.StatsInfo().RowCount
-		chReqProps[outerIdx].ExpectedCnt = p.Children()[outerIdx].StatsInfo().RowCount * expCntScale
+	orderRatio := p.SCtx().GetSessionVars().OptOrderingIdxSelRatio
+	// Record the variable usage for explain explore.
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
+	outerRowCount := p.Children()[outerIdx].StatsInfo().RowCount
+	estimatedRowCount := p.StatsInfo().RowCount
+	if (prop.ExpectedCnt < estimatedRowCount) ||
+		(orderRatio > 0 && outerRowCount > estimatedRowCount && prop.ExpectedCnt < outerRowCount && estimatedRowCount > 0) {
+		// Apply the orderRatio to recognize that a large outer table scan may
+		// read additional rows before the inner table reaches the limit values
+		rowsToMeetFirst := max(0.0, (outerRowCount-estimatedRowCount)*orderRatio)
+		expCntScale := prop.ExpectedCnt / estimatedRowCount
+		expectedCnt := (outerRowCount * expCntScale) + rowsToMeetFirst
+		chReqProps[outerIdx].ExpectedCnt = expectedCnt
 	}
+
 	// inner side should pass down the indexJoinProp, which contains the runtime constant inner key, which is used to build the underlying index/pk range.
 	chReqProps[1-outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, IndexJoinProp: indexJoinProp}
 
