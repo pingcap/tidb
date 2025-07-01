@@ -140,7 +140,6 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 		if common.IsRetryableError(err) {
 			return err
 		}
-		failpoint.Inject("beforeResetTableMode", func() {})
 		failpoint.Inject("errorWhenResetTableMode", func() {
 			failpoint.Return(errors.New("occur an error when reset table mode to normal"))
 		})
