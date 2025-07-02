@@ -535,7 +535,7 @@ func (*ImplUnionAll) OnImplement(expr *memo.GroupExpr, reqProp *property.Physica
 	for i := range expr.Children {
 		chReqProps[i] = &property.PhysicalProperty{ExpectedCnt: reqProp.ExpectedCnt}
 	}
-	physicalUnion := plannercore.PhysicalUnionAll{}.Init(
+	physicalUnion := physicalop.PhysicalUnionAll{}.Init(
 		logicalUnion.SCtx(),
 		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
 		logicalUnion.QueryBlockOffset(),

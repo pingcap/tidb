@@ -75,14 +75,14 @@ func (pe *projInjector) inject(plan base.PhysicalPlan) base.PhysicalPlan {
 		plan = InjectProjBelowSort(p, p.ByItems)
 	case *physicalop.NominalSort:
 		plan = TurnNominalSortIntoProj(p, p.OnlyColumn, p.ByItems)
-	case *PhysicalUnionAll:
+	case *physicalop.PhysicalUnionAll:
 		plan = injectProjBelowUnion(p)
 	}
 	return plan
 }
 
-func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
-	if !un.mpp {
+func injectProjBelowUnion(un *physicalop.PhysicalUnionAll) *physicalop.PhysicalUnionAll {
+	if !un.Mpp {
 		return un
 	}
 	for i, ch := range un.Children() {

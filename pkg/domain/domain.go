@@ -2177,7 +2177,12 @@ func (do *Domain) deltaUpdateTickerWorker() {
 	lease := do.statsLease
 	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
 	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
-	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
+	updateDuration := 20*lease + randDuration
+	failpoint.Inject("deltaUpdateDuration", func() {
+		updateDuration = 20 * time.Second
+	})
+
+	deltaUpdateTicker := time.NewTicker(updateDuration)
 	statsHandle := do.StatsHandle()
 	for {
 		select {
