@@ -3789,9 +3789,6 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 func exhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	la := lp.(*logicalop.LogicalAggregation)
 	preferHash, preferStream := la.ResetHintIfConflicted()
-	if strings.Contains(lp.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "select * from (select count(distinct deptid) a from employee) e1 join employee e2 on e1.a = e2.deptid") {
-		fmt.Println(1)
-	}
 	hashAggs := getHashAggs(la, prop)
 	if len(hashAggs) > 0 && preferHash {
 		return hashAggs, true, nil
