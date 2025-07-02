@@ -126,50 +126,6 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
 }
 
-func TestSplit(t *testing.T) {
-	cases := []struct {
-		input    []int
-		conc     int
-		expected [][]int
-	}{
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     1,
-			expected: [][]int{{1, 2, 3, 4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     2,
-			expected: [][]int{{1, 2, 3}, {4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     0,
-			expected: [][]int{{1, 2, 3, 4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     5,
-			expected: [][]int{{1}, {2}, {3}, {4}, {5}},
-		},
-		{
-			input:    []int{},
-			conc:     5,
-			expected: nil,
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     100,
-			expected: [][]int{{1}, {2}, {3}, {4}, {5}},
-		},
-	}
-
-	for _, c := range cases {
-		got := split(c.input, c.conc)
-		require.Equal(t, c.expected, got)
-	}
-}
-
 func prepareKVFiles(t *testing.T, store storage.ExternalStorage, contents [][]kvPair) (dataFiles, statFiles []string) {
 	ctx := context.Background()
 	for i, c := range contents {
@@ -409,7 +365,7 @@ func TestChangeEngineConcurrency(t *testing.T) {
 
 		// Directly call cancel after UpdateResource, and generator should not be blocked
 		time.Sleep(time.Millisecond * 300)
-		e.UpdateResource(1, 1024)
+		e.UpdateResource(ctx, 1, 1024)
 		cancel()
 
 		require.ErrorIs(t, eg.Wait(), context.Canceled)
@@ -419,7 +375,7 @@ func TestChangeEngineConcurrency(t *testing.T) {
 		resetFn()
 
 		time.Sleep(time.Millisecond * 300)
-		e.UpdateResource(1, 1024)
+		e.UpdateResource(ctx, 1, 1024)
 		require.NoError(t, eg.Wait())
 	})
 }

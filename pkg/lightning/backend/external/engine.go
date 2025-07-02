@@ -139,7 +139,11 @@ type Engine struct {
 	checkHotspot bool
 
 	workerConcurrency atomic.Int32
-	ts                uint64
+
+	// readyCh is used to notify that the engine's resource has been updated
+	readyCh chan struct{}
+
+	ts uint64
 
 	totalKVSize  int64
 	totalKVCount int64
@@ -206,6 +210,7 @@ func NewExternalEngine(
 		),
 		checkHotspot:      checkHotspot,
 		workerConcurrency: *atomic.NewInt32(int32(workerConcurrency)),
+		readyCh:           make(chan struct{}),
 		ts:                ts,
 		totalKVSize:       totalKVSize,
 		totalKVCount:      totalKVCount,
@@ -215,26 +220,6 @@ func NewExternalEngine(
 		onDup:             onDup,
 		filePrefix:        filePrefix,
 	}
-}
-
-func split[T any](in []T, groupNum int) [][]T {
-	if len(in) == 0 {
-		return nil
-	}
-	if groupNum <= 0 {
-		groupNum = 1
-	}
-	ceil := (len(in) + groupNum - 1) / groupNum
-	ret := make([][]T, 0, groupNum)
-	l := len(in)
-	for i := 0; i < l; i += ceil {
-		if i+ceil > l {
-			ret = append(ret, in[i:])
-		} else {
-			ret = append(ret, in[i:i+ceil])
-		}
-	}
-	return ret
 }
 
 func getFilesReadConcurrency(
@@ -451,9 +436,10 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 	return nil
 }
 
-// checkConcurrencyChange is used to check concurrency change.
-// Before the concurrency change, we need to make sure all previous data is consumed
-// and create new memory pool
+// checkConcurrencyChange checks if concurrency change.
+// If changed, we need to recreate the memory pool. Before this,
+// we should wait for all previous data being consumed. Then we
+// can drop and create new memory pool.
 func (e *Engine) checkConcurrencyChange(ctx context.Context, currBatchSize int) int {
 	newBatchSize := int(e.workerConcurrency.Load())
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
@@ -508,6 +494,9 @@ OUTER:
 		zap.Int("new batch size", newBatchSize),
 	)
 
+	// Notify that we have changed the resource usage
+	e.readyCh <- struct{}{}
+
 	return newBatchSize
 }
 
@@ -527,6 +516,7 @@ func (e *Engine) LoadIngestData(
 			}
 		}()
 	}
+
 	// try to make every worker busy for each batch
 	currBatchSize := int(e.workerConcurrency.Load())
 	logutil.Logger(ctx).Info("load ingest data", zap.Int("current batchSize", currBatchSize))
@@ -593,13 +583,28 @@ func (e *Engine) buildIngestData(kvs []kvPair, buf []*membuf.Buffer) *MemoryInge
 	}
 }
 
-// UpdateResource changes the concurrency of this engine.
-func (e *Engine) UpdateResource(concurrency int, memCapacity int64) {
-	// New values will be applied in the next call of LoadIngestData
+// UpdateResource changes the concurrency and the memory pool size of this engine.
+func (e *Engine) UpdateResource(ctx context.Context, concurrency int, memCapacity int64) {
 	e.workerConcurrency.Store(int32(concurrency))
 	e.memLimit = int(float64(memCapacity) / writeStepMemShareCount * 3)
-	logutil.BgLogger().Info("set new memlimit for load range data",
-		zap.String("memLimit", units.BytesSize(float64(e.memLimit))))
+
+	// Wait for current data being consumed and new memory pool created.
+	for {
+		select {
+		case <-ctx.Done():
+			logutil.BgLogger().Info("context done when updating resource, skip update")
+			return
+		case _, ok := <-e.readyCh:
+			if ok {
+				logutil.BgLogger().Info("set new memlimit for external engine",
+					zap.Int("concurrency", concurrency),
+					zap.String("memLimit", units.BytesSize(float64(e.memLimit))))
+			} else {
+				logutil.BgLogger().Info("engine closed when updating resource, skip update")
+			}
+			return
+		}
+	}
 }
 
 // KVStatistics returns the total kv size and total kv count.
@@ -653,6 +658,7 @@ func (e *Engine) Close() error {
 		e.largeBlockBufPool = nil
 	}
 	e.storage.Close()
+	close(e.readyCh)
 	return nil
 }
 

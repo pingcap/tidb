@@ -433,7 +433,10 @@ type BackendConfig struct {
 	MaxConnPerStore int
 	// compress type when write or ingest into tikv
 	ConnCompressType config.CompressionType
-	// concurrency of generateJobForRange and import(write & ingest) workers
+	// concurrency is used in these places:
+	// 1. generateJobForRange parallelism, only for local engine.
+	// 2. data size loaded from LoadIngestData, only for external engine.
+	// 3. region job worker pool size
 	WorkerConcurrency atomic.Int32
 	// batch kv size when writing to TiKV
 	KVWriteBatchSize       int64
@@ -772,17 +775,35 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory impor
 	return true, nil
 }
 
-// SetConcurrency sets the concurrency of the backend
-// It will return an error if the worker with the given id is not started.
-func (local *Backend) SetConcurrency(concurrency int, eid string) error {
-	v, ok := local.workers.Load(eid)
+// UpdateResource update the resource(concurrency, memory) of current running job.
+// The engineUUID is used to get corresponding engine.
+// If the job is not started yet, it will return an error.
+func (local *Backend) UpdateResource(ctx context.Context, engineUUID uuid.UUID, concurrency int, memCapacity int64) error {
+	engine, ok := local.engineMgr.getExternalEngine(engineUUID)
 	if !ok {
-		// worker not created, let framework retry
-		return goerrors.New("worker not running")
+		log.FromContext(ctx).Info("engine has been closed")
+		return nil
 	}
-	worker, _ := v.(*jobOperator)
-	worker.TuneWorkerPoolSize(int32(concurrency), true)
+
+	v, ok := local.workers.Load(engine.ID())
+	if !ok {
+		// let framework retry
+		return goerrors.New("worker not started")
+	}
+
+	op, _ := v.(*jobOperator)
+	op.TuneWorkerPoolSize(int32(concurrency), true)
 	local.WorkerConcurrency.Store(int32(concurrency))
+
+	e, _ := engine.(*external.Engine)
+	e.UpdateResource(ctx, concurrency, memCapacity)
+
+	log.FromContext(ctx).Info("update backend resource finished",
+		zap.String("engine", engine.ID()),
+		zap.Int("concurrency", concurrency),
+		zap.Int64("memCapacity", memCapacity),
+	)
+
 	return nil
 }
 
@@ -1151,21 +1172,6 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 			storeType, store.Store.Address, storeType)
 	}
 	return nil
-}
-
-// GetExternalEngine returns the external engine by uuid.
-// If the engine is not found or not an external engine, it returns nil.
-// It's used to dynamically update the resource used by the external engine
-func (local *Backend) GetExternalEngine(engineUUID uuid.UUID) *external.Engine {
-	e, ok := local.engineMgr.getExternalEngine(engineUUID)
-	if !ok {
-		return nil
-	}
-	ext, ok := e.(*external.Engine)
-	if !ok {
-		return nil
-	}
-	return ext
 }
 
 // ImportEngine imports an engine to TiKV.
