@@ -32,6 +32,12 @@ type Operator interface {
 	String() string
 }
 
+// TunableOperator is the operator which supports modifying pool size.
+type TunableOperator interface {
+	TuneWorkerPoolSize(workerNum int32, wait bool)
+	GetWorkerPoolSize() int32
+}
+
 // AsyncOperator process the data in async way.
 //
 // Eg: The sink of AsyncOperator op1 and the source of op2
@@ -40,6 +46,17 @@ type Operator interface {
 type AsyncOperator[T, R any] struct {
 	ctx  context.Context
 	pool *workerpool.WorkerPool[T, R]
+}
+
+// TuneWorkerPoolSize tunes the worker pool size.
+func (c *AsyncOperator[T, R]) TuneWorkerPoolSize(workerNum int32, wait bool) {
+	// TODO(joechenrh): cp necessary PR here
+	c.pool.Tune(workerNum)
+}
+
+// GetWorkerPoolSize returns the worker pool size.
+func (c *AsyncOperator[T, R]) GetWorkerPoolSize() int32 {
+	return c.pool.Cap()
 }
 
 // NewAsyncOperatorWithTransform create an AsyncOperator with a transform function.
