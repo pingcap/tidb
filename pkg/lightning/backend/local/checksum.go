@@ -529,7 +529,7 @@ func (m *gcTTLManager) start(ctx context.Context) {
 				// we will use the last safe point, as after all job removed, we
 				// will set currentTS to 0.
 				if err := m.doUpdateGCTTL(ctx, 0, m.lastSP.Load()); err != nil {
-					log.FromContext(ctx).Warn("failed to update service safe point, checksum may fail if gc triggered", zap.Error(err))
+					log.FromContext(ctx).Warn("failed to remove service safe point", zap.Error(err))
 				}
 				return
 			}
