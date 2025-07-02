@@ -75,9 +75,13 @@ func (s *mockGCSSuite) cleanupSysTables() {
 }
 
 func (s *mockGCSSuite) prepareAndUseDB(db string) {
-	s.tk.MustExec("drop database if exists " + db)
-	s.tk.MustExec("create database " + db)
-	s.tk.MustExec("use " + db)
+	prepareAndUseDB(db, s.tk)
+}
+
+func prepareAndUseDB(db string, tk *testkit.TestKit) {
+	tk.MustExec("drop database if exists " + db)
+	tk.MustExec("create database " + db)
+	tk.MustExec("use " + db)
 }
 
 func init() {

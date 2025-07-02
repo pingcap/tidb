@@ -36,7 +36,6 @@ import (
 type mergeSortExecutor struct {
 	taskexecutor.BaseStepExecutor
 	jobID         int64
-	idxNum        int
 	indexes       []*model.IndexInfo
 	ptbl          table.PhysicalTable
 	cloudStoreURI string

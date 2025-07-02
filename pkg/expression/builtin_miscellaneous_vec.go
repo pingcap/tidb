@@ -76,12 +76,12 @@ func (b *builtinIsIPv4Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 		return err
 	}
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	for i := range n {
-		// Note that even when the i-th input string is null, the output is
-		// 0 instead of null, therefore we do not set the null bit mask in
-		// result's corresponding row.
-		// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4
+		if buf.IsNull(i) {
+			continue
+		}
 		if isIPv4(buf.GetString(i)) {
 			i64s[i] = 1
 		} else {
@@ -133,21 +133,17 @@ func (b *builtinIsIPv6Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 		return err
 	}
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	for i := range n {
-		// Note that even when the i-th input string is null, the output is
-		// 0 instead of null, therefore we do not set the null bit mask in
-		// result's corresponding row.
-		// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv6
 		if buf.IsNull(i) {
-			i64s[i] = 0
+			continue
+		}
+		ipStr := buf.GetString(i)
+		if ip := net.ParseIP(ipStr); ip != nil && !isIPv4(ipStr) {
+			i64s[i] = 1
 		} else {
-			ipStr := buf.GetString(i)
-			if ip := net.ParseIP(ipStr); ip != nil && !isIPv4(ipStr) {
-				i64s[i] = 1
-			} else {
-				i64s[i] = 0
-			}
+			i64s[i] = 0
 		}
 	}
 	return nil
@@ -257,23 +253,23 @@ func (b *builtinIsIPv4CompatSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 		return err
 	}
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	prefixCompat := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 	for i := range n {
 		if buf.IsNull(i) {
+			continue
+		}
+		// Note that the input should be IP address in byte format.
+		// For IPv4, it should be byte slice with 4 bytes.
+		// For IPv6, it should be byte slice with 16 bytes.
+		// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
+		ipAddress := buf.GetBytes(i)
+		if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixCompat) {
+			// Not an IPv6 address, return false
 			i64s[i] = 0
 		} else {
-			// Note that the input should be IP address in byte format.
-			// For IPv4, it should be byte slice with 4 bytes.
-			// For IPv6, it should be byte slice with 16 bytes.
-			// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
-			ipAddress := buf.GetBytes(i)
-			if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixCompat) {
-				// Not an IPv6 address, return false
-				i64s[i] = 0
-			} else {
-				i64s[i] = 1
-			}
+			i64s[i] = 1
 		}
 	}
 	return nil
@@ -395,23 +391,23 @@ func (b *builtinIsIPv4MappedSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 		return err
 	}
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	prefixMapped := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
 	for i := range n {
 		if buf.IsNull(i) {
+			continue
+		}
+		// Note that the input should be IP address in byte format.
+		// For IPv4, it should be byte slice with 4 bytes.
+		// For IPv6, it should be byte slice with 16 bytes.
+		// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
+		ipAddress := buf.GetBytes(i)
+		if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixMapped) {
+			// Not an IPv6 address, return false
 			i64s[i] = 0
 		} else {
-			// Note that the input should be IP address in byte format.
-			// For IPv4, it should be byte slice with 4 bytes.
-			// For IPv6, it should be byte slice with 16 bytes.
-			// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
-			ipAddress := buf.GetBytes(i)
-			if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixMapped) {
-				// Not an IPv6 address, return false
-				i64s[i] = 0
-			} else {
-				i64s[i] = 1
-			}
+			i64s[i] = 1
 		}
 	}
 	return nil

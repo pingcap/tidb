@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -798,7 +799,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalHashAgg{},
 		&plannercore.PhysicalStreamAgg{},
 		&plannercore.PhysicalLimit{},
-		&plannercore.PhysicalSort{},
+		&physicalop.PhysicalSort{},
 		&plannercore.PhysicalTopN{},
 		&plannercore.PhysicalCTE{},
 		&plannercore.PhysicalCTETable{},
@@ -808,7 +809,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalTableDual{},
 		&plannercore.PhysicalWindow{},
 		&plannercore.PhysicalShuffle{},
-		&plannercore.PhysicalUnionAll{},
+		&physicalop.PhysicalUnionAll{},
 	}
 
 	opsNeedsCoveredMask := uint64(1<<len(opsNeedsCovered) - 1)
@@ -1566,9 +1567,7 @@ func TestGetResultRowsCount(t *testing.T) {
 		}
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
-		p, ok := info.Plan.(base.Plan)
-		require.True(t, ok)
-		cnt := executor.GetResultRowsCount(tk.Session().GetSessionVars().StmtCtx, p)
+		cnt := tk.Session().GetSessionVars().StmtCtx.GetResultRowsCount()
 		require.Equal(t, ca.row, cnt, fmt.Sprintf("sql: %v", ca.sql))
 	}
 }
@@ -2632,9 +2631,8 @@ func TestAdmin(t *testing.T) {
 	// check table test
 	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")
 	tk.MustExec("insert admin_test1 (c1) values (21),(22)")
-	r, err = tk.Exec("admin check table admin_test, admin_test1")
-	require.NoError(t, err)
-	require.Nil(t, r)
+	tk.MustExec("admin check table admin_test")
+	tk.MustExec("admin check table admin_test1")
 	// error table name
 	require.Error(t, tk.ExecToErr("admin check table admin_test_error"))
 	// different index values

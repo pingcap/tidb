@@ -64,6 +64,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -248,11 +249,11 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildSet(v)
 	case *plannercore.SetConfig:
 		return b.buildSetConfig(v)
-	case *plannercore.PhysicalSort:
+	case *physicalop.PhysicalSort:
 		return b.buildSort(v)
 	case *plannercore.PhysicalTopN:
 		return b.buildTopN(v)
-	case *plannercore.PhysicalUnionAll:
+	case *physicalop.PhysicalUnionAll:
 		return b.buildUnionAll(v)
 	case *plannercore.Update:
 		return b.buildUpdate(v)
@@ -525,7 +526,6 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Execut
 			dbName:       v.DBName,
 			table:        v.Table,
 			indexInfos:   v.IndexInfos,
-			is:           b.is,
 			err:          &atomic.Pointer[error]{},
 		}
 		return e
@@ -548,7 +548,6 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Execut
 		dbName:       v.DBName,
 		table:        v.Table,
 		indexInfos:   v.IndexInfos,
-		is:           b.is,
 		srcs:         readerExecs,
 		exitCh:       make(chan struct{}),
 		retCh:        make(chan error, len(readerExecs)),
@@ -1026,7 +1025,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 
 func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Executor {
 	// see planBuilder.buildImportInto for detail why we use the latest schema here.
-	latestIS := b.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	latestIS := b.ctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	tbl, ok := latestIS.TableByID(context.Background(), v.Table.TableInfo.ID)
 	if !ok {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
@@ -1467,11 +1466,9 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 			us.cacheTable = cacheData
 		} else if loading {
 			return
-		} else {
-			if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
-				store := b.ctx.GetStore()
-				cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
-			}
+		} else if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
+			store := b.ctx.GetStore()
+			cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
 		}
 	}
 }
@@ -1961,10 +1958,8 @@ func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *
 	// 1 row in set (0.00 sec)
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
 		e.DefaultVal = nil
-	} else {
-		if v.IsFinalAgg() {
-			e.DefaultVal = e.AllocPool.Alloc(exec.RetTypes(e), 1, 1)
-		}
+	} else if v.IsFinalAgg() {
+		e.DefaultVal = e.AllocPool.Alloc(exec.RetTypes(e), 1, 1)
 	}
 	for _, aggDesc := range v.AggFuncs {
 		if aggDesc.HasDistinct || len(aggDesc.OrderByItems) > 0 {
@@ -2490,7 +2485,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 	}
 }
 
-func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) exec.Executor {
+func (b *executorBuilder) buildSort(v *physicalop.PhysicalSort) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2648,7 +2643,7 @@ func (b *executorBuilder) buildMaxOneRow(v *plannercore.PhysicalMaxOneRow) exec.
 	return e
 }
 
-func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) exec.Executor {
+func (b *executorBuilder) buildUnionAll(v *physicalop.PhysicalUnionAll) exec.Executor {
 	childExecs := make([]exec.Executor, len(v.Children()))
 	for i, child := range v.Children() {
 		childExecs[i] = b.build(child)
@@ -5635,14 +5630,10 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) exec.Executor {
 
 	chkSize := b.ctx.GetSessionVars().MaxChunkSize
 	// iterOutTbl will be constructed in CTEExec.Open().
-	var resTbl cteutil.Storage
-	var iterInTbl cteutil.Storage
 	var producer *cteProducer
 	storages, ok := storageMap[v.CTE.IDForStorage]
 	if ok {
 		// Storage already setup.
-		resTbl = storages.ResTbl
-		iterInTbl = storages.IterInTbl
 		producer = storages.Producer
 	} else {
 		if v.SeedPlan == nil {
@@ -5658,12 +5649,12 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) exec.Executor {
 
 		// Setup storages.
 		tps := seedExec.RetFieldTypes()
-		resTbl = cteutil.NewStorageRowContainer(tps, chkSize)
+		resTbl := cteutil.NewStorageRowContainer(tps, chkSize)
 		if err := resTbl.OpenAndRef(); err != nil {
 			b.err = err
 			return nil
 		}
-		iterInTbl = cteutil.NewStorageRowContainer(tps, chkSize)
+		iterInTbl := cteutil.NewStorageRowContainer(tps, chkSize)
 		if err := iterInTbl.OpenAndRef(); err != nil {
 			b.err = err
 			return nil

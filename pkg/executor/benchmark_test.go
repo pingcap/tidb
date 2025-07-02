@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -91,7 +92,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec exec.Executor, schem
 		for _, col := range sg.GroupByItems {
 			byItems = append(byItems, &util.ByItems{Expr: col, Desc: false})
 		}
-		sortPP := &core.PhysicalSort{ByItems: byItems}
+		sortPP := &physicalop.PhysicalSort{ByItems: byItems}
 		sortPP.SetChildren(src)
 		sg.SetChildren(sortPP)
 		tail = sortPP
@@ -325,7 +326,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		for _, col := range partitionBy {
 			byItems = append(byItems, &util.ByItems{Expr: col, Desc: false})
 		}
-		sort := &core.PhysicalSort{ByItems: byItems}
+		sort := &physicalop.PhysicalSort{ByItems: byItems}
 		sort.SetChildren(src)
 		win.SetChildren(sort)
 		tail = sort

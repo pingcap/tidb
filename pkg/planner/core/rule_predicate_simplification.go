@@ -173,13 +173,25 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 	return newPred, specialCase
 }
 
-func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
+func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool) []expression.Expression {
 	simplifiedPredicate := shortCircuitLogicalConstants(sctx, predicates)
+	exprCtx := sctx.GetExprCtx()
+	// In some scenarios, we need to perform constant propagation,
+	// while in others, we merely aim to achieve simplification.
+	// Thus, we utilize a switch to govern this particular logic.
+	if propagateConstant {
+		simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate...)
+	} else {
+		exprs := expression.PropagateConstant(exprCtx, simplifiedPredicate...)
+		if len(exprs) == 1 {
+			if _, ok := exprs[0].(*expression.Constant); ok {
+				simplifiedPredicate = exprs
+			}
+		}
+	}
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	pruneEmptyORBranches(sctx, simplifiedPredicate)
-	exprCtx := sctx.GetExprCtx()
-	simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate)
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
 	return simplifiedPredicate
 }
@@ -267,7 +279,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	}
 	newPredList := make([]expression.Expression, 0, 1)
 	newPredList = append(newPredList, newPred)
-	newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList)
+	newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList...)
 	return unsatisfiableExpression(ctx, newPredList[0])
 }
 
