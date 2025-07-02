@@ -261,7 +261,6 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	if col1 == nil || !col1.Equals(col2) {
 		return false
 	}
-
 	if p1Type == equalPredicate {
 		equalPred = p1
 		otherPred = p2
@@ -272,7 +271,6 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	if equalPred == nil || otherPred == nil {
 		return false
 	}
-
 	// Copy constant from equal predicate into other predicate.
 	equalValue := equalPred.(*expression.ScalarFunction)
 	otherValue := otherPred.(*expression.ScalarFunction)
