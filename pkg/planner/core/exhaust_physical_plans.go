@@ -2331,6 +2331,11 @@ func applyLogicalAggregationHint(lp base.LogicalPlan, physicPlan base.PhysicalPl
 			if _, ok := childTasks[0].(*RootTask); ok {
 				return true
 			}
+			// If the distinct agg can't be allowed to push down, we will consider mpp task type too --- RootTask vs MPPTask
+			// which is try to get the same behavior as before like types := {RootTask} and appended {MPPTask}.
+			if _, ok := childTasks[0].(*MppTask); ok {
+				return true
+			}
 		}
 	} else if la.PreferAggToCop {
 		// If the aggregation is preferred to be pushed down to coprocessor, we will prefer it.
@@ -3784,6 +3789,9 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 func exhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	la := lp.(*logicalop.LogicalAggregation)
 	preferHash, preferStream := la.ResetHintIfConflicted()
+	if strings.Contains(lp.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "select * from (select count(distinct deptid) a from employee) e1 join employee e2 on e1.a = e2.deptid") {
+		fmt.Println(1)
+	}
 	hashAggs := getHashAggs(la, prop)
 	if len(hashAggs) > 0 && preferHash {
 		return hashAggs, true, nil
