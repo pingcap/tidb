@@ -281,6 +281,9 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	if ok1 && ok2 {
 		evalCtx := ctx.GetExprCtx().GetEvalCtx()
 		colCollate := col1.GetType(evalCtx).GetCollate()
+		// Different connection collations can affect the results here, leading to different simplified results and ultimately impacting the execution outcomes.
+		// Observing MySQL v8.0.31, this area does not perform string simplification, so we can directly skip it.
+		// If the collation is not compatible, we cannot simplify the expression.
 		if equalValueType := equalValueConst.GetType(evalCtx); equalValueType.EvalType() == types.ETString &&
 			!collate.CompatibleCollate(equalValueType.GetCollate(), colCollate) {
 			return false
