@@ -526,10 +526,10 @@
         "SQL": "EXPLAIN format = 'verbose' SELECT * FROM  `tbl_cardcore_transaction` `transactio0_` WHERE `transactio0_`.`period` = '202502' AND `transactio0_`.`account_number` = '1901040107462200' ORDER BY `transactio0_`.`transaction_status`, `transactio0_`.`account_number`, `transactio0_`.`entry_date` ASC, `transactio0_`.`id` ASC;",
         "Plan": [
           "Sort_5 1.00 39640.65 root  cardcore_issuing.tbl_cardcore_transaction.transaction_status, cardcore_issuing.tbl_cardcore_transaction.account_number, cardcore_issuing.tbl_cardcore_transaction.entry_date, cardcore_issuing.tbl_cardcore_transaction.id",
-          "└─IndexLookUp_14 1.00 39619.45 root  ",
-          "  ├─IndexRangeScan_11(Build) 16.16 4094.52 cop[tikv] table:transactio0_, index:tbl_cardcore_transaction_ix10(account_number, entry_date, value_date) range:[\"1901040107462200\",\"1901040107462200\"], keep order:false",
-          "  └─Selection_13(Probe) 1.00 5431.27 cop[tikv]  eq(cardcore_issuing.tbl_cardcore_transaction.period, \"202502\")",
-          "    └─TableRowIDScan_12 16.16 4624.68 cop[tikv] table:transactio0_ keep order:false"
+          "└─IndexLookUp_15 1.00 39619.45 root  ",
+          "  ├─IndexRangeScan_12(Build) 16.16 4094.52 cop[tikv] table:transactio0_, index:tbl_cardcore_transaction_ix10(account_number, entry_date, value_date) range:[\"1901040107462200\",\"1901040107462200\"], keep order:false",
+          "  └─Selection_14(Probe) 1.00 5431.27 cop[tikv]  eq(cardcore_issuing.tbl_cardcore_transaction.period, \"202502\")",
+          "    └─TableRowIDScan_13 16.16 4624.68 cop[tikv] table:transactio0_ keep order:false"
         ],
         "Warn": null
       }
@@ -592,9 +592,9 @@
       {
         "SQL": "explain select * from tbl_cardcore_statement s where  s.latest_stmt_print_date = '2024-10-16';",
         "Plan": [
-          "IndexLookUp_10 169960.89 root  ",
-          "├─IndexRangeScan_8(Build) 169960.89 cop[tikv] table:s, index:tbl_cardcore_statement_ix7(latest_stmt_print_date) range:[2024-10-16,2024-10-16], keep order:false",
-          "└─TableRowIDScan_9(Probe) 169960.89 cop[tikv] table:s keep order:false"
+          "IndexLookUp_11 169960.89 root  ",
+          "├─IndexRangeScan_9(Build) 169960.89 cop[tikv] table:s, index:tbl_cardcore_statement_ix7(latest_stmt_print_date) range:[2024-10-16,2024-10-16], keep order:false",
+          "└─TableRowIDScan_10(Probe) 169960.89 cop[tikv] table:s keep order:false"
         ],
         "Warn": null
       }

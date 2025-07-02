@@ -305,7 +305,7 @@ func enumeratePhysicalPlans4Task(
 	return bestTask, cntPlan, false, nil
 }
 
-// todo: remove the taskTypeSatisfied function, it is only used to check the task type in the root, cop, mpp task.
+// TODO: remove the taskTypeSatisfied function, it is only used to check the task type in the root, cop, mpp task.
 func taskTypeSatisfied(propRequired *property.PhysicalProperty, childTask base.Task) bool {
 	// check the root, cop, mpp task type matched the required property.
 	if childTask == nil || propRequired == nil {
