@@ -251,7 +251,12 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 			//if !continueCheck {
 			//	break
 			//}
-			time.Sleep(500 * time.Millisecond) // wait for 500ms before next check
+			if len(ids) == 0 {
+				logutil.BgLogger().Info("no unfinished transactions found, continue to modify schema read only state",
+					zap.String("db", dbInfo.Name.L))
+				break
+			}
+			time.Sleep(100 * time.Millisecond) // wait for 500ms before next check
 		}
 		dbInfo.ReadOnly = args.ReadOnly
 		dbInfo.ReadOnlyState = model.StateNone
