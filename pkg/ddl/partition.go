@@ -217,11 +217,8 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 		}
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
 		updatePartitionInfo(tblInfo)
-		var scatterScope string
-		if val, ok := job.GetSessionVars(vardef.TiDBScatterRegion); ok {
-			scatterScope = val
-		}
-		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, addingDefinitions, scatterScope)
+
+		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, addingDefinitions)
 
 		tblInfo.Partition.DDLState = model.StateNone
 		tblInfo.Partition.DDLAction = model.ActionNone
@@ -2554,11 +2551,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		var scatterScope string
-		if val, ok := job.GetSessionVars(vardef.TiDBScatterRegion); ok {
-			scatterScope = val
-		}
-		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions, scatterScope)
+		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions)
 		failpoint.Inject("truncatePartFail1", func(val failpoint.Value) {
 			if val.(bool) {
 				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
