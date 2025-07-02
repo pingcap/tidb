@@ -109,23 +109,6 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 		return err
 	}
 	s.tableImporter = tableImporter
-
-	taskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(s.store, se, s.tableImporter.Table)
-		if err2 != nil {
-			return err2
-		}
-		if !isEmpty {
-			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table is not empty")
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
 	// we need this sub context since Cleanup which wait on this routine is called
 	// before parent context is canceled in normal flow.
 	s.importCtx, s.importCancel = context.WithCancel(ctx)
@@ -166,6 +149,23 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		if err := subtaskMeta.ReadJSONFromExternalStorage(ctx, s.tableImporter.GlobalSortStore, &subtaskMeta); err != nil {
 			return errors.Trace(err)
 		}
+	}
+
+	taskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(s.store, se, s.tableImporter.Table)
+		if err2 != nil {
+			return err2
+		}
+		if !isEmpty {
+			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table is not empty")
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	var dataEngine, indexEngine *backend.OpenedEngine
