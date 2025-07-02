@@ -351,7 +351,7 @@ func BuildHistAndTopN(
 		// case 1, this value is equal to the last one: current count++
 		if bytes.Equal(cur, sampleBytes) {
 			curCnt++
-			if i == 0 || i == sampleNum-1 {
+			if i == sampleNum-1 {
 				// If this is the last sample, we need to ensure we count this last value.
 				sampleNDV++
 			}
@@ -415,17 +415,19 @@ func BuildHistAndTopN(
 			topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
 			if len(topNList) > numTopN {
 				topNList = topNList[:numTopN]
-			} else if sampleFactor > 1 && ndv > sampleNDV && len(topNList) == int(sampleNDV) {
-				// If we're sampling, and TopN contains everything in the sample - trim TopN so that buckets will be
-				// built. This can help address issues in optimizer cardinality estimation if TopN contains all values
-				// in the sample, but the length of the TopN is less than the true column/index NDV.
-				// Ensure that we keep at least one item in the topN list. If the sampleNDV is small, all remaining
-				// values are likely to added as the last value of a bucket such that skew will still be recognized.
-				keepTopN := max(1, len(topNList)-int(ndv-sampleNDV))
-				topNList = topNList[:keepTopN]
-				allowPruning = true
 			}
 		}
+	}
+
+	if sampleFactor > 1 && ndv > sampleNDV && len(topNList) >= int(sampleNDV) {
+		// If we're sampling, and TopN contains everything in the sample - trim TopN so that buckets will be
+		// built. This can help address issues in optimizer cardinality estimation if TopN contains all values
+		// in the sample, but the length of the TopN is less than the true column/index NDV.
+		// Ensure that we keep at least one item in the topN list. If the sampleNDV is small, all remaining
+		// values are likely to added as the last value of a bucket such that skew will still be recognized.
+		keepTopN := max(1, len(topNList)-int(ndv-sampleNDV))
+		topNList = topNList[:keepTopN]
+		allowPruning = true
 	}
 
 	if allowPruning {
@@ -437,7 +439,7 @@ func BuildHistAndTopN(
 
 	// Step2: exclude TopN from samples if the NDV is larger than the number of topN items.
 	lenSamples := int64(len(samples))
-	if lenTopN > 0 && lenTopN < sampleNDV && lenSamples > 0 {
+	if lenTopN > 0 && lenTopN < sampleNDV && lenSamples > 0 && numBuckets > 0 {
 		for i := int64(0); i < lenSamples; i++ {
 			sampleBytes, err := getComparedBytes(samples[i].Value)
 			if err != nil {
@@ -500,8 +502,8 @@ func BuildHistAndTopN(
 		topNTotalCount += topn.TopN[i].Count
 	}
 
-	if sampleNDV > 0 && sampleNDV <= lenTopN {
-		// If we've collected everything  - don't create any buckets
+	if (sampleNDV > 0 && sampleNDV <= lenTopN) || numBuckets <= 0 {
+		// If we've collected everything or numBuckets == 0 - don't create any buckets
 		return hg, topn, nil
 	}
 

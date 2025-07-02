@@ -231,6 +231,7 @@ func TestAnalyzeWithDynamicPartitionPruneMode(t *testing.T) {
 	rows = tk.MustQuery("show stats_buckets where partition_name = 'global' and is_index=1").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "6", rows[0][6])
+	tk.MustExec("set @@global.tidb_enable_auto_analyze=DEFAULT")
 }
 
 func TestFMSWithAnalyzePartition(t *testing.T) {

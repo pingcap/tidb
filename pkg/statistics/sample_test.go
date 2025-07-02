@@ -193,6 +193,64 @@ func TestBuildStatsOnRowSample(t *testing.T) {
 		"num: 196 lower_bound: 805 upper_bound: 1000 repeats: 1 ndv: 0", hist.ToString(0))
 }
 
+func TestBuildSampleFullNDV(t *testing.T) {
+	// Testing building TopN when the column NDV is less than the NDV in the sample. Only 3 TopN values should be
+	// created for the 6 column values in the sample.
+	ctx := mock.NewContext()
+	sketch := NewFMSketch(8)
+	data := make([]*SampleItem, 0, 8)
+	for i := 1; i < 41; i++ {
+		d := types.NewIntDatum(int64(2))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		require.NoError(t, err)
+		data = append(data, &SampleItem{Value: d})
+	}
+	for i := 1; i < 31; i++ {
+		d := types.NewIntDatum(int64(4))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		require.NoError(t, err)
+		data = append(data, &SampleItem{Value: d})
+	}
+	for i := 1; i < 25; i++ {
+		d := types.NewIntDatum(int64(7))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		require.NoError(t, err)
+		data = append(data, &SampleItem{Value: d})
+	}
+	for i := 1; i < 3; i++ {
+		d := types.NewIntDatum(int64(11))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		require.NoError(t, err)
+		data = append(data, &SampleItem{Value: d})
+	}
+	for i := 1; i < 3; i++ {
+		d := types.NewIntDatum(int64(13))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		require.NoError(t, err)
+		data = append(data, &SampleItem{Value: d})
+	}
+	for i := 1; i < 3; i++ {
+		d := types.NewIntDatum(int64(15))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		require.NoError(t, err)
+		data = append(data, &SampleItem{Value: d})
+	}
+	collector := &SampleCollector{
+		Samples:   data,
+		NullCount: 0,
+		Count:     int64(200),
+		FMSketch:  sketch,
+		TotalSize: int64(len(data)) * 8,
+	}
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	// Build histogram buckets with 0 buckets, and default 100 TopN.
+	_, topN, err := BuildHistAndTopN(ctx, 0, 100, 1, collector, tp, true, nil, false)
+	require.Nilf(t, err, "%+v", err)
+	topNStr, err := topN.DecodedString(ctx, []byte{tp.GetType()})
+	require.NoError(t, err)
+	require.Equal(t, "TopN{length: 3, [(2, 80), (4, 60), (7, 48)]}", topNStr)
+}
+
 type testSampleSuite struct {
 	count int
 	rs    sqlexec.RecordSet
