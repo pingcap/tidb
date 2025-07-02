@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -123,6 +124,9 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
+	}
+	if kerneltype.IsNextGen() {
+
 	}
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
 		return importer.VerifyChecksum(ctx, &taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
