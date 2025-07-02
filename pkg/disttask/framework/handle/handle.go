@@ -27,12 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
@@ -292,25 +289,33 @@ func GetCloudStorageURI(ctx context.Context, store kv.Storage) string {
 
 // GetTaskMgrToAccessDXFService returns the task manager to access DXF service.
 func GetTaskMgrToAccessDXFService() (*storage.TaskManager, error) {
-	var (
-		err           error
-		sysKSSessPool util.SessionPool
-	)
-	taskMgr, err := storage.GetTaskManager()
-	if err != nil {
-		return nil, err
-	}
-	if !keyspace.IsRunningOnUser() {
-		return taskMgr, nil
-	}
-	if err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
-		sysKSSessPool, err = se.GetSQLServer().GetKSSessPool(keyspace.System)
-		return err
-	}); err != nil {
-		return nil, err
-	}
-	return storage.NewTaskManager(sysKSSessPool), nil
+	// TODO currently DXF service is not fully implemented, so we always return
+	// task manager of current keyspace, replace it with below code when DXF service is ready.
+	return storage.GetTaskManager()
+
 }
+
+//// GetTaskMgrToAccessDXFService returns the task manager to access DXF service.
+//func GetTaskMgrToAccessDXFService() (*storage.TaskManager, error) {
+//	var (
+//		err           error
+//		sysKSSessPool util.SessionPool
+//	)
+//	taskMgr, err := storage.GetTaskManager()
+//	if err != nil {
+//		return nil, err
+//	}
+//	if !keyspace.IsRunningOnUser() {
+//		return taskMgr, nil
+//	}
+//	if err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
+//		sysKSSessPool, err = se.GetSQLServer().GetKSSessPool(keyspace.System)
+//		return err
+//	}); err != nil {
+//		return nil, err
+//	}
+//	return storage.NewTaskManager(sysKSSessPool), nil
+//}
 
 func init() {
 	// domain will init this var at runtime, we store it here for test, as some
