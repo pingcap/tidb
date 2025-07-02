@@ -949,8 +949,9 @@ func attach2Task4PhysicalSort(p base.PhysicalPlan, tasks ...base.Task) base.Task
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *NominalSort) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4NominalSort implements PhysicalPlan interface.
+func attach2Task4NominalSort(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.NominalSort)
 	if p.OnlyColumn {
 		return tasks[0]
 	}
@@ -1445,7 +1446,7 @@ func (p *PhysicalProjection) Attach2Task(tasks ...base.Task) base.Task {
 	return t
 }
 
-func (p *PhysicalUnionAll) attach2MppTasks(tasks ...base.Task) base.Task {
+func attach2MppTasks4PhysicalUnionAll(p *physicalop.PhysicalUnionAll, tasks ...base.Task) base.Task {
 	t := &MppTask{p: p}
 	childPlans := make([]base.PhysicalPlan, 0, len(tasks))
 	for _, tk := range tasks {
@@ -1462,8 +1463,9 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...base.Task) base.Task {
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalUnionAll) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalUnionAll implements PhysicalPlan interface logic.
+func attach2Task4PhysicalUnionAll(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalUnionAll)
 	for _, t := range tasks {
 		if _, ok := t.(*MppTask); ok {
 			if p.TP() == plancodec.TypePartitionUnion {
@@ -1472,7 +1474,7 @@ func (p *PhysicalUnionAll) Attach2Task(tasks ...base.Task) base.Task {
 				// For now, return base.InvalidTask immediately, we can refine this by letting childTask of PartitionUnion convert to rootTask.
 				return base.InvalidTask
 			}
-			return p.attach2MppTasks(tasks...)
+			return attach2MppTasks4PhysicalUnionAll(p, tasks...)
 		}
 	}
 	t := &RootTask{}

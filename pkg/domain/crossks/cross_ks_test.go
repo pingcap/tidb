@@ -49,7 +49,7 @@ func TestManager(t *testing.T) {
 		t.Skip("cross keyspace is not supported in classic kernel")
 	}
 	require.NoError(t, kvstore.Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{}))
-	sysKSStore, sysKSDom := testkit.CreateNextgenMockStoreAndDomain(t, keyspace.System)
+	sysKSStore, sysKSDom := testkit.CreateMockStoreAndDomainForKS(t, keyspace.System)
 
 	t.Run("same keyspace access", func(t *testing.T) {
 		_, err := sysKSDom.GetKSSessPool(keyspace.System)
@@ -83,7 +83,7 @@ func TestManager(t *testing.T) {
 		)
 
 		for _, ks := range []string{"ks1", "ks2", "ks3"} {
-			userKSStore, _ := testkit.CreateNextgenMockStoreAndDomain(t, ks)
+			userKSStore, _ := testkit.CreateMockStoreAndDomainForKS(t, ks)
 			storeMap[ks] = userKSStore
 
 			// must switch back to SYSTEM keyspace before creating a cross keyspace session
