@@ -222,7 +222,7 @@ func (r *readIndexExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 }
 
 func (r *readIndexExecutor) buildLocalStorePipeline(
-	opCtx *OperatorCtx,
+	opCtx *operator.Context,
 	sessCtx sessionctx.Context,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
@@ -269,7 +269,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 }
 
 func (r *readIndexExecutor) buildExternalStorePipeline(
-	opCtx *OperatorCtx,
+	opCtx *operator.Context,
 	subtaskID int64,
 	sessCtx sessionctx.Context,
 	sm *BackfillSubTaskMeta,
