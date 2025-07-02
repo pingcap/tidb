@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -273,14 +274,25 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	// Copy constant from equal predicate into other predicate.
 	equalValue := equalPred.(*expression.ScalarFunction)
 	otherValue := otherPred.(*expression.ScalarFunction)
-	newPred, err := expression.NewFunction(ctx.GetExprCtx(), otherValue.FuncName.L, otherValue.RetType, equalValue.GetArgs()[1], otherValue.GetArgs()[1])
-	if err != nil {
-		return false
+	equalValueConst, ok1 := equalValue.GetArgs()[1].(*expression.Constant)
+	otherValueConst, ok2 := otherValue.GetArgs()[1].(*expression.Constant)
+	if ok1 && ok2 {
+		if types.IsString(equalValueConst.RetType.GetType()) || types.IsString(otherValueConst.RetType.GetType()) {
+			// Different connection collations can affect the results here, leading to different simplified results and ultimately impacting the execution outcomes.
+			// From MySQL v8.0.31 onwards, this area does not perform string simplification, so we can directly skip it.
+			// TODO: We can incorporate more complex judgments to simplify the expression here while ensuring correctness.
+			return false
+		}
+		newPred, err := expression.NewFunction(ctx.GetExprCtx(), otherValue.FuncName.L, otherValue.RetType, equalValue.GetArgs()[1], otherValue.GetArgs()[1])
+		if err != nil {
+			return false
+		}
+		newPredList := make([]expression.Expression, 0, 1)
+		newPredList = append(newPredList, newPred)
+		newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList...)
+		return unsatisfiableExpression(ctx, newPredList[0])
 	}
-	newPredList := make([]expression.Expression, 0, 1)
-	newPredList = append(newPredList, newPred)
-	newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList...)
-	return unsatisfiableExpression(ctx, newPredList[0])
+	return false
 }
 
 func comparisonPred(predType predicateType) predicateType {
@@ -338,6 +350,9 @@ func updateOrPredicate(ctx base.PlanContext, orPredicateList expression.Expressi
 // pruneEmptyORBranches applies iteratively updateOrPredicate for each pair of OR predicate
 // and another scalar predicate.
 func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Expression) {
+	if !sctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	if len(predicates) <= 1 {
 		return
 	}
