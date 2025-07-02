@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -52,16 +53,16 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 
 	outerPlan := p.Children()[1^innerChildIdx]
 	innerPlan := p.Children()[innerChildIdx]
-	outerUniqueIDs := set.NewInt64Set()
-	for _, outerCol := range outerPlan.Schema().Columns {
-		outerUniqueIDs.Insert(outerCol.UniqueID)
-	}
 
 	// in case of count(*) FROM R LOJ S, the parentCols is empty, but
 	// still need to proceed to check whether we can eliminate outer join.
 	// In fact, we only care about whether there is any column from inner
 	// table, if there is none, we are good.
 	if len(parentCols) > 0 {
+		outerUniqueIDs := set.NewInt64Set()
+		for _, outerCol := range outerPlan.Schema().Columns {
+			outerUniqueIDs.Insert(outerCol.UniqueID)
+		}
 		matched := IsColsAllFromOuterTable(parentCols, outerUniqueIDs)
 		if !matched {
 			return p, false, nil
@@ -69,11 +70,18 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 	}
 
 	// outer join elimination with duplicate agnostic aggregate functions
-	matched := IsColsAllFromOuterTable(aggCols, outerUniqueIDs)
-	if matched {
-		appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
-		return outerPlan, true, nil
+	if len(aggCols) > 0 {
+		innerUniqueIDs := set.NewInt64Set()
+		for _, innerCol := range innerPlan.Schema().Columns {
+			innerUniqueIDs.Insert(innerCol.UniqueID)
+		}
+		innerFound := IsColFromInnerTable(aggCols, innerUniqueIDs)
+		if !innerFound {
+			appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
+			return outerPlan, true, nil
+		}
 	}
+
 	// outer join elimination without duplicate agnostic aggregate functions
 	innerJoinKeys := o.extractInnerJoinKeys(p, innerChildIdx)
 	contain, err := o.isInnerJoinKeysContainUniqueKey(innerPlan, innerJoinKeys)
@@ -119,6 +127,13 @@ func IsColsAllFromOuterTable(cols []*expression.Column, outerUniqueIDs set.Int64
 		}
 	}
 	return true
+}
+
+// IsColFromInnerTable check whether a column exists in the inner plan
+func IsColFromInnerTable(cols []*expression.Column, innerUniqueIDs set.Int64Set) bool {
+	return slices.ContainsFunc(cols, func(col *expression.Column) bool {
+		return innerUniqueIDs.Exist(col.UniqueID)
+	})
 }
 
 // check whether one of unique keys sets is contained by inner join keys
