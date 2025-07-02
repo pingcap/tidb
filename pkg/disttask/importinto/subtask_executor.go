@@ -111,13 +111,6 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 		return err
 	}
 
-	// TODO: create table indexes depends on the option.
-	// create table indexes even if the post process is failed.
-	// defer func() {
-	// 	err2 := createTableIndexes(ctx, globalTaskManager, taskMeta, logger)
-	// 	err = multierr.Append(err, err2)
-	// }()
-
 	localChecksum := verify.NewKVGroupChecksumForAdd()
 	for id, cksum := range subtaskMeta.Checksum {
 		callLog.Info(

@@ -68,3 +68,19 @@ type MemTablePredicateExtractor interface {
 	// ExplainInfo give the basic desc of this mem extractor, `p` indicates a PhysicalPlan here.
 	ExplainInfo(p PhysicalPlan) string
 }
+
+// DataAccesser is a plan that means it can access underlying data.
+// Include `PhysicalTableScan`, `PhysicalIndexScan`, `PointGetPlan`, `BatchPointScan` and `PhysicalMemTable`.
+// ExplainInfo = AccessObject + OperatorInfo
+type DataAccesser interface {
+	// AccessObject return plan's `table`, `partition` and `index`.
+	AccessObject() AccessObject
+
+	// OperatorInfo return other operator information to be explained.
+	OperatorInfo(normalized bool) string
+}
+
+// PartitionAccesser is a plan that can access partitioned data.
+type PartitionAccesser interface {
+	AccessObject(PlanContext) AccessObject
+}

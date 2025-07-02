@@ -173,13 +173,25 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 	return newPred, specialCase
 }
 
-func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
+func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool) []expression.Expression {
 	simplifiedPredicate := shortCircuitLogicalConstants(sctx, predicates)
+	exprCtx := sctx.GetExprCtx()
+	// In some scenarios, we need to perform constant propagation,
+	// while in others, we merely aim to achieve simplification.
+	// Thus, we utilize a switch to govern this particular logic.
+	if propagateConstant {
+		simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate...)
+	} else {
+		exprs := expression.PropagateConstant(exprCtx, simplifiedPredicate...)
+		if len(exprs) == 1 {
+			if _, ok := exprs[0].(*expression.Constant); ok {
+				simplifiedPredicate = exprs
+			}
+		}
+	}
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	pruneEmptyORBranches(sctx, simplifiedPredicate)
-	exprCtx := sctx.GetExprCtx()
-	simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate)
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
 	return simplifiedPredicate
 }
@@ -200,7 +212,7 @@ func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Express
 				sctx.GetExprCtx(),
 				ithPredicate,
 				jthPredicate)
-			if iCol == jCol {
+			if iCol.Equals(jCol) {
 				if iType == notEqualPredicate && jType == inListPredicate {
 					predicates[j], specialCase = updateInPredicate(sctx, jthPredicate, ithPredicate)
 					if maybeOverOptimized4PlanCache {
@@ -245,7 +257,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	var otherPred expression.Expression
 	col1, p1Type := FindPredicateType(ctx, p1)
 	col2, p2Type := FindPredicateType(ctx, p2)
-	if col1 != col2 || col1 == nil {
+	if col1 == nil || !col1.Equals(col2) {
 		return false
 	}
 	if p1Type == equalPredicate {
@@ -267,7 +279,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	}
 	newPredList := make([]expression.Expression, 0, 1)
 	newPredList = append(newPredList, newPred)
-	newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList)
+	newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList...)
 	return unsatisfiableExpression(ctx, newPredList[0])
 }
 
@@ -385,7 +397,7 @@ func shortCircuitANDORLogicalConstants(sctx base.PlanContext, predicate expressi
 	case secondType == falsePredicate && !orCase:
 		return secondCondition, true
 	default:
-		if firstCondition != args[0] || secondCondition != args[1] {
+		if !firstCondition.Equal(sctx.GetExprCtx().GetEvalCtx(), args[0]) || !secondCondition.Equal(sctx.GetExprCtx().GetEvalCtx(), args[1]) {
 			finalResult := expression.NewFunctionInternal(sctx.GetExprCtx(), con.FuncName.L, con.GetStaticType(), firstCondition, secondCondition)
 			return finalResult, true
 		}

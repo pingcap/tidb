@@ -21,40 +21,45 @@ include Makefile.common
 .PHONY: help
 help: ## Display this help and any documented user-facing targets. Other undocumented targets may be present in the Makefile.
 help:
-	@awk 'BEGIN {FS = ": ##"; printf "Usage:\n  make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_\.\-\/%]+: ##/ { printf "  %-45s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ": ##"; printf "Usage:\n make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_\.\-\/%]+: ##/ { printf " %-45s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-default: server buildsucc
+default: server buildsucc ## Default target: build TiDB server
 
 .PHONY: server-admin-check
-server-admin-check: server_check buildsucc
+server-admin-check: server_check buildsucc ## Build TiDB server with admin checks
 
 .PHONY: buildsucc
 buildsucc:
 	@echo Build TiDB Server successfully!
 
 .PHONY: all
-all: dev server benchkv
+all: dev server benchkv ## Build all targets: dev tools, server, and benchkv
 
 .PHONY: dev
-dev: checklist check integrationtest gogenerate br_unit_test test_part_parser_dev ut check-file-perm
+dev: ## Run the full development workflow including all tests and checks
+dev: checklist check integrationtest gogenerate br_unit_test test_part_parser_dev ut check-file-perm ## Run full development workflow including all tests and checks
 	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
 .PHONY: check-setup
-check-setup:tools/bin/revive
+check-setup: ## Install development and checking tools
+check-setup:tools/bin/revive 
 
 .PHONY: precheck
+precheck: ## Run pre-commit checks
 precheck: fmt bazel_prepare
 
 .PHONY: check
-check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license
+check: ## Run comprehensive code quality checks
+check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license 
 
 .PHONY: fmt
-fmt:
+fmt: ## Format Go code using gofmt
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w -r 'interface{} -> any' $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
 .PHONY: check-static
+check-static: ## Run static code analysis checks
 check-static: tools/bin/golangci-lint
 	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
 
@@ -112,21 +117,23 @@ check-parallel:
 CLEAN_UT_BINARY := find . -name '*.test.bin'| xargs rm -f
 
 .PHONY: clean
-clean: failpoint-disable
+clean: ## Clean build artifacts
+clean: failpoint-disable ## Clean build artifacts and test binaries
 	$(GO) clean -i ./...
 	rm -rf $(TEST_COVERAGE_DIR)
 	@$(CLEAN_UT_BINARY)
 
 # Split tests for CI to run `make test` in parallel.
 .PHONY: test
-test: test_part_1 test_part_2
+test: ## Run all tests (split into parts for parallel execution)
+test: test_part_1 test_part_2 
 	@>&2 echo "Great, all tests passed."
 
 .PHONY: test_part_1
-test_part_1: checklist integrationtest
+test_part_1: checklist integrationtest ## Run test part 1: checklist and integration tests
 
 .PHONY: test_part_2
-test_part_2: test_part_parser ut gogenerate br_unit_test dumpling_unit_test
+test_part_2: test_part_parser ut gogenerate br_unit_test dumpling_unit_test ## Run test part 2: parser tests, unit tests, BR and dumpling tests
 
 .PHONY: test_part_parser
 test_part_parser: parser_yacc test_part_parser_dev
@@ -157,6 +164,7 @@ test_part_br: br_unit_test br_integration_test
 test_part_dumpling: dumpling_unit_test dumpling_integration_test
 
 .PHONY: integrationtest
+integrationtest: ## Run integration tests with coverage
 integrationtest: server_check
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	@cd tests/integrationtest && GOCOVERDIR=../../$(TEST_COVERAGE_DIR) ./run-tests.sh -s ../../bin/tidb-server
@@ -167,7 +175,7 @@ ddltest:
 	@cd cmd/ddltest && $(GO) test --tags=deadllock,intest -o ../../bin/ddltest -c
 
 .PHONY: ut
-ut: tools/bin/ut tools/bin/xprog failpoint-enable
+ut: tools/bin/ut tools/bin/xprog failpoint-enable ## Run unit tests
 	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)
@@ -218,11 +226,11 @@ SERVER_BUILD_CMD := \
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) $(COVER_FLAG) \
 	-ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(SERVER_OUT)' ./cmd/tidb-server
 
-server:
+server: ## Build TiDB server binary
 	$(SERVER_BUILD_CMD)
 
 .PHONY: server_debug
-server_debug:
+server_debug: ## Build TiDB server binary with debug symbols
 ifeq ($(TARGET), "")
 	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server-debug ./cmd/tidb-server
 else
@@ -255,7 +263,7 @@ else
 endif
 
 .PHONY: enterprise-server
-enterprise-server:
+enterprise-server: ## Build TiDB server with enterprise features
 	$(MAKE) init-submodule
 	$(MAKE) enterprise-prepare
 	$(MAKE) enterprise-server-build
@@ -269,7 +277,7 @@ else
 endif
 
 .PHONY: linux
-linux:
+linux: ## Build TiDB server for Linux
 ifeq ($(TARGET), "")
 	GOOS=linux $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server-linux ./cmd/tidb-server
 else
@@ -285,19 +293,19 @@ else
 endif
 
 .PHONY: benchkv
-benchkv:
+benchkv: ## Build benchkv benchmark tool
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchkv cmd/benchkv/main.go
 
 .PHONY: benchraw
-benchraw:
+benchraw: ## Build benchraw benchmark tool
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchraw cmd/benchraw/main.go
 
 .PHONY: benchdb
-benchdb:
+benchdb: ## Build benchdb benchmark tool
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchdb cmd/benchdb/main.go
 
 .PHONY: importer
-importer:
+importer: ## Build importer tool
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/importer ./cmd/importer
 
 .PHONY: checklist
@@ -338,8 +346,8 @@ tools/bin/errdoc-gen:
 
 .PHONY: tools/bin/golangci-lint
 tools/bin/golangci-lint:
-	# Build from source is not recommand. See https://golangci-lint.run/usage/install/
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.47.2
+	$(eval GOLANGCI_LINT_VERSION := $(shell grep 'github.com/golangci/golangci-lint/v2' go.mod | awk '{print $$2}'))
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 .PHONY: tools/bin/vfsgendev
 tools/bin/vfsgendev:
@@ -349,7 +357,7 @@ tools/bin/vfsgendev:
 tools/bin/gotestsum:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install gotest.tools/gotestsum@v1.8.1
 
-# mockgen@v0.2.0 is imcompatible with v0.3.0, so install it always.
+# mockgen@v0.2.0 is incompatible with v0.3.0, so install it always.
 .PHONY: mockgen
 mockgen:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/lance6716/mock/mockgen@v0.4.0-patch
@@ -399,14 +407,14 @@ bench-daily:
 		-outfile $(TO)
 
 .PHONY: build_tools
-build_tools: build_br build_lightning build_lightning-ctl
+build_tools: build_br build_lightning build_lightning-ctl ## Build all BR and Lightning tools
 
 .PHONY: lightning_web
-lightning_web:
+lightning_web: ## Build Lightning web UI
 	@cd lightning/web && npm install && npm run build
 
 .PHONY: build_br
-build_br:
+build_br: ## Build BR (backup and restore) tool
 	CGO_ENABLED=1 $(GOBUILD_NO_TAGS) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
 
 .PHONY: build_lightning_for_web
@@ -414,11 +422,11 @@ build_lightning_for_web:
 	CGO_ENABLED=1 $(GOBUILD_NO_TAGS) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) lightning/cmd/tidb-lightning/main.go
 
 .PHONY: build_lightning
-build_lightning:
+build_lightning: ## Build TiDB Lightning data import tool
 	CGO_ENABLED=1 $(GOBUILD_NO_TAGS) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
 
 .PHONY: build_lightning-ctl
-build_lightning-ctl:
+build_lightning-ctl: ## Build TiDB Lightning control tool
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) ./lightning/cmd/tidb-lightning-ctl
 
 .PHONY: build_for_lightning_integration_test
@@ -463,7 +471,7 @@ build_for_br_integration_test:
 
 .PHONY: br_unit_test
 br_unit_test: export ARGS=$$($(BR_PACKAGES))
-br_unit_test:
+br_unit_test: ## Run BR (backup and restore) unit tests
 	@make failpoint-enable
 	@export TZ='Asia/Shanghai';
 	$(GOTEST) --tags=deadlock,intest $(RACE_FLAG) -ldflags '$(LDFLAGS)' $(ARGS) -coverprofile=coverage.txt || ( make failpoint-disable && exit 1 )
@@ -556,12 +564,12 @@ data_parsers: tools/bin/vfsgendev pkg/lightning/mydump/parser_generated.go light
 	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/lightning/pkg/web".Res' && mv res_vfsdata.go lightning/pkg/web/
 
 .PHONY: build_dumpling
-build_dumpling:
+build_dumpling: ## Build Dumpling data export tool
 	$(DUMPLING_GOBUILD) $(RACE_FLAG) -tags codes -o $(DUMPLING_BIN) dumpling/cmd/dumpling/main.go
 
 .PHONY: dumpling_unit_test
 dumpling_unit_test: export DUMPLING_ARGS=$$($(DUMPLING_PACKAGES))
-dumpling_unit_test: failpoint-enable
+dumpling_unit_test: failpoint-enable ## Run Dumpling (data export) unit tests
 	$(DUMPLING_GOTEST) $(RACE_FLAG) -coverprofile=coverage.txt -covermode=atomic $(DUMPLING_ARGS) || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 
@@ -642,7 +650,7 @@ check-bazel-prepare:
 	./tools/check/check-bazel-prepare.sh
 
 .PHONY: bazel_test
-bazel_test: failpoint-enable bazel_prepare
+bazel_test: failpoint-enable bazel_prepare ## Run all tests using Bazel
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --build_tests_only --test_keep_going=false \
 		--define gotags=deadlock,intest \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
@@ -663,7 +671,7 @@ bazel_coverage_test_ddlargsv1: failpoint-enable bazel_ci_simple_prepare
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
 .PHONY: bazel_build
-bazel_build:
+bazel_build: ## Build TiDB using Bazel build system
 	mkdir -p bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//... --//build:with_nogo_flag=$(NOGO_FLAG)
@@ -726,27 +734,27 @@ bazel_txntest: failpoint-enable bazel_ci_simple_prepare
 
 .PHONY: bazel_addindextest
 bazel_addindextest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
 		-- //tests/realtikvtest/addindextest/...
 
 .PHONY: bazel_addindextest1
 bazel_addindextest1: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
 		-- //tests/realtikvtest/addindextest1/...
 
 .PHONY: bazel_addindextest2
 bazel_addindextest2: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
 		-- //tests/realtikvtest/addindextest2/...
 
 .PHONY: bazel_addindextest3
 bazel_addindextest3: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
 		-- //tests/realtikvtest/addindextest3/...
 
 .PHONY: bazel_addindextest4
 bazel_addindextest4: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
 		-- //tests/realtikvtest/addindextest4/...
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
@@ -796,7 +804,7 @@ bazel_lint: bazel_prepare
 	bazel build //... --//build:with_nogo_flag=$(NOGO_FLAG)
 
 .PHONY: docker
-docker:
+docker: ## Build TiDB Docker image
 	docker build -t "$(DOCKERPREFIX)tidb:latest" --build-arg 'GOPROXY=$(shell go env GOPROXY),' -f Dockerfile .
 
 .PHONY: docker-test

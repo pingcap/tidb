@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -124,19 +125,43 @@ func TestDistributeTable(t *testing.T) {
 	cli := &MockDistributePDCli{}
 	recoverCli := infosync.SetPDHttpCliForTest(cli)
 	defer recoverCli()
-	mockCreateSchedulerWithInput := func(tblName, partition string, config map[string]any) *mock.Call {
-		is := tk.Session().GetDomainInfoSchema()
+	mockCreateSchedulerWithInput := func(tblName string, config map[string]any, partitions []string) *mock.Call {
+		is := tk.Session().GetLatestInfoSchema()
 		tbl, err := is.TableInfoByName(ast.NewCIStr(database), ast.NewCIStr(tblName))
 		require.NoError(t, err)
 		tblID := tbl.ID
-		if partition != "" {
-			tblID = tbl.GetPartitionInfo().GetPartitionIDByName(partition)
+		pi := tbl.GetPartitionInfo()
+		pids := make([]int64, 0)
+		if pi == nil {
+			pids = append(pids, tblID)
+		} else {
+			if len(partitions) > 0 {
+				for _, partition := range partitions {
+					pids = append(pids, pi.GetPartitionIDByName(partition))
+				}
+			} else {
+				for _, partition := range pi.Definitions {
+					pids = append(pids, partition.ID)
+				}
+			}
+		}
+		starts := make([]string, 0)
+		ends := make([]string, 0)
+		slices.Sort(pids)
+		for i, pid := range pids {
+			if i == 0 || pid != pids[i-1]+1 {
+				startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
+				endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
+				starts = append(starts, url.QueryEscape(string(startKey)))
+				ends = append(ends, url.QueryEscape(string(endKey)))
+			} else {
+				endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
+				ends[len(starts)-1] = url.QueryEscape(string(endKey))
+			}
 		}
 
-		startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(tblID))
-		endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(tblID+1))
-		config["start-key"] = url.QueryEscape(string(startKey))
-		config["end-key"] = url.QueryEscape(string(endKey))
+		config["start-key"] = strings.Join(starts, ",")
+		config["end-key"] = strings.Join(ends, ",")
 		return cli.On("CreateSchedulerWithInput", mock.Anything, schedulerName, config).
 			Return(nil)
 	}
@@ -147,32 +172,50 @@ func TestDistributeTable(t *testing.T) {
 	table := "t1"
 	partition := ""
 
-	alias := strings.Join([]string{database, table, partition}, ".")
 	config := map[string]any{
-		"alias":  alias,
+		"alias":  strings.Join([]string{database, table, partition}, "."),
 		"engine": "tikv",
 		"rule":   "leader-scatter",
 	}
-	tk.MustExec("create table t1(a int)")
+	tk.MustExec(`create table t1 (
+		c1 int, c2 int, c3 int
+	)
+	partition by range( c1 ) (
+		partition p0 values less than (1024),
+		partition p1 values less than (2048),
+		partition p2 values less than (3072)
+	   );`)
 	mockGetSchedulerConfig("balance-range-scheduler")
-	mockCreateSchedulerWithInput(table, partition, config)
-	tk.MustQuery(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=tikv", table)).Check(testkit.Rows("1"))
-	// create new scheduler with the same inputs
-	mockCreateSchedulerWithInput(table, partition, config)
-	tk.MustQuery(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=tikv", table)).Check(testkit.Rows("2"))
+	mockCreateSchedulerWithInput(table, config, nil)
+	tk.MustQuery(fmt.Sprintf("distribute table %s rule='leader-scatter' engine='tikv'", table)).Check(testkit.Rows("1"))
+	// test for multi partitions
+	partition = "partition(p1,p2)"
+	config["alias"] = strings.Join([]string{database, table, partition}, ".")
+	mockCreateSchedulerWithInput(table, config, []string{"p1", "p2"})
+	tk.MustQuery(fmt.Sprintf("distribute table %s partition (p1,p2) rule='leader-scatter' engine='tikv'", table)).Check(testkit.Rows("2"))
+	// test for unordered partitions
+	tk.MustQuery(fmt.Sprintf("distribute table %s partition (p2,p1) rule='leader-scatter' engine='tikv'", table)).Check(testkit.Rows("3"))
 
 	// test for timeout
+	partition = "partition(p0)"
+	config["alias"] = strings.Join([]string{database, table, partition}, ".")
 	config["timeout"] = "30m"
-	mockCreateSchedulerWithInput(table, partition, config)
-	tk.MustQuery(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=tikv timeout=`30m`", table)).Check(testkit.Rows("3"))
+	mockCreateSchedulerWithInput(table, config, []string{"p0"})
+	tk.MustQuery(fmt.Sprintf("distribute table %s partition(p0) rule='leader-scatter' engine='tikv' timeout='30m'", table)).Check(testkit.Rows("4"))
+
+	partition = "partition(p0,p2)"
+	config["alias"] = strings.Join([]string{database, table, partition}, ".")
+	config["timeout"] = "30m"
+	mockCreateSchedulerWithInput(table, config, []string{"p0", "p2"})
+	tk.MustQuery(fmt.Sprintf("distribute table %s partition(p0,p2) rule='leader-scatter' engine='tikv' timeout='30m'", table)).Check(testkit.Rows("5"))
 
 	// test for incorrect arguments
-	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=tiflash", table),
+	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule='leader-scatter' engine='tiflash'", table),
 		"[planner:1210]Incorrect arguments to the rule of tiflash must be learner-scatter")
-	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=`leader-scatter` engine=titan", table),
+	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule='leader-scatter' engine='titan'", table),
 		"[planner:1210]Incorrect arguments to engine must be tikv or tiflash")
-	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=`witness` engine=tikv", table),
-		"[planner:1210]Incorrect arguments to rule must be leader-scatter, follower-scatter or learner-scatter")
+	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule='witness' engine='tikv'", table),
+		"[planner:1210]Incorrect arguments to rule must be leader-scatter, peer-scatter or learner-scatter")
 }
 
 func TestShowTableDistributions(t *testing.T) {
@@ -184,7 +227,7 @@ func TestShowTableDistributions(t *testing.T) {
 	recoverCli := infosync.SetPDHttpCliForTest(cli)
 	defer recoverCli()
 	mockGetDistributions := func(tblName, partition string, distributions *pdhttp.RegionDistributions) *mock.Call {
-		is := tk.Session().GetDomainInfoSchema()
+		is := tk.Session().GetLatestInfoSchema()
 		tbl, err := is.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr(tblName))
 		require.NoError(t, err)
 		tblID := tbl.ID

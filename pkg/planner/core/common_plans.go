@@ -712,9 +712,9 @@ type DistributeTable struct {
 	baseSchemaProducer
 	TableInfo      *model.TableInfo
 	PartitionNames []ast.CIStr
-	Engine         ast.CIStr
-	Rule           ast.CIStr
-	Timeout        ast.CIStr
+	Engine         string
+	Rule           string
+	Timeout        string
 }
 
 // SplitRegion represents a split regions plan.
@@ -921,7 +921,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"TiDB_JSON"}
 	case e.Explore:
 		fieldNames = []string{"statement", "binding_hint", "plan", "plan_digest", "avg_latency", "exec_times", "avg_scan_rows",
-			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason"}
+			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason",
+			"explain_analyze", "binding"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -941,14 +942,11 @@ func (e *Explain) prepareSchema() error {
 
 func (e *Explain) renderResultForExplore() error {
 	bindingHandle := domain.GetDomain(e.SCtx()).BindingHandle()
-	charset, collation := e.SCtx().GetSessionVars().GetCharsetInfo()
-	currentDB := e.SCtx().GetSessionVars().CurrentDB
-
 	sqlOrDigest := e.SQLDigest
 	if sqlOrDigest == "" {
 		sqlOrDigest = e.ExecStmt.Text()
 	}
-	plans, err := bindingHandle.ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation)
+	plans, err := bindingHandle.ExplorePlansForSQL(e.SCtx(), sqlOrDigest, e.Analyze)
 	if err != nil {
 		return err
 	}
@@ -970,7 +968,9 @@ func (e *Explain) renderResultForExplore() error {
 			strconv.FormatFloat(p.LatencyPerReturnRow, 'f', -1, 64),
 			strconv.FormatFloat(p.ScanRowsPerReturnRow, 'f', -1, 64),
 			p.Recommend,
-			p.Reason})
+			p.Reason,
+			fmt.Sprintf("EXPLAIN ANALYZE '%v'", p.PlanDigest),
+			fmt.Sprintf("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST '%v'", p.PlanDigest)})
 	}
 	return nil
 }
@@ -1029,7 +1029,7 @@ func (e *Explain) RenderResult() error {
 		if strings.ToLower(e.Format) != types.ExplainFormatBrief && strings.ToLower(e.Format) != types.ExplainFormatROW && strings.ToLower(e.Format) != types.ExplainFormatVerbose {
 			return errors.Errorf("explain format '%s' for connection is not supported now", e.Format)
 		}
-		rows, err := plancodec.DecodeBinaryPlan4Connection(e.BriefBinaryPlan, strings.ToLower(e.Format))
+		rows, err := plancodec.DecodeBinaryPlan4Connection(e.BriefBinaryPlan, strings.ToLower(e.Format), false)
 		if err != nil {
 			return err
 		}
@@ -1131,7 +1131,7 @@ func (e *Explain) explainOpRecursivelyInJSONFormat(flatOp *FlatOperator, flats F
 	} else {
 		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
 	}
-	explainID := flatOp.Origin.ExplainID().String() + flatOp.Label.String()
+	explainID := flatOp.ExplainID().String() + flatOp.Label.String()
 
 	cur := e.prepareOperatorInfoForJSONFormat(flatOp.Origin, taskTp, explainID)
 
@@ -1148,7 +1148,7 @@ func getExplainIDAndTaskTp(flatOp *FlatOperator) (taskTp, textTreeExplainID stri
 	} else {
 		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
 	}
-	textTreeExplainID = texttree.PrettyIdentifier(flatOp.Origin.ExplainID().String()+flatOp.Label.String(),
+	textTreeExplainID = texttree.PrettyIdentifier(flatOp.ExplainID().String()+flatOp.Label.String(),
 		flatOp.TextTreeIndent,
 		flatOp.IsLastChild)
 	return
@@ -1288,12 +1288,12 @@ func getOperatorInfo(p base.Plan) (estRows, estCost, costFormula, accessObject, 
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
 
-	if plan, ok := p.(dataAccesser); ok {
+	if plan, ok := p.(base.DataAccesser); ok {
 		accessObject = plan.AccessObject().String()
 		operatorInfo = plan.OperatorInfo(false)
 	} else {
-		if pa, ok := p.(partitionAccesser); ok && sctx != nil {
-			accessObject = pa.accessObject(sctx).String()
+		if pa, ok := p.(base.PartitionAccesser); ok && sctx != nil {
+			accessObject = pa.AccessObject(sctx).String()
 		}
 		operatorInfo = p.ExplainInfo()
 	}
@@ -1354,7 +1354,7 @@ func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, brie
 		stmtCtx.IgnoreExplainIDSuffix = true
 
 		for i, op := range ops {
-			operators[i].BriefName = op.Origin.ExplainID().String()
+			operators[i].BriefName = op.ExplainID().String()
 			switch op.Origin.(type) {
 			case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalHashJoin, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalMergeJoin:
 				operators[i].BriefOperatorInfo = op.Origin.ExplainInfo()
@@ -1374,7 +1374,7 @@ func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, brie
 }
 
 func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tipb.ExplainOperator) {
-	out.Name = fop.Origin.ExplainID().String()
+	out.Name = fop.ExplainID().String()
 	switch fop.Label {
 	case BuildSide:
 		out.Labels = []tipb.OperatorLabel{tipb.OperatorLabel_buildSide}
@@ -1445,20 +1445,20 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 	}
 
 	// Operator info
-	if plan, ok := fop.Origin.(dataAccesser); ok {
+	if plan, ok := fop.Origin.(base.DataAccesser); ok {
 		out.OperatorInfo = plan.OperatorInfo(false)
 	} else {
 		out.OperatorInfo = fop.Origin.ExplainInfo()
 	}
 	// Access object
 	switch p := fop.Origin.(type) {
-	case dataAccesser:
+	case base.DataAccesser:
 		ao := p.AccessObject()
 		if ao != nil {
 			ao.SetIntoPB(out)
 		}
-	case partitionAccesser:
-		ao := p.accessObject(explainCtx)
+	case base.PartitionAccesser:
+		ao := p.AccessObject(explainCtx)
 		if ao != nil {
 			ao.SetIntoPB(out)
 		}
@@ -1468,56 +1468,61 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 func (e *Explain) prepareDotInfo(p base.PhysicalPlan) {
 	buffer := bytes.NewBufferString("")
 	fmt.Fprintf(buffer, "\ndigraph %s {\n", p.ExplainID())
-	e.prepareTaskDot(p, "root", buffer)
+	e.prepareTaskDot(&pair{p, false}, "root", buffer)
 	buffer.WriteString("}\n")
 
 	e.Rows = append(e.Rows, []string{buffer.String()})
 }
 
-func (e *Explain) prepareTaskDot(p base.PhysicalPlan, taskTp string, buffer *bytes.Buffer) {
-	fmt.Fprintf(buffer, "subgraph cluster%v{\n", p.ID())
+type pair struct {
+	physicalPlan base.PhysicalPlan
+	isChildOfINL bool
+}
+
+func (e *Explain) prepareTaskDot(pa *pair, taskTp string, buffer *bytes.Buffer) {
+	fmt.Fprintf(buffer, "subgraph cluster%v{\n", pa.physicalPlan.ID())
 	buffer.WriteString("node [style=filled, color=lightgrey]\n")
 	buffer.WriteString("color=black\n")
 	fmt.Fprintf(buffer, "label = \"%s\"\n", taskTp)
 
-	if len(p.Children()) == 0 {
+	if len(pa.physicalPlan.Children()) == 0 {
 		if taskTp == "cop" {
-			fmt.Fprintf(buffer, "\"%s\"\n}\n", p.ExplainID())
+			fmt.Fprintf(buffer, "\"%s\"\n}\n", pa.physicalPlan.ExplainID(pa.isChildOfINL))
 			return
 		}
-		fmt.Fprintf(buffer, "\"%s\"\n", p.ExplainID())
+		fmt.Fprintf(buffer, "\"%s\"\n", pa.physicalPlan.ExplainID(pa.isChildOfINL))
 	}
-
-	var copTasks []base.PhysicalPlan
+	var copTasks []*pair
 	var pipelines []string
 
-	for planQueue := []base.PhysicalPlan{p}; len(planQueue) > 0; planQueue = planQueue[1:] {
-		curPlan := planQueue[0]
-		switch copPlan := curPlan.(type) {
+	for planQueue := []*pair{pa}; len(planQueue) > 0; planQueue = planQueue[1:] {
+		curPair := planQueue[0]
+		switch copPlan := curPair.physicalPlan.(type) {
 		case *PhysicalTableReader:
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
-			copTasks = append(copTasks, copPlan.tablePlan)
+			copTasks = append(copTasks, &pair{physicalPlan: copPlan.tablePlan})
 		case *PhysicalIndexReader:
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
-			copTasks = append(copTasks, copPlan.indexPlan)
+			copTasks = append(copTasks, &pair{physicalPlan: copPlan.indexPlan})
 		case *PhysicalIndexLookUpReader:
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
-			copTasks = append(copTasks, copPlan.tablePlan)
-			copTasks = append(copTasks, copPlan.indexPlan)
+			copTasks = append(copTasks, &pair{physicalPlan: copPlan.tablePlan, isChildOfINL: true})
+			copTasks = append(copTasks, &pair{physicalPlan: copPlan.indexPlan})
 		case *PhysicalIndexMergeReader:
 			for i := range copPlan.partialPlans {
 				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.partialPlans[i].ExplainID()))
-				copTasks = append(copTasks, copPlan.partialPlans[i])
+				copTasks = append(copTasks, &pair{physicalPlan: copPlan.partialPlans[i]})
 			}
 			if copPlan.tablePlan != nil {
 				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
-				copTasks = append(copTasks, copPlan.tablePlan)
+				copTasks = append(copTasks, &pair{physicalPlan: copPlan.tablePlan, isChildOfINL: true})
 			}
 		}
-		for _, child := range curPlan.Children() {
-			fmt.Fprintf(buffer, "\"%s\" -> \"%s\"\n", curPlan.ExplainID(), child.ExplainID())
-			planQueue = append(planQueue, child)
+		for _, child := range curPair.physicalPlan.Children() {
+			fmt.Fprintf(buffer, "\"%s\" -> \"%s\"\n", curPair.physicalPlan.ExplainID(curPair.isChildOfINL), child.ExplainID(curPair.isChildOfINL))
+			// pass current pair isChildOfINL.
+			planQueue = append(planQueue, &pair{physicalPlan: child, isChildOfINL: curPair.isChildOfINL})
 		}
 	}
 	buffer.WriteString("}\n")
