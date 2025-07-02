@@ -281,19 +281,15 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	if ok1 && ok2 {
 		evalCtx := ctx.GetExprCtx().GetEvalCtx()
 		colCollate := col1.GetType(evalCtx).GetCollate()
-		if equalValueType := equalValueConst.GetType(evalCtx); equalValueType.EvalType() == types.ETString && !collate.CompatibleCollate(equalValueType.GetCollate(), colCollate) {
+		if equalValueType := equalValueConst.GetType(evalCtx); equalValueType.EvalType() == types.ETString &&
+			!collate.CompatibleCollate(equalValueType.GetCollate(), colCollate) {
 			return false
 		}
-		if otherValueType := otherValueConst.GetType(evalCtx); otherValueType.EvalType() == types.ETString && !collate.CompatibleCollate(otherValueType.GetCollate(), colCollate) {
+		if otherValueType := otherValueConst.GetType(evalCtx); otherValueType.EvalType() == types.ETString &&
+			!collate.CompatibleCollate(otherValueType.GetCollate(), colCollate) {
 			return false
 		}
-		if types.IsString(equalValueConst.RetType.GetType()) || types.IsString(otherValueConst.RetType.GetType()) {
-			// Different connection collations can affect the results here, leading to different simplified results and ultimately impacting the execution outcomes.
-			// Observing MySQL v8.0.31, this area does not perform string simplification, so we can directly skip it.
-			// TODO: We can incorporate more complex judgments to simplify the expression here while ensuring correctness.
-			return false
-		}
-		newPred, err := expression.NewFunction(ctx.GetExprCtx(), otherValue.FuncName.L, otherValue.RetType, equalValue.GetArgs()[1], otherValue.GetArgs()[1])
+		newPred, err := expression.NewFunction(ctx.GetExprCtx(), otherValue.FuncName.L, otherValue.RetType, equalValueConst, otherValueConst)
 		if err != nil {
 			return false
 		}
