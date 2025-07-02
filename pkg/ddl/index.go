@@ -937,7 +937,9 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	m := metrics.RegisterLightningCommonMetricsForDDL(job.ID)
 	ctx = lightningmetric.WithCommonMetric(ctx, m)
 	defer func() {
-		metrics.UnregisterLightningCommonMetricsForDDL(job.ID, m)
+		if err != nil || done {
+			metrics.UnregisterLightningCommonMetricsForDDL(job.ID, m)
+		}
 	}()
 	bc, err = ingest.LitBackCtxMgr.Register(ctx, job.ID, allIndexInfos[0].Unique, nil, discovery, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
