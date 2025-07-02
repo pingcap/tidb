@@ -774,15 +774,15 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory impor
 
 // SetConcurrency sets the concurrency of the backend
 // It will return an error if the worker with the given id is not started.
-func (b *Backend) SetConcurrency(concurrency int, eid string) error {
-	v, ok := b.workers.Load(eid)
+func (local *Backend) SetConcurrency(concurrency int, eid string) error {
+	v, ok := local.workers.Load(eid)
 	if !ok {
 		// worker not created, let framework retry
 		return goerrors.New("worker not running")
 	}
 	worker, _ := v.(*jobOperator)
 	worker.TuneWorkerPoolSize(int32(concurrency), true)
-	b.WorkerConcurrency.Store(int32(concurrency))
+	local.WorkerConcurrency.Store(int32(concurrency))
 	return nil
 }
 
