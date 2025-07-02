@@ -27,8 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -204,7 +202,7 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 		)
 		//sql = fmt.Sprintf("select RELATED_TABLE_IDS,CURRENT_SQL_DIGEST from INFORMATION_SCHEMA.TIDB_TRX")
 		//sql = fmt.Sprintf("select RELATED_TABLE_IDS,CURRENT_SQL_DIGEST from information_schema.cluster_tidb_trx")
-		is := jobCtx.infoCache.GetLatest()
+		//is := jobCtx.infoCache.GetLatest()
 		for {
 			startTime := time.Now()
 			r, err := w.sess.Execute(jobCtx.stepCtx, sql, "check unfinished transactions")
@@ -227,30 +225,30 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 				zap.Strings("tableIDs: ", tableIDs),
 				zap.Duration("cost time", dur))
 			// check related table IDs
-			continueCheck := false
-			startTime = time.Now()
-			for _, rTblIDs := range tableIDs {
-				tblIDs := strings.Split(rTblIDs, ",")
-				for _, tblID := range tblIDs {
-					id, err := strconv.Atoi(tblID)
-					if err != nil {
-						return ver, errors.Trace(err)
-					}
-					tblInfo, ok := is.TableByID(jobCtx.stepCtx, int64(id))
-					if !ok {
-						return ver, errors.Errorf("table %d not found in infoschema", id)
-					}
-					if tblInfo.Meta().DBID == dbInfo.ID {
-						logutil.BgLogger().Info("user transaction is still running",
-							zap.String("table", tblInfo.Meta().Name.L))
-						continueCheck = true
-						break
-					}
-				}
-			}
-			if !continueCheck {
-				break
-			}
+			//continueCheck := false
+			//startTime = time.Now()
+			//for _, rTblIDs := range tableIDs {
+			//	tblIDs := strings.Split(rTblIDs, ",")
+			//	for _, tblID := range tblIDs {
+			//		id, err := strconv.Atoi(tblID)
+			//		if err != nil {
+			//			return ver, errors.Trace(err)
+			//		}
+			//		tblInfo, ok := is.TableByID(jobCtx.stepCtx, int64(id))
+			//		if !ok {
+			//			return ver, errors.Errorf("table %d not found in infoschema", id)
+			//		}
+			//		if tblInfo.Meta().DBID == dbInfo.ID {
+			//			logutil.BgLogger().Info("user transaction is still running",
+			//				zap.String("table", tblInfo.Meta().Name.L))
+			//			continueCheck = true
+			//			break
+			//		}
+			//	}
+			//}
+			//if !continueCheck {
+			//	break
+			//}
 			time.Sleep(500 * time.Millisecond) // wait for 500ms before next check
 		}
 		dbInfo.ReadOnly = args.ReadOnly
