@@ -82,11 +82,11 @@ func TestVerifyChecksum(t *testing.T) {
 	backupDistScanCon := tk.Session().GetSessionVars().DistSQLScanConcurrency()
 	require.Equal(t, vardef.DefDistSQLScanConcurrency, backupDistScanCon)
 	localChecksum := verify.MakeKVChecksum(1, 1, 1)
-	err := importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	err := importer.VerifyChecksum(ctx, plan, localChecksum, logutil.BgLogger(), tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, backupDistScanCon, tk.Session().GetSessionVars().DistSQLScanConcurrency())
 	localChecksum = verify.MakeKVChecksum(1, 2, 1)
-	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, logutil.BgLogger(), tk.Session())
 	require.ErrorIs(t, err, common.ErrChecksumMismatch)
 
 	// check a slow checksum can be canceled
@@ -120,7 +120,7 @@ func TestVerifyChecksum(t *testing.T) {
 
 	ctx2, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	err = importer.VerifyChecksum(ctx2, plan2, localChecksum, tk.Session(), logutil.BgLogger())
+	err = importer.VerifyChecksum(ctx2, plan2, localChecksum, logutil.BgLogger(), tk.Session())
 	require.ErrorContains(t, err, "Query execution was interrupted")
 
 	err = tk.Session().GetSessionVars().SetSystemVar(vardef.TiDBChecksumTableConcurrency, backup)
@@ -131,32 +131,32 @@ func TestVerifyChecksum(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum"))
 	}()
-	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, logutil.BgLogger(), tk.Session())
 	require.ErrorContains(t, err, "occur an error when checksum")
 	// remote checksum success after retry
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum", `1*return(true)`))
 	localChecksum = verify.MakeKVChecksum(1, 1, 1)
-	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, logutil.BgLogger(), tk.Session())
 	require.NoError(t, err)
 
 	// checksum = optional
 	plan.Checksum = config.OpLevelOptional
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum"))
 	localChecksum = verify.MakeKVChecksum(1, 1, 1)
-	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, logutil.BgLogger(), tk.Session())
 	require.NoError(t, err)
 	localChecksum = verify.MakeKVChecksum(1, 2, 1)
-	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, logutil.BgLogger(), tk.Session())
 	require.NoError(t, err)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum", `3*return(true)`))
-	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, logutil.BgLogger(), tk.Session())
 	require.NoError(t, err)
 
 	// checksum = off
 	plan.Checksum = config.OpLevelOff
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum"))
 	localChecksum = verify.MakeKVChecksum(1, 2, 1)
-	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, logutil.BgLogger(), tk.Session())
 	require.NoError(t, err)
 }
 

@@ -19,13 +19,17 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
@@ -103,7 +107,8 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		callLog.End(zap.ErrorLevel, err)
 	}()
 
-	if err = importer.RebaseAllocatorBases(ctx, p.store, subtaskMeta.MaxIDs, &p.taskMeta.Plan, logger); err != nil {
+	plan := &p.taskMeta.Plan
+	if err = importer.RebaseAllocatorBases(ctx, p.store, subtaskMeta.MaxIDs, plan, logger); err != nil {
 		return err
 	}
 
@@ -125,7 +130,26 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 	}
 
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	if kerneltype.IsNextGen() {
+		bfWeight := importer.GetBackoffWeight(plan)
+		mgr := local.NewTiKVChecksumManagerForImportInto(p.store, p.taskID,
+			uint(plan.DistSQLScanConcurrency), bfWeight, resourcegroup.DefaultResourceGroupName)
+		defer mgr.Close()
+		return importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
+			func() (*local.RemoteChecksum, error) {
+				return mgr.Checksum(ctx, &checkpoints.TidbTableInfo{
+					DB:   plan.DBName,
+					Name: plan.TableInfo.Name.L,
+					Core: plan.TableInfo,
+				})
+			},
+		)
+	}
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
-		return importer.VerifyChecksum(ctx, &p.taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
+		return importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
+			func() (*local.RemoteChecksum, error) {
+				return importer.RemoteChecksumTableBySQL(ctx, se, plan, logger)
+			},
+		)
 	})
 }

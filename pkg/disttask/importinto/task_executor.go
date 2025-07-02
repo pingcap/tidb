@@ -618,6 +618,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", proto.ImportInto),
 		zap.Int64("task-id", task.ID),
+		zap.String("task-key", task.Key),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)),
 	)
 	store := e.store
@@ -628,9 +629,6 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 		}
 		err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
 			store, err = se.GetSQLServer().GetKSStore(task.Keyspace)
-			if err != nil {
-				return err
-			}
 			return err
 		})
 		if err != nil {

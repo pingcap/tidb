@@ -48,6 +48,7 @@ const (
 	maxErrorRetryCount              = 3
 	defaultGCLifeTime               = 100 * time.Hour
 	lightningServicePrefix          = "lightning"
+	importIntoServicePrefix         = "import-into"
 )
 
 var (
@@ -296,6 +297,19 @@ func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanCon
 		backoffWeight:             backoffWeight,
 		resourceGroupName:         resourceGroupName,
 		explicitRequestSourceType: explicitRequestSourceType,
+	}
+}
+
+// NewTiKVChecksumManagerForImportInto return a new tikv checksum manager
+func NewTiKVChecksumManagerForImportInto(store kv.Storage, taskID int64, distSQLScanConcurrency uint, backoffWeight int, resourceGroupName string) *TiKVChecksumManager {
+	prefix := fmt.Sprintf("%s-%d", importIntoServicePrefix, taskID)
+	return &TiKVChecksumManager{
+		client:                    store.GetClient(),
+		manager:                   newGCTTLManager(store.(kv.StorageWithPD).GetPDClient(), prefix),
+		distSQLScanConcurrency:    distSQLScanConcurrency,
+		backoffWeight:             backoffWeight,
+		resourceGroupName:         resourceGroupName,
+		explicitRequestSourceType: importIntoServicePrefix,
 	}
 }
 
