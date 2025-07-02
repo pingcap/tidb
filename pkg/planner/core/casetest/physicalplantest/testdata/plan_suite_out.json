@@ -364,8 +364,7 @@
           "      └─TableRowIDScan 3333.33 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{} 1:{} 2:{}])",
-          "[planner:1815]The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid"
+          "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{} 1:{} 2:{}])"
         ]
       },
       {
@@ -395,8 +394,7 @@
           "      └─TableRowIDScan 3323.33 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{} 1:{} 2:{}])",
-          "[planner:1815]The agg can not push down to the MPP side, the MPP_2PHASE_AGG() hint is invalid"
+          "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{} 1:{} 2:{}])"
         ]
       },
       {
