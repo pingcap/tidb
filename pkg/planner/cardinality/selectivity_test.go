@@ -1557,12 +1557,12 @@ func TestRiskEqSkewRatio(t *testing.T) {
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0.5")
 	count2, _, err2 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err2)
-	// Result of count2 should be larger than countbecause the risk ratio is higher
+	// Result of count2 should be larger than count because the risk ratio is higher
 	require.Less(t, count, count2)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 1")
 	count3, _, err3 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err3)
-	// Result of count3 should be larger than countbecause the risk ratio is higher
+	// Result of count3 should be larger than count because the risk ratio is higher
 	require.Less(t, count2, count3)
 	// Repeat the prior test by setting the global variable instead of the session variable. This should have no effect.
 	testKit.MustExec("set @@global.tidb_opt_risk_eq_skew_ratio = 0.5")
@@ -1577,5 +1577,4 @@ func TestRiskEqSkewRatio(t *testing.T) {
 	require.Less(t, count4, count3)
 	// Reset global variable to default.
 	testKit.MustExec("set @@global.tidb_opt_risk_eq_skew_ratio = default")
-	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = default")
 }
