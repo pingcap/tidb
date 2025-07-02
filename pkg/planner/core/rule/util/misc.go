@@ -15,8 +15,6 @@
 package util
 
 import (
-	"slices"
-
 	"github.com/pingcap/tidb/pkg/expression"
 )
 
@@ -44,47 +42,5 @@ func ResolveColumnAndReplace(origin *expression.Column, replace map[string]*expr
 	}
 }
 
-<<<<<<< HEAD
-=======
-// ReplaceColumnOfExpr replaces column of expression by another LogicalProjection.
-func ReplaceColumnOfExpr(expr expression.Expression, exprs []expression.Expression, schema *expression.Schema) expression.Expression {
-	switch v := expr.(type) {
-	case *expression.Column:
-		idx := schema.ColumnIndex(v)
-		if idx != -1 && idx < len(exprs) {
-			return exprs[idx]
-		}
-	case *expression.ScalarFunction:
-		for i := range v.GetArgs() {
-			v.GetArgs()[i] = ReplaceColumnOfExpr(v.GetArgs()[i], exprs, schema)
-		}
-	}
-	return expr
-}
-
-// IsColsAllFromOuterTable check whether the cols all from outer plan
-func IsColsAllFromOuterTable(cols []*expression.Column, outerUniqueIDs *intset.FastIntSet) bool {
-	// There are two cases "return false" here:
-	// 1. If cols represents aggCols, then "len(cols) == 0" means not all aggregate functions are duplicate agnostic before.
-	// 2. If cols represents parentCols, then "len(cols) == 0" means no parent logical plan of this join plan.
-	if len(cols) == 0 {
-		return false
-	}
-	for _, col := range cols {
-		if !outerUniqueIDs.Has(int(col.UniqueID)) {
-			return false
-		}
-	}
-	return true
-}
-
-// IsColFromInnerTable check whether a column exists in the inner plan
-func IsColFromInnerTable(cols []*expression.Column, innerUniqueIDs *intset.FastIntSet) bool {
-	return slices.ContainsFunc(cols, func(col *expression.Column) bool {
-		return innerUniqueIDs.Has(int(col.UniqueID))
-	})
-}
-
->>>>>>> 89f2927d372 (planner: outer join pruning for constants (#61478))
 // SetPredicatePushDownFlag is a hook for other packages to set rule flag.
 var SetPredicatePushDownFlag func(uint64) uint64

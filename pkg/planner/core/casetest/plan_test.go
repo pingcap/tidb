@@ -334,8 +334,6 @@ func TestHandleEQAll(t *testing.T) {
 	tk.MustQuery("select c2 from t2 where (c2 = all (select /*+ use_INDEX(t2, i1) */ c2 from t2))").Check(testkit.Rows())
 }
 
-<<<<<<< HEAD
-=======
 func TestOuterJoinElimination(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -386,7 +384,6 @@ func TestOuterJoinElimination(t *testing.T) {
 	tk.MustNotHavePlan("select distinct t1.a from (select distinct a from t1) t1 left join t2 on t1.a = t2.a", "Join")
 }
 
->>>>>>> 89f2927d372 (planner: outer join pruning for constants (#61478))
 func TestCTEErrNotSupportedYet(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
