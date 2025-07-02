@@ -55,11 +55,11 @@ const (
 	PerformanceSchemaDBID int64 = SystemSchemaIDFlag | 10000
 	// MetricSchemaDBID is the metrics_schema schema id, it's exported for test.
 	MetricSchemaDBID int64 = SystemSchemaIDFlag | 20000
-	// pingKaiTablesBaseID is the base id for PingKaiDB (a TiDB enterprise edition)
+	// PingKaiTablesBaseID is the base id for PingKaiDB (a TiDB enterprise edition)
 	// system tables. The code of PingKaiDB is maintained elsewhere, we want to add
 	// this variable in TiDB (the upstream codebase of PingKaiDB) to avoid TiDB uses
 	// these table IDs unintentionally.
-	pingKaiTablesBaseID int64 = SystemSchemaIDFlag | 30000 // nolint:unused
+	PingKaiTablesBaseID int64 = SystemSchemaIDFlag | 30000
 )
 
 const (
