@@ -17,7 +17,6 @@ package ddl
 import (
 	"context"
 	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -26,6 +25,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
+	"strconv"
+	"strings"
+	"time"
 )
 
 func onCreateSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
@@ -151,6 +155,115 @@ func onModifySchemaDefaultPlacement(jobCtx *jobContext, job *model.Job) (ver int
 		return ver, errors.Trace(err)
 	}
 	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+	return ver, nil
+}
+
+func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	args, err := model.GetModifySchemaArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(jobCtx.metaMut, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if dbInfo.ReadOnlyState == model.StatePublic && dbInfo.ReadOnly == args.ReadOnly {
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+		return ver, nil
+	}
+
+	switch dbInfo.ReadOnlyState {
+	case model.StateNone:
+		// none -> write only
+		dbInfo.ReadOnly = args.ReadOnly
+		dbInfo.ReadOnlyState = model.StateWriteOnly
+		if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+			return ver, errors.Trace(err)
+		}
+		if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
+			return ver, errors.Trace(err)
+		}
+	case model.StateWriteOnly:
+		// write only -> public
+		var startTS = uint64(0)
+		err = kv.RunInNewTxn(jobCtx.ctx, jobCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
+			startTS = txn.StartTS()
+			return nil
+		})
+		sql := ""
+		sql = fmt.Sprintf(
+			"SELECT RELATED_TABLE_IDS, CURRENT_SQL_DIGEST, ID "+
+				//"FROM INFORMATION_SCHEMA.TIDB_TRX "+
+				"FROM INFORMATION_SCHEMA.CLUSTER_TIDB_TRX "+
+				"WHERE (CURRENT_SQL_DIGEST IS NULL OR CURRENT_SQL_DIGEST != TIDB_ENCODE_SQL_DIGEST('%s')) "+ // exclude ddl
+				"AND id < %d", // exclude new transactions
+			job.Query,
+			startTS,
+		)
+		//sql = fmt.Sprintf("select RELATED_TABLE_IDS,CURRENT_SQL_DIGEST from INFORMATION_SCHEMA.TIDB_TRX")
+		//sql = fmt.Sprintf("select RELATED_TABLE_IDS,CURRENT_SQL_DIGEST from information_schema.cluster_tidb_trx")
+		is := jobCtx.infoCache.GetLatest()
+		for {
+			startTime := time.Now()
+			r, err := w.sess.Execute(jobCtx.stepCtx, sql, "check unfinished transactions")
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			dur := time.Since(startTime)
+			var (
+				digests  []string
+				tableIDs []string
+				ids      []int64
+			)
+			for _, row := range r {
+				tableIDs = append(tableIDs, row.GetString(0))
+				digests = append(digests, row.GetString(1))
+				ids = append(ids, row.GetInt64(2))
+			}
+			logutil.BgLogger().Info("check unfinished transactions query ok",
+				zap.Strings("current sql digests: ", digests),
+				zap.Strings("tableIDs: ", tableIDs),
+				zap.Duration("cost time", dur))
+			// check related table IDs
+			continueCheck := false
+			startTime = time.Now()
+			for _, rTblIDs := range tableIDs {
+				tblIDs := strings.Split(rTblIDs, ",")
+				for _, tblID := range tblIDs {
+					id, err := strconv.Atoi(tblID)
+					if err != nil {
+						return ver, errors.Trace(err)
+					}
+					tblInfo, ok := is.TableByID(jobCtx.stepCtx, int64(id))
+					if !ok {
+						return ver, errors.Errorf("table %d not found in infoschema", id)
+					}
+					if tblInfo.Meta().DBID == dbInfo.ID {
+						logutil.BgLogger().Info("user transaction is still running",
+							zap.String("table", tblInfo.Meta().Name.L))
+						continueCheck = true
+						break
+					}
+				}
+			}
+			if !continueCheck {
+				break
+			}
+			time.Sleep(500 * time.Millisecond) // wait for 500ms before next check
+		}
+		dbInfo.ReadOnly = args.ReadOnly
+		dbInfo.ReadOnlyState = model.StateNone
+
+		if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+			return ver, errors.Trace(err)
+		}
+		if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+	}
 	return ver, nil
 }
 
