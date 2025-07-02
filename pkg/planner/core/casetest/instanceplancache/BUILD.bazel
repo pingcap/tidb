@@ -2,7 +2,11 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "instanceplancache_test",
+<<<<<<< HEAD
     timeout = "short",
+=======
+    timeout = "moderate",
+>>>>>>> 4c9e2eaa155 (planner: avoid string type's collate affecting predicate simplification (#62141))
     srcs = [
         "concurrency_test.go",
         "concurrency_tpcc_test.go",
