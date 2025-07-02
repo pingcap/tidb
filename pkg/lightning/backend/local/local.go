@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -52,8 +53,11 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	rutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -61,6 +65,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/retry"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -392,8 +397,11 @@ type BackendConfig struct {
 	MaxConnPerStore int
 	// compress type when write or ingest into tikv
 	ConnCompressType config.CompressionType
-	// concurrency of generateJobForRange and import(write & ingest) workers
-	WorkerConcurrency int
+	// concurrency is used in these places:
+	// 1. generateJobForRange parallelism, only for local engine.
+	// 2. data size loaded from LoadIngestData, only for external engine.
+	// 3. region job worker pool size
+	WorkerConcurrency atomic.Int32
 	// batch kv size when writing to TiKV
 	KVWriteBatchSize       int64
 	RegionSplitBatchSize   int
@@ -438,7 +446,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		LocalStoreDir:               cfg.TikvImporter.SortedKVDir,
 		MaxConnPerStore:             cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:            cfg.TikvImporter.CompressKVPairs,
-		WorkerConcurrency:           cfg.TikvImporter.RangeConcurrency * 2,
+		WorkerConcurrency:           *atomic.NewInt32(int32(cfg.TikvImporter.RangeConcurrency) * 2),
 		BlockSize:                   int(cfg.TikvImporter.BlockSize),
 		KVWriteBatchSize:            int64(cfg.TikvImporter.SendKVSize),
 		RegionSplitBatchSize:        cfg.TikvImporter.RegionSplitBatchSize,
@@ -463,6 +471,16 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 
 func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
+}
+
+// Concurrency gets the current concurrency of the backend
+func (c *BackendConfig) Concurrency() int {
+	return int(c.WorkerConcurrency.Load())
+}
+
+// SetConcurrency sets the current concurrency of the backend
+func (c *BackendConfig) SetConcurrency(concurrency int) {
+	c.WorkerConcurrency.Store(int32(concurrency))
 }
 
 // Backend is a local backend.
@@ -930,10 +948,10 @@ func (local *Backend) generateAndSendJob(
 	jobToWorkerCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
 ) error {
-	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	dataAndRangeCh := make(chan common.DataAndRanges)
-	conn := local.WorkerConcurrency
+	conn := int(local.WorkerConcurrency.Load())
 	if _, ok := engine.(*external.Engine); ok {
 		// currently external engine will generate a large IngestData, se we lower the
 		// concurrency to pass backpressure to the LoadIngestData goroutine to avoid OOM
@@ -1064,15 +1082,86 @@ func (local *Backend) generateJobForRange(
 	return jobs, nil
 }
 
+// util function to create atomic variable
+func toAtomic(v int) atomic.Int32 {
+	return *atomic.NewInt32(int32(v))
+}
+
+type regionJobBaseWorker struct {
+	ctx *operator.Context
+
+	jobWg *sync.WaitGroup
+
+	local *Backend
+	// not used in release 8.1, just keep it here
+	afterExecuteJob func([]*metapb.Peer)
+	jobFromWorkerCh chan *regionJob
+}
+
 // startWorker creates a worker that reads from the job channel and processes.
 // startWorker will return nil if it's expected to stop, where the only case is
 // the context canceled. It will return not nil error when it actively stops.
 // startWorker must Done the jobWg if it does not put the job into jobOutCh.
-func (local *Backend) startWorker(
-	ctx context.Context,
-	jobInCh, jobOutCh chan *regionJob,
-	jobWg *sync.WaitGroup,
-) error {
+func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) {
+	// As we need to call job.done() after panic, we recover here rather than in worker pool.
+	defer tidbutil.Recover("fast_check_table", "handleTableScanTaskWithRecover", func() {
+		w.ctx.OnError(errors.Errorf("region job worker panic"))
+		job.done(w.jobWg)
+	}, false)
+
+	failpoint.Inject("injectPanicForRegionJob", func() {
+		panic("mock panic")
+	})
+
+	err := w.process(job)
+	if err != nil {
+		w.ctx.OnError(err)
+	}
+}
+
+func (w *regionJobBaseWorker) process(job *regionJob) error {
+	ctx := w.ctx
+	local := w.local
+	jobWg := w.jobWg
+
+	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
+	err := local.executeJob(ctx, job)
+	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
+	switch job.stage {
+	case regionScanned, wrote, ingested:
+		w.jobFromWorkerCh <- job
+	case needRescan:
+		jobs, err2 := local.generateJobForRange(
+			ctx,
+			job.ingestData,
+			[]common.Range{job.keyRange},
+			job.regionSplitSize,
+			job.regionSplitKeys,
+		)
+		if err2 != nil {
+			// Don't need to put the job back to retry, because generateJobForRange
+			// has done the retry internally. Here just done for the "needRescan"
+			// job and exit directly.
+			job.done(jobWg)
+			return err2
+		}
+		// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
+		newJobCnt := len(jobs) - 1
+		for newJobCnt > 0 {
+			job.ref(jobWg)
+			newJobCnt--
+		}
+		for _, j := range jobs {
+			j.lastRetryableErr = job.lastRetryableErr
+			w.jobFromWorkerCh <- j
+		}
+	}
+
+	return err
+}
+
+func (w *regionJobBaseWorker) run(jobInCh chan *regionJob) error {
+	ctx := w.ctx
 	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
 	for {
 		select {
@@ -1080,49 +1169,101 @@ func (local *Backend) startWorker(
 			return nil
 		case job, ok := <-jobInCh:
 			if !ok {
-				// In fact we don't use close input channel to notify worker to
-				// exit, because there's a cycle in workflow.
 				return nil
 			}
 
-			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
-			err := local.executeJob(ctx, job)
-			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
-			switch job.stage {
-			case regionScanned, wrote, ingested:
-				jobOutCh <- job
-			case needRescan:
-				jobs, err2 := local.generateJobForRange(
-					ctx,
-					job.ingestData,
-					[]common.Range{job.keyRange},
-					job.regionSplitSize,
-					job.regionSplitKeys,
-				)
-				if err2 != nil {
-					// Don't need to put the job back to retry, because generateJobForRange
-					// has done the retry internally. Here just done for the "needRescan"
-					// job and exit directly.
-					job.done(jobWg)
-					return err2
-				}
-				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
-				newJobCnt := len(jobs) - 1
-				for newJobCnt > 0 {
-					job.ref(jobWg)
-					newJobCnt--
-				}
-				for _, j := range jobs {
-					j.lastRetryableErr = job.lastRetryableErr
-					jobOutCh <- j
-				}
-			}
-
-			if err != nil {
+			if err := w.process(job); err != nil {
 				return err
 			}
 		}
 	}
+}
+
+// Close implement Operator interface
+func (*regionJobBaseWorker) Close() {}
+
+type jobOperator struct {
+	ctx *operator.Context
+	*operator.AsyncOperator[*regionJob, *regionJob]
+
+	// cancel is used to close the worker pool in happy path
+	cancel context.CancelFunc
+
+	// workerGroup is used to notify other component to quit in error case
+	workerGroup *tidbutil.ErrorGroupWithRecover
+}
+
+func newRegionJobOperator(
+	workerCtx context.Context,
+	workGroup *tidbutil.ErrorGroupWithRecover,
+	jobWg *sync.WaitGroup,
+	local *Backend,
+	jobToWorkerCh, jobFromWorkerCh chan *regionJob,
+) *jobOperator {
+	opCtx, cancel := operator.NewContext(workerCtx)
+	var (
+		sourceChannel   = jobToWorkerCh
+		afterExecuteJob func([]*metapb.Peer)
+	)
+
+	// if balancer != nil {
+	// 	afterExecuteJob = balancer.releaseStoreLoad
+	// 	sourceChannel = balancer.innerJobToWorkerCh
+	// }
+
+	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
+
+	pool := workerpool.NewWorkerPool(
+		"RegionJobOperator",
+		rutil.DistTask,
+		local.Concurrency(),
+		func() workerpool.Worker[*regionJob, *regionJob] {
+			return &regionJobBaseWorker{
+				ctx:             opCtx,
+				jobWg:           jobWg,
+				local:           local,
+				afterExecuteJob: afterExecuteJob,
+				jobFromWorkerCh: jobFromWorkerCh,
+			}
+		},
+	)
+
+	op := &jobOperator{
+		ctx:           opCtx,
+		AsyncOperator: operator.NewAsyncOperator(opCtx, pool),
+		workerGroup:   workGroup,
+		cancel:        cancel,
+	}
+	op.SetSink(operator.NewSimpleDataChannel(jobFromWorkerCh))
+	op.SetSource(operator.NewSimpleDataChannel(sourceChannel))
+	return op
+}
+
+func (*jobOperator) String() string {
+	return "jobOperator"
+}
+
+// Open starts the job operator.
+// Besides, it will also start a goroutine to monitor the context cancellation.
+// If the context is canceled, it will return the error catched in the worker pool.
+func (j *jobOperator) Open() error {
+	// In happy path, this goroutine will exit when we call j.Close().
+	// In error case:
+	// 1. if other goroutine in the worker group returns error, j.ctx will be canceled
+	// 2. if this worker pool meets error, this context will also be canceled by
+	//     j.ctx.OnError(err). And this error will be exposed to the worker pool.
+	j.workerGroup.Go(func() error {
+		<-j.ctx.Done()
+		return j.ctx.OperatorErr()
+	})
+	return j.AsyncOperator.Open()
+}
+
+func (j *jobOperator) Close() error {
+	j.cancel()
+	//nolint: errcheck
+	j.AsyncOperator.Close()
+	return j.ctx.OperatorErr()
 }
 
 func (*Backend) isRetryableImportTiKVError(err error) bool {
@@ -1232,6 +1373,21 @@ func (local *Backend) executeJob(
 		job.keyRange.Start = job.writeResult.remainingStartKey
 		job.convertStageTo(regionScanned)
 	}
+}
+
+// GetExternalEngine returns the external engine by uuid.
+// If the engine is not found or not an external engine, it returns nil.
+// It's used to dynamically update the resource used by the external engine
+func (local *Backend) GetExternalEngine(engineUUID uuid.UUID) *external.Engine {
+	e, ok := local.engineMgr.getExternalEngine(engineUUID)
+	if !ok {
+		return nil
+	}
+	ext, ok := e.(*external.Engine)
+	if !ok {
+		return nil
+	}
+	return ext
 }
 
 // ImportEngine imports an engine to TiKV.
@@ -1390,8 +1546,6 @@ func (local *Backend) doImport(
 	// when jobFromWorkerCh is closed to avoid worker is blocked on sending to
 	// jobFromWorkerCh.
 	defer func() {
-		// use defer to close jobFromWorkerCh after all workers are exited
-		close(jobFromWorkerCh)
 		<-dispatchJobGoroutine
 	}()
 	go func() {
@@ -1446,14 +1600,23 @@ func (local *Backend) doImport(
 		}
 	}()
 
+	worker := newRegionJobOperator(
+		workerCtx, workGroup, &jobWg,
+		local, jobToWorkerCh, jobFromWorkerCh,
+	)
+
+	if e, ok := engine.(*external.Engine); ok {
+		e.SetWorker(worker)
+	}
+
 	failpoint.Inject("skipStartWorker", func() {
 		failpoint.Goto("afterStartWorker")
 	})
 
-	for i := 0; i < local.WorkerConcurrency; i++ {
-		workGroup.Go(func() error {
-			return local.startWorker(workerCtx, jobToWorkerCh, jobFromWorkerCh, &jobWg)
-		})
+	if err := worker.Open(); err != nil {
+		close(jobFromWorkerCh)
+		_ = workGroup.Wait()
+		return errors.Trace(err)
 	}
 
 	failpoint.Label("afterStartWorker")
@@ -1473,13 +1636,17 @@ func (local *Backend) doImport(
 		}
 
 		jobWg.Wait()
-		workerCancel()
-		return nil
+		return worker.Close()
 	})
 	if err := workGroup.Wait(); err != nil {
 		if !common.IsContextCanceledError(err) {
 			log.FromContext(ctx).Error("do import meets error", zap.Error(err))
 		}
+
+		// Wait for all workers to quit in error case
+		//nolint: errcheck
+		_ = worker.Close()
+
 		firstErr.Set(err)
 	}
 	return firstErr.Get()

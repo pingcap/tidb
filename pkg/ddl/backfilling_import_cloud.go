@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -37,6 +38,7 @@ type cloudImportExecutor struct {
 	ptbl          table.PhysicalTable
 	bc            ingest.BackendCtx
 	cloudStoreURI string
+	engine        atomic.Pointer[external.Engine]
 }
 
 func newCloudImportExecutor(
@@ -107,6 +109,14 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
+
+	eng := local.GetExternalEngine(engineUUID)
+	if eng == nil {
+		return errors.Errorf("external engine %s not found", engineUUID)
+	}
+	m.engine.Store(eng)
+	defer m.engine.Store(nil)
+
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if common.ErrFoundDuplicateKeys.Equal(err) {
 		err = convertToKeyExistsErr(err, m.index, m.ptbl.Meta())
@@ -118,5 +128,45 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
 	// cleanup backend context
 	ingest.LitBackCtxMgr.Unregister(m.job.ID)
+	return nil
+}
+
+// TaskMetaModified changes the max write speed for ingest
+func (e *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []byte) error {
+	logutil.Logger(ctx).Info("cloud import executor update task meta")
+	// TODO(joechenrh): need to cp necessary PR
+	// newTaskMeta := &BackfillTaskMeta{}
+	// if err := json.Unmarshal(newMeta, newTaskMeta); err != nil {
+	// 	return errors.Trace(err)
+	// }
+
+	// local := e.bc.GetLocalBackend()
+	// newMaxWriteSpeed := newTaskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
+	// if newMaxWriteSpeed != e.job.ReorgMeta.GetMaxWriteSpeed() {
+	// 	e.job.ReorgMeta.SetMaxWriteSpeed(newMaxWriteSpeed)
+	// 	if local != nil {
+	// 		local.UpdateWriteSpeedLimit(newMaxWriteSpeed)
+	// 	}
+	// }
+	return nil
+}
+
+// ResourceModified change the concurrency for ingest
+func (e *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
+	logutil.Logger(ctx).Info("cloud import executor update resource")
+	local := e.bc.GetLocalBackend()
+	newConcurrency := int(newResource.CPU.Capacity())
+	if newConcurrency == local.Concurrency() {
+		return nil
+	}
+
+	eng := e.engine.Load()
+	if eng != nil {
+		if err := eng.UpdateResource(ctx, newConcurrency, newResource.Mem.Capacity()); err != nil {
+			return err
+		}
+	}
+
+	local.SetConcurrency(newConcurrency)
 	return nil
 }
