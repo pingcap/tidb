@@ -278,7 +278,7 @@ func updateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error 
 // TiKVChecksumManager is a manager that can compute checksum of a table using TiKV.
 type TiKVChecksumManager struct {
 	client                    kv.Client
-	manager                   gcTTLManager
+	manager                   *gcTTLManager
 	distSQLScanConcurrency    uint
 	backoffWeight             int
 	resourceGroupName         string
@@ -432,8 +432,8 @@ type gcTTLManager struct {
 	wg      util.WaitGroupWrapper
 }
 
-func newGCTTLManager(pdClient pd.Client, prefix string) gcTTLManager {
-	return gcTTLManager{
+func newGCTTLManager(pdClient pd.Client, prefix string) *gcTTLManager {
+	return &gcTTLManager{
 		pdClient:  pdClient,
 		serviceID: fmt.Sprintf("%s-%s", prefix, uuid.New()),
 		closeCh:   make(chan struct{}),
