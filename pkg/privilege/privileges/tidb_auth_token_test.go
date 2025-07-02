@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -418,30 +419,71 @@ func TestJWKSImpl(t *testing.T) {
 	require.Error(t, err)
 }
 
-func (p *immutable) User() []UserRecord {
-	return p.user
+func (p *MySQLPrivilege) User() []UserRecord {
+	var ret []UserRecord
+	p.user.Ascend(func(itm itemUser) bool {
+		ret = append(ret, itm.data...)
+		return true
+	})
+	slices.SortStableFunc(ret, compareUserRecord)
+	return ret
 }
 
-func (p *immutable) SetUser(user []UserRecord) {
-	p.user = user
+func (p *MySQLPrivilege) SetUser(user []UserRecord) {
+	p.user.Clear(false)
+	for _, u := range user {
+		old, exists := p.user.Get(itemUser{username: u.User})
+		if !exists {
+			old.username = u.User
+		}
+		old.data = append(old.data, u)
+		p.user.ReplaceOrInsert(old)
+	}
 }
 
-func (p *immutable) DB() []dbRecord {
-	return p.db
+func (p *MySQLPrivilege) DB() []dbRecord {
+	var ret []dbRecord
+	p.db.Ascend(func(itm itemDB) bool {
+		ret = append(ret, itm.data...)
+		return true
+	})
+	return ret
 }
 
-func (p *immutable) TablesPriv() []tablesPrivRecord {
-	return p.tablesPriv
+func (p *MySQLPrivilege) TablesPriv() []tablesPrivRecord {
+	var ret []tablesPrivRecord
+	p.tablesPriv.Ascend(func(itm itemTablesPriv) bool {
+		ret = append(ret, itm.data...)
+		return true
+	})
+	return ret
 }
 
-func (p *immutable) ColumnsPriv() []columnsPrivRecord {
-	return p.columnsPriv
+func (p *MySQLPrivilege) ColumnsPriv() []columnsPrivRecord {
+	var ret []columnsPrivRecord
+	p.columnsPriv.Ascend(func(itm itemColumnsPriv) bool {
+		ret = append(ret, itm.data...)
+		return true
+	})
+	return ret
 }
 
-func (p *immutable) DefaultRoles() []defaultRoleRecord {
-	return p.defaultRoles
+func (p *MySQLPrivilege) DefaultRoles() []defaultRoleRecord {
+	var ret []defaultRoleRecord
+	p.defaultRoles.Ascend(func(itm itemDefaultRole) bool {
+		ret = append(ret, itm.data...)
+		return true
+	})
+	return ret
 }
 
-func (p *immutable) RoleGraph() map[string]roleGraphEdgesTable {
+func (p *MySQLPrivilege) GlobalPriv(user string) []globalPrivRecord {
+	ret, _ := p.globalPriv.Get(itemGlobalPriv{username: user})
+	return ret.data
+}
+
+func (p *MySQLPrivilege) RoleGraph() map[string]roleGraphEdgesTable {
 	return p.roleGraph
 }
+
+var NewMySQLPrivilege = newMySQLPrivilege
