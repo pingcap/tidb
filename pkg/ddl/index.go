@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
@@ -719,68 +720,124 @@ SwitchIndexState:
 			return ver, errors.Trace(err)
 		}
 
-		var done bool
-		if job.MultiSchemaInfo != nil {
-			done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, d, t, job, tbl, allIndexInfos)
-		} else {
-			done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, allIndexInfos)
-		}
-		if !done {
-			return ver, err
-		}
-
-		// Set column index flag.
-		for _, indexInfo := range allIndexInfos {
-			AddIndexColumnFlag(tblInfo, indexInfo)
-			if isPK {
-				if err = UpdateColsNull2NotNull(tblInfo, indexInfo); err != nil {
-					return ver, errors.Trace(err)
-				}
+		switch job.ReorgMeta.AnalyzeState {
+		case model.AnalyzeStateNone:
+			var done bool
+			if job.MultiSchemaInfo != nil {
+				done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, d, t, job, tbl, allIndexInfos)
+			} else {
+				done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, allIndexInfos)
 			}
-			indexInfo.State = model.StatePublic
-		}
-
-		// Inject the failpoint to prevent the progress of index creation.
-		failpoint.Inject("create-index-stuck-before-public", func(v failpoint.Value) {
-			if sigFile, ok := v.(string); ok {
-				for {
-					time.Sleep(1 * time.Second)
-					if _, err := os.Stat(sigFile); err != nil {
-						if os.IsNotExist(err) {
-							continue
-						}
-						failpoint.Return(ver, errors.Trace(err))
+			if !done {
+				return ver, err
+			}
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+		case model.AnalyzeStateRunning:
+			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+			}
+		case model.AnalyzeStateDone:
+			// Set column index flag.
+			for _, indexInfo := range allIndexInfos {
+				AddIndexColumnFlag(tblInfo, indexInfo)
+				if isPK {
+					if err = UpdateColsNull2NotNull(tblInfo, indexInfo); err != nil {
+						return ver, errors.Trace(err)
 					}
-					break
 				}
+				indexInfo.State = model.StatePublic
 			}
-		})
 
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StatePublic)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
+			// Inject the failpoint to prevent the progress of index creation.
+			failpoint.Inject("create-index-stuck-before-public", func(v failpoint.Value) {
+				if sigFile, ok := v.(string); ok {
+					for {
+						time.Sleep(1 * time.Second)
+						if _, err := os.Stat(sigFile); err != nil {
+							if os.IsNotExist(err) {
+								continue
+							}
+							failpoint.Return(ver, errors.Trace(err))
+						}
+						break
+					}
+				}
+			})
 
-		allIndexIDs := make([]int64, 0, len(allIndexInfos))
-		ifExists := make([]bool, 0, len(allIndexInfos))
-		for _, indexInfo := range allIndexInfos {
-			allIndexIDs = append(allIndexIDs, indexInfo.ID)
-			ifExists = append(ifExists, false)
+			ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StatePublic)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+
+			allIndexIDs := make([]int64, 0, len(allIndexInfos))
+			ifExists := make([]bool, 0, len(allIndexInfos))
+			for _, indexInfo := range allIndexInfos {
+				allIndexIDs = append(allIndexIDs, indexInfo.ID)
+				ifExists = append(ifExists, false)
+			}
+			job.Args = []interface{}{allIndexIDs, ifExists, getPartitionIDs(tbl.Meta())}
+			// Finish this job.
+			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+				ingest.LitBackCtxMgr.Unregister(job.ID)
+			}
+			logutil.BgLogger().Info("run add index job done", zap.String("category", "ddl"),
+				zap.String("charset", job.Charset),
+				zap.String("collation", job.Collate))
 		}
-		job.Args = []interface{}{allIndexIDs, ifExists, getPartitionIDs(tbl.Meta())}
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			ingest.LitBackCtxMgr.Unregister(job.ID)
-		}
-		logutil.BgLogger().Info("run add index job done", zap.String("category", "ddl"),
-			zap.String("charset", job.Charset),
-			zap.String("collation", job.Collate))
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) bool {
+	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
+	if doneCh == nil {
+		doneCh = make(chan struct{})
+		eg := util.NewErrorGroupWithRecover()
+		eg.Go(func() error {
+			sessCtx, err := w.sessPool.Get()
+			if err != nil {
+				return err
+			}
+			sessCtx.GetSessionVars().InternalAnalyze = true
+			defer func() {
+				sessCtx.GetSessionVars().InternalAnalyze = false
+				w.sessPool.Put(sessCtx)
+				close(doneCh)
+			}()
+			dbTable := fmt.Sprintf("`%s`.`%s`", dbName, tblName)
+			exec, ok := sessCtx.(sqlexec.RestrictedSQLExecutor)
+			if !ok {
+				return errors.Errorf("not restricted SQL executor: %T", sessCtx)
+			}
+			_, _, err = exec.ExecRestrictedSQL(w.ctx, nil, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
+			if err != nil {
+				logutil.BgLogger().Warn("analyze table failed",
+					zap.String("category", "ddl"),
+					zap.String("db", dbName),
+					zap.String("table", tblName),
+					zap.Error(err))
+				// We can continue to finish the job even if analyze table failed.
+			}
+			return nil
+		})
+		w.ddlCtx.setAnalyzeDoneCh(job.ID, doneCh)
+	}
+	select {
+	case <-doneCh:
+		logutil.BgLogger().Info("analyze table after create index done", zap.Int64("jobID", job.ID))
+		return true
+	case <-w.ctx.Done():
+		logutil.BgLogger().Info("analyze table after create index context done", zap.Int64("jobID", job.ID))
+		return true
+	case <-time.After(10 * time.Second):
+		logutil.BgLogger().Info("analyze table after create index timeout", zap.Int64("jobID", job.ID))
+		return false
+	}
 }
 
 // pickBackfillType determines which backfill process will be used.
