@@ -286,7 +286,8 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	for uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit {
 		srcChk := exec.TryNewCacheChunk(e.Children(0))
 		// TopN requires its child to return all data, so don't need to set RequiredRows here according to the limit.
-		// See #62135 for more info.
+		// Instead, setting RequiredRows here might lead smaller BatchSize in its child operator and cause more
+		// requests to TiKV. Please see #62135 for more info.
 		err := exec.Next(ctx, e.Children(0), srcChk)
 		if err != nil {
 			return err
