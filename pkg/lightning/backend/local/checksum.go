@@ -299,19 +299,6 @@ func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanCon
 	}
 }
 
-// NewTiKVChecksumManagerForImportInto return a new tikv checksum manager used
-// by import-into.
-func NewTiKVChecksumManagerForImportInto(store kv.Storage, distSQLScanConcurrency uint, backoffWeight int, resourceGroupName, explicitRequestSourceType string) *TiKVChecksumManager {
-	return &TiKVChecksumManager{
-		client:                    store.GetClient(),
-		manager:                   newGCTTLManager(store.(kv.StorageWithPD).GetPDClient(), "import-into"),
-		distSQLScanConcurrency:    distSQLScanConcurrency,
-		backoffWeight:             backoffWeight,
-		resourceGroupName:         resourceGroupName,
-		explicitRequestSourceType: explicitRequestSourceType,
-	}
-}
-
 func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, ts uint64) (*RemoteChecksum, error) {
 	executor, err := checksum.NewExecutorBuilder(tableInfo.Core, ts).
 		SetConcurrency(e.distSQLScanConcurrency).
