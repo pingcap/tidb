@@ -278,6 +278,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	otherValueConst, ok2 := otherValue.GetArgs()[1].(*expression.Constant)
 	if ok1 && ok2 {
 		evalCtx := ctx.GetExprCtx().GetEvalCtx()
+		// We have checked the equivalence between col1 and col2, so we can safely use col1's collation.
 		colCollate := col1.GetType(evalCtx).GetCollate()
 		// Different connection collations can affect the results here, leading to different simplified results and ultimately impacting the execution outcomes.
 		// Observing MySQL v8.0.31, this area does not perform string simplification, so we can directly skip it.
