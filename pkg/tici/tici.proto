@@ -16,9 +16,7 @@ syntax = "proto3";
 
 package tici;
 
-option go_package = ".";
-
-import "indexer.proto";
+option go_package = "pkg/tici";
 
 message WorkerNodeStatus {
   // TODO Need more metrics, such as disk usage, quotas, cache miss rates
@@ -66,7 +64,7 @@ message WorkerNodeHeartbeatRequest {
 message WorkerNodeHeartbeatResponse {
   // Operation result status code, 0 means success
   int32 status = 1;
-  repeated indexer.AddShardRequest to_add_shards = 2;
+  repeated AddShardRequest to_add_shards = 2;
   // We assume the `shard_id`s are unique across tables,
   // So using `shard_id` is enough here.
   repeated uint64 to_remove_shards = 3;
@@ -78,6 +76,8 @@ message ReaderNodeHeartbeatRequest {
   string addr = 1;
   // Reader node status
   ReaderNodeStatus status = 2;
+  // TiFlash server address
+  string tiflash_server_addr = 3;
 }
 
 // Reader node heartbeat response
@@ -121,7 +121,7 @@ message KeyRange {
 
 // Shard local cache information
 message ShardLocalCacheInfo {
-  indexer.ShardManifestHeader shard = 1;
+  ShardManifestHeader shard = 1;
   repeated string local_cache_addrs = 2;
 }
 
@@ -153,6 +153,75 @@ message DebugGetShardManifestResponse {
   repeated FragMeta frag_metas = 1;
 }
 
+// -----------------------------------------------------------------------------
+// TiCI Full-text index data import workflow during Import Into (with DXF):
+// -----------------------------------------------------------------------------
+// 1. TiDB requests a cloud storage object path ("file") from the TiCI Meta
+//    Service. It provides the table info, index info, and key range for the
+//    specific data shard. TiDB import code path expects a unique file path
+//    for each shard to write its key-value pairs. Currently, only S3 is 
+//    supported as the cloud storage backend.
+//
+// 2. After import DXF has uploaded all data shards belonging to a baseline 
+//    full text index, it calls `MarkPartitionUploadFinished`. This allows 
+//    TiCI to mark the shard as complete and make it available to downstream 
+//    consumers.
+// -----------------------------------------------------------------------------
+
+message GetCloudStoragePathRequest {
+  // Detailed schema of the fts being built.
+  IndexInfo index_info = 1;
+  // Parent table metadata.
+  TableInfo table_info = 2;
+  // Inclusive lower key bound (encoded handle/rowID), non-empty.
+  bytes lower_bound = 3;
+  // Exclusive upper key bound, non-empty.
+  bytes upper_bound = 4;
+}
+
+message GetCloudStoragePathResponse {
+  // 0 - success
+  // ... other error codes
+  int32 status = 1;
+  // Optional human‑readable diagnostics, only defined when status ≠ 0.
+  string error_message = 2;
+  // Object key inside the bucket that TiDB Import should write to.
+  string s3_path = 3;
+}
+
+message MarkPartitionUploadFinishedRequest {
+  // The same S3 path previously returned by GetCloudStoragePath.
+  // We assume the path is unique for each partition so it can be used to
+  // identify the partition.
+  string s3_path = 1;
+}
+
+// DXF receives this in-band result so callers can
+// inspect the status and customized results.
+message MarkPartitionUploadFinishedResponse {
+  // 0 - success
+  // ... other error codes
+  int32 status = 1;
+  // Optional human‑readable diagnostics, only defined when status ≠ 0.
+  string error_message = 2;
+}
+
+message MarkTableUploadFinishedRequest {
+  // Table ID of the target table.
+  int64 table_id = 1;
+  // Index ID of the target index.
+  int64 index_id = 2;
+}
+
+message MarkTableUploadFinishedResponse {
+  // 0 - success
+  // ... other error codes
+  int32 status = 1;
+  // Optional human‑readable diagnostics, only defined when status ≠ 0.
+  string error_message = 2;
+}
+
+
 service MetaService {
   // Maintains heartbeat from worker nodes(such as writers, compactors) to meta service.
   rpc WorkerNodeHeartbeat(WorkerNodeHeartbeatRequest) returns (WorkerNodeHeartbeatResponse);
@@ -160,15 +229,15 @@ service MetaService {
   // Maintains heartbeat from reader nodes to meta service.
   rpc ReaderNodeHeartbeat(ReaderNodeHeartbeatRequest) returns (ReaderNodeHeartbeatResponse);
 
-  // TODO It will eventually replace the same RPCs in indexer.rs
+  // TODO It will eventually replace the same RPCs in rs
   // CreateIndex creates a new index
-  rpc CreateIndex(indexer.CreateIndexRequest) returns (indexer.CreateIndexResponse);
+  rpc CreateIndex(CreateIndexRequest) returns (CreateIndexResponse);
   
   // DropIndex removes an existing index
-  rpc DropIndex(indexer.DropIndexRequest) returns (indexer.DropIndexResponse);
+  rpc DropIndex(DropIndexRequest) returns (DropIndexResponse);
   
   // GetIndexProgress retrieves the current progress of an index build
-  rpc GetIndexProgress(indexer.GetIndexProgressRequest) returns (indexer.GetIndexProgressResponse);
+  rpc GetIndexProgress(GetIndexProgressRequest) returns (GetIndexProgressResponse);
 
   rpc AppendFragMeta(AppendFragMetaRequest) returns (AppendFragMetaResponse);
 
@@ -177,4 +246,211 @@ service MetaService {
 
   // Debug usage: get shard manifest from meta service writer
   rpc DebugGetShardManifest(DebugGetShardManifestRequest) returns (DebugGetShardManifestResponse);
+
+  // Returns the cloud storage path where TiDB should upload a baseline shard
+  // for the specified [table_info, index_info, key_range].
+  rpc GetCloudStoragePath(GetCloudStoragePathRequest)
+      returns (GetCloudStoragePathResponse);
+
+  // Called by Import DXF to notify Meta Service after all partitions for 
+  // the given index are uploaded.
+  rpc MarkPartitionUploadFinished(MarkPartitionUploadFinishedRequest)
+      returns (MarkPartitionUploadFinishedResponse);
+
+  // Called to notify Meta Service that the whole table/index upload is finished.
+  rpc MarkTableUploadFinished(MarkTableUploadFinishedRequest)
+      returns (MarkTableUploadFinishedResponse);
+}
+
+
+// IndexerService provides index creation and deletion functionality
+service IndexerService {
+  // Add shard for an index
+  rpc AddShard(AddShardRequest) returns (AddShardResponse);
+}
+
+// IndexType represents the type of index
+enum IndexType {
+  // Default value must be 0 in proto3
+  UNKNOWN = 0;
+  // Full-text index type
+  FULL_TEXT = 1;
+  // Custom index type
+  CUSTOM = 2;
+}
+
+// ParserType represents the type of parser
+enum ParserType {
+  // Default value must be 0 in proto3
+  UNKNOWN_PARSER = 0;
+  // Default parser
+  DEFAULT_PARSER = 1;
+  // Other parser types
+  OTHER_PARSER = 2;
+}
+
+message ShardManifestHeader {
+  uint64 shard_id = 1;
+  bytes start_key = 2;
+  bytes end_key = 3;
+  uint64 epoch = 4;
+}
+
+// AddShardRequest is sent from meta service to worker node
+message AddShardRequest {
+  ShardManifestHeader shard = 1;
+  // Index information
+  IndexInfo index_info = 2;
+  // Table information
+  TableInfo table_info = 3;
+  // If the shard is created from scratch, this field is empty
+  string cdc_s3_last_file = 4;
+  string cdc_s3_bucket = 5;
+  string cdc_s3_prefix = 6;
+  string s3_upload_bucket = 7;
+  string s3_upload_prefix = 8;
+}
+
+// AddShardResponse
+message AddShardResponse {
+  // Operation result status code, 0 means success
+  int32 status = 1;
+}
+
+// CreateIndexRequest is a request to create an index
+message CreateIndexRequest {
+  // Index information
+  IndexInfo index_info = 1;
+  // Table information
+  TableInfo table_info = 2;
+}
+
+// CreateIndexResponse is a response to the index creation request
+message CreateIndexResponse {
+  // Operation result status code, 0 means success
+  int32 status = 1;
+  // Error message, only valid when status is non-zero
+  string error_message = 2;
+  // Created index ID
+  string index_id = 3;
+}
+
+// DropIndexRequest is a request to drop an index
+message DropIndexRequest {
+  // Table ID
+  int64  table_id = 1;
+  // Index ID
+  int64  index_id = 2;
+}
+
+// DropIndexResponse is a response to the index drop request
+message DropIndexResponse {
+  // Operation result status code, 0 means success
+  int32 status = 1;
+  // Error message, only valid when status is non-zero
+  string error_message = 2;
+}
+
+// TableInfo represents table information
+message TableInfo {
+  // Table ID
+  int64 table_id = 1;
+  // Table name
+  string table_name = 2;
+  // Database name
+  string database_name = 3;
+  // Table version
+  int64 version = 4;
+  // Column information
+  repeated ColumnInfo columns = 5;
+  // Whether the table is clustered
+  bool is_clustered = 6;
+}
+
+// ColumnInfo represents column information
+message ColumnInfo {
+  // Column ID
+  int64 column_id = 1;
+  // Column name
+  string column_name = 2;
+  // MySQL type
+  int32 type = 3;
+  // Collation
+  int32 collation = 4;
+  // Column length
+  int32 column_length = 5;
+  // Decimal places
+  int32 decimal = 6;
+  // Flags
+  uint32 flag = 7;
+  // Enum elements
+  repeated string elems = 8;
+  // Default value
+  bytes default_val = 9;
+  // Whether it's a primary key
+  bool is_primary_key = 10;
+  // Whether it's an array
+  bool is_array = 11;
+}
+
+// IndexInfo represents index information
+message IndexInfo {
+  // Table ID
+  int64 table_id = 1;
+  // Index ID
+  int64 index_id = 2;
+  // Index name
+  string index_name = 3;
+  // Index type (fulltext, custom)
+  IndexType index_type = 4;
+  // Index columns
+  repeated ColumnInfo columns = 5;
+  // Whether the index is unique
+  bool is_unique = 6;
+  // Parser information
+  ParserInfo parser_info = 7;
+  // Other index parameters
+  map<string, string> other_params = 8;
+}
+
+// ParserInfo represents parser information
+message ParserInfo {
+  // Parser type
+  ParserType parser_type = 1;
+  // Parser parameters
+  map<string, string> parser_params = 2;
+}
+
+// GetIndexProgressRequest is a request to get the progress of an index build
+message GetIndexProgressRequest {
+  // Table ID
+  int64 table_id = 1;
+  // Index ID
+  int64 index_id = 2;
+}
+
+// GetIndexProgressResponse is a response containing index build progress
+message GetIndexProgressResponse {
+  enum State {
+    PENDING = 0;
+    RUNNING = 1;
+    COMPLETED = 2;
+    FAILED = 3;
+    NOTFOUND = 4;
+    ERROR = 5;
+  }
+  // Operation result status code, 0 means success
+  int32 status = 1;
+  // Error message, only valid when status is non-zero
+  string error_message = 2;
+  // Number of documents indexed so far
+  uint64 document_count = 3;
+  // Build task state (PENDING, RUNNING, COMPLETED, FAILED)
+  State state = 4;
+  // Whether index has been uploaded to S3
+  bool is_uploaded = 5;
+  // Last S3 upload time in RFC3339 format
+  string last_upload_time = 6;
+  // S3 path where the index is stored
+  string s3_path = 7;
 }
