@@ -350,9 +350,6 @@ func updateOrPredicate(ctx base.PlanContext, orPredicateList expression.Expressi
 // pruneEmptyORBranches applies iteratively updateOrPredicate for each pair of OR predicate
 // and another scalar predicate.
 func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Expression) {
-	if !sctx.GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	if len(predicates) <= 1 {
 		return
 	}
