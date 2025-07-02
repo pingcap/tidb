@@ -150,13 +150,13 @@ func TestLoadColumnsPrivTable(t *testing.T) {
 	se := tk.Session()
 	require.NoError(t, p.LoadColumnsPrivTable(se.GetSQLExecutor()))
 	columnsPriv := p.ColumnsPriv()
-	require.Equal(t, `%`, columnsPriv[0].Host)
+	require.Equal(t, `127.0.0.1`, columnsPriv[0].Host)
 	require.Equal(t, "db", columnsPriv[0].DB)
 	require.Equal(t, "user", columnsPriv[0].User)
 	require.Equal(t, "table", columnsPriv[0].TableName)
 	require.Equal(t, "column", columnsPriv[0].ColumnName)
-	require.Equal(t, mysql.InsertPriv|mysql.UpdatePriv, columnsPriv[0].ColumnPriv)
-	require.Equal(t, mysql.SelectPriv, columnsPriv[1].ColumnPriv)
+	require.Equal(t, mysql.SelectPriv, columnsPriv[0].ColumnPriv)
+	require.Equal(t, mysql.InsertPriv|mysql.UpdatePriv, columnsPriv[1].ColumnPriv)
 }
 
 func TestMatchColumns(t *testing.T) {
