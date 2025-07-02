@@ -19,7 +19,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
-	goerrors "errors"
 	"math"
 	"net"
 	"net/http"
@@ -520,6 +519,11 @@ func (c *BackendConfig) Concurrency() int {
 	return int(c.WorkerConcurrency.Load())
 }
 
+// SetConcurrency sets the current concurrency of the backend
+func (c *BackendConfig) SetConcurrency(concurrency int) {
+	c.WorkerConcurrency.Store(int32(concurrency))
+}
+
 // Backend is a local backend.
 type Backend struct {
 	pdCli     pd.Client
@@ -534,10 +538,6 @@ type Backend struct {
 
 	supportMultiIngest  bool
 	importClientFactory importClientFactory
-
-	// workers store all running workers for this backend to tune pool size.
-	// It is expected to have at most one worker at each time.
-	workers sync.Map
 
 	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
@@ -773,38 +773,6 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory impor
 
 	log.FromContext(ctx).Info("multi ingest support")
 	return true, nil
-}
-
-// UpdateResource update the resource(concurrency, memory) of current running job.
-// The engineUUID is used to get corresponding engine.
-// If the job is not started yet, it will return an error.
-func (local *Backend) UpdateResource(ctx context.Context, engineUUID uuid.UUID, concurrency int, memCapacity int64) error {
-	engine, ok := local.engineMgr.getExternalEngine(engineUUID)
-	if !ok {
-		log.FromContext(ctx).Info("engine has been closed")
-		return nil
-	}
-
-	v, ok := local.workers.Load(engine.ID())
-	if !ok {
-		// let framework retry
-		return goerrors.New("worker not started")
-	}
-
-	op, _ := v.(*jobOperator)
-	op.TuneWorkerPoolSize(int32(concurrency), true)
-	local.WorkerConcurrency.Store(int32(concurrency))
-
-	e, _ := engine.(*external.Engine)
-	e.UpdateResource(ctx, concurrency, memCapacity)
-
-	log.FromContext(ctx).Info("update backend resource finished",
-		zap.String("engine", engine.ID()),
-		zap.Int("concurrency", concurrency),
-		zap.Int64("memCapacity", memCapacity),
-	)
-
-	return nil
 }
 
 func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
@@ -1174,6 +1142,21 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 	return nil
 }
 
+// GetExternalEngine returns the external engine by uuid.
+// If the engine is not found or not an external engine, it returns nil.
+// It's used to dynamically update the resource used by the external engine
+func (local *Backend) GetExternalEngine(engineUUID uuid.UUID) *external.Engine {
+	e, ok := local.engineMgr.getExternalEngine(engineUUID)
+	if !ok {
+		return nil
+	}
+	ext, ok := e.(*external.Engine)
+	if !ok {
+		return nil
+	}
+	return ext
+}
+
 // ImportEngine imports an engine to TiKV.
 func (local *Backend) ImportEngine(
 	ctx context.Context,
@@ -1444,14 +1427,13 @@ func (local *Backend) doImport(
 		clusterID,
 	)
 
+	if e, ok := engine.(*external.Engine); ok {
+		e.SetWorker(worker)
+	}
+
 	failpoint.Inject("skipStartWorker", func() {
 		failpoint.Goto("afterStartWorker")
 	})
-
-	local.workers.Store(engine.ID(), worker)
-	defer func() {
-		local.workers.Delete(engine.ID())
-	}()
 
 	if err := worker.Open(); err != nil {
 		close(jobFromWorkerCh)
@@ -1494,11 +1476,11 @@ func (local *Backend) doImport(
 
 	err := workGroup.Wait()
 
-	// wait all workers in the pool to exit
-	// In happy path, the pool has already been closed.
-	// In error case, the workers will exit due to the context cancellation,
-	// we just wait for all of them to exit.
-	_ = worker.Close()
+	// Wait for all workers to quit in error case
+	if err != nil {
+		//nolint: errcheck
+		_ = worker.Close()
+	}
 
 	if err != nil && !common.IsContextCanceledError(err) {
 		log.FromContext(ctx).Error("do import meets error", zap.Error(err))

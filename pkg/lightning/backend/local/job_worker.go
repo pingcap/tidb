@@ -54,15 +54,15 @@ type regionJobWorker interface {
 
 	Close()
 
-	// run is used in test to minimize the code change,
-	// all inputs will be sent to jobInCh.
+	// run is only used in test, to process jobs from jobInCh.
+	// It's used to minimize the code change for tests for
+	// regionJobBaseWorker
 	run() error
 }
 
 type regionJobBaseWorker struct {
 	ctx *operator.Context
 
-	// Note: jobInCh is only used in unit test, to minimize the code change
 	jobInCh  chan *regionJob
 	jobOutCh chan *regionJob
 	jobWg    *sync.WaitGroup
@@ -81,12 +81,10 @@ type regionJobBaseWorker struct {
 }
 
 // HandleTask get jobs from the job channel and process them.
-// It will return not nil error when it unexpectedly stops. run must call job.done()
-// if it can't put the job into jobOutCh to make worker group quit gracefully.
+// job.done() must be called if we can't put the job into jobOutCh
+// to make worker group quit.
 func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) {
-	// In the worker, we use opCtx to detect context cancel
-	// and clean up the job (job.Done). So we use the channel directly
-	// instead of using sender function provided by the worker pool.
+	// As we need to call job.done() after panic, we recover here rather than in worker pool.
 	defer putil.Recover("fast_check_table", "handleTableScanTaskWithRecover", func() {
 		w.ctx.OnError(errors.Errorf("region job worker panic"))
 		job.done(w.jobWg)
@@ -95,6 +93,7 @@ func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) {
 	failpoint.Inject("injectPanicForRegionJob", func() {
 		panic("mock panic")
 	})
+
 	err := w.process(job)
 	if err != nil {
 		w.ctx.OnError(err)
@@ -120,8 +119,6 @@ func (w *regionJobBaseWorker) run() error {
 }
 
 func (w *regionJobBaseWorker) process(job *regionJob) error {
-	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
-
 	ctx := w.ctx
 	var peers []*metapb.Peer
 	// in unit test, we may not have the real peers
@@ -436,8 +433,10 @@ type jobOperator struct {
 	ctx *operator.Context
 	*operator.AsyncOperator[*regionJob, *regionJob]
 
-	// cancel is used to close the worker pool
-	cancel      context.CancelFunc
+	// cancel is used to close the worker pool in happy path
+	cancel context.CancelFunc
+
+	// workerGroup is used to notify other component to quit in error case
 	workerGroup *putil.ErrorGroupWithRecover
 }
 
@@ -461,8 +460,10 @@ func newJobOperator(
 		sourceChannel = balancer.innerJobToWorkerCh
 	}
 
+	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
+
 	pool := workerpool.NewWorkerPool(
-		"IngestJobOperator",
+		"RegionJobOperator",
 		rutil.DistTask,
 		local.Concurrency(),
 		func() workerpool.Worker[*regionJob, *regionJob] {
@@ -492,9 +493,8 @@ func (j *jobOperator) Open() error {
 	// In happy path, this goroutine will exit when we call j.Close().
 	// In error case:
 	// 1. if other goroutine in the worker group returns error, j.ctx will be canceled
-	// 2. if this worker pool meets error, this context will also be canceed by
-	//     j.ctx.OnError(err). In this senario, we need to expose the error to the
-	//     worker pool. So that other components can quit normally.
+	// 2. if this worker pool meets error, this context will also be canceled by
+	//     j.ctx.OnError(err). And this error will be exposed to the worker pool.
 	j.workerGroup.Go(func() error {
 		<-j.ctx.Done()
 		return j.ctx.OperatorErr()
