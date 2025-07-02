@@ -504,17 +504,17 @@ func (m *gcTTLManager) start(ctx context.Context) {
 
 	updateTick := time.NewTicker(updateGapTime)
 
-	updateGCTTL := func(ttl int64) {
+	updateGCTTL := func() {
 		m.lock.Lock()
 		currentTS := m.currentTS
 		m.lock.Unlock()
-		if err := m.doUpdateGCTTL(ctx, ttl, currentTS); err != nil {
+		if err := m.doUpdateGCTTL(ctx, serviceSafePointTTL, currentTS); err != nil {
 			log.FromContext(ctx).Warn("failed to update service safe point, checksum may fail if gc triggered", zap.Error(err))
 		}
 	}
 
 	// trigger a service gc ttl at start
-	updateGCTTL(serviceSafePointTTL)
+	updateGCTTL()
 	m.wg.RunWithLog(func() {
 		defer updateTick.Stop()
 		for {
@@ -523,7 +523,7 @@ func (m *gcTTLManager) start(ctx context.Context) {
 				log.FromContext(ctx).Info("service safe point keeper exited")
 				return
 			case <-updateTick.C:
-				updateGCTTL(serviceSafePointTTL)
+				updateGCTTL()
 			case <-m.closeCh:
 				// when ttl=0, PD will remove the service safe point.
 				// we will use the last safe point, as after all job removed, we
