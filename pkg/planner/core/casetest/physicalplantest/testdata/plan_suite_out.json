@@ -3593,7 +3593,7 @@
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.00 mpp[tiflash]  Column#10",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct Column#12)->Column#10",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct Column#14)->Column#10",
           "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "          └─HashAgg 1.00 mpp[tiflash]  group by:1, ",
