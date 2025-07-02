@@ -294,9 +294,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 		if err != nil {
 			return false
 		}
-		newPredList := make([]expression.Expression, 0, 1)
-		newPredList = append(newPredList, newPred)
-		newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList...)
+		newPredList := expression.PropagateConstant(ctx.GetExprCtx(), newPred)
 		return unsatisfiableExpression(ctx, newPredList[0])
 	}
 	return false
