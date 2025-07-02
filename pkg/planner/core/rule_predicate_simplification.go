@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
 // PredicateSimplification consolidates different predcicates on a column and its equivalence classes.  Initial out is for
@@ -260,6 +261,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	if col1 == nil || !col1.Equals(col2) {
 		return false
 	}
+
 	if p1Type == equalPredicate {
 		equalPred = p1
 		otherPred = p2
@@ -270,12 +272,21 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	if equalPred == nil || otherPred == nil {
 		return false
 	}
+
 	// Copy constant from equal predicate into other predicate.
 	equalValue := equalPred.(*expression.ScalarFunction)
 	otherValue := otherPred.(*expression.ScalarFunction)
 	equalValueConst, ok1 := equalValue.GetArgs()[1].(*expression.Constant)
 	otherValueConst, ok2 := otherValue.GetArgs()[1].(*expression.Constant)
 	if ok1 && ok2 {
+		evalCtx := ctx.GetExprCtx().GetEvalCtx()
+		colCollate := col1.GetType(evalCtx).GetCollate()
+		if equalValueType := equalValueConst.GetType(evalCtx); equalValueType.EvalType() == types.ETString && !collate.CompatibleCollate(equalValueType.GetCollate(), colCollate) {
+			return false
+		}
+		if otherValueType := otherValueConst.GetType(evalCtx); otherValueType.EvalType() == types.ETString && !collate.CompatibleCollate(otherValueType.GetCollate(), colCollate) {
+			return false
+		}
 		if types.IsString(equalValueConst.RetType.GetType()) || types.IsString(otherValueConst.RetType.GetType()) {
 			// Different connection collations can affect the results here, leading to different simplified results and ultimately impacting the execution outcomes.
 			// Observing MySQL v8.0.31, this area does not perform string simplification, so we can directly skip it.
