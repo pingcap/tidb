@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -176,38 +175,29 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
-	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID, int(s.GetResource().CPU.Capacity()))
-	op.SetSource(source)
-	pipeline := operator.NewAsyncPipeline(op)
-	if err = pipeline.Execute(); err != nil {
-		return err
-	}
-
-	panicked := atomic.Bool{}
-outer:
+	opCtx, _ := operator.NewContext(ctx)
+	tasks := make([]*importStepMinimalTask, 0, len(subtaskMeta.Chunks))
 	for _, chunk := range subtaskMeta.Chunks {
-		// TODO: current workpool impl doesn't drain the input channel, it will
-		// just return on context cancel(error happened), so we add this select.
-		select {
-		case source.Channel() <- &importStepMinimalTask{
+		tasks = append(tasks, &importStepMinimalTask{
+			ctx:        opCtx,
 			Plan:       s.taskMeta.Plan,
 			Chunk:      chunk,
 			SharedVars: sharedVars,
-			panicked:   &panicked,
-		}:
-		case <-op.Done():
-			break outer
-		}
+		})
 	}
-	source.Finish()
 
-	if err = pipeline.Close(); err != nil {
+	sourceOp := operator.NewSimpleDataSource(opCtx, tasks)
+	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID, int(s.GetResource().CPU.Capacity()))
+	operator.Compose(sourceOp, op)
+
+	pipe := operator.NewAsyncPipeline(sourceOp, op)
+	if err := pipe.Execute(); err != nil {
 		return err
 	}
-	if panicked.Load() {
-		return errors.Errorf("panic occurred during import, please check log")
+	if err := pipe.Close(); err != nil {
+		return err
 	}
+
 	return s.onFinished(ctx, subtask)
 }
 
