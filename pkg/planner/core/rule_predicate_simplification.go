@@ -278,7 +278,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	if ok1 && ok2 {
 		if types.IsString(equalValueConst.RetType.GetType()) || types.IsString(otherValueConst.RetType.GetType()) {
 			// Different connection collations can affect the results here, leading to different simplified results and ultimately impacting the execution outcomes.
-			// From MySQL v8.0.31 onwards, this area does not perform string simplification, so we can directly skip it.
+			// Observing MySQL v8.0.31, this area does not perform string simplification, so we can directly skip it.
 			// TODO: We can incorporate more complex judgments to simplify the expression here while ensuring correctness.
 			return false
 		}
