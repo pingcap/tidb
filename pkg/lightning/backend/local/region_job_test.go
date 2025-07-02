@@ -682,7 +682,7 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 		jobFromWorkerCh = make(chan *regionJob)
 		jobWg = sync.WaitGroup{}
 
-		op = newJobOperator(
+		op = newRegionJobOperator(
 			workerCtx, workGroup, &jobWg,
 			local, nil,
 			jobToWorkerCh, jobFromWorkerCh, 1,

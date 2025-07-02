@@ -125,7 +125,7 @@ func (w *regionJobBaseWorker) process(job *regionJob) error {
 	if job.region != nil && job.region.Region != nil {
 		peers = job.region.Region.GetPeers()
 	}
-	failpoint.InjectCall("beforeProcessRegionJob", ctx)
+	failpoint.InjectCall("beforeExecuteRegionJob", ctx)
 	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
 	err := w.runJob(ctx, job)
 	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
@@ -440,7 +440,7 @@ type jobOperator struct {
 	workerGroup *putil.ErrorGroupWithRecover
 }
 
-func newJobOperator(
+func newRegionJobOperator(
 	workerCtx context.Context,
 	workGroup *putil.ErrorGroupWithRecover,
 	jobWg *sync.WaitGroup,

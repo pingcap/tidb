@@ -1420,7 +1420,7 @@ func (local *Backend) doImport(
 		clusterID = local.pdCli.GetClusterID(ctx)
 	}
 
-	worker := newJobOperator(
+	worker := newRegionJobOperator(
 		workerCtx, workGroup, &jobWg,
 		local, balancer,
 		jobToWorkerCh, jobFromWorkerCh,
