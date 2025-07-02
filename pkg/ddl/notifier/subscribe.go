@@ -337,7 +337,9 @@ func (n *DDLNotifier) OnBecomeOwner() {
 		}
 		// In unit tests, we want to panic directly to find the root cause.
 		if intest.EnableInternalCheck {
-			panic(r)
+			if !strings.Contains(util.GetRecoverError(r).Error(), "failpoint") {
+				panic(r)
+			}
 		}
 		logutil.BgLogger().Error("panic in ddl notifier", zap.Any("recover", r), zap.Stack("stack"))
 	})
