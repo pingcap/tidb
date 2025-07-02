@@ -1021,7 +1021,10 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
 		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
 		if fp := tryWhereIn2BatchPointGet(ctx, x, node.GetResolveContext()); fp != nil {
-			visitInfos := getVisitInfo(userName, hostName, fp.dbName, fp.TblInfo.Name.L, fp.names, fp.unfoldFromWildCard, fp.colsInWhereClause)
+			visitInfos, ok := getVisitInfo(userName, hostName, fp.dbName, fp.TblInfo.Name.L, fp.names, fp.unfoldFromWildCard, fp.colsInWhereClause)
+			if !ok {
+				return nil
+			}
 			setVisitInfo4Test(visitInfos)
 			if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 				return nil
@@ -1034,7 +1037,10 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 			return
 		}
 		if fp := tryPointGetPlan(ctx, x, node.GetResolveContext(), isForUpdateReadSelectLock(x.LockInfo)); fp != nil {
-			visitInfos := getVisitInfo(userName, hostName, fp.dbName, fp.TblInfo.Name.L, fp.outputNames, fp.unfoldFromWildCard, fp.colsInWhereClause)
+			visitInfos, ok := getVisitInfo(userName, hostName, fp.dbName, fp.TblInfo.Name.L, fp.outputNames, fp.unfoldFromWildCard, fp.colsInWhereClause)
+			if !ok {
+				return nil
+			}
 			setVisitInfo4Test(visitInfos)
 			if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 				return nil
@@ -1065,16 +1071,14 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 //  1. output names. To distinguish between table-level and column-level privilege error report, unfoldFromWildCard is needed.
 //     If the PointPlan is inside UPDATE or DELETE statements, the checking of output names should be ignored.
 //  2. columns in WHERE clause.
-func getVisitInfo(user, host, db, tbl string, outputNames types.NameSlice, unfold []bool, colsInWhere []string) (res []visitInfo) {
+func getVisitInfo(user, host, db, tbl string, outputNames types.NameSlice, unfold []bool, colsInWhere []string) (res []visitInfo, ok bool) {
 	if len(outputNames) != len(unfold) {
 		if intest.InTest {
 			panic("outputNames and unfold should have the same length")
 		}
 		logutil.BgLogger().Error("outputNames length %d not equal to unfold length %d",
 			zap.Int("outputNames", len(outputNames)), zap.Int("unfold", len(unfold)), zap.Stack("stack"))
-		minLen := min(len(outputNames), len(unfold))
-		unfold = unfold[:minLen]
-		outputNames = outputNames[:minLen]
+		return nil, false
 	}
 	for i, name := range outputNames {
 		var authErr error
@@ -1100,7 +1104,7 @@ func getVisitInfo(user, host, db, tbl string, outputNames types.NameSlice, unfol
 			err:       plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", user, host, col, tbl),
 		})
 	}
-	return res
+	return res, true
 }
 
 func getLockWaitTime(ctx base.PlanContext, lockInfo *ast.SelectLockInfo) (lock bool, waitTime int64) {
@@ -2204,7 +2208,10 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolv
 	if pointPlan != nil {
 		// We don't check the output names, since they are expended to all columns of the table.
 		// See the comment in buildSchemaFromFields
-		visitInfos := getVisitInfo(userName, hostName, dbName, tbl.Name.L, nil, nil, colsInWhereClause)
+		visitInfos, ok := getVisitInfo(userName, hostName, dbName, tbl.Name.L, nil, nil, colsInWhereClause)
+		if !ok {
+			return nil
+		}
 		setVisitInfo4Test(visitInfos)
 		if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 			return nil
@@ -2363,7 +2370,10 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 	if pointPlan != nil {
 		// We don't check the output names, since they are expended to all columns of the table.
 		// See the comment in buildSchemaFromFields
-		visitInfos := getVisitInfo(userName, hostName, dbName, tbl.Name.L, nil, nil, colsInWhereClause)
+		visitInfos, ok := getVisitInfo(userName, hostName, dbName, tbl.Name.L, nil, nil, colsInWhereClause)
+		if !ok {
+			return nil
+		}
 		setVisitInfo4Test(visitInfos)
 		if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 			return nil
