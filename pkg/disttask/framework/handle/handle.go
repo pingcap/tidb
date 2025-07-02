@@ -63,7 +63,7 @@ func NotifyTaskChange() {
 
 // GetCPUCountOfNode gets the CPU count of the managed node.
 func GetCPUCountOfNode(ctx context.Context) (int, error) {
-	manager, err := storage.GetTaskManager()
+	manager, err := GetTaskMgrToAccessDXFService()
 	if err != nil {
 		return 0, err
 	}
@@ -72,7 +72,7 @@ func GetCPUCountOfNode(ctx context.Context) (int, error) {
 
 // SubmitTask submits a task.
 func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, targetScope string, maxNodeCnt int, taskMeta []byte) (*proto.Task, error) {
-	taskManager, err := storage.GetTaskManager()
+	taskManager, err := GetTaskMgrToAccessDXFService()
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +178,7 @@ func WaitTask(ctx context.Context, id int64, matchFn func(base *proto.TaskBase) 
 
 // CancelTask cancels a task.
 func CancelTask(ctx context.Context, taskKey string) error {
-	taskManager, err := storage.GetTaskManager()
+	taskManager, err := GetTaskMgrToAccessDXFService()
 	if err != nil {
 		return err
 	}
@@ -195,7 +195,7 @@ func CancelTask(ctx context.Context, taskKey string) error {
 
 // PauseTask pauses a task.
 func PauseTask(ctx context.Context, taskKey string) error {
-	taskManager, err := storage.GetTaskManager()
+	taskManager, err := GetTaskMgrToAccessDXFService()
 	if err != nil {
 		return err
 	}
@@ -209,7 +209,7 @@ func PauseTask(ctx context.Context, taskKey string) error {
 
 // ResumeTask resumes a task.
 func ResumeTask(ctx context.Context, taskKey string) error {
-	taskManager, err := storage.GetTaskManager()
+	taskManager, err := GetTaskMgrToAccessDXFService()
 	if err != nil {
 		return err
 	}
@@ -285,8 +285,9 @@ func GetCloudStorageURI(ctx context.Context, store kv.Storage) string {
 			u.Path = path.Join(u.Path, strconv.FormatUint(s.GetPDClient().GetClusterID(ctx), 10))
 			return u.String()
 		}
+	} else {
+		logutil.BgLogger().Warn("Can't get cluster id from store, use default cloud storage uri")
 	}
-	logutil.BgLogger().Error("Can't get cluster id from store, use default cloud storage uri")
 	return cloudURI
 }
 
