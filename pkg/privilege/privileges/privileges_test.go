@@ -2765,9 +2765,11 @@ func TestColumnPrivilege4NonPreparePlanCache(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE USER 'testuser'@'localhost';`)
 	tk.MustExec(`CREATE TABLE test.t (a INT, b INT, KEY(b));`)
+	tk.MustExec(`CREATE TABLE test.t1 (a INT, b INT, PRIMARY KEY(a));`)
 	userTk := testkit.NewTestKit(t, store)
 	err := userTk.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil, nil)
 	require.NoError(t, err)
+	tk.MustExec("GRANT SELECT(a,b) ON test.t1 TO 'testuser'@'localhost';")
 
 	for _, planCacheON := range []string{"0", "1"} {
 		userTk.MustExec(fmt.Sprintf("SET tidb_enable_non_prepared_plan_cache = %s", planCacheON))
@@ -2784,6 +2786,60 @@ func TestColumnPrivilege4NonPreparePlanCache(t *testing.T) {
 		userTk.MustQuery(`SELECT * FROM test.t WHERE b < 5 AND a = 2;`)
 		userTk.MustQuery(`SELECT @@last_plan_from_cache;`).Check(testkit.Rows(planCacheON))
 	}
+
+	// In this branch, the non-prepared plan cache can cache the point get plan,
+	// so the column privilege must also be checked when the cached point get plan is reused.
+	userTk.MustExec("SET tidb_enable_non_prepared_plan_cache = 1")
+	userTk.MustQuery(`EXPLAIN SELECT * FROM test.t1 WHERE a = 1;`).CheckContain("Point_Get")
+	userTk.MustQuery(`SELECT * FROM test.t1 WHERE a = 1;`)
+	userTk.MustQuery(`SELECT * FROM test.t1 WHERE a = 1;`)
+	userTk.MustQuery(`SELECT @@last_plan_from_cache;`).Check(testkit.Rows("1"))
+	tk.MustExec("REVOKE SELECT(b) ON test.t1 FROM 'testuser'@'localhost';")
+	userTk.MustGetErrCode(`SELECT * FROM test.t1 WHERE a = 1;`, mysql.ErrTableaccessDenied)
+	userTk.MustGetErrCode(`SELECT b FROM test.t1 WHERE a = 1;`, mysql.ErrColumnaccessDenied)
+	userTk.MustQuery(`SELECT a FROM test.t1 WHERE a = 1;`)
+	tk.MustExec("GRANT SELECT(b) ON test.t1 TO 'testuser'@'localhost';")
+	userTk.MustQuery(`SELECT * FROM test.t1 WHERE a = 1;`)
+}
+
+func TestColumnPrivilege4PreparePlanCache(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`CREATE USER 'testuser'@'localhost';`)
+	tk.MustExec(`CREATE TABLE test.t (a INT, b INT, KEY(b));`)
+	tk.MustExec(`CREATE TABLE test.t1 (a INT, b INT, PRIMARY KEY(a));`)
+	userTk := testkit.NewTestKit(t, store)
+	err := userTk.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil, nil)
+	require.NoError(t, err)
+
+	tk.MustExec("GRANT SELECT(a,b) ON test.t TO 'testuser'@'localhost';")
+	tk.MustExec("GRANT SELECT(a,b) ON test.t1 TO 'testuser'@'localhost';")
+	tk.MustQuery("EXPLAIN SELECT * FROM test.t WHERE a > 0").CheckNotContain("Point_Get")
+	tk.MustQuery("EXPLAIN SELECT * FROM test.t1 WHERE a = 0").CheckContain("Point_Get")
+
+	// For non point get
+	userTk.MustExec("PREPARE stmt FROM 'SELECT * FROM test.t WHERE a > 0'")
+	userTk.MustQuery(`EXECUTE stmt`)
+	userTk.MustQuery(`SELECT @@last_plan_from_cache;`).Check(testkit.Rows("0"))
+	userTk.MustQuery(`EXECUTE stmt`)
+	userTk.MustQuery(`SELECT @@last_plan_from_cache;`).Check(testkit.Rows("1"))
+	tk.MustExec("REVOKE SELECT(a) ON test.t FROM 'testuser'@'localhost';")
+	userTk.MustGetErrCode(`EXECUTE stmt`, mysql.ErrColumnaccessDenied)
+	tk.MustExec("GRANT SELECT(a) ON test.t TO 'testuser'@'localhost';")
+	userTk.MustQuery(`EXECUTE stmt`)
+	userTk.MustQuery(`SELECT @@last_plan_from_cache;`).Check(testkit.Rows("1"))
+
+	// For point get
+	userTk.MustExec("PREPARE stmt1 FROM 'SELECT * FROM test.t1 WHERE a = 0'")
+	userTk.MustQuery(`EXECUTE stmt1`)
+	userTk.MustQuery(`SELECT @@last_plan_from_cache;`).Check(testkit.Rows("0"))
+	userTk.MustQuery(`EXECUTE stmt1`)
+	userTk.MustQuery(`SELECT @@last_plan_from_cache;`).Check(testkit.Rows("1"))
+	tk.MustExec("REVOKE SELECT(a) ON test.t1 FROM 'testuser'@'localhost';")
+	userTk.MustGetErrCode(`EXECUTE stmt1`, mysql.ErrColumnaccessDenied)
+	tk.MustExec("GRANT SELECT(a) ON test.t1 TO 'testuser'@'localhost';")
+	userTk.MustQuery(`EXECUTE stmt1`)
+	userTk.MustQuery(`SELECT @@last_plan_from_cache;`).Check(testkit.Rows("1"))
 }
 
 func TestColumnPrivilege4Views(t *testing.T) {

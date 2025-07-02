@@ -477,6 +477,10 @@ func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	copy(cloned.IdxColLens, op.IdxColLens)
 	cloned.PartitionIdxs = make([]int, len(op.PartitionIdxs))
 	copy(cloned.PartitionIdxs, op.PartitionIdxs)
+	cloned.UnfoldFromWildCard = make([]bool, len(op.UnfoldFromWildCard))
+	copy(cloned.UnfoldFromWildCard, op.UnfoldFromWildCard)
+	cloned.ColsInWhereClause = make([]string, len(op.ColsInWhereClause))
+	copy(cloned.ColsInWhereClause, op.ColsInWhereClause)
 	cloned.accessCols = utilfuncp.CloneColumnsForPlanCache(op.accessCols, nil)
 	return cloned, true
 }
@@ -506,6 +510,10 @@ func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 	cloned.IdxColLens = make([]int, len(op.IdxColLens))
 	copy(cloned.IdxColLens, op.IdxColLens)
 	cloned.AccessConditions = utilfuncp.CloneExpressionsForPlanCache(op.AccessConditions, nil)
+	cloned.UnfoldFromWildCard = make([]bool, len(op.UnfoldFromWildCard))
+	copy(cloned.UnfoldFromWildCard, op.UnfoldFromWildCard)
+	cloned.ColsInWhereClause = make([]string, len(op.ColsInWhereClause))
+	copy(cloned.ColsInWhereClause, op.ColsInWhereClause)
 	cloned.accessCols = utilfuncp.CloneColumnsForPlanCache(op.accessCols, nil)
 	return cloned, true
 }

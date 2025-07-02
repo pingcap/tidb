@@ -879,12 +879,24 @@ func (p *MySQLPrivilege) LoadTablesPrivTable(exec sqlexec.SQLExecutor) error {
 	if err != nil {
 		return err
 	}
+	p.tablesPriv.Ascend(func(itm itemTablesPriv) bool {
+		slices.SortFunc(itm.data, compareTablesPrivRecord)
+		return true
+	})
 	return nil
 }
 
 // LoadColumnsPrivTable loads the mysql.columns_priv table from database.
 func (p *MySQLPrivilege) LoadColumnsPrivTable(exec sqlexec.SQLExecutor) error {
-	return loadTable(exec, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow(nil))
+	err := loadTable(exec, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow(nil))
+	if err != nil {
+		return err
+	}
+	p.columnsPriv.Ascend(func(itm itemColumnsPriv) bool {
+		slices.SortFunc(itm.data, compareColumnsPrivRecord)
+		return true
+	})
+	return nil
 }
 
 // LoadDefaultRoles loads the mysql.columns_priv table from database.
