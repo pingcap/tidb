@@ -824,9 +824,10 @@ func (p *PhysicalApply) GetPlanCostVer2(taskType property.TaskType, option *opti
 	return p.PlanCostVer2, nil
 }
 
-// GetPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost.
+// getPlanCostVer24PhysicalUnionAll calculates the cost of the plan if it has not been calculated yet and returns the cost.
 // plan-cost = sum(child-cost) / concurrency
-func (p *PhysicalUnionAll) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func getPlanCostVer24PhysicalUnionAll(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PhysicalUnionAll)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}

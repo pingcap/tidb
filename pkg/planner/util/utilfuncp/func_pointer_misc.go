@@ -152,7 +152,7 @@ var AddPrefix4ShardIndexes func(lp base.LogicalPlan, sc base.PlanContext,
 	conds []expression.Expression) []expression.Expression
 
 // ApplyPredicateSimplification will be called by LogicalSelection in logicalOp pkg.
-var ApplyPredicateSimplification func(base.PlanContext, []expression.Expression) []expression.Expression
+var ApplyPredicateSimplification func(base.PlanContext, []expression.Expression, bool) []expression.Expression
 
 // IsSingleScan check whether the data source is a single scan.
 var IsSingleScan func(ds base.LogicalPlan, indexColumns []*expression.Column, idxColLens []int) bool
@@ -185,6 +185,20 @@ var ToPB4PhysicalSort func(pp base.PhysicalPlan, ctx *base.BuildPBContext,
 
 // ResolveIndicesForSort will be called by PhysicalSort in physicalOp pkg.
 var ResolveIndicesForSort func(p base.PhysicalPlan) (err error)
+
+// Attach2Task4NominalSort will be called by NominalSort in physicalOp pkg.
+var Attach2Task4NominalSort func(base.PhysicalPlan, ...base.Task) base.Task
+
+// Attach2Task4PhysicalUnionAll will be called by PhysicalUnionAll in physicalOp pkg.
+var Attach2Task4PhysicalUnionAll func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// GetPlanCostVer14PhysicalUnionAll will be called by PhysicalUnionAll in physicalOp pkg.
+var GetPlanCostVer14PhysicalUnionAll func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalUnionAll will be called by PhysicalUnionAll in physicalOp pkg.
+var GetPlanCostVer24PhysicalUnionAll func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
 
 // ****************************************** task related ***********************************************
 
