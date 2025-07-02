@@ -201,7 +201,7 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 			startTS,
 		)
 		//sql = fmt.Sprintf("select RELATED_TABLE_IDS,CURRENT_SQL_DIGEST from INFORMATION_SCHEMA.TIDB_TRX")
-		//sql = fmt.Sprintf("select RELATED_TABLE_IDS,CURRENT_SQL_DIGEST from information_schema.cluster_tidb_trx")
+		sql = fmt.Sprintf("select RELATED_TABLE_IDS,CURRENT_SQL_DIGEST,ID from information_schema.cluster_tidb_trx")
 		//is := jobCtx.infoCache.GetLatest()
 		for {
 			startTime := time.Now()
@@ -221,8 +221,10 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 				ids = append(ids, row.GetInt64(2))
 			}
 			logutil.BgLogger().Info("check unfinished transactions query ok",
-				zap.Strings("current sql digests: ", digests),
-				zap.Strings("tableIDs: ", tableIDs),
+				// zap.Strings("current sql digests: ", digests),
+				// zap.Strings("tableIDs: ", tableIDs),
+				zap.Int("ids: ", len(ids)),
+				zap.Int64s("ids: ", ids),
 				zap.Duration("cost time", dur))
 			// check related table IDs
 			//continueCheck := false
