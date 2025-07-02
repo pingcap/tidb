@@ -13,6 +13,7 @@ go_library(
     deps = [
         "//pkg/resourcemanager/pool/workerpool",
         "//pkg/resourcemanager/util",
+        "@com_github_pingcap_errors//:errors",
         "@org_golang_x_sync//errgroup",
     ],
 )

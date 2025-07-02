@@ -322,7 +322,7 @@ func (em *engineManager) closeEngine(
 			externalCfg.EndKey,
 			externalCfg.JobKeys,
 			externalCfg.SplitKeys,
-			em.WorkerConcurrency,
+			int(em.WorkerConcurrency.Load()),
 			ts,
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,

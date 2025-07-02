@@ -19,12 +19,16 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
+	"golang.org/x/sync/errgroup"
 )
 
 func testGetFirstAndLastKey(
@@ -120,50 +124,6 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key25"), []byte("key26"), nil, nil)
 	testGetFirstAndLastKey(t, data, []byte("key0"), []byte("key1"), nil, nil)
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
-}
-
-func TestSplit(t *testing.T) {
-	cases := []struct {
-		input    []int
-		conc     int
-		expected [][]int
-	}{
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     1,
-			expected: [][]int{{1, 2, 3, 4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     2,
-			expected: [][]int{{1, 2, 3}, {4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     0,
-			expected: [][]int{{1, 2, 3, 4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     5,
-			expected: [][]int{{1}, {2}, {3}, {4}, {5}},
-		},
-		{
-			input:    []int{},
-			conc:     5,
-			expected: nil,
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     100,
-			expected: [][]int{{1}, {2}, {3}, {4}, {5}},
-		},
-	}
-
-	for _, c := range cases {
-		got := split(c.input, c.conc)
-		require.Equal(t, c.expected, got)
-	}
 }
 
 func prepareKVFiles(t *testing.T, store storage.ExternalStorage, contents [][]kvPair) (dataFiles, statFiles []string) {
@@ -361,5 +321,48 @@ func TestEngineOnDup(t *testing.T) {
 				}, dupPairs)
 			}
 		}
+	})
+}
+
+func TestChangeEngineConcurrency(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
+
+	var (
+		outCh chan engineapi.DataAndRanges
+		eg    errgroup.Group
+		e     *Engine
+	)
+
+	resetFn := func() {
+		outCh = make(chan engineapi.DataAndRanges, 4)
+		eg = errgroup.Group{}
+		e = &Engine{
+			jobKeys:           make([][]byte, 16),
+			workerConcurrency: *atomic.NewInt32(2),
+			readyCh:           make(chan struct{}),
+		}
+
+		// Load and consume the data
+		eg.Go(func() error {
+			defer close(outCh)
+			return e.LoadIngestData(context.Background(), outCh)
+		})
+		eg.Go(func() error {
+			for data := range outCh {
+				// mock some time consuming job
+				data.Data.IncRef()
+				time.Sleep(time.Millisecond * 100)
+				data.Data.DecRef()
+			}
+			return nil
+		})
+	}
+
+	t.Run("reduce concurrency", func(t *testing.T) {
+		resetFn()
+
+		time.Sleep(time.Millisecond * 300)
+		e.UpdateResource(context.Background(), 1, 1024)
+		require.NoError(t, eg.Wait())
 	})
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
@@ -33,7 +34,9 @@ import (
 
 func TestRegionJobBaseWorker(t *testing.T) {
 	newWorker := func() *regionJobBaseWorker {
+		opCtx, _ := operator.NewContext(context.Background())
 		return &regionJobBaseWorker{
+			ctx:      opCtx,
 			jobInCh:  make(chan *regionJob, 10),
 			jobOutCh: make(chan *regionJob, 10),
 			jobWg:    &sync.WaitGroup{},
@@ -66,7 +69,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 	t.Run("run on closed channel", func(t *testing.T) {
 		w := newWorker()
 		close(w.jobInCh)
-		require.NoError(t, w.run(context.Background()))
+		require.NoError(t, w.run())
 	})
 
 	t.Run("send job to out channel after run job", func(t *testing.T) {
@@ -74,7 +77,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
 		w.jobInCh <- job
 		close(w.jobInCh)
-		require.NoError(t, w.run(context.Background()))
+		require.NoError(t, w.run())
 		require.Equal(t, 1, len(w.jobOutCh))
 		outJob := <-w.jobOutCh
 		require.Equal(t, ingested, outJob.stage)
@@ -88,7 +91,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
 		w.jobInCh <- job
 		close(w.jobInCh)
-		require.NoError(t, w.run(context.Background()))
+		require.NoError(t, w.run())
 		require.Equal(t, 1, len(w.jobOutCh))
 		outJob := <-w.jobOutCh
 		require.Equal(t, ingested, outJob.stage)
@@ -102,7 +105,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
 		w.jobInCh <- job
 		close(w.jobInCh)
-		require.ErrorIs(t, w.run(context.Background()), errdef.ErrKVDiskFull)
+		require.ErrorIs(t, w.run(), errdef.ErrKVDiskFull)
 		require.Equal(t, 1, len(w.jobOutCh))
 		outJob := <-w.jobOutCh
 		// the job is left in wrote stage
@@ -118,7 +121,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
 		w.jobInCh <- job
 		close(w.jobInCh)
-		require.NoError(t, w.run(context.Background()))
+		require.NoError(t, w.run())
 		require.Equal(t, 1, len(w.jobOutCh))
 		outJob := <-w.jobOutCh
 		require.Equal(t, regionScanned, outJob.stage)
@@ -133,7 +136,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
 		w.jobInCh <- job
 		close(w.jobInCh)
-		require.NoError(t, w.run(context.Background()))
+		require.NoError(t, w.run())
 		require.Equal(t, 1, len(w.jobOutCh))
 		outJob := <-w.jobOutCh
 		require.Equal(t, regionScanned, outJob.stage)
@@ -149,7 +152,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
 		w.jobInCh <- job
 		close(w.jobInCh)
-		require.NoError(t, w.run(context.Background()))
+		require.NoError(t, w.run())
 		require.Equal(t, 3, len(w.jobOutCh))
 	})
 }
