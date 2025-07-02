@@ -981,6 +981,7 @@ func GetImportRootDir(tidbCfg *tidb.Config) string {
 	return filepath.Join(tidbCfg.TempDir, sortPathSuffix)
 }
 
+// FlushTableStats flushes the stats of the table.
 // stats will be stored in the stat collector, and be applied to to mysql.stats_meta
 // in the domain.UpdateTableStatsLoop with a random interval between [1, 2) minutes.
 // These stats will stay in memory until the next flush, so it might be lost if the tidb-server restarts.
