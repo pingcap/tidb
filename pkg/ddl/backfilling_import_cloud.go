@@ -213,8 +213,11 @@ func (e *cloudImportExecutor) ResourceModified(ctx context.Context, newResource 
 	}
 
 	// We need to update the memory usaage of external engine and the concurrency of backend.
+	if err := e.backend.SetConcurrency(newConcurrency, eng.ID()); err != nil {
+		return err
+	}
 	eng.UpdateResource(newConcurrency, newResource.Mem.Capacity())
-	e.backend.SetConcurrency(newConcurrency, eng.ID())
+
 	log.FromContext(ctx).Info("update concurrency finished",
 		zap.String("engine", eng.ID()),
 		zap.Int("concurrency", newConcurrency),
