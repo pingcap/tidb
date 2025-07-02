@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 type keyType int
@@ -45,6 +46,15 @@ type VerificationInfo struct {
 type Manager interface {
 	// ShowGrants shows granted privileges for user.
 	ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
+
+	// FetchColumnPrivileges gets column privilege for user
+	FetchColumnPrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error)
+
+	// FetchTablePrivileges gets table privilege for user
+	FetchTablePrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error)
+
+	// FetchSchemaPrivileges gets schema privilege for user
+	FetchSchemaPrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error)
 
 	// GetEncodedPassword shows the encoded password for user.
 	GetEncodedPassword(user, host string) string
@@ -91,7 +101,7 @@ type Manager interface {
 	MatchIdentity(user, host string, skipNameResolve bool) (string, string, bool)
 
 	// MatchUserResourceGroupName matches a user with specified resource group name
-	MatchUserResourceGroupName(resourceGroupName string) (string, bool)
+	MatchUserResourceGroupName(exec sqlexec.RestrictedSQLExecutor, resourceGroupName string) (string, bool)
 
 	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool
