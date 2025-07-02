@@ -109,6 +109,7 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 		return err
 	}
 	s.tableImporter = tableImporter
+
 	// we need this sub context since Cleanup which wait on this routine is called
 	// before parent context is canceled in normal flow.
 	s.importCtx, s.importCancel = context.WithCancel(ctx)
@@ -150,7 +151,6 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 			return errors.Trace(err)
 		}
 	}
-
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
