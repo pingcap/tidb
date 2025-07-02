@@ -19,14 +19,17 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -95,15 +98,15 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 }
 
 // postProcess does the post-processing for the task.
-func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
-	failpoint.InjectCall("syncBeforePostProcess", taskMeta.JobID)
+func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
+	failpoint.InjectCall("syncBeforePostProcess", p.taskMeta.JobID)
 
 	callLog := log.BeginTask(logger, "post process")
 	defer func() {
 		callLog.End(zap.ErrorLevel, err)
 	}()
 
-	if err = importer.RebaseAllocatorBases(ctx, store, subtaskMeta.MaxIDs, &taskMeta.Plan, logger); err != nil {
+	if err = importer.RebaseAllocatorBases(ctx, p.store, subtaskMeta.MaxIDs, &p.taskMeta.Plan, logger); err != nil {
 		return err
 	}
 
@@ -120,11 +123,27 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 	}
 
 	taskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	if keyspace.IsRunningOnSystem() && config.GetGlobalKeyspaceName() != p.taskKeyspace {
+		var sp tidbutil.SessionPool
+		err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+			svr := se.GetSQLServer()
+			sp, err = svr.GetKSSessPool(p.taskKeyspace)
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		taskManager = storage.NewTaskManager(sp)
+	}
+
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
 	}
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
-		return importer.VerifyChecksum(ctx, &taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
+		return importer.VerifyChecksum(ctx, &p.taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
 	})
 }
