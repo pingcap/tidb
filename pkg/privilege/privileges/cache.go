@@ -542,6 +542,26 @@ func compareGlobalPrivRecord(x, y globalPrivRecord) int {
 	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
 }
 
+func compareTablesPrivRecord(x, y tablesPrivRecord) int {
+	cmp := compareBaseRecord(&x.baseRecord, &y.baseRecord)
+	if cmp != 0 {
+		return cmp
+	}
+	switch {
+	case x.DB > y.DB:
+		return 1
+	case x.DB < y.DB:
+		return -1
+	}
+	switch {
+	case x.TableName > y.TableName:
+		return 1
+	case x.TableName < y.TableName:
+		return -1
+	}
+	return 0
+}
+
 func compareColumnsPrivRecord(x, y columnsPrivRecord) int {
 	cmp := compareBaseRecord(&x.baseRecord, &y.baseRecord)
 	if cmp != 0 {
@@ -672,12 +692,28 @@ func compareDBRecord(x, y dbRecord) int {
 
 // LoadTablesPrivTable loads the mysql.tables_priv table from database.
 func (p *MySQLPrivilege) LoadTablesPrivTable(ctx sqlexec.SQLExecutor) error {
-	return p.loadTable(ctx, sqlLoadTablePrivTable, p.decodeTablesPrivTableRow)
+	err := p.loadTable(ctx, sqlLoadTablePrivTable, p.decodeTablesPrivTableRow)
+	if err != nil {
+		return err
+	}
+	p.tablesPriv.Ascend(func(itm itemTablesPriv) bool {
+		slices.SortFunc(itm.data, compareTablesPrivRecord)
+		return true
+	})
+	return nil
 }
 
 // LoadColumnsPrivTable loads the mysql.columns_priv table from database.
 func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx sqlexec.SQLExecutor) error {
-	return p.loadTable(ctx, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow)
+	err := p.loadTable(ctx, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow)
+	if err != nil {
+		return err
+	}
+	p.columnsPriv.Ascend(func(itm itemColumnsPriv) bool {
+		slices.SortFunc(itm.data, compareColumnsPrivRecord)
+		return true
+	})
+	return nil
 }
 
 // LoadDefaultRoles loads the mysql.columns_priv table from database.
