@@ -292,7 +292,6 @@ func GetTaskMgrToAccessDXFService() (*storage.TaskManager, error) {
 	// TODO currently DXF service is not fully implemented, so we always return
 	// task manager of current keyspace, replace it with below code when DXF service is ready.
 	return storage.GetTaskManager()
-
 }
 
 //// GetTaskMgrToAccessDXFService returns the task manager to access DXF service.
