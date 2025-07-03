@@ -130,6 +130,9 @@ func TestUpdateSelfVersionFail(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	defer func() {
+		tk.MustExec("set global tidb_enable_metadata_lock=1")
+	}()
 
 	tk.MustExec("use test")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/util/PutKVToEtcdError", `3*return(true)`)
