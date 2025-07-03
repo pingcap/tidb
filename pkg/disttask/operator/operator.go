@@ -51,7 +51,7 @@ type AsyncOperator[T, R any] struct {
 // TuneWorkerPoolSize tunes the worker pool size.
 func (c *AsyncOperator[T, R]) TuneWorkerPoolSize(workerNum int32, wait bool) {
 	// TODO(joechenrh): cp necessary PR here
-	c.pool.Tune(workerNum)
+	c.pool.Tune(workerNum, wait)
 }
 
 // GetWorkerPoolSize returns the worker pool size.
