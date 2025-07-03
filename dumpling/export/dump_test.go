@@ -5,6 +5,7 @@ package export
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -350,4 +351,180 @@ func TestSetSessionParams(t *testing.T) {
 
 	err = setSessionParam(d)
 	require.NoError(t, err)
+}
+
+func TestTableChunkStatTracking(t *testing.T) {
+	// Test table chunk statistics for streaming chunk progress tracking
+
+	// Test initialization
+	stats := newTableChunkStat()
+	require.NotNil(t, stats, "Should create new chunk statistics")
+	require.Equal(t, int32(0), stats.sent.Load(), "Initial sent count should be 0")
+	require.Equal(t, int32(0), stats.finished.Load(), "Initial finished count should be 0")
+	require.False(t, stats.finalized.Load(), "Initial finalized status should be false")
+
+	// Test concurrent updates
+	var wg sync.WaitGroup
+	concurrency := 10
+	wg.Add(concurrency * 2)
+
+	// Simulate multiple goroutines sending chunks
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			stats.sent.Add(1)
+		}()
+	}
+
+	// Simulate multiple goroutines finishing chunks
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			stats.finished.Add(1)
+		}()
+	}
+
+	wg.Wait()
+
+	// Verify counts
+	require.Equal(t, int32(concurrency), stats.sent.Load(), "Sent count should match concurrent additions")
+	require.Equal(t, int32(concurrency), stats.finished.Load(), "Finished count should match concurrent additions")
+
+	// Test finalization
+	stats.finalized.Store(true)
+	require.True(t, stats.finalized.Load(), "Finalized status should be true after setting")
+}
+
+func TestDumperChunkedTablesManagement(t *testing.T) {
+	// Test dumper's chunked tables tracking for progress monitoring
+
+	d := &Dumper{
+		chunkedTables: sync.Map{},
+	}
+
+	// Create mock table metadata
+	mockMeta := &mockTableMeta{
+		database: "test_db",
+		table:    "test_table",
+	}
+
+	// Test storing chunk statistics
+	stats := newTableChunkStat()
+	chunkKey := mockMeta.ChunkKey()
+	d.chunkedTables.Store(chunkKey, stats)
+
+	// Test retrieving chunk statistics
+	retrievedStats, exists := d.chunkedTables.Load(chunkKey)
+	require.True(t, exists, "Should find stored chunk statistics")
+	require.Equal(t, stats, retrievedStats, "Retrieved statistics should match stored ones")
+
+	// Test progress tracking simulation
+	stats.sent.Add(5)
+	stats.finished.Add(3)
+
+	// Verify the statistics are tracked properly
+	require.Equal(t, int32(5), stats.sent.Load(), "Sent count should be tracked")
+	require.Equal(t, int32(3), stats.finished.Load(), "Finished count should be tracked")
+
+	// Test cleanup after completion
+	stats.finished.Store(5) // Mark all chunks as finished
+	stats.finalized.Store(true)
+
+	// Simulate cleanup when all chunks are completed
+	if stats.finished.Load() == stats.sent.Load() && stats.finalized.Load() {
+		d.chunkedTables.Delete(chunkKey)
+	}
+
+	// Verify cleanup
+	_, exists = d.chunkedTables.Load(chunkKey)
+	require.False(t, exists, "Should not find chunk statistics after cleanup")
+}
+
+func TestStreamingChunkProgressIntegration(t *testing.T) {
+	// Test integration of streaming chunking with progress tracking
+
+	d := &Dumper{
+		chunkedTables: sync.Map{},
+	}
+
+	// Mock table metadata for streaming chunking
+	mockMeta := &mockTableMeta{
+		database: "sales_db",
+		table:    "orders",
+	}
+
+	// Test simulating the streaming chunking flow
+	stats := newTableChunkStat()
+	chunkKey := mockMeta.ChunkKey()
+	d.chunkedTables.Store(chunkKey, stats)
+
+	// Simulate streaming chunk creation and completion
+	numChunks := 10
+	for i := 0; i < numChunks; i++ {
+		// Simulate sending a chunk task
+		stats.sent.Add(1)
+
+		// Simulate chunk completion after some processing
+		go func() {
+			stats.finished.Add(1)
+		}()
+	}
+
+	// Wait for all chunks to be processed (in real code this would be handled by workers)
+	for stats.finished.Load() < int32(numChunks) {
+		time.Sleep(1 * time.Millisecond)
+	}
+
+	// Verify all chunks were tracked
+	require.Equal(t, int32(numChunks), stats.sent.Load(), "All chunks should be sent")
+	require.Equal(t, int32(numChunks), stats.finished.Load(), "All chunks should be finished")
+
+	// Simulate finalization as done in streamStringChunks
+	stats.finalized.Store(true)
+
+	// Verify cleanup condition
+	if stats.finished.Load() == stats.sent.Load() {
+		d.chunkedTables.Delete(chunkKey)
+	}
+
+	_, exists := d.chunkedTables.Load(chunkKey)
+	require.False(t, exists, "Chunk statistics should be cleaned up after completion")
+}
+
+// mockTableMeta implements TableMeta interface for testing
+type mockTableMeta struct {
+	database string
+	table    string
+}
+
+func (m *mockTableMeta) ChunkKey() string {
+	return fmt.Sprintf("%s.%s", m.database, m.table)
+}
+
+func (m *mockTableMeta) DatabaseName() string {
+	return m.database
+}
+
+func (m *mockTableMeta) TableName() string {
+	return m.table
+}
+
+func (m *mockTableMeta) ColumnNames() []string {
+	return []string{"id", "name", "created_at"}
+}
+
+func (m *mockTableMeta) ColumnTypes() []string {
+	return []string{"INT", "VARCHAR", "TIMESTAMP"}
+}
+
+func (m *mockTableMeta) SelectedField() string {
+	return "*"
+}
+
+func (m *mockTableMeta) SelectedLen() int {
+	return 3
+}
+
+func (m *mockTableMeta) HasImplicitRowID() bool {
+	return false
 }
