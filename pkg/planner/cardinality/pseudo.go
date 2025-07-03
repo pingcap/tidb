@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
@@ -238,8 +239,6 @@ func getPseudoRowCountByColumnRanges(tc types.Context, tableRowCount float64, co
 			}
 		}
 	}
-	if rowCount > tableRowCount {
-		rowCount = tableRowCount
-	}
+	rowCount = mathutil.Clamp(rowCount, 1, float64(tableRowCount))
 	return rowCount, nil
 }
