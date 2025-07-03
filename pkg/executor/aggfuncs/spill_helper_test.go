@@ -794,7 +794,6 @@ func TestBasePartialResult4GroupConcat(t *testing.T) {
 		} else {
 			require.Equal(t, (*bytes.Buffer)(nil), deserializedPartialResults[i].buffer)
 		}
->>>>>>> 221d76f9ebd (executor: fix nil buffer in basePartialResult4GroupConcat when hash aggregation is spilled (#61808))
 	}
 }
 
