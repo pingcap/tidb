@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -44,7 +45,7 @@ func FDToString(p base.LogicalPlan) string {
 
 func needIncludeChildrenString(plan base.Plan) bool {
 	switch x := plan.(type) {
-	case *logicalop.LogicalUnionAll, *PhysicalUnionAll, *logicalop.LogicalPartitionUnionAll:
+	case *logicalop.LogicalUnionAll, *physicalop.PhysicalUnionAll, *logicalop.LogicalPartitionUnionAll:
 		// after https://github.com/pingcap/tidb/pull/25218, the union may contain less than 2 children,
 		// but we still wants to include its child plan's information when calling `toString` on union.
 		return true
@@ -189,7 +190,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *logicalop.LogicalShowDDLJobs, *PhysicalShowDDLJobs:
 		str = "ShowDDLJobs"
-	case *logicalop.LogicalSort, *PhysicalSort:
+	case *logicalop.LogicalSort, *physicalop.PhysicalSort:
 		str = "Sort"
 	case *logicalop.LogicalJoin:
 		last := len(idxs) - 1
@@ -203,7 +204,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			r := eq.GetArgs()[1].StringWithCtx(ectx, perrors.RedactLogDisable)
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *logicalop.LogicalUnionAll, *PhysicalUnionAll, *logicalop.LogicalPartitionUnionAll:
+	case *logicalop.LogicalUnionAll, *physicalop.PhysicalUnionAll, *logicalop.LogicalPartitionUnionAll:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]

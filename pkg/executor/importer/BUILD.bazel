@@ -52,6 +52,7 @@ go_library(
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
+        "//pkg/statistics/handle",
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",

@@ -574,6 +574,11 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 			return base.InvalidTask, 0, nil
 		}
 	}
+	if !checkOpSelfSatisfyPropTaskTypeRequirement(p.Self(), prop) {
+		// Currently all plan cannot totally push down to TiKV.
+		p.StoreTask(prop, base.InvalidTask)
+		return base.InvalidTask, 0, nil
+	}
 
 	canAddEnforcer := prop.CanAddEnforcer
 
@@ -1297,7 +1302,6 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		fixcontrol.Fix52869,
 		false,
 	)
-	ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix52869)
 	if preferRange {
 		// Override preferRange with the following limitations to scope
 		preferRange = preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
@@ -1306,8 +1310,11 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		// If a candidate path is TiFlash-path or forced-path or MV index or global index, we just keep them. For other
 		// candidate paths, if there exists any range scan path, we remove full scan paths and keep range scan paths.
 		preferredPaths := make([]*candidatePath, 0, len(candidates))
-		var hasRangeScanPath bool
+		var hasRangeScanPath, hasMultiRange bool
 		for _, c := range candidates {
+			if len(c.path.Ranges) > 1 {
+				hasMultiRange = true
+			}
 			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && (c.path.Index.Global || c.path.Index.MVIndex)) {
 				preferredPaths = append(preferredPaths, c)
 				continue
@@ -1320,6 +1327,10 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 					hasRangeScanPath = true
 				}
 			}
+		}
+		if hasMultiRange {
+			// Only log the fix control if we had multiple ranges
+			ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix52869)
 		}
 		if hasRangeScanPath {
 			return preferredPaths

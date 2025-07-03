@@ -58,6 +58,15 @@ type Loader struct {
 	sysExecutorFactory func() (pools.Resource, error)
 }
 
+// NewLoader creates a new Loader instance.
+func NewLoader(store kv.Storage, infoCache *infoschema.InfoCache) *Loader {
+	return &Loader{
+		store:     store,
+		infoCache: infoCache,
+		deferFn:   &deferFn{},
+	}
+}
+
 // initFields initializes some fields of the Loader.
 // below fields are required for accessing user tables, if you only load system tables,
 // you can skip this step.
