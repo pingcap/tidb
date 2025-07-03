@@ -19,11 +19,13 @@ import (
 	"path"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/table"
@@ -31,11 +33,13 @@ import (
 )
 
 type mergeSortExecutor struct {
-	taskexecutor.EmptyStepExecutor
+	taskexecutor.BaseStepExecutor
 	jobID         int64
 	idxNum        int
 	ptbl          table.PhysicalTable
 	cloudStoreURI string
+
+	mergeOp atomic.Pointer[external.MergeOperator]
 
 	mu                  sync.Mutex
 	subtaskSortedKVMeta *external.SortedKVMeta
@@ -86,21 +90,37 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	prefix := path.Join(strconv.Itoa(int(subtask.TaskID)), strconv.Itoa(int(subtask.ID)))
 	res := m.GetResource()
-	memSizePerCon := res.Mem.Capacity() / int64(subtask.Concurrency)
+	memSizePerCon := res.Mem.Capacity() / res.CPU.Capacity()
 	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/10000)
 
-	return external.MergeOverlappingFiles(
-		ctx,
-		sm.DataFiles,
+	opCtx, _ := operator.NewContext(ctx)
+
+	op := external.NewMergeOperator(
+		opCtx,
 		store,
 		partSize,
 		prefix,
 		external.DefaultBlockSize,
 		onClose,
-		subtask.Concurrency,
+		int(res.CPU.Capacity()),
 		true,
 		common.OnDuplicateKeyIgnore,
 	)
+
+	m.mergeOp.Store(op)
+	defer m.mergeOp.Store(nil)
+
+	err = external.MergeOverlappingFiles(
+		opCtx,
+		sm.DataFiles,
+		int(res.CPU.Capacity()),
+		op,
+	)
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.onFinished(ctx, subtask)
 }
 
 func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
@@ -108,7 +128,7 @@ func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (m *mergeSortExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort finish subtask")
 	sm, err := decodeBackfillSubTaskMeta(ctx, m.cloudStoreURI, subtask.Meta)
 	if err != nil {
@@ -126,5 +146,21 @@ func (m *mergeSortExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 		return errors.Trace(err)
 	}
 	subtask.Meta = newMeta
+	return nil
+}
+
+func (m *mergeSortExecutor) ResourceModified(_ context.Context, newResource *proto.StepResource) error {
+	currOp := m.mergeOp.Load()
+	if currOp == nil {
+		// let framework retry
+		return errors.Errorf("no subtask running")
+	}
+
+	targetConcurrency := int32(newResource.CPU.Capacity())
+	currentConcurrency := currOp.GetWorkerPoolSize()
+	if targetConcurrency != currentConcurrency {
+		currOp.TuneWorkerPoolSize(targetConcurrency, true)
+	}
+
 	return nil
 }

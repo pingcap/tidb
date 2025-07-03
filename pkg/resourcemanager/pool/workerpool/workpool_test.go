@@ -76,7 +76,7 @@ func TestWorkerPool(t *testing.T) {
 	require.Equal(t, int64(45), globalCnt.Load())
 
 	// Enlarge the pool to 5 workers.
-	pool.Tune(5)
+	pool.Tune(5, false)
 
 	// Add some more tasks to the pool.
 	cntWg.Add(10)
@@ -89,7 +89,7 @@ func TestWorkerPool(t *testing.T) {
 	require.Equal(t, int64(90), globalCnt.Load())
 
 	// Decrease the pool to 2 workers.
-	pool.Tune(2)
+	pool.Tune(2, false)
 
 	// Add some more tasks to the pool.
 	cntWg.Add(10)
