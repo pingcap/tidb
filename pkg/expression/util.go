@@ -1430,15 +1430,11 @@ func IsInmutableExpr(expr Expression) bool {
 // RemoveDupExprs removes identical exprs. Not that if expr contains functions which
 // are mutable or have side effects, we cannot remove it even if it has duplicates;
 // if the plan is going to be cached, we cannot remove expressions containing `?` neither.
-<<<<<<< HEAD
 func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
-	res := make([]Expression, 0, len(exprs))
-=======
-func RemoveDupExprs(exprs []Expression) []Expression {
 	if len(exprs) <= 1 {
 		return exprs
 	}
->>>>>>> cc37d0d3b05 (expression: skip empty  or one expression in the RemoveDupExprs (#62114))
+	res := make([]Expression, 0, len(exprs))
 	exists := make(map[string]struct{}, len(exprs))
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, expr := range exprs {
