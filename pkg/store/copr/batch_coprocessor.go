@@ -998,18 +998,31 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				}
 			})
 			if !skipCheck {
-				if len(aliveStores.storesInAllZones) == 0 {
-					// Refresh region cache and try again.
-					logutil.BgLogger().Info("retry for TiFlash because no alive tiflash stores")
-					cache.ForceRefreshAllStores(bo.GetCtx())
-					needRetry = true
-				} else if tiflashReplicaReadPolicy.IsClosestReplicas() {
-					// Will not retry when closest_replica policy has set.
-					// User can use closest_adaptive instead to avoid this error.
-					if len(aliveStores.storeIDsInTiDBZone) == 0 {
-						return nil, errors.Errorf("There is no region in tidb zone(%s)", tidbZone)
+				checkAliveStoreTarget := aliveStores.storeIDsInAllZones
+				if tiflashReplicaReadPolicy.IsClosestReplicas() {
+					checkAliveStoreTarget = aliveStores.storeIDsInTiDBZone
+				}
+
+				var invalidRegions []tikv.RegionVerID
+				for i, allStoresPerRegion := range usedTiFlashStores {
+					var storeOk bool
+					for _, storeID := range allStoresPerRegion {
+						if _, ok := checkAliveStoreTarget[storeID]; ok {
+							storeOk = true
+							break
+						}
 					}
-					maxRemoteReadCountAllowed = len(aliveStores.storeIDsInTiDBZone) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
+					if !storeOk {
+						cache.InvalidateCachedRegion(tasks[i].region)
+						needRetry = true
+						// To avoid too many logs.
+						if len(invalidRegions) < 10 {
+							invalidRegions = append(invalidRegions, tasks[i].region)
+						}
+					}
+				}
+				if needRetry {
+					logutil.BgLogger().Info("need retry because region has no alive tiflash store", zap.Any("invalid regions", invalidRegions))
 				}
 			}
 		}
@@ -1023,6 +1036,9 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				return nil, errors.Trace(err)
 			}
 			continue
+		}
+		if tiflashReplicaReadPolicy.IsClosestReplicas() {
+			maxRemoteReadCountAllowed = len(aliveStores.storeIDsInTiDBZone) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
 		}
 
 		var batchTasks []*batchCopTask
