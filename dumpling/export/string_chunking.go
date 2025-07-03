@@ -76,7 +76,7 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 	d.chunkedTables.Store(meta.ChunkKey(), chunkStats)
 
 	// True streaming approach: Send tasks immediately using previousBoundary -> currentBoundary
-	var totalChunks int64 = 0
+	var totalChunks int64
 
 	defer func() {
 		chunkStats.finalized.Store(true)
