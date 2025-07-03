@@ -685,8 +685,8 @@ func TestVectorConstantExplain(t *testing.T) {
 	fmt.Println("++++")
 	// Don't check planTree directly, because it contains execution time info which is not fixed after open/close time is included
 	require.True(t, strings.Contains(planTree, `	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#3`))
-	require.True(t, strings.Contains(planTree, `	└─TableReader_5    	root     	10000  	data:TableFullScan_4`))
-	require.True(t, strings.Contains(planTree, `	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo`))
+	require.True(t, strings.Contains(planTree, `	└─TableReader_6    	root     	10000  	data:TableFullScan_5`))
+	require.True(t, strings.Contains(planTree, `	  └─TableFullScan_5	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo`))
 	// No need to check result at all.
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs))
 }
