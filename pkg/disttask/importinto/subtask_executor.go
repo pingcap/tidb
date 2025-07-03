@@ -19,17 +19,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -125,18 +122,6 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
-	}
-	if keyspace.IsRunningOnSystem() && config.GetGlobalKeyspaceName() != p.taskKeyspace {
-		var sp tidbutil.SessionPool
-		err = taskManager.WithNewSession(func(se sessionctx.Context) error {
-			svr := se.GetSQLServer()
-			sp, err = svr.GetKSSessPool(p.taskKeyspace)
-			return err
-		})
-		if err != nil {
-			return err
-		}
-		taskManager = storage.NewTaskManager(sp)
 	}
 
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
