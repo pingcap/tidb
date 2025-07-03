@@ -1012,7 +1012,7 @@ func newBatchPointGetPlan(
 			return nil
 		}
 
-		partTable, ok := table.(partitionTable)
+		partTable, ok := table.(base.PartitionTable)
 		if !ok {
 			return nil
 		}
@@ -2274,7 +2274,7 @@ func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo)
 		return nil
 	}
 	// PartitionExpr don't need columns and names for hash partition.
-	partitionExpr := table.(partitionTable).PartitionExpr()
+	partitionExpr := table.(base.PartitionTable).PartitionExpr()
 	if pi.Type == ast.PartitionTypeKey {
 		// used to judge whether the key partition contains only one field
 		if len(pi.Columns) != 1 {

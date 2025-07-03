@@ -5662,7 +5662,7 @@ func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) 
 		return nil, err
 	}
 	nodeW := resolve.NewNodeWWithCtx(sel, b.resolveCtx)
-	targetPlan, _, err := OptimizeAstNode(ctx, sctx, nodeW, b.is)
+	targetPlan, _, err := OptimizeAstNodeNoCache(ctx, sctx, nodeW, b.is)
 	if err != nil {
 		return nil, err
 	}
