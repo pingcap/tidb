@@ -1302,9 +1302,9 @@ explain format='brief' select * from v2 where a = 'test';
 id	estRows	task	access object	operator info
 HashAgg	16.00	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
 └─Union	20.00	root		
-  ├─Point_Get	1.00	root	table:t3, clustered index:PRIMARY(a)	
+  ├─Point_Get	1.00	root	table:t3, clustered index:PRIMARY(a)	condition: [eq(planner__core__casetest__integration.t3.a, test)]
   └─Projection	10.00	root		cast(planner__core__casetest__integration.t4.a, varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#3
-    └─Point_Get	1.00	root	table:t4, clustered index:PRIMARY(a)	
+    └─Point_Get	1.00	root	table:t4, clustered index:PRIMARY(a)	condition: [eq(planner__core__casetest__integration.t4.a, test)]
 select * from v2 where a = 'test';
 a
 explain format='brief' select * from v2 where a = 1;
@@ -1335,7 +1335,7 @@ explain format='brief' select * from v3 where a = 'test' -- the condition should
 id	estRows	task	access object	operator info
 HashAgg	6408.00	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
 └─Union	8010.00	root		
-  ├─Point_Get	1.00	root	table:t5, clustered index:PRIMARY(a)	
+  ├─Point_Get	1.00	root	table:t5, clustered index:PRIMARY(a)	condition: [eq(planner__core__casetest__integration.t5.a, test)]
   └─Projection	8000.00	root		cast(planner__core__casetest__integration.t6.a, char(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#3
     └─TableReader	8000.00	root		data:Selection
       └─Selection	8000.00	cop[tikv]		eq(cast(planner__core__casetest__integration.t6.a, char(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin), "test")
@@ -1358,7 +1358,7 @@ explain format='brief' select * from v4 where a = 'test' -- diff column union ma
 id	estRows	task	access object	operator info
 HashAgg	6408.00	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
 └─Union	8010.00	root		
-  ├─Point_Get	1.00	root	table:t7, clustered index:PRIMARY(a)	
+  ├─Point_Get	1.00	root	table:t7, clustered index:PRIMARY(a)	condition: [eq(planner__core__casetest__integration.t7.a, test)]
   └─Selection	8000.00	root		eq(Column#3, "test")
     └─Projection	10000.00	root		cast(planner__core__casetest__integration.t8.a, varchar(100) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#3
       └─TableReader	10000.00	root		data:TableFullScan

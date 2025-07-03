@@ -18,7 +18,7 @@
       {
         "SQL": "explain format = 'brief' select * from t2 where id = 9 and a = -110",
         "Result": [
-          "Point_Get 1.00 root table:t2, partition:p1, index:PRIMARY(id, a) "
+          "Point_Get 1.00 root table:t2, partition:p1, index:PRIMARY(id, a) condition: [eq(test_partition.t2.id, 9) eq(test_partition.t2.a, -110)]"
         ]
       },
       {
@@ -31,7 +31,7 @@
         "SQL": "explain format = 'brief' select * from t1 join t2 on (t1.id = t2.id) where t1.id = 5 and t2.a = 7",
         "Result": [
           "HashJoin 1.00 root  CARTESIAN inner join",
-          "├─Point_Get(Build) 1.00 root table:t2, partition:p2, index:PRIMARY(id, a) ",
+          "├─Point_Get(Build) 1.00 root table:t2, partition:p2, index:PRIMARY(id, a) condition: [eq(5, test_partition.t2.id) eq(test_partition.t2.a, 7)]",
           "└─Point_Get(Probe) 1.00 root table:t1, partition:p5 handle:5"
         ]
       },
@@ -39,7 +39,7 @@
         "SQL": "explain format = 'brief' select * from t1 left join t2 on t1.id = 1 and t2.a = 2 where t2.id = 7",
         "Result": [
           "HashJoin 1.00 root  CARTESIAN inner join",
-          "├─Point_Get(Build) 1.00 root table:t2, partition:p9, index:PRIMARY(id, a) ",
+          "├─Point_Get(Build) 1.00 root table:t2, partition:p9, index:PRIMARY(id, a) condition: [eq(test_partition.t2.id, 7) eq(test_partition.t2.a, 2)]",
           "└─Point_Get(Probe) 1.00 root table:t1, partition:p1 handle:1"
         ]
       },
@@ -48,7 +48,7 @@
         "Result": [
           "HashJoin 1.00 root  CARTESIAN inner join",
           "├─Point_Get(Build) 1.00 root table:t1, partition:p2 handle:12",
-          "└─Point_Get(Probe) 1.00 root table:t2, partition:p4, index:PRIMARY(id, a) "
+          "└─Point_Get(Probe) 1.00 root table:t2, partition:p4, index:PRIMARY(id, a) condition: [eq(test_partition.t2.id, 12) eq(test_partition.t2.a, 12)]"
         ]
       },
       {
