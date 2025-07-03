@@ -72,7 +72,7 @@ type Dumper struct {
 	totalTables                   int64
 	charsetAndDefaultCollationMap map[string]string
 
-	speedRecorder      *SpeedRecorder
+	speedRecorder *SpeedRecorder
 
 	chunkedTables sync.Map
 }
@@ -1776,55 +1776,4 @@ func extractOrderByColumns(orderByClause string) []string {
 	}
 
 	return columns
-}
-
-// checkRowNumberSupport tests if the database supports ROW_NUMBER() window function
-// ROW_NUMBER() is supported by:
-// - MySQL 8.0+ (window functions introduced)
-// Not supported by:
-// - MySQL 5.7 and earlier (no window functions)
-// - Older database versions
-func checkRowNumberSupport(tctx *tcontext.Context, conn *BaseConn, database, table string) bool {
-	// First, set the database context to avoid "No database selected" error
-	useDbQuery := fmt.Sprintf("USE `%s`", escapeString(database))
-	err := conn.QuerySQL(tctx, func(rows *sql.Rows) error {
-		// No rows expected from USE statement
-		return nil
-	}, func() {}, useDbQuery)
-
-	if err != nil {
-		// Can't set database context, fallback to OFFSET-based approach
-		tctx.L().Debug("Cannot set database context for ROW_NUMBER() check", zap.Error(err))
-		return false
-	}
-
-	// Test ROW_NUMBER() against the actual table to detect support
-	// This will return error 1305 (function not found) on older MySQL versions
-	testQuery := fmt.Sprintf("SELECT ROW_NUMBER() FROM `%s` LIMIT 1", escapeString(table))
-
-	var supported bool
-	err = conn.QuerySQL(tctx, func(rows *sql.Rows) error {
-		// If we get here, ROW_NUMBER() syntax is recognized (even if query fails for other reasons)
-		supported = true
-		return nil
-	}, func() {}, testQuery)
-
-	if err != nil {
-		// Check if it's the expected "function not found" error (1305)
-		if mysqlErr, ok := errors.Cause(err).(*mysql.MySQLError); ok && mysqlErr.Number == 1305 {
-			// Error 1305: FUNCTION does not exist - ROW_NUMBER() not supported
-			tctx.L().Info("ROW_NUMBER() not supported by this database version",
-				zap.Uint16("errorCode", mysqlErr.Number))
-			return false
-		}
-		// Other errors might indicate syntax issues or connection problems
-		// Still treat as not supported for safety
-		tctx.L().Debug("ROW_NUMBER() check failed with unexpected error", zap.Error(err))
-		return false
-	}
-
-	tctx.L().Info("ROW_NUMBER() support check completed",
-		zap.Bool("supported", supported))
-
-	return supported
 }
