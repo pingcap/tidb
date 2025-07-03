@@ -17719,6 +17719,7 @@
             "min": false,
             "rightSide": true,
             "show": true,
+            "sideWidth": null,
             "total": false,
             "values": true
           },
