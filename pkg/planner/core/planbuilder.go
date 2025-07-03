@@ -4830,14 +4830,14 @@ var engineList = []string{"tikv", "tiflash"}
 func (b *PlanBuilder) buildDistributeTable(node *ast.DistributeTableStmt) (base.Plan, error) {
 	tnW := b.resolveCtx.GetTableName(node.Table)
 	tblInfo := tnW.TableInfo
-	if !slices.Contains(ruleList, node.Rule.L) {
+	if !slices.Contains(ruleList, node.Rule) {
 		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("rule must be leader-scatter, peer-scatter or learner-scatter")
 	}
-	if !slices.Contains(engineList, node.Engine.L) {
+	if !slices.Contains(engineList, node.Engine) {
 		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("engine must be tikv or tiflash")
 	}
 
-	if node.Engine.L == "tiflash" && node.Rule.L != "learner-scatter" {
+	if node.Engine == "tiflash" && node.Rule != "learner-scatter" {
 		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("the rule of tiflash must be learner-scatter")
 	}
 	plan := &DistributeTable{
@@ -5662,7 +5662,7 @@ func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) 
 		return nil, err
 	}
 	nodeW := resolve.NewNodeWWithCtx(sel, b.resolveCtx)
-	targetPlan, _, err := OptimizeAstNode(ctx, sctx, nodeW, b.is)
+	targetPlan, _, err := OptimizeAstNodeNoCache(ctx, sctx, nodeW, b.is)
 	if err != nil {
 		return nil, err
 	}
