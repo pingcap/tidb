@@ -67,6 +67,8 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 		p, err = b.pbToTableScan(e)
 	case tipb.ExecType_TypeSelection:
 		p, err = b.pbToSelection(e)
+	case tipb.ExecType_TypeProjection:
+		p, err = b.pbToProjection(e)
 	case tipb.ExecType_TypeTopN:
 		p, err = b.pbToTopN(e)
 	case tipb.ExecType_TypeLimit:
@@ -84,6 +86,7 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 		err = errors.Errorf("this exec type %v doesn't support yet", e.GetTp())
 	}
 	if subPlan != nil {
+		// p may nil if the executor is not supported, for example, Projection.
 		p.SetChildren(subPlan)
 	}
 	// The limit missed its output cols via the protobuf.
@@ -157,6 +160,17 @@ func (b *PBPlanBuilder) buildTableScanSchema(tblInfo *model.TableInfo, columns [
 		}
 	}
 	return schema
+}
+
+func (b *PBPlanBuilder) pbToProjection(e *tipb.Executor) (base.PhysicalPlan, error) {
+	exprs, err := expression.PBToExprs(b.sctx.GetExprCtx(), e.Projection.Exprs, b.tps)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	p := PhysicalProjection{
+		Exprs: exprs,
+	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
+	return p, nil
 }
 
 func (b *PBPlanBuilder) pbToSelection(e *tipb.Executor) (base.PhysicalPlan, error) {
