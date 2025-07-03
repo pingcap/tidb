@@ -216,7 +216,6 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 	childTasks := make([]task, 0, len(p.children))
 	childCnts := make([]int64, len(p.children))
 	cntPlan = 0
-<<<<<<< HEAD
 	iteration := func(
 		selfPhysicalPlan PhysicalPlan,
 		childTasks []task,
@@ -240,18 +239,6 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 				return nil, 0, childCnts, nil
 			}
 			childTasks = append(childTasks, childTask)
-=======
-	iteration := iteratePhysicalPlan4BaseLogical
-	if _, ok := p.Self().(*logicalop.LogicalSequence); ok {
-		iteration = iterateChildPlan4LogicalSequence
-	}
-	var fd *funcdep.FDSet
-	if addEnforcer && len(physicalPlans) != 0 {
-		switch logicalPlan := p.Self().(type) {
-		case *logicalop.LogicalJoin, *logicalop.LogicalAggregation:
-			// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
-			fd = logicalPlan.ExtractFD()
->>>>>>> 35c1e21115c (planner,expression: fix wrong copy args to avoid breaking origin expression when to EvaluateExprWithNull (#61630))
 		}
 
 		// This check makes sure that there is no invalid child task.
