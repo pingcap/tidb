@@ -987,44 +987,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 
 		if !needRetry {
 			aliveStores = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, usedTiFlashStoresMap, ttl, store, tiflashReplicaReadPolicy, tidbZone)
-
-			// Skip check because there is no real tiflash in most testcases.
-			skipCheck := intest.InTest
-			failpoint.Inject("mockNoAliveTiFlash", func(val failpoint.Value) {
-				// This test will setup tiflash store properly, so detecting alive will success.
-				skipCheck = false
-				if val.(bool) && retryNum <= 1 {
-					aliveStores.storesInAllZones = []*tikv.Store{}
-				}
-			})
-			if !skipCheck {
-				checkAliveStoreTarget := aliveStores.storeIDsInAllZones
-				if tiflashReplicaReadPolicy.IsClosestReplicas() {
-					checkAliveStoreTarget = aliveStores.storeIDsInTiDBZone
-				}
-
-				var invalidRegions []tikv.RegionVerID
-				for i, allStoresPerRegion := range usedTiFlashStores {
-					var storeOk bool
-					for _, storeID := range allStoresPerRegion {
-						if _, ok := checkAliveStoreTarget[storeID]; ok {
-							storeOk = true
-							break
-						}
-					}
-					if !storeOk {
-						cache.InvalidateCachedRegion(tasks[i].region)
-						needRetry = true
-						// To avoid too many logs.
-						if len(invalidRegions) < 10 {
-							invalidRegions = append(invalidRegions, tasks[i].region)
-						}
-					}
-				}
-				if needRetry {
-					logutil.BgLogger().Info("need retry because region has no alive tiflash store", zap.Any("invalid regions", invalidRegions))
-				}
-			}
+			needRetry = checkAliveStore(aliveStores, usedTiFlashStores, cache, tiflashReplicaReadPolicy, retryNum, tasks)
 		}
 
 		if needRetry {
@@ -1119,6 +1082,50 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		metrics.TxnRegionsNumHistogramWithBatchCoprocessor.Observe(float64(len(batchTasks)))
 		return batchTasks, nil
 	}
+}
+
+// Check if all stores of one specific region has at least on alive store.
+// If not, invalid region cache and return needRetry as true.
+func checkAliveStore(aliveStores *aliveStoresBundle, usedTiFlashStores [][]uint64, cache *RegionCache,
+	tiflashReplicaReadPolicy tiflash.ReplicaRead, retryNum int, tasks []*copTask) (needRetry bool) {
+	// Skip check because there is no real tiflash in most testcases.
+	skipCheck := intest.InTest
+	failpoint.Inject("mockNoAliveTiFlash", func(val failpoint.Value) {
+		// This test will setup tiflash store properly, so detecting alive will success.
+		skipCheck = false
+		if val.(bool) && retryNum <= 1 {
+			aliveStores.storesInAllZones = []*tikv.Store{}
+		}
+	})
+	if !skipCheck {
+		checkAliveStoreTarget := aliveStores.storeIDsInAllZones
+		if tiflashReplicaReadPolicy.IsClosestReplicas() {
+			checkAliveStoreTarget = aliveStores.storeIDsInTiDBZone
+		}
+
+		var invalidRegions []tikv.RegionVerID
+		for i, allStoresPerRegion := range usedTiFlashStores {
+			var storeOk bool
+			for _, storeID := range allStoresPerRegion {
+				if _, ok := checkAliveStoreTarget[storeID]; ok {
+					storeOk = true
+					break
+				}
+			}
+			if !storeOk {
+				cache.InvalidateCachedRegion(tasks[i].region)
+				needRetry = true
+				// To avoid too many logs.
+				if len(invalidRegions) < 10 {
+					invalidRegions = append(invalidRegions, tasks[i].region)
+				}
+			}
+		}
+		if needRetry {
+			logutil.BgLogger().Info("need retry because region has no alive tiflash store", zap.Any("invalid regions", invalidRegions))
+		}
+	}
+	return
 }
 
 func convertRegionInfosToPartitionTableRegions(batchTasks []*batchCopTask, partitionIDs []int64) {
