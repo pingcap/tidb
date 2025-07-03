@@ -1698,7 +1698,11 @@ func (networkTraffic *TiFlashNetworkTrafficSummary) mergeExecSummary(summary *ti
 // GetInterZoneTrafficBytes returns the inter zone network traffic bytes involved
 // between tiflash instances.
 func (networkTraffic *TiFlashNetworkTrafficSummary) GetInterZoneTrafficBytes() uint64 {
-	return networkTraffic.interZoneSendBytes + networkTraffic.interZoneReceiveBytes
+	// NOTE: we only count the inter zone sent bytes here because tiflash count the traffic bytes
+	// of all sub request. For each sub request, both side with count the send and recv traffic.
+	// So here, we only use the send bytes as the overall traffic to avoid count the traffic twice.
+	// While this statistics logic seems a bit weird to me, but this is the tiflash side desicion.
+	return networkTraffic.interZoneSendBytes
 }
 
 // BasicRuntimeStats is the basic runtime stats.
