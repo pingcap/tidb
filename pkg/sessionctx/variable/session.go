@@ -2222,18 +2222,10 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
-<<<<<<< HEAD
 		GroupConcatMaxLen:             DefGroupConcatMaxLen,
 		EnableRedactLog:               DefTiDBRedactLog,
 		EnableWindowFunction:          DefEnableWindowFunction,
-=======
-		GroupConcatMaxLen:             vardef.DefGroupConcatMaxLen,
-		EnableRedactLog:               vardef.DefTiDBRedactLog,
-		EnableWindowFunction:          vardef.DefEnableWindowFunction,
-		CostModelVersion:              vardef.DefTiDBCostModelVer,
-		OptimizerEnableNAAJ:           vardef.DefTiDBEnableNAAJ,
-		OptOrderingIdxSelRatio:        vardef.DefTiDBOptOrderingIdxSelRatio,
->>>>>>> 2a74539aceb (planner: extend order ratio to joins (#61687))
+		OptOrderingIdxSelRatio:        DefTiDBOptOrderingIdxSelRatio,
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
