@@ -1041,3 +1041,25 @@ CREATE OR REPLACE VIEW v1 AS SELECT 1, 1;
 disconnect foo;
 connection default;
 
+drop user if exists test_permission@'%';
+CREATE USER test_permission;
+
+connect (test_conn, 127.0.0.1, test_permission, , , );
+connection test_conn;
+
+--error 1227
+set sql_require_primary_key = 0;
+--error 1227
+set sql_require_primary_key = 1;
+--error 1227
+set global sql_require_primary_key = 0;
+--error 1227 
+set global sql_require_primary_key = 1;
+connection default;
+GRANT SUPER ON *.* TO test_permission;
+connection test_conn;
+set global sql_require_primary_key = 1;
+set global sql_require_primary_key = 0;
+connection default;
+drop user test_permission@'%';
+disconnect test_conn;
