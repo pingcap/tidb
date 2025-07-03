@@ -1411,7 +1411,7 @@ func (s *mockGCSSuite) TestTableMode() {
 func addRepairTable(t *testing.T, tk *testkit.TestKit, dbName, tblName string) {
 	domainutil.RepairInfo.SetRepairMode(true)
 	domainutil.RepairInfo.SetRepairTableList([]string{dbName + "." + tblName})
-	is := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
 	dbInfo, ok := is.SchemaByName(ast.NewCIStr(dbName))
 	require.True(t, ok)
 	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tblName))
