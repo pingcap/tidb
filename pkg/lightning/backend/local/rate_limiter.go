@@ -100,6 +100,10 @@ func (l *ingestLimiter) Burst() int {
 	return min(getRateBurst(l.maxReqPerSec), l.maxReqInFlight)
 }
 
+func (l *ingestLimiter) NoLimit() bool {
+	return l.maxReqInFlight == 0 && l.maxReqPerSec == 0
+}
+
 func getRateBurst(ratePerSec float64) int {
 	// we allow set the rate per second be smaller than 1, such as 0.5, it means
 	// 1 request every 2 seconds, but we need to ensure that the burst of rate per

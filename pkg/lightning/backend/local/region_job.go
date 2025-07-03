@@ -739,7 +739,15 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 	clientFactory := local.importClientFactory
 	supportMultiIngest := local.supportMultiIngest
 	shouldCheckWriteStall := local.ShouldCheckWriteStall
-	if shouldCheckWriteStall {
+
+	var limiter *ingestLimiter
+	if x := local.ingestLimiter.Load(); x != nil {
+		limiter = x
+	} else {
+		limiter = &ingestLimiter{}
+	}
+
+	if shouldCheckWriteStall && limiter.NoLimit() {
 		writeStall, resp, err := local.checkWriteStall(ctx, j.region)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -749,12 +757,6 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 		}
 	}
 
-	var limiter *ingestLimiter
-	if x := local.ingestLimiter.Load(); x != nil {
-		limiter = x
-	} else {
-		limiter = &ingestLimiter{}
-	}
 	batch := 1
 	if supportMultiIngest {
 		batch = len(j.writeResult.sstMeta)

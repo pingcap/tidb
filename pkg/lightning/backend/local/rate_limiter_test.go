@@ -138,19 +138,25 @@ func TestIngestLimiterBurst(t *testing.T) {
 	ctx := context.Background()
 	l := newIngestLimiter(ctx, 0, 0)
 	require.Equal(t, math.MaxInt, l.Burst())
+	require.True(t, l.NoLimit())
 
 	l = newIngestLimiter(ctx, 0, 1000)
 	require.Equal(t, 1000, l.Burst())
+	require.False(t, l.NoLimit())
 
 	l = newIngestLimiter(ctx, 1000, 0)
 	require.Equal(t, 1000, l.Burst())
+	require.False(t, l.NoLimit())
 
 	l = newIngestLimiter(ctx, 1000, 1000)
 	require.Equal(t, 1000, l.Burst())
+	require.False(t, l.NoLimit())
 
 	l = newIngestLimiter(ctx, 1000, 567)
 	require.Equal(t, 567, l.Burst())
+	require.False(t, l.NoLimit())
 
 	l = newIngestLimiter(ctx, 567, 1000)
 	require.Equal(t, 567, l.Burst())
+	require.False(t, l.NoLimit())
 }
