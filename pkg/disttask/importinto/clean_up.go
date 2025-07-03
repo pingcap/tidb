@@ -68,7 +68,9 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 		}); err != nil {
 			return err
 		}
-		markTaskResetTableMode(ctx, taskManager, taskMeta)
+		if err = markTaskResetTableMode(ctx, taskManager, taskMeta); err != nil {
+			return err
+		}
 	}
 	// Not use cloud storage, no need to cleanUp.
 	if taskMeta.Plan.CloudStorageURI == "" {

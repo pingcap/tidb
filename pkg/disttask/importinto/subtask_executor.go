@@ -158,8 +158,5 @@ func markTaskResetTableMode(ctx context.Context, taskManager *storage.TaskManage
 	if err = updateMeta(task, taskMeta); err != nil {
 		return err
 	}
-	if err = taskManager.ModifiedTask(ctx, task); err != nil {
-		return err
-	}
-	return nil
+	return taskManager.ModifiedTask(ctx, task)
 }
