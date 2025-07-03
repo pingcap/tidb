@@ -378,12 +378,9 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 		// Mock error for test
 		failpoint.Inject("PutKVToEtcdError", func(val failpoint.Value) {
 			if val.(bool) && strings.Contains(key, "all_schema_versions") {
-				err = errors.New("mocked error for PutKVToEtcd")
+				failpoint.Continue()
 			}
 		})
-		if err != nil {
-			continue
-		}
 
 		childCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
 		_, err = etcdCli.Put(childCtx, key, val, opts...)
