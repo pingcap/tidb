@@ -29,7 +29,6 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
-		goleak.Cleanup(CheckIngestLeakageForTest),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }

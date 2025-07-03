@@ -141,7 +141,7 @@ func (s *backfillDistScheduler) Init(ctx context.Context) error {
 		return err
 	}
 	pdLeaderAddr := d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
-	s.metric = metrics.RegisterLightningCommonMetricsForDDL(s.jobID)
+	s.metric = metrics.RegisterLightningCommonMetricsForDDL(job.ID)
 	ctx = lightningmetric.WithCommonMetric(ctx, s.metric)
 	bc, err := ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
 	if err != nil {

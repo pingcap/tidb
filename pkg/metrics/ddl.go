@@ -233,8 +233,10 @@ func RegisterLightningCommonMetricsForDDL(jobID int64) *metric.Common {
 func UnregisterLightningCommonMetricsForDDL(jobID int64, metrics *metric.Common) {
 	mu.Lock()
 	defer mu.Unlock()
-	metrics.UnregisterFrom(prometheus.DefaultRegisterer)
-	delete(registeredJobMetrics, jobID)
+	if _, ok := registeredJobMetrics[jobID]; ok {
+		metrics.UnregisterFrom(prometheus.DefaultRegisterer)
+		delete(registeredJobMetrics, jobID)
+	}
 }
 
 // GetRegisteredJob is used for test
