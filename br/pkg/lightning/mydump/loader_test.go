@@ -1218,7 +1218,7 @@ func TestParallelProcess(t *testing.T) {
 
 	oneTest := func(length int, concurrency int) {
 		original := make([]md.RawFile, length)
-		for i := range length {
+		for i := 0; i < length; i++ {
 			original[i] = md.RawFile{Path: randomString()}
 		}
 
