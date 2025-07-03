@@ -239,6 +239,6 @@ func getPseudoRowCountByColumnRanges(tc types.Context, tableRowCount float64, co
 			}
 		}
 	}
-	rowCount = mathutil.Clamp(rowCount, 1, float64(tableRowCount))
+	rowCount = mathutil.Clamp(rowCount, 1, tableRowCount)
 	return rowCount, nil
 }
