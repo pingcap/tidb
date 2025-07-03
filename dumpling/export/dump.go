@@ -1759,7 +1759,12 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 
 func (d *Dumper) newTaskTableData(meta TableMeta, data TableDataIR, currentChunk, totalChunks int) *TaskTableData {
 	d.metrics.totalChunks.Add(1)
-	return NewTaskTableData(meta, data, currentChunk, totalChunks)
+	task := NewTaskTableData(meta, data, currentChunk, totalChunks)
+	// Set IsLastChunk for known total chunks scenarios
+	if totalChunks > 0 {
+		task.IsLastChunk = (currentChunk == totalChunks-1)
+	}
+	return task
 }
 
 // extractOrderByColumns extracts column names from ORDER BY clause

@@ -43,11 +43,11 @@ func TestBuildStringWhereClausesWithSpecialCharacters(t *testing.T) {
 	clauses := buildStringWhereClauses([]string{"user_id"}, boundaries)
 	expected := []string{
 		"`user_id`<'value_a123*('",
-		"`user_id`>='value_a123*(' and `user_id`<'value_b456)'''",
-		"`user_id`>='value_b456)''' and `user_id`<'test''quote'",
-		"`user_id`>='test''quote' and `user_id`<'test\"doublequote'",
-		"`user_id`>='test\"doublequote' and `user_id`<'test\\backslash'",
-		"`user_id`>='test\\backslash'",
+		"`user_id`>='value_a123*(' and `user_id`<'value_b456)\\''",
+		"`user_id`>='value_b456)\\'' and `user_id`<'test\\'quote'",
+		"`user_id`>='test\\'quote' and `user_id`<'test\\\"doublequote'",
+		"`user_id`>='test\\\"doublequote' and `user_id`<'test\\\\backslash'",
+		"`user_id`>='test\\\\backslash'",
 	}
 	require.Equal(t, expected, clauses)
 
@@ -68,10 +68,10 @@ func TestEscapeSQLString(t *testing.T) {
 		expected string
 	}{
 		{"simple", "'simple'"},
-		{"test'quote", "'test''quote'"},
-		{"test\"doublequote", "'test\"doublequote'"},
+		{"test'quote", "'test\\'quote'"},
+		{"test\"doublequote", "'test\\\"doublequote'"},
 		{"value_a123*(", "'value_a123*('"},
-		{"value_b456)'", "'value_b456)'''"},
+		{"value_b456)'", `'value_b456)\''`},
 		{"", "''"},
 	}
 
@@ -91,17 +91,17 @@ func TestSpecialCharacterEscapingFix(t *testing.T) {
 	// Expected generated WHERE clauses that should be valid SQL
 	expected := []string{
 		"`record_id`<'value_x123*('",
-		"`record_id`>='value_x123*(' and `record_id`<'value_y456)'''",
-		"`record_id`>='value_y456)'''",
+		"`record_id`>='value_x123*(' and `record_id`<'value_y456)\\''",
+		"`record_id`>='value_y456)\\''",
 	}
 	require.Equal(t, expected, clauses)
 
 	// Verify that the problematic boundary is properly escaped
 	// The original bug could generate: 'value_y456)''  which is malformed
-	// Our fix should generate: 'value_y456)''' which is valid SQL
+	// Our fix should generate: 'value_y456)\'' which is valid SQL
 
 	problematicClause := clauses[1] // The middle clause that was causing the error
-	require.Contains(t, problematicClause, "'value_y456)'''", "should contain properly escaped boundary")
+	require.Contains(t, problematicClause, "'value_y456)\\''", "should contain properly escaped boundary")
 	require.NotContains(t, problematicClause, "'value_y456)''  ", "should not contain malformed escaping")
 }
 

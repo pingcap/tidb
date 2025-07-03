@@ -48,7 +48,7 @@ func (d *Dumper) concurrentDumpStringField(tctx *tcontext.Context, conn *BaseCon
 	return d.concurrentDumpStringFields(tctx, conn, meta, taskChan, []string{field}, orderByClause, estimatedCount)
 }
 
-// streamStringChunks generates boundaries incrementally and sends tasks immediately as each boundary is computed
+// streamStringChunks generates boundaries incrementally and sends tasks with buffering to handle last chunk detection
 func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task, fields []string, orderByClause string, chunkSize, numChunks int64, selectField string, selectLen int) error {
 	conf := d.conf
 	db, tbl := meta.DatabaseName(), meta.TableName()
@@ -75,10 +75,40 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 	chunkStats := newTableChunkStat()
 	d.chunkedTables.Store(meta.ChunkKey(), chunkStats)
 
-	// True streaming approach: Send tasks immediately using previousBoundary -> currentBoundary
+	// Buffering approach: Buffer one chunk to determine if it's the last one
+	type bufferedChunk struct {
+		task       *TaskTableData
+		chunkIndex int
+	}
+	var buffer *bufferedChunk
+	
+	// Helper function to send buffered chunk with correct termination flag
+	sendBufferedChunk := func(isLast bool) error {
+		if buffer != nil {
+			// Update the task with proper chunk termination info
+			buffer.task.IsLastChunk = isLast
+			if isLast {
+				buffer.task.TotalChunks = buffer.chunkIndex + 1 // Now we know the total
+			}
+			
+			ctxDone := d.sendTaskToChan(tctx, buffer.task, taskChan)
+			if ctxDone {
+				return tctx.Err()
+			}
+			buffer = nil
+		}
+		return nil
+	}
+
+	// True streaming approach: Buffer chunks to handle last chunk detection
 	var totalChunks int64
 
 	defer func() {
+		// Send any remaining buffered chunk as the last chunk
+		if buffer != nil {
+			sendBufferedChunk(true) // Mark as last chunk
+		}
+		
 		chunkStats.finalized.Store(true)
 
 		// Update the totalChunks at the end of streaming to enable proper progress tracking
@@ -213,32 +243,34 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 			zap.Int64("boundaryIndex", i),
 			zap.Strings("boundary", currentBoundary))
 
-		// Send task for chunk using previousBoundary -> currentBoundary
+		// Create task for chunk using previousBoundary -> currentBoundary (with buffering)
+		var newTask *TaskTableData
+		
 		if len(previousBoundary) == 0 {
 			// First chunk: everything up to first boundary
 			whereClause := buildUpperBoundWhereClause(orderByColumns, currentBoundary)
 			fullWhere := buildWhereCondition(conf, whereClause)
 			query := buildSelectQuery(db, tbl, selectField, "", fullWhere, orderByClause)
-			task := d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1)
-
-			ctxDone := d.sendTaskToChan(tctx, task, taskChan)
-			if ctxDone {
-				return tctx.Err()
-			}
-			totalChunks++
+			newTask = d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1)
 		} else {
 			// Intermediate chunk: between previousBoundary and currentBoundary
 			whereClause := buildBoundedWhereClause(orderByColumns, previousBoundary, currentBoundary)
 			fullWhere := buildWhereCondition(conf, whereClause)
 			query := buildSelectQuery(db, tbl, selectField, "", fullWhere, orderByClause)
-			task := d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1)
-
-			ctxDone := d.sendTaskToChan(tctx, task, taskChan)
-			if ctxDone {
-				return tctx.Err()
-			}
-			totalChunks++
+			newTask = d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1)
 		}
+
+		// Send previous buffered chunk (now we know it's not the last)
+		if err := sendBufferedChunk(false); err != nil {
+			return err
+		}
+		
+		// Buffer the new task
+		buffer = &bufferedChunk{
+			task:       newTask,
+			chunkIndex: int(totalChunks),
+		}
+		totalChunks++
 
 		previousBoundary = currentBoundary // Update for next iteration
 	}
@@ -252,16 +284,23 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 			zap.String("table", tbl),
 			zap.Strings("lastBoundary", previousBoundary))
 
+		// Send previous buffered chunk (now we know it's not the last)
+		if err := sendBufferedChunk(false); err != nil {
+			return err
+		}
+
+		// Create and buffer the final chunk
 		whereClause := buildLowerBoundWhereClause(orderByColumns, previousBoundary)
 		fullWhere := buildWhereCondition(conf, whereClause)
 		query := buildSelectQuery(db, tbl, selectField, "", fullWhere, orderByClause)
-		task := d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1)
+		finalTask := d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1)
 
-		ctxDone := d.sendTaskToChan(tctx, task, taskChan)
-		if ctxDone {
-			return tctx.Err()
+		buffer = &bufferedChunk{
+			task:       finalTask,
+			chunkIndex: int(totalChunks),
 		}
 		totalChunks++
+		// The defer function will send this final chunk marked as last
 	} else if totalChunks == 0 {
 		// This block handles the case where no boundaries were found at all (e.g., very small table)
 		// and no previousBoundary was ever set.
@@ -276,6 +315,7 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 		query := buildSelectQuery(db, tbl, selectField, "", firstWhereClause, orderByClause)
 		task := d.newTaskTableData(meta, newTableData(query, selectLen, false), 0, 1)
 
+		// Single chunk case - send immediately as we know it's the only one
 		ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 		if ctxDone {
 			return tctx.Err()
