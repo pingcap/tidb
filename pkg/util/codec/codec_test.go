@@ -988,14 +988,24 @@ func TestHashGroup(t *testing.T) {
 	tp1 := tp
 	tp1.SetFlen(20)
 	tp1.SetDecimal(5)
+<<<<<<< HEAD
 	_, err := HashGroupKey(sc, 3, chk1.Column(0), buf1, tp1)
+=======
+	buf, err := HashGroupKey(time.Local, 3, chk1.Column(0), buf1, tp1)
+>>>>>>> 91dcec40fdd (codec: should also return the value even with error because the error may be ignored in the future (#62175))
 	require.Error(t, err)
+	require.Len(t, buf, 3)
 
 	tp2 := tp
 	tp2.SetFlen(12)
 	tp2.SetDecimal(10)
+<<<<<<< HEAD
 	_, err = HashGroupKey(sc, 3, chk1.Column(0), buf1, tp2)
+=======
+	buf, err = HashGroupKey(time.Local, 3, chk1.Column(0), buf1, tp2)
+>>>>>>> 91dcec40fdd (codec: should also return the value even with error because the error may be ignored in the future (#62175))
 	require.Error(t, err)
+	require.Len(t, buf, 3)
 }
 
 func datumsForTest(_ *stmtctx.StatementContext) ([]types.Datum, []*types.FieldType) {

@@ -1271,7 +1271,7 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 					err = sc.HandleOverflow(err, err)
 				}
 				if err != nil {
-					return nil, err
+					return buf, err
 				}
 			}
 		}
@@ -1284,7 +1284,7 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 				buf[i] = append(buf[i], uintFlag)
 				buf[i], err = EncodeMySQLTime(sc, ts[i], mysql.TypeUnspecified, buf[i])
 				if err != nil {
-					return nil, err
+					return buf, err
 				}
 			}
 		}
