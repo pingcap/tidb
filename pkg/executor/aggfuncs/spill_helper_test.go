@@ -788,18 +788,12 @@ func TestBasePartialResult4GroupConcat(t *testing.T) {
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
-<<<<<<< HEAD
 	for i := 0; i < testDataNum; i++ {
-		require.Equal(t, (*basePartialResult4GroupConcat)(serializedPartialResults[i]).valsBuf.String(), deserializedPartialResults[i].valsBuf.String())
-		require.Equal(t, (*basePartialResult4GroupConcat)(serializedPartialResults[i]).buffer.String(), deserializedPartialResults[i].buffer.String())
-=======
-	for i := range testDataNum {
 		if (*basePartialResult4GroupConcat)(serializedPartialResults[i]).buffer != nil {
 			require.Equal(t, (*basePartialResult4GroupConcat)(serializedPartialResults[i]).buffer.String(), deserializedPartialResults[i].buffer.String())
 		} else {
 			require.Equal(t, (*bytes.Buffer)(nil), deserializedPartialResults[i].buffer)
 		}
->>>>>>> 221d76f9ebd (executor: fix nil buffer in basePartialResult4GroupConcat when hash aggregation is spilled (#61808))
 	}
 }
 
