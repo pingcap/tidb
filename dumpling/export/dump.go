@@ -73,7 +73,6 @@ type Dumper struct {
 	charsetAndDefaultCollationMap map[string]string
 
 	speedRecorder      *SpeedRecorder
-	adaptiveChunkSizer *AdaptiveChunkSizer
 
 	chunkedTables sync.Map
 }
@@ -100,7 +99,6 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		cancelCtx:                 cancelFn,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 		speedRecorder:             NewSpeedRecorder(),
-		adaptiveChunkSizer:        NewAdaptiveChunkSizer(int64(conf.Rows)),
 	}
 
 	var err error
@@ -355,7 +353,7 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 		if err != nil {
 			return nil, func() {}, err
 		}
-		writer := NewWriter(tctx, int64(i), conf, conn, d.extStore, d.metrics, d.adaptiveChunkSizer)
+		writer := NewWriter(tctx, int64(i), conf, conn, d.extStore, d.metrics)
 		writer.rebuildConnFn = rebuildConnFn
 		writer.setFinishTableCallBack(func(task Task) {
 			// this is called when a file is finished.

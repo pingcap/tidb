@@ -5,92 +5,10 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
 
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"go.uber.org/zap"
 )
-
-// AdaptiveChunkSizer calculates optimal chunk sizes based on performance feedback
-type AdaptiveChunkSizer struct {
-	sync.Mutex
-	currentChunkSize int64
-	minChunkSize     int64
-	maxChunkSize     int64
-}
-
-// NewAdaptiveChunkSizer creates a new adaptive chunk sizer
-func NewAdaptiveChunkSizer(initialChunkSize int64) *AdaptiveChunkSizer {
-	min := initialChunkSize / 8
-	if min == 0 {
-		min = 1
-	}
-	return &AdaptiveChunkSizer{
-		currentChunkSize: initialChunkSize,
-		minChunkSize:     min,
-		maxChunkSize:     initialChunkSize * 8,
-	}
-}
-
-func (acs *AdaptiveChunkSizer) Get() int64 {
-	acs.Lock()
-	defer acs.Unlock()
-	return acs.currentChunkSize
-}
-
-// Adjust adjusts chunk size based on actual performance
-func (acs *AdaptiveChunkSizer) Adjust(tctx *tcontext.Context, actualDuration time.Duration) {
-	acs.Lock()
-	defer acs.Unlock()
-
-	const (
-		fastThreshold  = 100 * time.Millisecond // Increased from 50ms to 100ms
-		slowThreshold  = 5 * time.Second        // Increased from 1s to 5s
-		increaseFactor = 1.5
-		decreaseFactor = 1.5
-	)
-
-	oldChunkSize := acs.currentChunkSize
-	newChunkSize := acs.currentChunkSize
-
-	if actualDuration < fastThreshold && acs.currentChunkSize < acs.maxChunkSize {
-		newChunkSize = int64(float64(acs.currentChunkSize) * increaseFactor)
-	} else if actualDuration > slowThreshold && acs.currentChunkSize > acs.minChunkSize {
-		newChunkSize = int64(float64(acs.currentChunkSize) / decreaseFactor)
-	}
-
-	// Apply bounds
-	if newChunkSize < acs.minChunkSize {
-		newChunkSize = acs.minChunkSize
-	}
-	if newChunkSize > acs.maxChunkSize {
-		newChunkSize = acs.maxChunkSize
-	}
-	if newChunkSize == 0 {
-		newChunkSize = 1
-	}
-
-	// Log chunk size changes
-	if newChunkSize != oldChunkSize {
-		var reason string
-		if actualDuration < fastThreshold {
-			reason = "fast query detected"
-		} else if actualDuration > slowThreshold {
-			reason = "slow query detected"
-		} else {
-			reason = "bounds adjustment"
-		}
-
-		tctx.L().Info("adaptive chunk size adjusted",
-			zap.Int64("oldChunkSize", oldChunkSize),
-			zap.Int64("newChunkSize", newChunkSize),
-			zap.Duration("queryDuration", actualDuration),
-			zap.String("reason", reason))
-	}
-
-	acs.currentChunkSize = newChunkSize
-}
 
 // concurrentDumpStringFields handles composite key chunking with multiple columns
 func (d *Dumper) concurrentDumpStringFields(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task, fields []string, orderByClause string, estimatedCount uint64) error {
@@ -103,7 +21,7 @@ func (d *Dumper) concurrentDumpStringFields(tctx *tcontext.Context, conn *BaseCo
 		totalCount = int64(conf.Rows) * 5 // Conservative fallback
 	}
 
-	chunkSize := d.adaptiveChunkSizer.Get()
+	chunkSize := int64(d.conf.Rows)
 	if totalCount <= chunkSize {
 		tctx.L().Info("table too small for chunking, using sequential dump",
 			zap.String("database", db), zap.String("table", tbl))
@@ -191,23 +109,12 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 			break
 		}
 
-		// Get current adaptive chunk size for this boundary
-		currentChunkSize := d.adaptiveChunkSizer.Get()
-		if i == 1 || currentChunkSize != chunkSize {
-			tctx.L().Debug("using adaptive chunk size for boundary sampling",
-				zap.String("database", db),
-				zap.String("table", tbl),
-				zap.Int64("chunkIndex", i),
-				zap.Int64("originalChunkSize", chunkSize),
-				zap.Int64("currentChunkSize", currentChunkSize))
-		}
-
 		// Sample boundary for chunk i
 		var sampleQuery string
 
 		if supportsRowNumber {
 			// Use ROW_NUMBER() for more reliable boundary sampling
-			rowNumber := i * currentChunkSize
+			rowNumber := i * chunkSize
 			sampleQuery = fmt.Sprintf(
 				"SELECT %s FROM (SELECT %s, ROW_NUMBER() OVER (%s) as rn FROM `%s`.`%s`) t WHERE rn = %d",
 				selectCols,
@@ -220,7 +127,7 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 			// Use cursor-based boundary sampling to avoid expensive OFFSET for large tables
 			if len(previousBoundary) == 0 {
 				// First boundary: OFFSET is acceptable for the first boundary
-				offset := currentChunkSize
+				offset := chunkSize
 				sampleQuery = fmt.Sprintf(
 					"SELECT %s FROM `%s`.`%s` %s LIMIT 1 OFFSET %d",
 					selectCols,
@@ -240,7 +147,7 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 					escapeString(tbl),
 					fullWhere,
 					orderByClause,
-					currentChunkSize) // Skip currentChunkSize more rows from cursor position
+					chunkSize) // Skip chunkSize more rows from cursor position
 			}
 		}
 

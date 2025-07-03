@@ -1,12 +1,8 @@
 package export
 
 import (
-	"fmt"
-	"strings"
 	"testing"
-	"time"
 
-	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/stretchr/testify/require"
 )
 
@@ -132,126 +128,6 @@ func TestBuildStringWhereClausesCompositeKey(t *testing.T) {
 	// Test that boundary values are properly escaped
 	require.Contains(t, clauses[0], "'apple'", "Should contain escaped first boundary value")
 	require.Contains(t, clauses[0], "'100'", "Should contain escaped first boundary value")
-}
-
-func TestAdaptiveChunkSizer(t *testing.T) {
-	sizer := NewAdaptiveChunkSizer(1000)
-
-	// Test initial values
-	require.Equal(t, int64(1000), sizer.Get())
-
-	// Create a test context with logger
-	tctx := tcontext.Background()
-
-	// Test adjustment behavior
-	testCases := []struct {
-		name           string
-		actualDuration time.Duration
-		expectIncrease bool
-		expectDecrease bool
-	}{
-		{
-			name:           "fast query should increase chunk size",
-			actualDuration: 30 * time.Millisecond, // faster than 50ms threshold
-			expectIncrease: true,
-		},
-		{
-			name:           "slow query should decrease chunk size",
-			actualDuration: 6 * time.Second, // slower than 1s threshold
-			expectDecrease: true,
-		},
-		{
-			name:           "normal query should not change much",
-			actualDuration: 500 * time.Millisecond, // between thresholds
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			oldSize := sizer.Get()
-			sizer.Adjust(tctx, tc.actualDuration)
-			newSize := sizer.Get()
-
-			if tc.expectIncrease {
-				require.Greater(t, newSize, oldSize, "Expected chunk size to increase")
-			} else if tc.expectDecrease {
-				require.Less(t, newSize, oldSize, "Expected chunk size to decrease")
-			}
-		})
-	}
-}
-
-func TestDataDrivenBoundaryGeneration(t *testing.T) {
-	// Test the boundary generation logic (without actual DB queries)
-
-	// Test chunk calculation
-	testCases := []struct {
-		name           string
-		totalCount     int64
-		chunkSize      int64
-		expectedChunks int64
-	}{
-		{
-			name:           "exact division",
-			totalCount:     1000,
-			chunkSize:      100,
-			expectedChunks: 10,
-		},
-		{
-			name:           "with remainder",
-			totalCount:     1050,
-			chunkSize:      100,
-			expectedChunks: 11, // ceil(1050/100) = 11
-		},
-		{
-			name:           "small table",
-			totalCount:     50,
-			chunkSize:      100,
-			expectedChunks: 1, // no chunking needed
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			numChunks := (tc.totalCount + tc.chunkSize - 1) / tc.chunkSize
-			require.Equal(t, tc.expectedChunks, numChunks, "Chunk calculation should be correct")
-
-			// Test boundary count (should be numChunks - 1)
-			if numChunks > 1 {
-				expectedBoundaries := numChunks - 1
-				require.Greater(t, expectedBoundaries, int64(0), "Should need boundaries for multiple chunks")
-			}
-		})
-	}
-}
-
-func TestBatchQueryGeneration(t *testing.T) {
-	// Test the UNION query generation logic
-	chunkSize := int64(1000)
-	numChunks := int64(4)
-
-	var unionParts []string
-	for i := int64(1); i < numChunks; i++ {
-		offset := i * chunkSize
-		unionParts = append(unionParts, fmt.Sprintf(
-			"(SELECT `id` FROM `test`.`table` ORDER BY `id` LIMIT 1 OFFSET %d)", offset))
-	}
-
-	expectedParts := []string{
-		"(SELECT `id` FROM `test`.`table` ORDER BY `id` LIMIT 1 OFFSET 1000)",
-		"(SELECT `id` FROM `test`.`table` ORDER BY `id` LIMIT 1 OFFSET 2000)",
-		"(SELECT `id` FROM `test`.`table` ORDER BY `id` LIMIT 1 OFFSET 3000)",
-	}
-
-	require.Equal(t, expectedParts, unionParts, "Should generate correct UNION parts")
-	require.Len(t, unionParts, 3, "Should generate numChunks-1 parts")
-
-	// Test batch query construction
-	batchQuery := fmt.Sprintf("SELECT * FROM (%s) AS boundaries ORDER BY `id`",
-		strings.Join(unionParts, " UNION ALL "))
-
-	require.Contains(t, batchQuery, "UNION ALL", "Should use UNION ALL for combining queries")
-	require.Contains(t, batchQuery, "ORDER BY", "Should sort final results")
 }
 
 func TestGetStringOrNumericIndexDetection(t *testing.T) {
