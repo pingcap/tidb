@@ -222,10 +222,14 @@ func WriteInsert(
 	}
 	insertStatementPrefixLen := uint64(len(insertStatementPrefix))
 
+	isFirstChunk := true
 	for fileRowIter.HasNext() {
-		wp.currentStatementSize = 0
-		bf.WriteString(insertStatementPrefix)
-		wp.AddFileSize(insertStatementPrefixLen)
+		if isFirstChunk {
+			wp.currentStatementSize = 0
+			bf.WriteString(insertStatementPrefix)
+			wp.AddFileSize(insertStatementPrefixLen)
+			isFirstChunk = false
+		}
 
 		for fileRowIter.HasNext() {
 			lastBfSize := bf.Len()
@@ -268,6 +272,8 @@ func WriteInsert(
 			}
 
 			if shouldSwitch {
+				wp.currentStatementSize = 0
+				isFirstChunk = true
 				break
 			}
 		}
