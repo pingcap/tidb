@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -122,6 +123,25 @@ func (l *ownerListener) OnBecomeOwner() {
 	}
 	l.ddl.reorgCtx.setOwnerTS(time.Now().Unix())
 	l.scheduler.start()
+
+	if err := kv.RunInNewTxn(ctx, l.ddl.store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		err := local.InitializeGlobalMaxBatchSplitRanges(m, logutil.DDLIngestLogger())
+		if err != nil {
+			return err
+		}
+		err = local.InitializeGlobalSplitRangesPerSec(m, logutil.DDLIngestLogger())
+		if err != nil {
+			return err
+		}
+		err = local.InitializeGlobalIngestConcurrency(m, logutil.DDLIngestLogger())
+		if err != nil {
+			return err
+		}
+		return local.InitializeGlobalIngestPerSec(m, logutil.DDLIngestLogger())
+	}); err != nil {
+		logutil.DDLIngestLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
+	}
 }
 
 func (l *ownerListener) OnRetireOwner() {
