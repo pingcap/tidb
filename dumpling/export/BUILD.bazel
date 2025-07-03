@@ -77,6 +77,7 @@ go_test(
     timeout = "short",
     srcs = [
         "block_allow_list_test.go",
+        "composite_string_key_integration_test.go",
         "config_test.go",
         "consistency_test.go",
         "dump_test.go",
@@ -87,6 +88,7 @@ go_test(
         "prepare_test.go",
         "sql_test.go",
         "sql_type_test.go",
+        "sql_util_test.go",
         "status_test.go",
         "string_chunking_test.go",
         "util_for_test.go",

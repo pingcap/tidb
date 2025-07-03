@@ -70,15 +70,14 @@ func getStringOrNumericIndexColumns(tctx *tcontext.Context, db *BaseConn, meta T
 				_, isString := dataTypeString[colType]
 
 				// Accept both numeric and string columns for chunking
-				if isNumeric || isString {
-					columns = append(columns, colName)
-					isStrings = append(isStrings, isString)
-				} else {
+				if !isNumeric && !isString {
 					// If any column in the key is not numeric/string, skip this key
 					columns = nil
 					isStrings = nil
 					break
 				}
+				columns = append(columns, colName)
+				isStrings = append(isStrings, isString)
 			}
 		}
 
