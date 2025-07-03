@@ -1298,7 +1298,7 @@ func pickupPossibleField(tctx *tcontext.Context, meta TableMeta, db *BaseConn) (
 	if fieldName == "" {
 		return pickupPossibleFieldForStringChunking(tctx, meta, db)
 	}
-	
+
 	return fieldName, false, nil
 }
 

@@ -64,16 +64,12 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 	// Build SELECT columns for boundary sampling (all ORDER BY columns)
 	selectCols := strings.Join(orderByColumns, ", ")
 
-	// Check if database supports ROW_NUMBER() for more reliable boundary sampling
-	supportsRowNumber := checkRowNumberSupport(tctx, conn, db, tbl)
-
 	tctx.L().Debug("boundary sampling setup",
 		zap.String("database", db),
 		zap.String("table", tbl),
 		zap.Strings("chunkingFields", fields),
 		zap.Strings("orderByColumns", orderByColumns),
-		zap.String("dataOrderBy", orderByClause),
-		zap.Bool("supportsRowNumber", supportsRowNumber))
+		zap.String("dataOrderBy", orderByClause))
 
 	// Initialize chunk tracking
 	chunkStats := newTableChunkStat()
@@ -84,14 +80,14 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 
 	defer func() {
 		chunkStats.finalized.Store(true)
-		
+
 		// Update the totalChunks at the end of streaming to enable proper progress tracking
 		// In streaming mode, we don't know total chunks upfront, so we update it after completion
 		tctx.L().Debug("updating total chunks for streaming table",
 			zap.String("database", db),
 			zap.String("table", tbl),
 			zap.Int64("totalChunks", totalChunks))
-		
+
 		if chunkStats.finished.Load() == chunkStats.sent.Load() {
 			IncCounter(d.metrics.finishedTablesCounter)
 			d.chunkedTables.Delete(meta.ChunkKey())
@@ -120,56 +116,43 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 		// Sample boundary for chunk i
 		var sampleQuery string
 
-		if supportsRowNumber {
-			// Use ROW_NUMBER() for more reliable boundary sampling
-			rowNumber := i * chunkSize
+		// Use cursor-based boundary sampling for optimal performance
+		if len(previousBoundary) == 0 {
+			// First boundary: OFFSET is acceptable for the first boundary
+			offset := chunkSize
 			sampleQuery = fmt.Sprintf(
-				"SELECT %s FROM (SELECT %s, ROW_NUMBER() OVER (%s) as rn FROM `%s`.`%s`) t WHERE rn = %d",
+				"SELECT %s FROM `%s`.`%s` %s LIMIT 1 OFFSET %d",
 				selectCols,
-				selectCols,
-				orderByClause,
 				escapeString(db),
 				escapeString(tbl),
-				rowNumber)
+				orderByClause,
+				offset)
 		} else {
-			// Use cursor-based boundary sampling to avoid expensive OFFSET for large tables
-			if len(previousBoundary) == 0 {
-				// First boundary: OFFSET is acceptable for the first boundary
-				offset := chunkSize
-				sampleQuery = fmt.Sprintf(
-					"SELECT %s FROM `%s`.`%s` %s LIMIT 1 OFFSET %d",
-					selectCols,
-					escapeString(db),
-					escapeString(tbl),
-					orderByClause,
-					offset)
-			} else {
-				// Subsequent boundaries: use cursor-based pagination for performance
-				// Skip currentChunkSize rows from previous boundary, then take the first row
-				whereClause := buildCursorWhereClause(orderByColumns, previousBoundary)
-				fullWhere := buildWhereCondition(conf, whereClause)
-				sampleQuery = fmt.Sprintf(
-					"SELECT %s FROM `%s`.`%s` %s %s LIMIT 1 OFFSET %d",
-					selectCols,
-					escapeString(db),
-					escapeString(tbl),
-					fullWhere,
-					orderByClause,
-					chunkSize) // Skip chunkSize more rows from cursor position
-			}
+			// Subsequent boundaries: use cursor-based pagination for performance
+			// Skip chunkSize rows from previous boundary, then take the first row
+			whereClause := buildCursorWhereClause(orderByColumns, previousBoundary)
+			fullWhere := buildWhereCondition(conf, whereClause)
+			sampleQuery = fmt.Sprintf(
+				"SELECT %s FROM `%s`.`%s` %s %s LIMIT 1 OFFSET %d",
+				selectCols,
+				escapeString(db),
+				escapeString(tbl),
+				fullWhere,
+				orderByClause,
+				chunkSize) // Skip chunkSize more rows from cursor position
 		}
 
 		tctx.L().Debug("sampling boundary",
 			zap.String("query", sampleQuery),
 			zap.Int64("chunkIndex", i),
-			zap.Bool("usingCursor", len(previousBoundary) > 0 && !supportsRowNumber))
+			zap.Bool("usingCursor", len(previousBoundary) > 0))
 
 		// Execute boundary sampling query
 		var currentBoundary []string
 		err := conn.QuerySQL(tctx, func(rows *sql.Rows) error {
 			// We're selecting all ORDER BY columns, not just chunking fields
-			values := make([]interface{}, len(orderByColumns))
-			scanArgs := make([]interface{}, len(orderByColumns))
+			values := make([]any, len(orderByColumns))
+			scanArgs := make([]any, len(orderByColumns))
 			for j := range values {
 				scanArgs[j] = &values[j]
 			}
