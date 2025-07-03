@@ -133,16 +133,16 @@ func interpolateStringBoundary(minBytes, maxBytes []byte, ratio float64) string 
 	}
 
 	// Extend shorter string with null bytes for comparison
-	min := make([]byte, maxLen)
-	max := make([]byte, maxLen)
-	copy(min, minBytes)
-	copy(max, maxBytes)
+	minVal := make([]byte, maxLen)
+	maxVal := make([]byte, maxLen)
+	copy(minVal, minBytes)
+	copy(maxVal, maxBytes)
 
 	result := make([]byte, maxLen)
-	for i := 0; i < maxLen; i++ {
+	for i := range maxLen {
 		// Interpolate each byte position
-		minByte := float64(min[i])
-		maxByte := float64(max[i])
+		minByte := float64(minVal[i])
+		maxByte := float64(maxVal[i])
 		interpolated := minByte + (maxByte-minByte)*ratio
 		result[i] = byte(interpolated)
 	}
@@ -292,17 +292,17 @@ func buildCursorWhereClause(columnNames []string, boundary []string) string {
 		}
 	}
 
-	var conditions []string
+	conditions := make([]string, 0, len(quotedCols))
 
 	// Generate OR conditions for cursor-based pagination
 	// col1 > val1 OR (col1 = val1 AND col2 > val2) OR (col1 = val1 AND col2 = val2 AND col3 > val3) ...
-	for i := 0; i < len(quotedCols); i++ {
+	for i := range quotedCols {
 		var condition strings.Builder
 
 		// Add equality conditions for previous columns
 		if i > 0 {
 			condition.WriteString("(")
-			for j := 0; j < i; j++ {
+			for j := range i {
 				if j > 0 {
 					condition.WriteString(" AND ")
 				}
@@ -355,17 +355,17 @@ func buildUpperBoundWhereClause(columnNames []string, upperBoundary []string) st
 		}
 	}
 
-	var conditions []string
+	conditions := make([]string, 0, len(quotedCols))
 
 	// Generate OR conditions for upper bound
 	// col1 < val1 OR (col1 = val1 AND col2 < val2) OR (col1 = val1 AND col2 = val2 AND col3 < val3) ...
-	for i := 0; i < len(quotedCols); i++ {
+	for i := range quotedCols {
 		var condition strings.Builder
 
 		// Add equality conditions for previous columns
 		if i > 0 {
 			condition.WriteString("(")
-			for j := 0; j < i; j++ {
+			for j := range i {
 				if j > 0 {
 					condition.WriteString(" AND ")
 				}
