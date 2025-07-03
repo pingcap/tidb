@@ -808,6 +808,16 @@ func (local *Backend) getImportClient(ctx context.Context, storeID uint64) (sst.
 	return local.importClientFactory.Create(ctx, storeID)
 }
 
+// UpdateWriteSpeedLimit updates the write limiter of the backend.
+func (local *Backend) UpdateWriteSpeedLimit(limit int) {
+	local.writeLimiter.UpdateLimit(limit)
+}
+
+// GetWriteSpeedLimit returns the speed of the write limiter.
+func (local *Backend) GetWriteSpeedLimit() int {
+	return local.writeLimiter.Limit()
+}
+
 func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []common.Range {
 	ranges := make([]common.Range, 0, sizeProps.totalSize/uint64(sizeLimit))
 	curSize := uint64(0)
