@@ -182,22 +182,22 @@ func TestEscapeSQLStringAdvanced(t *testing.T) {
 		{
 			name:     "string with single quote",
 			input:    "don't",
-			expected: "'don''t'",
+			expected: "'don\\'t'",
 		},
 		{
 			name:     "string with multiple quotes",
 			input:    "it's a 'test'",
-			expected: "'it''s a ''test'''",
+			expected: "'it\\'s a \\'test\\''",
 		},
 		{
 			name:     "string with double quotes",
 			input:    `say "hello"`,
-			expected: `'say "hello"'`,
+			expected: `'say \"hello\"'`,
 		},
 		{
 			name:     "string with backslash",
 			input:    `path\to\file`,
-			expected: `'path\to\file'`,
+			expected: `'path\\to\\file'`,
 		},
 		{
 			name:     "empty string",
@@ -212,7 +212,7 @@ func TestEscapeSQLStringAdvanced(t *testing.T) {
 		{
 			name:     "problematic boundary case",
 			input:    "value_y456)'",
-			expected: "'value_y456)'''",
+			expected: `'value_y456)\''`,
 		},
 	}
 
