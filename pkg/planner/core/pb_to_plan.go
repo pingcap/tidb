@@ -84,6 +84,7 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 		err = errors.Errorf("this exec type %v doesn't support yet", e.GetTp())
 	}
 	if subPlan != nil {
+		// p may nil if the executor is not supported, for example, Projection.
 		p.SetChildren(subPlan)
 	}
 	// The limit missed its output cols via the protobuf.
