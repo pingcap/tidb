@@ -782,9 +782,6 @@ func (p *Plan) adjustOptions(targetNodeCPUCnt int) {
 			zap.Int("before", p.ThreadCnt), zap.Int("after", limit))
 		p.ThreadCnt = limit
 	}
-	if p.IsGlobalSort() {
-		p.DisableTiKVImportMode = true
-	}
 }
 
 func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
