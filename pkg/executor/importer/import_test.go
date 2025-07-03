@@ -189,11 +189,17 @@ func TestAdjustOptions(t *testing.T) {
 	plan.adjustOptions(16)
 	require.Equal(t, 16, plan.ThreadCnt)
 	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
+	require.False(t, plan.DisableTiKVImportMode)
 
 	plan.ThreadCnt = 100000000
 	plan.DataSourceType = DataSourceTypeQuery
 	plan.adjustOptions(16)
 	require.Equal(t, 32, plan.ThreadCnt)
+	require.False(t, plan.DisableTiKVImportMode)
+
+	plan.CloudStorageURI = "s3://bucket/path"
+	plan.adjustOptions(16)
+	require.True(t, plan.DisableTiKVImportMode)
 }
 
 func TestAdjustDiskQuota(t *testing.T) {

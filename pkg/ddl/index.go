@@ -2266,7 +2266,7 @@ func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
 		logutil.DDLLogger().Warn("cannot get task manager", zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
-	task, err := taskMgr.GetTaskByKey(w.ctx, taskKey)
+	task, err := taskMgr.GetTaskByKeyWithHistory(w.ctx, taskKey)
 	if err != nil {
 		logutil.DDLLogger().Warn("cannot get task", zap.String("task_key", taskKey), zap.Error(err))
 		return
