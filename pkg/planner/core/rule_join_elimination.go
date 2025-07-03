@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -129,10 +128,14 @@ func IsColsAllFromOuterTable(cols []*expression.Column, outerUniqueIDs set.Int64
 	return true
 }
 
+// IsColFromInnerTable checks whether any column is from inner table.
 func IsColFromInnerTable(cols []*expression.Column, innerUniqueIDs set.Int64Set) bool {
-	return slices.ContainsFunc(cols, func(col *expression.Column) bool {
-		return innerUniqueIDs.Exist(col.UniqueID)
-	})
+	for _, col := range cols {
+		if innerUniqueIDs.Exist(col.UniqueID) {
+			return true
+		}
+	}
+	return false
 }
 
 // check whether one of unique keys sets is contained by inner join keys
