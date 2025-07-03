@@ -713,7 +713,11 @@ timezone.*
     "success!"
     ```
 
-41. Parameters to control split & scatter regions concurrency before ingest, and ingest request concurrency.
+41. Set split & scatter regions concurrency before ingest, and ingest request concurrency. Value ranges:
+    - `max-batch-split-ranges`: `[1, 9223372036854775807]`, default `2048`
+    - `max-split-ranges-per-sec`: `[0, 9223372036854775807]`, default `0` (no limit)
+    - `max-ingest-per-sec`: `[0, 9223372036854775807]`, default `0` (no limit)
+    - `max-ingest-inflight`: `[0, 9223372036854775807]`, default `0` (no limit)
 
     ```shell
     curl http://{TiDBIP}:10080/ingest/max-batch-split-ranges
