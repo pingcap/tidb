@@ -125,9 +125,6 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 	}
 
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-	if err != nil {
-		return err
-	}
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
 		return importer.VerifyChecksum(ctx, &p.taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
 	})

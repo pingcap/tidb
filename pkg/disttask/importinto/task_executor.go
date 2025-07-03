@@ -75,7 +75,6 @@ type importStepExecutor struct {
 	wg           sync.WaitGroup
 }
 
-// TODO(tangenta): come back later
 func getTableImporter(
 	ctx context.Context,
 	taskID int64,
