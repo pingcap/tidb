@@ -987,23 +987,30 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 
 		if !needRetry {
 			aliveStores = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, usedTiFlashStoresMap, ttl, store, tiflashReplicaReadPolicy, tidbZone)
+
+			// Skip check because there is no real tiflash in most testcases.
+			skipCheck := intest.InTest
 			failpoint.Inject("mockNoAliveTiFlash", func(val failpoint.Value) {
+				// This test will setup tiflash store properly, so detecting alive will success.
+				skipCheck = false
 				if val.(bool) && retryNum <= 1 {
 					aliveStores.storesInAllZones = []*tikv.Store{}
 				}
 			})
-			if len(aliveStores.storesInAllZones) == 0 {
-				// Refresh region cache and try again.
-				logutil.BgLogger().Info("retry for TiFlash because no alive tiflash stores")
-				cache.ForceRefreshAllStores(bo.GetCtx())
-				needRetry = true
-			} else if tiflashReplicaReadPolicy.IsClosestReplicas() {
-				// Will not retry when closest_replica policy has set.
-				// User can use closest_adaptive instead to avoid this error.
-				if len(aliveStores.storeIDsInTiDBZone) == 0 {
-					return nil, errors.Errorf("There is no region in tidb zone(%s)", tidbZone)
+			if !skipCheck {
+				if len(aliveStores.storesInAllZones) == 0 {
+					// Refresh region cache and try again.
+					logutil.BgLogger().Info("retry for TiFlash because no alive tiflash stores")
+					cache.ForceRefreshAllStores(bo.GetCtx())
+					needRetry = true
+				} else if tiflashReplicaReadPolicy.IsClosestReplicas() {
+					// Will not retry when closest_replica policy has set.
+					// User can use closest_adaptive instead to avoid this error.
+					if len(aliveStores.storeIDsInTiDBZone) == 0 {
+						return nil, errors.Errorf("There is no region in tidb zone(%s)", tidbZone)
+					}
+					maxRemoteReadCountAllowed = len(aliveStores.storeIDsInTiDBZone) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
 				}
-				maxRemoteReadCountAllowed = len(aliveStores.storeIDsInTiDBZone) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
 			}
 		}
 
