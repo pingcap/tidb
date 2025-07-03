@@ -156,12 +156,11 @@ func (m *mergeSortExecutor) ResourceModified(_ context.Context, newResource *pro
 		return errors.Errorf("no subtask running")
 	}
 
-	// Commented out because we lack some PR in this branch
-	// targetConcurrency := int32(newResource.CPU.Capacity())
-	// currentConcurrency := currOp.GetWorkerPoolSize()
-	// if targetConcurrency != currentConcurrency {
-	// 	currOp.TuneWorkerPoolSize(targetConcurrency, true)
-	// }
+	targetConcurrency := int32(newResource.CPU.Capacity())
+	currentConcurrency := currOp.GetWorkerPoolSize()
+	if targetConcurrency != currentConcurrency {
+		currOp.TuneWorkerPoolSize(targetConcurrency, true)
+	}
 
 	return nil
 }
