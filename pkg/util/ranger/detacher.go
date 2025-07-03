@@ -138,7 +138,12 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
 				val, err := constVal.Eval(evalCtx, chunk.Row{})
-				intest.Assert(sctx.RegardNULLAsPoint)
+				intest.AssertFunc(func() bool {
+					if sctx.ExprCtx.ConnectionID() == 0 {
+						return sctx.RegardNULLAsPoint
+					}
+					return true
+				})
 				if err != nil || (!sctx.RegardNULLAsPoint && val.IsNull()) || (f.FuncName.L == ast.NullEQ && val.IsNull()) {
 					// treat col<=>null as range scan instead of point get to avoid incorrect results
 					// when nullable unique index has multiple matches for filter x is null
