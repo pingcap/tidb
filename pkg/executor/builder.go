@@ -64,6 +64,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -248,11 +249,11 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildSet(v)
 	case *plannercore.SetConfig:
 		return b.buildSetConfig(v)
-	case *plannercore.PhysicalSort:
+	case *physicalop.PhysicalSort:
 		return b.buildSort(v)
 	case *plannercore.PhysicalTopN:
 		return b.buildTopN(v)
-	case *plannercore.PhysicalUnionAll:
+	case *physicalop.PhysicalUnionAll:
 		return b.buildUnionAll(v)
 	case *plannercore.Update:
 		return b.buildUpdate(v)
@@ -525,7 +526,6 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Execut
 			dbName:       v.DBName,
 			table:        v.Table,
 			indexInfos:   v.IndexInfos,
-			is:           b.is,
 			err:          &atomic.Pointer[error]{},
 		}
 		return e
@@ -548,7 +548,6 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Execut
 		dbName:       v.DBName,
 		table:        v.Table,
 		indexInfos:   v.IndexInfos,
-		is:           b.is,
 		srcs:         readerExecs,
 		exitCh:       make(chan struct{}),
 		retCh:        make(chan error, len(readerExecs)),
@@ -2486,7 +2485,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 	}
 }
 
-func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) exec.Executor {
+func (b *executorBuilder) buildSort(v *physicalop.PhysicalSort) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2644,7 +2643,7 @@ func (b *executorBuilder) buildMaxOneRow(v *plannercore.PhysicalMaxOneRow) exec.
 	return e
 }
 
-func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) exec.Executor {
+func (b *executorBuilder) buildUnionAll(v *physicalop.PhysicalUnionAll) exec.Executor {
 	childExecs := make([]exec.Executor, len(v.Children()))
 	for i, child := range v.Children() {
 		childExecs[i] = b.build(child)

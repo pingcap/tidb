@@ -836,23 +836,25 @@ func TestIndexMergeLimitNotPushedOnPartialSideButKeepOrder(t *testing.T) {
 	tk.MustExec("insert into t values " + strings.Join(valsInsert, ","))
 	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceIndexMergeKeepOrder", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceIndexMergeKeepOrder")
-	for range 50 {
+	for idx := range 50 {
 		valA, valB, valC, limit := rand.Intn(100), rand.Intn(100), rand.Intn(50), rand.Intn(100)+1
 		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(c), 100) from (select c from t use index(idx3) where (a = %d or b = %d) and c >= %d order by c limit %d) t", valA, valB, valC, limit)).Rows()[0][0]
 		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d", valA, valB, valC, valC+1, maxEle, limit)
 		queryWithNormalIndex := fmt.Sprintf("select * from t use index(idx3) where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d", valA, valB, valC, valC+1, maxEle, limit)
 		tk.MustHavePlan(queryWithIndexMerge, "IndexMerge")
 		tk.MustHavePlan(queryWithIndexMerge, "Limit")
+		t.Logf("index: %d, queryWithIndexMerge: %s, queryWithNormalIndex: %s", idx, queryWithIndexMerge, queryWithNormalIndex)
 		normalResult := tk.MustQuery(queryWithNormalIndex).Sort().Rows()
 		tk.MustQuery(queryWithIndexMerge).Sort().Check(normalResult)
 	}
-	for range 50 {
+	for idx := range 50 {
 		valA, valB, valC, limit, offset := rand.Intn(100), rand.Intn(100), rand.Intn(50), rand.Intn(100)+1, rand.Intn(20)
 		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(c), 100) from (select c from t use index(idx3) where (a = %d or b = %d) and c >= %d order by c limit %d offset %d) t", valA, valB, valC, limit, offset)).Rows()[0][0]
 		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ c from t where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d offset %d", valA, valB, valC, valC+1, maxEle, limit, offset)
 		queryWithNormalIndex := fmt.Sprintf("select c from t use index(idx3) where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d offset %d", valA, valB, valC, valC+1, maxEle, limit, offset)
 		tk.MustHavePlan(queryWithIndexMerge, "IndexMerge")
 		tk.MustHavePlan(queryWithIndexMerge, "Limit")
+		t.Logf("index: %d, queryWithIndexMerge: %s, queryWithNormalIndex: %s", idx, queryWithIndexMerge, queryWithNormalIndex)
 		normalResult := tk.MustQuery(queryWithNormalIndex).Sort().Rows()
 		tk.MustQuery(queryWithIndexMerge).Sort().Check(normalResult)
 	}

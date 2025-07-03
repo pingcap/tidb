@@ -20,9 +20,11 @@ import (
 	"sync"
 
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -113,6 +115,13 @@ type Context interface {
 	// except schema of physical schema objects, the information schema returned
 	// also includes the temporary table definitions stored in session.
 	GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema
+	// GetLatestISWithoutSessExt is same as GetLatestInfoSchema, except that it
+	// does NOT include the temporary table definitions stored in session.
+	GetLatestISWithoutSessExt() infoschema.MetaOnlyInfoSchema
+	// GetSchemaValidator returns the schema validator.
+	GetSchemaValidator() validatorapi.Validator
+	// GetSQLServer returns the sqlsvrapi.Server.
+	GetSQLServer() sqlsvrapi.Server
 
 	GetSessionVars() *variable.SessionVars
 

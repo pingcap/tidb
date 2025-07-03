@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -440,7 +441,7 @@ func testDAGPlanBuilderSplitAvg(t *testing.T, root base.PhysicalPlan) {
 
 func TestPhysicalPlanMemoryTrace(t *testing.T) {
 	// PhysicalSort
-	ls := core.PhysicalSort{}
+	ls := physicalop.PhysicalSort{}
 	size := ls.MemoryUsage()
 	ls.ByItems = append(ls.ByItems, &util.ByItems{})
 	require.Greater(t, ls.MemoryUsage(), size)
@@ -551,7 +552,7 @@ func TestAvoidColumnEvaluatorForProjBelowUnion(t *testing.T) {
 			return projsBelowUnion, normalProjs
 		}
 		switch v := p.(type) {
-		case *core.PhysicalUnionAll:
+		case *physicalop.PhysicalUnionAll:
 			for _, child := range v.Children() {
 				if proj, ok := child.(*core.PhysicalProjection); ok {
 					projsBelowUnion = append(projsBelowUnion, proj)

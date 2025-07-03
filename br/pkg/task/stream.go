@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
@@ -1337,6 +1338,9 @@ func RunStreamRestore(
 	// if not set by user, restore to the max TS available
 	if cfg.RestoreTS == 0 {
 		cfg.RestoreTS = logInfo.logMaxTS
+		cfg.IsRestoredTSUserSpecified = false
+	} else {
+		cfg.IsRestoredTSUserSpecified = true
 	}
 	cfg.UpstreamClusterID = logInfo.clusterID
 
@@ -1538,8 +1542,12 @@ func restoreStream(
 
 	// It need disable GC in TiKV when PiTR.
 	// because the process of PITR is concurrent and kv events isn't sorted by tso.
-	restoreGCFunc, oldGCRatio, err := DisableGC(g, mgr.GetStorage())
-	if err != nil {
+	var restoreGCFunc RestoreGCFunc
+	var oldGCRatio string
+	if err := cfg.RestoreRegistry.OperationAfterWaitIDs(ctx, func() (err error) {
+		restoreGCFunc, oldGCRatio, err = DisableGC(g, mgr.GetStorage())
+		return errors.Trace(err)
+	}); err != nil {
 		return errors.Trace(err)
 	}
 	gcDisabledRestorable := false
@@ -1557,9 +1565,13 @@ func restoreStream(
 			oldGCRatio = utils.DefaultGcRatioVal
 		}
 		log.Info("start to restore gc", zap.String("ratio", oldGCRatio))
-		if err := restoreGCFunc(oldGCRatio); err != nil {
-			log.Error("failed to restore gc", zap.Error(err))
-		}
+		err = cfg.RestoreRegistry.GlobalOperationAfterSetResettingStatus(ctx, cfg.RestoreID, func() error {
+			if err := restoreGCFunc(oldGCRatio); err != nil {
+				log.Error("failed to restore gc", zap.Error(err))
+				return errors.Trace(err)
+			}
+			return nil
+		})
 		log.Info("finish restoring gc")
 	}()
 
@@ -1693,10 +1705,12 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 
+		logFilesIter = iter.WithEmitSizeTrace(logFilesIter, metrics.KVLogFileEmittedMemory.WithLabelValues("0-loaded"))
 		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		logFilesIterWithSplit = iter.WithEmitSizeTrace(logFilesIterWithSplit, metrics.KVLogFileEmittedMemory.WithLabelValues("1-split"))
 
 		if cfg.UseCheckpoint {
 			// TODO make a failpoint iter inside the logclient.

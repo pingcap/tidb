@@ -43,6 +43,7 @@ func genConfig(
 	memRoot MemRoot,
 	unique bool,
 	resourceGroup string,
+	keyspace string,
 	concurrency int,
 	maxWriteSpeed int,
 	globalSort bool,
@@ -52,7 +53,7 @@ func genConfig(
 		ResourceGroupName: resourceGroup,
 		MaxConnPerStore:   concurrency,
 		WorkerConcurrency: concurrency * 2,
-		KeyspaceName:      tidb.GetGlobalKeyspaceName(),
+		KeyspaceName:      keyspace,
 		// We disable the switch TiKV mode feature for now, because the impact is not
 		// fully tested.
 		ShouldCheckWriteStall: true,

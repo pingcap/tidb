@@ -1,6 +1,10 @@
 set tidb_cost_model_version=1;
 drop table if exists test3, test5;
 create table test3(id int primary key clustered, a int, b int, unique key uk_expr((tidb_shard(a)),a));
+INSERT INTO test3 (id, a, b) VALUES
+(1, 100, 100),
+(3, 200, 300),
+(5, 300, 300);
 create table test5(id int primary key clustered, a int, b int, unique key uk_expr((tidb_shard(a)),a,b));
 
 explain format=brief select * from test3 where a=100;
@@ -10,7 +14,9 @@ explain format=brief select * from test3 where a=100 or b = 200;
 explain format=brief select * from test3 where a=100 or a = 300;
 explain format=brief select * from test3 where a=100 or a = 300 or a > 997;
 explain format=brief select * from test3 where ((a=100 and b = 100) or a = 200) and b = 300;
+select * from test3 where ((a=100 and b = 100) or a = 200) and b = 300;
 explain format=brief select * from test3 where a = b;
+select * from test3 where a = b;
 explain format=brief select * from test3 where a = b and b = 100;
 explain format=brief select * from test5 where a=100 and b = 100;
 explain format=brief select * from test5 where (a=100 and b = 100) or  (a=200 and b = 200);
