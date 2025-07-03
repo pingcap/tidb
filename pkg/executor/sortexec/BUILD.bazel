@@ -20,7 +20,7 @@ go_library(
     deps = [
         "//pkg/executor/internal/exec",
         "//pkg/expression",
-        "//pkg/planner/core",
+        "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/util",
         "//pkg/sessionctx/vardef",
         "//pkg/types",

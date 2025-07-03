@@ -3134,7 +3134,7 @@ func getPhysLimits(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) [
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), SortItems: p.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
-		limit := PhysicalLimit{
+		limit := physicalop.PhysicalLimit{
 			Count:       lt.Count,
 			Offset:      lt.Offset,
 			PartitionBy: lt.GetPartitionBy(),
@@ -3887,7 +3887,7 @@ func getLimitPhysicalPlans(p *logicalop.LogicalLimit, prop *property.PhysicalPro
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(p.Count + p.Offset), CTEProducerStatus: prop.CTEProducerStatus}
-		limit := PhysicalLimit{
+		limit := physicalop.PhysicalLimit{
 			Offset:      p.Offset,
 			Count:       p.Count,
 			PartitionBy: p.GetPartitionBy(),

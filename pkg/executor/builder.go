@@ -213,7 +213,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildPlanReplayer(v)
 	case *plannercore.Traffic:
 		return b.buildTraffic(v)
-	case *plannercore.PhysicalLimit:
+	case *physicalop.PhysicalLimit:
 		return b.buildLimit(v)
 	case *plannercore.Prepare:
 		return b.buildPrepare(v)
@@ -810,7 +810,7 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) exec.Exec
 	return e
 }
 
-func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) exec.Executor {
+func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -1437,7 +1437,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 		us.table = x.table
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
 	case *PointGetExecutor, *BatchPointGetExec, // PointGet and BatchPoint can handle virtual columns and dirty txn data themselves.
-		*TableDualExec,       // If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
+		*TableDualExec,                         // If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
 		*TableSampleExecutor: // TableSample only supports sampling from disk, don't need to consider in-memory txn data for simplicity.
 		return originReader
 	default:
@@ -2512,7 +2512,7 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) exec.Executor {
 	executor_metrics.ExecutorCounterTopNExec.Inc()
 	t := &sortexec.TopNExec{
 		SortExec:    sortExec,
-		Limit:       &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
+		Limit:       &physicalop.PhysicalLimit{Count: v.Count, Offset: v.Offset},
 		Concurrency: b.ctx.GetSessionVars().Concurrency.ExecutorConcurrency,
 	}
 	columnIdxsUsedByChild, columnMissing := retrieveColumnIdxsUsedByChild(v.Schema(), v.Children()[0].Schema())
