@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -20,14 +19,13 @@ import (
 // Writer is the abstraction that keep pulling data from database and write to files.
 // Every writer owns a snapshot connection, and will try to get a task from task stream chan and work on it.
 type Writer struct {
-	id                 int64
-	tctx               *tcontext.Context
-	conf               *Config
-	conn               *sql.Conn
-	extStorage         storage.ExternalStorage
-	fileFmt            FileFormat
-	metrics            *metrics
-	adaptiveChunkSizer *AdaptiveChunkSizer
+	id         int64
+	tctx       *tcontext.Context
+	conf       *Config
+	conn       *sql.Conn
+	extStorage storage.ExternalStorage
+	fileFmt    FileFormat
+	metrics    *metrics
 
 	receivedTaskCount int
 
@@ -44,7 +42,6 @@ func NewWriter(
 	conn *sql.Conn,
 	externalStore storage.ExternalStorage,
 	metrics *metrics,
-	adaptiveChunkSizer *AdaptiveChunkSizer,
 ) *Writer {
 	sw := &Writer{
 		id:                  id,
@@ -53,7 +50,6 @@ func NewWriter(
 		conn:                conn,
 		extStorage:          externalStore,
 		metrics:             metrics,
-		adaptiveChunkSizer:  adaptiveChunkSizer,
 		finishTaskCallBack:  func(Task) {},
 		finishTableCallBack: func(Task) {},
 	}
@@ -116,15 +112,7 @@ func (w *Writer) handleTask(task Task) error {
 	case *TaskPolicyMeta:
 		return w.WritePolicyMeta(t.PolicyName, t.CreatePolicySQL)
 	case *TaskTableData:
-		// Monitor performance for adaptive chunking
-		startTime := time.Now()
 		err := w.WriteTableData(t.Meta, t.Data, t.ChunkIndex)
-		duration := time.Since(startTime)
-
-		// Provide feedback to adaptive chunk sizer
-		if w.adaptiveChunkSizer != nil {
-			w.adaptiveChunkSizer.Adjust(w.tctx, duration)
-		}
 		if err != nil {
 			return err
 		}

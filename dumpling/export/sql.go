@@ -1283,19 +1283,23 @@ func simpleQueryWithArgs(ctx context.Context, conn *sql.Conn, handleOneRow func(
 	return errors.Annotatef(rows.Err(), "sql: %s, args: %s", query, args)
 }
 
-func pickupPossibleField(tctx *tcontext.Context, meta TableMeta, db *BaseConn) (string, error) {
+func pickupPossibleField(tctx *tcontext.Context, meta TableMeta, db *BaseConn) (string, bool, error) {
 	// try using _tidb_rowid first
 	if meta.HasImplicitRowID() {
-		return "_tidb_rowid", nil
+		return "_tidb_rowid", false, nil
 	}
 	// try to use pk or uk
 	fieldName, err := getNumericIndex(tctx, db, meta)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
-	// if fieldName == "", there is no proper index
-	return fieldName, nil
+	// if fieldName == "", there is no proper index, try string chunking
+	if fieldName == "" {
+		return pickupPossibleFieldForStringChunking(tctx, meta, db)
+	}
+	
+	return fieldName, false, nil
 }
 
 func estimateCount(tctx *tcontext.Context, dbName, tableName string, db *BaseConn, field string, conf *Config) uint64 {
