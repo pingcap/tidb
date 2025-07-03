@@ -140,11 +140,26 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 		if err2 != nil {
 			callLog.Warn("alter table mode to normal failure", zap.Error(err2))
 		} else {
-			addResetTableModeTask(taskMeta.JobID)
+			err2 = markTaskResetTableMode(ctx, taskManager, taskMeta)
 		}
 		if err != nil {
 			return err
 		}
 		return err2
 	})
+}
+
+func markTaskResetTableMode(ctx context.Context, taskManager *storage.TaskManager, taskMeta *TaskMeta) error {
+	task, err := taskManager.GetTaskByID(ctx, taskMeta.JobID)
+	if err != nil {
+		return err
+	}
+	taskMeta.ResetTableMode = true
+	if err = updateMeta(task, taskMeta); err != nil {
+		return err
+	}
+	if err = taskManager.ModifiedTask(ctx, task); err != nil {
+		return err
+	}
+	return nil
 }

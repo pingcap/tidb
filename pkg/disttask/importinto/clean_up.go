@@ -34,7 +34,6 @@ import (
 )
 
 var _ scheduler.CleanUpRoutine = (*ImportCleanUp)(nil)
-var resetTableModeTaskSet map[int64]struct{}
 
 // ImportCleanUp implements scheduler.CleanUpRoutine.
 type ImportCleanUp struct {
@@ -42,16 +41,6 @@ type ImportCleanUp struct {
 
 func newImportCleanUpS3() scheduler.CleanUpRoutine {
 	return &ImportCleanUp{}
-}
-
-// addResetTableModeTask add task which table mode had alter to normal to the set.
-func addResetTableModeTask(taskID int64) {
-	resetTableModeTaskSet[taskID] = struct{}{}
-}
-
-// deleteResetTableModeTask remove task which finished clean up.
-func deleteResetTableModeTask(taskID int64) {
-	delete(resetTableModeTaskSet, taskID)
 }
 
 // CleanUp implements the CleanUpRoutine.CleanUp interface.
@@ -65,7 +54,7 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 	}
 	defer redactSensitiveInfo(task, taskMeta)
 
-	if _, ok := resetTableModeTaskSet[task.ID]; !ok {
+	if !taskMeta.ResetTableMode {
 		taskManager, err := storage.GetTaskManager()
 		if err != nil {
 			return err
@@ -75,11 +64,11 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 			if err2 != nil {
 				return err2
 			}
-			addResetTableModeTask(task.ID)
 			return nil
 		}); err != nil {
 			return err
 		}
+		markTaskResetTableMode(ctx, taskManager, taskMeta)
 	}
 	// Not use cloud storage, no need to cleanUp.
 	if taskMeta.Plan.CloudStorageURI == "" {
@@ -99,11 +88,9 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 		logger.Warn("failed to clean up files of task", zap.Error(err))
 		return err
 	}
-	deleteResetTableModeTask(task.ID)
 	return nil
 }
 
 func init() {
-	resetTableModeTaskSet = make(map[int64]struct{})
 	scheduler.RegisterSchedulerCleanUpFactory(proto.ImportInto, newImportCleanUpS3)
 }
