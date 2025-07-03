@@ -243,17 +243,12 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 		if err != nil {
 			return false
 		}
-		newPredList := expression.PropagateConstant(ctx.GetExprCtx(), newPred)
+		newPredList := make([]expression.Expression, 0, 1)
+		newPredList = append(newPredList, newPred)
+		newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList)
 		return unsatisfiableExpression(ctx, newPredList[0])
 	}
-<<<<<<< HEAD
-	newPredList := make([]expression.Expression, 0, 1)
-	newPredList = append(newPredList, newPred)
-	newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList)
-	return unsatisfiableExpression(ctx, newPredList[0])
-=======
 	return false
->>>>>>> 4c9e2eaa155 (planner: avoid string type's collate affecting predicate simplification (#62141))
 }
 
 func comparisonPred(predType predicateType) predicateType {
