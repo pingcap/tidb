@@ -84,6 +84,14 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 
 	defer func() {
 		chunkStats.finalized.Store(true)
+		
+		// Update the totalChunks at the end of streaming to enable proper progress tracking
+		// In streaming mode, we don't know total chunks upfront, so we update it after completion
+		tctx.L().Debug("updating total chunks for streaming table",
+			zap.String("database", db),
+			zap.String("table", tbl),
+			zap.Int64("totalChunks", totalChunks))
+		
 		if chunkStats.finished.Load() == chunkStats.sent.Load() {
 			IncCounter(d.metrics.finishedTablesCounter)
 			d.chunkedTables.Delete(meta.ChunkKey())
