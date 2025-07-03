@@ -2593,6 +2593,11 @@ func (do *Domain) gcStatsWorkerExitPreprocessing() {
 		do.statsOwner.Close()
 		ch <- struct{}{}
 	}()
+	if intest.InTest {
+		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
+		<-ch
+		return
+	}
 	select {
 	case <-ch:
 		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
