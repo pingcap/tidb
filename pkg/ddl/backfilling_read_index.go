@@ -38,6 +38,7 @@ import (
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/table"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
@@ -112,7 +113,7 @@ func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 
 func (r *readIndexStepExecutor) runGlobalPipeline(
 	ctx context.Context,
-	opCtx *operator.Context,
+	opCtx *util.Context,
 	subtask *proto.Subtask,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
@@ -135,7 +136,7 @@ func (r *readIndexStepExecutor) runGlobalPipeline(
 
 func (r *readIndexStepExecutor) runLocalPipeline(
 	ctx context.Context,
-	opCtx *operator.Context,
+	opCtx *util.Context,
 	subtask *proto.Subtask,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
@@ -186,8 +187,8 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		return err
 	}
 
-	opCtx, cancel := NewDistTaskOperatorCtx(ctx, subtask.TaskID, subtask.ID)
-	defer cancel()
+	opCtx := NewDistTaskOperatorCtx(ctx, subtask.TaskID, subtask.ID)
+	defer opCtx.Cancel()
 	r.Reset()
 
 	concurrency := int(r.GetResource().CPU.Capacity())
@@ -325,7 +326,7 @@ func (r *readIndexStepExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 }
 
 func (r *readIndexStepExecutor) buildLocalStorePipeline(
-	opCtx *operator.Context,
+	opCtx *util.Context,
 	backendCtx ingest.BackendCtx,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
@@ -374,7 +375,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 }
 
 func (r *readIndexStepExecutor) buildExternalStorePipeline(
-	opCtx *operator.Context,
+	opCtx *util.Context,
 	taskID int64,
 	subtaskID int64,
 	sm *BackfillSubTaskMeta,

@@ -43,26 +43,22 @@ var (
 )
 
 type mergeMinimalTask struct {
-	ctx   *operator.Context
 	files []string
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
 func (t *mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return "mergeSortOperator", "RecoverArgs", func() {
-		t.ctx.OnError(errors.Errorf("panic occurred during merge sort operator"))
-	}, false
+	return "mergeSortOperator", "RecoverArgs", nil, false
 }
 
 // MergeOperator is the operator that merges overlapping files.
 type MergeOperator struct {
-	ctx *operator.Context
 	*operator.AsyncOperator[*mergeMinimalTask, workerpool.None]
 }
 
 // NewMergeOperator creates a new MergeOperator instance.
 func NewMergeOperator(
-	ctx *operator.Context,
+	ctx *util.Context,
 	store storage.ExternalStorage,
 	partSize int64,
 	newFilePrefix string,
@@ -99,7 +95,6 @@ func NewMergeOperator(
 	)
 
 	return &MergeOperator{
-		ctx:           ctx,
 		AsyncOperator: operator.NewAsyncOperator(ctx, pool),
 	}
 }
@@ -109,20 +104,8 @@ func (*MergeOperator) String() string {
 	return "mergeOperator"
 }
 
-// Open opens the operator and starts the worker pool.
-func (op *MergeOperator) Open() error {
-	return op.AsyncOperator.Open()
-}
-
-// Close closes the operator and waits for all workers to finish.
-func (op *MergeOperator) Close() error {
-	//nolint:errcheck
-	op.AsyncOperator.Close()
-	return op.ctx.OperatorErr()
-}
-
 type mergeWorker struct {
-	ctx *operator.Context
+	ctx context.Context
 
 	store         storage.ExternalStorage
 	partSize      int64
@@ -133,8 +116,8 @@ type mergeWorker struct {
 	onDup         engineapi.OnDuplicateKey
 }
 
-func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)) {
-	err := mergeOverlappingFilesInternal(
+func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)) error {
+	return mergeOverlappingFilesInternal(
 		w.ctx,
 		task.files,
 		w.store,
@@ -146,18 +129,16 @@ func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)
 		w.checkHotspot,
 		w.onDup,
 	)
-
-	if err != nil {
-		w.ctx.OnError(err)
-	}
 }
 
-func (*mergeWorker) Close() {}
+func (*mergeWorker) Close() error {
+	return nil
+}
 
 // MergeOverlappingFiles reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
 func MergeOverlappingFiles(
-	ctx *operator.Context,
+	ctx *util.Context,
 	paths []string,
 	concurrency int,
 	op *MergeOperator,
@@ -171,7 +152,6 @@ func MergeOverlappingFiles(
 	mergeTasks := make([]*mergeMinimalTask, 0, len(dataFilesSlice))
 	for _, files := range dataFilesSlice {
 		mergeTasks = append(mergeTasks, &mergeMinimalTask{
-			ctx:   ctx,
 			files: files,
 		})
 	}

@@ -13,7 +13,6 @@ go_library(
     deps = [
         "//pkg/resourcemanager/pool/workerpool",
         "//pkg/resourcemanager/util",
-        "@com_github_pingcap_errors//:errors",
         "@org_golang_x_sync//errgroup",
     ],
 )
@@ -25,6 +24,7 @@ go_test(
     embed = [":operator"],
     flaky = True,
     deps = [
+        "//pkg/resourcemanager/util",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],

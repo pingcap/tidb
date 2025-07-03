@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,7 +36,7 @@ func TestPipelineAsyncMultiOperatorsWithoutError(t *testing.T) {
 	}
 
 	for _, mockError := range []bool{false, true} {
-		opCtx, _ := NewContext(context.Background())
+		opCtx := util.NewContext(context.Background())
 
 		var mostCommonWord stringTask
 		source := NewSimpleDataSource(opCtx, tasks)
@@ -78,7 +79,7 @@ func (stringTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn
 	return "", "", nil, false
 }
 
-func makeLower(ctx *Context) *simpleOperator[stringTask, stringTask] {
+func makeLower(ctx *util.Context) *simpleOperator[stringTask, stringTask] {
 	return newSimpleOperator(
 		ctx,
 		func(task stringTask) stringTask {
@@ -86,7 +87,7 @@ func makeLower(ctx *Context) *simpleOperator[stringTask, stringTask] {
 		}, 3)
 }
 
-func makeTrimmer(ctx *Context) *simpleOperator[stringTask, stringTask] {
+func makeTrimmer(ctx *util.Context) *simpleOperator[stringTask, stringTask] {
 	var nonAlphaRegex = regexp.MustCompile(`[^a-zA-Z0-9]+`)
 	return newSimpleOperator(
 		ctx,
@@ -95,7 +96,7 @@ func makeTrimmer(ctx *Context) *simpleOperator[stringTask, stringTask] {
 		}, 3)
 }
 
-func makeCounter(ctx *Context, mockError bool) *simpleOperator[stringTask, strCnt] {
+func makeCounter(ctx *util.Context, mockError bool) *simpleOperator[stringTask, strCnt] {
 	strCntMap := make(map[stringTask]int)
 	strCntMapMu := sync.Mutex{}
 	return newSimpleOperator(
@@ -112,7 +113,7 @@ func makeCounter(ctx *Context, mockError bool) *simpleOperator[stringTask, strCn
 		}, 3)
 }
 
-func makeCollector(ctx *Context, v *stringTask) *simpleSink[strCnt] {
+func makeCollector(ctx *util.Context, v *stringTask) *simpleSink[strCnt] {
 	maxCnt := 0
 	maxMu := sync.Mutex{}
 	return newSimpleSink(

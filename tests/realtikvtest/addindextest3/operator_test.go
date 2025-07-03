@@ -77,7 +77,7 @@ func TestBackfillOperators(t *testing.T) {
 	var opTasks []ddl.TableScanTask
 	{
 		ctx := context.Background()
-		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		pTbl := tbl.(table.PhysicalTable)
 		src := ddl.NewTableScanTaskSource(opCtx, store, pTbl, startKey, endKey, nil)
 		sink := testutil.NewOperatorTestSink[ddl.TableScanTask]()
@@ -96,7 +96,7 @@ func TestBackfillOperators(t *testing.T) {
 		require.Equal(t, startKey, tasks[0].Start)
 		require.Equal(t, endKey, tasks[9].End)
 
-		cancel()
+		opCtx.Cancel()
 		require.NoError(t, opCtx.OperatorErr())
 
 		opTasks = tasks
@@ -113,7 +113,7 @@ func TestBackfillOperators(t *testing.T) {
 		}
 
 		ctx := context.Background()
-		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		src := testutil.NewOperatorTestSource(opTasks...)
 		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3, 0, nil, nil)
 		sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
@@ -139,14 +139,14 @@ func TestBackfillOperators(t *testing.T) {
 		}
 		require.Equal(t, 10, cnt)
 
-		cancel()
+		opCtx.Cancel()
 		require.NoError(t, opCtx.OperatorErr())
 	}
 
 	// Test IndexIngestOperator.
 	{
 		ctx := context.Background()
-		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		var keys, values [][]byte
 		onWrite := func(key, val []byte) {
 			keys = append(keys, key)
@@ -208,8 +208,8 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	sessPool := newSessPoolForTest(t, store)
 
 	ctx := context.Background()
-	opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
-	defer cancel()
+	opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+	defer opCtx.Cancel()
 	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
 	require.NoError(t, err)
 	defer bd.Close()
@@ -317,8 +317,8 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 			} else {
 				require.NoError(t, failpoint.Enable(tc.failPointPath, `return`))
 			}
-			opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
-			defer cancel()
+			opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+			defer opCtx.Cancel()
 			pipeline, err := ddl.NewAddIndexIngestPipeline(
 				opCtx, store,
 				sessPool,
@@ -417,7 +417,7 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 	// Test TableScanOperator.
 	{
 		ctx := context.Background()
-		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, nil, 2, 0, nil, nil)
 
 		scanOp.Open()
@@ -427,14 +427,14 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 		scanOp.TuneWorkerPoolSize(1, false)
 		require.Equal(t, scanOp.GetWorkerPoolSize(), int32(1))
 
-		cancel()
+		opCtx.Cancel()
 		require.NoError(t, opCtx.OperatorErr())
 	}
 
 	// Test IndexIngestOperator.
 	{
 		ctx := context.Background()
-		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		pTbl := tbl.(table.PhysicalTable)
 		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
 		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
@@ -454,7 +454,7 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 		ingestOp.TuneWorkerPoolSize(1, false)
 		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(1))
 
-		cancel()
+		opCtx.Cancel()
 		require.NoError(t, opCtx.OperatorErr())
 	}
 }

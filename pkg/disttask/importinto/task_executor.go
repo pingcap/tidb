@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -175,11 +176,10 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
-	opCtx, _ := operator.NewContext(ctx)
+	opCtx := util.NewContext(ctx)
 	tasks := make([]*importStepMinimalTask, 0, len(subtaskMeta.Chunks))
 	for _, chunk := range subtaskMeta.Chunks {
 		tasks = append(tasks, &importStepMinimalTask{
-			ctx:        opCtx,
 			Plan:       s.taskMeta.Plan,
 			Chunk:      chunk,
 			SharedVars: sharedVars,
@@ -187,7 +187,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 
 	sourceOp := operator.NewSimpleDataSource(opCtx, tasks)
-	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID, int(s.GetResource().CPU.Capacity()))
+	op := newEncodeAndSortOperator(opCtx, s, sharedVars, subtask.ID, int(s.GetResource().CPU.Capacity()))
 	operator.Compose(sourceOp, op)
 
 	pipe := operator.NewAsyncPipeline(sourceOp, op)
@@ -358,8 +358,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	concurrency := int(m.GetResource().CPU.Capacity())
 
-	opCtx, _ := operator.NewContext(ctx)
-
+	opCtx := util.NewContext(ctx)
 	op := external.NewMergeOperator(
 		opCtx,
 		m.sortStore,

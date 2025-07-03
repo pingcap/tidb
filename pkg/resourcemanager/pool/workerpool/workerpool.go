@@ -15,11 +15,11 @@
 package workerpool
 
 import (
-	"context"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -39,8 +39,8 @@ type TaskMayPanic interface {
 type Worker[T TaskMayPanic, R any] interface {
 	// HandleTask consumes a task(T) and produces a result(R).
 	// The result is sent to the result channel by calling `send` function.
-	HandleTask(task T, send func(R))
-	Close()
+	HandleTask(task T, send func(R)) error
+	Close() error
 }
 
 type tuneConfig struct {
@@ -49,8 +49,7 @@ type tuneConfig struct {
 
 // WorkerPool is a pool of workers.
 type WorkerPool[T TaskMayPanic, R any] struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
+	ctx           *util.Context
 	name          string
 	numWorkers    int32
 	originWorkers int32
@@ -111,7 +110,7 @@ func (p *WorkerPool[T, R]) SetResultSender(sender chan R) {
 }
 
 // Start starts default count of workers.
-func (p *WorkerPool[T, R]) Start(ctx context.Context) {
+func (p *WorkerPool[T, R]) Start(ctx *util.Context) {
 	if p.taskChan == nil {
 		p.taskChan = make(chan T)
 	}
@@ -124,7 +123,7 @@ func (p *WorkerPool[T, R]) Start(ctx context.Context) {
 		}
 	}
 
-	p.ctx, p.cancel = context.WithCancel(ctx)
+	p.ctx = ctx
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -140,7 +139,16 @@ func (p *WorkerPool[T, R]) handleTaskWithRecover(w Worker[T, R], task T) {
 	defer func() {
 		p.runningTask.Add(-1)
 	}()
-	defer tidbutil.Recover(task.RecoverArgs())
+
+	label, funcInfo, recoverFn, quit := task.RecoverArgs()
+	wrapFn := func() {
+		p.ctx.OnError(errors.Errorf("task panic: %s, func info: %s", label, funcInfo))
+		if recoverFn != nil {
+			recoverFn()
+		}
+	}
+
+	defer tidbutil.Recover(label, funcInfo, wrapFn, quit)
 
 	sendResult := func(r R) {
 		if p.resChan == nil {
@@ -152,7 +160,9 @@ func (p *WorkerPool[T, R]) handleTaskWithRecover(w Worker[T, R], task T) {
 		}
 	}
 
-	w.HandleTask(task, sendResult)
+	if err := w.HandleTask(task, sendResult); err != nil {
+		p.ctx.OnError(err)
+	}
 }
 
 func (p *WorkerPool[T, R]) runAWorker() {
@@ -161,22 +171,29 @@ func (p *WorkerPool[T, R]) runAWorker() {
 		return // Fail to create worker, quit.
 	}
 	p.wg.Run(func() {
+		var err error
+		defer func() {
+			if err != nil {
+				p.ctx.OnError(err)
+			}
+		}()
+
 		for {
 			select {
 			case task, ok := <-p.taskChan:
 				if !ok {
-					w.Close()
+					err = w.Close()
 					return
 				}
 				p.handleTaskWithRecover(w, task)
 			case cfg, ok := <-p.quitChan:
-				w.Close()
+				err = w.Close()
 				if ok {
 					cfg.wg.Done()
 				}
 				return
 			case <-p.ctx.Done():
-				w.Close()
+				err = w.Close()
 				return
 			}
 		}
@@ -280,8 +297,8 @@ func (p *WorkerPool[T, R]) Wait() {
 
 // Release releases the pool.
 func (p *WorkerPool[T, R]) Release() {
-	if p.cancel != nil {
-		p.cancel()
+	if p.ctx != nil {
+		p.ctx.Cancel()
 	}
 	if p.resChan != nil {
 		close(p.resChan)

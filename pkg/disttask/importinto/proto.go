@@ -18,8 +18,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -159,7 +157,6 @@ func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *external.WriterS
 // importStepMinimalTask is the minimal task of IMPORT INTO.
 // TaskExecutor will split the subtask into minimal tasks(Chunks -> Chunk)
 type importStepMinimalTask struct {
-	ctx        *operator.Context
 	Plan       importer.Plan
 	Chunk      importer.Chunk
 	SharedVars *SharedVars
@@ -167,9 +164,7 @@ type importStepMinimalTask struct {
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
 func (t *importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return "encodeAndSortOperator", "RecoverArgs", func() {
-		t.ctx.OnError(errors.Errorf("import step minimal task panicked"))
-	}, false
+	return "encodeAndSortOperator", "RecoverArgs", nil, false
 }
 
 func (t *importStepMinimalTask) String() string {

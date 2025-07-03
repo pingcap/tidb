@@ -15,11 +15,8 @@
 package operator
 
 import (
-	"context"
 	"fmt"
-	"sync/atomic"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 )
@@ -45,13 +42,13 @@ type TunableOperator interface {
 // use the same channel, Then op2's worker will handle
 // the result from op1.
 type AsyncOperator[T workerpool.TaskMayPanic, R any] struct {
-	ctx  context.Context
+	ctx  *util.Context
 	pool *workerpool.WorkerPool[T, R]
 }
 
 // NewAsyncOperatorWithTransform create an AsyncOperator with a transform function.
 func NewAsyncOperatorWithTransform[T workerpool.TaskMayPanic, R any](
-	ctx context.Context,
+	ctx *util.Context,
 	name string,
 	workerNum int,
 	transform func(T) R,
@@ -61,7 +58,9 @@ func NewAsyncOperatorWithTransform[T workerpool.TaskMayPanic, R any](
 }
 
 // NewAsyncOperator create an AsyncOperator.
-func NewAsyncOperator[T workerpool.TaskMayPanic, R any](ctx context.Context, pool *workerpool.WorkerPool[T, R]) *AsyncOperator[T, R] {
+// To catch the error and close the whole pipeline, you should pass the
+// same context to each operator in the pipeline.
+func NewAsyncOperator[T workerpool.TaskMayPanic, R any](ctx *util.Context, pool *workerpool.WorkerPool[T, R]) *AsyncOperator[T, R] {
 	return &AsyncOperator[T, R]{
 		ctx:  ctx,
 		pool: pool,
@@ -81,7 +80,7 @@ func (c *AsyncOperator[T, R]) Close() error {
 	// it is maintained outside this operator, see SetSource.
 	c.pool.Wait()
 	c.pool.Release()
-	return nil
+	return c.ctx.OperatorErr()
 }
 
 // String show the name.
@@ -123,45 +122,12 @@ func newAsyncWorkerCtor[T workerpool.TaskMayPanic, R any](transform func(T) R) f
 	}
 }
 
-func (s *asyncWorker[T, R]) HandleTask(task T, rsFn func(R)) {
+func (s *asyncWorker[T, R]) HandleTask(task T, rsFn func(R)) error {
 	result := s.transform(task)
 	rsFn(result)
+	return nil
 }
 
-func (*asyncWorker[T, R]) Close() {}
-
-// Context is the context used for worker pool
-// TODO(joechenrh): use this context in WorkerPool to simplify
-// the error handling logic of pipelines.
-type Context struct {
-	context.Context
-	cancel context.CancelFunc
-	err    atomic.Pointer[error]
-}
-
-// OnError is called when an error occurs in the operator.
-func (ctx *Context) OnError(err error) {
-	tracedErr := errors.Trace(err)
-	ctx.err.CompareAndSwap(nil, &tracedErr)
-	ctx.cancel()
-}
-
-// OperatorErr returns the error of the operator.
-func (ctx *Context) OperatorErr() error {
-	err := ctx.err.Load()
-	if err == nil {
-		return nil
-	}
-	return *err
-}
-
-// NewContext creates a new Context
-func NewContext(
-	ctx context.Context,
-) (*Context, context.CancelFunc) {
-	opCtx, cancel := context.WithCancel(ctx)
-	return &Context{
-		Context: opCtx,
-		cancel:  cancel,
-	}, cancel
+func (*asyncWorker[T, R]) Close() error {
+	return nil
 }

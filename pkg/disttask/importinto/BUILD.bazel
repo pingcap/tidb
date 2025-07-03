@@ -119,6 +119,7 @@ go_test(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/planner/core",
+        "//pkg/resourcemanager/util",
         "//pkg/session",
         "//pkg/store",
         "//pkg/store/driver/error",

@@ -527,7 +527,6 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Execut
 			table:        v.Table,
 			indexInfos:   v.IndexInfos,
 			is:           b.is,
-			err:          &atomic.Pointer[error]{},
 		}
 		return e
 	}

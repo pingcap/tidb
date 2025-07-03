@@ -18,12 +18,13 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"golang.org/x/sync/errgroup"
 )
 
 // SimpleDataSource is a simple operator which use the given input slice as the data source.
 type SimpleDataSource[T workerpool.TaskMayPanic] struct {
-	ctx      *Context
+	ctx      *util.Context
 	errGroup *errgroup.Group
 	inputs   []T
 	target   DataChannel[T]
@@ -36,7 +37,7 @@ type SimpleDataSource[T workerpool.TaskMayPanic] struct {
 // So we need to call ctx.OnError in other operators when they encounter
 // an error or panic.
 func NewSimpleDataSource[T workerpool.TaskMayPanic](
-	ctx *Context,
+	ctx *util.Context,
 	inputs []T,
 ) *SimpleDataSource[T] {
 	return &SimpleDataSource[T]{
@@ -82,13 +83,13 @@ func (s *SimpleDataSource[T]) SetSink(ch DataChannel[T]) {
 }
 
 type simpleSink[R any] struct {
-	ctx      *Context
+	ctx      *util.Context
 	errGroup errgroup.Group
 	drainer  func(R)
 	source   DataChannel[R]
 }
 
-func newSimpleSink[R any](ctx *Context, drainer func(R)) *simpleSink[R] {
+func newSimpleSink[R any](ctx *util.Context, drainer func(R)) *simpleSink[R] {
 	return &simpleSink[R]{
 		ctx:     ctx,
 		drainer: drainer,
@@ -135,7 +136,7 @@ func (s *simpleOperator[T, R]) String() string {
 }
 
 func newSimpleOperator[T workerpool.TaskMayPanic, R any](
-	ctx *Context,
+	ctx *util.Context,
 	transform func(task T) R,
 	concurrency int,
 ) *simpleOperator[T, R] {
