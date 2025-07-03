@@ -21,6 +21,7 @@ import (
 	goerrors "errors"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -148,6 +149,12 @@ func isSingleRetryableError(err error) bool {
 			return true
 		}
 		return false
+	case *errdef.HTTPStatusError:
+		// all are retryable except 400 and 404
+		if nerr.StatusCode == http.StatusBadRequest || nerr.StatusCode == http.StatusNotFound {
+			return false
+		}
+		return true
 	default:
 		rpcStatus, ok := status.FromError(err)
 		if !ok {

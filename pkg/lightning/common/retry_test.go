@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"testing"
 	"time"
@@ -49,6 +50,11 @@ func TestIsRetryableError(t *testing.T) {
 	require.False(t, IsRetryableError(&net.DNSError{}))
 	require.True(t, IsRetryableError(&net.DNSError{IsTimeout: true}))
 	require.True(t, IsRetryableError(&net.DNSError{IsTemporary: true}))
+
+	// request error
+	require.False(t, IsRetryableError(errors.Trace(&errdef.HTTPStatusError{StatusCode: http.StatusBadRequest})))
+	require.False(t, IsRetryableError(errors.Trace(&errdef.HTTPStatusError{StatusCode: http.StatusNotFound})))
+	require.True(t, IsRetryableError(errors.Trace(&errdef.HTTPStatusError{StatusCode: http.StatusInternalServerError})))
 
 	// kv errors
 	require.True(t, IsRetryableError(errdef.ErrKVNotLeader))
