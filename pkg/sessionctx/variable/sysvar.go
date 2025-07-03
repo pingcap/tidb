@@ -1515,17 +1515,10 @@ var defaultSysVars = []*SysVar{
 			return nil
 		}},
 	{
-<<<<<<< HEAD
 		Scope:                   ScopeGlobal,
 		Name:                    TiDBLoadBindingTimeout,
-		Value:                   "200",
-		Type:                    TypeUnsigned,
-=======
-		Scope:                   vardef.ScopeGlobal,
-		Name:                    vardef.TiDBLoadBindingTimeout,
 		Value:                   strconv.Itoa(vardef.DefTiDBLoadBindingTimeout),
-		Type:                    vardef.TypeUnsigned,
->>>>>>> a3cba16f8ee (planner: fix uninit timeout for loading bindings (#61891))
+		Type:                    TypeUnsigned,
 		MinValue:                0,
 		MaxValue:                math.MaxInt32,
 		IsHintUpdatableVerified: false,
