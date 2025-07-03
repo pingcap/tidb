@@ -57,7 +57,6 @@ import (
 	rutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -958,7 +957,7 @@ func (local *Backend) generateAndSendJob(
 	jobToWorkerCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
 ) error {
-	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	dataAndRangeCh := make(chan common.DataAndRanges)
 	conn := int(local.WorkerConcurrency.Load())
@@ -1114,7 +1113,7 @@ type regionJobBaseWorker struct {
 // startWorker must Done the jobWg if it does not put the job into jobOutCh.
 func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) {
 	// As we need to call job.done() after panic, we recover here rather than in worker pool.
-	defer tidbutil.Recover("fast_check_table", "handleTableScanTaskWithRecover", func() {
+	defer util.Recover("fast_check_table", "handleTableScanTaskWithRecover", func() {
 		w.ctx.OnError(errors.Errorf("region job worker panic"))
 		job.done(w.jobWg)
 	}, false)
@@ -1200,12 +1199,12 @@ type jobOperator struct {
 	cancel context.CancelFunc
 
 	// workerGroup is used to notify other component to quit in error case
-	workerGroup *tidbutil.ErrorGroupWithRecover
+	workerGroup *util.ErrorGroupWithRecover
 }
 
 func newRegionJobOperator(
 	workerCtx context.Context,
-	workGroup *tidbutil.ErrorGroupWithRecover,
+	workGroup *util.ErrorGroupWithRecover,
 	jobWg *sync.WaitGroup,
 	local *Backend,
 	jobToWorkerCh, jobFromWorkerCh chan *regionJob,
