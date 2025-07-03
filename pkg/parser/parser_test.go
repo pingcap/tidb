@@ -2754,6 +2754,7 @@ func TestDDL(t *testing.T) {
 		{"ALTER DATABASE test READ ONLY = '1'", false, ""},
 		{"ALTER DATABASE test READ ONLY = `1`", false, ""},
 		{"ALTER DATABASE test READ ONLY = true", false, ""},
+		{"CREATE DATABASE test READ ONLY = 1", false, ""},
 		// 5. create partition
 		{`create table m (c int) partition by range (c) (partition p1 values less than (200) primary_region="us");`, false, ""},
 		{`create table m (c int) partition by range (c) (partition p1 values less than (200) regions="us,3");`, false, ""},
