@@ -29,13 +29,8 @@ import (
 	"github.com/pingcap/failpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/expression"
-<<<<<<< HEAD
-=======
-	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
->>>>>>> cc8d9cbbd4d (lignthing/importinto: parallel reading files infos from data store (#59382))
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -215,25 +210,6 @@ func TestASTArgsFromStmt(t *testing.T) {
 	require.Equal(t, astArgs.ColumnsAndUserVars, importIntoStmt.ColumnsAndUserVars)
 }
 
-<<<<<<< HEAD
-func TestGetFileRealSize(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage", "return(250)")
-	require.NoError(t, err)
-	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage")
-	}()
-	fileMeta := mydump.SourceFileMeta{Compression: mydump.CompressionNone, FileSize: 100}
-	c := &LoadDataController{logger: log.L()}
-	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
-	fileMeta.Compression = mydump.CompressionGZ
-	require.Equal(t, int64(250), c.getFileRealSize(context.Background(), fileMeta, nil))
-	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
-	require.NoError(t, err)
-	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
-}
-
-=======
->>>>>>> cc8d9cbbd4d (lignthing/importinto: parallel reading files infos from data store (#59382))
 func urlEqual(t *testing.T, expected, actual string) {
 	urlExpected, err := url.Parse(expected)
 	require.NoError(t, err)

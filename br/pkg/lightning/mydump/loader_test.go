@@ -26,14 +26,11 @@ import (
 	"testing"
 	"time"
 
-<<<<<<< HEAD:br/pkg/lightning/mydump/loader_test.go
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	md "github.com/pingcap/tidb/br/pkg/lightning/mydump"
-=======
-	"github.com/pingcap/failpoint"
->>>>>>> cc8d9cbbd4d (lignthing/importinto: parallel reading files infos from data store (#59382)):pkg/lightning/mydump/loader_test.go
 	"github.com/pingcap/tidb/br/pkg/storage"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
@@ -1196,8 +1193,6 @@ func TestSampleParquetDataSize(t *testing.T) {
 	t.Run("count=1000", func(t *testing.T) { testSampleParquetDataSize(t, 1000) })
 	t.Run("count=0", func(t *testing.T) { testSampleParquetDataSize(t, 0) })
 }
-<<<<<<< HEAD:br/pkg/lightning/mydump/loader_test.go
-=======
 
 func TestSetupOptions(t *testing.T) {
 	// those functions are only used in other components, add this to avoid they
@@ -1241,4 +1236,3 @@ func TestParallelProcess(t *testing.T) {
 	oneTest(1, 10)
 	oneTest(2, 2)
 }
->>>>>>> cc8d9cbbd4d (lignthing/importinto: parallel reading files infos from data store (#59382)):pkg/lightning/mydump/loader_test.go

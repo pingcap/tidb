@@ -1046,15 +1046,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// when import from server disk, all entries in parent directory should have READ
 		// access, else walkDir will fail
 		// we only support '*', in order to reuse glob library manually escape the path
-<<<<<<< HEAD
 		escapedPath := stringutil.EscapeGlobExceptAsterisk(fileNameKey)
-		err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
-=======
-		escapedPath := stringutil.EscapeGlobQuestionMark(fileNameKey)
 
 		allFiles := make([]mydump.RawFile, 0, 16)
 		if err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
->>>>>>> cc8d9cbbd4d (lignthing/importinto: parallel reading files infos from data store (#59382))
 			func(remotePath string, size int64) error {
 				// we have checked in LoadDataExec.Next
 				//nolint: errcheck
@@ -1070,7 +1065,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 
 		var err error
-		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
+		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, int(e.ThreadCnt*2),
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
 				path, size := f.Path, f.Size
 				compressTp := mydump.ParseCompressionOnFileExtension(path)

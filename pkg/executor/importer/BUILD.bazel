@@ -88,11 +88,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 20,
-=======
-    shard_count = 26,
->>>>>>> cc8d9cbbd4d (lignthing/importinto: parallel reading files infos from data store (#59382))
+    shard_count = 19,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/backend/encode",
@@ -125,12 +121,6 @@ go_test(
         "@com_github_johannesboyne_gofakes3//backend/s3mem",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
-<<<<<<< HEAD
-        "@com_github_pingcap_log//:log",
-=======
-        "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_prometheus_client_golang//prometheus",
->>>>>>> cc8d9cbbd4d (lignthing/importinto: parallel reading files infos from data store (#59382))
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
