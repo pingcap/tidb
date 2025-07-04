@@ -130,6 +130,23 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 		zap.String("per-index-buf-limit", units.BytesSize(float64(s.perIndexKVMemSizePerCon))),
 		zap.String("data-buf-block-size", units.BytesSize(float64(s.dataBlockSize))),
 		zap.String("index-buf-block-size", units.BytesSize(float64(s.indexBlockSize))))
+
+	taskManager, err := disttaskStorage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(s.store, se, s.tableImporter.Table)
+		if err2 != nil {
+			return err2
+		}
+		if !isEmpty {
+			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table is not empty")
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -152,23 +169,6 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 			return errors.Trace(err)
 		}
 	}
-	taskManager, err := disttaskStorage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(s.store, se, s.tableImporter.Table)
-		if err2 != nil {
-			return err2
-		}
-		if !isEmpty {
-			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table is not empty")
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
 	var dataEngine, indexEngine *backend.OpenedEngine
 	if s.tableImporter.IsLocalSort() {
 		dataEngine, err = s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
