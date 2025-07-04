@@ -26,7 +26,7 @@ import (
 func BenchmarkResetContextOfStmt(b *testing.B) {
 	stmt := &ast.SelectStmt{}
 	ctx := mock.NewContext()
-	domain.BindDomain(ctx, &domain.Domain{})
+	ctx.BindDomain(&domain.Domain{})
 	for i := 0; i < b.N; i++ {
 		executor.ResetContextOfStmt(ctx, stmt)
 	}
