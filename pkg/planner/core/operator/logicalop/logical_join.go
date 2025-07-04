@@ -253,7 +253,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, p.LeftConditions...)
 		tempCond = append(tempCond, p.RightConditions...)
 		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
-		tempCond = append(tempCond, p.OtherConditions...)
+		tempCond = append(tempCond, utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.OtherConditions, true)...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
 		tempCond = expression.PropagateConstant(p.SCtx().GetExprCtx(), tempCond...)
@@ -263,7 +263,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 			AppendTableDualTraceStep(p, dual, tempCond, opt)
 			return ret, dual
 		}
-		tempCond = utilfuncp.ApplyPredicateSimplification(p.SCtx(), tempCond, true)
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(tempCond, true, true)
 		p.LeftConditions = nil
 		p.RightConditions = nil
