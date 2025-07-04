@@ -1273,16 +1273,6 @@ func CheckImportIntoTableIsEmpty(
 		return false, errors.New("check if table is empty failed")
 	}
 	startTS := txn.StartTS()
-	failpoint.Inject("CheckImportIntoTableIsEmpty", func(_val failpoint.Value) {
-		if val, ok := _val.(string); ok {
-			switch val {
-			case "NotEmpty":
-				failpoint.Return(false, nil)
-			case "Error":
-				failpoint.Return(false, errors.New("check if table is empty failed"))
-			}
-		}
-	})
 	return checkIfTableIsEmpty(NewReorgContext(), store, tbl, startTS)
 }
 

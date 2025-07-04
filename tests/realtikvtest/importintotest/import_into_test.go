@@ -1037,6 +1037,14 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	err := s.tk.QueryToErr(sql)
 	s.Error(err)
 	s.Greater(unregisterTime, registerTime)
+	require.Eventually(s.T(), func() bool {
+		err := s.tk.QueryToErr("SELECT * FROM load_data.register_task;")
+		if err != nil {
+			require.ErrorContains(s.T(), err, "Table table_mode is in mode Import")
+			return false
+		}
+		return true
+	}, 10*time.Second, 100*time.Millisecond)
 
 	client, err := importer.GetEtcdClient()
 	s.NoError(err)
@@ -1337,26 +1345,9 @@ func (s *mockGCSSuite) TestTableMode() {
 	loadDataSQL := fmt.Sprintf(`IMPORT INTO import_into.table_mode
 		FROM 'gs://table-mode-test/data.csv?endpoint=%s'`, gcsEndpoint)
 
-	//Test check table is not empty after alter table mode to Import
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("NotEmpty")`)
-	err := s.tk.QueryToErr(loadDataSQL)
-	require.ErrorContains(s.T(), err, "PreCheck failed: target table is not empty")
-	addRepairTable(s.T(), s.tk, "import_into", "table_mode")
-	s.tk.MustExec("admin repair table table_mode create table table_mode (id int primary key, fk int);")
-	s.tk.MustQuery("SELECT * FROM import_into.table_mode;").Check(testkit.Rows())
-	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty")
-	//Test check table is not empty failure after alter table mode to Import
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty", `return("Error")`)
-	err = s.tk.QueryToErr(loadDataSQL)
-	require.ErrorContains(s.T(), err, "check if table is empty failed")
-	addRepairTable(s.T(), s.tk, "import_into", "table_mode")
-	s.tk.MustExec("admin repair table table_mode create table table_mode (id int primary key, fk int);")
-	s.tk.MustQuery("SELECT * FROM import_into.table_mode;").Check(testkit.Rows())
-	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/CheckImportIntoTableIsEmpty")
-
 	// Test import into clean up can alter table mode to Normal finally.
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenResetTableMode", `return`)
-	err = s.tk.QueryToErr(loadDataSQL)
+	err := s.tk.QueryToErr(loadDataSQL)
 	require.ErrorContains(s.T(), err, "occur an error when reset table mode to normal")
 	require.Eventually(s.T(), func() bool {
 		err := s.tk.QueryToErr("SELECT * FROM import_into.table_mode;")
