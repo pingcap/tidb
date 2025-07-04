@@ -28,6 +28,7 @@ import (
 	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	disttaskStorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -48,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -108,6 +110,23 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 		return err
 	}
 	s.tableImporter = tableImporter
+
+	taskManager, err := disttaskStorage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(s.store, se, s.tableImporter.Table)
+		if err2 != nil {
+			return err2
+		}
+		if !isEmpty {
+			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table is not empty")
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
 
 	// we need this sub context since Cleanup which wait on this routine is called
 	// before parent context is canceled in normal flow.
