@@ -63,7 +63,7 @@ func NotifyTaskChange() {
 
 // GetCPUCountOfNode gets the CPU count of the managed node.
 func GetCPUCountOfNode(ctx context.Context) (int, error) {
-	manager, err := GetTaskMgrToAccessDXFService()
+	manager, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return 0, err
 	}
@@ -72,7 +72,7 @@ func GetCPUCountOfNode(ctx context.Context) (int, error) {
 
 // SubmitTask submits a task.
 func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, targetScope string, maxNodeCnt int, taskMeta []byte) (*proto.Task, error) {
-	taskManager, err := GetTaskMgrToAccessDXFService()
+	taskManager, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +108,7 @@ func WaitTaskDoneOrPaused(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	taskManager, err := GetTaskMgrToAccessDXFService()
+	taskManager, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return err
 	}
@@ -134,7 +134,7 @@ func WaitTaskDoneOrPaused(ctx context.Context, id int64) error {
 
 // WaitTaskDoneByKey waits for a task done by task key.
 func WaitTaskDoneByKey(ctx context.Context, taskKey string) error {
-	taskManager, err := GetTaskMgrToAccessDXFService()
+	taskManager, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return err
 	}
@@ -150,7 +150,7 @@ func WaitTaskDoneByKey(ctx context.Context, taskKey string) error {
 
 // WaitTask waits for a task until it meets the matchFn.
 func WaitTask(ctx context.Context, id int64, matchFn func(base *proto.TaskBase) bool) (*proto.TaskBase, error) {
-	taskManager, err := GetTaskMgrToAccessDXFService()
+	taskManager, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +178,7 @@ func WaitTask(ctx context.Context, id int64, matchFn func(base *proto.TaskBase) 
 
 // CancelTask cancels a task.
 func CancelTask(ctx context.Context, taskKey string) error {
-	taskManager, err := GetTaskMgrToAccessDXFService()
+	taskManager, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return err
 	}
@@ -195,7 +195,7 @@ func CancelTask(ctx context.Context, taskKey string) error {
 
 // PauseTask pauses a task.
 func PauseTask(ctx context.Context, taskKey string) error {
-	taskManager, err := GetTaskMgrToAccessDXFService()
+	taskManager, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return err
 	}
@@ -209,7 +209,7 @@ func PauseTask(ctx context.Context, taskKey string) error {
 
 // ResumeTask resumes a task.
 func ResumeTask(ctx context.Context, taskKey string) error {
-	taskManager, err := GetTaskMgrToAccessDXFService()
+	taskManager, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return err
 	}
@@ -290,35 +290,6 @@ func GetCloudStorageURI(ctx context.Context, store kv.Storage) string {
 	}
 	return cloudURI
 }
-
-// GetTaskMgrToAccessDXFService returns the task manager to access DXF service.
-func GetTaskMgrToAccessDXFService() (*storage.TaskManager, error) {
-	// TODO currently DXF service is not fully implemented, so we always return
-	// task manager of current keyspace, replace it with below code when DXF service is ready.
-	return storage.GetTaskManager()
-}
-
-//// GetTaskMgrToAccessDXFService returns the task manager to access DXF service.
-//func GetTaskMgrToAccessDXFService() (*storage.TaskManager, error) {
-//	var (
-//		err           error
-//		sysKSSessPool util.SessionPool
-//	)
-//	taskMgr, err := storage.GetTaskManager()
-//	if err != nil {
-//		return nil, err
-//	}
-//	if !keyspace.IsRunningOnUser() {
-//		return taskMgr, nil
-//	}
-//	if err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
-//		sysKSSessPool, err = se.GetSQLServer().GetKSSessPool(keyspace.System)
-//		return err
-//	}); err != nil {
-//		return nil, err
-//	}
-//	return storage.NewTaskManager(sysKSSessPool), nil
-//}
 
 func init() {
 	// domain will init this var at runtime, we store it here for test, as some

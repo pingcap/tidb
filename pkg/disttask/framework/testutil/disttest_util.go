@@ -133,7 +133,7 @@ func WaitTaskDone(ctx context.Context, t testing.TB, taskKey string) *proto.Task
 }
 
 func waitTaskUntil(ctx context.Context, t testing.TB, taskKey string, fn func(task *proto.TaskBase) bool) *proto.TaskBase {
-	taskMgr, err := storage.GetTaskManager()
+	taskMgr, err := storage.GetDXFSvcTaskMgr()
 	require.NoError(t, err)
 	gotTask, err := taskMgr.GetTaskBaseByKeyWithHistory(ctx, taskKey)
 	require.NoError(t, err)

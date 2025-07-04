@@ -94,7 +94,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 			logicalPlan.JobID = jobID
 			planCtx.SessionCtx = se
 			planCtx.TaskKey = TaskKey(jobID)
-			if taskID, err2 = submitTask2DXF(logicalPlan, planCtx); err2 != nil {
+			if taskID, err2 = submitTask2DXF(logicalPlan, planCtx, taskManager); err2 != nil {
 				return err2
 			}
 		}
@@ -108,7 +108,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	dxfTaskMgr := taskManager
 	if keyspace.IsRunningOnUser() {
 		var err2 error
-		dxfTaskMgr, err2 = handle.GetTaskMgrToAccessDXFService()
+		dxfTaskMgr, err2 = storage.GetDXFSvcTaskMgr()
 		if err2 != nil {
 			return 0, nil, err2
 		}
@@ -117,7 +117,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 			planCtx.SessionCtx = se
 			planCtx.TaskKey = TaskKey(jobID)
 			var err2 error
-			if taskID, err2 = submitTask2DXF(logicalPlan, planCtx); err2 != nil {
+			if taskID, err2 = submitTask2DXF(logicalPlan, planCtx, dxfTaskMgr); err2 != nil {
 				return err2
 			}
 			return nil
@@ -142,11 +142,11 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	return jobID, task, nil
 }
 
-func submitTask2DXF(logicalPlan *LogicalPlan, planCtx planner.PlanCtx) (int64, error) {
+func submitTask2DXF(logicalPlan *LogicalPlan, planCtx planner.PlanCtx, taskMgr *storage.TaskManager) (int64, error) {
 	// TODO: use planner.Run to run the logical plan
 	// now creating import job and submitting distributed task should be in the same transaction.
 	p := planner.NewPlanner()
-	return p.Run(planCtx, logicalPlan)
+	return p.Run(planCtx, logicalPlan, taskMgr)
 }
 
 // RuntimeInfo is the runtime information of the task for corresponding job.
@@ -159,7 +159,7 @@ type RuntimeInfo struct {
 // GetRuntimeInfoForJob get the corresponding DXF task runtime info for the job.
 func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-	dxfTaskMgr, err := handle.GetTaskMgrToAccessDXFService()
+	dxfTaskMgr, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return nil, err
 	}

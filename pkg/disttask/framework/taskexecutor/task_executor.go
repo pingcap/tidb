@@ -113,7 +113,11 @@ type BaseTaskExecutor struct {
 // TODO: we can refactor this part to pass task base only, but currently ADD-INDEX
 // depends on it to init, so we keep it for now.
 func NewBaseTaskExecutor(ctx context.Context, task *proto.Task, param Param) *BaseTaskExecutor {
-	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID), zap.String("task-type", string(task.Type)))
+	logger := logutil.ErrVerboseLogger().With(
+		zap.Int64("task-id", task.ID),
+		zap.String("task-key", task.Key),
+		zap.String("task-type", string(task.Type)),
+	)
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.execID))
 	}
