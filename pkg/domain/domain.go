@@ -1066,6 +1066,21 @@ func (do *Domain) InitDistTaskLoop() error {
 	})
 
 	taskManager := storage.NewTaskManager(do.sysSessionPool)
+	storage.SetTaskManager(taskManager)
+
+	if keyspace.IsRunningOnUser() {
+		sp, err := do.GetKSSessPool(keyspace.System)
+		if err != nil {
+			return err
+		}
+		storage.SetDXFSvcTaskMgr(storage.NewTaskManager(sp))
+
+		// in nextgen, DXF runs as a service on SYSTEM ks and are shared by all
+		// user keyspace
+		logutil.BgLogger().Info("skip running DXF in user keyspace")
+		return nil
+	}
+
 	var serverID string
 	if intest.InTest {
 		do.InitInfo4Test()
@@ -1092,7 +1107,6 @@ func (do *Domain) InitDistTaskLoop() error {
 		return err
 	}
 
-	storage.SetTaskManager(taskManager)
 	if err = executorManager.InitMeta(); err != nil {
 		// executor manager loop will try to recover meta repeatedly, so we can
 		// just log the error here.

@@ -124,11 +124,6 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		localChecksum.AddRawGroup(id, cksum.Size, cksum.KVs, cksum.Sum)
 	}
 
-	taskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if kerneltype.IsNextGen() {
 		bfWeight := importer.GetBackoffWeight(plan)
@@ -145,6 +140,11 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 				})
 			},
 		)
+	}
+
+	taskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
 	}
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
 		return importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -127,6 +128,10 @@ var _ SessionExecutor = &TaskManager{}
 
 var taskManagerInstance atomic.Pointer[TaskManager]
 
+// this one is only used on nextgen, and it's only initialized in user ks and
+// point to SYSTEM KS
+var dxfSvcTaskMgr atomic.Pointer[TaskManager]
+
 var (
 	// TestLastTaskID is used for test to set the last task ID.
 	TestLastTaskID atomic.Int64
@@ -140,6 +145,11 @@ func NewTaskManager(sePool util.SessionPool) *TaskManager {
 }
 
 // GetTaskManager gets the task manager.
+// this task manager always point to the storage of this TiDB instance, not only
+// DXF uses it, add-index and import-into also use this manager to access internal
+// sessions.
+// in nextgen, DXF service only runs on SYSTEM ks, to access it, use GetDXFSvcTaskMgr
+// instead.
 func GetTaskManager() (*TaskManager, error) {
 	v := taskManagerInstance.Load()
 	if v == nil {
@@ -151,6 +161,23 @@ func GetTaskManager() (*TaskManager, error) {
 // SetTaskManager sets the task manager.
 func SetTaskManager(is *TaskManager) {
 	taskManagerInstance.Store(is)
+}
+
+// GetDXFSvcTaskMgr returns the task manager to access DXF service.
+func GetDXFSvcTaskMgr() (*TaskManager, error) {
+	if keyspace.IsRunningOnUser() {
+		v := dxfSvcTaskMgr.Load()
+		if v == nil {
+			return nil, errors.New("DXF service task manager is not initialized")
+		}
+		return v, nil
+	}
+	return GetTaskManager()
+}
+
+// SetDXFSvcTaskMgr sets the task manager for DXF service.
+func SetDXFSvcTaskMgr(mgr *TaskManager) {
+	dxfSvcTaskMgr.Store(mgr)
 }
 
 // WithNewSession executes the function with a new session.
