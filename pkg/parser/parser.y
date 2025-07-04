@@ -1051,6 +1051,7 @@ import (
 	HelpStmt                   "HELP statement"
 	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
 	CancelImportStmt           "CANCEL IMPORT JOB statement"
+	AlterImportStmt            "ALTER IMPORT JOB statement"
 	ProcedureUnlabeledBlock    "The statement block without label in procedure"
 	ProcedureBlockContent      "The statement block in procedure expressed with 'Begin ... End'"
 	SimpleWhenThen             "Procedure case when then"
@@ -1079,6 +1080,8 @@ import (
 	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
+	AlterJobOptionList                     "Alter job option list"
+	AlterJobOption                         "Alter job option"
 	AlterTableSpecSingleOpt                "Alter table single option"
 	AlterTableSpec                         "Alter table specification"
 	AlterTableSpecList                     "Alter table specification list"
@@ -5880,6 +5883,33 @@ CancelImportStmt:
 		$$ = &ast.ImportIntoActionStmt{
 			Tp:    ast.ImportIntoCancel,
 			JobID: $4.(int64),
+		}
+	}
+AlterImportStmt:
+	"ALTER" "IMPORT" "JOB" Int64Num AlterJobOptionList
+	{
+			$$ = &ast.AlterImportJobStmt{
+					JobID: $4.(int64),
+					AlterJobOptions: $5.([]*ast.AlterJobOption),
+			}
+	}
+
+AlterJobOptionList:
+	AlterJobOption
+	{
+		$$ = []*ast.AlterJobOption{$1.(*ast.AlterJobOption)}
+	}
+|	AlterJobOptionList ',' AlterJobOption
+	{
+		$$ = append($1.([]*ast.AlterJobOption), $3.(*ast.AlterJobOption))
+	}
+
+AlterJobOption:
+	identifier "=" SignedLiteral
+	{
+		$$ = &ast.AlterJobOption{
+			Name:  strings.ToLower($1),
+			Value: $3.(ast.ExprNode),
 		}
 	}
 
@@ -12097,6 +12127,7 @@ Statement:
 |	NonTransactionalDMLStmt
 |	OptimizeTableStmt
 |	CancelImportStmt
+|   AlterImportStmt
 
 TraceableStmt:
 	DeleteFromStmt
