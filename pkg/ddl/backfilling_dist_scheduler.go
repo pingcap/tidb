@@ -20,10 +20,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
+	lightningmetric "github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler/execute"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -107,6 +109,7 @@ type backfillDistScheduler struct {
 	taskTable  scheduler.TaskTable
 	backendCtx ingest.BackendCtx
 	jobID      int64
+	metric     *lightningmetric.Common
 }
 
 func newBackfillDistScheduler(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable, d *ddl) scheduler.Scheduler {
@@ -138,6 +141,8 @@ func (s *backfillDistScheduler) Init(ctx context.Context) error {
 		return err
 	}
 	pdLeaderAddr := d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
+	s.metric = metrics.RegisterLightningCommonMetricsForDDL(job.ID)
+	ctx = lightningmetric.WithCommonMetric(ctx, s.metric)
 	bc, err := ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		return errors.Trace(err)
@@ -177,6 +182,7 @@ func (*backfillDistScheduler) IsIdempotent(*proto.Subtask) bool {
 func (s *backfillDistScheduler) Close() {
 	if s.backendCtx != nil {
 		ingest.LitBackCtxMgr.Unregister(s.jobID)
+		metrics.UnregisterLightningCommonMetricsForDDL(s.jobID, s.metric)
 	}
 	s.BaseScheduler.Close()
 }
