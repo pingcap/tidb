@@ -15,7 +15,6 @@
 package metrics
 
 import (
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 )
@@ -53,7 +52,7 @@ var (
 
 // InitTelemetryMetrics initializes telemetry metrics.
 func InitTelemetryMetrics() {
-	TelemetrySQLCTECnt = metricscommon.NewCounterVec(
+	TelemetrySQLCTECnt = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -61,7 +60,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of usage of CTE",
 		}, []string{LblCTEType})
 
-	TelemetryMultiSchemaChangeCnt = metricscommon.NewCounter(
+	TelemetryMultiSchemaChangeCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -69,7 +68,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of usage of multi-schema change",
 		})
 
-	TelemetryTablePartitionCnt = metricscommon.NewCounter(
+	TelemetryTablePartitionCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -77,7 +76,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of CREATE TABLE which includes of table partitioning",
 		})
 
-	TelemetryTablePartitionListCnt = metricscommon.NewCounter(
+	TelemetryTablePartitionListCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -85,7 +84,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of CREATE TABLE which includes LIST partitioning",
 		})
 
-	TelemetryTablePartitionRangeCnt = metricscommon.NewCounter(
+	TelemetryTablePartitionRangeCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -93,7 +92,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of CREATE TABLE which includes RANGE partitioning",
 		})
 
-	TelemetryTablePartitionHashCnt = metricscommon.NewCounter(
+	TelemetryTablePartitionHashCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -101,7 +100,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of CREATE TABLE which includes HASH partitioning",
 		})
 
-	TelemetryTablePartitionRangeColumnsCnt = metricscommon.NewCounter(
+	TelemetryTablePartitionRangeColumnsCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -109,7 +108,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of CREATE TABLE which includes RANGE COLUMNS partitioning",
 		})
 
-	TelemetryTablePartitionRangeColumnsGt1Cnt = metricscommon.NewCounter(
+	TelemetryTablePartitionRangeColumnsGt1Cnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -117,7 +116,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of CREATE TABLE which includes RANGE COLUMNS partitioning with more than one partitioning column",
 		})
 
-	TelemetryTablePartitionRangeColumnsGt2Cnt = metricscommon.NewCounter(
+	TelemetryTablePartitionRangeColumnsGt2Cnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -125,7 +124,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of CREATE TABLE which includes RANGE COLUMNS partitioning with more than two partitioning columns",
 		})
 
-	TelemetryTablePartitionRangeColumnsGt3Cnt = metricscommon.NewCounter(
+	TelemetryTablePartitionRangeColumnsGt3Cnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -133,7 +132,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of CREATE TABLE which includes RANGE COLUMNS partitioning with more than three partitioning columns",
 		})
 
-	TelemetryTablePartitionListColumnsCnt = metricscommon.NewCounter(
+	TelemetryTablePartitionListColumnsCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -141,7 +140,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of CREATE TABLE which includes LIST COLUMNS partitioning",
 		})
 
-	TelemetryTablePartitionMaxPartitionsCnt = metricscommon.NewCounter(
+	TelemetryTablePartitionMaxPartitionsCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -149,7 +148,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of partitions created by CREATE TABLE statements",
 		})
 
-	TelemetryAccountLockCnt = metricscommon.NewCounterVec(
+	TelemetryAccountLockCnt = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -157,7 +156,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of locked/unlocked users",
 		}, []string{LblAccountLock})
 
-	TelemetryTablePartitionCreateIntervalPartitionsCnt = metricscommon.NewCounter(
+	TelemetryTablePartitionCreateIntervalPartitionsCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -165,7 +164,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of partitions created by CREATE TABLE INTERVAL statements",
 		})
 
-	TelemetryTablePartitionAddIntervalPartitionsCnt = metricscommon.NewCounter(
+	TelemetryTablePartitionAddIntervalPartitionsCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -173,7 +172,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of partitions added by ALTER TABLE LAST PARTITION statements",
 		})
 
-	TelemetryTablePartitionDropIntervalPartitionsCnt = metricscommon.NewCounter(
+	TelemetryTablePartitionDropIntervalPartitionsCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -181,7 +180,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of partitions added by ALTER TABLE FIRST PARTITION statements",
 		})
 
-	TelemetryExchangePartitionCnt = metricscommon.NewCounter(
+	TelemetryExchangePartitionCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -189,7 +188,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of usage of exchange partition statements",
 		})
 
-	TelemetryAddIndexIngestCnt = metricscommon.NewCounter(
+	TelemetryAddIndexIngestCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -197,7 +196,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of usage of add index acceleration solution",
 		})
 
-	TelemetryFlashbackClusterCnt = metricscommon.NewCounter(
+	TelemetryFlashbackClusterCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -205,7 +204,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of usage of flashback cluster",
 		})
 
-	TelemetryIndexMergeUsage = metricscommon.NewCounter(
+	TelemetryIndexMergeUsage = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -213,7 +212,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of usage of index merge",
 		})
 
-	TelemetryCompactPartitionCnt = metricscommon.NewCounter(
+	TelemetryCompactPartitionCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -221,7 +220,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of compact table partition",
 		})
 
-	TelemetryReorganizePartitionCnt = metricscommon.NewCounter(
+	TelemetryReorganizePartitionCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -229,7 +228,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of alter table reorganize partition",
 		})
 
-	TelemetryDistReorgCnt = metricscommon.NewCounter(
+	TelemetryDistReorgCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -237,7 +236,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of usage of distributed reorg DDL tasks count",
 		})
 
-	TelemetryStoreBatchedQueryCnt = metricscommon.NewCounter(
+	TelemetryStoreBatchedQueryCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -245,7 +244,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of queries which use store batched coprocessor tasks",
 		})
 
-	TelemetryBatchedQueryTaskCnt = metricscommon.NewCounter(
+	TelemetryBatchedQueryTaskCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -253,7 +252,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of coprocessor tasks in batched queries",
 		})
 
-	TelemetryStoreBatchedCnt = metricscommon.NewCounter(
+	TelemetryStoreBatchedCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
@@ -261,7 +260,7 @@ func InitTelemetryMetrics() {
 			Help:      "Counter of store batched coprocessor tasks",
 		})
 
-	TelemetryStoreBatchedFallbackCnt = metricscommon.NewCounter(
+	TelemetryStoreBatchedFallbackCnt = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",

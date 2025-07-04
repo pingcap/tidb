@@ -75,13 +75,9 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/helper"
-=======
-	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/telemetry"
->>>>>>> 15fe8f1be97 (telemetry: add telemetry related code back (#61753))
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"

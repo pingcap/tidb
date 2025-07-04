@@ -103,11 +103,8 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
-=======
 	"github.com/pingcap/tidb/pkg/telemetry"
->>>>>>> 15fe8f1be97 (telemetry: add telemetry related code back (#61753))
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"

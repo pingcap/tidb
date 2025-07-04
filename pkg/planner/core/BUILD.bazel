@@ -82,12 +82,8 @@ go_library(
         "stringer.go",
         "task.go",
         "task_base.go",
-<<<<<<< HEAD
-        "tiflash_selection_late_materialization.go",
-=======
         "telemetry.go",
-        "tiflash_predicate_push_down.go",
->>>>>>> 15fe8f1be97 (telemetry: add telemetry related code back (#61753))
+        "tiflash_selection_late_materialization.go",
         "trace.go",
         "util.go",
     ],
