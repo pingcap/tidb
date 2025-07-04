@@ -123,25 +123,6 @@ func (l *ownerListener) OnBecomeOwner() {
 	}
 	l.ddl.reorgCtx.setOwnerTS(time.Now().Unix())
 	l.scheduler.start()
-
-	if err := kv.RunInNewTxn(ctx, l.ddl.store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMutator(txn)
-		err := local.InitializeGlobalMaxBatchSplitRanges(m, logutil.DDLIngestLogger())
-		if err != nil {
-			return err
-		}
-		err = local.InitializeGlobalSplitRangesPerSec(m, logutil.DDLIngestLogger())
-		if err != nil {
-			return err
-		}
-		err = local.InitializeGlobalIngestConcurrency(m, logutil.DDLIngestLogger())
-		if err != nil {
-			return err
-		}
-		return local.InitializeGlobalIngestPerSec(m, logutil.DDLIngestLogger())
-	}); err != nil {
-		logutil.DDLIngestLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
-	}
 }
 
 func (l *ownerListener) OnRetireOwner() {

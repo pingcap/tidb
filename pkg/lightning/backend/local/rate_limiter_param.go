@@ -34,106 +34,99 @@ const (
 
 var (
 	// CurrentMaxBatchSplitRanges stores the current limit for batch split ranges.
-	CurrentMaxBatchSplitRanges atomic.Int64
+	CurrentMaxBatchSplitRanges atomic.Pointer[int]
 	// CurrentMaxSplitRangesPerSec stores the current limit for split ranges per second.
-	CurrentMaxSplitRangesPerSec atomic.Float64
+	CurrentMaxSplitRangesPerSec atomic.Pointer[float64]
 	// CurrentMaxIngestInflight stores the current limit for concurrent ingest requests.
-	CurrentMaxIngestInflight atomic.Int64
+	CurrentMaxIngestInflight atomic.Pointer[int]
 	// CurrentMaxIngestPerSec stores the current limit for maximum ingest requests per second.
-	CurrentMaxIngestPerSec atomic.Float64
+	CurrentMaxIngestPerSec atomic.Pointer[float64]
 )
 
-// InitializeGlobalMaxBatchSplitRanges loads the maxBatchSplitRanges value using meta.Meta or sets a default.
-func InitializeGlobalMaxBatchSplitRanges(m *meta.Mutator, logger *zap.Logger) error {
-	valInt, isNull, err := m.GetIngestMaxBatchSplitRanges()
+// InitializeRateLimiterParam initializes the rate limiter params.
+func InitializeRateLimiterParam(m *meta.Mutator, logger *zap.Logger) error {
+	err := initializeVariables(
+		m.GetIngestMaxBatchSplitRanges,
+		defaultMaxBatchSplitRanges,
+		&CurrentMaxBatchSplitRanges,
+		logger, "maxBatchSplitRanges")
 	if err != nil {
-		return errors.Annotate(err, "failed to read maxBatchSplitRanges from meta store")
+		return err
 	}
-	if isNull || valInt <= 0 {
-		valInt = defaultMaxBatchSplitRanges
-		logger.Info("maxBatchSplitRanges not found in meta store, initialized to default and persisted",
-			zap.Int("value", defaultMaxBatchSplitRanges))
-	} else {
-		logger.Info("loaded maxBatchSplitRanges from meta store", zap.Int("value", valInt))
+	err = initializeVariables(
+		m.GetIngestMaxSplitRangesPerSec,
+		defaultSplitRangesPerSec,
+		&CurrentMaxSplitRangesPerSec,
+		logger, "maxSplitRangesPerSec")
+	if err != nil {
+		return err
 	}
-	CurrentMaxBatchSplitRanges.Store(int64(valInt))
+	err = initializeVariables(
+		m.GetIngestMaxInflight,
+		defaultMaxIngestInflight,
+		&CurrentMaxIngestInflight,
+		logger, "maxIngestInflight")
+	if err != nil {
+		return err
+	}
+	err = initializeVariables(
+		m.GetIngestMaxPerSec,
+		defaultMaxIngestPerSec,
+		&CurrentMaxIngestPerSec,
+		logger, "maxIngestPerSec")
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
-// InitializeGlobalSplitRangesPerSec loads the splitRangesPerSec value using meta.Meta or sets a default.
-func InitializeGlobalSplitRangesPerSec(m *meta.Mutator, logger *zap.Logger) error {
-	val, isNull, err := m.GetIngestMaxSplitRangesPerSec()
+func initializeVariables[T comparable](
+	metaGetter func() (v T, isNull bool, err error),
+	defaultVal T,
+	globalVar *atomic.Pointer[T],
+	logger *zap.Logger,
+	varName string,
+) error {
+	val, isNull, err := metaGetter()
 	if err != nil {
-		return errors.Annotate(err, "failed to read splitRangesPerSec from meta store")
+		return errors.Annotate(err, "failed to read value from meta store")
 	}
-	if isNull || val <= 0 {
-		val = defaultSplitRangesPerSec
-		logger.Info("splitRangesPerSec not found in meta store, initialized to default and persisted",
-			zap.Float64("value", defaultSplitRangesPerSec))
+	var zero T
+	if isNull || val == zero {
+		val = defaultVal
+		logger.Info("meta kv not found in meta store, initialized to default and persisted",
+			zap.String("key", varName),
+			zap.Any("value", defaultVal))
 	} else {
-		logger.Info("loaded splitRangesPerSec from meta store", zap.Float64("value", val))
+		logger.Info("loaded value from meta store", zap.Any("value", val))
 	}
-	CurrentMaxSplitRangesPerSec.Store(val)
-	return nil
-}
-
-// InitializeGlobalIngestConcurrency loads the maxIngestConcurrency value using meta.Meta or sets a default.
-func InitializeGlobalIngestConcurrency(m *meta.Mutator, logger *zap.Logger) error {
-	valInt, isNull, err := m.GetIngestMaxInflight()
-	if err != nil {
-		return errors.Annotate(err, "failed to read maxIngestConcurrency from meta store")
-	}
-	if isNull {
-		valInt = defaultMaxIngestInflight
-		logger.Info("maxIngestConcurrency not found in meta store, initialized to default and persisted",
-			zap.Int("value", defaultMaxIngestInflight))
-	} else {
-		logger.Info("loaded maxIngestConcurrency from meta store", zap.Int("value", valInt))
-	}
-	CurrentMaxIngestInflight.Store(int64(valInt))
-	return nil
-}
-
-// InitializeGlobalIngestPerSec loads the maxIngestPerSec value using meta.Meta or sets a default.
-func InitializeGlobalIngestPerSec(m *meta.Mutator, logger *zap.Logger) error {
-	val, isNull, err := m.GetIngestMaxPerSec()
-	if err != nil {
-		return errors.Annotate(err, "failed to read maxIngestPerSec from meta store")
-	}
-	if isNull {
-		val = defaultMaxIngestPerSec
-		logger.Info("maxIngestPerSec not found in meta store, initialized to default and persisted",
-			zap.Float64("value", defaultMaxIngestPerSec))
-	} else {
-		logger.Info("loaded maxIngestPerSec from meta store", zap.Float64("value", val))
-	}
-	CurrentMaxIngestPerSec.Store(val)
+	globalVar.Store(&val)
 	return nil
 }
 
 // GetMaxBatchSplitRanges returns the current maximum number of ranges in a batch to split and scatter.
 func GetMaxBatchSplitRanges() int {
 	val := CurrentMaxBatchSplitRanges.Load()
-	if val == 0 { // Not yet initialized from TiKV or invalid value caused fallback to 0
+	if *val == 0 { // Not yet initialized from TiKV or invalid value caused fallback to 0
 		return defaultMaxBatchSplitRanges
 	}
-	return int(val)
+	return int(*val)
 }
 
 // GetMaxSplitRangePerSec returns the current maximum number of ranges to split and scatter per second.
 func GetMaxSplitRangePerSec() float64 {
 	val := CurrentMaxSplitRangesPerSec.Load()
-	return val
+	return *val
 }
 
 // GetMaxIngestConcurrency returns the current maximum number of concurrent ingest requests.
 func GetMaxIngestConcurrency() int {
 	val := CurrentMaxIngestInflight.Load()
-	return int(val)
+	return int(*val)
 }
 
 // GetMaxIngestPerSec returns the current maximum number of ingest requests per second.
 func GetMaxIngestPerSec() float64 {
 	val := CurrentMaxIngestPerSec.Load()
-	return val
+	return *val
 }
