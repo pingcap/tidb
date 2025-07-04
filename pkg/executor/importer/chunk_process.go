@@ -21,6 +21,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -202,9 +203,10 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 
 // chunkEncoder encodes data from readFn and sends encoded data to sendFn.
 type chunkEncoder struct {
-	readFn encodeReaderFn
-	offset int64
-	sendFn func(ctx context.Context, batch *encodedKVGroupBatch) error
+	readFn    encodeReaderFn
+	offset    int64
+	sendFn    func(ctx context.Context, batch *encodedKVGroupBatch) error
+	collector execute.Collector
 
 	chunkName string
 	logger    *zap.Logger
@@ -223,6 +225,7 @@ func newChunkEncoder(
 	readFn encodeReaderFn,
 	offset int64,
 	sendFn func(ctx context.Context, batch *encodedKVGroupBatch) error,
+	collector execute.Collector,
 	logger *zap.Logger,
 	encoder *TableKVEncoder,
 	keyspace []byte,
@@ -232,6 +235,7 @@ func newChunkEncoder(
 		readFn:        readFn,
 		offset:        offset,
 		sendFn:        sendFn,
+		collector:     collector,
 		logger:        logger,
 		encoder:       encoder,
 		keyspace:      keyspace,
@@ -260,13 +264,16 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 			return nil
 		}
 
-		if currOffset >= 0 && metrics != nil {
-			delta := currOffset - p.offset
+		var delta int64
+		if currOffset >= 0 {
+			delta = currOffset - p.offset
 			p.offset = currOffset
-			// if we're using split_file, this metric might larger than total
-			// source file size, as the offset we're using is the reader offset,
-			// not parser offset, and we'll buffer data.
-			encodedBytesCounter.Add(float64(delta))
+			if metrics != nil {
+				// if we're using split_file, this metric might larger than total
+				// source file size, as the offset we're using is the reader offset,
+				// not parser offset, and we'll buffer data.
+				encodedBytesCounter.Add(float64(delta))
+			}
 		}
 
 		if metrics != nil {
@@ -288,6 +295,10 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 
 		if err := p.sendFn(ctx, kvGroupBatch); err != nil {
 			return err
+		}
+
+		if p.collector != nil {
+			p.collector.Add(delta, int64(rowCount))
 		}
 
 		// the ownership of rowBatch is transferred to the receiver of sendFn, we should
@@ -402,6 +413,7 @@ func NewFileChunkProcessor(
 	dataWriter backend.EngineWriter,
 	indexWriter backend.EngineWriter,
 	groupChecksum *verify.KVGroupChecksum,
+	collector execute.Collector,
 ) ChunkProcessor {
 	chunkLogger := logger.With(zap.String("key", chunk.GetKey()))
 	deliver := &dataDeliver{
@@ -419,6 +431,7 @@ func NewFileChunkProcessor(
 			parserEncodeReader(parser, chunk.Chunk.EndOffset, chunk.GetKey()),
 			chunk.Chunk.Offset,
 			deliver.sendEncodedData,
+			collector,
 			chunkLogger,
 			encoder,
 			keyspace,
@@ -545,6 +558,7 @@ func newQueryChunkProcessor(
 	dataWriter backend.EngineWriter,
 	indexWriter backend.EngineWriter,
 	groupChecksum *verify.KVGroupChecksum,
+	collector execute.Collector,
 ) ChunkProcessor {
 	chunkName := "import-from-select"
 	chunkLogger := logger.With(zap.String("key", chunkName))
@@ -563,6 +577,7 @@ func newQueryChunkProcessor(
 			queryRowEncodeReader(chunkCh),
 			-1,
 			deliver.sendEncodedData,
+			collector,
 			chunkLogger,
 			encoder,
 			keyspace,
