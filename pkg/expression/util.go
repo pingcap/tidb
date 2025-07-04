@@ -1431,6 +1431,9 @@ func IsInmutableExpr(expr Expression) bool {
 // are mutable or have side effects, we cannot remove it even if it has duplicates;
 // if the plan is going to be cached, we cannot remove expressions containing `?` neither.
 func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
+	if len(exprs) <= 1 {
+		return exprs
+	}
 	res := make([]Expression, 0, len(exprs))
 	exists := make(map[string]struct{}, len(exprs))
 	sc := ctx.GetSessionVars().StmtCtx
