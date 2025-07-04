@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -190,7 +190,7 @@ func buildTopNExec(sortCase *testutil.SortCase, dataSource *testutil.MockDataSou
 
 	topNexec := &sortexec.TopNExec{
 		SortExec:    sortExec,
-		Limit:       &plannercore.PhysicalLimit{Offset: offset, Count: count},
+		Limit:       &physicalop.PhysicalLimit{Offset: offset, Count: count},
 		Concurrency: 5,
 	}
 
@@ -378,7 +378,7 @@ func severalChunksInDiskCase(t *testing.T, topnExec *sortexec.TopNExec) {
 func TestGenerateTopNResultsWhenSpillOnlyOnce(t *testing.T) {
 	//nolint:constructor
 	topnExec := &sortexec.TopNExec{}
-	topnExec.Limit = &plannercore.PhysicalLimit{}
+	topnExec.Limit = &physicalop.PhysicalLimit{}
 
 	oneChunkInDiskCase(t, topnExec)
 	severalChunksInDiskCase(t, topnExec)

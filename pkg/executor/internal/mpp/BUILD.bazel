@@ -21,6 +21,7 @@ go_library(
         "//pkg/kv",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/physicalop",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/store/copr",
@@ -50,6 +51,7 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/planner/core",
+        "//pkg/planner/core/operator/physicalop",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
     ],

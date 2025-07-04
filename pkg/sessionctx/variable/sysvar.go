@@ -2682,8 +2682,7 @@ var defaultSysVars = []*SysVar{
 			}
 			return vardef.On, nil
 		},
-		SetSession: func(vars *SessionVars, s string) error {
-			vars.EnableNewCostInterface = TiDBOptOn(s)
+		SetSession: func(*SessionVars, string) error {
 			return nil
 		},
 	},

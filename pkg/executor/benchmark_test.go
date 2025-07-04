@@ -1910,7 +1910,7 @@ func benchmarkTopNExec(b *testing.B, cas *topNTestCase) {
 
 	executor := &sortexec.TopNExec{
 		SortExec: executorSort,
-		Limit: &core.PhysicalLimit{
+		Limit: &physicalop.PhysicalLimit{
 			Count:  uint64(cas.count),
 			Offset: uint64(cas.offset),
 		},
