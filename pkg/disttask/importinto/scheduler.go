@@ -474,6 +474,30 @@ func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, 
 	)
 	logger.Info("create step scheduler")
 
+<<<<<<< HEAD
+=======
+// GetEligibleInstances implements scheduler.Extension interface.
+func (*importScheduler) GetEligibleInstances(_ context.Context, task *proto.Task) ([]string, error) {
+	taskMeta := &TaskMeta{}
+	err := json.Unmarshal(task.Meta, taskMeta)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	res := make([]string, 0, len(taskMeta.EligibleInstances))
+	for _, instance := range taskMeta.EligibleInstances {
+		res = append(res, disttaskutil.GenerateExecID(instance))
+	}
+	return res, nil
+}
+
+// IsRetryableErr implements scheduler.Extension interface.
+func (*importScheduler) IsRetryableErr(err error) bool {
+	return common.IsRetryableError(err)
+}
+
+// GetNextStep implements scheduler.Extension interface.
+func (sch *importScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
+>>>>>>> 6e5a6d2a93f (importinto: check retryable schedule error (#60320))
 	switch task.Step {
 	case StepImport, StepEncodeAndSort:
 		return &importStepExecutor{
