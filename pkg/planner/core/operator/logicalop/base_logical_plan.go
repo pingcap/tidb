@@ -269,8 +269,9 @@ func (*BaseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expressi
 }
 
 // PreparePossibleProperties implements LogicalPlan.<13th> interface.
-func (*BaseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	return nil
+func (*BaseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, childProps ...*property.PossibleProp) *property.PossibleProp {
+	intest.Assert(len(childProps) > 0 && childProps[0] != nil)
+	return &property.PossibleProp{TiFlashable: childProps[0].TiFlashable} // return an empty possible property but with tiFlashable flag.
 }
 
 // ExhaustPhysicalPlans implements LogicalPlan.<14th> interface.

@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/intest"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -117,12 +118,16 @@ func (ls *LogicalSort) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optim
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (ls *LogicalSort) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (ls *LogicalSort) PreparePossibleProperties(_ *expression.Schema, childProps ...*property.PossibleProp) *property.PossibleProp {
+	intest.Assert(len(childProps) > 0 && childProps[0] != nil)
 	propCols := getPossiblePropertyFromByItems(ls.ByItems)
+	res := &property.PossibleProp{}
 	if len(propCols) == 0 {
-		return nil
+		return res
 	}
-	return [][]*expression.Column{propCols}
+	res.OrderCols = [][]*expression.Column{propCols}
+	res.TiFlashable = childProps[0].TiFlashable
+	return res
 }
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.

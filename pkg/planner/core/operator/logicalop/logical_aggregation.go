@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -48,8 +49,8 @@ type LogicalAggregation struct {
 	PreferAggType  uint
 	PreferAggToCop bool
 
-	PossibleProperties [][]*expression.Column `hash64-equals:"true" shallow-ref:"true"`
-	InputCount         float64                // InputCount is the input count of this plan.
+	PossibleProperties *property.PossibleProp
+	InputCount         float64 // InputCount is the input count of this plan.
 
 	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
 	// It is true when the agg is in the outer child tree of apply.
@@ -271,25 +272,34 @@ func (la *LogicalAggregation) ExtractColGroups(_ [][]*expression.Column) [][]*ex
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*property.PossibleProp) *property.PossibleProp {
+	intest.Assert(len(childrenProperties) > 0 && childrenProperties[0] != nil)
 	childProps := childrenProperties[0]
 	// If there's no group-by item, the stream aggregation could have no order property. So we can add an empty property
 	// when its group-by item is empty.
+	la.PossibleProperties = &property.PossibleProp{}
+	res := &property.PossibleProp{}
 	if len(la.GroupByItems) == 0 {
-		la.PossibleProperties = [][]*expression.Column{nil}
-		return nil
+		return res
 	}
-	resultProperties := make([][]*expression.Column, 0, len(childProps))
+
+	// prepare the order columns for the aggregation.
+	resultOrderCols := make([][]*expression.Column, 0, len(childProps.OrderCols))
 	groupByCols := la.GetGroupByCols()
-	for _, possibleChildProperty := range childProps {
+	for _, possibleChildProperty := range childProps.OrderCols {
 		sortColOffsets := util.GetMaxSortPrefix(possibleChildProperty, groupByCols)
 		if len(sortColOffsets) == len(groupByCols) {
 			prop := possibleChildProperty[:len(groupByCols)]
-			resultProperties = append(resultProperties, prop)
+			resultOrderCols = append(resultOrderCols, prop)
 		}
 	}
-	la.PossibleProperties = resultProperties
-	return resultProperties
+	la.PossibleProperties.OrderCols = resultOrderCols
+	la.PossibleProperties.TiFlashable = childProps.TiFlashable
+
+	// return the result properties.
+	res.OrderCols = resultOrderCols
+	res.TiFlashable = childProps.TiFlashable
+	return res
 }
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.

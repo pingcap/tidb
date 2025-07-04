@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"math"
 	"slices"
 
@@ -151,7 +152,8 @@ func checkJoinKeyCollation(leftKeys, rightKeys []*expression.Column) bool {
 
 // GetMergeJoin convert the logical join to physical merge join based on the physical property.
 func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo, leftStatsInfo *property.StatsInfo, rightStatsInfo *property.StatsInfo) []base.PhysicalPlan {
-	joins := make([]base.PhysicalPlan, 0, len(p.LeftProperties)+1)
+	intest.Assert(p.LeftProperties != nil)
+	joins := make([]base.PhysicalPlan, 0, len(p.LeftProperties.OrderCols)+1)
 	// The LeftProperties caches all the possible properties that are provided by its children.
 	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
 
@@ -172,7 +174,7 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 	if hasNullEQ {
 		return nil
 	}
-	for _, lhsChildProperty := range p.LeftProperties {
+	for _, lhsChildProperty := range p.LeftProperties.OrderCols {
 		offsets := util.GetMaxSortPrefix(lhsChildProperty, leftJoinKeys)
 		// If not all equal conditions hit properties. We ban merge join heuristically. Because in this case, merge join
 		// may get a very low performance. In executor, executes join results before other conditions filter it.
@@ -188,7 +190,7 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 			newIsNullEQ = append(newIsNullEQ, isNullEQ[offset])
 		}
 
-		prefixLen := findMaxPrefixLen(p.RightProperties, rightKeys)
+		prefixLen := findMaxPrefixLen(p.RightProperties.OrderCols, rightKeys)
 		// right side should also be full match.
 		if prefixLen < len(offsets) || prefixLen == 0 {
 			continue
@@ -3485,7 +3487,8 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 	}
 
 	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
-	streamAggs := make([]base.PhysicalPlan, 0, len(la.PossibleProperties)*(len(allTaskTypes)-1)+len(allTaskTypes))
+	intest.Assert(la.PossibleProperties != nil)
+	streamAggs := make([]base.PhysicalPlan, 0, len(la.PossibleProperties.OrderCols)*(len(allTaskTypes)-1)+len(allTaskTypes))
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt: math.Max(prop.ExpectedCnt*la.InputCount/la.StatsInfo().RowCount, prop.ExpectedCnt),
 	}
@@ -3493,7 +3496,7 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 	if childProp == nil {
 		return nil
 	}
-	for _, possibleChildProperty := range la.PossibleProperties {
+	for _, possibleChildProperty := range la.PossibleProperties.OrderCols {
 		childProp.SortItems = property.SortItemsFromCols(possibleChildProperty[:len(groupByCols)], desc)
 		if !prop.IsPrefix(childProp) {
 			continue

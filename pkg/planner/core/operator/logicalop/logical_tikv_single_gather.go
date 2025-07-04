@@ -16,6 +16,7 @@ package logicalop
 
 import (
 	"bytes"
+	"github.com/pingcap/tidb/pkg/planner/property"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -86,7 +87,7 @@ func (*TiKVSingleGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (*TiKVSingleGather) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (*TiKVSingleGather) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*property.PossibleProp) *property.PossibleProp {
 	return childrenProperties[0]
 }
 

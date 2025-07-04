@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"maps"
 	"math"
 	"math/bits"
@@ -122,8 +123,8 @@ type LogicalJoin struct {
 	RightConditions expression.CNFExprs          `hash64-equals:"true" shallow-ref:"true"`
 	OtherConditions expression.CNFExprs          `hash64-equals:"true" shallow-ref:"true"`
 
-	LeftProperties  [][]*expression.Column
-	RightProperties [][]*expression.Column
+	LeftProperties  *property.PossibleProp
+	RightProperties *property.PossibleProp
 
 	// DefaultValues is only used for left/right outer join, which is values the inner row's should be when the outer table
 	// doesn't match any inner table's row.
@@ -613,9 +614,11 @@ func (p *LogicalJoin) ExtractColGroups(colGroups [][]*expression.Column) [][]*ex
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*property.PossibleProp) *property.PossibleProp {
+	intest.Assert(len(childrenProperties) == 2)
 	leftProperties := childrenProperties[0]
 	rightProperties := childrenProperties[1]
+	intest.Assert(leftProperties != nil && rightProperties != nil)
 	// TODO: We should consider properties propagation.
 	p.LeftProperties = leftProperties
 	p.RightProperties = rightProperties
@@ -624,17 +627,37 @@ func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenPr
 	} else if p.JoinType == RightOuterJoin {
 		leftProperties = nil
 	}
-	resultProperties := make([][]*expression.Column, len(leftProperties)+len(rightProperties))
-	for i, cols := range leftProperties {
-		resultProperties[i] = make([]*expression.Column, len(cols))
-		copy(resultProperties[i], cols)
+	// cal the length of the result properties
+	length := 0
+	tiFlashable := true
+	if leftProperties != nil {
+		length += len(leftProperties.OrderCols)
+		tiFlashable = leftProperties.TiFlashable
 	}
-	leftLen := len(leftProperties)
-	for i, cols := range rightProperties {
-		resultProperties[leftLen+i] = make([]*expression.Column, len(cols))
-		copy(resultProperties[leftLen+i], cols)
+	if rightProperties != nil {
+		length += len(rightProperties.OrderCols)
+		tiFlashable = tiFlashable && rightProperties.TiFlashable
 	}
-	return resultProperties
+	resultProperties := make([][]*expression.Column, length)
+	leftLen := 0
+	if leftProperties != nil {
+		for i, cols := range leftProperties.OrderCols {
+			resultProperties[i] = make([]*expression.Column, len(cols))
+			copy(resultProperties[i], cols)
+		}
+		leftLen = len(leftProperties.OrderCols)
+	}
+	if rightProperties != nil {
+		for i, cols := range rightProperties.OrderCols {
+			resultProperties[leftLen+i] = make([]*expression.Column, len(cols))
+			copy(resultProperties[leftLen+i], cols)
+		}
+	}
+
+	return &property.PossibleProp{
+		OrderCols:   resultProperties,
+		TiFlashable: tiFlashable,
+	}
 }
 
 // ExhaustPhysicalPlans implements the base.LogicalPlan.<14th> interface.
