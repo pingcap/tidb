@@ -89,7 +89,7 @@ func initializeVariables[T comparable](
 ) error {
 	val, isNull, err := metaGetter()
 	if err != nil {
-		return errors.Annotate(err, "failed to read value from meta store")
+		return errors.Annotatef(err, "failed to read %s value from meta store", varName)
 	}
 	var zero T
 	if isNull || val == zero {
@@ -98,7 +98,9 @@ func initializeVariables[T comparable](
 			zap.String("key", varName),
 			zap.Any("value", defaultVal))
 	} else {
-		logger.Info("loaded value from meta store", zap.Any("value", val))
+		logger.Info("loaded value from meta store",
+			zap.String("key", varName),
+			zap.Any("value", val))
 	}
 	globalVar.Store(&val)
 	return nil
