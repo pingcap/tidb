@@ -3883,6 +3883,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		stmtStats:             stmtstats.CreateStatementStats(),
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
+	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	s.exprctx = sessionexpr.NewExprContext(s)
 	s.pctx = newPlanContextImpl(s)
 	s.tblctx = tblsession.NewMutateContext(s)
