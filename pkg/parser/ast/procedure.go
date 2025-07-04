@@ -46,6 +46,7 @@ var (
 
 	_ ErrNode = &ProcedureErrorCon{}
 	_ ErrNode = &ProcedureErrorVal{}
+	_ ErrNode = &ProcedureErrorState{}
 )
 
 // procedure param type.
