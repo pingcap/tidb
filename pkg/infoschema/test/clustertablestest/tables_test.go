@@ -647,8 +647,9 @@ func TestSystemSchemaID(t *testing.T) {
 	_, dom := testkit.CreateMockStoreAndDomain(t)
 
 	uniqueIDMap := make(map[int64]string)
-	// [5000, 10000) of information_schema is reserved for PingKaiDB. Because in TiDB
-	// there's no PingKaiDB tables, we limit the check range to [1, 5000) for information_schema.
+	// [5000, 10000) of information_schema is reserved for PingKaiDB. See
+	// PingKaiTablesBaseID. Because in TiDB codebase there's no PingKaiDB tables, we
+	// limit the check range to [1, 5000) for information_schema.
 	checkSystemSchemaTableID(t, dom, "information_schema", autoid.InformationSchemaDBID, 1, 5000, uniqueIDMap)
 	checkSystemSchemaTableID(t, dom, "performance_schema", autoid.PerformanceSchemaDBID, 10000, 20000, uniqueIDMap)
 	checkSystemSchemaTableID(t, dom, "metrics_schema", autoid.MetricSchemaDBID, 20000, 30000, uniqueIDMap)
