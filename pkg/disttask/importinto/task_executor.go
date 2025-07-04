@@ -169,6 +169,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 			return errors.Trace(err)
 		}
 	}
+
 	var dataEngine, indexEngine *backend.OpenedEngine
 	if s.tableImporter.IsLocalSort() {
 		dataEngine, err = s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
