@@ -1171,7 +1171,7 @@ import (
 	DatabaseOption                         "CREATE Database specification"
 	DatabaseOptionList                     "CREATE Database specification list"
 	DatabaseOptionListOpt                  "CREATE Database specification list opt"
-	DatabaseReadOnlyOpt				       "Database read only option"
+	DatabaseReadOnlyOpt                    "Database read only option"
 	DistinctOpt                            "Explicit distinct option"
 	DefaultFalseDistinctOpt                "Distinct option which defaults to false"
 	DefaultTrueDistinctOpt                 "Distinct option which defaults to true"
@@ -4460,10 +4460,10 @@ AlterDatabaseStmt:
 
 AlterDatabaseOptionList:
 	DatabaseOptionList
-|   "READ" "ONLY" EqOpt DatabaseReadOnlyOpt
+|	"READ" "ONLY" EqOpt DatabaseReadOnlyOpt
 	{
 		$$ = []*ast.DatabaseOption{{
-			Tp:        ast.DatabaseOptionReadOnly,
+			Tp:    ast.DatabaseOptionReadOnly,
 			Value: $4.(string),
 		}}
 	}
@@ -4473,7 +4473,7 @@ DatabaseReadOnlyOpt:
 	{
 		$$ = "DEFAULT"
 	}
-|   NUM
+|	NUM
 	{
 		switch getUint64FromNUM($1) {
 		case 0:
