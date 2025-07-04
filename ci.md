@@ -27,3 +27,4 @@ The CI pipeline will automatically trigger when you submit a PR or push new comm
 | pull-sqllogic-test              | `/test pull-sqllogic-test`              | SQL logic tests in PingCAP-QE/tidb-test                      | No           |
 | pull-tiflash-test               | `/test pull-tiflash-test`               | TiFlash tests in pingcap/tiflash `tests/docker/`             | No           |
 
+<!-- test -->
