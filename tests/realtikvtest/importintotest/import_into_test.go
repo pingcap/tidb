@@ -24,7 +24,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"testing"
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
@@ -45,13 +44,11 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -1361,7 +1358,7 @@ func (s *mockGCSSuite) TestTableMode() {
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenResetTableMode")
 
 	// Test import into post process will alter table mode to Normal.
-	var wg sync.WaitGroup
+	wg := sync.WaitGroup{}
 	wg.Add(2)
 	go func() {
 		defer func() {
@@ -1373,15 +1370,16 @@ func (s *mockGCSSuite) TestTableMode() {
 	}()
 	go func() {
 		defer wg.Done()
+		tk2 := testkit.NewTestKit(s.T(), s.store)
 		require.Eventually(s.T(), func() bool {
-			err := s.tk.QueryToErr("SELECT * FROM import_into.table_mode;")
+			err := tk2.QueryToErr("SELECT * FROM import_into.table_mode;")
 			if err != nil {
 				require.ErrorContains(s.T(), err, "Table table_mode is in mode Import")
 				return false
 			}
 			return true
 		}, 10*time.Second, 100*time.Millisecond)
-		s.tk.EventuallyMustQueryAndCheck("SELECT * FROM import_into.table_mode;", nil, testkit.Rows("1 1", "2 2"), 5*time.Second, 100*time.Millisecond)
+		tk2.EventuallyMustQueryAndCheck("SELECT * FROM import_into.table_mode;", nil, testkit.Rows("1 1", "2 2"), 5*time.Second, 100*time.Millisecond)
 	}()
 	wg.Wait()
 
@@ -1397,15 +1395,4 @@ func (s *mockGCSSuite) TestTableMode() {
 	)
 	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{"1 1", "2 2"}...))
-}
-
-func addRepairTable(t *testing.T, tk *testkit.TestKit, dbName, tblName string) {
-	domainutil.RepairInfo.SetRepairMode(true)
-	domainutil.RepairInfo.SetRepairTableList([]string{dbName + "." + tblName})
-	is := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
-	dbInfo, ok := is.SchemaByName(ast.NewCIStr(dbName))
-	require.True(t, ok)
-	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tblName))
-	require.Nil(t, err)
-	domainutil.RepairInfo.CheckAndFetchRepairedTable(dbInfo, tblInfo.Meta())
 }

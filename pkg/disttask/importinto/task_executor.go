@@ -111,6 +111,23 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 	}
 	s.tableImporter = tableImporter
 
+	taskManager, err := disttaskStorage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(s.store, se, s.tableImporter.Table)
+		if err2 != nil {
+			return err2
+		}
+		if !isEmpty {
+			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table is not empty")
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
 	// we need this sub context since Cleanup which wait on this routine is called
 	// before parent context is canceled in normal flow.
 	s.importCtx, s.importCancel = context.WithCancel(ctx)
@@ -130,23 +147,6 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 		zap.String("per-index-buf-limit", units.BytesSize(float64(s.perIndexKVMemSizePerCon))),
 		zap.String("data-buf-block-size", units.BytesSize(float64(s.dataBlockSize))),
 		zap.String("index-buf-block-size", units.BytesSize(float64(s.indexBlockSize))))
-
-	taskManager, err := disttaskStorage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(s.store, se, s.tableImporter.Table)
-		if err2 != nil {
-			return err2
-		}
-		if !isEmpty {
-			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table is not empty")
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
 	return nil
 }
 
