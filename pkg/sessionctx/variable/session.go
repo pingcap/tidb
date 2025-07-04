@@ -2290,6 +2290,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		CostModelVersion:              vardef.DefTiDBCostModelVer,
 		OptimizerEnableNAAJ:           vardef.DefTiDBEnableNAAJ,
 		OptOrderingIdxSelRatio:        vardef.DefTiDBOptOrderingIdxSelRatio,
+		ReplicaClosestReadThreshold:   vardef.DefAdaptiveClosestReadThreshold,
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
@@ -2434,6 +2435,25 @@ func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 // SetReplicaRead set SessionVars.replicaRead.
 func (s *SessionVars) SetReplicaRead(val kv.ReplicaReadType) {
 	s.replicaRead = val
+}
+
+// SetReplicaReadByString sets the replica read type based on the string value.
+func (s *SessionVars) SetReplicaReadByString(val string) {
+	if strings.EqualFold(val, "follower") {
+		s.SetReplicaRead(kv.ReplicaReadFollower)
+	} else if strings.EqualFold(val, "leader-and-follower") {
+		s.SetReplicaRead(kv.ReplicaReadMixed)
+	} else if strings.EqualFold(val, "leader") || len(val) == 0 {
+		s.SetReplicaRead(kv.ReplicaReadLeader)
+	} else if strings.EqualFold(val, "closest-replicas") {
+		s.SetReplicaRead(kv.ReplicaReadClosest)
+	} else if strings.EqualFold(val, "closest-adaptive") {
+		s.SetReplicaRead(kv.ReplicaReadClosestAdaptive)
+	} else if strings.EqualFold(val, "learner") {
+		s.SetReplicaRead(kv.ReplicaReadLearner)
+	} else if strings.EqualFold(val, "prefer-leader") {
+		s.SetReplicaRead(kv.ReplicaReadPreferLeader)
+	}
 }
 
 // IsReplicaReadClosestAdaptive returns whether adaptive closest replica can be enabled.

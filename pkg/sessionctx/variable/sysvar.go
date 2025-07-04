@@ -2433,21 +2433,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBReplicaRead, Value: "leader", Type: vardef.TypeEnum, PossibleValues: []string{"leader", "prefer-leader", "follower", "leader-and-follower", "closest-replicas", "closest-adaptive", "learner"}, SetSession: func(s *SessionVars, val string) error {
-		if strings.EqualFold(val, "follower") {
-			s.SetReplicaRead(kv.ReplicaReadFollower)
-		} else if strings.EqualFold(val, "leader-and-follower") {
-			s.SetReplicaRead(kv.ReplicaReadMixed)
-		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
-			s.SetReplicaRead(kv.ReplicaReadLeader)
-		} else if strings.EqualFold(val, "closest-replicas") {
-			s.SetReplicaRead(kv.ReplicaReadClosest)
-		} else if strings.EqualFold(val, "closest-adaptive") {
-			s.SetReplicaRead(kv.ReplicaReadClosestAdaptive)
-		} else if strings.EqualFold(val, "learner") {
-			s.SetReplicaRead(kv.ReplicaReadLearner)
-		} else if strings.EqualFold(val, "prefer-leader") {
-			s.SetReplicaRead(kv.ReplicaReadPreferLeader)
-		}
+		s.SetReplicaReadByString(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBAdaptiveClosestReadThreshold, Value: strconv.Itoa(vardef.DefAdaptiveClosestReadThreshold), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {

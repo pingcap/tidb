@@ -504,6 +504,15 @@ func IsFastPlan(p base.Plan) bool {
 	return false
 }
 
+func syncInternalSystemVariable(sctx *variable.SessionVars) {
+	if sctx.GetSessionVars().InRestrictedSQL {
+		val, _ := sctx.GetSessionVars().GetSystemVar(vardef.TiDBReplicaRead)
+		sctx.GetSessionVars().SetReplicaReadByString(val)
+		val, _ = sctx.GetSessionVars().GetSystemVar(vardef.TiDBAdaptiveClosestReadThreshold)
+		sctx.GetSessionVars().ReplicaClosestReadThreshold = variable.TidbOptInt64(val, vardef.DefAdaptiveClosestReadThreshold)
+	}
+}
+
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function. If the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
@@ -562,6 +571,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	})
 	sctx := a.Ctx
 	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
+	syncInternalSystemVariable(sctx.GetSessionVars())
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBBuildStatsConcurrency)
 		if !ok {
@@ -1275,6 +1285,7 @@ func (a *ExecStmt) buildExecutor() (exec.Executor, error) {
 			stmtCtx.Priority = kv.PriorityLow
 		}
 	}
+	syncInternalSystemVariable(ctx.GetSessionVars())
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
