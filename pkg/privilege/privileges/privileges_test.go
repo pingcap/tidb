@@ -48,7 +48,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	semv1 "github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/stretchr/testify/require"
 )
@@ -224,6 +225,11 @@ func TestDropTablePrivileges(t *testing.T) {
 }
 
 func TestAlterUserStmt(t *testing.T) {
+	testAlterUserStmt(t, sem.V1)
+	testAlterUserStmt(t, sem.V2)
+}
+
+func testAlterUserStmt(t *testing.T, semVer string) {
 	store := createStoreAndPrepareDB(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -237,8 +243,7 @@ func TestAlterUserStmt(t *testing.T) {
 	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* TO semuser1, semuser2, semuser3")
 	tk.MustExec("GRANT SYSTEM_USER ON *.* to semuser3") // user is both restricted + has SYSTEM_USER (or super)
 
-	sem.Enable()
-	defer sem.Disable()
+	defer sem.SwitchToSEMForTest(t, semVer)()
 
 	// When SEM is enabled, even though we have UPDATE privilege on mysql.user, it explicitly
 	// denies writeable privileges to system schemas unless RESTRICTED_TABLES_ADMIN is granted.
@@ -1161,6 +1166,11 @@ func TestDynamicGrantOption(t *testing.T) {
 }
 
 func TestSecurityEnhancedModeRestrictedTables(t *testing.T) {
+	testSecurityEnhancedModeRestrictedTables(t, sem.V1)
+	testSecurityEnhancedModeRestrictedTables(t, sem.V2)
+}
+
+func testSecurityEnhancedModeRestrictedTables(t *testing.T, semVer string) {
 	store := createStoreAndPrepareDB(t)
 
 	// This provides an integration test of the tests in util/security/security_test.go
@@ -1174,8 +1184,7 @@ func TestSecurityEnhancedModeRestrictedTables(t *testing.T) {
 	urootTk := testkit.NewTestKit(t, store)
 	require.NoError(t, urootTk.Session().Auth(&auth.UserIdentity{Username: "uroot", Hostname: "%"}, nil, nil, nil))
 
-	sem.Enable()
-	defer sem.Disable()
+	defer sem.SwitchToSEMForTest(t, semVer)()
 
 	err := urootTk.ExecToErr("use metrics_schema")
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'uroot'@'%' to database 'metrics_schema'")
@@ -1203,8 +1212,8 @@ func TestSecurityEnhancedModeInfoschema(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil, nil)
 
-	sem.Enable()
-	defer sem.Disable()
+	semv1.Enable()
+	defer semv1.Disable()
 
 	// Even though we have super, we still can't read protected information from tidb_servers_info, cluster_* tables
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NOT NULL`).Check(testkit.Rows("0"))
@@ -1242,8 +1251,8 @@ func TestSecurityEnhancedLocalBackupRestore(t *testing.T) {
 	_, err = tk.Session().ExecuteInternal(ctx, "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
 	require.EqualError(t, err, "RESTORE requires tikv store, not unistore")
 
-	sem.Enable()
-	defer sem.Disable()
+	semv1.Enable()
+	defer semv1.Disable()
 
 	// With SEM enabled nolocal does not have permission, but yeslocal does.
 	_, err = tk.Session().ExecuteInternal(ctx, "BACKUP DATABASE * TO 'local:///tmp/test';")
@@ -1266,6 +1275,11 @@ func TestSecurityEnhancedLocalBackupRestore(t *testing.T) {
 }
 
 func TestSecurityEnhancedModeSysVars(t *testing.T) {
+	testSecurityEnhancedModeSysVars(t, sem.V1)
+	testSecurityEnhancedModeSysVars(t, sem.V2)
+}
+
+func testSecurityEnhancedModeSysVars(t *testing.T, semVer string) {
 	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -1275,8 +1289,8 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk.MustExec("GRANT SUPER, RESTRICTED_VARIABLES_ADMIN ON *.* to svroot2")
 	tk.MustExec("GRANT SELECT ON performance_schema.* to svroot2")
 
-	sem.Enable()
-	defer sem.Disable()
+	cleanup := sem.SwitchToSEMForTest(t, semVer)
+	defer cleanup()
 
 	// svroot1 has SUPER but in SEM will be restricted
 	tk.Session().Auth(&auth.UserIdentity{
@@ -1335,7 +1349,7 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("1"))
 
 	tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(vardef.DefHostname))
-	sem.Disable()
+	cleanup()
 	if hostname, err := os.Hostname(); err == nil {
 		tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(hostname))
 	}
@@ -1372,6 +1386,11 @@ func TestViewDefiner(t *testing.T) {
 }
 
 func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
+	testSecurityEnhancedModeRestrictedUsers(t, sem.V1)
+	testSecurityEnhancedModeRestrictedUsers(t, sem.V2)
+}
+
+func testSecurityEnhancedModeRestrictedUsers(t *testing.T, semVer string) {
 	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -1382,8 +1401,7 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* to ruroot3")
 	tk.MustExec("GRANT notimportant TO ruroot2, ruroot3")
 
-	sem.Enable()
-	defer sem.Disable()
+	defer sem.SwitchToSEMForTest(t, semVer)()
 
 	stmts := []string{
 		"SET PASSWORD for ruroot3 = 'newpassword'",
