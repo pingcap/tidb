@@ -715,7 +715,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.InitBackupMeta(c, backupMeta, u, reader); err != nil {
+	if err = client.InitBackupMeta(c, backupMeta, u, reader, cfg.LoadStats); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1021,6 +1021,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	var finish <-chan struct{}
 	postHandleCh := afterTableRestoredCh
 
+<<<<<<< HEAD
 	// pipeline checksum and load stats
 	if cfg.Checksum && !client.IsIncremental() {
 		afterTableCheckesumedCh := client.GoValidateChecksum(
@@ -1028,6 +1029,16 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		afterTableLoadStatsCh := client.GoUpdateMetaAndLoadStats(ctx, afterTableCheckesumedCh, errCh)
 		postHandleCh = afterTableLoadStatsCh
 	}
+=======
+	// pipeline checksum
+	if cfg.Checksum {
+		postHandleCh = client.GoValidateChecksum(
+			ctx, postHandleCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
+	}
+
+	// pipeline update meta and load stats
+	postHandleCh = client.GoUpdateMetaAndLoadStats(ctx, s, &cfg.CipherInfo, postHandleCh, errCh, cfg.StatsConcurrency, cfg.LoadStats)
+>>>>>>> cbd41115f32 (br: skip loading stats into memory if set `--load-stats` to false (#51535))
 
 	// pipeline wait Tiflash synced
 	if cfg.WaitTiflashReady {

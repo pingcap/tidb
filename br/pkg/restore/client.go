@@ -533,9 +533,14 @@ func (rc *Client) InitBackupMeta(
 	c context.Context,
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
-	reader *metautil.MetaReader) error {
+	reader *metautil.MetaReader,
+	loadStats bool) error {
 	if rc.needLoadSchemas(backupMeta) {
+<<<<<<< HEAD
 		databases, err := utils.LoadBackupTables(c, reader)
+=======
+		databases, err := metautil.LoadBackupTables(c, reader, loadStats)
+>>>>>>> cbd41115f32 (br: skip loading stats into memory if set `--load-stats` to false (#51535))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1787,47 +1792,72 @@ func (rc *Client) execAndValidateChecksum(
 	return nil
 }
 
+<<<<<<< HEAD
 func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<- error) chan *CreatedTable {
 	log.Info("Start to update meta then load stats")
 	outCh := DefaultOutputTableChan()
 	workers := utils.NewWorkerPool(16, "UpdateStats")
 	// The rc.db is not thread safe
 	var updateMetaLock sync.Mutex
+=======
+func (rc *Client) GoUpdateMetaAndLoadStats(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	cipher *backuppb.CipherInfo,
+	inCh <-chan *CreatedTable,
+	errCh chan<- error,
+	statsConcurrency uint,
+	loadStats bool,
+) chan *CreatedTable {
+	log.Info("Start to update meta then load stats")
+	outCh := DefaultOutputTableChan()
+	workers := utils.NewWorkerPool(statsConcurrency, "UpdateStats")
+>>>>>>> cbd41115f32 (br: skip loading stats into memory if set `--load-stats` to false (#51535))
 
 	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
 		oldTable := tbl.OldTable
-		// Not need to return err when failed because of update analysis-meta
-		restoreTS, err := rc.GetTSWithRetry(ctx)
-		if err != nil {
-			log.Error("getTS failed", zap.Error(err))
-		} else {
-			updateMetaLock.Lock()
-
-			log.Info("start update metas",
-				zap.Stringer("table", oldTable.Info.Name),
-				zap.Stringer("db", oldTable.DB.Name))
-			err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, oldTable.TotalKvs)
-			if err != nil {
-				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
-			}
-
-			updateMetaLock.Unlock()
-		}
-
-		if oldTable.Stats != nil {
+		var statsErr error = nil
+		if loadStats && oldTable.Stats != nil {
 			log.Info("start loads analyze after validate checksum",
 				zap.Int64("old id", oldTable.Info.ID),
 				zap.Int64("new id", tbl.Table.ID),
 			)
 			start := time.Now()
 			// NOTICE: skip updating cache after load stats from json
-			if err := rc.statsHandler.LoadStatsFromJSONNoUpdate(ctx, rc.dom.InfoSchema(), oldTable.Stats, 0); err != nil {
-				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(err))
+			if statsErr = rc.statsHandler.LoadStatsFromJSONNoUpdate(ctx, rc.dom.InfoSchema(), oldTable.Stats, 0); statsErr != nil {
+				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(statsErr))
 			}
 			log.Info("restore stat done",
 				zap.Stringer("table", oldTable.Info.Name),
 				zap.Stringer("db", oldTable.DB.Name),
 				zap.Duration("cost", time.Since(start)))
+<<<<<<< HEAD
+=======
+		} else if loadStats && len(oldTable.StatsFileIndexes) > 0 {
+			log.Info("start to load statistic data for each partition",
+				zap.Int64("old id", oldTable.Info.ID),
+				zap.Int64("new id", tbl.Table.ID),
+			)
+			start := time.Now()
+			rewriteIDMap := getTableIDMap(tbl.Table, tbl.OldTable.Info)
+			if statsErr = metautil.RestoreStats(ctx, s, cipher, rc.statsHandler, tbl.Table, oldTable.StatsFileIndexes, rewriteIDMap); statsErr != nil {
+				log.Error("analyze table failed", zap.Any("table", oldTable.StatsFileIndexes), zap.Error(statsErr))
+			}
+			log.Info("restore statistic data done",
+				zap.Stringer("table", oldTable.Info.Name),
+				zap.Stringer("db", oldTable.DB.Name),
+				zap.Duration("cost", time.Since(start)))
+>>>>>>> cbd41115f32 (br: skip loading stats into memory if set `--load-stats` to false (#51535))
+		}
+
+		if statsErr != nil || !loadStats || (oldTable.Stats == nil && len(oldTable.StatsFileIndexes) == 0) {
+			// Not need to return err when failed because of update analysis-meta
+			log.Info("start update metas", zap.Stringer("table", oldTable.Info.Name), zap.Stringer("db", oldTable.DB.Name))
+			// the total kvs contains the index kvs, but the stats meta needs the count of rows
+			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
+			if statsErr = rc.statsHandler.SaveMetaToStorage(tbl.Table.ID, count, 0, "br restore"); statsErr != nil {
+				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(statsErr))
+			}
 		}
 		return nil
 	}, func() {
@@ -2710,7 +2740,11 @@ func initFullBackupTables(
 	// read full backup databases to get map[table]table.Info
 	reader := metautil.NewMetaReader(backupMeta, s, nil)
 
+<<<<<<< HEAD
 	databases, err := utils.LoadBackupTables(ctx, reader)
+=======
+	databases, err := metautil.LoadBackupTables(ctx, reader, false)
+>>>>>>> cbd41115f32 (br: skip loading stats into memory if set `--load-stats` to false (#51535))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
