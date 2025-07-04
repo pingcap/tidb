@@ -15,57 +15,61 @@
 package operator
 
 import (
+	"context"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 )
 
-func TestPipelineAsyncMultiOperators(t *testing.T) {
+func TestPipelineAsyncMultiOperatorsWithoutError(t *testing.T) {
 	words := `Bob hiT a ball, the hIt BALL flew far after it was hit.`
-	var mostCommonWord stringTask
-	splitter := makeSplitter(words)
-	lower := makeLower()
-	trimmer := makeTrimmer()
-	counter := makeCounter()
-	collector := makeCollector(&mostCommonWord)
+	splitted := strings.Split(words, " ")
 
-	Compose[stringTask](splitter, lower)
-	Compose[stringTask](lower, trimmer)
-	Compose[stringTask](trimmer, counter)
-	Compose[strCnt](counter, collector)
+	tasks := make([]stringTask, len(splitted))
+	for i, word := range splitted {
+		tasks[i] = stringTask(word)
+	}
 
-	pipeline := NewAsyncPipeline(splitter, lower, trimmer, counter, collector)
-	require.Equal(
-		t,
-		"AsyncPipeline[simpleSource -> simpleOperator(AsyncOp[operator.stringTask, operator.stringTask]) -> simpleOperator(AsyncOp[operator.stringTask, operator.stringTask]) -> simpleOperator(AsyncOp[operator.stringTask, operator.strCnt]) -> simpleSink]",
-		pipeline.String(),
-	)
-	err := pipeline.Execute()
-	require.NoError(t, err)
-	err = pipeline.Close()
-	require.NoError(t, err)
-	require.EqualValues(t, mostCommonWord, "hit")
+	for _, mockError := range []bool{false, true} {
+		opCtx, _ := NewContext(context.Background())
+
+		var mostCommonWord stringTask
+		source := NewSimpleDataSource(opCtx, tasks)
+		lower := makeLower(opCtx)
+		trimmer := makeTrimmer(opCtx)
+		counter := makeCounter(opCtx, mockError)
+		collector := makeCollector(opCtx, &mostCommonWord)
+
+		Compose[stringTask](source, lower)
+		Compose[stringTask](lower, trimmer)
+		Compose[stringTask](trimmer, counter)
+		Compose[strCnt](counter, collector)
+
+		pipeline := NewAsyncPipeline(source, lower, trimmer, counter, collector)
+		require.Equal(
+			t,
+			"AsyncPipeline[SimpleDataSource[operator.stringTask] -> simpleOperator(AsyncOp[operator.stringTask, operator.stringTask]) -> simpleOperator(AsyncOp[operator.stringTask, operator.stringTask]) -> simpleOperator(AsyncOp[operator.stringTask, operator.strCnt]) -> simpleSink]",
+			pipeline.String(),
+		)
+		err := pipeline.Execute()
+		require.NoError(t, err)
+		err = pipeline.Close()
+		if mockError {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			require.EqualValues(t, mostCommonWord, "hit")
+		}
+	}
 }
 
 type strCnt struct {
 	str stringTask
 	cnt int
-}
-
-func makeSplitter(s string) *simpleSource[stringTask] {
-	ss := strings.Split(s, " ")
-	src := newSimpleSource(func() stringTask {
-		if len(ss) == 0 {
-			return ""
-		}
-		ret := ss[0]
-		ss = ss[1:]
-		return stringTask(ret)
-	})
-	return src
 }
 
 type stringTask string
@@ -74,40 +78,51 @@ func (stringTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn
 	return "", "", nil, false
 }
 
-func makeLower() *simpleOperator[stringTask, stringTask] {
-	return newSimpleOperator(func(task stringTask) stringTask {
-		return stringTask(strings.ToLower(string(task)))
-	}, 3)
+func makeLower(ctx *Context) *simpleOperator[stringTask, stringTask] {
+	return newSimpleOperator(
+		ctx,
+		func(task stringTask) stringTask {
+			return stringTask(strings.ToLower(string(task)))
+		}, 3)
 }
 
-func makeTrimmer() *simpleOperator[stringTask, stringTask] {
+func makeTrimmer(ctx *Context) *simpleOperator[stringTask, stringTask] {
 	var nonAlphaRegex = regexp.MustCompile(`[^a-zA-Z0-9]+`)
-	return newSimpleOperator(func(s stringTask) stringTask {
-		return stringTask(nonAlphaRegex.ReplaceAllString(string(s), ""))
-	}, 3)
+	return newSimpleOperator(
+		ctx,
+		func(s stringTask) stringTask {
+			return stringTask(nonAlphaRegex.ReplaceAllString(string(s), ""))
+		}, 3)
 }
 
-func makeCounter() *simpleOperator[stringTask, strCnt] {
+func makeCounter(ctx *Context, mockError bool) *simpleOperator[stringTask, strCnt] {
 	strCntMap := make(map[stringTask]int)
 	strCntMapMu := sync.Mutex{}
-	return newSimpleOperator(func(s stringTask) strCnt {
-		strCntMapMu.Lock()
-		old := strCntMap[s]
-		strCntMap[s] = old + 1
-		strCntMapMu.Unlock()
-		return strCnt{s, old + 1}
-	}, 3)
+	return newSimpleOperator(
+		ctx,
+		func(s stringTask) strCnt {
+			strCntMapMu.Lock()
+			old := strCntMap[s]
+			strCntMap[s] = old + 1
+			strCntMapMu.Unlock()
+			if mockError {
+				ctx.OnError(errors.Errorf("mock error for testing"))
+			}
+			return strCnt{s, old + 1}
+		}, 3)
 }
 
-func makeCollector(v *stringTask) *simpleSink[strCnt] {
+func makeCollector(ctx *Context, v *stringTask) *simpleSink[strCnt] {
 	maxCnt := 0
 	maxMu := sync.Mutex{}
-	return newSimpleSink(func(sc strCnt) {
-		maxMu.Lock()
-		if sc.cnt > maxCnt {
-			maxCnt = sc.cnt
-			*v = sc.str
-		}
-		maxMu.Unlock()
-	})
+	return newSimpleSink(
+		ctx,
+		func(sc strCnt) {
+			maxMu.Lock()
+			if sc.cnt > maxCnt {
+				maxCnt = sc.cnt
+				*v = sc.str
+			}
+			maxMu.Unlock()
+		})
 }

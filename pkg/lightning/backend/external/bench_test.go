@@ -26,6 +26,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
@@ -496,10 +497,11 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		s.beforeMerge()
 	}
 
+	opCtx, _ := operator.NewContext(ctx)
+
 	now := time.Now()
-	err = MergeOverlappingFiles(
-		ctx,
-		datas,
+	op := NewMergeOperator(
+		opCtx,
 		s.store,
 		int64(5*size.MB),
 		mergeOutput,
@@ -508,6 +510,13 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		s.concurrency,
 		s.mergeIterHotspot,
 		engineapi.OnDuplicateKeyIgnore,
+	)
+
+	err = MergeOverlappingFiles(
+		opCtx,
+		datas,
+		s.concurrency,
+		op,
 	)
 
 	intest.AssertNoError(err)

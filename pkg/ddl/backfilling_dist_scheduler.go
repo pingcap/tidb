@@ -594,6 +594,11 @@ func generateMergePlan(
 			break
 		}
 	}
+
+	failpoint.Inject("forceMergeSort", func() {
+		allSkip = false
+	})
+
 	if allSkip {
 		logger.Info("skip merge sort")
 		return nil, nil

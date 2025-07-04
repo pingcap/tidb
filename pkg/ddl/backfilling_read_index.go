@@ -120,7 +120,7 @@ func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 
 func (r *readIndexStepExecutor) runGlobalPipeline(
 	ctx context.Context,
-	opCtx *OperatorCtx,
+	opCtx *operator.Context,
 	subtask *proto.Subtask,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
@@ -143,7 +143,7 @@ func (r *readIndexStepExecutor) runGlobalPipeline(
 
 func (r *readIndexStepExecutor) runLocalPipeline(
 	ctx context.Context,
-	opCtx *OperatorCtx,
+	opCtx *operator.Context,
 	subtask *proto.Subtask,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
@@ -333,7 +333,7 @@ func (r *readIndexStepExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 }
 
 func (r *readIndexStepExecutor) buildLocalStorePipeline(
-	opCtx *OperatorCtx,
+	opCtx *operator.Context,
 	backendCtx ingest.BackendCtx,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
@@ -381,7 +381,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 }
 
 func (r *readIndexStepExecutor) buildExternalStorePipeline(
-	opCtx *OperatorCtx,
+	opCtx *operator.Context,
 	taskID int64,
 	subtaskID int64,
 	sm *BackfillSubTaskMeta,

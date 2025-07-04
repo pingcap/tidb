@@ -368,17 +368,32 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if sm.KVGroup != dataKVGroup {
 		partSize = m.indexKVPartSize
 	}
-	err = external.MergeOverlappingFiles(
-		logutil.WithFields(ctx, zap.String("kv-group", sm.KVGroup), zap.Int64("subtask-id", subtask.ID)),
-		sm.DataFiles,
+
+	concurrency := int(m.GetResource().CPU.Capacity())
+
+	opCtx, _ := operator.NewContext(ctx)
+
+	op := external.NewMergeOperator(
+		opCtx,
 		m.sortStore,
 		partSize,
 		prefix,
 		external.DefaultOneWriterBlockSize,
 		onClose,
-		int(m.GetResource().CPU.Capacity()),
+		concurrency,
 		false,
-		engineapi.OnDuplicateKeyIgnore)
+		engineapi.OnDuplicateKeyIgnore,
+	)
+
+	if err = external.MergeOverlappingFiles(
+		opCtx,
+		sm.DataFiles,
+		concurrency,
+		op,
+	); err != nil {
+		return errors.Trace(err)
+	}
+
 	logger.Info(
 		"merge sort finished",
 		zap.Uint64("total-kv-size", m.subtaskSortedKVMeta.TotalKVSize),
@@ -386,9 +401,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		brlogutil.Key("start-key", m.subtaskSortedKVMeta.StartKey),
 		brlogutil.Key("end-key", m.subtaskSortedKVMeta.EndKey),
 	)
-	if err != nil {
-		return errors.Trace(err)
-	}
+
 	return m.onFinished(ctx, subtask)
 }
 

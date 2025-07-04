@@ -25,6 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -170,10 +171,12 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	})
 	defaultReadBufferSize = 100
 	defaultOneWriterMemSizeLimit = uint64(mergeMemSize)
+
+	opCtx, _ := operator.NewContext(ctx)
+
 	for _, group := range dataGroup {
-		require.NoError(t, MergeOverlappingFiles(
-			ctx,
-			group,
+		op := NewMergeOperator(
+			opCtx,
 			memStore,
 			int64(5*size.MB),
 			"/test2",
@@ -182,6 +185,13 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			1,
 			true,
 			engineapi.OnDuplicateKeyIgnore,
+		)
+
+		require.NoError(t, MergeOverlappingFiles(
+			opCtx,
+			group,
+			1,
+			op,
 		))
 	}
 
