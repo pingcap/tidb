@@ -27,8 +27,8 @@ import (
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -39,49 +39,49 @@ func TestTxnUsageInfo(t *testing.T) {
 
 	t.Run("Used", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
-		tk.MustExec(fmt.Sprintf("set global %s = 0", vardef.TiDBEnableAsyncCommit))
-		tk.MustExec(fmt.Sprintf("set global %s = 0", vardef.TiDBEnable1PC))
+		tk.MustExec(fmt.Sprintf("set global %s = 0", variable.TiDBEnableAsyncCommit))
+		tk.MustExec(fmt.Sprintf("set global %s = 0", variable.TiDBEnable1PC))
 
 		txnUsage := telemetry.GetTxnUsageInfo(tk.Session())
 		require.False(t, txnUsage.AsyncCommitUsed)
 		require.False(t, txnUsage.OnePCUsed)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 1", vardef.TiDBEnableAsyncCommit))
-		tk.MustExec(fmt.Sprintf("set global %s = 1", vardef.TiDBEnable1PC))
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBEnableAsyncCommit))
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBEnable1PC))
 
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.AsyncCommitUsed)
 		require.True(t, txnUsage.OnePCUsed)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 0", vardef.TiDBEnableMutationChecker))
-		tk.MustExec(fmt.Sprintf("set global %s = off", vardef.TiDBTxnAssertionLevel))
+		tk.MustExec(fmt.Sprintf("set global %s = 0", variable.TiDBEnableMutationChecker))
+		tk.MustExec(fmt.Sprintf("set global %s = off", variable.TiDBTxnAssertionLevel))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.False(t, txnUsage.MutationCheckerUsed)
 		require.Equal(t, "OFF", txnUsage.AssertionLevel)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 1", vardef.TiDBEnableMutationChecker))
-		tk.MustExec(fmt.Sprintf("set global %s = strict", vardef.TiDBTxnAssertionLevel))
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBEnableMutationChecker))
+		tk.MustExec(fmt.Sprintf("set global %s = strict", variable.TiDBTxnAssertionLevel))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.MutationCheckerUsed)
 		require.Equal(t, "STRICT", txnUsage.AssertionLevel)
 
-		tk.MustExec(fmt.Sprintf("set global %s = fast", vardef.TiDBTxnAssertionLevel))
+		tk.MustExec(fmt.Sprintf("set global %s = fast", variable.TiDBTxnAssertionLevel))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.Equal(t, "FAST", txnUsage.AssertionLevel)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 1", vardef.TiDBRCReadCheckTS))
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBRCReadCheckTS))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.RcCheckTS)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 1", vardef.TiDBRCWriteCheckTs))
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBRCWriteCheckTs))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.RCWriteCheckTS)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 0", vardef.TiDBPessimisticTransactionFairLocking))
+		tk.MustExec(fmt.Sprintf("set global %s = 0", variable.TiDBPessimisticTransactionFairLocking))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.False(t, txnUsage.FairLocking)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 1", vardef.TiDBPessimisticTransactionFairLocking))
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBPessimisticTransactionFairLocking))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.FairLocking)
 	})
@@ -91,12 +91,12 @@ func TestTxnUsageInfo(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists txn_usage_info")
 		tk.MustExec("create table txn_usage_info (a int)")
-		tk.MustExec(fmt.Sprintf("set %s = 1", vardef.TiDBEnableAsyncCommit))
-		tk.MustExec(fmt.Sprintf("set %s = 1", vardef.TiDBEnable1PC))
+		tk.MustExec(fmt.Sprintf("set %s = 1", variable.TiDBEnableAsyncCommit))
+		tk.MustExec(fmt.Sprintf("set %s = 1", variable.TiDBEnable1PC))
 		tk.MustExec("insert into txn_usage_info values (1)")
-		tk.MustExec(fmt.Sprintf("set %s = 0", vardef.TiDBEnable1PC))
+		tk.MustExec(fmt.Sprintf("set %s = 0", variable.TiDBEnable1PC))
 		tk.MustExec("insert into txn_usage_info values (2)")
-		tk.MustExec(fmt.Sprintf("set %s = 0", vardef.TiDBEnableAsyncCommit))
+		tk.MustExec(fmt.Sprintf("set %s = 0", variable.TiDBEnableAsyncCommit))
 		tk.MustExec("insert into txn_usage_info values (3)")
 
 		txnUsage := telemetry.GetTxnUsageInfo(tk.Session())
@@ -463,7 +463,7 @@ func TestPagingUsageInfo(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.True(t, usage.EnablePaging == vardef.DefTiDBEnablePaging)
+	require.True(t, usage.EnablePaging == variable.DefTiDBEnablePaging)
 
 	tk.Session().GetSessionVars().EnablePaging = false
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
@@ -477,7 +477,7 @@ func TestCostModelVer2UsageInfo(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, usage.EnableCostModelVer2, vardef.DefTiDBCostModelVer == 2)
+	require.Equal(t, usage.EnableCostModelVer2, variable.DefTiDBCostModelVer == 2)
 
 	tk.Session().GetSessionVars().CostModelVersion = 2
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
@@ -548,7 +548,7 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
 	require.NoError(t, err)
 
-	allow := vardef.EnableFastReorg.Load()
+	allow := variable.EnableFastReorg.Load()
 	require.Equal(t, true, allow)
 	tk.MustExec("set global tidb_enable_metadata_lock = 0")
 	tk.MustExec("use test")
@@ -563,7 +563,7 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on")
 	tk.MustExec("set global tidb_enable_metadata_lock = 1")
-	allow = vardef.EnableFastReorg.Load()
+	allow = variable.EnableFastReorg.Load()
 	require.Equal(t, true, allow)
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
@@ -581,7 +581,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.True(t, usage.EnableGlobalMemoryControl == (vardef.DefTiDBServerMemoryLimit != "0"))
+	require.True(t, usage.EnableGlobalMemoryControl == (variable.DefTiDBServerMemoryLimit != "0"))
 
 	tk.MustExec("set global tidb_server_memory_limit = 5 << 30")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
@@ -640,7 +640,7 @@ func TestTTLTelemetry(t *testing.T) {
 	tk.MustExec("set @@global.tidb_ttl_job_enable=0")
 
 	getTTLTable := func(name string) *model.TableInfo {
-		tbl, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
+		tbl, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr(name))
 		require.NoError(t, err)
 		require.NotNil(t, tbl.Meta().TTLInfo)
 		return tbl.Meta()

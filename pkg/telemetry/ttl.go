@@ -20,10 +20,11 @@ import (
 	"math"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -107,7 +108,7 @@ func (c *ttlUsageCounter) UpdateTableHistWithDelayTime(tblCnt int, hours int64) 
 
 func getTTLUsageInfo(ctx context.Context, sctx sessionctx.Context) (counter *ttlUsageCounter) {
 	counter = &ttlUsageCounter{
-		TTLJobEnabled: vardef.EnableTTLJob.Load(),
+		TTLJobEnabled: variable.EnableTTLJob.Load(),
 		TTLHistDate:   time.Now().Add(-24 * time.Hour).Format(time.DateOnly),
 		TableHistWithDeleteRows: []*ttlHistItem{
 			{
@@ -145,7 +146,13 @@ func getTTLUsageInfo(ctx context.Context, sctx sessionctx.Context) (counter *ttl
 		},
 	}
 
-	is := sctx.GetLatestInfoSchema()
+	is, ok := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	if !ok {
+		// it should never happen
+		logutil.BgLogger().Error(fmt.Sprintf("GetDomainInfoSchema returns a invalid type: %T", is))
+		return
+	}
+
 	ttlTables := make(map[int64]*model.TableInfo)
 	for _, db := range is.AllSchemas() {
 		tblInfos, err := is.SchemaTableInfos(ctx, db.Name)

@@ -1246,7 +1246,7 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 		b.Ti.PartitionTelemetry.UseTablePartition = true
 
 		switch p.Tp {
-		case ast.PartitionTypeRange:
+		case pmodel.PartitionTypeRange:
 			if p.Sub == nil {
 				if len(p.ColumnNames) > 0 {
 					b.Ti.PartitionTelemetry.UseTablePartitionRangeColumns = true
@@ -1266,11 +1266,11 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 					b.Ti.PartitionTelemetry.UseCreateIntervalPartition = true
 				}
 			}
-		case ast.PartitionTypeHash:
+		case pmodel.PartitionTypeHash:
 			if p.Sub == nil {
 				b.Ti.PartitionTelemetry.UseTablePartitionHash = true
 			}
-		case ast.PartitionTypeList:
+		case pmodel.PartitionTypeList:
 			if p.Sub == nil {
 				if len(p.ColumnNames) > 0 {
 					b.Ti.PartitionTelemetry.UseTablePartitionListColumns = true
