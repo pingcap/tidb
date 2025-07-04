@@ -63,6 +63,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/util"
+	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -709,8 +710,21 @@ type copIterator struct {
 	storeBatchedNum         atomic.Uint64
 	storeBatchedFallbackNum atomic.Uint64
 
+<<<<<<< HEAD
 	runawayChecker  resourcegroup.RunawayChecker
 	unconsumedStats *unconsumedCopRuntimeStats
+=======
+	runawayChecker resourcegroup.RunawayChecker
+	stats          *copIteratorRuntimeStats
+}
+
+type liteCopIteratorWorker struct {
+	// ctx contains some info(such as rpc interceptor(WithSQLKvExecCounterInterceptor)), it is used for handle cop task later.
+	ctx              context.Context
+	worker           *copIteratorWorker
+	batchCopRespList []*copResponse
+	tryCopLiteWorker *atomic2.Uint32
+>>>>>>> de2b7ac0418 (executor: tiny optimize index-lookup query performance by reuse lite-cop-worker. (#58586))
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -846,7 +860,21 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 }
 
 // open starts workers and sender goroutines.
+<<<<<<< HEAD
 func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool) {
+=======
+func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *atomic2.Uint32) {
+	if len(it.tasks) == 1 && tryCopLiteWorker != nil && tryCopLiteWorker.CompareAndSwap(0, 1) {
+		// For a query, only one `copIterator` can use `liteWorker`, otherwise it will affect the performance of multiple cop iterators executed concurrently,
+		// see more detail in TestQueryWithConcurrentSmallCop.
+		it.liteWorker = &liteCopIteratorWorker{
+			ctx:              ctx,
+			worker:           newCopIteratorWorker(it, nil),
+			tryCopLiteWorker: tryCopLiteWorker,
+		}
+		return
+	}
+>>>>>>> de2b7ac0418 (executor: tiny optimize index-lookup query performance by reuse lite-cop-worker. (#58586))
 	taskCh := make(chan *copTask, 1)
 	it.unconsumedStats = &unconsumedCopRuntimeStats{}
 	it.wg.Add(it.concurrency + it.smallTaskConcurrency)
@@ -1122,6 +1150,61 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return resp, nil
 }
 
+<<<<<<< HEAD
+=======
+func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator) (resp *copResponse) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			logutil.Logger(ctx).Error("copIteratorWork meet panic",
+				zap.Any("r", r),
+				zap.Stack("stack trace"))
+			resp = &copResponse{err: util2.GetRecoverError(r)}
+		}
+	}()
+
+	worker := w.worker
+	if len(w.batchCopRespList) > 0 {
+		resp = w.batchCopRespList[0]
+		w.batchCopRespList = w.batchCopRespList[1:]
+		return resp
+	}
+	backoffermap := make(map[uint64]*Backoffer)
+	for len(it.tasks) > 0 {
+		curTask := it.tasks[0]
+		bo := chooseBackoffer(w.ctx, backoffermap, curTask, worker)
+		result, err := worker.handleTaskOnce(bo, curTask)
+		if err != nil {
+			resp = &copResponse{err: errors.Trace(err)}
+			worker.checkRespOOM(resp)
+			return resp
+		}
+
+		if result != nil && len(result.remains) > 0 {
+			it.tasks = append(result.remains, it.tasks[1:]...)
+		} else {
+			it.tasks = it.tasks[1:]
+		}
+		if len(it.tasks) == 0 {
+			// if all tasks are finished, reset tryCopLiteWorker to 0 to make future request can reuse copLiteWorker.
+			w.tryCopLiteWorker.Store(0)
+		}
+		if result != nil {
+			if result.resp != nil {
+				w.batchCopRespList = result.batchRespList
+				return result.resp
+			}
+			if len(result.batchRespList) > 0 {
+				resp = result.batchRespList[0]
+				w.batchCopRespList = result.batchRespList[1:]
+				return resp
+			}
+		}
+	}
+	return nil
+}
+
+>>>>>>> de2b7ac0418 (executor: tiny optimize index-lookup query performance by reuse lite-cop-worker. (#58586))
 // HasUnconsumedCopRuntimeStats indicate whether has unconsumed CopRuntimeStats.
 type HasUnconsumedCopRuntimeStats interface {
 	// CollectUnconsumedCopRuntimeStats returns unconsumed CopRuntimeStats.
