@@ -86,6 +86,7 @@ import (
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	kvstore "github.com/pingcap/tidb/pkg/store"
+	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -1578,6 +1579,40 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 	}, "globalBindHandleWorkerLoop")
 }
 
+// TelemetryLoop create a goroutine that reports usage data in a loop, it should be called only once
+// in BootstrapSession.
+func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
+	ctx.GetSessionVars().InRestrictedSQL = true
+	err := telemetry.InitialRun(ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("Initial telemetry run failed", zap.Error(err))
+	}
+
+	reportTicker := time.NewTicker(telemetry.ReportInterval)
+	subWindowTicker := time.NewTicker(telemetry.SubWindowSize)
+
+	do.wg.Run(func() {
+		defer func() {
+			logutil.BgLogger().Info("TelemetryReportLoop exited.")
+		}()
+		defer util.Recover(metrics.LabelDomain, "TelemetryReportLoop", nil, false)
+
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-reportTicker.C:
+				err := telemetry.ReportUsageData(ctx)
+				if err != nil {
+					logutil.BgLogger().Warn("TelemetryLoop retports usaged data failed", zap.Error(err))
+				}
+			case <-subWindowTicker.C:
+				telemetry.RotateSubWindow()
+			}
+		}
+	}, "TelemetryLoop")
+}
+
 // SetupPlanReplayerHandle setup plan replayer handle
 func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, workersSctxs []sessionctx.Context) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
@@ -2078,6 +2113,13 @@ func (do *Domain) gcStatsWorkerExitPreprocessing() {
 		do.statsOwner.Close()
 		ch <- struct{}{}
 	}()
+	if intest.InTest {
+		// We should wait for statistics owner to close on exit.
+		// Otherwise, the goroutine leak detection may fail.
+		<-ch
+		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
+		return
+	}
 	select {
 	case <-ch:
 		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
@@ -2865,6 +2907,9 @@ func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle,
 
 func init() {
 	initByLDFlagsForGlobalKill()
+	telemetry.GetDomainInfoSchema = func(ctx sessionctx.Context) infoschema.InfoSchema {
+		return GetDomain(ctx).InfoSchema()
+	}
 }
 
 var (
