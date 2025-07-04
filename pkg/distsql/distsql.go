@@ -80,6 +80,7 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 		EnabledRateLimitAction:     enabledRateLimitAction,
 		EventCb:                    eventCb,
 		EnableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load(),
+		TryCopLiteWorker:           &dctx.TryCopLiteWorker,
 	}
 
 	if kvReq.StoreType == kv.TiFlash {
