@@ -61,6 +61,7 @@ go_library(
         "//pkg/util/servicescope",
         "//pkg/util/size",
         "//pkg/util/sqlkiller",
+        "//pkg/util/stmtsummary",
         "//pkg/util/stmtsummary/v2:stmtsummary",
         "//pkg/util/stringutil",
         "//pkg/util/tableutil",
