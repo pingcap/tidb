@@ -57,6 +57,8 @@ type SchemaValidator interface {
 	Reset()
 	// IsStarted indicates whether SchemaValidator is started.
 	IsStarted() bool
+	// IsLeaseExpired checks whether the current lease has expired
+	IsLeaseExpired() bool
 }
 
 type deltaSchemaInfo struct {
@@ -167,6 +169,10 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 		logutil.BgLogger().Debug("update schema validator", zap.Int64("oldVer", oldVer),
 			zap.Int64("currVer", currVer), zap.Int64s("changedTableIDs", tblIDs), zap.Uint64s("changedActionTypes", actionTypes))
 	}
+}
+
+func (s *schemaValidator) IsLeaseExpired() bool {
+	return time.Now().After(s.latestSchemaExpire)
 }
 
 // isRelatedTablesChanged returns the result whether relatedTableIDs is changed

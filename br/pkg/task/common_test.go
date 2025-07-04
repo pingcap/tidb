@@ -99,7 +99,7 @@ func TestUrlNoQuery(t *testing.T) {
 
 func TestTiDBConfigUnchanged(t *testing.T) {
 	cfg := config.GetGlobalConfig()
-	restoreConfig := enableTiDBConfig()
+	restoreConfig := tweakLocalConfForRestore()
 	require.NotEqual(t, config.GetGlobalConfig(), cfg)
 	restoreConfig()
 	require.Equal(t, config.GetGlobalConfig(), cfg)

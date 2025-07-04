@@ -88,6 +88,7 @@ func checkDataConsistency(
 	extraIndexesLayout table.IndexesLayout,
 ) error {
 	if t.Meta().GetPartitionInfo() != nil {
+		// TODO: Support check for partitions as well
 		return nil
 	}
 	if txn.IsPipelined() {

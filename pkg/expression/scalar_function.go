@@ -209,6 +209,8 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 		return BuildCastFunction(ctx, args[0], retType), nil
 	case ast.GetVar:
 		return BuildGetVarFunction(ctx, args[0], retType)
+	case ast.GetProcedureVar:
+		return BuildGetProcedureVarFunction(ctx, args[0], retType)
 	case InternalFuncFromBinary:
 		return BuildFromBinaryFunction(ctx, args[0], retType, false), nil
 	case InternalFuncToBinary:

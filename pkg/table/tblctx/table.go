@@ -38,7 +38,7 @@ type RowEncodingConfig struct {
 // StatisticsSupport is used for statistics update operations.
 type StatisticsSupport interface {
 	// UpdatePhysicalTableDelta updates the physical table delta.
-	UpdatePhysicalTableDelta(physicalTableID int64, delta int64, count int64, cols variable.DeltaCols)
+	UpdatePhysicalTableDelta(physicalTableID int64, delta int64, count int64)
 }
 
 // CachedTableSupport is used for cached table operations

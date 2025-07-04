@@ -72,11 +72,22 @@ type Table struct {
 	// 1. Initialized by snapshot when loading stats_meta.
 	// 2. Updated by the analysis time of a specific column or index when loading the histogram of the column or index.
 	LastAnalyzeVersion uint64
+	// LastStatsHistVersion is the mvcc version of the last update of histograms.
+	// It differs from LastAnalyzeVersion because it can be influenced by some DDL.
+	// e.g. When we execute ALTER TABLE ADD COLUMN, there'll be new record inserted into mysql.stats_histograms.
+	//      We need to load the corresponding one into memory too.
+	// It's used to skip redundant loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
+	// and the schema of the table does not change, we don't need to load the stats for this table again.
+	// Stats' sync load/async load should not change this field since they are not table-level update.
+	// It's hard to deal with the upgrade compatibility of this field, the field will not take effect unless
+	// auto analyze or DDL happened on the table.
+	LastStatsHistVersion uint64
 	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
 	// It is the schema version of the corresponding table. It is used to skip redundant
 	// loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
 	// and the schema of the table does not change, we don't need to load the stats for this
 	// table again.
+	// TODO: it can be removed now that we've have LastAnalyseVersion and LastStatsHistVersion.
 	TblInfoUpdateTS uint64
 
 	IsPkIsHandle bool
@@ -84,19 +95,20 @@ type Table struct {
 
 // ColAndIdxExistenceMap is the meta map for statistics.Table.
 // It can tell whether a column/index really has its statistics. So we won't send useless kv request when we do online stats loading.
+// We use this map to decide the stats status of a column/index. So it should be fully initialized before we check whether a column/index is analyzed or not.
 type ColAndIdxExistenceMap struct {
 	checked     bool
 	colAnalyzed map[int64]bool
 	idxAnalyzed map[int64]bool
 }
 
-// DeleteColAnalyzed deletes the column with the given id.
-func (m *ColAndIdxExistenceMap) DeleteColAnalyzed(id int64) {
+// DeleteColNotFound deletes the column with the given id.
+func (m *ColAndIdxExistenceMap) DeleteColNotFound(id int64) {
 	delete(m.colAnalyzed, id)
 }
 
-// DeleteIdxAnalyzed deletes the index with the given id.
-func (m *ColAndIdxExistenceMap) DeleteIdxAnalyzed(id int64) {
+// DeleteIdxNotFound deletes the index with the given id.
+func (m *ColAndIdxExistenceMap) DeleteIdxNotFound(id int64) {
 	delete(m.idxAnalyzed, id)
 }
 
@@ -118,6 +130,8 @@ func (m *ColAndIdxExistenceMap) SetChecked() {
 //  3. We have it and its statistics.
 //
 // To figure out three status, we use HasAnalyzed's TRUE value to represents the status 3. The Has's FALSE to represents the status 1.
+// Begin from v8.5.2, the 1. case becomes a nearly invalid case. It's just a middle state between happening of the DDL and the completion of the stats' ddl handler.
+// But we may need to deal with the 1. for the upgrade compatibility.
 func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 	if isIndex {
 		analyzed, ok := m.idxAnalyzed[id]
@@ -125,6 +139,16 @@ func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 	}
 	analyzed, ok := m.colAnalyzed[id]
 	return ok && analyzed
+}
+
+// Has checks whether a column/index stats exists.
+func (m *ColAndIdxExistenceMap) Has(id int64, isIndex bool) bool {
+	if isIndex {
+		_, ok := m.idxAnalyzed[id]
+		return ok
+	}
+	_, ok := m.colAnalyzed[id]
+	return ok
 }
 
 // InsertCol inserts a column with its meta into the map.
@@ -331,13 +355,15 @@ func (coll *HistColl) IdxNum() int {
 }
 
 // DelCol deletes the column with the given id.
-func (coll *HistColl) DelCol(id int64) {
-	delete(coll.columns, id)
+func (t *Table) DelCol(id int64) {
+	delete(t.columns, id)
+	t.ColAndIdxExistenceMap.DeleteColNotFound(id)
 }
 
 // DelIdx deletes the index with the given id.
-func (coll *HistColl) DelIdx(id int64) {
-	delete(coll.indices, id)
+func (t *Table) DelIdx(id int64) {
+	delete(t.indices, id)
+	t.ColAndIdxExistenceMap.DeleteIdxNotFound(id)
 }
 
 // StableOrderColSlice returns a slice of columns in stable order.
@@ -596,10 +622,11 @@ func (t *Table) Copy() *Table {
 		newHistColl.indices[id] = idx.Copy()
 	}
 	nt := &Table{
-		HistColl:           newHistColl,
-		Version:            t.Version,
-		TblInfoUpdateTS:    t.TblInfoUpdateTS,
-		LastAnalyzeVersion: t.LastAnalyzeVersion,
+		HistColl:             newHistColl,
+		Version:              t.Version,
+		TblInfoUpdateTS:      t.TblInfoUpdateTS,
+		LastAnalyzeVersion:   t.LastAnalyzeVersion,
+		LastStatsHistVersion: t.LastStatsHistVersion,
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
@@ -638,6 +665,7 @@ func (t *Table) ShallowCopy() *Table {
 		ExtendedStats:         t.ExtendedStats,
 		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap,
 		LastAnalyzeVersion:    t.LastAnalyzeVersion,
+		LastStatsHistVersion:  t.LastStatsHistVersion,
 	}
 	return nt
 }
@@ -811,7 +839,7 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 }
 
 // ColumnIsLoadNeeded checks whether the column needs trigger the async/sync load.
-// The Column should be visible in the table and really has analyzed statistics in the stroage.
+// The Column should be visible in the table and really has analyzed statistics in the storage.
 // Also, if the stats has been loaded into the memory, we also don't need to load it.
 // We return the Column together with the checking result, to avoid accessing the map multiple times.
 // The first bool is whether we need to load it into memory. The second bool is whether this column has stats in the system table or not.
@@ -819,24 +847,27 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	if t.Pseudo {
 		return nil, false, false
 	}
-	// when we use non-lite init stats, it cannot init the stats for common columns.
-	// so we need to foce to load the stats.
+	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 	col, ok := t.columns[id]
 	if !ok {
-		return nil, true, true
+		// If The column have no stats object in memory. We need to check it by existence map.
+		// If existence map says it even has no unitialized record in storage, we don't need to do anything. => Has=false, HasAnalyzed=false
+		// If existence map says it has analyzed stats, we need to load it from storage. => Has=true, HasAnalyzed=true
+		// If existence map says it has no analyzed stats but have a uninitialized record in storage, we need to also create a fake object. => Has=true, HasAnalyzed=false
+		return nil, t.ColAndIdxExistenceMap.Has(id, false), hasAnalyzed
 	}
-	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
 	// If it's not analyzed yet.
+	// The real check condition: !ok && !hashAnalyzed.(Has must be true since we've have the memory object so we should have the storage object)
+	// After this check, we will always have ok && hasAnalyzed.
 	if !hasAnalyzed {
 		return nil, false, false
 	}
 
 	// Restore the condition from the simplified form:
-	// 1. !ok && hasAnalyzed => need load
-	// 2. ok && hasAnalyzed && fullLoad && !col.IsFullLoad => need load
-	// 3. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
-	if !ok || (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
+	// 1. ok && hasAnalyzed && fullLoad && !col.IsFullLoad => need load
+	// 2. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
+	if (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
 		return col, true, true
 	}
 

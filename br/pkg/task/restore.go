@@ -476,6 +476,14 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 			return errors.Trace(err)
 		}
 
+		tsString, err := flags.GetString(FlagStreamRestoreTS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if cfg.RestoreTS, err = ParseTSString(tsString, true); err != nil {
+			return errors.Trace(err)
+		}
+
 		// iops: gp3 [3,000-16,000]; io1/io2 [100-32,000]
 		// throughput: gp3 [125, 1000]; io1/io2 cannot set throughput
 		// io1 and io2 volumes support up to 64,000 IOPS only on Instances built on the Nitro System.
@@ -972,7 +980,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// pre-set TiDB config for restore
-	restoreDBConfig := enableTiDBConfig()
+	restoreDBConfig := tweakLocalConfForRestore()
 	defer restoreDBConfig()
 
 	if client.GetSupportPolicy() {
@@ -1323,10 +1331,6 @@ func Exhaust(ec <-chan error) []error {
 }
 
 func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, g glue.Glue) error {
-	// Tasks from br clp client use other checks to validate
-	if g.GetClient() != glue.ClientSql {
-		return nil
-	}
 	message := "table already exists: "
 	allUnique := true
 	for _, table := range tables {
@@ -1411,9 +1415,9 @@ func filterRestoreFiles(
 	return
 }
 
-// enableTiDBConfig tweaks some of configs of TiDB to make the restore progress go well.
+// tweakLocalConfForRestore tweaks some of configs of TiDB to make the restore progress go well.
 // return a function that could restore the config to origin.
-func enableTiDBConfig() func() {
+func tweakLocalConfForRestore() func() {
 	restoreConfig := config.RestoreFunc()
 	config.UpdateGlobal(func(conf *config.Config) {
 		// set max-index-length before execute DDLs and create tables

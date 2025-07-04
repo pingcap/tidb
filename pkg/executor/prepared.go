@@ -62,6 +62,8 @@ type PrepareExec struct {
 	// If it's generated from executing "prepare stmt from '...'", the process is parse -> plan -> executor
 	// If it's generated from the prepare protocol, the process is session.PrepareStmt -> NewPrepareExec
 	// They both generate a PrepareExec struct, but the second case needs to reset the statement context while the first already do that.
+	// Also, the second case need charset_client param since SQL is directly passed from clients.
+	// While the text-prepare already transformed charset by parser.
 	needReset bool
 }
 
@@ -87,23 +89,28 @@ func (e *PrepareExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			return nil
 		}
 	}
-	charset, collation := vars.GetCharsetInfo()
 	var (
 		stmts []ast.StmtNode
 		err   error
 	)
+	var params []parser.ParseParam
+	if e.needReset {
+		params = vars.GetParseParams()
+	} else {
+		var paramsArr [2]parser.ParseParam
+		charset, collation := vars.GetCharsetInfo()
+		paramsArr[0] = parser.CharsetConnection(charset)
+		paramsArr[1] = parser.CollationConnection(collation)
+		params = paramsArr[:]
+	}
 	if sqlParser, ok := e.Ctx().(sqlexec.SQLParser); ok {
 		// FIXME: ok... yet another parse API, may need some api interface clean.
-		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText,
-			parser.CharsetConnection(charset),
-			parser.CollationConnection(collation))
+		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText, params...)
 	} else {
 		p := parser.New()
 		p.SetParserConfig(vars.BuildParserConfig())
 		var warns []error
-		stmts, warns, err = p.ParseSQL(e.sqlText,
-			parser.CharsetConnection(charset),
-			parser.CollationConnection(collation))
+		stmts, warns, err = p.ParseSQL(e.sqlText, params...)
 		for _, warn := range warns {
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 		}

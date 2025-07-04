@@ -90,7 +90,8 @@ func newEncodeAndSortOperator(
 		util.ImportInto,
 		concurrency,
 		func() workerpool.Worker[*importStepMinimalTask, workerpool.None] {
-			return newChunkWorker(ctx, op, executor.dataKVMemSizePerCon, executor.perIndexKVMemSizePerCon)
+			return newChunkWorker(ctx, op, executor.dataKVMemSizePerCon,
+				executor.perIndexKVMemSizePerCon, executor.indexBlockSize)
 		},
 	)
 	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
@@ -148,7 +149,8 @@ type chunkWorker struct {
 	indexWriter *importer.IndexRouteWriter
 }
 
-func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64) *chunkWorker {
+func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSizePerCon,
+	perIndexKVMemSizePerCon uint64, indexBlockSize int) *chunkWorker {
 	w := &chunkWorker{
 		ctx: ctx,
 		op:  op,
@@ -163,7 +165,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 					op.sharedVars.mergeIndexSummary(indexID, summary)
 				}).
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
-				SetBlockSize(getKVGroupBlockSize(""))
+				SetBlockSize(indexBlockSize)
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
 			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)

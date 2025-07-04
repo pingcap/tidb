@@ -92,7 +92,30 @@ const (
 var (
 	jobV2FirstVer        = *semver.New("8.4.0")
 	detectJobVerInterval = 10 * time.Second
+	eeVersions           = map[string]string{
+		"7.1.8-5": "8.5",
+		"7.1.7-5": "7.5",
+	}
 )
+
+func mayConvertFromEEVersion(ver *semver.Version) *semver.Version {
+	strVer := ver.String()
+	for eeVersion, version := range eeVersions {
+		if strings.HasPrefix(strVer, eeVersion) {
+			newVersion := strings.Replace(strVer, eeVersion, version, 1)
+			if newVersion == version {
+				// Add the patch version
+				newVersion += ".0"
+			}
+			newVer, err := semver.NewVersion(newVersion)
+			if err == nil {
+				return newVer
+			}
+		}
+	}
+	// no one match, just return the original one
+	return ver
+}
 
 // StartMode is an enum type for the start mode of the DDL.
 type StartMode string
@@ -588,18 +611,26 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		return nil
 	}
 
-	ch := jobCtx.oldDDLCtx.ddlEventCh
-	if ch != nil {
-	forLoop:
-		for i := 0; i < 10; i++ {
-			select {
-			case ch <- e:
-				break forLoop
-			default:
-				time.Sleep(time.Microsecond * 10)
+	// In test environments, we use a channel-based approach to handle DDL events.
+	// This maintains compatibility with existing test cases that expect events to be delivered through channels.
+	// In production, DDL events are handled by the notifier system instead.
+	if intest.InTest {
+		ch := jobCtx.oldDDLCtx.ddlEventCh
+		if ch != nil {
+		forLoop:
+			// Try sending the event to the channel with a backoff strategy to avoid blocking indefinitely.
+			// Since most unit tests don't consume events, we make a few attempts and then give up rather
+			// than blocking the DDL job forever on a full channel.
+			for i := 0; i < 10; i++ {
+				select {
+				case ch <- e:
+					break forLoop
+				default:
+					time.Sleep(time.Microsecond * 10)
+				}
 			}
+			logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
 		}
-		logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
 	}
 
 	intest.Assert(jobCtx.eventPublishStore != nil, "eventPublishStore should not be nil")
@@ -929,6 +960,9 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 				zap.String("err", err2.Error()))
 			break
 		}
+		if string(ver.PreRelease) != "" {
+			ver = mayConvertFromEEVersion(ver)
+		}
 		// sem-ver also compares pre-release labels, but we don't need to consider
 		// them here, so we clear them.
 		ver.PreRelease = ""
@@ -1005,6 +1039,7 @@ func (d *ddl) close() {
 
 	startTime := time.Now()
 	d.cancel()
+	failpoint.InjectCall("afterDDLCloseCancel")
 	d.wg.Wait()
 	// when run with real-tikv, the lifecycle of ownerManager is managed by globalOwnerManager,
 	// when run with uni-store BreakCampaignLoop is same as Close.

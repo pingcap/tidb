@@ -370,15 +370,15 @@ func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestV
 		// Check all schema versions.
 		if variable.EnableMDL.Load() {
 			notifyCh := make(chan struct{})
-			var unmatchedNodeID atomic.Pointer[string]
+			var unmatchedNodeInfo atomic.Pointer[string]
 			matchFn := func(nodeVersions map[string]int64) bool {
-				if len(nodeVersions) < len(updatedMap) {
+				if len(nodeVersions) == 0 {
 					return false
 				}
-				for tidbID := range updatedMap {
+				for tidbID, info := range updatedMap {
 					if nodeVer, ok := nodeVersions[tidbID]; !ok || nodeVer < latestVer {
-						id := tidbID
-						unmatchedNodeID.Store(&id)
+						linfo := info
+						unmatchedNodeInfo.Store(&linfo)
 						return false
 					}
 				}
@@ -394,9 +394,9 @@ func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestV
 				return errors.Trace(ctx.Err())
 			case <-time.After(time.Second):
 				item.clearMatchFn()
-				if id := unmatchedNodeID.Load(); id != nil {
+				if info := unmatchedNodeInfo.Load(); info != nil {
 					logutil.DDLLogger().Info("syncer check all versions, someone is not synced",
-						zap.String("info", *id),
+						zap.String("info", *info),
 						zap.Int64("ddl job id", jobID),
 						zap.Int64("ver", latestVer))
 				} else {

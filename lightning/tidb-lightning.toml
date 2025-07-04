@@ -103,7 +103,7 @@ strategy = ""
 # precheck-conflict-before-import = false
 # Controls the maximum number of conflict errors that can be handled when strategy is "replace" or "ignore". You can set it only when the strategy is "replace" or "ignore". The default value is 10000. If you set a value larger than 10000, the import process might experience performance degradation.
 # threshold = 10000
-# Controls the maximum number of records in the `conflict_records` table. The default value is 10000.
+# Controls the maximum number of records in the `conflict_records_v2` table. The default value is 10000.
 # Starting from v8.1.0, there is no need to configure `max-record-rows` manually, because TiDB Lightning automatically assigns the value of `max-record-rows` with the value of `threshold`, regardless of the user input. `max-record-rows` will be deprecated in a future release.
 # In the physical import mode, if the strategy is "replace", the conflict records that are overwritten are recorded.
 # In the logical import mode, if the strategy is "ignore", the conflict records that are ignored are recorded; if the strategy is "replace", the conflict records are not recorded.

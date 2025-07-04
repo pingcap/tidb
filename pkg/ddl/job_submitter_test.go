@@ -581,3 +581,17 @@ func TestGenGIDAndInsertJobsWithRetryOnErr(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, newGID-1, jobs[0].TableID)
 }
+
+func TestSubmitJobAfterDDLIsClosed(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+
+	var ddlErr error
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDDLCloseCancel", func() {
+		ddlErr = tk.ExecToErr("create database test2;")
+	})
+	err := dom.DDL().Stop()
+	require.NoError(t, err)
+	require.Error(t, ddlErr)
+	require.Equal(t, "context canceled", ddlErr.Error())
+}

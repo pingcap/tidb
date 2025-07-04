@@ -434,7 +434,7 @@ func getKeyspaceName(db *sql.DB) (string, error) {
 
 func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *options) (err error) {
 	build.LogInfo(build.Lightning)
-	o.logger.Info("cfg", zap.Stringer("cfg", taskCfg))
+	o.logger.Info("cfg", zap.String("cfg", taskCfg.Redact()))
 
 	logutil.LogEnvVariables()
 
@@ -536,7 +536,10 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 
 	loadTask := o.logger.Begin(zap.InfoLevel, "load data source")
 	var mdl *mydump.MDLoader
-	mdl, err = mydump.NewLoaderWithStore(ctx, mydump.NewLoaderCfg(taskCfg), s)
+	mdl, err = mydump.NewLoaderWithStore(
+		ctx, mydump.NewLoaderCfg(taskCfg), s,
+		mydump.WithScanFileConcurrency(l.curTask.App.RegionConcurrency*2),
+	)
 	loadTask.End(zap.ErrorLevel, err)
 	if err != nil {
 		return errors.Trace(err)

@@ -47,7 +47,7 @@ type StatsGC interface {
 
 	// DeleteTableStatsFromKV deletes table statistics from kv.
 	// A statsID refers to statistic of a table or a partition.
-	DeleteTableStatsFromKV(statsIDs []int64) (err error)
+	DeleteTableStatsFromKV(statsIDs []int64, soft bool) (err error)
 }
 
 // ColStatsTimeInfo records usage information of this column stats.
@@ -108,8 +108,8 @@ type IndexUsage interface {
 
 // StatsHistory is used to manage historical stats.
 type StatsHistory interface {
-	// RecordHistoricalStatsMeta records stats meta of the specified version to stats_meta_history.
-	RecordHistoricalStatsMeta(tableID int64, version uint64, source string, enforce bool)
+	// RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history one by one.
+	RecordHistoricalStatsMeta(version uint64, source string, enforce bool, tableIDs ...int64)
 
 	// CheckHistoricalStatsEnable check whether historical stats is enabled.
 	CheckHistoricalStatsEnable() (enable bool, err error)
@@ -146,6 +146,8 @@ type IndicatorsJSON struct {
 }
 
 // StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
+// We need to read all the tables's last_analyze_time, modified_count, and row_count into memory.
+// Because the current auto analyze' scheduling needs the whole information.
 type StatsAnalyze interface {
 	owner.Listener
 
@@ -195,6 +197,22 @@ type StatsAnalyze interface {
 	Close()
 }
 
+// CacheUpdate encapsulates changes to be made to the stats cache
+type CacheUpdate struct {
+	Updated []*statistics.Table
+	Deleted []int64
+	Options UpdateOptions
+}
+
+// UpdateOptions contains configuration for cache updates
+type UpdateOptions struct {
+	// SkipMoveForward controls whether to skip updating the cache's max version number.
+	// When true, the cache max version number stays unchanged even after updates.
+	// This improves performance when analyzing a small number of tables by avoiding
+	// unnecessary full cache reloads that would normally be triggered by version changes.
+	SkipMoveForward bool
+}
+
 // StatsCache is used to manage all table statistics in memory.
 type StatsCache interface {
 	// Close closes this cache.
@@ -204,7 +222,8 @@ type StatsCache interface {
 	Clear()
 
 	// Update reads stats meta from store and updates the stats map.
-	Update(ctx context.Context, is infoschema.InfoSchema) error
+	// To work with auto-analyze's needs, we'll update all table's stats meta into memory.
+	Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error
 
 	// MemConsumed returns its memory usage.
 	MemConsumed() (size int64)
@@ -215,8 +234,8 @@ type StatsCache interface {
 	// Put puts this table stats into the cache.
 	Put(tableID int64, t *statistics.Table)
 
-	// UpdateStatsCache updates the cache.
-	UpdateStatsCache(addedTables []*statistics.Table, deletedTableIDs []int64)
+	// UpdateStatsCache applies a batch of changes to the cache
+	UpdateStatsCache(update CacheUpdate)
 
 	// GetNextCheckVersionWithOffset returns the last version with offset.
 	// It is used to fetch updated statistics from the stats meta table.
@@ -240,6 +259,9 @@ type StatsCache interface {
 
 	// UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 	UpdateStatsHealthyMetrics()
+
+	// TriggerEvict triggers the cache to evict some items
+	TriggerEvict()
 }
 
 // StatsLockTable is the table info of which will be locked.
@@ -320,15 +342,17 @@ type StatsReadWriter interface {
 	// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
 	ReloadExtendedStatistics() error
 
-	// SaveStatsToStorage save the stats data to the storage.
-	SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
+	// SaveColOrIdxStatsToStorage save the column or index stats to storage.
+	SaveColOrIdxStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
 		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error)
 
-	// SaveTableStatsToStorage saves the stats of a table to storage.
-	SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
+	// SaveAnalyzeResultToStorage saves the analyze result to the storage.
+	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
 
 	// SaveMetaToStorage saves the stats meta of a table to storage.
-	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)
+	// Use the param `refreshLastHistVer` to indicate whether we need to update the last_histograms_versions in stats_meta table.
+	// Set it to true if the column/index stats is updated.
+	SaveMetaToStorage(tableID, count, modifyCount int64, source string, needRefreshLastHistVer bool) (err error)
 
 	// InsertColStats2KV inserts columns stats to kv.
 	InsertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error)
@@ -496,7 +520,7 @@ type StatsGlobal interface {
 // DDL is used to handle ddl events.
 type DDL interface {
 	// HandleDDLEvent handles ddl events.
-	HandleDDLEvent(changeEvent *notifier.SchemaChangeEvent) error
+	HandleDDLEvent(ctx context.Context, sctx sessionctx.Context, changeEvent *notifier.SchemaChangeEvent) error
 	// DDLEventCh returns ddl events channel in handle.
 	DDLEventCh() chan *notifier.SchemaChangeEvent
 }
@@ -523,6 +547,9 @@ type StatsHandle interface {
 
 	// GetPartitionStats retrieves the partition stats from cache.
 	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
+
+	// GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
+	GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table
 
 	// GetPartitionStatsForAutoAnalyze retrieves the partition stats from cache, but it will not return pseudo.
 	GetPartitionStatsForAutoAnalyze(tblInfo *model.TableInfo, pid int64) *statistics.Table

@@ -314,6 +314,9 @@ func onCreateView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 
 	metaMut := jobCtx.metaMut
 	oldTableID, err := findTableIDByName(jobCtx.infoCache, metaMut, schemaID, tbInfo.Name.L)
+	if err == nil && oldTableID > 0 {
+		err = infoschema.ErrTableExists
+	}
 	if infoschema.ErrTableNotExists.Equal(err) {
 		err = nil
 	}
@@ -330,6 +333,7 @@ func onCreateView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 	}
+
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)

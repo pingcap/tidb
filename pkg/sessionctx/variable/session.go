@@ -32,8 +32,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"gitee.com/Trisia/gotlcp/tlcp"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -71,6 +73,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 var (
@@ -340,38 +343,13 @@ func (tc *TransactionContext) CollectUnchangedKeysForLock(buf []kv.Key) []kv.Key
 	return buf
 }
 
-// ColSize is a data struct to store the delta information for a table.
-type ColSize struct {
-	ColID int64
-	Size  int64
-}
-
-// DeltaCols is used to update the delta size for cols.
-type DeltaCols interface {
-	// UpdateColSizeMap is used to update delta map for cols.
-	UpdateColSizeMap(m map[int64]int64) map[int64]int64
-}
-
-// DeltaColsMap implements DeltaCols
-type DeltaColsMap map[int64]int64
-
-// UpdateColSizeMap implements DeltaCols
-func (cols DeltaColsMap) UpdateColSizeMap(m map[int64]int64) map[int64]int64 {
-	if m == nil && len(cols) > 0 {
-		m = make(map[int64]int64, len(cols))
-	}
-	for colID, size := range cols {
-		m[colID] += size
-	}
-	return m
-}
-
 // UpdateDeltaForTable updates the delta info for some table.
 // The `cols` argument is used to update the delta size for cols.
 // If `cols` is nil, it means that the delta size for cols is not changed.
 func (tc *TransactionContext) UpdateDeltaForTable(
-	physicalTableID int64, delta int64,
-	count int64, cols DeltaCols,
+	physicalTableID int64,
+	delta int64,
+	count int64,
 ) {
 	tc.tdmLock.Lock()
 	defer tc.tdmLock.Unlock()
@@ -382,9 +360,6 @@ func (tc *TransactionContext) UpdateDeltaForTable(
 	item.Delta += delta
 	item.Count += count
 	item.TableID = physicalTableID
-	if cols != nil {
-		item.ColSize = cols.UpdateColSizeMap(item.ColSize)
-	}
 	tc.TableDeltaMap[physicalTableID] = item
 }
 
@@ -847,6 +822,9 @@ type SessionVars struct {
 
 	// TLSConnectionState is the TLS connection state (nil if not using TLS).
 	TLSConnectionState *tls.ConnectionState
+
+	// TLCPConnectionState is the TLCP connection state (nil if not using TLCP).
+	TLCPConnectionState *tlcp.ConnectionState
 
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
@@ -1639,6 +1617,15 @@ type SessionVars struct {
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
 
+	// in call procedure status
+	inCallProcedure struct {
+		inCall bool
+		num    int
+	}
+
+	// procedureContext indicates current procedure environment variable
+	procedureContext sessionProcedureContext
+
 	// FastCheckTable is used to control whether fast check table is enabled.
 	FastCheckTable bool
 
@@ -1708,6 +1695,21 @@ type SessionVars struct {
 
 	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	ScatterRegion string
+
+	// database name +"."+procedure_name as key , *RoutineCacahe as value.
+	ProcedurePlanCache map[string]any
+	// LastProcedureErrorStr is used to save last handler command.
+	LastProcedureErrorStr string
+	// MaxSpRecursionDepth indicates how many recursions are allowed in a stored procedure
+	MaxSpRecursionDepth int
+	// ReplaceAbleUserDefVars indicates whether to replace user defined variables in the sql.
+	ReplaceAbleUserDefVars map[string]struct{}
+	// EnableUDVSubstitute indicates whether to enable user defined variable substitute,
+	// it takes effect both in general sql and stored procedures.
+	EnableUDVSubstitute bool
+	// EnableSPParamSubstitute indicate whether to enable stored procedure parameter substitute, it is only used to control
+	// the replacement of parameters (in, out, inout) in stored procedures.
+	EnableSPParamSubstitute bool
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -2094,6 +2096,7 @@ type ConnectionInfo struct {
 	DB                string
 	AuthMethod        string
 	Attributes        map[string]string
+	IPInWhiteList     bool
 }
 
 const (
@@ -2217,6 +2220,11 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		GroupConcatMaxLen:             DefGroupConcatMaxLen,
 		EnableRedactLog:               DefTiDBRedactLog,
 		EnableWindowFunction:          DefEnableWindowFunction,
+		inCallProcedure: struct {
+			inCall bool
+			num    int
+		}{inCall: false, num: 0},
+		ProcedurePlanCache: make(map[string]any),
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
@@ -2904,11 +2912,15 @@ func (s *SessionVars) SetResourceGroupName(groupName string) {
 	s.ResourceGroupName = groupName
 }
 
+// GetCallProcedure get procedure flag.
+func (s *SessionVars) GetCallProcedure() bool {
+	return s.inCallProcedure.inCall
+}
+
 // TableDelta stands for the changed count for one table or partition.
 type TableDelta struct {
 	Delta    int64
 	Count    int64
-	ColSize  map[int64]int64
 	InitTime time.Time // InitTime is the time that this delta is generated.
 	TableID  int64
 }
@@ -2918,7 +2930,6 @@ func (td TableDelta) Clone() TableDelta {
 	return TableDelta{
 		Delta:    td.Delta,
 		Count:    td.Count,
-		ColSize:  maps.Clone(td.ColSize),
 		InitTime: td.InitTime,
 		TableID:  td.TableID,
 	}
@@ -3775,8 +3786,9 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 
 // GetRelatedTableForMDL gets the related table for metadata lock.
 func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
-	s.TxnCtx.tdmLock.Lock()
-	defer s.TxnCtx.tdmLock.Unlock()
+	mu := &s.TxnCtx.tdmLock
+	mu.Lock()
+	defer mu.Unlock()
 	if s.TxnCtx.relatedTableForMDL == nil {
 		s.TxnCtx.relatedTableForMDL = new(sync.Map)
 	}
@@ -4021,3 +4033,47 @@ const (
 	// ScatterGlobal means scatter region at global level
 	ScatterGlobal string = "global"
 )
+
+// SetInCallProcedure set in procedure flag.
+func (s *SessionVars) SetInCallProcedure() {
+	if !s.inCallProcedure.inCall {
+		s.inCallProcedure.inCall = true
+	}
+	s.inCallProcedure.num++
+}
+
+// InOtherCall in other procedure.
+func (s *SessionVars) InOtherCall() bool {
+	return s.inCallProcedure.num >= 2
+}
+
+// OutCallProcedure out of procedure.
+func (s *SessionVars) OutCallProcedure(clearStmtCtx bool) {
+	s.inCallProcedure.num--
+	if s.inCallProcedure.num <= 0 {
+		s.inCallProcedure.inCall = false
+		//clear all BackupStmtCtxes
+		if clearStmtCtx {
+			for i := range s.procedureContext.BackupStmtCtx {
+				s.procedureContext.BackupStmtCtx[i] = nil
+			}
+			s.procedureContext.BackupStmtCtx = s.procedureContext.BackupStmtCtx[:0]
+		}
+		if len(s.procedureContext.BackupStmtCtx) != 0 {
+			log.Error("procedure unclear backup stmtctx", zap.String("SQL", s.StmtCtx.OriginalSQL))
+		}
+		if len(s.ProcedurePlanCache) > int(StoredProgramCacheSize.Load()) {
+			for k := range s.ProcedurePlanCache {
+				delete(s.ProcedurePlanCache, k)
+			}
+		}
+	}
+}
+
+// GetProcedureContext get procedure environment variables.
+func (s *SessionVars) GetProcedureContext() *sessionProcedureContext {
+	if !s.inCallProcedure.inCall {
+		return nil
+	}
+	return &s.procedureContext
+}

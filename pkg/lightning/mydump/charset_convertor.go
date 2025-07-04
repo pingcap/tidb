@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/simplifiedchinese"
@@ -64,7 +65,7 @@ func (cc *CharsetConvertor) initDecoder() error {
 	case config.Binary, config.UTF8MB4, config.ASCII:
 		return nil
 	case config.GB18030:
-		cc.decoder = simplifiedchinese.GB18030.NewDecoder()
+		cc.decoder = charset.NewCustomGB18030Decoder()
 		return nil
 	case config.GBK:
 		cc.decoder = simplifiedchinese.GBK.NewDecoder()
@@ -83,7 +84,7 @@ func (cc *CharsetConvertor) initEncoder() error {
 	case config.Binary, config.UTF8MB4, config.ASCII:
 		return nil
 	case config.GB18030:
-		cc.encoder = simplifiedchinese.GB18030.NewEncoder()
+		cc.encoder = charset.NewCustomGB18030Encoder()
 		return nil
 	case config.GBK:
 		cc.encoder = simplifiedchinese.GBK.NewEncoder()

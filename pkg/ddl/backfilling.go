@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -194,21 +195,47 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 		id = int(backfillContextID.Add(1))
 	}
 
+	colOrIdxName := ""
+	switch rInfo.Job.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		args, err := model.GetModifyIndexArgs(rInfo.Job)
+		if err != nil {
+			logutil.DDLLogger().Error("Fail to get ModifyIndexArgs", zap.String("label", label), zap.String("schemaName", schemaName), zap.String("tableName", tbl.Meta().Name.String()))
+		} else {
+			colOrIdxName = getIdxNamesFromArgs(args)
+		}
+	case model.ActionModifyColumn:
+		oldCol, _ := getOldAndNewColumnsForUpdateColumn(tbl, rInfo.currElement.ID)
+		if oldCol != nil {
+			colOrIdxName = oldCol.Name.String()
+		}
+	}
+
 	batchCnt := rInfo.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
 	return &backfillCtx{
-		id:         id,
-		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
-		warnings:   warnHandler,
-		exprCtx:    exprCtx,
-		tblCtx:     tblCtx,
-		loc:        exprCtx.GetEvalCtx().Location(),
-		schemaName: schemaName,
-		table:      tbl,
-		batchCnt:   batchCnt,
-		jobContext: jobCtx,
-		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
-			metrics.GenerateReorgLabel(label, schemaName, tbl.Meta().Name.String())),
+		id:            id,
+		ddlCtx:        rInfo.jobCtx.oldDDLCtx,
+		warnings:      warnHandler,
+		exprCtx:       exprCtx,
+		tblCtx:        tblCtx,
+		loc:           exprCtx.GetEvalCtx().Location(),
+		schemaName:    schemaName,
+		table:         tbl,
+		batchCnt:      batchCnt,
+		jobContext:    jobCtx,
+		metricCounter: metrics.GetBackfillTotalByLabel(label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
 	}, nil
+}
+
+func getIdxNamesFromArgs(args *model.ModifyIndexArgs) string {
+	var sb strings.Builder
+	for i, idx := range args.IndexArgs {
+		if i > 0 {
+			sb.WriteString("+")
+		}
+		sb.WriteString(idx.IndexName.O)
+	}
+	return sb.String()
 }
 
 func updateTxnEntrySizeLimitIfNeeded(txn kv.Transaction) {
@@ -327,7 +354,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		// we will never cancel the job once there is panic in bf.BackfillData.
 		// Because reorgRecordTask may run a long time,
 		// we should check whether this ddl job is still runnable.
-		err := d.isReorgRunnable(jobID, false)
+		err := d.isReorgRunnable(d.ctx, false)
 		if err != nil {
 			result.err = err
 			return result
@@ -367,6 +394,8 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			break
 		}
 	}
+	failpoint.InjectCall("afterHandleBackfillTask", task.jobID)
+
 	logutil.DDLLogger().Info("backfill worker finish task",
 		zap.Stringer("worker", w), zap.Stringer("task", task),
 		zap.Int("added count", result.addedCount),
@@ -457,6 +486,7 @@ func loadTableRanges(
 	t table.PhysicalTable,
 	store kv.Storage,
 	startKey, endKey kv.Key,
+	splitKeys []kv.Key,
 	limit int,
 ) ([]kv.KeyRange, error) {
 	if len(startKey) == 0 && len(endKey) == 0 {
@@ -483,7 +513,11 @@ func loadTableRanges(
 	maxSleep := 10000 // ms
 	bo := tikv.NewBackofferWithVars(ctx, maxSleep, nil)
 	var ranges []kv.KeyRange
-	err := util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (bool, error) {
+	maxRetryTimes := util.DefaultMaxRetries
+	failpoint.Inject("loadTableRangesNoRetry", func() {
+		maxRetryTimes = 1
+	})
+	err := util.RunWithRetry(maxRetryTimes, util.RetryInterval, func() (bool, error) {
 		logutil.DDLLogger().Info("load table ranges from PD",
 			zap.Int64("physicalTableID", t.GetPhysicalID()),
 			zap.String("start key", hex.EncodeToString(startKey)),
@@ -511,6 +545,7 @@ func loadTableRanges(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	ranges = splitRangesByKeys(ranges, splitKeys)
 	logutil.DDLLogger().Info("load table ranges from PD done",
 		zap.Int64("physicalTableID", t.GetPhysicalID()),
 		zap.String("range start", hex.EncodeToString(ranges[0].StartKey)),
@@ -520,7 +555,41 @@ func loadTableRanges(
 	return ranges, nil
 }
 
+// splitRangesByKeys splits the ranges into more ranges by given split keys.
+// The split keys should be ordered.
+func splitRangesByKeys(ranges []kv.KeyRange, splitKeys []kv.Key) []kv.KeyRange {
+	if len(splitKeys) == 0 {
+		return ranges
+	}
+	ret := make([]kv.KeyRange, 0, len(ranges)+len(splitKeys))
+	for _, r := range ranges {
+		start := r.StartKey
+		finishOneRange := false
+		for !finishOneRange {
+			if len(splitKeys) == 0 {
+				break
+			}
+			split := splitKeys[0]
+			switch {
+			case split.Cmp(start) <= 0:
+				splitKeys = splitKeys[1:]
+			case split.Cmp(r.EndKey) < 0:
+				splitKeys = splitKeys[1:]
+				ret = append(ret, kv.KeyRange{StartKey: start, EndKey: split})
+				start = split
+			default:
+				finishOneRange = true
+			}
+		}
+		ret = append(ret, kv.KeyRange{StartKey: start, EndKey: r.EndKey})
+	}
+	return ret
+}
+
 func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error {
+	failpoint.Inject("validateAndFillRangesErr", func() {
+		failpoint.Return(dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("mock"))
+	})
 	if len(ranges) == 0 {
 		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]",
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
@@ -531,6 +600,10 @@ func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error 
 			s := r.StartKey
 			if len(s) == 0 || bytes.Compare(s, startKey) < 0 {
 				ranges[i].StartKey = startKey
+			} else if bytes.Compare(s, startKey) > 0 {
+				errMsg := fmt.Sprintf("get empty range at the beginning of ranges, expected %s, but got %s",
+					hex.EncodeToString(startKey), hex.EncodeToString(s))
+				return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 			}
 		}
 		if i == len(ranges)-1 {
@@ -538,12 +611,15 @@ func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error 
 			if len(e) == 0 || bytes.Compare(e, endKey) > 0 {
 				ranges[i].EndKey = endKey
 			}
+			// We don't need to check the end key because a limit may set before scanning regions.
 		}
 		if len(ranges[i].StartKey) == 0 || len(ranges[i].EndKey) == 0 {
-			return errors.Errorf("get empty start/end key in the middle of ranges")
+			return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("get empty start/end key in the middle of ranges")
 		}
 		if i > 0 && !bytes.Equal(ranges[i-1].EndKey, ranges[i].StartKey) {
-			return errors.Errorf("ranges are not continuous")
+			errMsg := fmt.Sprintf("ranges are not continuous, last end key %s, next start key %s",
+				hex.EncodeToString(ranges[i-1].EndKey), hex.EncodeToString(ranges[i].StartKey))
+			return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 		}
 	}
 	return nil
@@ -677,8 +753,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	t table.PhysicalTable,
 	reorgInfo *reorgInfo,
 ) error {
-	// TODO(tangenta): support adjust worker count dynamically.
-	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
+	if err := dc.isReorgRunnable(ctx, false); err != nil {
 		return errors.Trace(err)
 	}
 	job := reorgInfo.Job
@@ -688,6 +763,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	idxCnt := len(reorgInfo.elements)
 	indexIDs := make([]int64, 0, idxCnt)
 	indexInfos := make([]*model.IndexInfo, 0, idxCnt)
+	var indexNames strings.Builder
 	uniques := make([]bool, 0, idxCnt)
 	hasUnique := false
 	for _, e := range reorgInfo.elements {
@@ -701,6 +777,10 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 			return errors.Errorf("index info not found: %d", e.ID)
 		}
 		indexInfos = append(indexInfos, indexInfo)
+		if indexNames.Len() > 0 {
+			indexNames.WriteString("+")
+		}
+		indexNames.WriteString(indexInfo.Name.O)
 		uniques = append(uniques, indexInfo.Unique)
 		hasUnique = hasUnique || indexInfo.Unique
 	}
@@ -708,8 +788,9 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	//nolint: forcetypeassert
 	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
 	bcCtx, err := ingest.LitBackCtxMgr.Register(
-		ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, job.RealStartTS)
+		ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, maxWriteSpeed, job.RealStartTS, 0)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -737,8 +818,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	rowCntListener := &localRowCntListener{
 		prevPhysicalRowCnt: reorgCtx.getRowCount(),
 		reorgCtx:           reorgCtx,
-		counter: metrics.BackfillTotalCounter.WithLabelValues(
-			metrics.GenerateReorgLabel("add_idx_rate", job.SchemaName, job.TableName)),
+		counter:            metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, job.SchemaName, job.TableName, indexNames.String()),
 	}
 
 	sctx, err := sessPool.Get()
@@ -776,7 +856,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	if err != nil {
 		return err
 	}
-	err = executeAndClosePipeline(opCtx, pipe, job, avgRowSize)
+	err = executeAndClosePipeline(opCtx, pipe, job, bcCtx, avgRowSize)
 	if err != nil {
 		err1 := bcCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
 		if err1 != nil {
@@ -793,7 +873,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	return bcCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 }
 
-func adjustWorkerPoolSize(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, avgRowSize int) {
+func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) {
 	opR, opW := pipe.GetLocalIngestModeReaderAndWriter()
 	if opR == nil || opW == nil {
 		logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", job.ID))
@@ -817,36 +897,50 @@ func adjustWorkerPoolSize(ctx context.Context, pipe *operator.AsyncPipeline, job
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(
-				job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())), avgRowSize)
-			currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
-			if int32(targetReaderCnt) == currentReaderCnt && int32(targetWriterCnt) == currentWriterCnt {
-				continue
+			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
+			if maxWriteSpeed != bcCtx.GetLocalBackend().GetWriteSpeedLimit() {
+				bcCtx.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
+				logutil.DDLIngestLogger().Info("adjust ddl job config success",
+					zap.Int64("jobID", job.ID),
+					zap.Int("max write speed", bcCtx.GetLocalBackend().GetWriteSpeedLimit()))
 			}
-			reader.TuneWorkerPoolSize(int32(targetReaderCnt))
-			writer.TuneWorkerPoolSize(int32(targetWriterCnt))
-			logutil.DDLIngestLogger().Info("adjust ddl job config success",
-				zap.Int64("jobID", job.ID),
-				zap.Int32("table scan operator count", reader.GetWorkerPoolSize()),
-				zap.Int32("index ingest operator count", writer.GetWorkerPoolSize()))
+
+			concurrency := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
+			currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
+			if int32(targetReaderCnt) != currentReaderCnt || int32(targetWriterCnt) != currentWriterCnt {
+				reader.TuneWorkerPoolSize(int32(targetReaderCnt))
+				writer.TuneWorkerPoolSize(int32(targetWriterCnt))
+				logutil.DDLIngestLogger().Info("adjust ddl job config success",
+					zap.Int64("jobID", job.ID),
+					zap.Int32("table scan operator count", reader.GetWorkerPoolSize()),
+					zap.Int32("index ingest operator count", writer.GetWorkerPoolSize()))
+			}
 		}
 	}
 }
 
-func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job *model.Job, avgRowSize int) error {
+func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) error {
 	err := pipe.Execute()
 	if err != nil {
 		return err
 	}
 
-	// Adjust worker pool size dynamically.
+	// Adjust worker pool size and max write speed dynamically.
+	var wg util.WaitGroupWrapper
+	adjustCtx, cancel := context.WithCancel(ctx)
 	if job != nil {
+		wg.Add(1)
 		go func() {
-			adjustWorkerPoolSize(ctx, pipe, job, avgRowSize)
+			defer wg.Done()
+			adjustWorkerCntAndMaxWriteSpeed(adjustCtx, pipe, job, bcCtx, avgRowSize)
 		}()
 	}
 
 	err = pipe.Close()
+
+	cancel()
+	wg.Wait() // wait for adjustWorkerCntAndMaxWriteSpeed to exit
 	if opErr := ctx.OperatorErr(); opErr != nil {
 		return opErr
 	}
@@ -906,7 +1000,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 ) (err error) {
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 
-	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
+	if err := dc.isReorgRunnable(ctx, false); err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
@@ -938,6 +1032,11 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	err = scheduler.setupWorkers()
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	var splitKeys []kv.Key
+	if reorgInfo.mergingTmpIdx {
+		splitKeys = getSplitKeysForTempIndexRanges(t.GetPhysicalID(), reorgInfo.elements)
 	}
 
 	// process result goroutine
@@ -975,7 +1074,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				} else {
 					totalAddedCount += int64(result.addedCount)
 				}
-				dc.getReorgCtx(reorgInfo.Job.ID).setRowCount(totalAddedCount)
 
 				keeper.updateNextKey(result.taskID, result.nextKey)
 
@@ -998,7 +1096,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		start, end := startKey, endKey
 		taskIDAlloc := newTaskIDAllocator()
 		for {
-			kvRanges, err2 := loadTableRanges(egCtx, t, dc.store, start, end, backfillTaskChanSize)
+			kvRanges, err2 := loadTableRanges(egCtx, t, dc.store, start, end, splitKeys, backfillTaskChanSize)
 			if err2 != nil {
 				return errors.Trace(err2)
 			}

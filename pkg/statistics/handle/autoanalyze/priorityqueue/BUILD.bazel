@@ -19,6 +19,7 @@ go_library(
     deps = [
         "//pkg/ddl/notifier",
         "//pkg/infoschema",
+        "//pkg/meta",
         "//pkg/meta/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
@@ -68,6 +69,7 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/statistics",
+        "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
         "//pkg/store/mockstore",

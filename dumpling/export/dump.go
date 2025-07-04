@@ -325,7 +325,6 @@ func (d *Dumper) Dump() (dumpErr error) {
 		time.Sleep(1 * time.Second)
 		tctx.L().Debug("progress ready, sleep 1s")
 	})
-	_ = baseConn.DBConn.Close()
 	if err := wg.Wait(); err != nil {
 		summary.CollectFailureUnit("dump table data", err)
 		return errors.Trace(err)
@@ -1150,15 +1149,21 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 		return nil
 	}
 
-	ifSeqExists, err := CheckIfSeqExists(db)
-	if err != nil {
-		return err
-	}
 	var listType listTableType
-	if ifSeqExists {
-		listType = listTableByShowFullTables
+
+	// TiDB has optimized the performance of reading INFORMATION_SCHEMA.TABLES
+	if conf.ServerInfo.ServerType == version.ServerTypeTiDB {
+		listType = listTableByInfoSchema
 	} else {
-		listType = getListTableTypeByConf(conf)
+		ifSeqExists, err := checkIfSeqExists(db)
+		if err != nil {
+			return err
+		}
+		if ifSeqExists {
+			listType = listTableByShowFullTables
+		} else {
+			listType = getListTableTypeByConf(conf)
+		}
 	}
 
 	if conf.SpecifiedTables {

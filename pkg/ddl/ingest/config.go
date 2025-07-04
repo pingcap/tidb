@@ -44,6 +44,7 @@ func genConfig(
 	unique bool,
 	resourceGroup string,
 	concurrency int,
+	maxWriteSpeed int,
 ) (*local.BackendConfig, error) {
 	cfg := &local.BackendConfig{
 		LocalStoreDir:     jobSortPath,
@@ -68,7 +69,7 @@ func genConfig(
 		PausePDSchedulerScope:       lightning.PausePDSchedulerScopeTable,
 		TaskType:                    kvutil.ExplicitTypeDDL,
 		DisableAutomaticCompactions: true,
-		StoreWriteBWLimit:           int(variable.DDLReorgMaxWriteSpeed.Load()),
+		StoreWriteBWLimit:           maxWriteSpeed,
 	}
 	// Each backend will build a single dir in lightning dir.
 	if ImporterRangeConcurrencyForTest != nil {

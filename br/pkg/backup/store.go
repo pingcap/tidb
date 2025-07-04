@@ -60,6 +60,7 @@ func (r ResponseAndStore) GetStoreID() uint64 {
 
 // timeoutRecv cancel the context if `Refresh()` is not called within the specified time `timeout`.
 type timeoutRecv struct {
+	storeID   uint64
 	wg        sync.WaitGroup
 	parentCtx context.Context
 	cancel    context.CancelCauseFunc
@@ -98,15 +99,17 @@ func (trecv *timeoutRecv) loop(timeout time.Duration) {
 				return
 			}
 		case <-ticker.C:
-			log.Warn("receive a backup response timeout")
+			log.Warn("wait backup response timeout, cancel the backup",
+				zap.Duration("timeout", timeout), zap.Uint64("storeID", trecv.storeID))
 			trecv.cancel(errors.Errorf("receive a backup response timeout"))
 		}
 	}
 }
 
-func StartTimeoutRecv(ctx context.Context, timeout time.Duration) (context.Context, *timeoutRecv) {
+func StartTimeoutRecv(ctx context.Context, timeout time.Duration, storeID uint64) (context.Context, *timeoutRecv) {
 	cctx, cancel := context.WithCancelCause(ctx)
 	trecv := &timeoutRecv{
+		storeID:   storeID,
 		parentCtx: ctx,
 		cancel:    cancel,
 		refresh:   make(chan struct{}),
@@ -117,15 +120,11 @@ func StartTimeoutRecv(ctx context.Context, timeout time.Duration) (context.Conte
 }
 
 func doSendBackup(
-	pctx context.Context,
+	ctx context.Context,
 	client backuppb.BackupClient,
 	req backuppb.BackupRequest,
 	respFn func(*backuppb.BackupResponse) error,
 ) error {
-	// Backup might be stuck on GRPC `waitonHeader`, so start a timeout ticker to
-	// terminate the backup if it does not receive any new response for a long time.
-	ctx, timerecv := StartTimeoutRecv(pctx, TimeoutOneResponse)
-	defer timerecv.Stop()
 	failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
 		logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
 			"process will notify the shell.")
@@ -170,7 +169,6 @@ func doSendBackup(
 
 	for {
 		resp, err := bCli.Recv()
-		timerecv.Refresh()
 		if err != nil {
 			if errors.Cause(err) == io.EOF { // nolint:errorlint
 				logutil.CL(ctx).Debug("backup streaming finish",
@@ -193,7 +191,7 @@ func doSendBackup(
 }
 
 func startBackup(
-	ctx context.Context,
+	pctx context.Context,
 	storeID uint64,
 	backupReq backuppb.BackupRequest,
 	backupCli backuppb.BackupClient,
@@ -202,14 +200,21 @@ func startBackup(
 ) error {
 	// this goroutine handle the response from a single store
 	select {
-	case <-ctx.Done():
-		return ctx.Err()
+	case <-pctx.Done():
+		return pctx.Err()
 	default:
-		logutil.CL(ctx).Info("try backup", zap.Uint64("storeID", storeID))
 		// Send backup request to the store.
 		// handle the backup response or internal error here.
 		// handle the store error(reboot or network partition) outside.
 		reqs := SplitBackupReqRanges(backupReq, concurrency)
+		logutil.CL(pctx).Info("starting backup to the corresponding store", zap.Uint64("storeID", storeID),
+			zap.Int("requestCount", len(reqs)), zap.Uint("concurrency", concurrency))
+
+		// Backup might be stuck on GRPC `waitonHeader`, so start a timeout ticker to
+		// terminate the backup if it does not receive any new response for a long time.
+		ctx, timerecv := StartTimeoutRecv(pctx, TimeoutOneResponse, storeID)
+		defer timerecv.Stop()
+
 		pool := tidbutil.NewWorkerPool(concurrency, "store_backup")
 		eg, ectx := errgroup.WithContext(ctx)
 		for i, req := range reqs {
@@ -219,8 +224,10 @@ func startBackup(
 				retry := -1
 				return utils.WithRetry(ectx, func() error {
 					retry += 1
-					logutil.CL(ectx).Info("backup to store", zap.Uint64("storeID", storeID),
-						zap.Int("retry", retry), zap.Int("reqIndex", reqIndex))
+					if retry > 1 {
+						logutil.CL(ectx).Info("retry backup to store", zap.Uint64("storeID", storeID),
+							zap.Int("retry", retry), zap.Int("reqIndex", reqIndex))
+					}
 					return doSendBackup(ectx, backupCli, bkReq, func(resp *backuppb.BackupResponse) error {
 						// Forward all responses (including error).
 						failpoint.Inject("backup-timeout-error", func(val failpoint.Value) {
@@ -263,6 +270,8 @@ func startBackup(
 							Resp:    resp,
 							StoreID: storeID,
 						}:
+							// reset timeout when receive a response
+							timerecv.Refresh()
 						}
 						return nil
 					})
@@ -326,7 +335,7 @@ func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetr
 				// reset the state
 				sendAll = false
 				clear(newJoinStoresMap)
-				logutil.CL(ctx).Info("check store changes every tick")
+				logutil.CL(ctx).Info("check store changes every 30s")
 				err := watcher.Step(ctx)
 				if err != nil {
 					logutil.CL(ctx).Warn("failed to watch store changes, ignore it", zap.Error(err))

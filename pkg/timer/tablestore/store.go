@@ -117,7 +117,7 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 	}
 	defer back()
 
-	if sessVars := sctx.GetSessionVars(); sessVars.GetEnableIndexMerge() {
+	if sessVars := sctx.GetSessionVars(); !sessVars.GetEnableIndexMerge() {
 		// Enable index merge is used to make sure filtering timers with tags quickly.
 		// Currently, we are using multi-value index to index tags for timers which requires index merge enabled.
 		// see: https://docs.pingcap.com/tidb/dev/choose-index#use-a-multi-valued-index

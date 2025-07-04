@@ -74,7 +74,6 @@ type reorgCtx struct {
 	doneCh chan reorgFnResult
 	// rowCount is used to simulate a job's row count.
 	rowCount int64
-	jobState model.JobState
 
 	mu struct {
 		sync.Mutex
@@ -275,20 +274,6 @@ func reorgTimeZoneWithTzLoc(tzLoc *model.TimeZoneLocation) (*time.Location, erro
 	return tzLoc.GetLocation()
 }
 
-func (rc *reorgCtx) notifyJobState(state model.JobState) {
-	atomic.StoreInt32((*int32)(&rc.jobState), int32(state))
-}
-
-func (rc *reorgCtx) isReorgCanceled() bool {
-	s := atomic.LoadInt32((*int32)(&rc.jobState))
-	return int32(model.JobStateCancelled) == s || int32(model.JobStateCancelling) == s
-}
-
-func (rc *reorgCtx) isReorgPaused() bool {
-	s := atomic.LoadInt32((*int32)(&rc.jobState))
-	return int32(model.JobStatePaused) == s || int32(model.JobStatePausing) == s
-}
-
 func (rc *reorgCtx) setRowCount(count int64) {
 	atomic.StoreInt64(&rc.rowCount, count)
 }
@@ -354,6 +339,7 @@ func (rc *reorgCtx) getRowCount() int64 {
 //
 // After that, we can make sure that the worker goroutine is correctly shut down.
 func (w *worker) runReorgJob(
+	jobCtx *jobContext,
 	reorgInfo *reorgInfo,
 	tblInfo *model.TableInfo,
 	reorgFn func() error,
@@ -395,7 +381,13 @@ func (w *worker) runReorgJob(
 		})
 	}
 
-	updateProcessTicker := time.NewTicker(5 * time.Second)
+	updateProgressInverval := 5 * time.Second
+	failpoint.Inject("updateProgressIntervalInMs", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			updateProgressInverval = time.Duration(v) * time.Millisecond
+		}
+	})
+	updateProcessTicker := time.NewTicker(updateProgressInverval)
 	defer updateProcessTicker.Stop()
 	for {
 		select {
@@ -407,6 +399,7 @@ func (w *worker) runReorgJob(
 				logutil.DDLLogger().Warn("owner ts mismatch, return timeout error and retry",
 					zap.Int64("prevTS", res.ownerTS),
 					zap.Int64("curTS", curTS))
+				jobCtx.reorgTimeoutOccurred = true
 				return dbterror.ErrWaitReorgTimeout
 			}
 			// Since job is cancelled，we don't care about its partial counts.
@@ -442,6 +435,8 @@ func (w *worker) runReorgJob(
 			w.mergeWarningsIntoJob(job)
 
 			rc.resetWarnings()
+			jobCtx.reorgTimeoutOccurred = true
+			return dbterror.ErrWaitReorgTimeout
 		}
 	}
 }
@@ -526,12 +521,26 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		} else {
 			label = metrics.LblAddIndex
 		}
-		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+		idxNames := ""
+		args, err := model.GetModifyIndexArgs(reorgInfo.Job)
+		if err != nil {
+			logutil.DDLLogger().Error("Fail to get ModifyIndexArgs", zap.Error(err))
+		} else {
+			idxNames = getIdxNamesFromArgs(args)
+		}
+		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String(), idxNames).Set(progress * 100)
 	case model.ActionModifyColumn:
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+		colName := ""
+		args, err := model.GetModifyColumnArgs(reorgInfo.Job)
+		if err != nil {
+			logutil.DDLLogger().Error("Fail to get ModifyColumnArgs", zap.Error(err))
+		} else {
+			colName = args.OldColumnName.O
+		}
+		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String(), colName).Set(progress * 100)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String(), "").Set(progress * 100)
 	}
 }
 
@@ -566,28 +575,14 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	return rows[0].GetInt64(0)
 }
 
-func (dc *ddlCtx) isReorgCancelled(jobID int64) bool {
-	return dc.getReorgCtx(jobID).isReorgCanceled()
-}
-func (dc *ddlCtx) isReorgPaused(jobID int64) bool {
-	return dc.getReorgCtx(jobID).isReorgPaused()
-}
-
-func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
+func (dc *ddlCtx) isReorgRunnable(ctx context.Context, isDistReorg bool) error {
 	if dc.ctx.Err() != nil {
 		// Worker is closed. So it can't do the reorganization.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
-	// TODO(lance6716): check ctx.Err?
-	if dc.isReorgCancelled(jobID) {
-		// Job is cancelled. So it can't be done.
-		return dbterror.ErrCancelledDDLJob
-	}
-
-	if dc.isReorgPaused(jobID) {
-		logutil.DDLLogger().Warn("job paused by user", zap.String("ID", dc.uuid))
-		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(jobID)
+	if ctx.Err() != nil {
+		return context.Cause(ctx)
 	}
 
 	// If isDistReorg is true, we needn't check if it is owner.
@@ -767,22 +762,19 @@ func GetTableMaxHandle(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl 
 	return kv.IntHandle(row.GetInt64(0)), false, nil
 }
 
-// ExistsTableRow checks if there is at least one row in the specified table.
+// existsTableRow checks if there is at least one row in the specified table.
 // In case of an error during the operation, it returns false along with the error.
-func ExistsTableRow(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl table.PhysicalTable) (bool, error) {
-	handleCols := buildHandleCols(tbl)
-	result, err := buildOneRowTableScan(ctx, store, startTS, tbl, handleCols, 1, false)
+func existsTableRow(ctx *ReorgContext, store kv.Storage, tbl table.PhysicalTable, startTS uint64) (bool, error) {
+	found := false
+	err := iterateSnapshotKeys(ctx, store, kv.PriorityLow, tbl.RecordPrefix(), startTS, nil, nil,
+		func(_ kv.Handle, _ kv.Key, _ []byte) (bool, error) {
+			found = true
+			return false, nil
+		})
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	defer terror.Call(result.Close)
-
-	chk := chunk.New(getColumnsTypes(handleCols), 1, 1)
-	err = result.Next(ctx.ddlJobCtx, chk)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return chk.NumRows() != 0, nil
+	return found, nil
 }
 
 func buildHandleCols(tbl table.PhysicalTable) []*model.ColumnInfo {
@@ -932,8 +924,8 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 			zap.String("startKey", hex.EncodeToString(start)),
 			zap.String("endKey", hex.EncodeToString(end)))
 
-		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
-			return &info, errors.New("occur an error when update reorg handle")
+		failpoint.Inject("errorUpdateReorgHandle", func() {
+			failpoint.Return(&info, errors.New("occur an error when update reorg handle"))
 		})
 		err = rh.InitDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
@@ -981,6 +973,19 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 	info.dbInfo = dbInfo
 
 	return &info, nil
+}
+
+func getSplitKeysForTempIndexRanges(pid int64, elements []*meta.Element) []kv.Key {
+	splitKeys := make([]kv.Key, 0, len(elements))
+	for _, e := range elements {
+		if !bytes.Equal(e.TypeKey, meta.IndexElementKey) {
+			continue
+		}
+		tempIdxID := tablecodec.TempIndexPrefix | e.ID
+		splitKey := tablecodec.EncodeIndexSeekKey(pid, tempIdxID, nil)
+		splitKeys = append(splitKeys, splitKey)
+	}
+	return splitKeys
 }
 
 func encodeTempIndexRange(physicalID, firstIdxID, lastIdxID int64) (start kv.Key, end kv.Key) {

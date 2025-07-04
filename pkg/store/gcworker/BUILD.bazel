@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "gcworker",
-    srcs = ["gc_worker.go"],
+    srcs = [
+        "gc_worker.go",
+        "pkdb_gc_login_history.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/store/gcworker",
     visibility = ["//visibility:public"],
     deps = [
@@ -47,11 +50,11 @@ go_test(
     srcs = [
         "gc_worker_test.go",
         "main_test.go",
+        "pkdb_gc_login_history_test.go",
     ],
     embed = [":gcworker"],
     flaky = True,
-    race = "on",
-    shard_count = 27,
+    shard_count = 29,
     deps = [
         "//pkg/config",
         "//pkg/ddl/placement",
@@ -61,7 +64,9 @@ go_test(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/session",
+        "//pkg/sessionctx/variable",
         "//pkg/store/mockstore",
+        "//pkg/testkit",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "@com_github_pingcap_errors//:errors",
