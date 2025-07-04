@@ -240,6 +240,8 @@ type stmtSummaryStats struct {
 	planCacheUnqualifiedCount int64
 	lastPlanCacheUnqualified  string // the reason why this query is unqualified for the plan cache
 
+	storageKV  bool // query read from TiKV
+	storageMPP bool // query read from TiFlash
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -912,6 +914,9 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 
 	// request-units
 	ssStats.StmtRUSummary.Add(sei.RUDetail)
+
+	ssStats.storageKV = sei.StmtCtx.IsTiKV.Load()
+	ssStats.storageMPP = sei.StmtCtx.IsTiFlash.Load()
 }
 
 func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64, warningCount int, affectedRows uint64) {
