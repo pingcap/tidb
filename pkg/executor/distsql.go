@@ -637,10 +637,20 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize int) error {
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
+<<<<<<< HEAD
 	ctx, cancel := context.WithCancel(ctx)
 	e.cancelFunc = cancel
 	workCh := make(chan *lookupTableTask, 1)
 	if err := e.startIndexWorker(ctx, workCh, initBatchSize); err != nil {
+=======
+	e.workerCtx, e.cancelFunc = context.WithCancel(ctx)
+	e.pool = &workerPool{
+		needSpawn: func(workers, tasks uint32) bool {
+			return workers < uint32(e.indexLookupConcurrency) && tasks > 1
+		},
+	}
+	if err := e.startIndexWorker(ctx, initBatchSize); err != nil {
+>>>>>>> 38226ece2d4 (executor: reduce overhead of copystack in idxlookup workers (#58705))
 		return err
 	}
 	e.startTableWorker(ctx, workCh)
@@ -725,8 +735,14 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	tps := e.getRetTpsForIndexReader()
 	idxID := e.getIndexPlanRootID()
 	e.idxWorkerWg.Add(1)
+<<<<<<< HEAD
 	go func() {
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
+=======
+	e.pool.submit(func() {
+		defer trace.StartRegion(ctx, "IndexLookUpIndexTask").End()
+		growWorkerStack16K()
+>>>>>>> 38226ece2d4 (executor: reduce overhead of copystack in idxlookup workers (#58705))
 		worker := &indexWorker{
 			idxLookup:       e,
 			workCh:          workCh,
@@ -1105,7 +1121,23 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 			return nil
 		case <-w.finished:
 			return nil
+<<<<<<< HEAD
 		case w.workCh <- task:
+=======
+		default:
+			e := w.idxLookup
+			e.tblWorkerWg.Add(1)
+			e.pool.submit(func() {
+				defer e.tblWorkerWg.Done()
+				select {
+				case <-e.finished:
+					return
+				default:
+					growWorkerStack16K()
+					execTableTask(e, task)
+				}
+			})
+>>>>>>> 38226ece2d4 (executor: reduce overhead of copystack in idxlookup workers (#58705))
 			w.resultCh <- task
 		}
 		if w.idxLookup.stats != nil {
