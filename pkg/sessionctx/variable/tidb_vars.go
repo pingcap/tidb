@@ -1606,6 +1606,7 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
+	DefTiDBLoadBindingTimeout                         = 200
 )
 
 // Process global variables.
