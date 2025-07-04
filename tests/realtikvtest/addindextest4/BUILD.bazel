@@ -4,7 +4,12 @@ go_test(
     name = "addindextest4_test",
     timeout = "long",
     srcs = [
+<<<<<<< HEAD
         "ingest_test.go",
+=======
+        "failure_test.go",
+        "integration_test.go",
+>>>>>>> 39128189e93 (ddl: construct separate tasks for different temp indexes (#61250))
         "main_test.go",
     ],
     flaky = True,
@@ -19,6 +24,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",

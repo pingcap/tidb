@@ -399,6 +399,7 @@ func splitAndValidateTableRanges(
 	t table.PhysicalTable,
 	store kv.Storage,
 	startKey, endKey kv.Key,
+	splitKeys []kv.Key,
 	limit int,
 ) ([]kv.KeyRange, error) {
 	ranges, err := splitTableRanges(ctx, t, store, startKey, endKey, limit)
@@ -423,6 +424,7 @@ func validateTableRanges(ranges []kv.KeyRange, start, end kv.Key) ([]kv.KeyRange
 			r.EndKey = end
 		}
 	}
+<<<<<<< HEAD
 	return ranges, nil
 }
 
@@ -459,6 +461,53 @@ func splitTableRanges(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+=======
+	ranges = splitRangesByKeys(ranges, splitKeys)
+	logutil.DDLLogger().Info("load table ranges from PD done",
+		zap.Int64("physicalTableID", t.GetPhysicalID()),
+		zap.String("range start", hex.EncodeToString(ranges[0].StartKey)),
+		zap.String("range end", hex.EncodeToString(ranges[len(ranges)-1].EndKey)),
+		zap.Int("range count", len(ranges)))
+	failpoint.InjectCall("afterLoadTableRanges", len(ranges))
+	return ranges, nil
+}
+
+// splitRangesByKeys splits the ranges into more ranges by given split keys.
+// The split keys should be ordered.
+func splitRangesByKeys(ranges []kv.KeyRange, splitKeys []kv.Key) []kv.KeyRange {
+	if len(splitKeys) == 0 {
+		return ranges
+	}
+	ret := make([]kv.KeyRange, 0, len(ranges)+len(splitKeys))
+	for _, r := range ranges {
+		start := r.StartKey
+		finishOneRange := false
+		for !finishOneRange {
+			if len(splitKeys) == 0 {
+				break
+			}
+			split := splitKeys[0]
+			switch {
+			case split.Cmp(start) <= 0:
+				splitKeys = splitKeys[1:]
+			case split.Cmp(r.EndKey) < 0:
+				splitKeys = splitKeys[1:]
+				ret = append(ret, kv.KeyRange{StartKey: start, EndKey: split})
+				start = split
+			default:
+				finishOneRange = true
+			}
+		}
+		ret = append(ret, kv.KeyRange{StartKey: start, EndKey: r.EndKey})
+	}
+	return ret
+}
+
+func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error {
+	failpoint.Inject("validateAndFillRangesErr", func() {
+		failpoint.Return(dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("mock"))
+	})
+>>>>>>> 39128189e93 (ddl: construct separate tasks for different temp indexes (#61250))
 	if len(ranges) == 0 {
 		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]", startKey.String(), endKey.String())
 		return nil, errors.Trace(dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
@@ -663,6 +712,11 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		return errors.Trace(err)
 	}
 
+	var splitKeys []kv.Key
+	if reorgInfo.mergingTmpIdx {
+		splitKeys = getSplitKeysForTempIndexRanges(t.GetPhysicalID(), reorgInfo.elements)
+	}
+
 	// process result goroutine
 	eg.Go(func() error {
 		totalAddedCount := reorgInfo.Job.GetRowCount()
@@ -729,7 +783,11 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		start, end := startKey, endKey
 		taskIDAlloc := newTaskIDAllocator()
 		for {
+<<<<<<< HEAD
 			kvRanges, err2 := splitAndValidateTableRanges(egCtx, t, reorgInfo.d.store, start, end, backfillTaskChanSize)
+=======
+			kvRanges, err2 := loadTableRanges(egCtx, t, dc.store, start, end, splitKeys, backfillTaskChanSize)
+>>>>>>> 39128189e93 (ddl: construct separate tasks for different temp indexes (#61250))
 			if err2 != nil {
 				return errors.Trace(err2)
 			}
