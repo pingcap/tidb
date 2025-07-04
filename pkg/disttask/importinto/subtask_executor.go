@@ -99,15 +99,15 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 }
 
 // postProcess does the post-processing for the task.
-func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
-	failpoint.InjectCall("syncBeforePostProcess", taskMeta.JobID)
+func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
+	failpoint.InjectCall("syncBeforePostProcess", p.taskMeta.JobID)
 
 	callLog := log.BeginTask(logger, "post process")
 	defer func() {
 		callLog.End(zap.ErrorLevel, err)
 	}()
 
-	if err = importer.RebaseAllocatorBases(ctx, store, subtaskMeta.MaxIDs, &taskMeta.Plan, logger); err != nil {
+	if err = importer.RebaseAllocatorBases(ctx, p.store, subtaskMeta.MaxIDs, &p.taskMeta.Plan, logger); err != nil {
 		return err
 	}
 
@@ -124,12 +124,13 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 	}
 
 	taskManager, err := storage.GetTaskManager()
-	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
 	}
+
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
-		err = importer.VerifyChecksum(ctx, &taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
+		err = importer.VerifyChecksum(ctx, &p.taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
 		if common.IsRetryableError(err) {
 			return err
 		}
@@ -140,7 +141,7 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 		if err2 != nil {
 			callLog.Warn("alter table mode to normal failure", zap.Error(err2))
 		} else {
-			err2 = markTaskResetTableMode(ctx, taskManager, taskMeta)
+			err2 = markTaskResetTableMode(ctx, taskManager, p.taskMeta)
 		}
 		if err != nil {
 			return err
@@ -148,7 +149,6 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 		return err2
 	})
 }
-
 func markTaskResetTableMode(ctx context.Context, taskManager *storage.TaskManager, taskMeta *TaskMeta) error {
 	task, err := taskManager.GetTaskByID(ctx, taskMeta.JobID)
 	if err != nil {
