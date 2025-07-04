@@ -69,7 +69,11 @@ go_library(
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/util",
         "//pkg/store",
+<<<<<<< HEAD
         "//pkg/store/helper",
+=======
+        "//pkg/telemetry",
+>>>>>>> 15fe8f1be97 (telemetry: add telemetry related code back (#61753))
         "//pkg/ttl/ttlworker",
         "//pkg/types",
         "//pkg/util",

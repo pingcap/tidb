@@ -943,6 +943,7 @@ var defaultSysVars = []*SysVar{
 			}
 			return origin, nil
 		}},
+<<<<<<< HEAD
 	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return "OFF", nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
@@ -950,6 +951,10 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: Off, Type: TypeBool, Depended: true},
+=======
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableTelemetry, Value: BoolToOnOff(vardef.DefTiDBEnableTelemetry), Type: vardef.TypeBool},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableHistoricalStats, Value: vardef.Off, Type: vardef.TypeBool, Depended: true},
+>>>>>>> 15fe8f1be97 (telemetry: add telemetry related code back (#61753))
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: On, Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return getTiDBTableValue(s, "tikv_gc_enable", On)
