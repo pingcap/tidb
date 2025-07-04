@@ -253,7 +253,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, p.LeftConditions...)
 		tempCond = append(tempCond, p.RightConditions...)
 		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
-		tempCond = append(tempCond, utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.OtherConditions, true)...)
+		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
 		tempCond = utilfuncp.ApplyPredicateSimplification(p.SCtx(), tempCond, true)
