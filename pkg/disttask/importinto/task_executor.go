@@ -616,7 +616,6 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 		return nil, errors.Trace(err)
 	}
 	logger := logutil.BgLogger().With(
-		zap.Stringer("type", proto.ImportInto),
 		zap.Int64("task-id", task.ID),
 		zap.String("task-key", task.Key),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)),

@@ -326,6 +326,10 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 
 	distSQLScanConcurrency := int(e.distSQLScanConcurrency)
 	for i := range maxErrorRetryCount {
+		log.FromContext(ctx).Info("checksum table",
+			zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name),
+			zap.Int("distSQLConcurrency", distSQLScanConcurrency),
+			zap.Int("backoffWeight", e.backoffWeight))
 		_ = executor.Each(func(request *kv.Request) error {
 			request.Concurrency = distSQLScanConcurrency
 			return nil
