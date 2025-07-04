@@ -7082,18 +7082,6 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 // will failure. RefreshMeta will reload schema diff to update info schema by
 // schema ID and table ID to make sure data in meta kv and info schema is consistent.
 func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaArgs) error {
-	is := e.infoCache.GetLatest()
-
-	schema, ok := is.SchemaByID(args.SchemaID)
-	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("SchemaID: %v", args.SchemaID))
-	}
-
-	table, ok := is.TableByID(e.ctx, args.TableID)
-	if !ok {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name, args.TableID)
-	}
-
 	job := &model.Job{
 		Version:        model.JobVersion2,
 		SchemaID:       args.SchemaID,
@@ -7104,8 +7092,8 @@ func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaA
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{
-				Database:      schema.Name.O,
-				Table:         table.Meta().Name.O,
+				Database:      "",
+				Table:         "",
 				Policy:        "",
 				ResourceGroup: "",
 				Mode:          0,
