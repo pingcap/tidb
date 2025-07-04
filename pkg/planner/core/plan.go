@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -58,7 +59,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanC
 		tsk = tsk.ConvertToRootTask(ctx)
 	}
 	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: p.SortItems, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{
+	sort := physicalop.PhysicalSort{
 		ByItems:       make([]*util.ByItems, 0, len(p.SortItems)),
 		IsPartialSort: p.IsSortItemAllForPartition(),
 	}.Init(ctx, tsk.Plan().StatsInfo(), tsk.Plan().QueryBlockOffset(), sortReqProp)
@@ -97,7 +98,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx base.PlanContext) *Physica
 		return nil
 	}
 
-	sort, ok := pp.Children()[0].(*PhysicalSort)
+	sort, ok := pp.Children()[0].(*physicalop.PhysicalSort)
 	if !ok {
 		// Multi-thread executing on SORTED data source is not effective enough by current implementation.
 		// TODO: Implement a better one.
@@ -136,7 +137,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx base.PlanContext) *P
 		return nil
 	}
 
-	sort, ok := pp.Children()[0].(*PhysicalSort)
+	sort, ok := pp.Children()[0].(*physicalop.PhysicalSort)
 	if !ok {
 		// Multi-thread executing on SORTED data source is not effective enough by current implementation.
 		// TODO: Implement a better one.
@@ -178,7 +179,7 @@ func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx base.PlanContext) *P
 	tails := make([]base.PhysicalPlan, len(children))
 
 	for i := range children {
-		sort, ok := children[i].(*PhysicalSort)
+		sort, ok := children[i].(*physicalop.PhysicalSort)
 		if !ok {
 			// Multi-thread executing on SORTED data source is not effective enough by current implementation.
 			// TODO: Implement a better one.
