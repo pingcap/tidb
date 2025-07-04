@@ -2113,6 +2113,13 @@ func (do *Domain) gcStatsWorkerExitPreprocessing() {
 		do.statsOwner.Close()
 		ch <- struct{}{}
 	}()
+	if intest.InTest {
+		// We should wait for statistics owner to close on exit.
+		// Otherwise, the goroutine leak detection may fail.
+		<-ch
+		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
+		return
+	}
 	select {
 	case <-ch:
 		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
