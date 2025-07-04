@@ -416,12 +416,24 @@ func BuildHistAndTopN(
 		topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
 	}
 
-	// Step2: exclude topn from samples
-	if numTopN != 0 {
-		for i := int64(0); i < int64(len(samples)); i++ {
+	topn := &TopN{TopN: topNList}
+	lenTopN := int64(len(topn.TopN))
+
+	// Step2: exclude TopN from samples if the NDV is larger than the number of topN items.
+	lenSamples := int64(len(samples))
+	if lenTopN > 0 && lenTopN < hg.NDV && lenSamples > 0 {
+		for i := int64(0); i < lenSamples; i++ {
 			sampleBytes, err := getComparedBytes(samples[i].Value)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
+			}
+			// Safety:
+			// When a sample value matches an entry in the topN list, it is removed from the samples array,
+			// so it can never match the previous sample. Therefore, this equality check will never be true
+			// in that case. For values not found in topN, we don't need keep checking the same value.
+			if i > 0 && bytes.Equal(sampleBytes, samples[i-1].Value.GetBytes()) {
+				// If the sample is the same as the previous one, we can skip it.
+				continue
 			}
 			// For debugging invalid sample data.
 			var (
@@ -457,6 +469,7 @@ func BuildHistAndTopN(
 					// Found the same value in topn: need to skip over this value in samples.
 					copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
 					samples = samples[:uint64(len(samples))-topNList[j].Count]
+					lenSamples = int64(len(samples))
 					i--
 					foundTwice = true
 					continue
@@ -465,24 +478,27 @@ func BuildHistAndTopN(
 		}
 	}
 
-	topn := &TopN{TopN: topNList}
-	topn.Scale(sampleFactor)
+	var topNTotalCount uint64
+	for i := range topn.TopN {
+		topn.TopN[i].Count = uint64(float64(topn.TopN[i].Count) * sampleFactor)
+		topNTotalCount += topn.TopN[i].Count
+	}
 
-	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
+	if hg.NDV <= lenTopN {
 		// If we've collected everything  - don't create any buckets
 		return hg, topn, nil
 	}
 
 	// Step3: build histogram with the rest samples
-	if len(samples) > 0 {
+	if lenSamples > 0 {
+		remainingNDV := ndv - lenTopN
 		// if we pruned the topN, it means that there are no remaining skewed values in the samples
-		if len(topn.TopN) < numTopN && numBuckets == 256 {
-			remainingNDV := ndv - int64(len(topn.TopN))
+		if lenTopN < int64(numTopN) && numBuckets == 256 {
 			// set the number of buckets to be the number of remaining distinct values divided by 2
 			// but no less than 1 and no more than the original number of buckets
 			numBuckets = int(min(max(1, remainingNDV/2), int64(numBuckets)))
 		}
-		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
+		_, err = buildHist(sc, hg, samples, count-int64(topNTotalCount), remainingNDV, int64(numBuckets), memTracker)
 		if err != nil {
 			return nil, nil, err
 		}

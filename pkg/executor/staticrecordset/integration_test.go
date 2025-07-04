@@ -130,7 +130,7 @@ func TestStaticRecordSetExceedGCTime(t *testing.T) {
 	tk.MustExec("truncate table t")
 
 	// Update the safe point
-	store.(tikv.Storage).UpdateSPCache(startTS+1, time.Now())
+	store.(tikv.Storage).UpdateTxnSafePointCache(startTS+1, time.Now())
 
 	// Check data, it'll get an error
 	chk := srs.NewChunk(nil)

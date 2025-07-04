@@ -162,7 +162,7 @@ func (j *DynamicPartitionedTableAnalysisJob) ValidateAndPrepare(
 			j.failureHook(j, needRetry)
 		}
 	}
-	is := sctx.GetDomainInfoSchema()
+	is := sctx.GetLatestInfoSchema()
 	tableInfo, ok := is.TableInfoByID(j.GlobalTableID)
 	if !ok {
 		callFailureHook(false)

@@ -54,14 +54,14 @@ func (s *mockGCSSuite) TestErrorMessage() {
 	checkClientErrorMessage(s.T(), err, "ERROR 1054 (42S22): Unknown column 'wrong' in 'field list'")
 	err = s.tk.ExecToErr("LOAD DATA INFILE 'abc://1' INTO TABLE t;")
 	checkClientErrorMessage(s.T(), err,
-		"ERROR 8158 (HY000): The URI of data source is invalid. Reason: storage abc not support yet. Please provide a valid URI, such as")
+		"ERROR 8158 (HY000): The URI of data source is invalid. Reason: storage abc not support yet: invalid external storage config. Please provide a valid URI, such as")
 	err = s.tk.ExecToErr("LOAD DATA INFILE 's3://no-network' INTO TABLE t;")
 	checkClientErrorMessage(s.T(), err,
-		"ERROR 8159 (HY000): Access to the data source has been denied. Reason: failed to get region of bucket no-network. Please check the URI, access key and secret access key are correct")
+		"ERROR 8159 (HY000): Access to the data source has been denied. Reason: failed to get region of bucket no-network")
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://wrong-bucket/p?endpoint=%s'
-		INTO TABLE t;`, gcsEndpoint))
+		INTO TABLE t;`, s.GetGCSEndpoint()))
 	checkClientErrorMessage(s.T(), err,
-		"ERROR 8160 (HY000): Failed to read source files. Reason: the object doesn't exist, file info: input.bucket='wrong-bucket', input.key='p'. Please check the file location is correct")
+		"ERROR 8160 (HY000): Failed to read source files. Reason: the object doesn't exist, file info: input.bucket='wrong-bucket', input.key='p': storage: object doesn't exist. Please check the file location is correct")
 
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
@@ -72,7 +72,7 @@ func (s *mockGCSSuite) TestErrorMessage() {
 			"1\t4\n"),
 	})
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
-		INTO TABLE t LINES STARTING BY '\n';`, gcsEndpoint))
+		INTO TABLE t LINES STARTING BY '\n';`, s.GetGCSEndpoint()))
 	checkClientErrorMessage(s.T(), err,
 		`ERROR 8162 (HY000): STARTING BY '
 ' cannot contain LINES TERMINATED BY '
@@ -99,7 +99,7 @@ func (s *mockGCSSuite) TestColumnNumMismatch() {
 	s.tk.MustExec("CREATE TABLE t (c INT);")
 	s.tk.MustExec("SET SESSION sql_mode = ''")
 	err := s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t2.tsv?endpoint=%s'
-		INTO TABLE t;`, gcsEndpoint))
+		INTO TABLE t;`, s.GetGCSEndpoint()))
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2", s.tk.Session().LastMessage())
 	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(
@@ -108,17 +108,17 @@ func (s *mockGCSSuite) TestColumnNumMismatch() {
 
 	s.tk.MustExec("SET SESSION sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t2.tsv?endpoint=%s'
-		INTO TABLE t;`, gcsEndpoint))
+		INTO TABLE t;`, s.GetGCSEndpoint()))
 	checkClientErrorMessage(s.T(), err,
 		"ERROR 1262 (01000): Row 1 was truncated; it contained more data than there were input columns")
 
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t2.tsv?endpoint=%s'
-		REPLACE INTO TABLE t;`, gcsEndpoint))
+		REPLACE INTO TABLE t;`, s.GetGCSEndpoint()))
 	checkClientErrorMessage(s.T(), err,
 		"ERROR 1262 (01000): Row 1 was truncated; it contained more data than there were input columns")
 
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t2.tsv?endpoint=%s'
-		IGNORE INTO TABLE t;`, gcsEndpoint))
+		IGNORE INTO TABLE t;`, s.GetGCSEndpoint()))
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2", s.tk.Session().LastMessage())
 	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(
@@ -129,7 +129,7 @@ func (s *mockGCSSuite) TestColumnNumMismatch() {
 
 	s.tk.MustExec("CREATE TABLE t2 (c1 INT, c2 INT, c3 INT);")
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t2.tsv?endpoint=%s'
-		INTO TABLE t2;`, gcsEndpoint))
+		INTO TABLE t2;`, s.GetGCSEndpoint()))
 	checkClientErrorMessage(s.T(), err,
 		"ERROR 1261 (01000): Row 1 doesn't contain data for all columns")
 
@@ -140,7 +140,7 @@ func (s *mockGCSSuite) TestColumnNumMismatch() {
     	c2 INT NOT NULL,
     	c3 INT NOT NULL DEFAULT 1);`)
 	s.tk.MustExec(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t2.tsv?endpoint=%s'
-		INTO TABLE t3 (c1, c2);`, gcsEndpoint))
+		INTO TABLE t3 (c1, c2);`, s.GetGCSEndpoint()))
 	s.tk.MustQuery("SELECT * FROM t3;").Check(testkit.Rows(
 		"1 2 1",
 		"1 4 1"))
@@ -164,21 +164,21 @@ func (s *mockGCSSuite) TestEvalError() {
 	s.tk.MustExec("CREATE TABLE t (c INT, c2 INT UNIQUE);")
 	s.tk.MustExec("SET SESSION sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
 	err := s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t3.tsv?endpoint=%s'
-		INTO TABLE t (@v1, c2) SET c=@v1+'asd';`, gcsEndpoint))
+		INTO TABLE t (@v1, c2) SET c=@v1+'asd';`, s.GetGCSEndpoint()))
 	checkClientErrorMessage(s.T(), err,
 		"ERROR 1292 (22007): Truncated incorrect DOUBLE value: 'asd'")
 
 	// REPLACE does not help
 
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t3.tsv?endpoint=%s'
-		REPLACE INTO TABLE t (@v1, c2) SET c=@v1+'asd';`, gcsEndpoint))
+		REPLACE INTO TABLE t (@v1, c2) SET c=@v1+'asd';`, s.GetGCSEndpoint()))
 	checkClientErrorMessage(s.T(), err,
 		"ERROR 1292 (22007): Truncated incorrect DOUBLE value: 'asd'")
 
 	// IGNORE helps
 
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t3.tsv?endpoint=%s'
-		IGNORE INTO TABLE t (@v1, c2) SET c=@v1+'asd';`, gcsEndpoint))
+		IGNORE INTO TABLE t (@v1, c2) SET c=@v1+'asd';`, s.GetGCSEndpoint()))
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2", s.tk.Session().LastMessage())
 	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(
@@ -207,12 +207,12 @@ func (s *mockGCSSuite) TestDataError() {
 	s.tk.MustExec("CREATE TABLE t (c INT NOT NULL, c2 INT NOT NULL);")
 	s.tk.MustExec("SET SESSION sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
 	err := s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/null.tsv?endpoint=%s'
-		INTO TABLE t;`, gcsEndpoint))
+		INTO TABLE t;`, s.GetGCSEndpoint()))
 	checkClientErrorMessage(s.T(), err,
 		"ERROR 1263 (22004): Column set to default value; NULL supplied to NOT NULL column 'c2' at row 1")
 
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/null.tsv?endpoint=%s'
-		IGNORE INTO TABLE t;`, gcsEndpoint))
+		IGNORE INTO TABLE t;`, s.GetGCSEndpoint()))
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 1", s.tk.Session().LastMessage())
 	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(
@@ -230,13 +230,13 @@ func (s *mockGCSSuite) TestDataError() {
 	s.tk.MustExec("CREATE TABLE t2 (c INT PRIMARY KEY, c2 INT NOT NULL);")
 
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t4.tsv?endpoint=%s'
-		INTO TABLE t2;`, gcsEndpoint))
+		INTO TABLE t2;`, s.GetGCSEndpoint()))
 	checkClientErrorMessage(s.T(), err, "ERROR 1062 (23000): Duplicate entry '1' for key 't2.PRIMARY'")
 
 	s.tk.MustExec("CREATE TABLE t3 (c INT, c2 INT UNIQUE);")
 
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t4.tsv?endpoint=%s'
-		INTO TABLE t3;`, gcsEndpoint))
+		INTO TABLE t3;`, s.GetGCSEndpoint()))
 	checkClientErrorMessage(s.T(), err, "ERROR 1062 (23000): Duplicate entry '2' for key 't3.c2'")
 
 	s.server.CreateObject(fakestorage.Object{
@@ -248,14 +248,14 @@ func (s *mockGCSSuite) TestDataError() {
 			"2\t100\n"),
 	})
 	s.tk.MustExec(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t5.tsv?endpoint=%s'
-		REPLACE INTO TABLE t3;`, gcsEndpoint))
+		REPLACE INTO TABLE t3;`, s.GetGCSEndpoint()))
 	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows())
 	s.tk.MustQuery("SELECT * FROM t3;").Check(testkit.Rows(
 		"2 100"))
 
 	s.tk.MustExec("UPDATE t3 SET c = 3;")
 	s.tk.MustExec(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t5.tsv?endpoint=%s'
-		IGNORE INTO TABLE t3;`, gcsEndpoint))
+		IGNORE INTO TABLE t3;`, s.GetGCSEndpoint()))
 	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(
 		"Warning 1062 Duplicate entry '100' for key 't3.c2'",
 		"Warning 1062 Duplicate entry '100' for key 't3.c2'"))
@@ -282,7 +282,7 @@ func (s *mockGCSSuite) TestIssue43555() {
 	s.tk.MustExec("SET SESSION sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
 
 	err := s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-csv/43555.csv?endpoint=%s'
-		IGNORE INTO TABLE t;`, gcsEndpoint))
+		IGNORE INTO TABLE t;`, s.GetGCSEndpoint()))
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 3", s.tk.Session().LastMessage())
 
@@ -295,11 +295,11 @@ func (s *mockGCSSuite) TestIssue43555() {
 		"7 <nil>"))
 
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-csv/43555.csv?endpoint=%s'
-		INTO TABLE t (id);`, gcsEndpoint))
+		INTO TABLE t (id);`, s.GetGCSEndpoint()))
 	checkClientErrorMessage(s.T(), err, "ERROR 1265 (01000): Data truncated for column 'id' at row 2")
 
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-csv/43555.csv?endpoint=%s'
-		IGNORE INTO TABLE t (id1) SET id='7.1';`, gcsEndpoint))
+		IGNORE INTO TABLE t (id1) SET id='7.1';`, s.GetGCSEndpoint()))
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2", s.tk.Session().LastMessage())
 	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(

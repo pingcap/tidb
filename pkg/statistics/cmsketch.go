@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 )
@@ -213,28 +215,6 @@ func (c *CMSketch) InsertBytesByCount(bytes []byte, count uint64) {
 
 func (c *CMSketch) considerDefVal(cnt uint64) bool {
 	return (cnt == 0 || (cnt > c.defaultValue && cnt < 2*(c.count/uint64(c.width)))) && c.defaultValue > 0
-}
-
-// setValue sets the count for value that hashed into (h1, h2), and update defaultValue if necessary.
-func (c *CMSketch) setValue(h1, h2 uint64, count uint64) {
-	oriCount := c.queryHashValue(nil, h1, h2)
-	if c.considerDefVal(oriCount) {
-		// We should update c.defaultValue if we used c.defaultValue when getting the estimate count.
-		// This should make estimation better, remove this line if it does not work as expected.
-		c.defaultValue = uint64(float64(c.defaultValue)*0.95 + float64(c.defaultValue)*0.05)
-		if c.defaultValue == 0 {
-			// c.defaultValue never guess 0 since we are using a sampled data.
-			c.defaultValue = 1
-		}
-	}
-
-	c.count += count - oriCount
-	// let it overflow naturally
-	deltaCount := uint32(count) - uint32(oriCount)
-	for i := range c.table {
-		j := (h1 + h2*uint64(i)) % uint64(c.width)
-		c.table[i][j] = c.table[i][j] + deltaCount
-	}
 }
 
 // SubValue remove a value from the CMSketch.
@@ -520,13 +500,11 @@ func (c *CMSketch) CalcDefaultValForAnalyze(ndv uint64) {
 // TopN stores most-common values, which is used to estimate point queries.
 type TopN struct {
 	TopN []TopNMeta
-}
 
-// Scale scales the TopN by the given factor.
-func (c *TopN) Scale(scaleFactor float64) {
-	for i := range c.TopN {
-		c.TopN[i].Count = uint64(float64(c.TopN[i].Count) * scaleFactor)
-	}
+	totalCount uint64
+	minCount   uint64
+	// minCount and totalCount are initialized only once.
+	once sync.Once
 }
 
 // AppendTopN appends a topn into the TopN struct.
@@ -611,12 +589,38 @@ func (c *TopN) MinCount() uint64 {
 	if c == nil || len(c.TopN) == 0 {
 		return 0
 	}
-	// Initialize to the first value in TopN
-	minCount := c.TopN[0].Count
+	c.calculateMinCountAndCount()
+	return c.minCount
+}
+
+func (c *TopN) calculateMinCountAndCount() {
+	if intest.InTest {
+		// In test, After the sync.Once is called, topN will not be modified anymore.
+		minCount, totalCount := c.calculateMinCountAndCountInternal()
+		c.onceCalculateMinCountAndCount()
+		intest.Assert(minCount == c.minCount, "minCount should be equal to the calculated minCount")
+		intest.Assert(totalCount == c.totalCount, "totalCount should be equal to the calculated totalCount")
+		return
+	}
+	c.onceCalculateMinCountAndCount()
+}
+
+func (c *TopN) onceCalculateMinCountAndCount() {
+	c.once.Do(func() {
+		// Initialize to the first value in TopN
+		minCount, total := c.calculateMinCountAndCountInternal()
+		c.minCount = minCount
+		c.totalCount = total
+	})
+}
+
+func (c *TopN) calculateMinCountAndCountInternal() (minCount, total uint64) {
+	minCount = c.TopN[0].Count
 	for _, t := range c.TopN {
 		minCount = min(minCount, t.Count)
+		total += t.Count
 	}
-	return minCount
+	return minCount, total
 }
 
 // TopNMeta stores the unit of the TopN.
@@ -726,14 +730,11 @@ func (c *TopN) Sort() {
 
 // TotalCount returns how many data is stored in TopN.
 func (c *TopN) TotalCount() uint64 {
-	if c == nil {
+	if c == nil || len(c.TopN) == 0 {
 		return 0
 	}
-	total := uint64(0)
-	for _, t := range c.TopN {
-		total += t.Count
-	}
-	return total
+	c.calculateMinCountAndCount()
+	return c.totalCount
 }
 
 // Equal checks whether the two TopN are equal.
@@ -757,18 +758,6 @@ func (c *TopN) Equal(cc *TopN) bool {
 	return true
 }
 
-// RemoveVal remove the val from TopN if it exists.
-func (c *TopN) RemoveVal(val []byte) {
-	if c == nil {
-		return
-	}
-	pos := c.FindTopN(val)
-	if pos == -1 {
-		return
-	}
-	c.TopN = slices.Delete(c.TopN, pos, pos+1)
-}
-
 // MemoryUsage returns the total memory usage of a topn.
 func (c *TopN) MemoryUsage() (sum int64) {
 	if c == nil {
@@ -779,24 +768,6 @@ func (c *TopN) MemoryUsage() (sum int64) {
 		sum += 32 + int64(cap(meta.Encoded)) // 32 is size of byte array (24) + size of uint64 (8)
 	}
 	return
-}
-
-// queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert.
-// If such elements does not in topn elements, nothing will happen and false will be returned.
-func (c *TopN) updateTopNWithDelta(d []byte, delta uint64, increase bool) bool {
-	if c == nil || c.TopN == nil {
-		return false
-	}
-	idx := c.FindTopN(d)
-	if idx >= 0 {
-		if increase {
-			c.TopN[idx].Count += delta
-		} else {
-			c.TopN[idx].Count -= delta
-		}
-		return true
-	}
-	return false
 }
 
 // NewTopN creates the new TopN struct by the given size.

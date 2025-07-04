@@ -129,6 +129,8 @@ const (
 	PlanDigestStr                              = "PLAN_DIGEST"
 	PlanStr                                    = "PLAN"
 	BinaryPlan                                 = "BINARY_PLAN"
+	BindingDigestStr                           = "BINDING_DIGEST"
+	BindingDigestTextStr                       = "BINDING_DIGEST_TEXT"
 	Charset                                    = "CHARSET"
 	Collation                                  = "COLLATION"
 	PlanHint                                   = "PLAN_HINT"
@@ -185,6 +187,12 @@ var columnFactoryMap = map[string]columnFactory{
 	},
 	DigestTextStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.NormalizedSQL
+	},
+	BindingDigestStr: func(_ columnInfo, record *StmtRecord) any {
+		return convertEmptyToNil(record.BindingDigest)
+	},
+	BindingDigestTextStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.BindingSQL
 	},
 	TableNamesStr: func(_ columnInfo, record *StmtRecord) any {
 		return convertEmptyToNil(record.TableNames)

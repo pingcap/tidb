@@ -29,8 +29,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
@@ -74,17 +75,17 @@ func TestConvertPBError2Error(t *testing.T) {
 
 	cases := []struct {
 		pbErr *errorpb.Error
-		res   *ingestAPIError
+		res   *ingestcli.IngestAPIError
 	}{
 		// NotLeader doesn't mean region peers are changed, so we can retry ingest.
-		{pbErr: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}, res: &ingestAPIError{err: common.ErrKVNotLeader}},
+		{pbErr: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}, res: &ingestcli.IngestAPIError{Err: errdef.ErrKVNotLeader}},
 		// EpochNotMatch means region is changed, if the new region covers the old, we can restart the writing process.
 		// Otherwise, we should restart from region scanning.
 		{
 			pbErr: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{
 				CurrentRegions: []*metapb.Region{newRegion},
 			}},
-			res: &ingestAPIError{err: common.ErrKVEpochNotMatch, newRegion: &split.RegionInfo{
+			res: &ingestcli.IngestAPIError{Err: errdef.ErrKVEpochNotMatch, NewRegion: &split.RegionInfo{
 				Region: newRegion,
 				Leader: &metapb.Peer{Id: 1},
 			}},
@@ -97,33 +98,25 @@ func TestConvertPBError2Error(t *testing.T) {
 				RegionEpoch: &metapb.RegionEpoch{ConfVer: 1, Version: 2},
 				Peers:       []*metapb.Peer{{Id: 1}},
 			}}}},
-			res: &ingestAPIError{err: common.ErrKVEpochNotMatch},
+			res: &ingestcli.IngestAPIError{Err: errdef.ErrKVEpochNotMatch},
 		},
-		// TODO: in which case raft layer will drop message?
-		{pbErr: &errorpb.Error{Message: "raft: proposal dropped"}, res: &ingestAPIError{err: common.ErrKVRaftProposalDropped}},
-		{pbErr: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}, res: &ingestAPIError{err: common.ErrKVServerIsBusy}},
-		{pbErr: &errorpb.Error{RegionNotFound: &errorpb.RegionNotFound{}}, res: &ingestAPIError{err: common.ErrKVRegionNotFound}},
-		// ReadIndexNotReady means the region is changed, we need to restart from region scanning
-		{pbErr: &errorpb.Error{ReadIndexNotReady: &errorpb.ReadIndexNotReady{}}, res: &ingestAPIError{err: common.ErrKVReadIndexNotReady}},
-		// TiKV disk full is not retryable
-		{pbErr: &errorpb.Error{DiskFull: &errorpb.DiskFull{}}, res: &ingestAPIError{err: common.ErrKVDiskFull}},
-		// a general error is retryable from writing
-		{pbErr: &errorpb.Error{StaleCommand: &errorpb.StaleCommand{}}, res: &ingestAPIError{err: common.ErrKVIngestFailed}},
 	}
 
 	for i, c := range cases {
 		t.Run(fmt.Sprintf("case %d", i), func(t *testing.T) {
-			err := convertPBError2Error(job, c.pbErr)
-			require.ErrorIs(t, err, c.res.err)
-			if c.res.newRegion == nil {
-				require.Nil(t, err.newRegion)
+			err := ingestcli.NewIngestAPIError(c.pbErr, func(regions []*metapb.Region) *split.RegionInfo {
+				return extractRegionFromErr(job, regions)
+			})
+			require.ErrorIs(t, err, c.res.Err)
+			if c.res.NewRegion == nil {
+				require.Nil(t, err.NewRegion)
 			} else {
 				if kerneltype.IsNextGen() {
 					// it's always nil for nextgen
-					require.Nil(t, err.newRegion)
+					require.Nil(t, err.NewRegion)
 				} else {
-					require.EqualValues(t, c.res.newRegion, err.newRegion)
-					require.EqualValues(t, 2, err.newRegion.Region.RegionEpoch.Version)
+					require.EqualValues(t, c.res.NewRegion, err.NewRegion)
+					require.EqualValues(t, 2, err.NewRegion.Region.RegionEpoch.Version)
 				}
 			}
 		})
@@ -131,7 +124,7 @@ func TestConvertPBError2Error(t *testing.T) {
 }
 
 func TestExtractRegionFromErrForNextGen(t *testing.T) {
-	if !kerneltype.IsNextGen() {
+	if kerneltype.IsClassic() {
 		t.Skip("only run in next gen")
 	}
 	region := &split.RegionInfo{
@@ -174,11 +167,6 @@ func TestExtractRegionFromErrForNextGen(t *testing.T) {
 	require.Nil(t, extractRegionFromErr(job, []*metapb.Region{newRegion}))
 }
 
-func TestIngestAPIErrorRetryable(t *testing.T) {
-	require.True(t, common.IsRetryableError(&ingestAPIError{err: common.ErrKVIngestFailed}))
-	require.False(t, common.IsRetryableError(&ingestAPIError{err: common.ErrKVDiskFull}))
-}
-
 func TestGetNextStageOnIngestError(t *testing.T) {
 	cases := []struct {
 		err    error
@@ -186,16 +174,16 @@ func TestGetNextStageOnIngestError(t *testing.T) {
 		stage  jobStageTp
 	}{
 		{err: &net.DNSError{IsTimeout: true}, stage: wrote},
-		{err: &ingestAPIError{err: common.ErrKVNotLeader.GenWithStack("")}, stage: needRescan},
-		{err: &ingestAPIError{err: common.ErrKVEpochNotMatch.GenWithStack("")}, stage: needRescan},
-		{err: &ingestAPIError{err: common.ErrKVEpochNotMatch.GenWithStack(""), newRegion: &split.RegionInfo{}},
+		{err: &ingestcli.IngestAPIError{Err: errdef.ErrKVNotLeader.GenWithStack("")}, stage: needRescan},
+		{err: &ingestcli.IngestAPIError{Err: errdef.ErrKVEpochNotMatch.GenWithStack("")}, stage: needRescan},
+		{err: &ingestcli.IngestAPIError{Err: errdef.ErrKVEpochNotMatch.GenWithStack(""), NewRegion: &split.RegionInfo{}},
 			region: &split.RegionInfo{}, stage: regionScanned},
-		{err: &ingestAPIError{err: common.ErrKVRaftProposalDropped.GenWithStack("")}, stage: needRescan},
-		{err: &ingestAPIError{err: common.ErrKVServerIsBusy.GenWithStack("")}, stage: wrote},
-		{err: &ingestAPIError{err: common.ErrKVRegionNotFound.GenWithStack("")}, stage: needRescan},
-		{err: &ingestAPIError{err: common.ErrKVReadIndexNotReady.GenWithStack("")}, stage: needRescan},
+		{err: &ingestcli.IngestAPIError{Err: errdef.ErrKVRaftProposalDropped.GenWithStack("")}, stage: needRescan},
+		{err: &ingestcli.IngestAPIError{Err: errdef.ErrKVServerIsBusy.GenWithStack("")}, stage: wrote},
+		{err: &ingestcli.IngestAPIError{Err: errdef.ErrKVRegionNotFound.GenWithStack("")}, stage: needRescan},
+		{err: &ingestcli.IngestAPIError{Err: errdef.ErrKVReadIndexNotReady.GenWithStack("")}, stage: needRescan},
 		// ErrKVDiskFull is not retryable, no need to test it
-		{err: &ingestAPIError{err: common.ErrKVIngestFailed.GenWithStack("")}, stage: regionScanned},
+		{err: &ingestcli.IngestAPIError{Err: errdef.ErrKVIngestFailed.GenWithStack("")}, stage: regionScanned},
 	}
 	for i, c := range cases {
 		t.Run(fmt.Sprintf("case %d", i), func(t *testing.T) {

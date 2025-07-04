@@ -376,7 +376,7 @@ func TestFullLoadAndSnapshot(t *testing.T) {
 	timestamp := time.Now().Format(time.RFC3339Nano)
 	time.Sleep(100 * time.Millisecond)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockTryLoadDiffError", `return("renametable")`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/MockTryLoadDiffError", `return("renametable")`)
 	tk.MustExec("rename table db1.t to db2.t")
 
 	tk.MustQuery("select * from db2.t").Check(testkit.Rows())
@@ -393,7 +393,7 @@ func TestFullLoadAndSnapshot(t *testing.T) {
 	tk.MustExec("insert into test.tmp values (1)")
 	tk.MustExec("commit")
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockTryLoadDiffError", `return("dropdatabase")`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/MockTryLoadDiffError", `return("dropdatabase")`)
 	tk.MustExec("drop database db1")
 	tk.MustExecToErr("use db1")
 	tk.MustQuery("select table_schema from information_schema.tables where table_schema = 'db2'").Check(testkit.Rows("db2"))

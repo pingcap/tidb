@@ -718,14 +718,6 @@ func (d *SchemaTracker) handleModifyColumn(
 	tblInfo.AutoRandomBits = args.NewShardBits
 	oldCol := table.FindCol(t.Cols(), originalColName.L).ColumnInfo
 
-	originDefVal, err := ddl.GetOriginDefaultValueForModifyColumn(sctx.GetExprCtx(), newColInfo, oldCol)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err = newColInfo.SetOriginDefaultValue(originDefVal); err != nil {
-		return errors.Trace(err)
-	}
-
 	// replace old column and its related index column in-place.
 	newColInfo.ID = ddl.AllocateColumnID(tblInfo)
 	newColInfo.Offset = oldCol.Offset
@@ -1190,5 +1182,10 @@ func (d *SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema 
 
 // CreatePlacementPolicyWithInfo implements the DDL interface, it's no-op in DM's case.
 func (*SchemaTracker) CreatePlacementPolicyWithInfo(_ sessionctx.Context, _ *model.PolicyInfo, _ ddl.OnExist) error {
+	return nil
+}
+
+// RefreshMeta implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) RefreshMeta(_ sessionctx.Context, _ *model.RefreshMetaArgs) error {
 	return nil
 }

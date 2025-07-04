@@ -46,8 +46,8 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockWriterMemSize", "return()"))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockWriterMemSize")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockWriterMemSizeInKB", "return(1048576)"))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockWriterMemSizeInKB")
 	/// 1. test partition table.
 	tk.MustExec("create table tp1(id int primary key, v int) PARTITION BY RANGE (id) (\n    " +
 		"PARTITION p0 VALUES LESS THAN (10),\n" +
@@ -357,4 +357,16 @@ func createAddIndexTask(t *testing.T,
 	}
 
 	return task, server
+}
+
+func TestBackfillTaskMetaVersion(t *testing.T) {
+	// Test the default version.
+	meta := &ddl.BackfillTaskMeta{}
+	require.Equal(t, ddl.BackfillTaskMetaVersion0, meta.Version)
+
+	// Test the new version.
+	meta = &ddl.BackfillTaskMeta{
+		Version: ddl.BackfillTaskMetaVersion1,
+	}
+	require.Equal(t, ddl.BackfillTaskMetaVersion1, meta.Version)
 }

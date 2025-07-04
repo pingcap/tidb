@@ -136,7 +136,7 @@ func indexJoinPathNewMutableRange(
 	ranges []*ranger.Range,
 	path *util.AccessPath) ranger.MutableRanges {
 	// if the plan-cache is enabled and these ranges depend on some parameters, we have to rebuild these ranges after changing parameters
-	if expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), relatedExprs) {
+	if expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), relatedExprs...) {
 		// assume that path, innerKeys and outerKeys will not be modified in the follow-up process
 		return &mutableIndexJoinRange{
 			ranges:        ranges,
@@ -632,8 +632,7 @@ func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoi
 }
 
 // getBestIndexJoinInnerTaskByProp tries to build the best inner child task from ds for index join by the given property.
-func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty,
-	planCounter *base.PlanCounterTp) (base.Task, int64, error) {
+func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp) (base.Task, int64, error) {
 	// the below code is quite similar from the original logic
 	// reason1: we need to leverage original indexPathInfo down related logic to build constant range for index plan.
 	// reason2: the ranges from TS and IS couldn't be directly used to derive the stats' estimation, it's not real.
@@ -653,6 +652,9 @@ func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.Ph
 		return base.InvalidTask, 0, nil
 	}
 	planCounter.Dec(1)
+	if prop.TaskTp == property.RootTaskType {
+		return innerCopTask.ConvertToRootTask(ds.SCtx()), 1, nil
+	}
 	return innerCopTask, 1, nil
 }
 

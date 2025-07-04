@@ -103,3 +103,56 @@ select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 , concat_ws(',', t1.col_
 rollback;
 
 set @@tidb_enable_inl_join_inner_multi_pattern=default;
+
+CREATE TABLE `td89f296a` (
+  `col_64` tinyint DEFAULT NULL,
+  `col_65` json NOT NULL,
+  `col_66` json DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+
+CREATE TABLE `tac9d3b07` (
+  `col_60` binary(67) DEFAULT '\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0',
+  `col_61` decimal(27,16) NOT NULL,
+  `col_62` time NOT NULL,
+  UNIQUE KEY `idx_19` (`col_60`,`col_61`,`col_62`),
+  UNIQUE KEY `idx_20` (`col_60`(2),`col_62`,`col_61`),
+  KEY `idx_21` (`col_60`(1),`col_61`),
+  UNIQUE KEY `idx_22` (`col_61`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+
+explain format=brief select /*+ inl_join(st_45) */ td89f296a.col_64 as r0 , substr( st_45.r0 , 2 ) as r1 , ord( st_45.r0 ) as r2 , mid( st_45.r1 , 0 , 6 ) as r3 from td89f296a inner join (select  tac9d3b07.col_61 as r0 , bit_and( tac9d3b07.col_61 ) as r1 from tac9d3b07  group by tac9d3b07.col_61,tac9d3b07.col_60) st_45 on td89f296a.col_64 = st_45.r0 order by r0,r1,r2,r3 ;
+select /*+ inl_join(st_45) */ td89f296a.col_64 as r0 , substr( st_45.r0 , 2 ) as r1 , ord( st_45.r0 ) as r2 , mid( st_45.r1 , 0 , 6 ) as r3 from td89f296a inner join (select  tac9d3b07.col_61 as r0 , bit_and( tac9d3b07.col_61 ) as r1 from tac9d3b07  group by tac9d3b07.col_61,tac9d3b07.col_60) st_45 on td89f296a.col_64 = st_45.r0 order by r0,r1,r2,r3 ;
+
+CREATE TABLE `t5602f14e` (
+  `col_51` json NOT NULL,
+  `col_52` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT 'Vn',
+  `col_53` mediumint NOT NULL DEFAULT '-3927549',
+  `col_54` date DEFAULT NULL,
+  `col_55` date NOT NULL DEFAULT '1978-05-20',
+  `col_56` bigint unsigned NOT NULL DEFAULT '12818995484625953384',
+  PRIMARY KEY (`col_55`) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY `idx_16` (`col_55`,`col_54`) /*T![global_index] GLOBAL */,
+  KEY `idx_17` (`col_55`,`col_52`,`col_53`),
+  KEY `idx_18` (`col_55`) /*T![global_index] GLOBAL */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+PARTITION BY RANGE COLUMNS(`col_55`)
+(PARTITION `p0` VALUES LESS THAN ('1980-09-26'),
+ PARTITION `p1` VALUES LESS THAN ('2023-02-26'),
+ PARTITION `p2` VALUES LESS THAN ('2034-03-19'),
+ PARTITION `p3` VALUES LESS THAN (MAXVALUE));
+
+CREATE TABLE `t8e1f515f` (
+  `col_39` decimal(64,22) NOT NULL,
+  `col_40` json DEFAULT NULL,
+  `col_41` date NOT NULL DEFAULT '2022-05-10',
+  `col_42` smallint unsigned NOT NULL DEFAULT '54999',
+  `col_43` double DEFAULT NULL,
+  `col_44` blob DEFAULT NULL,
+  `col_45` varchar(365) COLLATE utf8_bin DEFAULT 'GUNcVb8m',
+  `col_46` smallint NOT NULL,
+  `col_47` binary(149) NOT NULL,
+  `col_48` varchar(437) COLLATE utf8_unicode_ci NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+explain select /*+ inl_join(st_984) */ concat( st_984.r1 , st_984.r1 ) as r0 , st_984.r0 as r1 , t8e1f515f.col_44 as r2 from t8e1f515f inner join (select /*+  stream_agg() */ t5602f14e.col_55 as r0 , group_concat(   t5602f14e.col_56 order by t5602f14e.col_56 ) as r1 , bit_and( t5602f14e.col_53 ) as r2 from t5602f14e where not( IsNull( JSON_OVERLAPS( '[15114205522559919477,7224822526648750310]' , t5602f14e.col_51 ) ) ) group by t5602f14e.col_55) st_984 on t8e1f515f.col_48 = st_984.r0 order by r0,r1,r2 ;
+select /*+ inl_join(st_984) */ concat( st_984.r1 , st_984.r1 ) as r0 , st_984.r0 as r1 , t8e1f515f.col_44 as r2 from t8e1f515f inner join (select /*+  stream_agg() */ t5602f14e.col_55 as r0 , group_concat(   t5602f14e.col_56 order by t5602f14e.col_56 ) as r1 , bit_and( t5602f14e.col_53 ) as r2 from t5602f14e where not( IsNull( JSON_OVERLAPS( '[15114205522559919477,7224822526648750310]' , t5602f14e.col_51 ) ) ) group by t5602f14e.col_55) st_984 on t8e1f515f.col_48 = st_984.r0 order by r0,r1,r2 ;

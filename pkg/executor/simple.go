@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -182,6 +183,8 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeSetSessionStates(ctx, x)
 	case *ast.KillStmt:
 		err = e.executeKillStmt(ctx, x)
+	case *ast.RefreshStatsStmt:
+		err = e.executeRefreshStats(ctx, x)
 	case *ast.BinlogStmt:
 		// We just ignore it.
 		return nil
@@ -962,12 +965,7 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 	if err != nil {
 		return nil, err
 	}
@@ -1320,12 +1318,7 @@ func isRole(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, host str
 	if err != nil {
 		return false, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 1)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 1)
 	if err != nil {
 		return false, err
 	}
@@ -1342,12 +1335,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 	if err != nil {
 		return nil, err
 	}
@@ -1464,12 +1452,7 @@ func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, us
 	if err != nil {
 		return 0, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 	if err != nil {
 		return 0, err
 	}
@@ -1490,12 +1473,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 		if err != nil {
 			return false, err
 		}
@@ -1510,12 +1488,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, vardef.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1538,12 +1511,7 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 		if err != nil {
 			return false, err
 		}
@@ -1560,12 +1528,7 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, vardef.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1587,12 +1550,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 		if err != nil {
 			return false, err
 		}
@@ -1606,12 +1564,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, vardef.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -2773,6 +2726,63 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", gcid.ServerID),
 		zap.Uint64("conn", gcid.ToConnID()), zap.Bool("query", query))
 	return err
+}
+
+func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStatsStmt) error {
+	if e.IsFromRemote {
+		// TODO: do the real refresh stats
+		statslogutil.StatsLogger().Info("Refresh stats from remote", zap.String("sql", s.Text()))
+		return nil
+	}
+	return broadcast(ctx, e.Ctx(), s.Text())
+}
+
+func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
+	broadcastExec := &tipb.Executor{
+		Tp: tipb.ExecType_TypeBroadcastQuery,
+		BroadcastQuery: &tipb.BroadcastQuery{
+			Query: &sql,
+		},
+	}
+	dagReq := &tipb.DAGRequest{}
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sctx.GetSessionVars().Location())
+	sc := sctx.GetSessionVars().StmtCtx
+	if sc.RuntimeStatsColl != nil {
+		collExec := true
+		dagReq.CollectExecutionSummaries = &collExec
+	}
+	dagReq.Flags = sc.PushDownFlags()
+	dagReq.Executors = []*tipb.Executor{broadcastExec}
+
+	var builder distsql.RequestBuilder
+	kvReq, err := builder.
+		SetDAGRequest(dagReq).
+		SetFromSessionVars(sctx.GetDistSQLCtx()).
+		SetFromInfoSchema(sctx.GetInfoSchema()).
+		SetStoreType(kv.TiDB).
+		// Send to all TiDB instances.
+		SetTiDBServerID(0).
+		SetStartTS(math.MaxUint64).
+		Build()
+	if err != nil {
+		return err
+	}
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, &kv.ClientSendOption{})
+	if resp == nil {
+		err := errors.New("client returns nil response")
+		return err
+	}
+
+	// Must consume & close the response, otherwise coprocessor task will leak.
+	defer func() {
+		_ = resp.Close()
+	}()
+	if _, err := resp.Next(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
+	logutil.BgLogger().Info("Successfully broadcast query", zap.String("sql", sql))
+	return nil
 }
 
 func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {

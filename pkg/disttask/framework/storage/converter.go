@@ -47,6 +47,7 @@ func row2TaskBasic(r chunk.Row) *proto.TaskBase {
 		TargetScope:  r.GetString(8),
 		MaxNodeCount: int(r.GetInt64(9)),
 		ExtraParams:  extraParams,
+		Keyspace:     r.GetString(11),
 	}
 	return task
 }
@@ -56,18 +57,18 @@ func Row2Task(r chunk.Row) *proto.Task {
 	taskBase := row2TaskBasic(r)
 	task := &proto.Task{TaskBase: *taskBase}
 	var startTime, updateTime time.Time
-	if !r.IsNull(11) {
-		startTime, _ = r.GetTime(11).GoTime(time.Local)
-	}
 	if !r.IsNull(12) {
-		updateTime, _ = r.GetTime(12).GoTime(time.Local)
+		startTime, _ = r.GetTime(12).GoTime(time.Local)
+	}
+	if !r.IsNull(13) {
+		updateTime, _ = r.GetTime(13).GoTime(time.Local)
 	}
 	task.StartTime = startTime
 	task.StateUpdateTime = updateTime
-	task.Meta = r.GetBytes(13)
-	task.SchedulerID = r.GetString(14)
-	if !r.IsNull(15) {
-		errBytes := r.GetBytes(15)
+	task.Meta = r.GetBytes(14)
+	task.SchedulerID = r.GetString(15)
+	if !r.IsNull(16) {
+		errBytes := r.GetBytes(16)
 		stdErr := errors.Normalize("")
 		err := stdErr.UnmarshalJSON(errBytes)
 		if err != nil {
@@ -77,8 +78,8 @@ func Row2Task(r chunk.Row) *proto.Task {
 			task.Error = stdErr
 		}
 	}
-	if !r.IsNull(16) {
-		str := r.GetJSON(16).String()
+	if !r.IsNull(17) {
+		str := r.GetJSON(17).String()
 		if err := json.Unmarshal([]byte(str), &task.ModifyParam); err != nil {
 			logutil.BgLogger().Error("unmarshal task modify param", zap.Error(err))
 		}

@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
@@ -864,4 +866,28 @@ func TestSetAssertion(t *testing.T) {
 	mustHaveAssertion(k7, kv.SetAssertNone)
 
 	require.NoError(t, txn.Rollback())
+}
+
+func TestInitStorage(t *testing.T) {
+	require.NoError(t, Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{}))
+	if kerneltype.IsClassic() {
+		storage := MustInitStorage("")
+		defer storage.Close()
+		require.Nil(t, GetSystemStorage())
+	} else {
+		bak := *config.GetGlobalConfig()
+		config.GetGlobalConfig().Path = t.TempDir()
+		config.GetGlobalConfig().KeyspaceName = keyspace.System
+		t.Cleanup(func() {
+			config.StoreGlobalConfig(&bak)
+		})
+
+		storage := MustInitStorage(keyspace.System)
+		require.NotNil(t, GetSystemStorage())
+		defer storage.Close()
+		require.Same(t, storage, GetSystemStorage())
+
+		// for user keyspace, we need to init 2 store with different PATH, we cannot
+		// do it for uni-store, so skip it.
+	}
 }

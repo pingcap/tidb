@@ -15,8 +15,9 @@
 package infosync
 
 import (
-	"fmt"
+	"net"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -61,7 +62,7 @@ func (m *MockGlobalServerInfoManager) DeleteByExecID(execID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i := range m.infos {
-		name := fmt.Sprintf("%s:%d", m.infos[i].IP, m.infos[i].Port)
+		name := net.JoinHostPort(m.infos[i].IP, strconv.FormatUint(uint64(m.infos[i].Port), 10))
 		if name == execID {
 			m.infos = slices.Delete(m.infos, i, i+1)
 			break

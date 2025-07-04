@@ -259,11 +259,13 @@ func TestAddStatement(t *testing.T) {
 		},
 		ResourceGroupName: "rg1",
 		LazyInfo: &mockLazyInfo{
-			originalSQL: "original_sql2",
-			plan:        "",
-			hintStr:     "",
-			binPlan:     "",
-			planDigest:  "",
+			originalSQL:   "original_sql2",
+			plan:          "",
+			hintStr:       "",
+			binPlan:       "",
+			planDigest:    "",
+			bindingSQL:    "binding_sql2",
+			bindingDigest: "binding_digest2",
 		},
 	}
 	stmtExecInfo2.StmtCtx.AddAffectedRows(200)
@@ -417,11 +419,13 @@ func TestAddStatement(t *testing.T) {
 			},
 		},
 		LazyInfo: &mockLazyInfo{
-			originalSQL: "original_sql3",
-			plan:        "",
-			hintStr:     "",
-			binPlan:     "",
-			planDigest:  "",
+			originalSQL:   "original_sql3",
+			plan:          "",
+			hintStr:       "",
+			binPlan:       "",
+			planDigest:    "",
+			bindingSQL:    "binding_sql3",
+			bindingDigest: "binding_digest3",
 		},
 	}
 	stmtExecInfo3.StmtCtx.AddAffectedRows(20000)
@@ -504,12 +508,14 @@ func TestAddStatement(t *testing.T) {
 	for i := range buf {
 		buf[i] = 'a'
 	}
+	originalSQL := stmtExecInfo1.LazyInfo.GetOriginalSQL()
 	stmtExecInfo7.LazyInfo = &mockLazyInfo{
-		originalSQL: stmtExecInfo1.LazyInfo.GetOriginalSQL(),
+		originalSQL: originalSQL,
 		plan:        string(buf),
 		hintStr:     "",
 		binPlan:     "",
 		planDigest:  "",
+		bindingSQL:  originalSQL,
 	}
 	key = &StmtDigestKey{}
 	key.Init(stmtExecInfo7.SchemaName, stmtExecInfo7.Digest, "", stmtExecInfo7.PlanDigest, stmtExecInfo7.ResourceGroupName)
@@ -731,11 +737,13 @@ func generateAnyExecInfo() *StmtExecInfo {
 			},
 		},
 		LazyInfo: &mockLazyInfo{
-			originalSQL: "original_sql1",
-			plan:        "",
-			hintStr:     "",
-			binPlan:     "",
-			planDigest:  "",
+			originalSQL:   "original_sql1",
+			plan:          "",
+			hintStr:       "",
+			binPlan:       "",
+			planDigest:    "",
+			bindingSQL:    "binding_sql1",
+			bindingDigest: "binding_digest1",
 		},
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
@@ -743,11 +751,13 @@ func generateAnyExecInfo() *StmtExecInfo {
 }
 
 type mockLazyInfo struct {
-	originalSQL string
-	plan        string
-	hintStr     string
-	binPlan     string
-	planDigest  string
+	originalSQL   string
+	plan          string
+	hintStr       string
+	binPlan       string
+	planDigest    string
+	bindingSQL    string
+	bindingDigest string
 }
 
 func (a *mockLazyInfo) GetOriginalSQL() string {
@@ -766,6 +776,10 @@ func (a *mockLazyInfo) GetPlanDigest() string {
 	return a.planDigest
 }
 
+func (a *mockLazyInfo) GetBindingSQLAndDigest() (s string, d string) {
+	return a.bindingSQL, a.bindingDigest
+}
+
 func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryReader {
 	columnNames := []string{
 		SummaryBeginTimeStr,
@@ -774,6 +788,8 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 		SchemaNameStr,
 		DigestStr,
 		DigestTextStr,
+		BindingDigestStr,
+		BindingDigestTextStr,
 		TableNamesStr,
 		IndexNamesStr,
 		SampleUserStr,
@@ -898,7 +914,8 @@ func TestToDatum(t *testing.T) {
 	e := types.NewTime(types.FromGoTime(time.Unix(ssMap.beginTimeForCurInterval+1800, 0).In(time.UTC)), mysql.TypeTimestamp, types.DefaultFsp)
 	f := types.NewTime(types.FromGoTime(stmtExecInfo1.StartTime), mysql.TypeTimestamp, types.DefaultFsp)
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Lock()
-	expectedDatum := []any{n, e, "Select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
+	bindingSQL, bindingDigest := stmtExecInfo1.LazyInfo.GetBindingSQLAndDigest()
+	expectedDatum := []any{n, e, "Select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL, bindingDigest, bindingSQL,
 		"db1.tb1,db2.tb2", "a", stmtExecInfo1.User, 1, 0, 0, int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.CompileLatency),
@@ -948,8 +965,8 @@ func TestToDatum(t *testing.T) {
 	ssMap.AddStatement(stmtExecInfo2)
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	datums = reader.GetStmtSummaryCurrentRows()
-	expectedEvictedDatum := []any{n, e, "", "<nil>", "<nil>", "",
-		"<nil>", "<nil>", stmtExecInfo1.User, 1, 0, 0, int64(stmtExecInfo1.TotalLatency),
+	expectedEvictedDatum := []any{n, e, "", "<nil>", "<nil>", "", "<nil>", "", "<nil>", "<nil>",
+		stmtExecInfo1.User, 1, 0, 0, int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.CompileLatency),
 		int64(stmtExecInfo1.CompileLatency), stmtExecInfo1.CopTasks.NumCopTasks, int64(stmtExecInfo1.CopTasks.MaxProcessTime),

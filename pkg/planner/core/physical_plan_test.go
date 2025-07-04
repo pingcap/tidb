@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -439,7 +441,7 @@ func testDAGPlanBuilderSplitAvg(t *testing.T, root base.PhysicalPlan) {
 
 func TestPhysicalPlanMemoryTrace(t *testing.T) {
 	// PhysicalSort
-	ls := core.PhysicalSort{}
+	ls := physicalop.PhysicalSort{}
 	size := ls.MemoryUsage()
 	ls.ByItems = append(ls.ByItems, &util.ByItems{})
 	require.Greater(t, ls.MemoryUsage(), size)
@@ -507,14 +509,17 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	require.NotNil(t, ts)
 	// manually push down the condition `client_no = c.company_no`
 	var selected expression.Expression
-	for _, cond := range sel.Conditions {
+	var selectedIndex int
+	for i, cond := range sel.Conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.Function.PbCode() == tipb.ScalarFuncSig_EQString {
 			selected = cond
+			selectedIndex = i
 			break
 		}
 	}
 	if selected != nil {
-		core.PushedDown(sel, ts, []expression.Expression{selected}, 0.1)
+		ts.LateMaterializationFilterCondition = []expression.Expression{selected}
+		sel.Conditions = slices.Delete(sel.Conditions, selectedIndex, selectedIndex+1)
 	}
 
 	pb, err := ts.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
@@ -547,7 +552,7 @@ func TestAvoidColumnEvaluatorForProjBelowUnion(t *testing.T) {
 			return projsBelowUnion, normalProjs
 		}
 		switch v := p.(type) {
-		case *core.PhysicalUnionAll:
+		case *physicalop.PhysicalUnionAll:
 			for _, child := range v.Children() {
 				if proj, ok := child.(*core.PhysicalProjection); ok {
 					projsBelowUnion = append(projsBelowUnion, proj)

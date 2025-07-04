@@ -66,6 +66,9 @@ import (
 // OptimizeAstNode optimizes the query to a physical plan directly.
 var OptimizeAstNode func(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, error)
 
+// OptimizeAstNodeNoCache bypasses the plan cache and generates a physical plan directly.
+var OptimizeAstNodeNoCache func(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, error)
+
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = atomic.NewBool(true)
 
@@ -107,6 +110,7 @@ var optRuleList = []base.LogicalOptRule{
 	&JoinReOrderSolver{},
 	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
+	&EliminateUnionAllDualItem{},
 	&ResolveExpand{},
 }
 
@@ -382,8 +386,10 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^rule.FlagJoinReOrder
 	}
-	flag |= rule.FlagCollectPredicateColumnsPoint
-	flag |= rule.FlagSyncWaitStatsLoadPoint
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+		flag |= rule.FlagCollectPredicateColumnsPoint
+		flag |= rule.FlagSyncWaitStatsLoadPoint
+	}
 	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
 		flag |= rule.FlagPartitionProcessor // apply partition pruning under static mode
 	}
@@ -431,7 +437,7 @@ func refineCETrace(sctx base.PlanContext) {
 		return cmp.Compare(i.RowCount, j.RowCount)
 	})
 	traceRecords := stmtCtx.OptimizerCETrace
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	for _, rec := range traceRecords {
 		tbl, _ := infoschema.FindTableByTblOrPartID(is, rec.TableID)
 		if tbl != nil {
@@ -480,7 +486,6 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
 	disableReuseChunkIfNeeded(sctx, plan)
-	tryEnableLateMaterialization(sctx, plan)
 	generateRuntimeFilter(sctx, plan)
 	return plan
 }
@@ -499,26 +504,6 @@ func generateRuntimeFilter(sctx base.PlanContext, plan base.PhysicalPlan) {
 	rfGenerator.GenerateRuntimeFilter(plan)
 	logutil.BgLogger().Debug("Finish runtime filter generator",
 		zap.Duration("Cost", time.Since(startRFGenerator)))
-}
-
-// tryEnableLateMaterialization tries to push down some filter conditions to the table scan operator
-// @brief: push down some filter conditions to the table scan operator
-// @param: sctx: session context
-// @param: plan: the physical plan to be pruned
-// @note: this optimization is only applied when the TiFlash is used.
-// @note: the following conditions should be satisfied:
-//   - Only the filter conditions with high selectivity should be pushed down.
-//   - The filter conditions which contain heavy cost functions should not be pushed down.
-//   - Filter conditions that apply to the same column are either pushed down or not pushed down at all.
-func tryEnableLateMaterialization(sctx base.PlanContext, plan base.PhysicalPlan) {
-	// check if EnableLateMaterialization is set
-	if sctx.GetSessionVars().EnableLateMaterialization && !sctx.GetSessionVars().TiFlashFastScan {
-		predicatePushDownToTableScan(sctx, plan)
-	}
-	if sctx.GetSessionVars().EnableLateMaterialization && sctx.GetSessionVars().TiFlashFastScan {
-		sc := sctx.GetSessionVars().StmtCtx
-		sc.AppendWarning(errors.NewNoStackError("FastScan is not compatible with late materialization, late materialization is disabled"))
-	}
 }
 
 /*
@@ -585,7 +570,7 @@ func countStarRewriteInternal(plan base.PhysicalPlan) {
 		}
 	}
 	physicalTableScan, ok := physicalAgg.Children()[0].(*PhysicalTableScan)
-	if !ok || !physicalTableScan.isFullScan() || physicalTableScan.StoreType != kv.TiFlash || len(physicalTableScan.schema.Columns) != 1 {
+	if !ok || !physicalTableScan.isFullScan() || physicalTableScan.StoreType != kv.TiFlash || len(physicalTableScan.Schema().Columns) != 1 {
 		return
 	}
 	// rewrite datasource and agg args
@@ -599,7 +584,7 @@ func rewriteTableScanAndAggArgs(physicalTableScan *PhysicalTableScan, aggFuncs [
 	var resultColumn *expression.Column
 
 	resultColumnInfo = physicalTableScan.Columns[0]
-	resultColumn = physicalTableScan.schema.Columns[0]
+	resultColumn = physicalTableScan.Schema().Columns[0]
 	// prefer not null column from table
 	for _, columnInfo := range physicalTableScan.Table.Columns {
 		if columnInfo.FieldType.IsVarLengthType() {
@@ -619,7 +604,7 @@ func rewriteTableScanAndAggArgs(physicalTableScan *PhysicalTableScan, aggFuncs [
 	}
 	// table scan (row_id) -> (not null column)
 	physicalTableScan.Columns[0] = resultColumnInfo
-	physicalTableScan.schema.Columns[0] = resultColumn
+	physicalTableScan.Schema().Columns[0] = resultColumn
 	// agg arg count(1) -> count(not null column)
 	arg := resultColumn.Clone()
 	for _, aggFunc := range aggFuncs {
@@ -867,7 +852,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 		// which will break data partition.
 		helper.updateTarget(window, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalSort:
+	case *physicalop.PhysicalSort:
 		if x.IsPartialSort {
 			// Partial sort will keep the data partition.
 			helper.plans = append(helper.plans, &x.BasePhysicalPlan)
@@ -1205,7 +1190,7 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 // avoidColumnEvaluatorForProjBelowUnion sets AvoidColumnEvaluator to false for the projection operator which is a child of Union operator.
 func avoidColumnEvaluatorForProjBelowUnion(p base.PhysicalPlan) base.PhysicalPlan {
 	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
-		x, ok := p.(*PhysicalUnionAll)
+		x, ok := p.(*physicalop.PhysicalUnionAll)
 		if ok {
 			for _, child := range x.Children() {
 				if proj, ok := child.(*PhysicalProjection); ok {
@@ -1290,12 +1275,7 @@ func existsCartesianProduct(p base.LogicalPlan) bool {
 	if join, ok := p.(*logicalop.LogicalJoin); ok && len(join.EqualConditions) == 0 {
 		return join.JoinType == logicalop.InnerJoin || join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin
 	}
-	for _, child := range p.Children() {
-		if existsCartesianProduct(child) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(p.Children(), existsCartesianProduct)
 }
 
 // DefaultDisabledLogicalRulesList indicates the logical rules which should be banned.

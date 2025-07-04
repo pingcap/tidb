@@ -233,12 +233,8 @@ func (*ImportIntoExec) waitTask(ctx context.Context, jobID int64, task *proto.Ta
 	err := handle.WaitTaskDoneOrPaused(ctx, task.ID)
 	// when user KILL the connection, the ctx will be canceled, we need to cancel the import job.
 	if errors.Cause(err) == context.Canceled {
-		taskManager, err2 := fstorage.GetTaskManager()
-		if err2 != nil {
-			return err2
-		}
 		// use background, since ctx is canceled already.
-		return cancelAndWaitImportJob(context.Background(), taskManager, jobID)
+		return cancelAndWaitImportJob(context.Background(), jobID)
 	}
 	return err
 }
@@ -376,7 +372,7 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) (err er
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
-	return cancelAndWaitImportJob(ctx, taskManager, e.jobID)
+	return cancelAndWaitImportJob(ctx, e.jobID)
 }
 
 func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, manager *fstorage.TaskManager, hasSuperPriv bool) error {
@@ -395,7 +391,11 @@ func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, mana
 	return nil
 }
 
-func cancelAndWaitImportJob(ctx context.Context, manager *fstorage.TaskManager, jobID int64) error {
+func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
+	manager, err := handle.GetTaskMgrToAccessDXFService()
+	if err != nil {
+		return err
+	}
 	if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 		return manager.CancelTaskByKeySession(ctx, se, importinto.TaskKey(jobID))

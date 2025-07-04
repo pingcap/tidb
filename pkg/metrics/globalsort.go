@@ -14,7 +14,10 @@
 
 package metrics
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 var (
 	// GlobalSortWriteToCloudStorageDuration records the duration of writing to cloud storage.
@@ -33,7 +36,7 @@ var (
 
 // InitGlobalSortMetrics initializes defines global sort metrics.
 func InitGlobalSortMetrics() {
-	GlobalSortWriteToCloudStorageDuration = NewHistogramVec(prometheus.HistogramOpts{
+	GlobalSortWriteToCloudStorageDuration = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "global_sort",
 		Name:      "write_to_cloud_storage_duration",
@@ -41,7 +44,7 @@ func InitGlobalSortMetrics() {
 		Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 	}, []string{LblType})
 
-	GlobalSortWriteToCloudStorageRate = NewHistogramVec(prometheus.HistogramOpts{
+	GlobalSortWriteToCloudStorageRate = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "global_sort",
 		Name:      "write_to_cloud_storage_rate",
@@ -49,7 +52,7 @@ func InitGlobalSortMetrics() {
 		Buckets:   prometheus.ExponentialBuckets(0.05, 2, 20),
 	}, []string{LblType})
 
-	GlobalSortReadFromCloudStorageDuration = NewHistogramVec(prometheus.HistogramOpts{
+	GlobalSortReadFromCloudStorageDuration = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "global_sort",
 		Name:      "read_from_cloud_storage_duration",
@@ -57,7 +60,7 @@ func InitGlobalSortMetrics() {
 		Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
 	}, []string{LblType})
 
-	GlobalSortReadFromCloudStorageRate = NewHistogramVec(prometheus.HistogramOpts{
+	GlobalSortReadFromCloudStorageRate = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "global_sort",
 		Name:      "read_from_cloud_storage_rate",
@@ -65,14 +68,14 @@ func InitGlobalSortMetrics() {
 		Buckets:   prometheus.ExponentialBuckets(0.05, 2, 20),
 	}, []string{LblType})
 
-	GlobalSortIngestWorkerCnt = NewGaugeVec(prometheus.GaugeOpts{
+	GlobalSortIngestWorkerCnt = metricscommon.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "global_sort",
 		Name:      "ingest_worker_cnt",
 		Help:      "ingest worker cnt",
 	}, []string{LblType})
 
-	GlobalSortUploadWorkerCount = NewGauge(
+	GlobalSortUploadWorkerCount = metricscommon.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "global_sort",

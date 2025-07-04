@@ -49,8 +49,8 @@ type Session interface {
 	variable.SessionVarsProvider
 	// GetStore returns the kv store
 	GetStore() kv.Storage
-	// GetDomainInfoSchema returns information schema of domain
-	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
+	// GetLatestInfoSchema returns information schema of latest info schema.
+	GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema
 	// SessionInfoSchema returns information schema of current session
 	SessionInfoSchema() infoschema.MetaOnlyInfoSchema
 	// GetSQLExecutor returns the sql executor
@@ -98,9 +98,8 @@ func (s *session) GetSessionVars() *variable.SessionVars {
 	return s.sctx.GetSessionVars()
 }
 
-// GetDomainInfoSchema returns information schema of domain
-func (s *session) GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema {
-	return s.sctx.GetDomainInfoSchema()
+func (s *session) GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema {
+	return s.sctx.GetLatestInfoSchema()
 }
 
 // SessionInfoSchema returns information schema of current session

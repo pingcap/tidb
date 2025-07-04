@@ -115,7 +115,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	// step 3: add metadata lock and check each table's schema version
 	schemaNotMatch := false
-	for i := 0; i < len(stmt.dbName); i++ {
+	for i := range stmt.dbName {
 		tbl, ok := is.TableByID(ctx, stmt.tbls[i].Meta().ID)
 		if !ok {
 			tblByName, err := is.TableByName(context.Background(), stmt.dbName[i], stmt.tbls[i].Meta().Name)
@@ -340,9 +340,10 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	stmtCtx := sessVars.StmtCtx
 
 	core_metrics.GetPlanCacheMissCounter(isNonPrepared).Inc()
+	// XXX: We should be able to remove InPreparedPlanBuilding.
 	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = true
 	nodeW := resolve.NewNodeWWithCtx(stmtAst.Stmt, stmt.ResolveCtx)
-	p, names, err := OptimizeAstNode(ctx, sctx, nodeW, is)
+	p, names, err := OptimizeAstNodeNoCache(ctx, sctx, nodeW, is)
 	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = false
 	if err != nil {
 		return nil, nil, err

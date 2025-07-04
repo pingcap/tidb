@@ -208,6 +208,9 @@ func TestSetTiFlashReplicaForTemporaryTable(t *testing.T) {
 	rpcserver, _ := setUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
 	defer rpcserver.Stop()
 	tk.MustExec("use test")
+	// previously, projection won't generate cop plan, because memTable can't be pushed to cop.
+	// so projection is always attached as root operator.
+	// tk.MustExec("set @@tidb_opt_projection_push_down = off")
 	tk.MustExec("create global temporary table temp(id int) on commit delete rows")
 	tk.MustExec("create temporary table temp2(id int)")
 	tk.MustGetErrCode("alter table temp set tiflash replica 1", errno.ErrOptOnTemporaryTable)

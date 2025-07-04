@@ -9,6 +9,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/tools/check",
     visibility = ["//visibility:private"],
     deps = [
+        "@org_golang_x_sync//errgroup",
         "@org_golang_x_tools//cover",
         "@org_uber_go_automaxprocs//:automaxprocs",
     ],

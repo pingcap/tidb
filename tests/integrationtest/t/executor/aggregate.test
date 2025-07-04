@@ -1065,8 +1065,13 @@ insert into mysql.opt_rule_blacklist value("decorrelate");
 drop table if exists test;
 create table test (a int);
 insert into test value(1);
+analyze table test;
 select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
 explain format = 'brief' select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
 delete from mysql.opt_rule_blacklist where name = "decorrelate";
 admin reload opt_rule_blacklist;
 
+# TestIssue61735AggregateTruncatedDecimal
+--enable_warnings
+select distinct avg(nullif(77.15, PI()));
+--disable_warnings

@@ -215,6 +215,7 @@ explain format = 'brief' update t set c = 'ssss' where a=x'FA34E1093CB428485734E
 drop table if exists t;
 
 create table t(a int, b int);
+analyze table t;
 explain format = 'brief' select (select count(n.a) from t) from t n;
 explain format = 'brief' select (select sum((select count(a)))) from t;
 explain format = 'brief' select count(a) from t group by b order by (select count(a));

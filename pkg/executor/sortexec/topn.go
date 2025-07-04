@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
@@ -37,7 +37,7 @@ import (
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
 type TopNExec struct {
 	SortExec
-	Limit *plannercore.PhysicalLimit
+	Limit *physicalop.PhysicalLimit
 
 	// It's useful when spill is triggered and the fetcher could know when workers finish their works.
 	fetcherAndWorkerSyncer *sync.WaitGroup

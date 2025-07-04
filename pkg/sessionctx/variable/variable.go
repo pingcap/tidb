@@ -77,6 +77,8 @@ type SysVar struct {
 	GetGlobal func(context.Context, *SessionVars) (string, error)
 	// GetStateValue gets the value for session states, which is used for migrating sessions.
 	// We need a function to override GetSession sometimes, because GetSession may not return the real value.
+	// The first return value must be a valid value for the variable, and the second return value must be
+	// true if and only if the variable has been changed from the default.
 	GetStateValue func(*SessionVars) (string, bool, error)
 	// Depended indicates whether other variables depend on this one. That is, if this one is not correctly set,
 	// another variable cannot be set either.

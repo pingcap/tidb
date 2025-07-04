@@ -17,6 +17,7 @@ package implementation
 import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 )
 
@@ -132,7 +133,7 @@ type LimitImpl struct {
 }
 
 // NewLimitImpl creates a new LimitImpl.
-func NewLimitImpl(limit *plannercore.PhysicalLimit) *LimitImpl {
+func NewLimitImpl(limit *physicalop.PhysicalLimit) *LimitImpl {
 	return &LimitImpl{baseImpl{plan: limit}}
 }
 
@@ -198,7 +199,7 @@ func (*UnionAllImpl) GetCostLimit(costLimit float64, _ ...memo.Implementation) f
 }
 
 // NewUnionAllImpl creates a new UnionAllImpl.
-func NewUnionAllImpl(union *plannercore.PhysicalUnionAll) *UnionAllImpl {
+func NewUnionAllImpl(union *physicalop.PhysicalUnionAll) *UnionAllImpl {
 	return &UnionAllImpl{baseImpl{plan: union}}
 }
 

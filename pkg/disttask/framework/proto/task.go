@@ -98,6 +98,9 @@ type TaskBase struct {
 	CreateTime   time.Time
 	MaxNodeCount int
 	ExtraParams
+	// keyspace name is the keyspace that the task belongs to.
+	// it's only useful for nextgen cluster.
+	Keyspace string
 }
 
 // IsDone checks if the task is done.

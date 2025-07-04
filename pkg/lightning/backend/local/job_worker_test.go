@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	ingestclimock "github.com/pingcap/tidb/pkg/ingestor/ingestcli/mock"
-	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -97,12 +97,12 @@ func TestRegionJobBaseWorker(t *testing.T) {
 	t.Run("meet non-retryable error during ingest", func(t *testing.T) {
 		w := newWorker()
 		w.ingestFn = func(ctx context.Context, job *regionJob) error {
-			return &ingestAPIError{err: common.ErrKVDiskFull}
+			return &ingestcli.IngestAPIError{Err: errdef.ErrKVDiskFull}
 		}
 		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
 		w.jobInCh <- job
 		close(w.jobInCh)
-		require.ErrorIs(t, w.run(context.Background()), common.ErrKVDiskFull)
+		require.ErrorIs(t, w.run(context.Background()), errdef.ErrKVDiskFull)
 		require.Equal(t, 1, len(w.jobOutCh))
 		outJob := <-w.jobOutCh
 		// the job is left in wrote stage
@@ -113,7 +113,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 	t.Run("retry job from regionScanned", func(t *testing.T) {
 		w := newWorker()
 		w.ingestFn = func(ctx context.Context, job *regionJob) error {
-			return &ingestAPIError{err: common.ErrKVIngestFailed}
+			return &ingestcli.IngestAPIError{Err: errdef.ErrKVIngestFailed}
 		}
 		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
 		w.jobInCh <- job
@@ -122,13 +122,13 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		require.Equal(t, 1, len(w.jobOutCh))
 		outJob := <-w.jobOutCh
 		require.Equal(t, regionScanned, outJob.stage)
-		require.ErrorIs(t, outJob.lastRetryableErr, common.ErrKVIngestFailed)
+		require.ErrorIs(t, outJob.lastRetryableErr, errdef.ErrKVIngestFailed)
 	})
 
 	t.Run("retry job from regionScanned, and region got from the ingest error", func(t *testing.T) {
 		w := newWorker()
 		w.ingestFn = func(ctx context.Context, job *regionJob) error {
-			return &ingestAPIError{err: common.ErrKVEpochNotMatch, newRegion: &split.RegionInfo{Region: &metapb.Region{Id: 123}}}
+			return &ingestcli.IngestAPIError{Err: errdef.ErrKVEpochNotMatch, NewRegion: &split.RegionInfo{Region: &metapb.Region{Id: 123}}}
 		}
 		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
 		w.jobInCh <- job
@@ -137,14 +137,14 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		require.Equal(t, 1, len(w.jobOutCh))
 		outJob := <-w.jobOutCh
 		require.Equal(t, regionScanned, outJob.stage)
-		require.ErrorIs(t, outJob.lastRetryableErr, common.ErrKVEpochNotMatch)
+		require.ErrorIs(t, outJob.lastRetryableErr, errdef.ErrKVEpochNotMatch)
 		require.Equal(t, &split.RegionInfo{Region: &metapb.Region{Id: 123}}, outJob.region)
 	})
 
 	t.Run("regenerate jobs", func(t *testing.T) {
 		w := newWorker()
 		w.ingestFn = func(ctx context.Context, job *regionJob) error {
-			return &ingestAPIError{err: common.ErrKVNotLeader}
+			return &ingestcli.IngestAPIError{Err: errdef.ErrKVNotLeader}
 		}
 		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
 		w.jobInCh <- job

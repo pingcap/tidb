@@ -353,6 +353,8 @@ const (
 	PlanDigestStr                              = "PLAN_DIGEST"
 	PlanStr                                    = "PLAN"
 	BinaryPlan                                 = "BINARY_PLAN"
+	BindingDigestStr                           = "BINDING_DIGEST"
+	BindingDigestTextStr                       = "BINDING_DIGEST_TEXT"
 	Charset                                    = "CHARSET"
 	Collation                                  = "COLLATION"
 	PlanHint                                   = "PLAN_HINT"
@@ -459,6 +461,12 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	},
 	DigestTextStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, _ *stmtSummaryStats) any {
 		return ssbd.normalizedSQL
+	},
+	BindingDigestStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, _ *stmtSummaryStats) any {
+		return convertEmptyToNil(ssbd.bindingDigest)
+	},
+	BindingDigestTextStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, _ *stmtSummaryStats) any {
+		return ssbd.bindingSQL
 	},
 	TableNamesStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, _ *stmtSummaryStats) any {
 		return convertEmptyToNil(ssbd.tableNames)

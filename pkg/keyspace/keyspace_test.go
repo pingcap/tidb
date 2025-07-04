@@ -15,9 +15,11 @@
 package keyspace
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,11 +35,20 @@ func TestSetKeyspaceNameInConf(t *testing.T) {
 	c1.KeyspaceName = keyspaceNameInCfg
 
 	getKeyspaceName := GetKeyspaceNameBySettings()
-
-	// Check the keyspaceName which get from GetKeyspaceNameBySettings, equals keyspaceNameInCfg which is in conf.
+	// Check the keyspaceName which get from GetKeyspaceNameBytesBySettings, equals keyspaceNameInCfg which is in conf.
 	// The cfg.keyspaceName get higher weights than KEYSPACE_NAME in system env.
 	require.Equal(t, keyspaceNameInCfg, getKeyspaceName)
 	require.Equal(t, false, IsKeyspaceNameEmpty(getKeyspaceName))
+
+	// Make sure genKeyspaceNameOnce is called only once in this test.
+	keyspaceNameBytes = nil
+	genKeyspaceNameOnce = sync.Once{}
+	getKeyspaceNameByte := GetKeyspaceNameBytesBySettings()
+	if kerneltype.IsNextGen() {
+		require.Equal(t, []byte(keyspaceNameInCfg), getKeyspaceNameByte)
+	} else {
+		require.Nil(t, getKeyspaceNameByte)
+	}
 }
 
 func TestNoKeyspaceNameSet(t *testing.T) {
@@ -46,7 +57,77 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 	})
 
 	getKeyspaceName := GetKeyspaceNameBySettings()
-
 	require.Equal(t, "", getKeyspaceName)
 	require.Equal(t, true, IsKeyspaceNameEmpty(getKeyspaceName))
+
+	// Make sure genKeyspaceNameOnce is called only once in this test.
+	keyspaceNameBytes = nil
+	genKeyspaceNameOnce = sync.Once{}
+	getKeyspaceNameByte := GetKeyspaceNameBytesBySettings()
+	if kerneltype.IsNextGen() {
+		require.Equal(t, []byte(""), getKeyspaceNameByte)
+	} else {
+		require.Nil(t, getKeyspaceNameByte)
+	}
+}
+
+func BenchmarkGetKeyspaceNameBytesBySettings(b *testing.B) {
+	if !kerneltype.IsNextGen() {
+		b.Skip("NextGen is not enabled, skipping benchmark")
+		return
+	}
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "benchmark_keyspace"
+	})
+
+	var result []byte
+	keyspaceNameBytes = nil
+	genKeyspaceNameOnce = sync.Once{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		result = GetKeyspaceNameBytesBySettings()
+	}
+	_ = result
+}
+
+func TestIsRunningOnUser(t *testing.T) {
+	if kerneltype.IsClassic() {
+		require.False(t, IsRunningOnUser())
+	} else {
+		bak := *config.GetGlobalConfig()
+		t.Cleanup(func() {
+			config.StoreGlobalConfig(&bak)
+		})
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = "aa"
+		})
+		require.True(t, IsRunningOnUser())
+
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = System
+		})
+		require.False(t, IsRunningOnUser())
+	}
+}
+
+func TestIsRunningOnSystem(t *testing.T) {
+	if kerneltype.IsClassic() {
+		require.False(t, IsRunningOnSystem())
+	} else {
+		bak := *config.GetGlobalConfig()
+		t.Cleanup(func() {
+			config.StoreGlobalConfig(&bak)
+		})
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = System
+		})
+		require.True(t, IsRunningOnSystem())
+
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = "aa"
+		})
+		require.False(t, IsRunningOnSystem())
+	}
 }

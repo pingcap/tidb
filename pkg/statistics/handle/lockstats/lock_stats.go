@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	pkgutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -131,11 +130,6 @@ func (sl *statsLockImpl) GetLockedTables(tableIDs ...int64) (map[int64]struct{},
 func (sl *statsLockImpl) GetTableLockedAndClearForTest() (map[int64]struct{}, error) {
 	return sl.queryLockedTables()
 }
-
-var (
-	// useCurrentSession to make sure the sql is executed in current session.
-	useCurrentSession = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
-)
 
 // AddLockedTables add locked tables id to store.
 // - exec: sql executor.

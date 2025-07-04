@@ -18,10 +18,13 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // this file is used for passing function pointer at init(){} to avoid some import cycles.
@@ -149,7 +152,7 @@ var AddPrefix4ShardIndexes func(lp base.LogicalPlan, sc base.PlanContext,
 	conds []expression.Expression) []expression.Expression
 
 // ApplyPredicateSimplification will be called by LogicalSelection in logicalOp pkg.
-var ApplyPredicateSimplification func(base.PlanContext, []expression.Expression) []expression.Expression
+var ApplyPredicateSimplification func(base.PlanContext, []expression.Expression, bool) []expression.Expression
 
 // IsSingleScan check whether the data source is a single scan.
 var IsSingleScan func(ds base.LogicalPlan, indexColumns []*expression.Column, idxColLens []int) bool
@@ -161,6 +164,47 @@ var GetEstimatedProbeCntFromProbeParents func(probeParents []base.PhysicalPlan) 
 
 // GetActualProbeCntFromProbeParents will be called by BasePhysicalPlan in physicalOp pkg.
 var GetActualProbeCntFromProbeParents func(pps []base.PhysicalPlan, statsColl *execdetails.RuntimeStatsColl) int64
+
+// Attach2Task4PhysicalSort will be called by PhysicalSort in physicalOp pkg.
+var Attach2Task4PhysicalSort func(p base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// GetCost4PhysicalSort will be called by PhysicalSort in physicalOp pkg.
+var GetCost4PhysicalSort func(p base.PhysicalPlan, count float64, schema *expression.Schema) float64
+
+// GetPlanCostVer14PhysicalSort will be called by PhysicalSort in physicalOp pkg.
+var GetPlanCostVer14PhysicalSort func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalSort represents the cost of a physical sort operation in version 2.
+var GetPlanCostVer24PhysicalSort func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+
+// ToPB4PhysicalSort will be called by PhysicalSort in physicalOp pkg.
+var ToPB4PhysicalSort func(pp base.PhysicalPlan, ctx *base.BuildPBContext,
+	storeType kv.StoreType) (*tipb.Executor, error)
+
+// ResolveIndicesForSort will be called by PhysicalSort in physicalOp pkg.
+var ResolveIndicesForSort func(p base.PhysicalPlan) (err error)
+
+// Attach2Task4NominalSort will be called by NominalSort in physicalOp pkg.
+var Attach2Task4NominalSort func(base.PhysicalPlan, ...base.Task) base.Task
+
+// Attach2Task4PhysicalUnionAll will be called by PhysicalUnionAll in physicalOp pkg.
+var Attach2Task4PhysicalUnionAll func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// GetPlanCostVer14PhysicalUnionAll will be called by PhysicalUnionAll in physicalOp pkg.
+var GetPlanCostVer14PhysicalUnionAll func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalUnionAll will be called by PhysicalUnionAll in physicalOp pkg.
+var GetPlanCostVer24PhysicalUnionAll func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
+
+// ResolveIndices4PhysicalLimit will be called by PhysicalLimit in physicalOp pkg.
+var ResolveIndices4PhysicalLimit func(pp base.PhysicalPlan) (err error)
+
+// Attach2Task4PhysicalLimit will be called by PhysicalLimit in physicalOp pkg.
+var Attach2Task4PhysicalLimit func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
 // ****************************************** task related ***********************************************
 

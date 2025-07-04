@@ -1510,15 +1510,15 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 		"├─TableReader_16 3323.33 root  MppVersion: 3, data:ExchangeSender_15",
 		"│ └─ExchangeSender_15 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"│   └─Selection_14 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"│     └─TableFullScan_13 10000.00 mpp[tiflash] table:t1, partition:p0 pushed down filter:empty, keep order:false, stats:pseudo",
+		"│     └─TableFullScan_13 10000.00 mpp[tiflash] table:t1, partition:p0 keep order:false, stats:pseudo",
 		"├─TableReader_20 3323.33 root  MppVersion: 3, data:ExchangeSender_19",
 		"│ └─ExchangeSender_19 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"│   └─Selection_18 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"│     └─TableFullScan_17 10000.00 mpp[tiflash] table:t1, partition:p1 pushed down filter:empty, keep order:false, stats:pseudo",
+		"│     └─TableFullScan_17 10000.00 mpp[tiflash] table:t1, partition:p1 keep order:false, stats:pseudo",
 		"└─TableReader_24 3323.33 root  MppVersion: 3, data:ExchangeSender_23",
 		"  └─ExchangeSender_23 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"    └─Selection_22 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"      └─TableFullScan_21 10000.00 mpp[tiflash] table:t1, partition:p2 pushed down filter:empty, keep order:false, stats:pseudo"))
+		"      └─TableFullScan_21 10000.00 mpp[tiflash] table:t1, partition:p2 keep order:false, stats:pseudo"))
 }
 
 func TestMPPMemoryTracker(t *testing.T) {
@@ -1829,11 +1829,11 @@ func TestMPP47766(t *testing.T) {
 			"└─ExchangeSender_30 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
 			"  └─Projection_5 8000.00 mpp[tiflash]  date(test.traces.test_time)->Column#5, Column#4",
 			"    └─Projection_26 8000.00 mpp[tiflash]  Column#4, test.traces.test_time",
-			"      └─HashAgg_27 8000.00 mpp[tiflash]  group by:Column#14, funcs:sum(Column#15)->Column#4, funcs:firstrow(Column#16)->test.traces.test_time",
+			"      └─HashAgg_27 8000.00 mpp[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#4, funcs:firstrow(Column#15)->test.traces.test_time",
 			"        └─ExchangeReceiver_29 8000.00 mpp[tiflash]  ",
-			"          └─ExchangeSender_28 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#14, collate: binary]",
-			"            └─HashAgg_25 8000.00 mpp[tiflash]  group by:Column#18, funcs:count(1)->Column#15, funcs:firstrow(Column#17)->Column#16",
-			"              └─Projection_32 10000.00 mpp[tiflash]  test.traces.test_time->Column#17, date(test.traces.test_time)->Column#18",
+			"          └─ExchangeSender_28 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#13, collate: binary]",
+			"            └─HashAgg_25 8000.00 mpp[tiflash]  group by:Column#17, funcs:count(1)->Column#14, funcs:firstrow(Column#16)->Column#15",
+			"              └─Projection_32 10000.00 mpp[tiflash]  test.traces.test_time->Column#16, date(test.traces.test_time)->Column#17",
 			"                └─TableFullScan_15 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo",
 		))
 }
