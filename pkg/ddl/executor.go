@@ -421,6 +421,38 @@ func (e *executor) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *as
 	return errors.Trace(err)
 }
 
+func (e *executor) ModifySchemaReadOnlyState(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, newState bool) (err error) {
+	// Check if need to change read only state.
+	dbName := stmt.Name
+	is := e.infoCache.GetLatest()
+	dbInfo, ok := is.SchemaByName(dbName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
+	}
+	if dbInfo.ReadOnly == newState {
+		return nil
+	}
+	// Do the DDL job.
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       dbInfo.ID,
+		SchemaName:     dbInfo.Name.L,
+		Type:           model.ActionModifySchemaReadOnly,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: dbInfo.Name.L,
+			Table:    model.InvolvingAll,
+		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.ModifySchemaArgs{
+		ReadOnly: newState,
+	}
+	err = e.doDDLJob2(ctx, job, args)
+	return errors.Trace(err)
+}
+
 // getPendingTiFlashTableCount counts unavailable TiFlash replica by iterating all tables in infoCache.
 func (e *executor) getPendingTiFlashTableCount(originVersion int64, pendingCount uint32) (int64, uint32) {
 	is := e.infoCache.GetLatest()
@@ -692,6 +724,7 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 		isAlterCharsetAndCollate bool
 		placementPolicyRef       *model.PolicyRefInfo
 		tiflashReplica           *ast.TiFlashReplicaSpec
+		isReadOnly, newState     bool
 	)
 
 	err = checkMultiSchemaSpecs(sctx, stmt.Options)
@@ -724,6 +757,11 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 			placementPolicyRef = &model.PolicyRefInfo{Name: ast.NewCIStr(val.Value)}
 		case ast.DatabaseSetTiFlashReplica:
 			tiflashReplica = val.TiFlashReplica
+		case ast.DatabaseOptionReadOnly:
+			isReadOnly = true
+			if val.Value == "1" { // todo: use constant
+				newState = true
+			}
 		}
 	}
 
@@ -739,6 +777,11 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 	}
 	if tiflashReplica != nil {
 		if err = e.ModifySchemaSetTiFlashReplica(sctx, stmt, tiflashReplica); err != nil {
+			return err
+		}
+	}
+	if isReadOnly {
+		if err = e.ModifySchemaReadOnlyState(sctx, stmt, newState); err != nil {
 			return err
 		}
 	}

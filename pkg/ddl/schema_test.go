@@ -493,3 +493,23 @@ func TestRenameTableAutoIDs(t *testing.T) {
 		"64 63 10",
 	))
 }
+
+func TestAlterDBReadOnly(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	//store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk1.MustExec("create database test_db")
+	tk1.MustExec("use test_db")
+	tk1.MustExec("create table t (a int)")
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t")
+	show := tk1.MustQuery("show create database test_db").Rows()
+	require.Equal(t, 1, len(show))
+
+	//r := tk2.MustQuery("select * from information_schema.tidb_trx").Rows()
+	r := tk2.MustQuery("select * from information_schema.cluster_tidb_trx").Rows()
+	require.True(t, len(r) > 0)
+	tk2.MustExec("alter database test_db read only = 1")
+}

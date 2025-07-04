@@ -32,6 +32,8 @@ type DBInfo struct {
 	State              SchemaState      `json:"state"`
 	PlacementPolicyRef *PolicyRefInfo   `json:"policy_ref_info"`
 	TableName2ID       map[string]int64 `json:"-"`
+	ReadOnly           bool             `json:"read_only"`       // If the DB is read-only.
+	ReadOnlyState      SchemaState      `json:"read_only_state"` // The state of the read-only DB.
 }
 
 // Clone clones DBInfo.
