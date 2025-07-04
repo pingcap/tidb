@@ -909,12 +909,14 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 	var (
 		aliveStores               *aliveStoresBundle
 		maxRemoteReadCountAllowed int
+		retryNum                  int
 	)
 	if !isTiDBLabelZoneSet {
 		tiflashReplicaReadPolicy = tiflash.AllReplicas
 	}
 
 	for {
+		retryNum++
 		var tasks []*copTask
 		var tasksForPartitions [][]*copTask = make([][]*copTask, len(rangesForEachPhysicalTable))
 		rangesLen = 0
@@ -983,6 +985,11 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			usedTiFlashStores = append(usedTiFlashStores, allStores)
 		}
 
+		if !needRetry {
+			aliveStores = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, usedTiFlashStoresMap, ttl, store, tiflashReplicaReadPolicy, tidbZone)
+			needRetry = checkAliveStore(aliveStores, usedTiFlashStores, cache, tiflashReplicaReadPolicy, retryNum, tasks)
+		}
+
 		if needRetry {
 			// As mentioned above, nil rpcCtx is always attributed to failed stores.
 			// It's equal to long poll the store but get no response. Here we'd better use
@@ -993,12 +1000,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			}
 			continue
 		}
-
-		aliveStores = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, usedTiFlashStoresMap, ttl, store, tiflashReplicaReadPolicy, tidbZone)
 		if tiflashReplicaReadPolicy.IsClosestReplicas() {
-			if len(aliveStores.storeIDsInTiDBZone) == 0 {
-				return nil, errors.Errorf("There is no region in tidb zone(%s)", tidbZone)
-			}
 			maxRemoteReadCountAllowed = len(aliveStores.storeIDsInTiDBZone) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
 		}
 
@@ -1074,11 +1076,56 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				zap.Duration("elapsed", elapsed),
 				zap.Duration("balanceElapsed", balanceElapsed),
 				zap.Int("range len", rangesLen),
-				zap.Int("task len", len(batchTasks)))
+				zap.Int("task len", len(batchTasks)),
+				zap.Int("retry num", retryNum))
 		}
 		metrics.TxnRegionsNumHistogramWithBatchCoprocessor.Observe(float64(len(batchTasks)))
 		return batchTasks, nil
 	}
+}
+
+// Check if all stores of one specific region has at least on alive store.
+// If not, invalid region cache and return needRetry as true.
+func checkAliveStore(aliveStores *aliveStoresBundle, usedTiFlashStores [][]uint64, cache *RegionCache,
+	tiflashReplicaReadPolicy tiflash.ReplicaRead, retryNum int, tasks []*copTask) (needRetry bool) {
+	// Skip check because there is no real tiflash in most testcases.
+	skipCheck := intest.InTest
+	failpoint.Inject("mockNoAliveTiFlash", func(val failpoint.Value) {
+		// This test will setup tiflash store properly, so detecting alive will success.
+		skipCheck = false
+		if val.(bool) && retryNum <= 1 {
+			aliveStores.storesInAllZones = []*tikv.Store{}
+		}
+	})
+	if !skipCheck {
+		checkAliveStoreTarget := aliveStores.storeIDsInAllZones
+		if tiflashReplicaReadPolicy.IsClosestReplicas() {
+			checkAliveStoreTarget = aliveStores.storeIDsInTiDBZone
+		}
+
+		var invalidRegions []tikv.RegionVerID
+		for i, allStoresPerRegion := range usedTiFlashStores {
+			var storeOk bool
+			for _, storeID := range allStoresPerRegion {
+				if _, ok := checkAliveStoreTarget[storeID]; ok {
+					storeOk = true
+					break
+				}
+			}
+			if !storeOk {
+				cache.InvalidateCachedRegion(tasks[i].region)
+				needRetry = true
+				// To avoid too many logs.
+				if len(invalidRegions) < 10 {
+					invalidRegions = append(invalidRegions, tasks[i].region)
+				}
+			}
+		}
+		if needRetry {
+			logutil.BgLogger().Info("need retry because region has no alive tiflash store", zap.Any("invalid regions", invalidRegions))
+		}
+	}
+	return
 }
 
 func convertRegionInfosToPartitionTableRegions(batchTasks []*batchCopTask, partitionIDs []int64) {
@@ -1523,7 +1570,17 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 		}
 		stores = filterAliveStores(bo.GetCtx(), stores, ttl, kvStore)
 		if len(stores) == 0 {
-			return nil, errors.New("tiflash_compute node is unavailable")
+			if intest.InTest {
+				// To avoid keep retrying, which makes CI slow.
+				return nil, errors.New("tiflash_compute node is unavailable")
+			}
+			logutil.BgLogger().Info("buildBatchCopTasksConsistentHashForPD retry because no alive tiflash", zap.Int("retryNum", retryNum))
+			cache.ForceRefreshAllStores(bo.GetCtx())
+			if err := bo.Backoff(tikv.BoTiFlashRPC(), errors.New("tiflash_compute node is unavailable")); err != nil {
+				return nil, errors.Trace(err)
+			}
+			getStoreElapsed += time.Since(getStoreStart)
+			continue
 		}
 		getStoreElapsed = time.Since(getStoreStart)
 
@@ -1544,8 +1601,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 		}
 		if rpcCtxs == nil {
 			logutil.BgLogger().Info("buildBatchCopTasksConsistentHashForPD retry because rcpCtx is nil", zap.Int("retryNum", retryNum))
-			err := bo.Backoff(tikv.BoTiFlashRPC(), errors.New("Cannot find region with TiFlash peer"))
-			if err != nil {
+			if err := bo.Backoff(tikv.BoTiFlashRPC(), errors.New("Cannot find region with TiFlash peer")); err != nil {
 				return nil, errors.Trace(err)
 			}
 			continue
