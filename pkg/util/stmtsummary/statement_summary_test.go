@@ -181,14 +181,16 @@ func TestAddStatement(t *testing.T) {
 		TotalLatency:   20000,
 		ParseLatency:   200,
 		CompileLatency: 2000,
-		CopTasks: &execdetails.CopTasksDetails{
+		CopTasks: &execdetails.CopTasksSummary{
 			NumCopTasks:       20,
-			AvgProcessTime:    2000,
-			P90ProcessTime:    20000,
 			MaxProcessAddress: "200",
 			MaxProcessTime:    25000,
+<<<<<<< HEAD
 			AvgWaitTime:       200,
 			P90WaitTime:       2000,
+=======
+			TotProcessTime:    40000,
+>>>>>>> fc3c894e391 (stmtsummary: tiny optimize by avoiding unnecessary calculations (#58562))
 			MaxWaitAddress:    "201",
 			MaxWaitTime:       2500,
 		},
@@ -324,14 +326,16 @@ func TestAddStatement(t *testing.T) {
 		TotalLatency:   1000,
 		ParseLatency:   50,
 		CompileLatency: 500,
-		CopTasks: &execdetails.CopTasksDetails{
+		CopTasks: &execdetails.CopTasksSummary{
 			NumCopTasks:       2,
-			AvgProcessTime:    100,
-			P90ProcessTime:    300,
 			MaxProcessAddress: "300",
 			MaxProcessTime:    350,
+<<<<<<< HEAD
 			AvgWaitTime:       20,
 			P90WaitTime:       200,
+=======
+			TotProcessTime:    200,
+>>>>>>> fc3c894e391 (stmtsummary: tiny optimize by avoiding unnecessary calculations (#58562))
 			MaxWaitAddress:    "301",
 			MaxWaitTime:       250,
 		},
@@ -630,14 +634,16 @@ func generateAnyExecInfo() *StmtExecInfo {
 		TotalLatency:   10000,
 		ParseLatency:   100,
 		CompileLatency: 1000,
-		CopTasks: &execdetails.CopTasksDetails{
+		CopTasks: &execdetails.CopTasksSummary{
 			NumCopTasks:       10,
-			AvgProcessTime:    1000,
-			P90ProcessTime:    10000,
 			MaxProcessAddress: "127",
 			MaxProcessTime:    15000,
+<<<<<<< HEAD
 			AvgWaitTime:       100,
 			P90WaitTime:       1000,
+=======
+			TotProcessTime:    10000,
+>>>>>>> fc3c894e391 (stmtsummary: tiny optimize by avoiding unnecessary calculations (#58562))
 			MaxWaitAddress:    "128",
 			MaxWaitTime:       1500,
 		},
