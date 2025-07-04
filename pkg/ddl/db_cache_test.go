@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/stretchr/testify/require"
 )
 
@@ -164,9 +164,13 @@ func TestCacheTableSizeLimit(t *testing.T) {
 }
 
 func TestIssue34069(t *testing.T) {
+	testIssue34069(t, sem.V1)
+	testIssue34069(t, sem.V2)
+}
+
+func testIssue34069(t *testing.T, semVer string) {
 	store := testkit.CreateMockStore(t)
-	sem.Enable()
-	defer sem.Disable()
+	defer sem.SwitchToSEMForTest(t, semVer)()
 
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
