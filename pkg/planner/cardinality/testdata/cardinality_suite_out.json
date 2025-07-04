@@ -24,11 +24,7 @@
       {
         "Start": 800,
         "End": 900,
-<<<<<<< HEAD
         "Count": 791.004166655054
-=======
-        "Count": 782.754166655054
->>>>>>> 36e39785ab1 (Planner: Single col out of range use original type (#55600))
       },
       {
         "Start": 900,
@@ -83,11 +79,7 @@
       {
         "Start": 800,
         "End": 1000,
-<<<<<<< HEAD
         "Count": 1249.196869573942
-=======
-        "Count": 1240.946869573942
->>>>>>> 36e39785ab1 (Planner: Single col out of range use original type (#55600))
       },
       {
         "Start": 900,
@@ -112,11 +104,7 @@
       {
         "Start": 200,
         "End": 400,
-<<<<<<< HEAD
         "Count": 1188.7788209899081
-=======
-        "Count": 1182.0288209899081
->>>>>>> 36e39785ab1 (Planner: Single col out of range use original type (#55600))
       },
       {
         "Start": 200,
@@ -1607,7 +1595,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1095
+                    "TopN total count": 1096
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -2536,7 +2524,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1095
+                    "TopN total count": 1096
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -3992,12 +3980,7 @@
                           {
                             "lDatum": "KindMinNotNull <nil>",
                             "modifyCount": 100,
-<<<<<<< HEAD
-                            "rDatum": "KindBytes \\x03\\x7f\\xff\\xff\\xff\\xff\\xff\\xfa$"
-=======
-                            "rDatum": "KindInt64 -1500",
-                            "realtimeRowCount": 3080
->>>>>>> 36e39785ab1 (Planner: Single col out of range use original type (#55600))
+                            "rDatum": "KindInt64 -1500"
                           },
                           {
                             "commonPrefix": 0,
@@ -4006,9 +3989,6 @@
                             "unsigned": false
                           },
                           {
-<<<<<<< HEAD
-                            "Result": 0
-=======
                             "boundL": -2997,
                             "boundR": 2997,
                             "histL": -999,
@@ -4019,13 +3999,12 @@
                           },
                           {
                             "Result": 100
->>>>>>> 36e39785ab1 (Planner: Single col out of range use original type (#55600))
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 0,
+                          "RowCount": 100,
                           "Type": "Range"
                         }
                       }
@@ -4033,7 +4012,7 @@
                   },
                   {
                     "Name": "iab",
-                    "Result": 1
+                    "Result": 100
                   }
                 ]
               },
@@ -4186,11 +4165,11 @@
                 "Expressions": [
                   "lt(test.t.a, -1500)"
                 ],
-                "Selectivity": 0.0003246753246753247,
+                "Selectivity": 0.032467532467532464,
                 "partial cover": false
               },
               {
-                "Result": 1.9066503965832828e-7
+                "Result": 0.000019066503965832824
               }
             ]
           }
