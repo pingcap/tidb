@@ -51,18 +51,18 @@ func TestCostModelVer2ScanRowSize(t *testing.T) {
 		scanFormula string
 	}{
 		// index scan row-size on idx_ab is always equal to row-size(index_ab)
-		{"select a from t use index(ab) where a=1", "scan(1*logrowsize(32)*tikv_scan_factor(40.7))"},
-		{"select a, b from t use index(ab) where a=1", "scan(1*logrowsize(32)*tikv_scan_factor(40.7))"},
-		{"select b from t use index(ab) where a=1 and b=1", "scan(1*logrowsize(32)*tikv_scan_factor(40.7))"},
+		{"select a from t use index(ab) where a=1", "(scan(1*logrowsize(32)*tikv_scan_factor(40.7)))*1.00"},
+		{"select a, b from t use index(ab) where a=1", "(scan(1*logrowsize(32)*tikv_scan_factor(40.7)))*1.00"},
+		{"select b from t use index(ab) where a=1 and b=1", "(scan(1*logrowsize(32)*tikv_scan_factor(40.7)))*1.00"},
 		// index scan row-size on idx_abc is always equal to row-size(index_abc)
-		{"select a from t use index(abc) where a=1", "scan(1*logrowsize(48)*tikv_scan_factor(40.7))"},
-		{"select a from t use index(abc) where a=1 and b=1", "scan(1*logrowsize(48)*tikv_scan_factor(40.7))"},
-		{"select a, b from t use index(abc) where a=1 and b=1", "scan(1*logrowsize(48)*tikv_scan_factor(40.7))"},
-		{"select a, b, c from t use index(abc) where a=1 and b=1 and c=1", "scan(1*logrowsize(48)*tikv_scan_factor(40.7))"},
+		{"select a from t use index(abc) where a=1", "(scan(1*logrowsize(48)*tikv_scan_factor(40.7)))*1.00"},
+		{"select a from t use index(abc) where a=1 and b=1", "(scan(1*logrowsize(48)*tikv_scan_factor(40.7)))*1.00"},
+		{"select a, b from t use index(abc) where a=1 and b=1", "(scan(1*logrowsize(48)*tikv_scan_factor(40.7)))*1.00"},
+		{"select a, b, c from t use index(abc) where a=1 and b=1 and c=1", "(scan(1*logrowsize(48)*tikv_scan_factor(40.7)))*1.00"},
 		// table scan row-size is always equal to row-size(*)
-		{"select a from t use index(primary) where a=1", "(scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7)))"},
-		{"select a, d from t use index(primary) where a=1", "(scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7)))"},
-		{"select * from t use index(primary) where a=1", "(scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7)))"},
+		{"select a from t use index(primary) where a=1", "((scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7))))*1.00"},
+		{"select a, d from t use index(primary) where a=1", "((scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7))))*1.00"},
+		{"select * from t use index(primary) where a=1", "((scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7))))*1.00"},
 	}
 	for _, c := range cases {
 		rs := tk.MustQuery("explain analyze format=true_card_cost " + c.query).Rows()
@@ -185,19 +185,23 @@ func TestTableScanCostWithForce(t *testing.T) {
 	tk.MustExec("analyze table t")
 
 	// Test TableFullScan with and without FORCE INDEX
-	rs := tk.MustQuery("explain analyze format=verbose select * from t").Rows()
-	planCost1 := rs[0][2].(string)
-	rs = tk.MustQuery("explain analyze format=verbose select * from t force index(PRIMARY)").Rows()
-	planCost2 := rs[0][2].(string)
+	rs := tk.MustQuery("explain format=verbose select * from t").Rows()
+	planCost1, err1 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+	rs = tk.MustQuery("explain format=verbose select * from t force index(PRIMARY)").Rows()
+	planCost2, err2 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
 
 	// Query with FORCE should be more expensive than query without
 	require.Less(t, planCost1, planCost2)
 
 	// Test TableRangeScan with and without FORCE INDEX
-	rs = tk.MustQuery("explain analyze format=verbose select * from t where a > 1").Rows()
-	planCost1 = rs[0][2].(string)
-	rs = tk.MustQuery("explain analyze format=verbose select * from t force index(PRIMARY) where a > 1").Rows()
-	planCost2 = rs[0][2].(string)
+	rs = tk.MustQuery("explain format=verbose select * from t where a > 1").Rows()
+	planCost1, err1 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+	rs = tk.MustQuery("explain format=verbose select * from t force index(PRIMARY) where a > 1").Rows()
+	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
 
 	// Query costs should be equal since FORCE cost penalty does not apply to range scan
 	require.Equal(t, planCost1, planCost2)
