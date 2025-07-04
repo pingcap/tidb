@@ -15,7 +15,6 @@
 package logicalop
 
 import (
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )

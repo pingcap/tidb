@@ -16,11 +16,11 @@ package logicalop
 
 import (
 	"bytes"
-	"github.com/pingcap/tidb/pkg/planner/property"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 

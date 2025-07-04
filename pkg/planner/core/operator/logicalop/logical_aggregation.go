@@ -17,7 +17,6 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )

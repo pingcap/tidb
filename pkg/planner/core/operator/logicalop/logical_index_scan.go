@@ -17,9 +17,9 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/kv"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
