@@ -1067,3 +1067,7 @@ explain format = 'brief' select /*+ hash_agg() */ sum(a), (select NULL from test
 delete from mysql.opt_rule_blacklist where name = "decorrelate";
 admin reload opt_rule_blacklist;
 
+# TestIssue61735AggregateTruncatedDecimal
+--enable_warnings
+select distinct avg(nullif(77.15, PI()));
+--disable_warnings

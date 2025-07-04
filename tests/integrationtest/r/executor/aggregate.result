@@ -2060,3 +2060,8 @@ Projection	1.00	root		Column#9, Column#12, Column#15, Column#18
             └─TableFullScan	1000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
 delete from mysql.opt_rule_blacklist where name = "decorrelate";
 admin reload opt_rule_blacklist;
+select distinct avg(nullif(77.15, PI()));
+avg(nullif(77.15, PI()))
+77.1500000000000000000000000000000000
+Level	Code	Message
+Warning	1265	Data truncated for column '%s' at row %d
