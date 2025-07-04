@@ -29,7 +29,6 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -696,14 +695,6 @@ func buildRowsRecordSet(ctx context.Context, rs sqlexec.RecordSet) sqlexec.Recor
 		rows:   rows,
 		idx:    0,
 	}
-}
-
-// EnableFailPoint enables fail-point, and disable it when test finished.
-func EnableFailPoint(t testing.TB, name, expr string) {
-	require.NoError(t, failpoint.Enable(name, expr))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable(name))
-	})
 }
 
 // MockTiDBStatusPort mock the TiDB server status port to have metrics.

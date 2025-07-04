@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/mock/gomock"
@@ -106,7 +107,7 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 }
 
 func prepareForBenchTest(b *testing.B) {
-	testkit.EnableFailPoint(b, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+	testfailpoint.Enable(b, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 
 	var d driver.TiKVDriver
 	var err error
@@ -157,7 +158,7 @@ func registerTaskTypeForBench(c *testutil.TestDXFContext) {
 	).AnyTimes()
 	schedulerExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
-	testutil.RegisterTaskMetaWithDXFCtx(c, schedulerExt, func(ctx context.Context, subtask *proto.Subtask) error {
+	registerExampleTaskWithDXFCtx(c, schedulerExt, func(ctx context.Context, subtask *proto.Subtask) error {
 		select {
 		case <-ctx.Done():
 			taskManager, err := storage.GetTaskManager()

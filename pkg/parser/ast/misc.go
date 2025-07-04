@@ -2458,6 +2458,25 @@ type LimitSimple struct {
 	Offset uint64
 }
 
+type AlterJobOption struct {
+	// Name is the name of the option, will be converted to lower case during parse.
+	Name string
+	// only literal is allowed, we use ExprNode to support negative number
+	Value ExprNode
+}
+
+func (l *AlterJobOption) Restore(ctx *format.RestoreCtx) error {
+	if l.Value == nil {
+		ctx.WritePlain(l.Name)
+	} else {
+		ctx.WritePlain(l.Name + " = ")
+		if err := l.Value.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterJobOption")
+		}
+	}
+	return nil
+}
+
 // AdminStmt is the struct for Admin statement.
 type AdminStmt struct {
 	stmtNode
@@ -3614,6 +3633,37 @@ func (n *ImportIntoActionStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WriteKeyWord("CANCEL IMPORT JOB ")
 	ctx.WritePlainf("%d", n.JobID)
+	return nil
+}
+
+// AlterImportJobStmt represents ALTER IMPORT JOB statement.
+type AlterImportJobStmt struct {
+	stmtNode
+
+	JobID           int64
+	AlterJobOptions []*AlterJobOption
+}
+
+// Accept implements Node Accept interface.
+func (n *AlterImportJobStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
+}
+
+// Restore implements Node Restore interface.
+func (n *AlterImportJobStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALTER IMPORT JOB ")
+	ctx.WritePlainf("%d", n.JobID)
+	for i, option := range n.AlterJobOptions {
+		if i == 0 {
+			ctx.WritePlain(" ")
+		} else {
+			ctx.WritePlain(", ")
+		}
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterImportJobStmt.AlterJobOptions[%d]", i)
+		}
+	}
 	return nil
 }
 
