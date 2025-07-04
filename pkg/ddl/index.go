@@ -84,7 +84,8 @@ const (
 
 var (
 	// SuppressErrorTooLongKeyKey is used by SchemaTracker to suppress err too long key error
-	SuppressErrorTooLongKeyKey stringutil.StringerStr = "suppressErrorTooLongKeyKey"
+	SuppressErrorTooLongKeyKey   stringutil.StringerStr = "suppressErrorTooLongKeyKey"
+	telemetryAddIndexIngestUsage                        = metrics.TelemetryAddIndexIngestCnt
 )
 
 func suppressErrorTooLongKeyKey(sctx sessionctx.Context) bool {
@@ -670,6 +671,8 @@ SwitchIndexState:
 		}
 		loadCloudStorageURI(w, job)
 		if reorgTp.NeedMergeProcess() {
+			// Increase telemetryAddIndexIngestUsage
+			telemetryAddIndexIngestUsage.Inc()
 			for _, indexInfo := range allIndexInfos {
 				indexInfo.BackfillState = model.BackfillStateRunning
 			}

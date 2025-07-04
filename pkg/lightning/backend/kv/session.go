@@ -432,6 +432,16 @@ func (*Session) GetInfoSchema() infoschema.MetaOnlyInfoSchema {
 	return nil
 }
 
+// GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
+// Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
+func (*Session) GetBuiltinFunctionUsage() map[string]uint32 {
+	return make(map[string]uint32)
+}
+
+// BuiltinFunctionUsageInc implements the sessionctx.Context interface.
+func (*Session) BuiltinFunctionUsageInc(_ string) {
+}
+
 // GetStmtStats implements the sessionctx.Context interface.
 func (*Session) GetStmtStats() *stmtstats.StatementStats {
 	return nil
