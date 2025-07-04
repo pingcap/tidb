@@ -652,6 +652,19 @@ IndexMerge	0.00	root		type: union
 ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t4, index:iad(a, d)	range:[1 6,1 6], keep order:false, stats:pseudo
 └─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t4.a, 1), or(or(eq(planner__core__casetest__predicate_simplification.t4.b, 2), eq(planner__core__casetest__predicate_simplification.t4.c, 4)), or(eq(planner__core__casetest__predicate_simplification.t4.b, 12), or(eq(planner__core__casetest__predicate_simplification.t4.c, 5), eq(planner__core__casetest__predicate_simplification.t4.d, 6))))
   └─TableRowIDScan	8.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+drop table if exists t5, t6;
+create table t5 (c0 int, c1 int);
+create table t6 (c0 int, c1 int);
+explain format=brief  select * from t5 join t6 on t5.c0 = t6.c0
+where t5.c1 = null or t5.c1 > 0 and t6.c1 > 0;
+id	estRows	task	access object	operator info
+HashJoin	4162.50	root		inner join, equal:[eq(planner__core__casetest__predicate_simplification.t5.c0, planner__core__casetest__predicate_simplification.t6.c0)]
+├─TableReader(Build)	3330.00	root		data:Selection
+│ └─Selection	3330.00	cop[tikv]		gt(planner__core__casetest__predicate_simplification.t6.c1, 0), not(isnull(planner__core__casetest__predicate_simplification.t6.c0))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t6	keep order:false, stats:pseudo
+└─TableReader(Probe)	3330.00	root		data:Selection
+  └─Selection	3330.00	cop[tikv]		gt(planner__core__casetest__predicate_simplification.t5.c1, 0), not(isnull(planner__core__casetest__predicate_simplification.t5.c0))
+    └─TableFullScan	10000.00	cop[tikv]	table:t5	keep order:false, stats:pseudo
 CREATE TABLE `t910beff5` (
 `col_40` tinyint unsigned DEFAULT '95',
 `col_41` tinytext COLLATE gbk_bin NOT NULL

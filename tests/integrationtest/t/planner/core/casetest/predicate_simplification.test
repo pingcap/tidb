@@ -310,6 +310,12 @@ drop table if exists t4;
 create table t4(a int, b int, c int, d int, index iab(a,b), index iac(a,c), index iad(a,d));
 explain format=brief select /*+ use_index_merge(t4) */ * from t4 where a = 1 and (b = 2 or c = 4 or b = 12 or c = 5 or d = 6 or c = 4 or c = 5 or d = 6);
 
+drop table if exists t5, t6;
+create table t5 (c0 int, c1 int);
+create table t6 (c0 int, c1 int);
+explain format=brief  select * from t5 join t6 on t5.c0 = t6.c0
+	where t5.c1 = null or t5.c1 > 0 and t6.c1 > 0;
+
 CREATE TABLE `t910beff5` (
 `col_40` tinyint unsigned DEFAULT '95',
 `col_41` tinytext COLLATE gbk_bin NOT NULL
