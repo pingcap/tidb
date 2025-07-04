@@ -234,27 +234,6 @@ func (p *PhysicalTopN) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalLimit) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
-	client := ctx.GetClient()
-	limitExec := &tipb.Limit{
-		Limit: p.Count,
-	}
-	executorID := ""
-	for _, item := range p.PartitionBy {
-		limitExec.PartitionBy = append(limitExec.PartitionBy, expression.SortByItemToPB(ctx.GetExprCtx().GetEvalCtx(), client, item.Col.Clone(), item.Desc))
-	}
-	if storeType == kv.TiFlash {
-		var err error
-		limitExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		executorID = p.ExplainID().String()
-	}
-	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec, ExecutorId: &executorID}, nil
-}
-
-// ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	if storeType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return p.partitionTableScanToPBForFlash(ctx)
