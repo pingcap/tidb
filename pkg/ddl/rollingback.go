@@ -262,7 +262,7 @@ func rollingbackAddFullTextIndex(jobCtx *jobContext, job *model.Job) (ver int64,
 
 func rollingbackAddColumanrIndex(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	if job.SchemaState == model.StateWriteReorganization {
-		// Add vector index workers are started. need to ask them to exit.
+		// Add columnar index workers are started. need to ask them to exit.
 		jobCtx.logger.Info("run the cancelling DDL job", zap.String("job", job.String()))
 		ver, err = w.onCreateColumnarIndex(jobCtx, job)
 	} else {

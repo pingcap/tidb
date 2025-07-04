@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -47,14 +47,6 @@ const defaultChannelSize = 1024
 // checksum tasks.
 const defaultChecksumConcurrency = 64
 
-// CreatedTable is a table created on restore process,
-// but not yet filled with data.
-type CreatedTable struct {
-	RewriteRule *restoreutils.RewriteRules
-	Table       *model.TableInfo
-	OldTable    *metautil.Table
-}
-
 type PhysicalTable struct {
 	NewPhysicalID int64
 	OldPhysicalID int64
@@ -62,8 +54,8 @@ type PhysicalTable struct {
 	Files         []*backuppb.File
 }
 
-func defaultOutputTableChan() chan *CreatedTable {
-	return make(chan *CreatedTable, defaultChannelSize)
+func defaultOutputTableChan() chan *restoreutils.CreatedTable {
+	return make(chan *restoreutils.CreatedTable, defaultChannelSize)
 }
 
 // ExhaustErrors drains all remaining errors in the channel, into a slice of errors.
@@ -81,16 +73,117 @@ func ExhaustErrors(ec <-chan error) []error {
 	}
 }
 
+func (rc *SnapClient) filterAndValidateTemporaryTables(
+	ctx context.Context,
+	createdTables []*restoreutils.CreatedTable,
+	temporaryTablesCheckFn func(string, string) (string, bool),
+	kvClient kv.Client,
+	checksum bool,
+	checksumConcurrency uint,
+) (map[string]map[string]struct{}, int, error) {
+	renamedTables := make(map[string]map[string]struct{})
+	renamedTableCount := 0
+	workerpool := tidbutil.NewWorkerPool(defaultChecksumConcurrency, "Restore Statistic Checksum")
+	eg, ectx := errgroup.WithContext(ctx)
+	for _, createdTable := range createdTables {
+		tempSchemaName := createdTable.OldTable.DB.Name.O
+		tableName := createdTable.OldTable.Info.Name.O
+		if dbName, ok := temporaryTablesCheckFn(tempSchemaName, tableName); ok {
+			renamedTableMap, ok := renamedTables[dbName]
+			if !ok {
+				renamedTableMap = make(map[string]struct{})
+				renamedTables[dbName] = renamedTableMap
+			}
+			renamedTableMap[tableName] = struct{}{}
+			if checksum {
+				workerpool.ApplyOnErrorGroup(eg, func() error {
+					return rc.execAndValidateChecksum(ectx, createdTable, kvClient, checksumConcurrency)
+				})
+			}
+			renamedTableCount += 1
+		}
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	return renamedTables, renamedTableCount, nil
+}
+
+func (rc *SnapClient) moveRenamedTable(ctx context.Context, restoreTS uint64, statisticTables map[string]map[string]struct{}) error {
+	// the renamed tables will be deleted by DROP DATABASE in the function cleanTemporaryDatabase later
+	renameSQL := GenerateMoveRenamedTableSQLPair(restoreTS, statisticTables)
+	if err := rc.db.Session().Execute(ctx, renameSQL); err != nil {
+		log.Error("failed to move rename tables", zap.String("sql", renameSQL), zap.Error(err))
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (rc *SnapClient) updateTemporaryUserTable(ctx context.Context, renamedTables map[string]map[string]struct{}) error {
+	if tables, exists := renamedTables[mysql.SystemDB]; exists {
+		if _, exists = tables[sysUserTableName]; exists {
+			return removeUserResourceGroup(ctx, utils.TemporaryDBName(mysql.SystemDB).O, rc.db.Session().Execute)
+		}
+	}
+	return nil
+}
+
+func (rc *SnapClient) replaceTables(
+	ctx context.Context,
+	createdTables []*restoreutils.CreatedTable,
+	schemaVersionPair SchemaVersionPairT,
+	restoreTS uint64,
+	loadStatsPhysical, loadSysTablePhysical bool,
+	kvClient kv.Client,
+	checksum bool,
+	checksumConcurrency uint,
+) (int, error) {
+	temporaryTableChecker := &TemporaryTableChecker{
+		loadStatsPhysical:    loadStatsPhysical,
+		loadSysTablePhysical: loadSysTablePhysical,
+	}
+	renamedTables, renamedTableCount, err := rc.filterAndValidateTemporaryTables(ctx, createdTables, temporaryTableChecker.CheckTemporaryTables, kvClient, checksum, checksumConcurrency)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	if len(renamedTables) == 0 {
+		return 0, nil
+	}
+
+	if err := rc.updateTemporaryUserTable(ctx, renamedTables); err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	if err := updateStatsTableSchema(ctx, renamedTables, schemaVersionPair, rc.db.Session().Execute); err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	if err := rc.moveRenamedTable(ctx, restoreTS, renamedTables); err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	if err := notifyUpdateAllUsersPrivilege(renamedTables, rc.dom.NotifyUpdateAllUsersPrivilege); err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	return renamedTableCount, nil
+}
+
 type PipelineContext struct {
 	// pipeline item switch
-	Checksum         bool
-	LoadStats        bool
-	WaitTiflashReady bool
+	Checksum             bool
+	LoadStats            bool
+	LoadStatsPhysical    bool
+	LoadSysTablePhysical bool
+	WaitTiflashReady     bool
 
 	// pipeline item configuration
 	LogProgress         bool
 	ChecksumConcurrency uint
 	StatsConcurrency    uint
+	SchemaVersionPair   SchemaVersionPairT
+	RestoreTS           uint64
 
 	// pipeline item tool client
 	KvClient   kv.Client
@@ -99,34 +192,42 @@ type PipelineContext struct {
 }
 
 // RestorePipeline does checksum, load stats and wait for tiflash to be ready.
-func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext, createdTables []*CreatedTable) error {
+func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext, createdTables []*restoreutils.CreatedTable) (err error) {
 	start := time.Now()
 	defer func() {
 		summary.CollectDuration("restore pipeline", time.Since(start))
 	}()
-	progressLen := int64(0)
+	pipelineNum := 0
 	if plCtx.Checksum {
-		progressLen += int64(len(createdTables))
+		pipelineNum += 1
 	}
-	if plCtx.LoadStats {
-		progressLen += int64(len(createdTables))
+	if plCtx.LoadStats && !plCtx.LoadStatsPhysical {
+		pipelineNum += 1
 	}
 	if plCtx.WaitTiflashReady {
-		progressLen += int64(len(createdTables))
+		pipelineNum += 1
+	}
+	progressLen := int64(pipelineNum * len(createdTables))
+	if plCtx.LoadStatsPhysical || plCtx.LoadSysTablePhysical {
+		renamedTableCount, err := rc.replaceTables(ctx, createdTables, plCtx.SchemaVersionPair, plCtx.RestoreTS, plCtx.LoadStatsPhysical, plCtx.LoadSysTablePhysical, plCtx.KvClient, plCtx.Checksum, plCtx.ChecksumConcurrency)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		progressLen -= int64(pipelineNum * renamedTableCount)
 	}
 
 	// Redirect to log if there is no log file to avoid unreadable output.
 	updateCh := plCtx.Glue.StartProgress(ctx, "Restore Pipeline", progressLen, !plCtx.LogProgress)
 	defer updateCh.Close()
 
-	handlerBuilder := &PipelineConcurrentBuilder{}
+	handlerBuilder := &PipelineConcurrentBuilder{loadStatsPhysical: plCtx.LoadStatsPhysical, loadSysTablePhysical: plCtx.LoadSysTablePhysical}
 	// pipeline checksum
 	if plCtx.Checksum {
 		rc.registerValidateChecksum(handlerBuilder, plCtx.KvClient, updateCh, plCtx.ChecksumConcurrency)
 	}
 
 	// pipeline update meta and load stats
-	if plCtx.LoadStats {
+	if plCtx.LoadStats && !plCtx.LoadStatsPhysical {
 		rc.registerUpdateMetaAndLoadStats(handlerBuilder, plCtx.ExtStorage, updateCh, plCtx.StatsConcurrency)
 	}
 
@@ -144,18 +245,21 @@ type pipelineFunction struct {
 	taskLabel   string
 	concurrency uint
 
-	processFn func(context.Context, *CreatedTable) error
+	processFn func(context.Context, *restoreutils.CreatedTable) error
 	endFn     func(context.Context) error
 }
 
 type PipelineConcurrentBuilder struct {
 	pipelineFunctions []pipelineFunction
+
+	loadStatsPhysical    bool
+	loadSysTablePhysical bool
 }
 
 func (builder *PipelineConcurrentBuilder) RegisterPipelineTask(
 	taskLabel string,
 	concurrency uint,
-	processFn func(context.Context, *CreatedTable) error,
+	processFn func(context.Context, *restoreutils.CreatedTable) error,
 	endFn func(context.Context) error,
 ) {
 	builder.pipelineFunctions = append(builder.pipelineFunctions, pipelineFunction{
@@ -166,7 +270,7 @@ func (builder *PipelineConcurrentBuilder) RegisterPipelineTask(
 	})
 }
 
-func (builder *PipelineConcurrentBuilder) StartPipelineTask(ctx context.Context, createdTables []*CreatedTable) error {
+func (builder *PipelineConcurrentBuilder) StartPipelineTask(ctx context.Context, createdTables []*restoreutils.CreatedTable) error {
 	eg, pipelineTaskCtx := errgroup.WithContext(ctx)
 	handler := &PipelineConcurrentHandler{
 		pipelineTaskCtx: pipelineTaskCtx,
@@ -174,7 +278,7 @@ func (builder *PipelineConcurrentBuilder) StartPipelineTask(ctx context.Context,
 	}
 
 	// the first pipeline task
-	postHandleCh := handler.afterTableRestoredCh(createdTables)
+	postHandleCh := handler.afterTableRestoredCh(createdTables, builder.loadStatsPhysical, builder.loadSysTablePhysical)
 
 	// the middle pipeline tasks
 	for _, f := range builder.pipelineFunctions {
@@ -192,13 +296,19 @@ type PipelineConcurrentHandler struct {
 	eg              *errgroup.Group
 }
 
-func (handler *PipelineConcurrentHandler) afterTableRestoredCh(createdTables []*CreatedTable) <-chan *CreatedTable {
-	outCh := make(chan *CreatedTable)
+func (handler *PipelineConcurrentHandler) afterTableRestoredCh(createdTables []*restoreutils.CreatedTable, loadStatsPhysical, loadSysTablePhysical bool) <-chan *restoreutils.CreatedTable {
+	outCh := make(chan *restoreutils.CreatedTable)
 
 	handler.eg.Go(func() error {
 		defer close(outCh)
 
 		for _, createdTable := range createdTables {
+			if loadStatsPhysical && IsStatsTemporaryTable(createdTable.OldTable.DB.Name.O, createdTable.OldTable.Info.Name.O) {
+				continue
+			}
+			if loadSysTablePhysical && IsRenameableSysTemporaryTable(createdTable.OldTable.DB.Name.O, createdTable.OldTable.Info.Name.O) {
+				continue
+			}
 			select {
 			case <-handler.pipelineTaskCtx.Done():
 				return handler.pipelineTaskCtx.Err()
@@ -213,7 +323,7 @@ func (handler *PipelineConcurrentHandler) afterTableRestoredCh(createdTables []*
 
 // dropToBlackhole drop all incoming tables into black hole,
 // i.e. don't execute checksum, just increase the process anyhow.
-func (handler *PipelineConcurrentHandler) dropToBlackhole(inCh <-chan *CreatedTable) {
+func (handler *PipelineConcurrentHandler) dropToBlackhole(inCh <-chan *restoreutils.CreatedTable) {
 	handler.eg.Go(func() error {
 		for {
 			select {
@@ -229,12 +339,12 @@ func (handler *PipelineConcurrentHandler) dropToBlackhole(inCh <-chan *CreatedTa
 }
 
 func (handler *PipelineConcurrentHandler) concurrentHandleTablesCh(
-	inCh <-chan *CreatedTable,
+	inCh <-chan *restoreutils.CreatedTable,
 	concurrency uint,
 	taskLabel string,
-	processFun func(context.Context, *CreatedTable) error,
+	processFun func(context.Context, *restoreutils.CreatedTable) error,
 	endFun func(context.Context) error,
-) (outCh chan *CreatedTable) {
+) (outCh chan *restoreutils.CreatedTable) {
 	outCh = defaultOutputTableChan()
 	handler.eg.Go(func() (pipelineErr error) {
 		workers := tidbutil.NewWorkerPool(concurrency, taskLabel)
@@ -299,7 +409,7 @@ func (rc *SnapClient) registerValidateChecksum(
 	updateCh glue.Progress,
 	concurrency uint,
 ) {
-	builder.RegisterPipelineTask("Restore Checksum", defaultChecksumConcurrency, func(c context.Context, tbl *CreatedTable) error {
+	builder.RegisterPipelineTask("Restore Checksum", defaultChecksumConcurrency, func(c context.Context, tbl *restoreutils.CreatedTable) error {
 		err := rc.execAndValidateChecksum(c, tbl, kvClient, concurrency)
 		if err != nil {
 			return errors.Trace(err)
@@ -350,7 +460,7 @@ func (buffer *statsMetaItemBuffer) UpdateMetasRest(ctx context.Context, statsHan
 	if len(metaUpdates) == 0 {
 		return nil
 	}
-	return statsHandler.SaveMetaToStorage("br restore", false, metaUpdates...)
+	return buffer.saveMetaToStorageWithRetry(ctx, statsHandler, metaUpdates)
 }
 
 func (buffer *statsMetaItemBuffer) TryUpdateMetas(ctx context.Context, statsHandler *handle.Handle, physicalID, count int64) error {
@@ -363,7 +473,23 @@ func (buffer *statsMetaItemBuffer) TryUpdateMetas(ctx context.Context, statsHand
 	if len(metaUpdates) == 0 {
 		return nil
 	}
-	return statsHandler.SaveMetaToStorage("br restore", false, metaUpdates...)
+	return buffer.saveMetaToStorageWithRetry(ctx, statsHandler, metaUpdates)
+}
+
+func (buffer *statsMetaItemBuffer) saveMetaToStorageWithRetry(
+	ctx context.Context,
+	statsHandler *handle.Handle,
+	metaUpdates []statstypes.MetaUpdate,
+) error {
+	state := utils.InitialRetryState(8, 500*time.Millisecond, 500*time.Millisecond)
+	err := utils.WithRetry(ctx, func() error {
+		if err := statsHandler.SaveMetaToStorage("br restore", false, metaUpdates...); err != nil {
+			log.Error("failed to save meta to storage", zap.Error(err))
+			return errors.Trace(err)
+		}
+		return nil
+	}, &state)
+	return errors.Trace(err)
 }
 
 func calculateRowCountForPhysicalTable(files []*backuppb.File) int64 {
@@ -376,7 +502,8 @@ func calculateRowCountForPhysicalTable(files []*backuppb.File) int64 {
 	return int64(totalKvs)
 }
 
-func updateStatsMetaForNonPartitionTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle, tbl *CreatedTable) error {
+func updateStatsMetaForNonPartitionTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle,
+	tbl *restoreutils.CreatedTable) error {
 	count := calculateRowCountForPhysicalTable(tbl.OldTable.FilesOfPhysicals[tbl.OldTable.Info.ID])
 	if statsErr := buffer.TryUpdateMetas(ctx, statsHandler, tbl.Table.ID, count); statsErr != nil {
 		log.Error("update stats meta failed", zap.Error(statsErr))
@@ -385,7 +512,8 @@ func updateStatsMetaForNonPartitionTable(ctx context.Context, buffer *statsMetaI
 	return nil
 }
 
-func updateStatsMetaForPartitionTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle, tbl *CreatedTable) error {
+func updateStatsMetaForPartitionTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle,
+	tbl *restoreutils.CreatedTable) error {
 	totalCount := int64(0)
 	physicalRowCountMap := make(map[int64]int64)
 	for physicalID, files := range tbl.OldTable.FilesOfPhysicals {
@@ -423,7 +551,8 @@ func updateStatsMetaForPartitionTable(ctx context.Context, buffer *statsMetaItem
 	return nil
 }
 
-func updateStatsMetaForTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle, tbl *CreatedTable) error {
+func updateStatsMetaForTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle,
+	tbl *restoreutils.CreatedTable) error {
 	if tbl.OldTable.Info.Partition == nil {
 		return updateStatsMetaForNonPartitionTable(ctx, buffer, statsHandler, tbl)
 	}
@@ -439,7 +568,7 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 	statsHandler := rc.dom.StatsHandle()
 	buffer := NewStatsMetaItemBuffer()
 
-	builder.RegisterPipelineTask("Update Stats", statsConcurrency, func(c context.Context, tbl *CreatedTable) error {
+	builder.RegisterPipelineTask("Update Stats", statsConcurrency, func(c context.Context, tbl *restoreutils.CreatedTable) error {
 		oldTable := tbl.OldTable
 		var statsErr error = nil
 		if oldTable.Stats != nil {
@@ -507,7 +636,7 @@ func (rc *SnapClient) registerWaitTiFlashReady(
 		}
 	}
 
-	builder.RegisterPipelineTask("Wait For Tiflash Ready", 4, func(c context.Context, tbl *CreatedTable) error {
+	builder.RegisterPipelineTask("Wait For Tiflash Ready", 4, func(c context.Context, tbl *restoreutils.CreatedTable) error {
 		if tbl.Table != nil && tbl.Table.TiFlashReplica == nil {
 			log.Info("table has no tiflash replica",
 				zap.Stringer("table", tbl.OldTable.Info.Name),

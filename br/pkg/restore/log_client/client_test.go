@@ -1341,12 +1341,11 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 	{
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
 		client.SetStorage(ctx, backend, nil)
-		cfg := &logclient.GetIDMapConfig{LoadSavedIDMap: false}
 		err := stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), []byte(""))
 		require.NoError(t, err)
 		err = stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 1), []byte("123"))
 		require.NoError(t, err)
-		_, err = client.GetBaseIDMap(ctx, cfg, nil)
+		err = client.GetBaseIDMapAndMerge(ctx, false, false, nil, stream.NewTableMappingManager())
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "proto: wrong")
 		err = stg.DeleteFile(ctx, logclient.PitrIDMapsFilename(123, 1))
@@ -1356,10 +1355,9 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 	{
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
 		client.SetStorage(ctx, backend, nil)
-		cfg := &logclient.GetIDMapConfig{LoadSavedIDMap: true}
 		err := stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), []byte("123"))
 		require.NoError(t, err)
-		_, err = client.GetBaseIDMap(ctx, cfg, nil)
+		err = client.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager())
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "proto: wrong")
 		err = stg.DeleteFile(ctx, logclient.PitrIDMapsFilename(123, 2))
@@ -1374,10 +1372,9 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		se, err := g.CreateSession(s.Mock.Storage)
 		require.NoError(t, err)
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
-		cfg := &logclient.GetIDMapConfig{LoadSavedIDMap: true}
-		_, err = client.GetBaseIDMap(ctx, cfg, nil)
+		err = client.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager())
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "miss upstream table information at `start-ts`(1) but the full backup path is not specified")
+		require.Contains(t, err.Error(), "no base id map found from saved id or last restored PiTR")
 	}
 }
 
@@ -1549,7 +1546,7 @@ func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 	stg, err := storage.NewLocalStorage("local://" + filepath.ToSlash(t.TempDir()))
 	require.NoError(t, err)
 	logCheckpointMetaManager := checkpoint.NewLogStorageMetaManager(
-		stg, nil, 123, "test")
+		stg, nil, 123, "test", 1)
 	defer logCheckpointMetaManager.Close()
 	baseTableMappingManager := &stream.TableMappingManager{
 		DBReplaceMap: getDBMap(),
@@ -1563,7 +1560,7 @@ func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 	stg, err = storage.NewLocalStorage("local://" + filepath.ToSlash(t.TempDir()) + "/temp_another")
 	require.NoError(t, err)
 	logCheckpointMetaManager2 := checkpoint.NewLogStorageMetaManager(
-		stg, nil, 123, "test")
+		stg, nil, 123, "test", 1)
 	defer logCheckpointMetaManager.Close()
 	newSchemaReplaces, err = client2.TEST_initSchemasMap(ctx, 2, logCheckpointMetaManager2)
 	require.NoError(t, err)
@@ -2260,13 +2257,13 @@ func TestRepairIngestIndexFromCheckpoint(t *testing.T) {
 	require.NotEqual(t, int64(0), indexIDi2)
 
 	// add checkpoint
-	_, err = tk.Exec("CREATE DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint")
+	_, err = tk.Exec("CREATE DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint_1")
 	require.NoError(t, err)
 	defer func() {
-		_, err = tk.Exec("DROP DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint")
+		_, err = tk.Exec("DROP DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint_1")
 		require.NoError(t, err)
 	}()
-	logCheckpointMetaManager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName)
+	logCheckpointMetaManager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName, 1)
 	require.NoError(t, err)
 	defer logCheckpointMetaManager.Close()
 	require.NoError(t, logCheckpointMetaManager.SaveCheckpointIngestIndexRepairSQLs(ctx, &checkpoint.CheckpointIngestIndexRepairSQLs{

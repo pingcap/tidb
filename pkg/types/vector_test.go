@@ -61,9 +61,9 @@ func TestVectorParse(t *testing.T) {
 	require.NotNil(t, err)
 	require.True(t, v.IsZeroValue())
 
-	// Note: Currently we will parse "null" into [].
+	// "null" string should return error, not empty vector
 	v, err = types.ParseVectorFloat32(`null`)
-	require.Nil(t, err)
+	require.NotNil(t, err)
 	require.True(t, v.IsZeroValue())
 
 	v, err = types.ParseVectorFloat32(`"json_str"`)
@@ -104,6 +104,17 @@ func TestVectorParse(t *testing.T) {
 
 	v, err = types.ParseVectorFloat32(`[-1e39, 1e39]`)
 	require.EqualError(t, err, "value -1e+39 out of range for float32")
+
+	// Test invalid vector with extra characters
+	v, err = types.ParseVectorFloat32(`[1,2,3,4.4]ddddddddddddfasfa`)
+	require.NotNil(t, err)
+	require.True(t, v.IsZeroValue())
+	require.Contains(t, err.Error(), "Invalid vector text")
+
+	v, err = types.ParseVectorFloat32(`[1,2,3]extra`)
+	require.NotNil(t, err)
+	require.True(t, v.IsZeroValue())
+	require.Contains(t, err.Error(), "Invalid vector text")
 }
 
 func TestVectorDatum(t *testing.T) {

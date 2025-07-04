@@ -87,10 +87,6 @@ func bindingLogger() *zap.Logger {
 
 // GenerateBindingSQL generates binding sqls from stmt node and plan hints.
 func GenerateBindingSQL(stmtNode ast.StmtNode, planHint string, defaultDB string) string {
-	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
-	if planHint == "" {
-		return ""
-	}
 	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
 	// So here we would remove the hint and inject the current best plan hint.
 	hint.BindHint(stmtNode, &hint.HintsSet{})
@@ -220,7 +216,7 @@ func getBindingPlanDigest(sctx sessionctx.Context, schema, bindingSQL string) (p
 		if !hasParam(stmt) {
 			// if there is '?' from `create binding using select a from t where a=?`,
 			// the final plan digest might be incorrect.
-			planDigest, _ = PlanDigestFunc(sctx, stmt)
+			planDigest, _ = CalculatePlanDigest(sctx, stmt)
 		}
 	}
 	return

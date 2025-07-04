@@ -24,9 +24,11 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -148,4 +150,25 @@ func TestRunWithRetry(t *testing.T) {
 		},
 	)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestGetTargetScope(t *testing.T) {
+	bak := vardef.ServiceScope.Load()
+	t.Cleanup(func() {
+		vardef.ServiceScope.Store(bak)
+	})
+	vardef.ServiceScope.Store("test-scope")
+	if kerneltype.IsNextGen() {
+		require.Equal(t, "dxf_service", handle.GetTargetScope())
+	} else {
+		require.Equal(t, "test-scope", handle.GetTargetScope())
+	}
+}
+
+func TestHandles(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	uri := "s3://bucket/path/to/folder"
+	vardef.CloudStorageURI.Store(uri)
+	mockURI := handle.GetCloudStorageURI(context.Background(), store)
+	require.Equal(t, mockURI, "s3://bucket/path/to/folder/1") // mock store always get cluster ID 1
 }

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/testkit/testflag"
@@ -58,6 +59,10 @@ import (
 )
 
 func sessionFactory(t *testing.T, from any) func() (session.Session, func()) {
+	return sessionFactoryWithTimeout(t, from, time.Minute)
+}
+
+func sessionFactoryWithTimeout(t *testing.T, from any, timeout time.Duration) func() (session.Session, func()) {
 	var pool syssession.Pool
 	switch p := from.(type) {
 	case *domain.Domain:
@@ -80,7 +85,7 @@ func sessionFactory(t *testing.T, from any) func() (session.Session, func()) {
 
 				select {
 				case <-ch:
-				case <-time.After(time.Minute):
+				case <-time.After(timeout):
 					require.FailNow(t, "timeout")
 				}
 				return nil
@@ -102,10 +107,10 @@ func sessionFactory(t *testing.T, from any) func() (session.Session, func()) {
 }
 
 func TestWithSession(t *testing.T) {
-	origAttachStats, origDetachStats := ttlworker.AttachStatsCollector, ttlworker.DetachStatsCollector
+	origAttachStats, origDetachStats := statshandle.AttachStatsCollector, statshandle.DetachStatsCollector
 	defer func() {
-		ttlworker.AttachStatsCollector = origAttachStats
-		ttlworker.DetachStatsCollector = origDetachStats
+		statshandle.AttachStatsCollector = origAttachStats
+		statshandle.DetachStatsCollector = origDetachStats
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -133,13 +138,13 @@ func TestWithSession(t *testing.T) {
 
 	type mockStatsSQLExecutor struct{ sqlexec.SQLExecutor }
 	var attached, detached bool
-	ttlworker.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	statshandle.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 		require.False(t, attached)
 		attached = true
 		require.Same(t, tk.Session().GetSQLExecutor(), s)
 		return &mockStatsSQLExecutor{SQLExecutor: tk.Session().GetSQLExecutor()}
 	}
-	ttlworker.DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	statshandle.DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 		require.False(t, detached)
 		detached = true
 		m, ok := s.(*mockStatsSQLExecutor)
@@ -183,7 +188,11 @@ func TestParallelLockNewJob(t *testing.T) {
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
 
-	sessionFactory := sessionFactory(t, dom)
+	sessionTimeout := time.Minute
+	if testflag.Long() {
+		sessionTimeout = 10 * time.Minute
+	}
+	sessionFactory := sessionFactoryWithTimeout(t, dom, sessionTimeout)
 
 	testTable := &cache.PhysicalTable{ID: 2, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"}}}
 	// simply lock a new job
@@ -1830,7 +1839,6 @@ func overwriteJobInterval(t *testing.T) func() {
 }
 
 func TestJobManagerWithFault(t *testing.T) {
-	// TODO: add a flag `-long` to enable this test
 	skip.NotUnderLong(t)
 
 	defer boostJobScheduleForTest(t)()
@@ -2109,4 +2117,40 @@ func TestIterationOfRunningJob(t *testing.T) {
 
 	// Now all the jobs should have been removed
 	require.Len(t, m.RunningJobs(), 0)
+}
+
+func TestTTLSummaryForTimeoutJob(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+	sessionFactory := sessionFactory(t, dom)
+
+	tk := testkit.NewTestKit(t, store)
+	m := ttlworker.NewJobManager("test-job-manager", dom.AdvancedSysSessionPool(), store, nil, func() bool { return true })
+
+	se, closeSe := sessionFactory()
+	defer closeSe()
+
+	testTable := &cache.PhysicalTable{ID: 1, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"}}}
+	m.InfoSchemaCache().Tables[testTable.ID] = testTable
+	jobID := uuid.NewString()
+	_, err := m.LockJob(context.Background(), se, testTable, se.Now(), jobID, false)
+	require.NoError(t, err)
+	tk.MustQuery("SELECT current_job_id, current_job_owner_id FROM mysql.tidb_ttl_table_status WHERE table_id = ?", 1).Check(testkit.Rows(fmt.Sprintf("%s %s", jobID, m.ID())))
+
+	// insert some finished task
+	tk.MustExec("INSERT INTO mysql.tidb_ttl_task (scan_id, job_id, table_id, status, state, expire_time, created_time)"+
+		" VALUES (1, ?, 1, 'finished', ?, NOW(), NOW())", jobID, `{"total_rows": 100 ,"success_rows": 100}`)
+
+	// report timeout
+	err = m.UpdateHeartBeatForJob(context.Background(), se, se.Now().Add(8*time.Hour), m.RunningJobs()[0])
+	require.NoError(t, err)
+
+	// the job should contain summary
+	rows := tk.MustQuery("SELECT last_job_summary FROM mysql.tidb_ttl_table_status WHERE table_id = ?", 1).Rows()
+	summary := &ttlworker.TTLSummary{}
+	require.NoError(t, json.Unmarshal([]byte(rows[0][0].(string)), summary))
+	require.Equal(t, uint64(100), summary.TotalRows)
+	require.Equal(t, uint64(100), summary.SuccessRows)
+	require.Equal(t, uint64(0), summary.ErrorRows)
+	require.Equal(t, "job is timeout", summary.ScanTaskErr)
 }
