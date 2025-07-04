@@ -256,7 +256,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.OtherConditions, true)...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
-		tempCond = expression.PropagateConstant(p.SCtx().GetExprCtx(), tempCond...)
+		tempCond = utilfuncp.ApplyPredicateSimplification(p.SCtx(), tempCond, true)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
@@ -267,7 +267,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		p.LeftConditions = nil
 		p.RightConditions = nil
 		p.EqualConditions = equalCond
-		p.OtherConditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), otherCond, true)
+		p.OtherConditions = otherCond
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	case AntiSemiJoin:
