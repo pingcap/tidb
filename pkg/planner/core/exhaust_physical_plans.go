@@ -2913,8 +2913,8 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 		return nil, false, nil
 	}
 	joins := make([]base.PhysicalPlan, 0, 8)
-	canPushToTiFlash := p.CanPushToCop(kv.TiFlash)
-	if p.SCtx().GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
+	// we lift the p.canPushToTiFlash check here, because we want to generate all the plans to be decided by the attachment layer.
+	if p.SCtx().GetSessionVars().IsMPPAllowed() {
 		if (p.PreferJoinType & h.PreferShuffleJoin) > 0 {
 			if shuffleJoins := tryToGetMppHashJoin(p, prop, false); len(shuffleJoins) > 0 {
 				return shuffleJoins, true, nil
@@ -3384,8 +3384,8 @@ func exhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 	lw := lp.(*logicalop.LogicalWindow)
 	windows := make([]base.PhysicalPlan, 0, 2)
 
-	canPushToTiFlash := lw.CanPushToCop(kv.TiFlash)
-	if lw.SCtx().GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
+	// we lift the p.CanPushToCop(tiFlash) check here.
+	if lw.SCtx().GetSessionVars().IsMPPAllowed() {
 		mppWindows := tryToGetMppWindows(lw, prop)
 		windows = append(windows, mppWindows...)
 	}
@@ -3870,10 +3870,13 @@ func exhaustPhysicalPlans4LogicalSelection(lp base.LogicalPlan, prop *property.P
 	newProps := make([]*property.PhysicalProperty, 0, 2)
 	childProp := prop.CloneEssentialFields()
 	newProps = append(newProps, childProp)
+	// we lift the p.CanPushDown(kv.TiFlash) check here, which may depend on the children.
+	canPushDownToTiFlash := !expression.ContainVirtualColumn(p.Conditions) &&
+		expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Conditions, kv.TiFlash)
 
 	if prop.TaskTp != property.MppTaskType &&
 		p.SCtx().GetSessionVars().IsMPPAllowed() &&
-		p.CanPushDown(kv.TiFlash) {
+		canPushDownToTiFlash {
 		childPropMpp := prop.CloneEssentialFields()
 		childPropMpp.TaskTp = property.MppTaskType
 		newProps = append(newProps, childPropMpp)
