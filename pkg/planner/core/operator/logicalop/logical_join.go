@@ -263,6 +263,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 			AppendTableDualTraceStep(p, dual, tempCond, opt)
 			return ret, dual
 		}
+		tempCond = utilfuncp.ApplyPredicateSimplification(p.SCtx(), tempCond, true)
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(tempCond, true, true)
 		p.LeftConditions = nil
 		p.RightConditions = nil
