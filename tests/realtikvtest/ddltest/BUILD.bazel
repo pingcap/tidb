@@ -4,8 +4,8 @@ go_test(
     name = "ddltest_test",
     timeout = "short",
     srcs = [
+        "ddl_test.go",
         "main_test.go",
-        "scatter_region_test.go",
     ],
     flaky = True,
     deps = [
