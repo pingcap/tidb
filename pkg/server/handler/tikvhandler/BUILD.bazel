@@ -13,6 +13,7 @@ go_library(
         "//pkg/executor",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/lightning/backend/local",
         "//pkg/meta",
         "//pkg/parser/model",
         "//pkg/parser/terror",
