@@ -356,3 +356,176 @@ func TestMeetTTLRunningTasks(t *testing.T) {
 	require.False(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(3, cache.TaskStatusWaiting))
 	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(3, cache.TaskStatusRunning))
 }
+<<<<<<< HEAD
+=======
+
+func TestShrinkScanWorkerTimeout(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	pool := wrapPoolForTest(dom.SysSessionPool())
+	defer pool.AssertNoSessionInUse(t)
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+	sessionFactory := sessionFactory(t, store)
+
+	tk.MustExec("set global tidb_ttl_running_tasks = 32")
+
+	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
+	testTable, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	for id := 0; id < 4; id++ {
+		sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW() - INTERVAL 1 DAY, NOW())", testTable.Meta().ID, id)
+		tk.MustExec(sql)
+	}
+
+	se := sessionFactory()
+	now := se.Now()
+
+	isc := cache.NewInfoSchemaCache(time.Minute)
+	require.NoError(t, isc.Update(se))
+	m := ttlworker.NewTaskManager(context.Background(), pool, isc, "scan-manager-1", store)
+
+	startBlockNotifyCh := make(chan struct{})
+	blockCancelCh := make(chan struct{})
+
+	workers := []ttlworker.Worker{}
+	for j := 0; j < 4; j++ {
+		scanWorker := ttlworker.NewMockScanWorker(t)
+		if j == 0 {
+			scanWorker.SetCtx(func(ctx context.Context) context.Context {
+				return context.WithValue(ctx, ttlworker.TTLScanPostScanHookForTest{}, func() {
+					startBlockNotifyCh <- struct{}{}
+					<-blockCancelCh
+				})
+			})
+		}
+		scanWorker.Start()
+		workers = append(workers, scanWorker)
+	}
+
+	m.SetScanWorkers4Test(workers)
+
+	m.RescheduleTasks(se, now)
+	require.Len(t, m.GetRunningTasks(), 4)
+	tk.MustQuery("SELECT count(1) from mysql.tidb_ttl_task where status = 'running'").Check(testkit.Rows("4"))
+	<-startBlockNotifyCh
+
+	// shrink scan workers, one of them will timeout
+	require.Error(t, m.ResizeScanWorkers(0))
+	require.Len(t, m.GetScanWorkers(), 0)
+
+	// the canceled 3 tasks are still running, but they have results, so after `CheckFinishedTask`, it should be finished
+	tk.MustQuery("SELECT count(1) from mysql.tidb_ttl_task where status = 'running'").Check(testkit.Rows("4"))
+	m.CheckFinishedTask(se, now)
+	require.Len(t, m.GetRunningTasks(), 0)
+	// now, the task should be finished
+	tk.MustQuery("SELECT count(1) from mysql.tidb_ttl_task where status = 'running'").Check(testkit.Rows("0"))
+	// the first task will be finished with "timeout to cancel scan task"
+	// other tasks will finish with table not found because we didn't mock the table in this test.
+	tk.MustQuery("SELECT scan_id, json_extract(state, '$.scan_task_err') from mysql.tidb_ttl_task").Sort().Check(testkit.Rows(
+		"0 \"timeout to cancel scan task\"",
+		"1 \"table 'test.t' meta changed, should abort current job: [schema:1146]Table 'test.t' doesn't exist\"",
+		"2 \"table 'test.t' meta changed, should abort current job: [schema:1146]Table 'test.t' doesn't exist\"",
+		"3 \"table 'test.t' meta changed, should abort current job: [schema:1146]Table 'test.t' doesn't exist\"",
+	))
+
+	require.NoError(t, m.ResizeDelWorkers(0))
+	close(blockCancelCh)
+}
+
+func TestTaskCancelledAfterHeartbeatTimeout(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	pool := wrapPoolForTest(dom.SysSessionPool())
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+	sessionFactory := sessionFactory(t, store)
+	se := sessionFactory()
+
+	tk.MustExec("set global tidb_ttl_running_tasks = 128")
+	defer tk.MustExec("set global tidb_ttl_running_tasks = -1")
+
+	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
+	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	// 4 tasks are inserted into the table
+	for i := 0; i < 4; i++ {
+		sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW(), NOW())", table.Meta().ID, i)
+		tk.MustExec(sql)
+	}
+	isc := cache.NewInfoSchemaCache(time.Second)
+	require.NoError(t, isc.Update(se))
+
+	workers := []ttlworker.Worker{}
+	for j := 0; j < 8; j++ {
+		scanWorker := ttlworker.NewMockScanWorker(t)
+		scanWorker.Start()
+		workers = append(workers, scanWorker)
+	}
+
+	now := se.Now()
+	m1 := ttlworker.NewTaskManager(context.Background(), pool, isc, "task-manager-1", store)
+	m1.SetScanWorkers4Test(workers[0:4])
+	m1.RescheduleTasks(se, now)
+	m2 := ttlworker.NewTaskManager(context.Background(), pool, isc, "task-manager-2", store)
+	m2.SetScanWorkers4Test(workers[4:])
+
+	// All tasks should be scheduled to m1 and running
+	tk.MustQuery("select count(1) from mysql.tidb_ttl_task where status = 'running' and owner_id = 'task-manager-1'").Check(testkit.Rows("4"))
+
+	var cancelCount atomic.Uint32
+	for i := 0; i < 4; i++ {
+		task := m1.GetRunningTasks()[i]
+		task.SetCancel(func() {
+			cancelCount.Add(1)
+		})
+	}
+
+	// After a period of time, the tasks lost heartbeat and will be re-asisgned to m2
+	now = now.Add(time.Hour)
+	m2.RescheduleTasks(se, now)
+
+	// All tasks should be scheduled to m2 and running
+	tk.MustQuery("select count(1) from mysql.tidb_ttl_task where status = 'running' and owner_id = 'task-manager-2'").Check(testkit.Rows("4"))
+
+	// Then m1 cannot update the heartbeat of its task
+	require.Error(t, m1.UpdateHeartBeat(context.Background(), se, now.Add(time.Hour)))
+	tk.MustQuery("select owner_hb_time from mysql.tidb_ttl_task").Check(testkit.Rows(
+		now.Format(time.DateTime),
+		now.Format(time.DateTime),
+		now.Format(time.DateTime),
+		now.Format(time.DateTime),
+	))
+
+	// m2 can successfully update the heartbeat
+	require.NoError(t, m2.UpdateHeartBeat(context.Background(), se, now.Add(time.Hour)))
+	tk.MustQuery("select owner_hb_time from mysql.tidb_ttl_task").Check(testkit.Rows(
+		now.Add(time.Hour).Format(time.DateTime),
+		now.Add(time.Hour).Format(time.DateTime),
+		now.Add(time.Hour).Format(time.DateTime),
+		now.Add(time.Hour).Format(time.DateTime),
+	))
+
+	// Although m1 cannot finish the task. It'll also try to cancel the task.
+	for _, task := range m1.GetRunningTasks() {
+		task.SetResult(nil)
+	}
+	m1.CheckFinishedTask(se, now)
+	tk.MustQuery("select count(1) from mysql.tidb_ttl_task where status = 'running'").Check(testkit.Rows("4"))
+	require.Equal(t, uint32(4), cancelCount.Load())
+
+	// Then the tasks in m1 should be cancelled again in `CheckInvalidTask`.
+	m1.CheckInvalidTask(se)
+	require.Equal(t, uint32(8), cancelCount.Load())
+
+	// m2 can finish the task
+	for _, task := range m2.GetRunningTasks() {
+		task.SetResult(nil)
+	}
+	m2.CheckFinishedTask(se, now)
+	tk.MustQuery("select status, state, owner_id from mysql.tidb_ttl_task").Sort().Check(testkit.Rows(
+		`finished {"total_rows":0,"success_rows":0,"error_rows":0,"scan_task_err":""} task-manager-2`,
+		`finished {"total_rows":0,"success_rows":0,"error_rows":0,"scan_task_err":""} task-manager-2`,
+		`finished {"total_rows":0,"success_rows":0,"error_rows":0,"scan_task_err":""} task-manager-2`,
+		`finished {"total_rows":0,"success_rows":0,"error_rows":0,"scan_task_err":""} task-manager-2`,
+	))
+}
+>>>>>>> 018ab99b803 (ttl: fix the issue that the task is not cancelled after transfering owners (#57788))
