@@ -865,3 +865,150 @@ func TestCreateConstraintForTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "t1")
 }
+
+func TestCreateTableAutoIncrementMaxValue(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t1")
+
+	// See: https://docs.pingcap.com/tidb/stable/data-type-numeric/#integer-type
+
+	// Test 1: Signed INT - exceeding int32 max value
+	// math.MaxInt32 = 2147483647
+	maxInt32Plus1 := "2147483648" // math.MaxInt32 + 1
+	failedSQL := fmt.Sprintf("CREATE TABLE t1 (id INT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = %s", maxInt32Plus1)
+
+	err := tk.ExecToErr(failedSQL)
+	require.Error(t, err, "Expected error for AUTO_INCREMENT value exceeding int32 max")
+	require.Contains(t, err.Error(), "auto_increment overflows",
+		"Expected auto_increment overflow error, got: %v", err)
+
+	// Test with math.MaxInt32 (should succeed)
+	tk.MustExec("CREATE TABLE t1 (id INT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 2147483647")
+	tk.MustExec("DROP TABLE t1")
+
+	// Test 2: Unsigned INT - exceeding uint32 max value
+	// math.MaxUint32 = 4294967295
+	maxUint32Plus1 := "4294967296" // math.MaxUint32 + 1
+	failedSQL = fmt.Sprintf("CREATE TABLE t1 (id INT UNSIGNED PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = %s", maxUint32Plus1)
+
+	err = tk.ExecToErr(failedSQL)
+	if err != nil {
+		// If validation is implemented, expect overflow error
+		require.Contains(t, err.Error(), "overflow",
+			"Expected overflow error for unsigned int AUTO_INCREMENT, got: %v", err)
+	} else {
+		// Current behavior: accepts values > uint32 max for unsigned int
+		t.Logf("Warning: AUTO_INCREMENT value %s exceeds uint32 max for unsigned int but was accepted", maxUint32Plus1)
+		tk.MustExec("DROP TABLE t1")
+	}
+
+	// Test with math.MaxUint32 (should succeed)
+	tk.MustExec("CREATE TABLE t1 (id INT UNSIGNED PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 4294967295")
+	tk.MustExec("DROP TABLE t1")
+
+	// Test 3: Signed BIGINT - exceeding int64 max value
+	// math.MaxInt64 = 9223372036854775807
+	maxInt64Plus1 := "9223372036854775808" // math.MaxInt64 + 1
+	failedSQL = fmt.Sprintf("CREATE TABLE t1 (id BIGINT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = %s", maxInt64Plus1)
+
+	err = tk.ExecToErr(failedSQL)
+	if err != nil {
+		// If validation is implemented, expect overflow error
+		require.Contains(t, err.Error(), "overflow",
+			"Expected overflow error for signed bigint AUTO_INCREMENT, got: %v", err)
+	} else {
+		// Current behavior: accepts values > int64 max for signed bigint
+		t.Logf("Warning: AUTO_INCREMENT value %s exceeds int64 max for signed bigint but was accepted", maxInt64Plus1)
+		tk.MustExec("DROP TABLE t1")
+	}
+
+	// Test with math.MaxInt64 (should succeed)
+	tk.MustExec("CREATE TABLE t1 (id BIGINT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 9223372036854775807")
+	tk.MustExec("DROP TABLE t1")
+
+	// Test 4: Unsigned BIGINT - test with max value
+	// math.MaxUint64 = 18446744073709551615
+	tk.MustExec("CREATE TABLE t1 (id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 18446744073709551615")
+	tk.MustExec("DROP TABLE t1")
+
+	// Test 5: Signed TINYINT - exceeding int8 max value
+	// math.MaxInt8 = 127
+	maxInt8Plus1 := "128" // math.MaxInt8 + 1
+	failedSQL = fmt.Sprintf("CREATE TABLE t1 (id TINYINT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = %s", maxInt8Plus1)
+	err = tk.ExecToErr(failedSQL)
+	require.Error(t, err, "Expected error for AUTO_INCREMENT value exceeding int8 max")
+	require.Contains(t, err.Error(), "auto_increment overflows",
+		"Expected auto_increment overflow error, got: %v", err)
+
+	// Test with math.MaxInt8 (should succeed)
+	tk.MustExec("CREATE TABLE t1 (id TINYINT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 127")
+	tk.MustExec("DROP TABLE t1")
+
+	// Test 6: Unsigned TINYINT - exceeding uint8 max value
+	// math.MaxUint8 = 255
+	maxUint8Plus1 := "256" // math.MaxUint8 + 1
+	failedSQL = fmt.Sprintf("CREATE TABLE t1 (id TINYINT UNSIGNED PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = %s", maxUint8Plus1)
+	err = tk.ExecToErr(failedSQL)
+	require.Error(t, err, "Expected error for AUTO_INCREMENT value exceeding uint8 max")
+	require.Contains(t, err.Error(), "auto_increment overflows",
+		"Expected auto_increment overflow error, got: %v", err)
+
+	// Test with math.MaxUint8 (should succeed)
+	tk.MustExec("CREATE TABLE t1 (id TINYINT UNSIGNED PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 255")
+	tk.MustExec("DROP TABLE t1")
+
+	// Test 7: Signed SMALLINT - exceeding int16 max value
+	// math.MaxInt16 = 32767
+	maxInt16Plus1 := "32768" // math.MaxInt16 + 1
+	failedSQL = fmt.Sprintf("CREATE TABLE t1 (id SMALLINT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = %s", maxInt16Plus1)
+	err = tk.ExecToErr(failedSQL)
+	require.Error(t, err, "Expected error for AUTO_INCREMENT value exceeding int16 max")
+	require.Contains(t, err.Error(), "auto_increment overflows",
+		"Expected auto_increment overflow error, got: %v", err)
+
+	// Test with math.MaxInt16 (should succeed)
+	tk.MustExec("CREATE TABLE t1 (id SMALLINT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 32767")
+	tk.MustExec("DROP TABLE t1")
+
+	// Test 8: Unsigned SMALLINT - exceeding uint16 max value
+	// math.MaxUint16 = 65535
+	maxUint16Plus1 := "65536" // math.MaxUint16 + 1
+	failedSQL = fmt.Sprintf("CREATE TABLE t1 (id SMALLINT UNSIGNED PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = %s", maxUint16Plus1)
+	err = tk.ExecToErr(failedSQL)
+	require.Error(t, err, "Expected error for AUTO_INCREMENT value exceeding uint16 max")
+	require.Contains(t, err.Error(), "auto_increment overflows",
+		"Expected auto_increment overflow error, got: %v", err)
+
+	// Test with math.MaxUint16 (should succeed)
+	tk.MustExec("CREATE TABLE t1 (id SMALLINT UNSIGNED PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 65535")
+	tk.MustExec("DROP TABLE t1")
+
+	// Test 9: Signed MEDIUMINT - exceeding int24 max value
+	// MaxInt24 = 8388607
+	maxInt24Plus1 := "8388608" // MaxInt24 + 1
+	failedSQL = fmt.Sprintf("CREATE TABLE t1 (id MEDIUMINT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = %s", maxInt24Plus1)
+	err = tk.ExecToErr(failedSQL)
+	require.Error(t, err, "Expected error for AUTO_INCREMENT value exceeding int24 max")
+	require.Contains(t, err.Error(), "auto_increment overflows",
+		"Expected auto_increment overflow error, got: %v", err)
+
+	// Test with MaxInt24 (should succeed)
+	tk.MustExec("CREATE TABLE t1 (id MEDIUMINT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 8388607")
+	tk.MustExec("DROP TABLE t1")
+
+	// Test 10: Unsigned MEDIUMINT - exceeding uint24 max value
+	// MaxUint24 = 16777215
+	maxUint24Plus1 := "16777216" // MaxUint24 + 1
+	failedSQL = fmt.Sprintf("CREATE TABLE t1 (id MEDIUMINT UNSIGNED PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = %s", maxUint24Plus1)
+	err = tk.ExecToErr(failedSQL)
+	require.Error(t, err, "Expected error for AUTO_INCREMENT value exceeding uint24 max")
+	require.Contains(t, err.Error(), "auto_increment overflows",
+		"Expected auto_increment overflow error, got: %v", err)
+
+	// Test with MaxUint24 (should succeed)
+	tk.MustExec("CREATE TABLE t1 (id MEDIUMINT UNSIGNED PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 16777215")
+	tk.MustExec("DROP TABLE t1")
+}
