@@ -346,7 +346,11 @@
         "Plan": [
           "HashAgg 8000.00 root  group by:Column#10, funcs:count(Column#9)->Column#6",
           "└─Projection 10000.00 root  test.t.a->Column#9, md5(cast(test.t.a, var_string(20)))->Column#10",
+<<<<<<< HEAD
           "  └─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+=======
+          "  └─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+>>>>>>> 35c1e21115c (planner,expression: fix wrong copy args to avoid breaking origin expression when to EvaluateExprWithNull (#61630))
           "    └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
