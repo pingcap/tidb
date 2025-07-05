@@ -112,7 +112,7 @@ func GetMaxBatchSplitRanges() int {
 	if *val == 0 { // Not yet initialized from TiKV or invalid value caused fallback to 0
 		return defaultMaxBatchSplitRanges
 	}
-	return int(*val)
+	return *val
 }
 
 // GetMaxSplitRangePerSec returns the current maximum number of ranges to split and scatter per second.
@@ -124,7 +124,7 @@ func GetMaxSplitRangePerSec() float64 {
 // GetMaxIngestConcurrency returns the current maximum number of concurrent ingest requests.
 func GetMaxIngestConcurrency() int {
 	val := CurrentMaxIngestInflight.Load()
-	return int(*val)
+	return *val
 }
 
 // GetMaxIngestPerSec returns the current maximum number of ingest requests per second.
