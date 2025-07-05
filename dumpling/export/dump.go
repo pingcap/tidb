@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -53,6 +54,9 @@ var errEmptyHandleVals = errors.New("empty handleVals for TiDB table")
 // see https://docs.pingcap.com/zh/tidb/dev/system-variables#tidb_enable_paging-%E4%BB%8E-v540-%E7%89%88%E6%9C%AC%E5%BC%80%E5%A7%8B%E5%BC%95%E5%85%A5
 var enablePagingVersion = semver.New("6.2.0")
 
+// Maximum number of chunks to prevent infinite loops during boundary sampling
+const maxChunkLimit = 1000000
+
 // Dumper is the dump progress structure
 type Dumper struct {
 	tctx      *tcontext.Context
@@ -69,6 +73,8 @@ type Dumper struct {
 	charsetAndDefaultCollationMap map[string]string
 
 	speedRecorder *SpeedRecorder
+
+	chunkedTables sync.Map
 }
 
 // NewDumper returns a new Dumper
@@ -349,25 +355,23 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 		}
 		writer := NewWriter(tctx, int64(i), conf, conn, d.extStore, d.metrics)
 		writer.rebuildConnFn = rebuildConnFn
-		writer.setFinishTableCallBack(func(task Task) {
-			if _, ok := task.(*TaskTableData); ok {
-				IncCounter(d.metrics.finishedTablesCounter)
-				// FIXME: actually finishing the last chunk doesn't means this table is 'finished'.
-				//  We can call this table is 'finished' if all its chunks are finished.
-				//  Comment this log now to avoid ambiguity.
-				// tctx.L().Debug("finished dumping table data",
-				//	zap.String("database", td.Meta.DatabaseName()),
-				//	zap.String("table", td.Meta.TableName()))
-				failpoint.Inject("EnableLogProgress", func() {
-					time.Sleep(1 * time.Second)
-					tctx.L().Debug("EnableLogProgress, sleep 1s")
-				})
-			}
+		writer.setFinishTableCallBack(func(_ Task) {
+			// this is called when a file is finished.
 		})
 		writer.setFinishTaskCallBack(func(task Task) {
 			IncGauge(d.metrics.taskChannelCapacity)
 			if td, ok := task.(*TaskTableData); ok {
 				d.metrics.completedChunks.Add(1)
+				if val, ok := d.chunkedTables.Load(td.Meta.ChunkKey()); ok {
+					chunkStats := val.(*tableChunkStat)
+					finishedChunks := chunkStats.finished.Add(1)
+					if chunkStats.finalized.Load() && finishedChunks == chunkStats.sent.Load() {
+						IncCounter(d.metrics.finishedTablesCounter)
+						d.chunkedTables.Delete(td.Meta.ChunkKey())
+					}
+				} else {
+					IncCounter(d.metrics.finishedTablesCounter)
+				}
 				tctx.L().Debug("finish dumping table data task",
 					zap.String("database", td.Meta.DatabaseName()),
 					zap.String("table", td.Meta.TableName()),
@@ -619,7 +623,7 @@ func (d *Dumper) dumpTableData(tctx *tcontext.Context, conn *BaseConn, meta Tabl
 	}
 
 	// Update total rows
-	fieldName, _ := pickupPossibleField(tctx, meta, conn)
+	fieldName, _, _ := pickupPossibleField(tctx, meta, conn)
 	c := estimateCount(tctx, meta.DatabaseName(), meta.TableName(), conn, fieldName, conf)
 	AddCounter(d.metrics.estimateTotalRowsCounter, float64(c))
 
@@ -729,9 +733,10 @@ func (d *Dumper) sequentialDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 }
 
 // concurrentDumpTable tries to split table into several chunks to dump
-func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task) error {
+func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task) (err error) {
 	conf := d.conf
 	db, tbl := meta.DatabaseName(), meta.TableName()
+
 	if conf.ServerInfo.ServerType == version.ServerTypeTiDB &&
 		conf.ServerInfo.ServerVersion != nil &&
 		(conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) >= 0 ||
@@ -751,7 +756,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		return err
 	}
 
-	field, err := pickupPossibleField(tctx, meta, conn)
+	field, isStringField, err := pickupPossibleField(tctx, meta, conn)
 	if err != nil || field == "" {
 		// skip split chunk logic if not found proper field
 		tctx.L().Info("fallback to sequential dump due to no proper field. This won't influence the whole dump process",
@@ -772,6 +777,15 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 			zap.String("database", db),
 			zap.String("table", tbl))
 		return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
+	}
+
+	// Handle string-based chunking
+	if isStringField {
+		tctx.L().Info("using string-based chunking",
+			zap.String("database", db),
+			zap.String("table", tbl),
+			zap.String("field", field))
+		return d.concurrentDumpStringField(tctx, conn, meta, taskChan, field, orderByClause, count)
 	}
 
 	minv, maxv, err := d.selectMinAndMaxIntValue(tctx, conn, db, tbl, field)
@@ -798,6 +812,15 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 
 	chunkIndex := 0
 	nullValueCondition := ""
+	chunkStats := newTableChunkStat()
+	d.chunkedTables.Store(meta.ChunkKey(), chunkStats)
+	defer func() {
+		chunkStats.finalized.Store(true)
+		if chunkStats.finished.Load() == chunkStats.sent.Load() {
+			IncCounter(d.metrics.finishedTablesCounter)
+			d.chunkedTables.Delete(meta.ChunkKey())
+		}
+	}()
 	if conf.Where == "" {
 		nullValueCondition = fmt.Sprintf("`%s` IS NULL OR ", escapeString(field))
 	}
@@ -820,6 +843,11 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 }
 
 func (d *Dumper) sendTaskToChan(tctx *tcontext.Context, task Task, taskChan chan<- Task) (ctxDone bool) {
+	if td, ok := task.(*TaskTableData); ok {
+		if val, ok := d.chunkedTables.Load(td.Meta.ChunkKey()); ok {
+			val.(*tableChunkStat).sent.Add(1)
+		}
+	}
 	select {
 	case <-tctx.Done():
 		return true
@@ -828,6 +856,20 @@ func (d *Dumper) sendTaskToChan(tctx *tcontext.Context, task Task, taskChan chan
 			zap.String("task", task.Brief()))
 		DecGauge(d.metrics.taskChannelCapacity)
 		return false
+	}
+}
+
+type tableChunkStat struct {
+	sent      *gatomic.Int32
+	finished  *gatomic.Int32
+	finalized *gatomic.Bool
+}
+
+func newTableChunkStat() *tableChunkStat {
+	return &tableChunkStat{
+		sent:      gatomic.NewInt32(0),
+		finished:  gatomic.NewInt32(0),
+		finalized: gatomic.NewBool(false),
 	}
 }
 
@@ -923,6 +965,16 @@ func (d *Dumper) concurrentDumpTiDBPartitionTables(tctx *tcontext.Context, conn 
 		totalChunk += len(handleVals) + 1
 		cachedHandleVals[i] = handleVals
 	}
+
+	chunkStats := newTableChunkStat()
+	d.chunkedTables.Store(meta.ChunkKey(), chunkStats)
+	defer func() {
+		chunkStats.finalized.Store(true)
+		if chunkStats.finished.Load() == chunkStats.sent.Load() {
+			IncCounter(d.metrics.finishedTablesCounter)
+			d.chunkedTables.Delete(meta.ChunkKey())
+		}
+	}()
 	for i, partition := range partitions {
 		err := d.sendConcurrentDumpTiDBTasks(tctx, meta, taskChan, handleColNames, cachedHandleVals[i], partition, startChunkIdx, totalChunk)
 		if err != nil {
@@ -1708,4 +1760,20 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 func (d *Dumper) newTaskTableData(meta TableMeta, data TableDataIR, currentChunk, totalChunks int) *TaskTableData {
 	d.metrics.totalChunks.Add(1)
 	return NewTaskTableData(meta, data, currentChunk, totalChunks)
+}
+
+// extractOrderByColumns extracts column names from ORDER BY clause
+// Input: "ORDER BY `item_id`,`photo_index`"
+// Output: ["`item_id`", "`photo_index`"]
+func extractOrderByColumns(orderByClause string) []string {
+	// Remove "ORDER BY " prefix
+	columnsStr := strings.TrimPrefix(orderByClause, "ORDER BY ")
+
+	// Split by comma and trim spaces
+	columns := strings.Split(columnsStr, ",")
+	for i, col := range columns {
+		columns[i] = strings.TrimSpace(col)
+	}
+
+	return columns
 }
