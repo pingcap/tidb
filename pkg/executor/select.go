@@ -1049,6 +1049,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	errLevels := sc.ErrLevels()
 	errLevels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+	inImportInto := false
 	switch stmt := s.(type) {
 	// `ResetUpdateStmtCtx` and `ResetDeleteStmtCtx` may modify the flags, so we'll need to store them.
 	case *ast.UpdateStmt:
@@ -1077,12 +1078,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			!strictSQLMode || stmt.IgnoreErr,
 		)
 		sc.Priority = stmt.Priority
-		sc.SetTypeFlags(sc.TypeFlags().
-			WithTruncateAsWarning(!strictSQLMode || stmt.IgnoreErr).
-			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
-			WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() ||
-				!vars.SQLMode.HasNoZeroDateMode() || !strictSQLMode || stmt.IgnoreErr ||
-				vars.SQLMode.HasAllowInvalidDatesMode()))
+		sc.SetTypeFlags(util.GetTypeFlagsForInsert(sc.TypeFlags(), vars.SQLMode, stmt.IgnoreErr))
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		sc.InCreateOrAlterStmt = true
 		sc.SetTypeFlags(sc.TypeFlags().
@@ -1096,6 +1092,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
 		errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
+	case *ast.ImportIntoStmt:
+		inImportInto = true
+		sc.SetTypeFlags(util.GetTypeFlagsForImportInto(sc.TypeFlags(), vars.SQLMode))
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
 
@@ -1153,7 +1152,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// WithAllowNegativeToUnsigned with false value indicates values less than 0 should be clipped to 0 for unsigned integer types.
 		// This is the case for `insert`, `update`, `alter table`, `create table` and `load data infile` statements, when not in strict SQL mode.
 		// see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-		WithAllowNegativeToUnsigned(!sc.InInsertStmt && !sc.InLoadDataStmt && !sc.InUpdateStmt && !sc.InCreateOrAlterStmt),
+		WithAllowNegativeToUnsigned(!sc.InInsertStmt && !sc.InLoadDataStmt && !inImportInto && !sc.InUpdateStmt && !sc.InCreateOrAlterStmt),
 	)
 
 	vars.PlanCacheParams.Reset()
