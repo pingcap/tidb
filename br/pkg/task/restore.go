@@ -871,24 +871,24 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		checkpointFirstRun = !existsCheckpointMetadata
 	}
 
-	if isFullRestore(cmdName) {
-		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointFirstRun) {
-			if err = client.CheckTargetClusterFresh(ctx); err != nil {
+	isFullCmd := isFullRestore(cmdName)
+	needCheck := client.IsFull() && checkpointFirstRun
+	if needCheck {
+		if isFullCmd && !cfg.ExplicitFilter {
+			if err := client.CheckTargetClusterFresh(ctx); err != nil {
 				return errors.Trace(err)
 			}
 		}
-		// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
-		// to avoid import cycle problem which we won't do it in this pr, then refactor this
-		//
-		// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
-		if cfg.WithSysTable {
-			client.InitFullClusterRestore(cfg.ExplicitFilter)
+		if cfg.CheckRequirements && (cfg.ExplicitFilter || !isFullCmd) {
+			if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
+				schedulersRemovable = true
+				return errors.Trace(err)
+			}
 		}
-	} else if client.IsFull() && checkpointFirstRun && cfg.CheckRequirements {
-		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
-			schedulersRemovable = true
-			return errors.Trace(err)
-		}
+	}
+
+	if isFullCmd && cfg.WithSysTable {
+		client.InitFullClusterRestore(cfg.ExplicitFilter)
 	}
 
 	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
