@@ -104,6 +104,7 @@ go_test(
         "//br/pkg/errors",
         "//br/pkg/glue",
         "//br/pkg/gluetidb",
+        "//br/pkg/logutil",
         "//br/pkg/mock",
         "//br/pkg/restore",
         "//br/pkg/restore/ingestrec",
