@@ -2981,10 +2981,6 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 		}
 	})
 
-	if strings.Contains(lp.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain format='brief' select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a") {
-		fmt.Println(1)
-	}
-
 	if !isJoinHintSupportedInMPPMode(p.PreferJoinType) {
 		if hasMPPJoinHints(p.PreferJoinType) {
 			// If there are MPP hints but has some conflicts join method hints, all the join hints are invalid.
