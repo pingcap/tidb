@@ -241,17 +241,22 @@ const (
 	MaxFloatingTypeWidth     = 255
 	MaxDecimalScale          = 30
 	MaxDecimalWidth          = 65
-	MaxDateWidth             = 10 // YYYY-MM-DD.
-	MaxDatetimeWidthNoFsp    = 19 // YYYY-MM-DD HH:MM:SS
-	MaxDatetimeWidthWithFsp  = 26 // YYYY-MM-DD HH:MM:SS[.fraction]
-	MaxDatetimeFullWidth     = 29 // YYYY-MM-DD HH:MM:SS.###### AM
-	MaxDurationWidthNoFsp    = 10 // HH:MM:SS
-	MaxDurationWidthWithFsp  = 17 // HH:MM:SS[.fraction] -838:59:59.000000 to 838:59:59.000000
-	MaxBlobWidth             = 16777216
+	MaxDateWidth             = 10       // YYYY-MM-DD.
+	MaxDatetimeWidthNoFsp    = 19       // YYYY-MM-DD HH:MM:SS
+	MaxDatetimeWidthWithFsp  = 26       // YYYY-MM-DD HH:MM:SS[.fraction]
+	MaxDatetimeFullWidth     = 29       // YYYY-MM-DD HH:MM:SS.###### AM
+	MaxDurationWidthNoFsp    = 10       // HH:MM:SS
+	MaxDurationWidthWithFsp  = 17       // HH:MM:SS[.fraction] -838:59:59.000000 to 838:59:59.000000
+	MaxBlobWidth             = 16777216 // `MaxBlobWidth` is greater than `MaxBlobSize`. It's compatible with MySQL, but doesn't have a good reason.
 	MaxLongBlobWidth         = 4294967295
 	MaxBitDisplayWidth       = 64
 	MaxFloatPrecisionLength  = 24
 	MaxDoublePrecisionLength = 53
+
+	MaxTinyBlobSize   = 255
+	MaxBlobSize       = 65535
+	MaxMediumBlobSize = 16777215
+	MaxLongBlobSize   = 4294967295
 )
 
 // MySQL max type field length.
