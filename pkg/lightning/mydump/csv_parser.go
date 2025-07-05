@@ -398,7 +398,7 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 	var buf []byte
 	for {
 		buf = append(buf, parser.buf...)
-		if len(buf) > LargestEntryLimit {
+		if parser.checkRowLen && parser.pos-parser.rowStartPos+int64(len(buf)) > int64(LargestEntryLimit) {
 			return buf, 0, errors.New("size of row cannot exceed the max value of txn-entry-size-limit")
 		}
 		parser.buf = nil
@@ -442,7 +442,7 @@ outside:
 		// end of a line, the substring can still be dropped by rule 2.
 		if len(parser.startingBy) > 0 && !foundStartingByThisLine {
 			oldPos := parser.pos
-			content, _, err := parser.ReadUntilTerminator()
+			content, _, err := parser.readUntilTerminator()
 			if err != nil {
 				if !(errors.Cause(err) == io.EOF) {
 					return nil, err
@@ -629,6 +629,8 @@ func (parser *CSVParser) replaceEOF(err error, replaced error) error {
 
 // ReadRow reads a row from the datafile.
 func (parser *CSVParser) ReadRow() error {
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
 	row := &parser.lastRow
 	row.Length = 0
 	row.RowID++
@@ -679,6 +681,8 @@ func (parser *CSVParser) ReadRow() error {
 
 // ReadColumns reads the columns of this CSV file.
 func (parser *CSVParser) ReadColumns() error {
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
 	columns, err := parser.readRecord(nil)
 	if err != nil {
 		return errors.Trace(err)
@@ -705,6 +709,12 @@ func (parser *CSVParser) ReadColumns() error {
 // Note that the terminator string pattern may be the content of a field, which
 // means it's inside quotes. Caller should make sure to handle this case.
 func (parser *CSVParser) ReadUntilTerminator() ([]byte, int64, error) {
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
+	return parser.readUntilTerminator()
+}
+
+func (parser *CSVParser) readUntilTerminator() ([]byte, int64, error) {
 	var ret []byte
 	for {
 		content, firstByte, err := parser.readUntil(&parser.newLineByteSet)

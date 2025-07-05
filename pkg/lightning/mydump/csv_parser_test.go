@@ -838,20 +838,49 @@ func TestTooLargeRow(t *testing.T) {
 			Delimiter: `"`,
 		},
 	}
-	var testCase bytes.Buffer
-	testCase.WriteString("a,b,c,d")
-	// WARN: will take up 10KB memory here.
-	mydump.LargestEntryLimit = 10 * 1024
-	for i := 0; i < mydump.LargestEntryLimit; i++ {
-		testCase.WriteByte('d')
-	}
-	charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
-	require.NoError(t, err)
-	parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(testCase.String()), int64(config.ReadBlockSize), ioWorkersForCSV, false, charsetConvertor)
-	require.NoError(t, err)
-	e := parser.ReadRow()
-	require.Error(t, e)
-	require.Contains(t, e.Error(), "size of row cannot exceed the max value of txn-entry-size-limit")
+	bak := mydump.LargestEntryLimit
+	t.Cleanup(func() {
+		mydump.LargestEntryLimit = bak
+	})
+	mydump.LargestEntryLimit = 1024
+	t.Run("too long field", func(t *testing.T) {
+		var dataBuf bytes.Buffer
+		dataBuf.WriteString("a,b,c,d")
+		for i := 0; i < mydump.LargestEntryLimit; i++ {
+			dataBuf.WriteByte('d')
+		}
+		require.Greater(t, dataBuf.Len(), mydump.LargestEntryLimit)
+		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
+		require.NoError(t, err)
+		parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(dataBuf.String()), int64(config.ReadBlockSize), ioWorkersForCSV, false, charsetConvertor)
+		require.NoError(t, err)
+		e := parser.ReadRow()
+		require.Error(t, e)
+		require.Contains(t, e.Error(), "size of row cannot exceed the max value of txn-entry-size-limit")
+	})
+
+	t.Run("field is short, but whole row too long", func(t *testing.T) {
+		var dataBuf bytes.Buffer
+		for i := 0; i < 16; i++ {
+			if i > 0 {
+				dataBuf.WriteByte(',')
+			}
+			for j := 0; j < mydump.LargestEntryLimit/16; j++ {
+				dataBuf.WriteByte('d')
+			}
+		}
+		for i := 0; i < mydump.LargestEntryLimit-dataBuf.Len()+16; i++ {
+			dataBuf.WriteByte('d')
+		}
+		require.Greater(t, dataBuf.Len(), mydump.LargestEntryLimit)
+		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
+		require.NoError(t, err)
+		parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(dataBuf.String()), int64(config.ReadBlockSize), ioWorkersForCSV, false, charsetConvertor)
+		require.NoError(t, err)
+		e := parser.ReadRow()
+		require.Error(t, e)
+		require.Contains(t, e.Error(), "size of row cannot exceed the max value of txn-entry-size-limit")
+	})
 }
 
 func TestSpecialChars(t *testing.T) {
