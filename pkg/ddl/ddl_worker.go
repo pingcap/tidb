@@ -997,6 +997,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		return 0, err
 	}
 	err = w.updateDDLJob(job, runJobErr != nil)
+	failpoint.InjectCall("afterUpdateJobToTable", job, &err)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
 		w.sess.Rollback()
 		d.unlockSchemaVersion(job.ID)
