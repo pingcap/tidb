@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -2251,6 +2252,17 @@ func recordLimitToCopWarnings(lp base.LogicalPlan) error {
 // recordIndexJoinHintWarnings records the warnings msg if no valid preferred physic are picked.
 // todo: extend recordIndexJoinHintWarnings to support all kind of operator's warnings handling.
 func recordIndexJoinHintWarnings(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, inEnforce bool) error {
+	// handle mpp join hints first.
+	if (p.PreferJoinType&h.PreferShuffleJoin) > 0 || (p.PreferJoinType&h.PreferBCJoin) > 0 {
+		var errMsg string
+		if (p.PreferJoinType & h.PreferShuffleJoin) > 0 {
+			errMsg = "The join can not push down to the MPP side, the shuffle_join() hint is invalid"
+		} else {
+			errMsg = "The join can not push down to the MPP side, the broadcast_join() hint is invalid"
+		}
+		return plannererrors.ErrInternal.FastGen(errMsg)
+	}
+	// handle index join hints.
 	if !p.PreferAny(h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
 		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner) {
 		return nil // no force index join hints
@@ -2291,8 +2303,57 @@ func recordIndexJoinHintWarnings(p *logicalop.LogicalJoin, prop *property.Physic
 	return nil
 }
 
+// applyOperatorContinues is used to skip the MPP join plans under some conditions.
+func applyOperatorContinues(lp base.LogicalPlan, curTask base.Task, pp base.PhysicalPlan) (skip bool) {
+	if curTask.Invalid() {
+		return true
+	}
+	return skipMppJoin(lp, pp)
+}
+
+// skipMppJoin checks whether the MPP join plan should be skipped based with the logical plan and physical plan.
+func skipMppJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (skip bool) {
+	p, ok := lp.(*logicalop.LogicalJoin)
+	if !ok {
+		return false
+	}
+	if physicPlan == nil {
+		// the later valid plan will be checked in findBestTask.
+		return false
+	}
+	join, ok := physicPlan.(*PhysicalHashJoin)
+	if !ok {
+		return false
+	}
+	// If the join is not a MPP join, we will not skip it.
+	if join.storeTp != kv.TiFlash {
+		return false
+	}
+	// when step into this, it means the children is generated a valid mpp join plan. (canPushToTiFlash is checked as previously)
+	if (p.PreferJoinType&h.PreferShuffleJoin) > 0 || (p.PreferJoinType&h.PreferBCJoin) > 0 {
+		// previously, once hint is set, we will only generate the corresponding mpp join plans.
+		// leave the hint prefer mpp join will be checked in applyLogicalJoinHint.
+		return false
+	} else {
+		// previously, once hint is not set and canPushToTiFlash is checked true, we will generate the mpp join plans
+		// by preferMppBCJ(p) and append with normal tidb join plans. Then do the cost comparison. So for those not
+		// preferMppBCJed join plans, we will skip them here. Otherwise, it will affect the normal cbo cmp. We don't
+		// want to prefer all them except preferMppBCJed join plans in applyLogicalJoinHint, because it will miss warnings.
+		if preferMppBCJ(p) {
+			if join, ok := physicPlan.(*PhysicalHashJoin); ok && join.storeTp == kv.TiFlash && join.mppShuffleJoin {
+				return true
+			}
+		} else {
+			if join, ok := physicPlan.(*PhysicalHashJoin); ok && join.storeTp == kv.TiFlash && !join.mppShuffleJoin {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func applyLogicalHintVarEigen(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, task base.Task, childTasks []base.Task) (preferred bool) {
-	return applyLogicalJoinHint(lp, task.Plan()) ||
+	return applyLogicalJoinHint(lp, pp) ||
 		applyLogicalTopNAndLimitHint(lp, state, pp, childTasks) ||
 		applyLogicalAggregationHint(lp, pp, childTasks)
 }
@@ -2307,7 +2368,8 @@ func applyLogicalHintVarEigen(lp base.LogicalPlan, state *enumerateState, pp bas
 // we cache the most preferred one among this valid and preferred physic plans. If there is no preferred physic applicable
 // for the logic hint, we will return false and the optimizer will continue to return the normal low-cost one.
 func applyLogicalJoinHint(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
-	return preferMergeJoin(lp, physicPlan) || preferIndexJoinFamily(lp, physicPlan) || preferHashJoin(lp, physicPlan)
+	return preferMergeJoin(lp, physicPlan) || preferIndexJoinFamily(lp, physicPlan) ||
+		preferHashJoin(lp, physicPlan) || preferMppJoin(lp, physicPlan)
 }
 
 func applyLogicalAggregationHint(lp base.LogicalPlan, physicPlan base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
@@ -2412,6 +2474,29 @@ func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp
 			}
 		}
 		if _, ok := childTasks[0].(*MppTask); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func preferMppJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
+	p, ok := lp.(*logicalop.LogicalJoin)
+	if !ok {
+		return false
+	}
+	if physicPlan == nil {
+		return false
+	}
+	if (p.PreferJoinType & h.PreferShuffleJoin) > 0 {
+		// If the hint is set, we should prefer MPP shuffle join.
+		if join, ok := physicPlan.(*PhysicalHashJoin); ok && join.storeTp == kv.TiFlash && join.mppShuffleJoin {
+			return true
+		}
+	}
+	if (p.PreferJoinType & h.PreferBCJoin) > 0 {
+		// If the hint is set, we should prefer MPP broadcast join.
+		if join, ok := physicPlan.(*PhysicalHashJoin); ok && join.storeTp == kv.TiFlash && !join.mppShuffleJoin {
 			return true
 		}
 	}
@@ -2896,6 +2981,10 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 		}
 	})
 
+	if strings.Contains(lp.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain format='brief' select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a") {
+		fmt.Println(1)
+	}
+
 	if !isJoinHintSupportedInMPPMode(p.PreferJoinType) {
 		if hasMPPJoinHints(p.PreferJoinType) {
 			// If there are MPP hints but has some conflicts join method hints, all the join hints are invalid.
@@ -2915,23 +3004,9 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 	joins := make([]base.PhysicalPlan, 0, 8)
 	// we lift the p.canPushToTiFlash check here, because we want to generate all the plans to be decided by the attachment layer.
 	if p.SCtx().GetSessionVars().IsMPPAllowed() {
-		if (p.PreferJoinType & h.PreferShuffleJoin) > 0 {
-			if shuffleJoins := tryToGetMppHashJoin(p, prop, false); len(shuffleJoins) > 0 {
-				return shuffleJoins, true, nil
-			}
-		}
-		if (p.PreferJoinType & h.PreferBCJoin) > 0 {
-			if bcastJoins := tryToGetMppHashJoin(p, prop, true); len(bcastJoins) > 0 {
-				return bcastJoins, true, nil
-			}
-		}
-		if preferMppBCJ(p) {
-			mppJoins := tryToGetMppHashJoin(p, prop, true)
-			joins = append(joins, mppJoins...)
-		} else {
-			mppJoins := tryToGetMppHashJoin(p, prop, false)
-			joins = append(joins, mppJoins...)
-		}
+		// prefer hint should be handled in the attachment layer. because the enumerated mpp join may couldn't be built bottom-up.
+		joins = append(joins, tryToGetMppHashJoin(p, prop, true)...)
+		joins = append(joins, tryToGetMppHashJoin(p, prop, false)...)
 	} else {
 		hasMppHints := false
 		var errMsg string

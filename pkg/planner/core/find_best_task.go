@@ -242,7 +242,7 @@ func enumeratePhysicalPlans4Task(
 
 		// Combine the best child tasks with parent physical plan.
 		curTask := pp.Attach2Task(childTasks...)
-		if curTask.Invalid() {
+		if curTask.Invalid() || applyOperatorContinues(p.Self(), curTask, pp) {
 			continue
 		}
 
