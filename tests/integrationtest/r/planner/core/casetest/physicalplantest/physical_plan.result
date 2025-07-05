@@ -1874,10 +1874,7 @@ sum(t1.a in (select a from t2))
 show warnings;
 Level	Code	Message
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
@@ -1928,10 +1925,7 @@ sum(t1.a in (select a from t2))
 show warnings;
 Level	Code	Message
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
@@ -1950,10 +1944,7 @@ sum(t1.a not in (select a from t2))
 show warnings;
 Level	Code	Message
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
@@ -2004,10 +1995,7 @@ sum(t1.a not in (select a from t2))
 show warnings;
 Level	Code	Message
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
