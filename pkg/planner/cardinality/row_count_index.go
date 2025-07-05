@@ -600,7 +600,7 @@ func matchPrefix(row chunk.Row, colIdx int, ad *types.Datum) bool {
 }
 
 // betweenRowCountOnIndex estimates the row count for interval [l, r).
-// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+// The input sctx is required for stats version 2. For version 1, it is just for debug trace, you can pass nil safely.
 func betweenRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, l, r types.Datum) float64 {
 	histBetweenCnt := idx.Histogram.BetweenRowCount(sctx, l, r)
 	if idx.StatsVer == statistics.Version1 {
