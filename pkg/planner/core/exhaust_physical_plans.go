@@ -2302,67 +2302,6 @@ func recordIndexJoinHintWarnings(p *logicalop.LogicalJoin, prop *property.Physic
 	return nil
 }
 
-// applyOperatorContinues is used to skip the MPP join plans under some conditions.
-func applyOperatorContinues(lp base.LogicalPlan, curTask base.Task, pp base.PhysicalPlan) (skip bool) {
-	if curTask.Invalid() {
-		return true
-	}
-	// here is a special case, when join receive root/mpp prop without shuffle and bcj hint.
-	// previously: root prop + preferMppBCJ(true) : BCJ joins + Root joins
-	//             root prop + preferMppBCJ(false): Shuffle joins + Root joins
-	// currently:  root prop                      : BCJ joins + Shuffle joins + Root joins
-	// previously: mpp  prop + preferMppBCJ(true) : BCJ joins
-	// 			   mpp  prop + preferMppBCJ(false): Shuffle joins
-	// currently:  mpp  prop                      : Shuffle joins + Shuffle joins
-	// which means: preferMppBCJ should help me skip some unwanted mpp joins. Why not use prefer mechanism?
-	// eg: because it will prefer (BCJ joins + Root joins) out of (BCJ joins + Shuffle joins + Root joins)
-	// and for those root joins preferred, since prefer is set to ture, even a more detailed /*+ index_join */
-	// hint can not make the fine-grained choice themselves anymore.
-	// so here, we just skip those unwanted mpp join.
-	return skipMppJoin(lp, pp)
-}
-
-// skipMppJoin checks whether the MPP join plan should be skipped based with the logical plan and physical plan.
-func skipMppJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (skip bool) {
-	p, ok := lp.(*logicalop.LogicalJoin)
-	if !ok {
-		return false
-	}
-	if physicPlan == nil {
-		// the later valid plan will be checked in findBestTask.
-		return false
-	}
-	join, ok := physicPlan.(*PhysicalHashJoin)
-	if !ok {
-		return false
-	}
-	// If the join is not an MPP join, we will not skip it.
-	if join.storeTp != kv.TiFlash {
-		return false
-	}
-	// when step into this, it means the children is generated a valid mpp join plan. (canPushToTiFlash is checked true as previously)
-	if (p.PreferJoinType&h.PreferShuffleJoin) > 0 || (p.PreferJoinType&h.PreferBCJoin) > 0 {
-		// previously, once shuffle and bcj hint is set, we will only generate the corresponding mpp join plans.
-		// the hint mechanism can pick the mpp join that they only preferred as expected.
-		return false
-	} else {
-		// previously, once hint is not set and canPushToTiFlash is checked true, we will generate the mpp join plans
-		// by preferMppBCJ(p) and append with normal tidb join plans. Then do the cost comparison. So for those not
-		// preferMppBCJed join plans, we will skip them here. Otherwise, it will affect the normal cbo cmp. We don't
-		// want to prefer all them except preferMppBCJed join plans in applyLogicalJoinHint, it will mix the preference.
-		if preferMppBCJ(p) {
-			if join, ok := physicPlan.(*PhysicalHashJoin); ok && join.storeTp == kv.TiFlash && join.mppShuffleJoin {
-				return true
-			}
-		} else {
-			if join, ok := physicPlan.(*PhysicalHashJoin); ok && join.storeTp == kv.TiFlash && !join.mppShuffleJoin {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func applyLogicalHintVarEigen(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
 	return applyLogicalJoinHint(lp, pp) ||
 		applyLogicalTopNAndLimitHint(lp, state, pp, childTasks) ||
@@ -2995,8 +2934,19 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 	// we lift the p.canPushToTiFlash check here, because we want to generate all the plans to be decided by the attachment layer.
 	if p.SCtx().GetSessionVars().IsMPPAllowed() {
 		// prefer hint should be handled in the attachment layer. because the enumerated mpp join may couldn't be built bottom-up.
-		joins = append(joins, tryToGetMppHashJoin(p, prop, true)...)
-		joins = append(joins, tryToGetMppHashJoin(p, prop, false)...)
+		if hasMPPJoinHints(p.PreferJoinType) {
+			// generate them all for later attachment prefer picking. cause underlying ds may not have tiFlash path.
+			// even all mpp join is invalid, they can still resort to root joins as an alternative.
+			joins = append(joins, tryToGetMppHashJoin(p, prop, true)...)
+			joins = append(joins, tryToGetMppHashJoin(p, prop, false)...)
+		} else {
+			// join don't have a mpp join hints, only generate preferMppBCJ mpp joins.
+			if preferMppBCJ(p) {
+				joins = append(joins, tryToGetMppHashJoin(p, prop, true)...)
+			} else {
+				joins = append(joins, tryToGetMppHashJoin(p, prop, false)...)
+			}
+		}
 	} else {
 		hasMppHints := false
 		var errMsg string
