@@ -60,7 +60,15 @@ import (
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+<<<<<<< HEAD
 	"github.com/tikv/pd/client/retry"
+=======
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
+	"github.com/tikv/pd/client/pkg/retry"
+	sd "github.com/tikv/pd/client/servicediscovery"
+	"go.uber.org/atomic"
+>>>>>>> 86ed1cab628 (backend/local: add rate limiter for split region and ingest data (#61555))
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -79,9 +87,6 @@ const (
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute
 	gRPCBackOffMaxDelay  = 10 * time.Minute
-
-	// The max ranges count in a batch to split and scatter.
-	maxBatchSplitRanges = 4096
 
 	propRangeIndex = "tikv.range_index"
 
@@ -498,11 +503,20 @@ type Backend struct {
 	supportMultiIngest  bool
 	importClientFactory ImportClientFactory
 
+<<<<<<< HEAD
 	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
 	// This mutex is used to do some mutual exclusion work in the backend, flushKVs() in writer for now.
 	mu sync.Mutex
+=======
+	metrics       *metric.Common
+	writeLimiter  StoreWriteLimiter
+	ingestLimiter atomic.Pointer[ingestLimiter]
+	logger        log.Logger
+
+	nextgenHTTPCli *http.Client
+>>>>>>> 86ed1cab628 (backend/local: add rate limiter for split region and ingest data (#61555))
 }
 
 var _ DiskUsage = (*Backend)(nil)
@@ -879,7 +893,14 @@ func (local *Backend) prepareAndSendJob(
 	jobWg *sync.WaitGroup,
 ) error {
 	lfTotalSize, lfLength := engine.KVStatistics()
-	log.FromContext(ctx).Info("import engine ranges", zap.Int("len(regionSplitKeyCnt)", len(regionSplitKeys)))
+	splitRangesBatch := GetMaxBatchSplitRanges()
+	maxRangesPerSec := GetMaxSplitRangePerSec()
+
+	log.FromContext(ctx).Info("import engine ranges",
+		zap.Int("len(regionSplitKeys)", len(regionSplitKeys)),
+		zap.Int("splitRangesBatch", splitRangesBatch),
+		zap.Float64("splitRangePerSec", maxRangesPerSec),
+	)
 
 	// if all the kv can fit in one region, skip split regions. TiDB will split one region for
 	// the table when table is created.
@@ -898,7 +919,7 @@ func (local *Backend) prepareAndSendJob(
 				failpoint.Break()
 			})
 
-			err = local.splitAndScatterRegionInBatches(ctx, regionSplitKeys, maxBatchSplitRanges)
+			err = local.splitAndScatterRegionInBatches(ctx, regionSplitKeys, splitRangesBatch, maxRangesPerSec)
 			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}
@@ -1345,11 +1366,17 @@ func (local *Backend) ImportEngine(
 		}()
 	}
 
+	maxReqInFlight := GetMaxIngestConcurrency()
+	maxReqPerSec := GetMaxIngestPerSec()
+	local.ingestLimiter.Store(newIngestLimiter(ctx, maxReqInFlight, maxReqPerSec))
 	log.FromContext(ctx).Info("start import engine",
 		zap.Stringer("uuid", engineUUID),
 		zap.Int("region ranges", len(splitKeys)-1),
 		zap.Int64("count", lfLength),
-		zap.Int64("size", lfTotalSize))
+		zap.Int64("size", lfTotalSize),
+		zap.Int("maxReqInFlight", maxReqInFlight),
+		zap.Float64("maxReqPerSec", maxReqPerSec),
+	)
 
 	failpoint.Inject("ReadyForImportEngine", func() {})
 
