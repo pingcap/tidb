@@ -15,6 +15,7 @@
 package logicalop
 
 import (
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
@@ -37,6 +38,12 @@ func (p LogicalPartitionUnionAll) Init(ctx base.PlanContext, offset int) *Logica
 // ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalPartitionUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	return utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll(p, prop)
+}
+
+// PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
+func (p *LogicalPartitionUnionAll) PreparePossibleProperties(_ *expression.Schema, _ ...*property.PossibleProp) *property.PossibleProp {
+	// LogicalLock table can not be pushed down to TiFlash.
+	return &property.PossibleProp{}
 }
 
 // *************************** end implementation of LogicalPlan interface ***************************

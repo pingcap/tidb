@@ -175,6 +175,10 @@ func (la *LogicalApply) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 }
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
+func (la *LogicalApply) PreparePossibleProperties(_ *expression.Schema, _ ...*property.PossibleProp) *property.PossibleProp {
+	// apply can not be pushed down to TiFlash.
+	return &property.PossibleProp{}
+}
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {

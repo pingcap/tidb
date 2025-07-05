@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -143,12 +144,16 @@ func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expressi
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (lt *LogicalTopN) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (lt *LogicalTopN) PreparePossibleProperties(_ *expression.Schema, childProps ...*property.PossibleProp) *property.PossibleProp {
+	intest.Assert(len(childProps) > 0 && childProps[0] != nil)
+	res := &property.PossibleProp{}
 	propCols := getPossiblePropertyFromByItems(lt.ByItems)
 	if len(propCols) == 0 {
-		return nil
+		return res
 	}
-	return [][]*expression.Column{propCols}
+	res.OrderCols = [][]*expression.Column{propCols}
+	res.TiFlashable = childProps[0].TiFlashable
+	return res
 }
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
