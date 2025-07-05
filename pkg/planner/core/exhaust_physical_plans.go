@@ -2430,6 +2430,16 @@ func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp
 	return false
 }
 
+// hash join has two types:
+// one is hash join type: normal hash join, shuffle join, broadcast join
+// another is the build side hint type: prefer left as build side, prefer right as build side
+// the first one is used to control the join type, the second one is used to control the build side of hash join.
+// the priority is:
+// once the join type is set, we should respect them first, not this type are all ignored.
+// after we see all the joins under this type, then we only consider the build side hints satisfied or not.
+//
+// for the priority among the hash join types, we will respect the join fine-grained hints first, then the normal hash join type,
+// that is, the priority is: shuffle join / broadcast join > normal hash join.
 func preferHashJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
 	p, ok := lp.(*logicalop.LogicalJoin)
 	if !ok {
@@ -2450,13 +2460,39 @@ func preferHashJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferre
 		return false
 	}
 	// If the hint is set, we should prefer MPP shuffle join.
-	preferShuffle := (p.PreferJoinType&h.PreferShuffleJoin) > 0 && physicalHashJoin.storeTp == kv.TiFlash && physicalHashJoin.mppShuffleJoin
-	preferBCJ := (p.PreferJoinType&h.PreferBCJoin) > 0 && physicalHashJoin.storeTp == kv.TiFlash && !physicalHashJoin.mppShuffleJoin
-	preferHashJoin := p.PreferJoinType&h.PreferHashJoin > 0 ||
-		(forceRightToBuild && physicalHashJoin.InnerChildIdx == 1) ||
-		(forceLeftToBuild && physicalHashJoin.InnerChildIdx == 0) ||
-		preferShuffle || preferBCJ
-	return preferHashJoin
+	preferShuffle := (p.PreferJoinType & h.PreferShuffleJoin) > 0
+	preferBCJ := (p.PreferJoinType & h.PreferBCJoin) > 0
+	if preferShuffle {
+		if physicalHashJoin.storeTp == kv.TiFlash && physicalHashJoin.mppShuffleJoin {
+			// first: respect the shuffle join hint.
+			// BCJ build side hint are handled in the enumeration phase.
+			return true
+		}
+		return false
+	}
+	if preferBCJ {
+		if physicalHashJoin.storeTp == kv.TiFlash && !physicalHashJoin.mppShuffleJoin {
+			// first: respect the broadcast join hint.
+			// BCJ build side hint are handled in the enumeration phase.
+			return true
+		}
+		return false
+	}
+	// Respect the join type and join side hints.
+	if p.PreferJoinType&h.PreferHashJoin > 0 {
+		// first: normal hash join hint are set.
+		if forceLeftToBuild || forceRightToBuild {
+			// second: respect the join side if join side hints are set.
+			return (forceRightToBuild && physicalHashJoin.InnerChildIdx == 1) ||
+				(forceLeftToBuild && physicalHashJoin.InnerChildIdx == 0)
+		} else {
+			// second: no join side hints are set, respect the join type is enough.
+			return true
+		}
+	}
+	// no hash join type hint is set, we only need to respect the hash join side hints.
+	return (forceRightToBuild && physicalHashJoin.InnerChildIdx == 1) ||
+		(forceLeftToBuild && physicalHashJoin.InnerChildIdx == 0)
 }
 
 func preferMergeJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {

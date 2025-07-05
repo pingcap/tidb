@@ -215,10 +215,8 @@ func enumeratePhysicalPlans4Task(
 			fd = logicalPlan.ExtractFD()
 		}
 	}
-	if strings.Contains(p.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain format='brief' select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a") {
-		if _, ok := p.Self().(*logicalop.LogicalJoin); ok {
-			fmt.Println(1)
-		}
+	if len(physicalPlans) == 0 {
+		return base.InvalidTask, 0, false, nil
 	}
 	initState := &enumerateState{}
 	for _, pp := range physicalPlans {
@@ -303,8 +301,10 @@ func enumeratePhysicalPlans4Task(
 	}
 	// if there is no valid preferred low-cost physical one, return the normal low one.
 	// if the hint is specified without any valid plan, we should also record the warnings.
-	if warn := recordWarnings(p.Self(), prop, addEnforcer); warn != nil {
-		bestTask.AppendWarning(warn)
+	if !bestTask.Invalid() {
+		if warn := recordWarnings(p.Self(), prop, addEnforcer); warn != nil {
+			bestTask.AppendWarning(warn)
+		}
 	}
 	// return the normal lowest-cost physical one.
 	return bestTask, cntPlan, false, nil
