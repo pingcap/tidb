@@ -912,6 +912,58 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 	for _, op := range options {
 		switch op.Tp {
 		case ast.TableOptionAutoIncrement:
+			var autoIncrCol *model.ColumnInfo
+			for _, col := range tbInfo.Columns {
+				if mysql.HasAutoIncrementFlag(col.GetFlag()) {
+					autoIncrCol = col
+					break
+				}
+			}
+
+			if autoIncrCol != nil {
+				isUnsigned := mysql.HasUnsignedFlag(autoIncrCol.GetFlag())
+				var maxValue uint64
+				switch autoIncrCol.GetType() {
+				// TINYINT
+				case mysql.TypeTiny:
+					if isUnsigned {
+						maxValue = math.MaxUint8
+					} else {
+						maxValue = math.MaxInt8
+					}
+				// SMALLINT
+				case mysql.TypeShort:
+					if isUnsigned {
+						maxValue = math.MaxUint16
+					} else {
+						maxValue = math.MaxInt16
+					}
+				// MEDIUMINT
+				case mysql.TypeInt24:
+					if isUnsigned {
+						maxValue = mysql.MaxUint24
+					} else {
+						maxValue = mysql.MaxInt24
+					}
+				// INT
+				case mysql.TypeLong:
+					if isUnsigned {
+						maxValue = math.MaxUint32
+					} else {
+						maxValue = math.MaxInt32
+					}
+				// BIGINT
+				case mysql.TypeLonglong:
+					if isUnsigned {
+						maxValue = math.MaxUint64
+					} else {
+						maxValue = math.MaxInt64
+					}
+				}
+				if maxValue > 0 && op.UintValue > maxValue {
+					return errors.New("table option auto_increment overflows")
+				}
+			}
 			tbInfo.AutoIncID = int64(op.UintValue)
 		case ast.TableOptionAutoIdCache:
 			if op.UintValue > uint64(math.MaxInt64) {
