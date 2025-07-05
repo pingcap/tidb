@@ -1848,6 +1848,7 @@ func constructDS2IndexScanTask(
 		CountAfterIndex:      rowCount,
 		CountAfterAccess:     rowCount,
 		CorrCountAfterAccess: 0,
+		MinCountAfterAccess:  0,
 	}
 	// Assume equal conditions used by index join and other conditions are independent.
 	if len(tblConds) > 0 {

@@ -178,6 +178,7 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 	path.Ranges = ranger.FullRange()
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.CorrCountAfterAccess = 0
+	path.MinCountAfterAccess = 0
 	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
 	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
@@ -232,6 +233,9 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 				path.CountAfterAccess = path.CountAfterAccess / ndv
 			}
 		}
+	}
+	if path.MinCountAfterAccess == 0 || path.CountAfterAccess < path.MinCountAfterAccess {
+		path.MinCountAfterAccess = path.CountAfterAccess
 	}
 	var indexFilters []expression.Expression
 	indexFilters, path.TableFilters = splitIndexFilterConditions(ds, path.TableFilters, path.FullIdxCols, path.FullIdxColLens)
@@ -411,9 +415,12 @@ func detachCondAndBuildRangeForPath(
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
 	}
-	path.CountAfterAccess, path.CorrCountAfterAccess, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges)
+	path.CountAfterAccess, path.CorrCountAfterAccess, path.MinCountAfterAccess, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges)
 	if path.CorrCountAfterAccess == 0 {
 		path.CorrCountAfterAccess = path.CountAfterAccess
+	}
+	if path.MinCountAfterAccess == 0 {
+		path.MinCountAfterAccess = path.CountAfterAccess
 	}
 	return err
 }

@@ -234,6 +234,7 @@ type accessPathForDebugTrace struct {
 	PartialPaths         []accessPathForDebugTrace `json:",omitempty"`
 	CountAfterAccess     float64
 	CorrCountAfterAccess float64
+	MinCountAfterAccess  float64
 	CountAfterIndex      float64
 }
 
@@ -246,6 +247,7 @@ func convertAccessPathForDebugTrace(ctx expression.EvalContext, path *util.Acces
 	out.TableFilters = expression.ExprsToStringsForDisplay(ctx, path.TableFilters)
 	out.CountAfterAccess = path.CountAfterAccess
 	out.CorrCountAfterAccess = path.CorrCountAfterAccess
+	out.MinCountAfterAccess = path.MinCountAfterAccess
 	out.CountAfterIndex = path.CountAfterIndex
 	out.PartialPaths = make([]accessPathForDebugTrace, len(path.PartialIndexPaths))
 	for i, partialPath := range path.PartialIndexPaths {
