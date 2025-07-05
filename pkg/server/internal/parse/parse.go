@@ -50,7 +50,7 @@ func HandshakeResponseHeader(ctx context.Context, packet *handshake.Response41, 
 	// Ensure there are enough data to read:
 	// http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::SSLRequest
 	if len(data) < 4+4+1+23 {
-		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packetData", data))
+		logutil.Logger(ctx).Warn("got malformed handshake response", zap.ByteString("packetData", data))
 		return 0, mysql.ErrMalformPacket
 	}
 
