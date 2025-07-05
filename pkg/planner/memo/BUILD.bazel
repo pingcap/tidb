@@ -42,6 +42,7 @@ go_test(
         "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
         "//pkg/planner/property",
         "//pkg/sessionctx/vardef",
