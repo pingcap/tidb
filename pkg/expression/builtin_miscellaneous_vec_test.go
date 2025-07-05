@@ -154,6 +154,7 @@ func TestSleepVectorized(t *testing.T) {
 	// non-strict model
 	var levels errctx.LevelMap
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 	sessVars.StmtCtx.SetErrLevels(levels)
 	input.AppendFloat64(0, 1)
 	err = vecEvalType(ctx, f, types.ETInt, input, result)
@@ -188,6 +189,7 @@ func TestSleepVectorized(t *testing.T) {
 
 	// for error case under the strict model
 	levels[errctx.ErrGroupBadNull] = errctx.LevelError
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelError
 	sessVars.StmtCtx.SetErrLevels(levels)
 	input.Reset()
 	input.AppendNull(0)
