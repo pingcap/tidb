@@ -2065,8 +2065,9 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		}
 		updateGlobal = func(v float64) float64 {
 			old := local.CurrentMaxBatchSplitRanges.Load()
-			local.CurrentMaxBatchSplitRanges.Store(int64(v))
-			return float64(old)
+			intV := int(v)
+			local.CurrentMaxBatchSplitRanges.Store(&intV)
+			return float64(*old)
 		}
 	case IngestParamMaxSplitRangesPerSec:
 		getter = func(m *meta.Mutator) (float64, bool, error) {
@@ -2077,8 +2078,8 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		}
 		updateGlobal = func(v float64) float64 {
 			old := local.CurrentMaxSplitRangesPerSec.Load()
-			local.CurrentMaxSplitRangesPerSec.Store(v)
-			return old
+			local.CurrentMaxSplitRangesPerSec.Store(&v)
+			return *old
 		}
 	case IngestParamMaxPerSecond:
 		getter = func(m *meta.Mutator) (float64, bool, error) {
@@ -2089,8 +2090,8 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		}
 		updateGlobal = func(v float64) float64 {
 			old := local.CurrentMaxIngestPerSec.Load()
-			local.CurrentMaxIngestPerSec.Store(v)
-			return old
+			local.CurrentMaxIngestPerSec.Store(&v)
+			return *old
 		}
 	case IngestParamMaxInflight:
 		getter = func(m *meta.Mutator) (float64, bool, error) {
@@ -2102,8 +2103,9 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		}
 		updateGlobal = func(v float64) float64 {
 			old := local.CurrentMaxIngestInflight.Load()
-			local.CurrentMaxIngestInflight.Store(int64(v))
-			return float64(old)
+			intV := int(v)
+			local.CurrentMaxIngestInflight.Store(&intV)
+			return float64(*old)
 		}
 	default:
 		handler.WriteError(w, errors.Errorf("unsupported ingest parameter: %s", h.param))
