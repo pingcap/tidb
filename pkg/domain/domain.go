@@ -1319,7 +1319,8 @@ func (do *Domain) Init(
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(do.infoSyncerKeeper, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
-	do.wg.Run(do.runawayStartLoop, "runawayStartLoop")
+	do.wg.Run(do.runawayManager.RunawayRecordFlushLoop, "runawayRecordFlushLoop")
+	do.wg.Run(do.runawayManager.RunawayWatchSyncLoop, "runawayWatchSyncLoop")
 	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
 	if !skipRegisterToDashboard {
 		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
