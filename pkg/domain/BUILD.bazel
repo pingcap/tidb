@@ -49,6 +49,7 @@ go_library(
         "//pkg/infoschema/validatorapi",
         "//pkg/keyspace",
         "//pkg/kv",
+        "//pkg/lightning/backend/local",
         "//pkg/lightning/common",
         "//pkg/meta",
         "//pkg/meta/autoid",
