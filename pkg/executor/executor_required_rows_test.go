@@ -318,7 +318,7 @@ func TestTopNRequiredRows(t *testing.T) {
 			groupBy:        []int{0},
 			requiredRows:   []int{1, 1, 1, 1, 10},
 			expectedRows:   []int{1, 1, 1, 1, 7},
-			expectedRowsDS: []int{26, 100 - 26, 0},
+			expectedRowsDS: []int{100, 0},
 		},
 		{
 			totalRows:      100,
@@ -336,7 +336,7 @@ func TestTopNRequiredRows(t *testing.T) {
 			groupBy:        []int{0, 1},
 			requiredRows:   []int{1, 3, 7, 10},
 			expectedRows:   []int{1, 3, 1, 0},
-			expectedRowsDS: []int{6, maxChunkSize, 14, 0},
+			expectedRowsDS: []int{maxChunkSize, 20, 0},
 		},
 		{
 			totalRows:      maxChunkSize + maxChunkSize + 20,
@@ -345,7 +345,7 @@ func TestTopNRequiredRows(t *testing.T) {
 			groupBy:        []int{0, 1},
 			requiredRows:   []int{1, 2, 3, 5, 7},
 			expectedRows:   []int{1, 2, 3, 2, 0},
-			expectedRowsDS: []int{maxChunkSize, 18, maxChunkSize, 2, 0},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize, 20, 0},
 		},
 		{
 			totalRows:      maxChunkSize*5 + 10,
