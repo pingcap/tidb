@@ -1173,7 +1173,11 @@ func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transactio
 		}
 		return true, nil
 	}
+<<<<<<< HEAD
 	_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
+=======
+	_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn)
+>>>>>>> 2a5047b817b (tables: always append temp index values for unique index (#60340))
 	if err != nil {
 		return false, err
 	}
