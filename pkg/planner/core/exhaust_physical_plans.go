@@ -2485,10 +2485,9 @@ func preferHashJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferre
 			// second: respect the join side if join side hints are set.
 			return (forceRightToBuild && physicalHashJoin.InnerChildIdx == 1) ||
 				(forceLeftToBuild && physicalHashJoin.InnerChildIdx == 0)
-		} else {
-			// second: no join side hints are set, respect the join type is enough.
-			return true
 		}
+		// second: no join side hints are set, respect the join type is enough.
+		return true
 	}
 	// no hash join type hint is set, we only need to respect the hash join side hints.
 	return (forceRightToBuild && physicalHashJoin.InnerChildIdx == 1) ||
