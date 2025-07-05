@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -2308,6 +2307,18 @@ func applyOperatorContinues(lp base.LogicalPlan, curTask base.Task, pp base.Phys
 	if curTask.Invalid() {
 		return true
 	}
+	// here is a special case, when join receive root/mpp prop without shuffle and bcj hint.
+	// previously: root prop + preferMppBCJ(true) : BCJ joins + Root joins
+	//             root prop + preferMppBCJ(false): Shuffle joins + Root joins
+	// currently:  root prop                      : BCJ joins + Shuffle joins + Root joins
+	// previously: mpp  prop + preferMppBCJ(true) : BCJ joins
+	// 			   mpp  prop + preferMppBCJ(false): Shuffle joins
+	// currently:  mpp  prop                      : Shuffle joins + Shuffle joins
+	// which means: preferMppBCJ should help me skip some unwanted mpp joins. Why not use prefer mechanism?
+	// eg: because it will prefer (BCJ joins + Root joins) out of (BCJ joins + Shuffle joins + Root joins)
+	// and for those root joins preferred, since prefer is set to ture, even a more detailed /*+ index_join */
+	// hint can not make the fine-grained choice themselves anymore.
+	// so here, we just skip those unwanted mpp join.
 	return skipMppJoin(lp, pp)
 }
 
@@ -2325,20 +2336,20 @@ func skipMppJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (skip bool) 
 	if !ok {
 		return false
 	}
-	// If the join is not a MPP join, we will not skip it.
+	// If the join is not an MPP join, we will not skip it.
 	if join.storeTp != kv.TiFlash {
 		return false
 	}
-	// when step into this, it means the children is generated a valid mpp join plan. (canPushToTiFlash is checked as previously)
+	// when step into this, it means the children is generated a valid mpp join plan. (canPushToTiFlash is checked true as previously)
 	if (p.PreferJoinType&h.PreferShuffleJoin) > 0 || (p.PreferJoinType&h.PreferBCJoin) > 0 {
-		// previously, once hint is set, we will only generate the corresponding mpp join plans.
-		// leave the hint prefer mpp join will be checked in applyLogicalJoinHint.
+		// previously, once shuffle and bcj hint is set, we will only generate the corresponding mpp join plans.
+		// the hint mechanism can pick the mpp join that they only preferred as expected.
 		return false
 	} else {
 		// previously, once hint is not set and canPushToTiFlash is checked true, we will generate the mpp join plans
 		// by preferMppBCJ(p) and append with normal tidb join plans. Then do the cost comparison. So for those not
 		// preferMppBCJed join plans, we will skip them here. Otherwise, it will affect the normal cbo cmp. We don't
-		// want to prefer all them except preferMppBCJed join plans in applyLogicalJoinHint, because it will miss warnings.
+		// want to prefer all them except preferMppBCJed join plans in applyLogicalJoinHint, it will mix the preference.
 		if preferMppBCJ(p) {
 			if join, ok := physicPlan.(*PhysicalHashJoin); ok && join.storeTp == kv.TiFlash && join.mppShuffleJoin {
 				return true
@@ -2352,7 +2363,7 @@ func skipMppJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (skip bool) 
 	return false
 }
 
-func applyLogicalHintVarEigen(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, task base.Task, childTasks []base.Task) (preferred bool) {
+func applyLogicalHintVarEigen(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
 	return applyLogicalJoinHint(lp, pp) ||
 		applyLogicalTopNAndLimitHint(lp, state, pp, childTasks) ||
 		applyLogicalAggregationHint(lp, pp, childTasks)
@@ -2369,7 +2380,7 @@ func applyLogicalHintVarEigen(lp base.LogicalPlan, state *enumerateState, pp bas
 // for the logic hint, we will return false and the optimizer will continue to return the normal low-cost one.
 func applyLogicalJoinHint(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
 	return preferMergeJoin(lp, physicPlan) || preferIndexJoinFamily(lp, physicPlan) ||
-		preferHashJoin(lp, physicPlan) || preferMppJoin(lp, physicPlan)
+		preferHashJoin(lp, physicPlan)
 }
 
 func applyLogicalAggregationHint(lp base.LogicalPlan, physicPlan base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
@@ -2480,29 +2491,6 @@ func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp
 	return false
 }
 
-func preferMppJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
-	p, ok := lp.(*logicalop.LogicalJoin)
-	if !ok {
-		return false
-	}
-	if physicPlan == nil {
-		return false
-	}
-	if (p.PreferJoinType & h.PreferShuffleJoin) > 0 {
-		// If the hint is set, we should prefer MPP shuffle join.
-		if join, ok := physicPlan.(*PhysicalHashJoin); ok && join.storeTp == kv.TiFlash && join.mppShuffleJoin {
-			return true
-		}
-	}
-	if (p.PreferJoinType & h.PreferBCJoin) > 0 {
-		// If the hint is set, we should prefer MPP broadcast join.
-		if join, ok := physicPlan.(*PhysicalHashJoin); ok && join.storeTp == kv.TiFlash && !join.mppShuffleJoin {
-			return true
-		}
-	}
-	return false
-}
-
 func preferHashJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
 	p, ok := lp.(*logicalop.LogicalJoin)
 	if !ok {
@@ -2522,7 +2510,13 @@ func preferHashJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferre
 	if !ok {
 		return false
 	}
-	preferHashJoin := p.PreferJoinType&h.PreferHashJoin > 0 || (forceRightToBuild && physicalHashJoin.InnerChildIdx == 1) || (forceLeftToBuild && physicalHashJoin.InnerChildIdx == 0)
+	// If the hint is set, we should prefer MPP shuffle join.
+	preferShuffle := (p.PreferJoinType&h.PreferShuffleJoin) > 0 && physicalHashJoin.storeTp == kv.TiFlash && physicalHashJoin.mppShuffleJoin
+	preferBCJ := (p.PreferJoinType&h.PreferBCJoin) > 0 && physicalHashJoin.storeTp == kv.TiFlash && !physicalHashJoin.mppShuffleJoin
+	preferHashJoin := p.PreferJoinType&h.PreferHashJoin > 0 ||
+		(forceRightToBuild && physicalHashJoin.InnerChildIdx == 1) ||
+		(forceLeftToBuild && physicalHashJoin.InnerChildIdx == 0) ||
+		preferShuffle || preferBCJ
 	return preferHashJoin
 }
 

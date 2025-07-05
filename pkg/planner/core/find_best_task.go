@@ -215,6 +215,11 @@ func enumeratePhysicalPlans4Task(
 			fd = logicalPlan.ExtractFD()
 		}
 	}
+	if strings.Contains(p.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain format='brief' select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a") {
+		if _, ok := p.Self().(*logicalop.LogicalJoin); ok {
+			fmt.Println(1)
+		}
+	}
 	initState := &enumerateState{}
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
@@ -254,7 +259,7 @@ func enumeratePhysicalPlans4Task(
 		// we need to check the hint is applicable before enforcing the property. otherwise
 		// what we get is Sort ot Exchanger kind of operators.
 		// todo: extend applyLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
-		hintApplicable := applyLogicalHintVarEigen(p.Self(), initState, pp, curTask, childTasks)
+		hintApplicable := applyLogicalHintVarEigen(p.Self(), initState, pp, childTasks)
 
 		// Enforce curTask property
 		if addEnforcer {
