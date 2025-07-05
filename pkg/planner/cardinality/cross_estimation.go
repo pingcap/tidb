@@ -135,7 +135,7 @@ func crossEstimateIndexRowCount(sctx planctx.PlanContext,
 func crossEstimateRowCount(sctx planctx.PlanContext,
 	dsStatsInfo, dsTableStats *property.StatsInfo,
 	path *util.AccessPath, conds []expression.Expression, col *expression.Column,
-	corr, expectedCnt float64, desc bool) (float64, bool, float64) {
+	corr, expectedCnt float64, desc bool) (scanCount float64, errResult bool, corrCount float64) {
 	// If the scan is not full range scan, we cannot use histogram of other columns for estimation, because
 	// the histogram reflects value distribution in the whole table level.
 	if col == nil || len(path.AccessConds) > 0 {
@@ -168,14 +168,14 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 	}
 	var rangeCount float64
 	if idxExists {
-		rangeCount, _, _, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges)
+		rangeCount, corrCount, _, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges)
 	} else {
 		rangeCount, err = GetRowCountByColumnRanges(sctx, dsTableStats.HistColl, colUniqueID, convertedRanges)
 	}
 	if err != nil {
 		return 0, false, corr
 	}
-	scanCount := rangeCount + expectedCnt - count
+	scanCount = rangeCount + expectedCnt - count
 	if len(remained) > 0 {
 		scanCount = scanCount / SelectionFactor
 	}
