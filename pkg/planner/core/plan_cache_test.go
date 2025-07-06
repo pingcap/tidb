@@ -286,7 +286,7 @@ func TestIssue38269(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
 		"IndexJoin_11 37.46 root  inner join, inner:IndexLookUp_30, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-		"├─TableReader_26(Build) 9990.00 root  data:Selection_24",
+		"├─TableReader_26(Build) 9990.00 root  data:Selection_25",
 		"│ └─Selection_25 9990.00 cop[tikv]  not(isnull(test.t1.a))",
 		"│   └─TableFullScan_24 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 		"└─IndexLookUp_30(Probe) 37.46 root  ",
