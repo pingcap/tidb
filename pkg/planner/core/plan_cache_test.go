@@ -285,14 +285,14 @@ func TestIssue38269(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		"IndexJoin_10 37.46 root  inner join, inner:IndexLookUp_29, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-		"├─TableReader_25(Build) 9990.00 root  data:Selection_24",
-		"│ └─Selection_24 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-		"│   └─TableFullScan_23 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"└─IndexLookUp_29(Probe) 37.46 root  ",
-		"  ├─Selection_28(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
-		"  │ └─IndexRangeScan_26 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan_27(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+		"IndexJoin_11 37.46 root  inner join, inner:IndexLookUp_30, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+		"├─TableReader_26(Build) 9990.00 root  data:Selection_24",
+		"│ └─Selection_25 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+		"│   └─TableFullScan_24 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─IndexLookUp_30(Probe) 37.46 root  ",
+		"  ├─Selection_29(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
+		"  │ └─IndexRangeScan_27 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_28(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }
 
 func TestIssue38533(t *testing.T) {
@@ -363,12 +363,12 @@ func TestIssue40093(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
 			{"Projection_10"},
-			{"└─HashJoin_25"},
-			{"  ├─IndexReader_27(Build)"},
-			{"  │ └─IndexRangeScan_26"}, // RangeScan instead of FullScan
-			{"  └─TableReader_33(Probe)"},
-			{"    └─Selection_32"},
-			{"      └─TableFullScan_31"},
+			{"└─HashJoin_26"},
+			{"  ├─IndexReader_28(Build)"},
+			{"  │ └─IndexRangeScan_27"}, // RangeScan instead of FullScan
+			{"  └─TableReader_34(Probe)"},
+			{"    └─Selection_33"},
+			{"      └─TableFullScan_32"},
 		})
 
 	tk.MustExec("execute st using @b")
