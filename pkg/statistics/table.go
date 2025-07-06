@@ -917,6 +917,61 @@ func (t *Table) IsOutdated() bool {
 	return false
 }
 
+// SuggestReasonType represents the reason why a table needs to be analyzed
+type SuggestReasonType int
+
+const (
+	// SuggestReasonStatsModified means the stats is outdated because of modifications
+	SuggestReasonStatsModified SuggestReasonType = iota
+	// SuggestReasonStatsOutdated means the stats is outdated because it's not been analyzed for a long time
+	SuggestReasonStatsOutdated
+)
+
+// SuggestIndexResult contains information about why a table needs to be analyzed
+type SuggestIndexResult struct {
+	// Valid indicates whether this result is valid
+	Valid bool
+	// ModifyPct indicates how many percent of rows are modified
+	ModifyPct float64
+	// Reason indicates why this table is suggested to be analyzed
+	Reason SuggestReasonType
+}
+
+// Health returns the health information of the column statistics of a table.
+func (t *Table) Health() SuggestIndexResult {
+	// If the table is not analyzed yet, we can't calculate health
+	if t == nil || t.Pseudo || !t.IsAnalyzed() {
+		return SuggestIndexResult{Valid: false}
+	}
+
+	// Try to get the analyze row count first
+	total := t.GetAnalyzeRowCount()
+	if total <= 0 {
+		// Fall back to real-time count if analyze count is not available
+		total = float64(t.RealtimeCount)
+		// If we still have no valid count but we have modifications,
+		// consider the table as needing analysis
+		if total <= 0 && t.ModifyCount > 0 {
+			return SuggestIndexResult{
+				Valid:     true,
+				ModifyPct: 1.0, // 100% modified since we have no reliable baseline
+				Reason:    SuggestReasonStatsModified,
+			}
+		} else if total <= 0 {
+			// No modifications and no data, health can't be calculated
+			return SuggestIndexResult{Valid: false}
+		}
+	}
+
+	// Calculate the health based on modification percentage
+	modifyPct := float64(t.ModifyCount) / total
+	return SuggestIndexResult{
+		Valid:     true,
+		ModifyPct: modifyPct,
+		Reason:    SuggestReasonStatsModified,
+	}
+}
+
 // ReleaseAndPutToPool releases data structures of Table and put itself back to pool.
 func (t *Table) ReleaseAndPutToPool() {
 	for _, col := range t.columns {
@@ -1085,3 +1140,9 @@ var PrepareCols4MVIndex func(
 	tblCols []*expression.Column,
 	checkOnly1ArrayTypeCol bool,
 ) (idxCols []*expression.Column, ok bool)
+
+// StatsMeta contains metadata about statistics
+type StatsMeta struct {
+	// Add fields as needed
+	Version uint64
+}
