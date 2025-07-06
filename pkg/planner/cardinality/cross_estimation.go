@@ -184,9 +184,9 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 }
 
 // getColumnRangeCounts estimates row count for each range respectively.
-func getColumnRangeCounts(sctx planctx.PlanContext, colID int64, ranges []*ranger.Range, histColl *statistics.HistColl, idxID int64) ([]float64, float64, float64, bool) {
+func getColumnRangeCounts(sctx planctx.PlanContext, colID int64, ranges []*ranger.Range, histColl *statistics.HistColl, idxID int64) (returnCount []float64, corrCount, minCount float64, returnErr bool) {
 	var err error
-	var count, corrCount, minCount float64
+	var count float64
 	rangeCounts := make([]float64, len(ranges))
 	for i, ran := range ranges {
 		if idxID >= 0 {
