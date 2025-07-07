@@ -74,7 +74,7 @@ func TestWriteTableMeta(t *testing.T) {
 	require.Equal(t, "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n/*!40101 SET NAMES binary*/;\nCREATE TABLE t (a INT);\n", string(bytes))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/dumpling/export/FailToCloseMetaFile", "return(true)"))
-	defer failpoint.Disable("github.com/pingcap/tidb/dumpling/export/FailToCloseMetaFile=return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/dumpling/export/FailToCloseMetaFile")
 
 	err = writer.WriteTableMeta("test", "t", "CREATE TABLE t (a INT)")
 	require.ErrorContains(t, err, "injected error: fail to close meta file")
@@ -146,7 +146,7 @@ func TestWriteTableData(t *testing.T) {
 	require.Equal(t, expected, string(bytes))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/dumpling/export/FailToCloseDataFile", "return(true)"))
-	defer failpoint.Disable("github.com/pingcap/tidb/dumpling/export/FailToCloseDataFile=return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/dumpling/export/FailToCloseDataFile")
 
 	tableIR = newMockTableIR("test", "employee", data, specCmts, colTypes)
 	err = writer.WriteTableData(tableIR, tableIR, 0)

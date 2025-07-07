@@ -312,7 +312,7 @@ func TestSetSessionParams(t *testing.T) {
 		WillReturnError(tikvErr)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/dumpling/export/SkipResetDB", "return(true)"))
-	defer failpoint.Disable("github.com/pingcap/tidb/dumpling/export/SkipResetDB=return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/dumpling/export/SkipResetDB")
 
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
 	defer cancel()
