@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -396,7 +397,7 @@ func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.By
 	}
 	return &sortexec.TopNExec{
 		SortExec:    sortExec,
-		Limit:       &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+		Limit:       &physicalop.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
 		Concurrency: 5,
 	}
 }
@@ -741,7 +742,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType logicalop.JoinType, inn
 		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(ctx.GetExprCtx(), j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(ctx, nil, nil)
 	return b.build(j)
 }
 

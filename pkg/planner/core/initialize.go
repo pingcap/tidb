@@ -50,14 +50,6 @@ func (p PhysicalTopN) Init(ctx base.PlanContext, stats *property.StatsInfo, offs
 	return &p
 }
 
-// Init initializes PhysicalLimit.
-func (p PhysicalLimit) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalLimit {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeLimit, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
 // Init initializes PhysicalTableDual.
 func (p PhysicalTableDual) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int) *PhysicalTableDual {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeDual, &p, offset)

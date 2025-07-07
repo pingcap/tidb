@@ -48,7 +48,7 @@ var (
 
 	// updateSubtaskSummaryInterval is the interval for updating the subtask summary to
 	// subtask table.
-	updateSubtaskSummaryInterval = 3 * time.Second
+	updateSubtaskSummaryInterval = 5 * time.Second
 	// DetectParamModifyInterval is the interval to detect whether task params
 	// are modified.
 	// exported for testing.

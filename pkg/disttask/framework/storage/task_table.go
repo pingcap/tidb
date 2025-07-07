@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -116,6 +117,10 @@ type SessionExecutor interface {
 type TaskHandle interface {
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(taskID int64, step proto.Step) ([][]byte, error)
+
+	// GetPreviousSubtaskSummary gets previous subtask summaries.
+	GetPreviousSubtaskSummary(taskID int64, step proto.Step) ([]*execute.SubtaskSummary, error)
+
 	SessionExecutor
 }
 
@@ -610,6 +615,35 @@ func (mgr *TaskManager) GetAllSubtasksByStepAndState(ctx context.Context, taskID
 		subtasks = append(subtasks, Row2SubTask(r))
 	}
 	return subtasks, nil
+}
+
+// GetAllSubtaskSummaryByStep gets the subtask summaries by step
+// Since it's only used for running jobs, we don't need to read from history table.
+func (mgr *TaskManager) GetAllSubtaskSummaryByStep(
+	ctx context.Context, taskID int64, step proto.Step,
+) ([]*execute.SubtaskSummary, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		`select summary from mysql.tidb_background_subtask
+		where task_key = %? and step = %?`,
+		taskID, step)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+	summaries := make([]*execute.SubtaskSummary, 0, len(rs))
+	for _, r := range rs {
+		summary := &execute.SubtaskSummary{}
+		if err := json.Unmarshal(hack.Slice(r.GetJSON(0).String()), summary); err != nil {
+			return nil, errors.Trace(err)
+		}
+		summaries = append(summaries, summary)
+	}
+	return summaries, nil
 }
 
 // GetSubtaskRowCount gets the subtask row count.

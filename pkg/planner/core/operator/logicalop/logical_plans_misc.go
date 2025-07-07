@@ -93,6 +93,10 @@ func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expre
 		p.Children()[chIdx] = child
 		return
 	}
+	if dual, ok := child.(*LogicalTableDual); ok && dual.RowCount == 0 {
+		p.Children()[chIdx] = child
+		return
+	}
 	// Return table dual when filter is constant false or null.
 	dual := Conds2TableDual(child, conditions)
 	if dual != nil {

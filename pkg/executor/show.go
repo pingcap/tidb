@@ -2471,7 +2471,7 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 		if err != nil {
 			return err
 		}
-		importedRowCount = int64(runInfo.ImportRows)
+		importedRowCount = runInfo.ImportRows
 		if runInfo.Status == proto.TaskStateAwaitingResolution {
 			info.Status = string(runInfo.Status)
 			info.ErrorMessage = runInfo.ErrorMsg

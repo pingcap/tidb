@@ -649,7 +649,7 @@ func (ti *TableImporter) closeAndCleanupEngine(engine *backend.OpenedEngine) {
 }
 
 // ImportSelectedRows imports selected rows.
-func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.Context) (*JobImportResult, error) {
+func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.Context) (int64, error) {
 	var (
 		err                     error
 		dataEngine, indexEngine *backend.OpenedEngine
@@ -671,11 +671,11 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 
 	dataEngine, err = ti.OpenDataEngine(ctx, 1)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	indexEngine, err = ti.OpenIndexEngine(ctx, common.IndexEngineID)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
 	var (
@@ -692,37 +692,37 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 				defer mu.Unlock()
 				checksum.Add(chunkChecksum)
 			}()
-			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, ti.logger, chunkChecksum)
+			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, ti.logger, chunkChecksum, nil)
 		})
 	}
 	if err = eg.Wait(); err != nil {
-		return nil, err
+		return 0, err
 	}
 
 	closedDataEngine, err := dataEngine.Close(ctx)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	failpoint.Inject("mockImportFromSelectErr", func() {
-		failpoint.Return(nil, errors.New("mock import from select error"))
+		failpoint.Return(0, errors.New("mock import from select error"))
 	})
 	if err = closedDataEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
 		}
-		return nil, err
+		return 0, err
 	}
 	dataKVCount := ti.backend.GetImportedKVCount(closedDataEngine.GetUUID())
 
 	closedIndexEngine, err := indexEngine.Close(ctx)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	if err = closedIndexEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
 		}
-		return nil, err
+		return 0, err
 	}
 
 	allocators := ti.Allocators()
@@ -732,12 +732,10 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		autoid.AutoRandomType:    allocators.Get(autoid.AutoRandomType).Base(),
 	}
 	if err = PostProcess(ctx, se, maxIDs, ti.Plan, checksum, ti.logger); err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	return &JobImportResult{
-		Affected: uint64(dataKVCount),
-	}, nil
+	return dataKVCount, nil
 }
 
 func adjustDiskQuota(diskQuota int64, sortDir string, logger *zap.Logger) int64 {
@@ -999,7 +997,7 @@ func GetImportRootDir(tidbCfg *tidb.Config) string {
 // stats will be stored in the stat collector, and be applied to to mysql.stats_meta
 // in the domain.UpdateTableStatsLoop with a random interval between [1, 2) minutes.
 // These stats will stay in memory until the next flush, so it might be lost if the tidb-server restarts.
-func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, result *JobImportResult) error {
+func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, importedRows int64) error {
 	if err := sessiontxn.NewTxn(ctx, se); err != nil {
 		return err
 	}
@@ -1010,7 +1008,7 @@ func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, 
 	sessionVars := se.GetSessionVars()
 	sessionVars.TxnCtxMu.Lock()
 	defer sessionVars.TxnCtxMu.Unlock()
-	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected))
+	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, importedRows, importedRows)
 	se.StmtCommit(ctx)
 	return se.CommitTxn(ctx)
 }
