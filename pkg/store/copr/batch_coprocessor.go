@@ -987,11 +987,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 
 		if !needRetry {
 			aliveStores = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, usedTiFlashStoresMap, ttl, store, tiflashReplicaReadPolicy, tidbZone)
-			var err error
-			if needRetry, err = checkAliveStore(aliveStores, usedTiFlashStores, usedTiFlashStoresMap,
-				cache, tiflashReplicaReadPolicy, retryNum, tasks); err != nil {
-				return nil, err
-			}
+			needRetry = checkAliveStore(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, cache, tiflashReplicaReadPolicy, retryNum, tasks)
 		}
 
 		if needRetry {
@@ -1141,7 +1137,7 @@ func canSkipCheckAliveStores(aliveStores *aliveStoresBundle, usedTiFlashStores [
 func checkAliveStore(aliveStores *aliveStoresBundle, usedTiFlashStores [][]uint64,
 	usedTiFlashStoresMap map[uint64]struct{}, cache *RegionCache,
 	tiflashReplicaReadPolicy tiflash.ReplicaRead, retryNum int,
-	tasks []*copTask) (needRetry bool, err error) {
+	tasks []*copTask) (needRetry bool) {
 	if canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflashReplicaReadPolicy, retryNum) {
 		return
 	}
