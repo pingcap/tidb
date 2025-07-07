@@ -336,10 +336,6 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 			histNDV = histNDV - int64(idx.TopN.Num())
 		}
 		// handling the out-of-range part
-<<<<<<< HEAD
-		if (outOfRangeOnIndex(idx, l) && !(isSingleCol && lowIsNull)) || outOfRangeOnIndex(idx, r) {
-			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, histNDV)
-=======
 		if (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
 			histNDV := idx.NDV
 			// Exclude the TopN in Stats Version 2
@@ -352,16 +348,15 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
 				if isSingleColRange && c != nil && c.Histogram.NDV > 0 {
 					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
-					count += c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], realtimeRowCount, modifyCount, histNDV)
+					count += c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], modifyCount, histNDV)
 				} else {
 					// TODO: Extend original datatype out-of-range estimation to multi-column
 					histNDV -= int64(idx.TopN.Num())
-					count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV)
+					count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, histNDV)
 				}
 			} else {
-				count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV)
+				count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, histNDV)
 			}
->>>>>>> 36e39785ab1 (Planner: Single col out of range use original type (#55600))
 		}
 
 		if debugTrace {
