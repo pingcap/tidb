@@ -959,6 +959,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		usedTiFlashStores := make([][]uint64, 0, len(tasks))
 		usedTiFlashStoresMap := make(map[uint64]struct{}, 0)
 		var needRetry bool
+		minReplicaNum := uint64(math.MaxUint64)
 		for _, task := range tasks {
 			rpcCtx, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, isMPP, tikv.LabelFilterNoTiFlashWriteNode)
 			if err != nil {
@@ -983,11 +984,12 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			}
 			rpcCtxs = append(rpcCtxs, rpcCtx)
 			usedTiFlashStores = append(usedTiFlashStores, allStores)
+			minReplicaNum = min(minReplicaNum, uint64(len(allStores)))
 		}
 
 		if !needRetry {
 			aliveStores = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, usedTiFlashStoresMap, ttl, store, tiflashReplicaReadPolicy, tidbZone)
-			needRetry = checkAliveStore(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, cache, tiflashReplicaReadPolicy, retryNum, tasks)
+			needRetry = checkAliveStore(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, cache, tiflashReplicaReadPolicy, retryNum, tasks, minReplicaNum)
 		}
 
 		if needRetry {
@@ -1085,9 +1087,11 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 	}
 }
 
+// Fast path for checkAliveStore(): If minReplicaNum > deadStoreNum, it means
+// there is at least one alive store for each regions, we can skip check.
 func canSkipCheckAliveStores(aliveStores *aliveStoresBundle, usedTiFlashStores [][]uint64,
 	usedTiFlashStoresMap map[uint64]struct{}, tiflashReplicaReadPolicy tiflash.ReplicaRead,
-	retryNum int) bool {
+	retryNum int, minReplicaNum uint64) bool {
 	// Skip check because there is no real tiflash in most testcases.
 	skipCheck := intest.InTest
 	failpoint.Inject("mockNoAliveTiFlash", func(val failpoint.Value) {
@@ -1101,34 +1105,27 @@ func canSkipCheckAliveStores(aliveStores *aliveStoresBundle, usedTiFlashStores [
 		return true
 	}
 
-	minReplicaNum := uint64(math.MaxUint64)
-	// Record all stores for all regions that is in the zone as tidb.
-	// Only for cloest_replica.
-	usedTiFlashStoresMapInTiDBZone := make(map[uint64]struct{})
-	for _, allStoresPerRegion := range usedTiFlashStores {
-		if tiflashReplicaReadPolicy.IsClosestReplicas() {
-			var aliveStoreNumInTiDBZone uint64
-			for _, storeID := range allStoresPerRegion {
-				if _, ok := aliveStores.storeIDsInTiDBZone[storeID]; ok {
-					aliveStoreNumInTiDBZone++
-				}
-				usedTiFlashStoresMapInTiDBZone[storeID] = struct{}{}
-			}
-			minReplicaNum = min(minReplicaNum, aliveStoreNumInTiDBZone)
-		} else {
-			minReplicaNum = min(minReplicaNum, uint64(len(allStoresPerRegion)))
-		}
+	if !tiflashReplicaReadPolicy.IsClosestReplicas() {
+		deadStoreNum := len(usedTiFlashStoresMap) - len(aliveStores.storeIDsInAllZones)
+		return minReplicaNum > uint64(deadStoreNum)
 	}
 
-	usedTiFlashNum := len(usedTiFlashStoresMap)
-	aliveNum := len(aliveStores.storeIDsInAllZones)
-	if tiflashReplicaReadPolicy.IsClosestReplicas() {
-		usedTiFlashNum = len(usedTiFlashStoresMapInTiDBZone)
-		aliveNum = len(aliveStores.storeIDsInTiDBZone)
+	// For closest_replica, need to recompute minReplicaNum and other infos,
+	// because we should only consider stores that is in tidb zone.
+	minReplicaNum = uint64(math.MaxUint64)
+	usedTiFlashStoresMapInTiDBZone := make(map[uint64]struct{})
+	for _, allStoresPerRegion := range usedTiFlashStores {
+		var aliveStoreNumInTiDBZone uint64
+		for _, storeID := range allStoresPerRegion {
+			if _, ok := aliveStores.storeIDsInTiDBZone[storeID]; ok {
+				aliveStoreNumInTiDBZone++
+			}
+			usedTiFlashStoresMapInTiDBZone[storeID] = struct{}{}
+		}
+		minReplicaNum = min(minReplicaNum, aliveStoreNumInTiDBZone)
 	}
-	deadStoreNum := usedTiFlashNum - aliveNum
-	// If minReplicaNum > deadStoreNum, it means
-	// there is at least one alive store for each regions.
+
+	deadStoreNum := len(usedTiFlashStoresMapInTiDBZone) - len(aliveStores.storeIDsInTiDBZone)
 	return minReplicaNum > uint64(deadStoreNum)
 }
 
@@ -1137,8 +1134,8 @@ func canSkipCheckAliveStores(aliveStores *aliveStoresBundle, usedTiFlashStores [
 func checkAliveStore(aliveStores *aliveStoresBundle, usedTiFlashStores [][]uint64,
 	usedTiFlashStoresMap map[uint64]struct{}, cache *RegionCache,
 	tiflashReplicaReadPolicy tiflash.ReplicaRead, retryNum int,
-	tasks []*copTask) (needRetry bool) {
-	if canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflashReplicaReadPolicy, retryNum) {
+	tasks []*copTask, minReplicaNum uint64) (needRetry bool) {
+	if canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflashReplicaReadPolicy, retryNum, minReplicaNum) {
 		return
 	}
 

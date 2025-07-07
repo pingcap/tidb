@@ -363,16 +363,16 @@ func TestAliveStoreSkipCheck(t *testing.T) {
 			},
 		}
 		// 1, 2, 3 is alive, can skip check.
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestAdaptive, 2))
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.AllReplicas, 2))
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestAdaptive, 2, 1))
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.AllReplicas, 2, 1))
 
 		// 1, 2 is alive, cannot skip check.
 		aliveStores.storeIDsInAllZones = map[uint64]struct{}{
 			1: {},
 			2: {},
 		}
-		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestAdaptive, 2))
-		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.AllReplicas, 2))
+		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestAdaptive, 2, 1))
+		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.AllReplicas, 2, 1))
 	}
 
 	{
@@ -395,16 +395,16 @@ func TestAliveStoreSkipCheck(t *testing.T) {
 				3: {},
 			},
 		}
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestAdaptive, 2))
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.AllReplicas, 2))
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestAdaptive, 2, 2))
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.AllReplicas, 2, 2))
 
 		// 1, 2 is alive, can skip check.
 		aliveStores.storeIDsInAllZones = map[uint64]struct{}{
 			1: {},
 			2: {},
 		}
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestAdaptive, 2))
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.AllReplicas, 2))
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestAdaptive, 2, 2))
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.AllReplicas, 2, 2))
 	}
 
 	{
@@ -425,14 +425,14 @@ func TestAliveStoreSkipCheck(t *testing.T) {
 				1: {},
 			},
 		}
-		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2))
+		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 1))
 
 		// 1, 2 is alive, cannot skip check.
 		aliveStores.storeIDsInTiDBZone = map[uint64]struct{}{
 			1: {},
 			2: {},
 		}
-		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2))
+		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 1))
 
 		// 1, 2, 3 is alive, can skip check.
 		aliveStores.storeIDsInTiDBZone = map[uint64]struct{}{
@@ -440,7 +440,7 @@ func TestAliveStoreSkipCheck(t *testing.T) {
 			2: {},
 			3: {},
 		}
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2))
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 1))
 	}
 
 	{
@@ -462,14 +462,14 @@ func TestAliveStoreSkipCheck(t *testing.T) {
 				1: {},
 			},
 		}
-		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2))
+		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 2))
 
 		// 1, 2 is alive, cannot skip check.
 		aliveStores.storeIDsInTiDBZone = map[uint64]struct{}{
 			1: {},
 			2: {},
 		}
-		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2))
+		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 2))
 
 		// 1, 2, 3 is alive, can skip check.
 		aliveStores.storeIDsInTiDBZone = map[uint64]struct{}{
@@ -477,7 +477,7 @@ func TestAliveStoreSkipCheck(t *testing.T) {
 			2: {},
 			3: {},
 		}
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2))
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 2))
 
 		// 1, 2 is alive, can skip check.
 		usedTiFlashStores = [][]uint64{
@@ -489,6 +489,6 @@ func TestAliveStoreSkipCheck(t *testing.T) {
 			1: {},
 			2: {},
 		}
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2))
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 2))
 	}
 }
