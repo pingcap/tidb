@@ -24,10 +24,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/stathat/consistent"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -328,5 +330,165 @@ func BenchmarkBalanceBatchCopTaskWithContinuity(b *testing.B) {
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = balanceBatchCopTaskWithContinuity(storeTasks, regionInfos, 20)
+	}
+}
+
+func TestAliveStoreSkipCheck(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash", `return(false)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash"))
+	}()
+
+	usedTiFlashStoresMap := map[uint64]struct{}{
+		1: {},
+		2: {},
+		3: {},
+	}
+
+	{
+		// Non closest_replica; min replica num is 1.
+		usedTiFlashStores := [][]uint64{
+			{1, 2}, // region-1
+			{2, 3}, // region-2
+			{1},    // region-3
+		}
+		aliveStores := &aliveStoresBundle{
+			storeIDsInAllZones: map[uint64]struct{}{
+				1: {},
+				2: {},
+				3: {},
+			},
+			storeIDsInTiDBZone: map[uint64]struct{}{
+				1: {},
+			},
+		}
+		// 1, 2, 3 is alive, can skip check.
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestAdaptive, 2))
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.AllReplicas, 2))
+
+		// 1, 2 is alive, cannot skip check.
+		aliveStores.storeIDsInAllZones = map[uint64]struct{}{
+			1: {},
+			2: {},
+		}
+		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestAdaptive, 2))
+		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.AllReplicas, 2))
+	}
+
+	{
+		// Non closest_replica; min replica num is 2.
+		usedTiFlashStores := [][]uint64{
+			{1, 2}, // region-1
+			{2, 3}, // region-2
+			{1, 3}, // region-3
+		}
+		// 1, 2, 3 is alive, can skip check.
+		aliveStores := &aliveStoresBundle{
+			storeIDsInAllZones: map[uint64]struct{}{
+				1: {},
+				2: {},
+				3: {},
+			},
+			storeIDsInTiDBZone: map[uint64]struct{}{
+				1: {},
+				2: {},
+				3: {},
+			},
+		}
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestAdaptive, 2))
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.AllReplicas, 2))
+
+		// 1, 2 is alive, can skip check.
+		aliveStores.storeIDsInAllZones = map[uint64]struct{}{
+			1: {},
+			2: {},
+		}
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestAdaptive, 2))
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.AllReplicas, 2))
+	}
+
+	{
+		// closest_replica. min replica num is 1.
+		usedTiFlashStores := [][]uint64{
+			{1, 2}, // region-1
+			{2, 3}, // region-2
+			{1},    // region-3
+		}
+		// 1 is alive, cannot skip check.
+		aliveStores := &aliveStoresBundle{
+			storeIDsInAllZones: map[uint64]struct{}{
+				1: {},
+				2: {},
+				3: {},
+			},
+			storeIDsInTiDBZone: map[uint64]struct{}{
+				1: {},
+			},
+		}
+		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2))
+
+		// 1, 2 is alive, cannot skip check.
+		aliveStores.storeIDsInTiDBZone = map[uint64]struct{}{
+			1: {},
+			2: {},
+		}
+		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2))
+
+		// 1, 2, 3 is alive, can skip check.
+		aliveStores.storeIDsInTiDBZone = map[uint64]struct{}{
+			1: {},
+			2: {},
+			3: {},
+		}
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2))
+	}
+
+	{
+		// closest_replica. min replica num is 2.
+		usedTiFlashStores := [][]uint64{
+			{1, 2}, // region-1
+			{2, 3}, // region-2
+			{1, 3}, // region-3
+		}
+
+		// 1 is alive, cannot skip check.
+		aliveStores := &aliveStoresBundle{
+			storeIDsInAllZones: map[uint64]struct{}{
+				1: {},
+				2: {},
+				3: {},
+			},
+			storeIDsInTiDBZone: map[uint64]struct{}{
+				1: {},
+			},
+		}
+		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2))
+
+		// 1, 2 is alive, cannot skip check.
+		aliveStores.storeIDsInTiDBZone = map[uint64]struct{}{
+			1: {},
+			2: {},
+		}
+		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2))
+
+		// 1, 2, 3 is alive, can skip check.
+		aliveStores.storeIDsInTiDBZone = map[uint64]struct{}{
+			1: {},
+			2: {},
+			3: {},
+		}
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2))
+
+		// 1, 2 is alive, can skip check.
+		usedTiFlashStores = [][]uint64{
+			{1, 2}, // region-1
+			{1, 2}, // region-2
+			{1, 2}, // region-3
+		}
+		aliveStores.storeIDsInTiDBZone = map[uint64]struct{}{
+			1: {},
+			2: {},
+		}
+		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2))
 	}
 }

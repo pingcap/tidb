@@ -993,7 +993,8 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		if !needRetry {
 			aliveStores = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, usedTiFlashStoresMap, ttl, store, tiflashReplicaReadPolicy, tidbZone)
 			var err error
-			if needRetry, err = checkAliveStore(aliveStores, usedTiFlashStores, cache, tiflashReplicaReadPolicy, retryNum, tasks, minReplicaNum); err != nil {
+			if needRetry, err = checkAliveStore(aliveStores, usedTiFlashStores, usedTiFlashStoresMap,
+				cache, tiflashReplicaReadPolicy, retryNum, tasks); err != nil {
 				return nil, err
 			}
 		}
@@ -1093,10 +1094,9 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 	}
 }
 
-// Check if all stores of one specific region has at least on alive store.
-// If not, invalid region cache and return needRetry as true.
-func checkAliveStore(aliveStores *aliveStoresBundle, usedTiFlashStores [][]uint64, cache *RegionCache,
-	tiflashReplicaReadPolicy tiflash.ReplicaRead, retryNum int, tasks []*copTask, minReplicaNum uint64) (needRetry bool, err error) {
+func canSkipCheckAliveStores(aliveStores *aliveStoresBundle, usedTiFlashStores [][]uint64,
+	usedTiFlashStoresMap map[uint64]struct{}, tiflashReplicaReadPolicy tiflash.ReplicaRead,
+	retryNum int) bool {
 	// Skip check because there is no real tiflash in most testcases.
 	skipCheck := intest.InTest
 	failpoint.Inject("mockNoAliveTiFlash", func(val failpoint.Value) {
@@ -1107,22 +1107,51 @@ func checkAliveStore(aliveStores *aliveStoresBundle, usedTiFlashStores [][]uint6
 		}
 	})
 	if skipCheck {
+		return true
+	}
+
+	minReplicaNum := uint64(math.MaxUint64)
+	// Record all stores for all regions that is in the zone as tidb.
+	// Only for cloest_replica.
+	usedTiFlashStoresMapInTiDBZone := make(map[uint64]struct{})
+	for _, allStoresPerRegion := range usedTiFlashStores {
+		if tiflashReplicaReadPolicy.IsClosestReplicas() {
+			var aliveStoreNumInTiDBZone uint64
+			for _, storeID := range allStoresPerRegion {
+				if _, ok := aliveStores.storeIDsInTiDBZone[storeID]; ok {
+					aliveStoreNumInTiDBZone++
+				}
+				usedTiFlashStoresMapInTiDBZone[storeID] = struct{}{}
+			}
+			minReplicaNum = min(minReplicaNum, aliveStoreNumInTiDBZone)
+		} else {
+			minReplicaNum = min(minReplicaNum, uint64(len(allStoresPerRegion)))
+		}
+	}
+
+	usedTiFlashNum := len(usedTiFlashStoresMap)
+	aliveNum := len(aliveStores.storeIDsInAllZones)
+	if tiflashReplicaReadPolicy.IsClosestReplicas() {
+		usedTiFlashNum = len(usedTiFlashStoresMapInTiDBZone)
+		aliveNum = len(aliveStores.storeIDsInTiDBZone)
+	}
+	notAliveNum := usedTiFlashNum - aliveNum
+	return minReplicaNum > uint64(notAliveNum)
+}
+
+// Check if all stores of one specific region has at least on alive store.
+// If not, invalid region cache and return needRetry as true.
+func checkAliveStore(aliveStores *aliveStoresBundle, usedTiFlashStores [][]uint64,
+	usedTiFlashStoresMap map[uint64]struct{}, cache *RegionCache,
+	tiflashReplicaReadPolicy tiflash.ReplicaRead, retryNum int,
+	tasks []*copTask) (needRetry bool, err error) {
+	if canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflashReplicaReadPolicy, retryNum) {
 		return
 	}
 
 	checkAliveStoreTarget := aliveStores.storeIDsInAllZones
 	if tiflashReplicaReadPolicy.IsClosestReplicas() {
 		checkAliveStoreTarget = aliveStores.storeIDsInTiDBZone
-	}
-
-	notAliveNum := len(usedTiFlashStores) - len(checkAliveStoreTarget)
-	if notAliveNum < 0 {
-		return true, errors.New(fmt.Sprintf("expect len(usedTiFlashStores)(%v) >= len(checkAliveStoreTarget)(%v)",
-			len(usedTiFlashStores), len(checkAliveStoreTarget)))
-	}
-	// Fast path: all regions will have at least one alive store.
-	if minReplicaNum > uint64(notAliveNum) {
-		return
 	}
 
 	var invalidRegions []tikv.RegionVerID
