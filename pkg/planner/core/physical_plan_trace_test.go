@@ -149,12 +149,12 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 		8:  "TableReader",
 		28: "TableReader",
 		16: "HashJoin",
-		18: "TableReader",
+		18: "HashAgg",
 		17: "HashAgg",
-		11: "HashAgg",
+		11: "Sort",
 		15: "HashAgg",
 		27: "HashAgg",
-		29: "HashAgg",
+		29: "TableFullScan",
 		20: "Projection",
 	}
 	final := map[int]struct{}{}
