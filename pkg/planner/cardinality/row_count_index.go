@@ -335,6 +335,7 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 		if idx.StatsVer == statistics.Version2 {
 			histNDV = histNDV - int64(idx.TopN.Num())
 		}
+		isSingleColIdx := len(idx.Info.Columns) == 1
 		// handling the out-of-range part
 		if (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
 			histNDV := idx.NDV
@@ -342,7 +343,7 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 			if idx.StatsVer == statistics.Version2 {
 				colIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
 				// Retrieve column statistics for the 1st index column
-				c := coll.GetCol(colIDs[0])
+				c := coll.Columns[colIDs[0]]
 				// If this is single column predicate - use the column's information rather than index.
 				// Index histograms are converted to string. Column uses original type - which can be more accurate for out of range
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
