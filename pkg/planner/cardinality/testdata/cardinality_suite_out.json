@@ -3717,12 +3717,7 @@
                           {
                             "lDatum": "KindMinNotNull <nil>",
                             "modifyCount": 100,
-<<<<<<< HEAD
-                            "rDatum": "KindBytes \\x03\\x7f\\xff\\xff\\xff\\xff\\xff\\xfa$"
-=======
                             "rDatum": "KindInt64 -1500",
-                            "realtimeRowCount": 3080
->>>>>>> 36e39785ab1 (Planner: Single col out of range use original type (#55600))
                           },
                           {
                             "commonPrefix": 0,
@@ -3731,9 +3726,7 @@
                             "unsigned": false
                           },
                           {
-<<<<<<< HEAD
                             "Result": 0
-=======
                             "boundL": -2997,
                             "boundR": 2997,
                             "histL": -999,
