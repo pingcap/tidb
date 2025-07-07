@@ -3206,6 +3206,10 @@ func findBestTask4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalPropert
 	if p.ChildLen() > 0 {
 		return p.BaseLogicalPlan.FindBestTask(prop, counter, pop)
 	}
+	if !checkOpSelfSatisfyPropTaskTypeRequirement(lp, prop) {
+		// Currently all plan cannot totally push down to TiKV.
+		return base.InvalidTask, 0, nil
+	}
 	if !prop.IsSortItemEmpty() && !prop.CanAddEnforcer {
 		return base.InvalidTask, 1, nil
 	}
