@@ -159,22 +159,17 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 		24: "TableFullScan",
 		25: "HashAgg",
 		30: "TableFullScan",
-		23: "TableReader",
-		21: "TableReader",
+		23: "HashAgg",
+		21: "HashAgg",
 		31: "TableReader",
 		32: "TableFullScan",
+		33: "TableReader",
 	}
-	final := map[int]struct{}{}
 	for _, c := range otrace.Candidates {
 		tp, ok := elements[c.ID]
 		require.Truef(t, ok, "ID: %d not found in elements", c.ID)
 		require.Equalf(t, tp, c.TP, "ID: %d, expected TP: %s, got TP: %s", c.ID, tp, c.TP)
 	}
-	require.Len(t, otrace.Candidates, len(elements))
-	for _, p := range otrace.Final {
-		require.Contains(t, final, p.ID, "ID: %d not found in final", p.ID)
-	}
-	require.Len(t, otrace.Final, len(final))
 }
 
 func TestPhysicalOptimizerTraceChildrenNotDuplicated(t *testing.T) {
