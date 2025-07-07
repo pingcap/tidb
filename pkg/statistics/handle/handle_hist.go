@@ -309,8 +309,15 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 		wrapper.idx = index
 	} else {
 		col, ok := tbl.Columns[item.ID]
-		if !ok || col.IsFullLoad() {
-			wrapper.col = nil
+		if !ok {
+			// From `removeHistLoadedColumns`, we can see that if a column is not found in the `tbl`,
+			// we'll directly remove it from the `remainedItems`.
+			// This precondition makes it difficult to tell when we will get here.
+			// But we should not panic here.
+			return nil
+		} else if col.IsFullLoad() {
+			// If this column is fully loaded, we don't need to load it again.
+			return nil
 		} else {
 			wrapper.col = col
 		}
