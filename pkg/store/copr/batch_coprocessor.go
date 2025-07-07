@@ -1130,8 +1130,10 @@ func canSkipCheckAliveStores(aliveStores *aliveStoresBundle, usedTiFlashStores [
 		usedTiFlashNum = len(usedTiFlashStoresMapInTiDBZone)
 		aliveNum = len(aliveStores.storeIDsInTiDBZone)
 	}
-	notAliveNum := usedTiFlashNum - aliveNum
-	return minReplicaNum > uint64(notAliveNum)
+	deadStoreNum := usedTiFlashNum - aliveNum
+	// If minReplicaNum > deadStoreNum, it means
+	// there is at least one alive store for each regions.
+	return minReplicaNum > uint64(deadStoreNum)
 }
 
 // Check if all stores of one specific region has at least on alive store.
