@@ -1340,6 +1340,11 @@ func (c *Config) Valid() error {
 		return err
 	}
 
+	// pd-client
+	if err := c.PDClient.Valid(); err != nil {
+		return err
+	}
+
 	// For tikvclient.
 	if err := c.TiKVClient.Valid(); err != nil {
 		return err
