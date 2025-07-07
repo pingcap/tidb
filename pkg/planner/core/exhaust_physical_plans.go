@@ -31,9 +31,11 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -580,10 +582,21 @@ func constructIndexJoinStatic(
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	// outer side expected cnt will be amplified by the prop.ExpectedCnt / p.StatsInfo().RowCount with same ratio.
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
-	if prop.ExpectedCnt < p.StatsInfo().RowCount {
-		expCntScale := prop.ExpectedCnt / p.StatsInfo().RowCount
-		chReqProps[outerIdx].ExpectedCnt = p.Children()[outerIdx].StatsInfo().RowCount * expCntScale
+	orderRatio := p.SCtx().GetSessionVars().OptOrderingIdxSelRatio
+	// Record the variable usage for explain explore.
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
+	outerRowCount := p.Children()[outerIdx].StatsInfo().RowCount
+	estimatedRowCount := p.StatsInfo().RowCount
+	if (prop.ExpectedCnt < estimatedRowCount) ||
+		(orderRatio > 0 && outerRowCount > estimatedRowCount && prop.ExpectedCnt < outerRowCount && estimatedRowCount > 0) {
+		// Apply the orderRatio to recognize that a large outer table scan may
+		// read additional rows before the inner table reaches the limit values
+		rowsToMeetFirst := max(0.0, (outerRowCount-estimatedRowCount)*orderRatio)
+		expCntScale := prop.ExpectedCnt / estimatedRowCount
+		expectedCnt := (outerRowCount * expCntScale) + rowsToMeetFirst
+		chReqProps[outerIdx].ExpectedCnt = expectedCnt
 	}
+
 	// inner side should pass down the indexJoinProp, which contains the runtime constant inner key, which is used to build the underlying index/pk range.
 	chReqProps[1-outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, IndexJoinProp: indexJoinProp}
 
@@ -1092,6 +1105,18 @@ type indexJoinInnerChildWrapper struct {
 	ds             *logicalop.DataSource
 	hasDitryWrite  bool
 	zippedChildren []base.LogicalPlan
+}
+
+func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *property.PhysicalProperty) bool {
+	switch prop.TaskTp {
+	case property.MppTaskType:
+		// when parent operator ask current op to be mppTaskType, check operator itself here.
+		return logicalop.CanSelfBeingPushedToCopImpl(p, kv.TiFlash)
+	case property.CopSingleReadTaskType, property.CopMultiReadTaskType:
+		return logicalop.CanSelfBeingPushedToCopImpl(p, kv.TiKV)
+	default:
+		return true
+	}
 }
 
 // admitIndexJoinInnerChildPattern is used to check whether current physical choosing is under an index join's
@@ -2186,13 +2211,46 @@ func handleFilterIndexJoinHints(p *logicalop.LogicalJoin, candidates []base.Phys
 	return filtered
 }
 
-// recordIndexJoinHintWarnings records the warnings msg if no valid preferred physic are picked.
-// todo: extend recordIndexJoinHintWarnings to support all kind of operator's warnings handling.
-func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalProperty, inEnforce bool) error {
-	p, ok := lp.(*logicalop.LogicalJoin)
-	if !ok {
+func recordWarnings(lp base.LogicalPlan, prop *property.PhysicalProperty, inEnforce bool) error {
+	switch x := lp.(type) {
+	case *logicalop.LogicalAggregation:
+		return recordAggregationHintWarnings(x)
+	case *logicalop.LogicalTopN, *logicalop.LogicalLimit:
+		return recordLimitToCopWarnings(lp)
+	case *logicalop.LogicalJoin:
+		return recordIndexJoinHintWarnings(x, prop, inEnforce)
+	default:
+		// no warnings to record
 		return nil
 	}
+}
+
+func recordAggregationHintWarnings(la *logicalop.LogicalAggregation) error {
+	if la.PreferAggToCop {
+		return plannererrors.ErrInternal.FastGen("Optimizer Hint AGG_TO_COP is inapplicable")
+	}
+	return nil
+}
+
+func recordLimitToCopWarnings(lp base.LogicalPlan) error {
+	var preferPushDown *bool
+	switch lp := lp.(type) {
+	case *logicalop.LogicalTopN:
+		preferPushDown = &lp.PreferLimitToCop
+	case *logicalop.LogicalLimit:
+		preferPushDown = &lp.PreferLimitToCop
+	default:
+		return nil
+	}
+	if *preferPushDown {
+		return plannererrors.ErrInternal.FastGen("Optimizer Hint LIMIT_TO_COP is inapplicable")
+	}
+	return nil
+}
+
+// recordIndexJoinHintWarnings records the warnings msg if no valid preferred physic are picked.
+// todo: extend recordIndexJoinHintWarnings to support all kind of operator's warnings handling.
+func recordIndexJoinHintWarnings(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, inEnforce bool) error {
 	if !p.PreferAny(h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
 		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner) {
 		return nil // no force index join hints
@@ -2233,6 +2291,16 @@ func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalPro
 	return nil
 }
 
+func applyLogicalHintVarEigen(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, task base.Task, childTasks []base.Task) (preferred bool) {
+	return applyLogicalJoinHint(lp, task.Plan()) ||
+		applyLogicalTopNAndLimitHint(lp, state, pp, childTasks) ||
+		applyLogicalAggregationHint(lp, pp, childTasks)
+}
+
+// Get the most preferred and efficient one by hint and low-cost priority.
+// since hint applicable plan may greater than 1, like inl_join can suit for:
+// index_join, index_hash_join, index_merge_join, we should chase the most efficient
+// one among them.
 // applyLogicalJoinHint is used to handle logic hint/prefer/variable, which is not a strong guide for optimization phase.
 // It is changed from handleForceIndexJoinHints to handle the preferred join hint among several valid physical plan choices.
 // It will return true if the hint can be applied when saw a real physic plan successfully built and returned up from child.
@@ -2240,6 +2308,114 @@ func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalPro
 // for the logic hint, we will return false and the optimizer will continue to return the normal low-cost one.
 func applyLogicalJoinHint(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
 	return preferMergeJoin(lp, physicPlan) || preferIndexJoinFamily(lp, physicPlan) || preferHashJoin(lp, physicPlan)
+}
+
+func applyLogicalAggregationHint(lp base.LogicalPlan, physicPlan base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
+	la, ok := lp.(*logicalop.LogicalAggregation)
+	if !ok {
+		return false
+	}
+	if physicPlan == nil {
+		return false
+	}
+	if la.HasDistinct() {
+		// TODO: remove after the cost estimation of distinct pushdown is implemented.
+		if la.SCtx().GetSessionVars().AllowDistinctAggPushDown {
+			// when AllowDistinctAggPushDown is true, we will not consider root task type as before.
+			if _, ok := childTasks[0].(*CopTask); ok {
+				return true
+			}
+		} else {
+			switch childTasks[0].(type) {
+			case *RootTask:
+				// If the distinct agg can't be allowed to push down, we will consider root task type.
+				// which is try to get the same behavior as before like types := {RootTask} only.
+				return true
+			case *MppTask:
+				// If the distinct agg can't be allowed to push down, we will consider mpp task type too --- RootTask vs MPPTask
+				// which is try to get the same behavior as before like types := {RootTask} and appended {MPPTask}.
+				return true
+			default:
+				return false
+			}
+		}
+	} else if la.PreferAggToCop {
+		// If the aggregation is preferred to be pushed down to coprocessor, we will prefer it.
+		if _, ok := childTasks[0].(*CopTask); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
+	hintPrefer, meetThreshold := pushLimitOrTopNForcibly(lp)
+	if hintPrefer {
+		// if there is a user hint control, try to get the copTask as the prior.
+		// here we don't assert task itself, because when topN attach 2 cop task, it will become root type automatically.
+		if _, ok := childTasks[0].(*CopTask); ok {
+			return true
+		}
+	}
+	if meetThreshold {
+		// previously, we set meetThreshold for pruning root task type but mpp task type. so:
+		// 1: when one copTask exists, we will ignore root task type.
+		// 2: when one copTask exists, another copTask should be cost compared with.
+		// 3: mppTask is always in the cbo comparing.
+		// 4: when none copTask exists, we will consider rootTask vs mppTask.
+		// the following check priority logic is compatible with former pushLimitOrTopNForcibly prop pruning logic.
+		_, isTopN := pp.(*PhysicalTopN)
+		if isTopN {
+			if state.topNCopExist {
+				if _, ok := childTasks[0].(*RootTask); ok {
+					return false
+				}
+				// peer cop task should compare the cost with each other.
+				if _, ok := childTasks[0].(*CopTask); ok {
+					return true
+				}
+			} else {
+				if _, ok := childTasks[0].(*CopTask); ok {
+					state.topNCopExist = true
+					return true
+				}
+				// when we encounter rootTask type while still see no topNCopExist.
+				// that means there is no copTask valid before, we will consider rootTask here.
+				if _, ok := childTasks[0].(*RootTask); ok {
+					return true
+				}
+			}
+			if _, ok := childTasks[0].(*MppTask); ok {
+				return true
+			}
+			// shouldn't be here
+			return false
+		}
+		// limit case:
+		if state.limitCopExist {
+			if _, ok := childTasks[0].(*RootTask); ok {
+				return false
+			}
+			// peer cop task should compare the cost with each other.
+			if _, ok := childTasks[0].(*CopTask); ok {
+				return true
+			}
+		} else {
+			if _, ok := childTasks[0].(*CopTask); ok {
+				state.limitCopExist = true
+				return true
+			}
+			// when we encounter rootTask type while still see no limitCopExist.
+			// that means there is no copTask valid before, we will consider rootTask here.
+			if _, ok := childTasks[0].(*RootTask); ok {
+				return true
+			}
+		}
+		if _, ok := childTasks[0].(*MppTask); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func preferHashJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
@@ -2844,8 +3020,8 @@ func exhaustPhysicalPlans4LogicalExpand(lp base.LogicalPlan, prop *property.Phys
 	}
 	var physicalExpands []base.PhysicalPlan
 	// for property.RootTaskType and property.MppTaskType with no partition option, we can give an MPP Expand.
-	canPushToTiFlash := p.CanPushToCop(kv.TiFlash)
-	if p.SCtx().GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
+	// we just remove whether subtree can be pushed to tiFlash check, and left child handle itself.
+	if p.SCtx().GetSessionVars().IsMPPAllowed() {
 		mppProp := prop.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType
 		expand := PhysicalExpand{
@@ -2889,13 +3065,15 @@ func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.
 	// generate a mpp task candidate if mpp mode is allowed
 	ctx := p.SCtx()
 	pushDownCtx := util.GetPushDownCtx(ctx)
-	if newProp.TaskTp != property.MppTaskType && ctx.GetSessionVars().IsMPPAllowed() && p.CanPushToCop(kv.TiFlash) &&
+	// lift the recursive check of canPushToCop(tiFlash)
+	if newProp.TaskTp != property.MppTaskType && ctx.GetSessionVars().IsMPPAllowed() &&
 		expression.CanExprsPushDown(pushDownCtx, p.Exprs, kv.TiFlash) {
 		mppProp := newProp.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType
 		newProps = append(newProps, mppProp)
 	}
-	if newProp.TaskTp != property.CopSingleReadTaskType && ctx.GetSessionVars().AllowProjectionPushDown && p.CanPushToCop(kv.TiKV) &&
+	// lift the recursive check of canPushToCop(tikv)
+	if newProp.TaskTp != property.CopSingleReadTaskType && ctx.GetSessionVars().AllowProjectionPushDown &&
 		expression.CanExprsPushDown(pushDownCtx, p.Exprs, kv.TiKV) && !expression.ContainVirtualColumn(p.Exprs) &&
 		expression.ProjectionBenefitsFromPushedDown(p.Exprs, p.Children()[0].Schema().Len()) {
 		copProp := newProp.CloneEssentialFields()
@@ -2916,38 +3094,30 @@ func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.
 	return ret, true, nil
 }
 
-func pushLimitOrTopNForcibly(p base.LogicalPlan) bool {
-	var meetThreshold bool
-	var preferPushDown *bool
+func pushLimitOrTopNForcibly(p base.LogicalPlan) (meetThreshold bool, preferPushDown bool) {
 	switch lp := p.(type) {
 	case *logicalop.LogicalTopN:
-		preferPushDown = &lp.PreferLimitToCop
+		preferPushDown = lp.PreferLimitToCop
 		meetThreshold = lp.Count+lp.Offset <= uint64(lp.SCtx().GetSessionVars().LimitPushDownThreshold)
 	case *logicalop.LogicalLimit:
-		preferPushDown = &lp.PreferLimitToCop
+		preferPushDown = lp.PreferLimitToCop
 		meetThreshold = true // always push Limit down in this case since it has no side effect
 	default:
-		return false
+		return preferPushDown, meetThreshold
 	}
 
-	if *preferPushDown || meetThreshold {
-		if p.CanPushToCop(kv.TiKV) {
-			return true
-		}
-		if *preferPushDown {
-			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer Hint LIMIT_TO_COP is inapplicable")
-			*preferPushDown = false
-		}
-	}
-
-	return false
+	// we remove the child subTree check, each logical operator only focus on themselves.
+	// for current level, they prefer a push-down copTask.
+	return preferPushDown, meetThreshold
 }
 
 func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
-	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
-	if !pushLimitOrTopNForcibly(lt) {
-		allTaskTypes = append(allTaskTypes, property.RootTaskType)
-	}
+	// topN should always generate rootTaskType for:
+	// case1: after v7.5, since tiFlash Cop has been banned, mppTaskType may return invalid task when there are some root conditions.
+	// case2: for index merge case which can only be run in root type, topN and limit can't be pushed to the inside index merge when it's an intersection.
+	// note: don't change the task enumeration order here.
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
+	// we move the pushLimitOrTopNForcibly check to attach2Task to do the prefer choice.
 	mppAllowed := lt.SCtx().GetSessionVars().IsMPPAllowed()
 	if mppAllowed {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
@@ -3011,15 +3181,12 @@ func getPhysLimits(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) [
 	if !canPass {
 		return nil
 	}
-
-	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
-	if !pushLimitOrTopNForcibly(lt) {
-		allTaskTypes = append(allTaskTypes, property.RootTaskType)
-	}
+	// note: don't change the task enumeration order here.
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), SortItems: p.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
-		limit := PhysicalLimit{
+		limit := physicalop.PhysicalLimit{
 			Count:       lt.Count,
 			Offset:      lt.Offset,
 			PartitionBy: lt.GetPartitionBy(),
@@ -3272,16 +3439,7 @@ func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.Phys
 		// empty
 		return enforcedAggs
 	}
-	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
-	if la.HasDistinct() {
-		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
-		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
-		if !la.CanPushToCop(kv.TiKV) || !la.SCtx().GetSessionVars().AllowDistinctAggPushDown {
-			taskTypes = []property.TaskType{property.RootTaskType}
-		}
-	} else if !la.PreferAggToCop {
-		taskTypes = append(taskTypes, property.RootTaskType)
-	}
+	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
 	// only admit special types for index join prop
 	taskTypes = admitIndexJoinTypes(taskTypes, prop)
 	for _, taskTp := range taskTypes {
@@ -3342,22 +3500,15 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 		}
 		// The table read of "CopDoubleReadTaskType" can't promises the sort
 		// property that the stream aggregation required, no need to consider.
-		taskTypes := []property.TaskType{property.CopSingleReadTaskType}
-		if la.HasDistinct() {
-			// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
-			// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
-			if !la.SCtx().GetSessionVars().AllowDistinctAggPushDown || !la.CanPushToCop(kv.TiKV) {
-				// if variable doesn't allow DistinctAggPushDown, just produce root task type.
-				// if variable does allow DistinctAggPushDown, but OP itself can't be pushed down to tikv, just produce root task type.
-				taskTypes = []property.TaskType{property.RootTaskType}
-			} else if !la.DistinctArgsMeetsProperty() {
-				continue
-			}
-		} else if !la.PreferAggToCop {
-			taskTypes = append(taskTypes, property.RootTaskType)
-		}
-		if !la.CanPushToCop(kv.TiKV) && !la.CanPushToCop(kv.TiFlash) {
+		taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.RootTaskType}
+		// aggregation has a special case that it can be pushed down to TiKV which is indicated by the la.NoCopPushDown
+		if la.NoCopPushDown {
 			taskTypes = []property.TaskType{property.RootTaskType}
+		}
+		if la.HasDistinct() && la.SCtx().GetSessionVars().AllowDistinctAggPushDown && !la.DistinctArgsMeetsProperty() {
+			// if distinct agg push down is allowed, while the distinct args doesn't meet the required property, continue
+			// to next possible property check.
+			continue
 		}
 		taskTypes = admitIndexJoinTypes(taskTypes, prop)
 		for _, taskTp := range taskTypes {
@@ -3588,22 +3739,13 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 		return nil
 	}
 	hashAggs := make([]base.PhysicalPlan, 0, len(prop.GetAllPossibleChildTaskTypes()))
-	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
-	canPushDownToTiFlash := la.CanPushToCop(kv.TiFlash)
-	canPushDownToMPP := canPushDownToTiFlash && la.SCtx().GetSessionVars().IsMPPAllowed() && checkCanPushDownToMPP(la)
-	if la.HasDistinct() {
-		// TODO: remove after the cost estimation of distinct pushdown is implemented.
-		if !la.SCtx().GetSessionVars().AllowDistinctAggPushDown || !la.CanPushToCop(kv.TiKV) {
-			// if variable doesn't allow DistinctAggPushDown, just produce root task type.
-			// if variable does allow DistinctAggPushDown, but OP itself can't be pushed down to tikv, just produce root task type.
-			taskTypes = []property.TaskType{property.RootTaskType}
-		}
-	} else if !la.PreferAggToCop {
-		taskTypes = append(taskTypes, property.RootTaskType)
-	}
-	if !la.CanPushToCop(kv.TiKV) && !canPushDownToTiFlash {
+	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
+	// aggregation has a special case that it can be pushed down to TiKV which is indicated by the la.NoCopPushDown
+	if la.NoCopPushDown {
 		taskTypes = []property.TaskType{property.RootTaskType}
 	}
+	// lift the recursive check of canPushToCop(tiFlash)
+	canPushDownToMPP := la.SCtx().GetSessionVars().IsMPPAllowed() && checkCanPushDownToMPP(la)
 	if canPushDownToMPP {
 		taskTypes = append(taskTypes, property.MppTaskType)
 	} else {
@@ -3648,13 +3790,6 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 
 func exhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	la := lp.(*logicalop.LogicalAggregation)
-	if la.PreferAggToCop {
-		if !la.CanPushToCop(kv.TiKV) {
-			la.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
-				"Optimizer Hint AGG_TO_COP is inapplicable")
-			la.PreferAggToCop = false
-		}
-	}
 	preferHash, preferStream := la.ResetHintIfConflicted()
 	hashAggs := getHashAggs(la, prop)
 	if len(hashAggs) > 0 && preferHash {
@@ -3765,17 +3900,15 @@ func getLimitPhysicalPlans(p *logicalop.LogicalLimit, prop *property.PhysicalPro
 		return nil, true, nil
 	}
 
-	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
-	if !pushLimitOrTopNForcibly(p) {
-		allTaskTypes = append(allTaskTypes, property.RootTaskType)
-	}
-	if p.CanPushToCop(kv.TiFlash) && p.SCtx().GetSessionVars().IsMPPAllowed() {
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
+	// lift the recursive check of canPushToCop(tiFlash)
+	if p.SCtx().GetSessionVars().IsMPPAllowed() {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(p.Count + p.Offset), CTEProducerStatus: prop.CTEProducerStatus}
-		limit := PhysicalLimit{
+		limit := physicalop.PhysicalLimit{
 			Offset:      p.Offset,
 			Count:       p.Count,
 			PartitionBy: p.GetPartitionBy(),
@@ -3812,7 +3945,8 @@ func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.Ph
 	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
 		return nil, true, nil
 	}
-	canUseMpp := p.SCtx().GetSessionVars().IsMPPAllowed() && logicalop.CanPushToCopImpl(&p.BaseLogicalPlan, kv.TiFlash)
+	// when arrived here, operator itself has already checked checkOpSelfSatisfyPropTaskTypeRequirement, we only need to feel allowMPP here.
+	canUseMpp := p.SCtx().GetSessionVars().IsMPPAllowed()
 	chReqProps := make([]*property.PhysicalProperty, 0, p.ChildLen())
 	for range p.Children() {
 		if canUseMpp && prop.TaskTp == property.MppTaskType {
@@ -3825,8 +3959,8 @@ func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.Ph
 			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt, CTEProducerStatus: prop.CTEProducerStatus})
 		}
 	}
-	ua := PhysicalUnionAll{
-		mpp: canUseMpp && prop.TaskTp == property.MppTaskType,
+	ua := physicalop.PhysicalUnionAll{
+		Mpp: canUseMpp && prop.TaskTp == property.MppTaskType,
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
 	ua.SetSchema(p.Schema())
 	if canUseMpp && prop.TaskTp == property.RootTaskType {
@@ -3838,7 +3972,7 @@ func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.Ph
 				CTEProducerStatus: prop.CTEProducerStatus,
 			})
 		}
-		mppUA := PhysicalUnionAll{mpp: true}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
+		mppUA := physicalop.PhysicalUnionAll{Mpp: true}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
 		mppUA.SetSchema(p.Schema())
 		return []base.PhysicalPlan{ua, mppUA}, true, nil
 	}
@@ -3852,7 +3986,7 @@ func exhaustPhysicalPlans4LogicalPartitionUnionAll(lp base.LogicalPlan, prop *pr
 		return nil, false, err
 	}
 	for _, ua := range uas {
-		ua.(*PhysicalUnionAll).SetTP(plancodec.TypePartitionUnion)
+		ua.(*physicalop.PhysicalUnionAll).SetTP(plancodec.TypePartitionUnion)
 	}
 	return uas, flagHint, nil
 }
@@ -3867,7 +4001,8 @@ func exhaustPhysicalPlans4LogicalTopN(lp base.LogicalPlan, prop *property.Physic
 
 func exhaustPhysicalPlans4LogicalSort(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	ls := lp.(*logicalop.LogicalSort)
-	if prop.TaskTp == property.RootTaskType {
+	switch prop.TaskTp {
+	case property.RootTaskType:
 		if MatchItems(prop, ls.ByItems) {
 			ret := make([]base.PhysicalPlan, 0, 2)
 			ret = append(ret, getPhysicalSort(ls, prop))
@@ -3877,42 +4012,42 @@ func exhaustPhysicalPlans4LogicalSort(lp base.LogicalPlan, prop *property.Physic
 			}
 			return ret, true, nil
 		}
-	} else if prop.TaskTp == property.MppTaskType {
-		if logicalop.CanPushToCopImpl(&ls.BaseLogicalPlan, kv.TiFlash) {
-			ps := getNominalSortSimple(ls, prop)
-			if ps != nil {
-				return []base.PhysicalPlan{ps}, true, nil
-			}
-			return nil, true, nil
+	case property.MppTaskType:
+		// just enumerate mpp task type requirement for child.
+		ps := getNominalSortSimple(ls, prop)
+		if ps != nil {
+			return []base.PhysicalPlan{ps}, true, nil
 		}
+	default:
+		return nil, true, nil
 	}
 	return nil, true, nil
 }
 
 func getPhysicalSort(ls *logicalop.LogicalSort, prop *property.PhysicalProperty) base.PhysicalPlan {
-	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.QueryBlockOffset(), &property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus})
+	ps := physicalop.PhysicalSort{ByItems: ls.ByItems}.Init(ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.QueryBlockOffset(), &property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus})
 	return ps
 }
 
-func getNominalSort(ls *logicalop.LogicalSort, reqProp *property.PhysicalProperty) *NominalSort {
+func getNominalSort(ls *logicalop.LogicalSort, reqProp *property.PhysicalProperty) *physicalop.NominalSort {
 	prop, canPass, onlyColumn := GetPropByOrderByItemsContainScalarFunc(ls.ByItems)
 	if !canPass {
 		return nil
 	}
 	prop.ExpectedCnt = reqProp.ExpectedCnt
-	ps := NominalSort{OnlyColumn: onlyColumn, ByItems: ls.ByItems}.Init(
+	ps := physicalop.NominalSort{OnlyColumn: onlyColumn, ByItems: ls.ByItems}.Init(
 		ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.QueryBlockOffset(), prop)
 	return ps
 }
 
-func getNominalSortSimple(ls *logicalop.LogicalSort, reqProp *property.PhysicalProperty) *NominalSort {
+func getNominalSortSimple(ls *logicalop.LogicalSort, reqProp *property.PhysicalProperty) *physicalop.NominalSort {
 	prop, canPass, onlyColumn := GetPropByOrderByItemsContainScalarFunc(ls.ByItems)
 	if !canPass || !onlyColumn {
 		return nil
 	}
 	newProp := reqProp.CloneEssentialFields()
 	newProp.SortItems = prop.SortItems
-	ps := NominalSort{OnlyColumn: true, ByItems: ls.ByItems}.Init(
+	ps := physicalop.NominalSort{OnlyColumn: true, ByItems: ls.ByItems}.Init(
 		ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(reqProp.ExpectedCnt), ls.QueryBlockOffset(), newProp)
 	return ps
 }

@@ -6945,15 +6945,6 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	}
 }
 
-func getRenameTableUniqueIDs(jobW *JobWrapper, schema bool) []int64 {
-	if !schema {
-		return []int64{jobW.TableID}
-	}
-
-	oldSchemaID := jobW.JobArgs.(*model.RenameTableArgs).OldSchemaID
-	return []int64{oldSchemaID, jobW.SchemaID}
-}
-
 // HandleLockTablesOnSuccessSubmit handles the table lock for the job which is submitted
 // successfully. exported for testing purpose.
 func HandleLockTablesOnSuccessSubmit(ctx sessionctx.Context, jobW *JobWrapper) {

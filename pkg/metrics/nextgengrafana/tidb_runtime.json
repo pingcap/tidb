@@ -900,7 +900,7 @@
           "spaceLength": 10,
           "stack": false,
           "steppedLine": false,
-          "targets": [
+          "targets": [            
             {
               "expr": "histogram_quantile(0.999, sum(rate(go_sched_latencies_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
               "format": "time_series",

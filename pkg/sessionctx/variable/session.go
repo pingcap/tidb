@@ -1436,8 +1436,6 @@ type SessionVars struct {
 	AssertionLevel AssertionLevel
 	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
 	IgnorePreparedCacheCloseStmt bool
-	// EnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
-	EnableNewCostInterface bool
 	// CostModelVersion is a internal switch to indicates the Cost Model Version.
 	CostModelVersion int
 	// IndexJoinDoubleReadPenaltyCostRate indicates whether to add some penalty cost to IndexJoin and how much of it.
@@ -2290,6 +2288,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableRedactLog:               vardef.DefTiDBRedactLog,
 		EnableWindowFunction:          vardef.DefEnableWindowFunction,
 		CostModelVersion:              vardef.DefTiDBCostModelVer,
+		OptimizerEnableNAAJ:           vardef.DefTiDBEnableNAAJ,
+		OptOrderingIdxSelRatio:        vardef.DefTiDBOptOrderingIdxSelRatio,
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName

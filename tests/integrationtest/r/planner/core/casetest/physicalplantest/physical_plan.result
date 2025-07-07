@@ -520,6 +520,7 @@ CTE_0	8001.00	root		Recursive CTE
 show warnings;
 Level	Code	Message
 Warning	1815	Recursive CTE cte2 can not be inlined by merge() or tidb_opt_force_inline_cte.
+Warning	1105	Scalar function 'cast'(signature: CastIntAsInt, return type: int) is not supported to push down to tiflash now.
 explain format='brief' with cte1 as (with recursive cte2(c1) as (select 1 union select c1 + 1 c1 from cte2 where c1 < 100) select * from cte2) select * from cte1; -- recursive 'cte2' inside non-recursive 'cte1';
 id	estRows	task	access object	operator info
 CTEFullScan	2.00	root	CTE:cte2	data:CTE_2
@@ -575,6 +576,7 @@ CTE_0	8001.00	root		Recursive CTE
     └─CTETable	10000.00	root		Scan on CTE_0
 show warnings;
 Level	Code	Message
+Warning	1105	Scalar function 'cast'(signature: CastIntAsInt, return type: int) is not supported to push down to tiflash now.
 explain format='brief' with cte1 as (with recursive cte2(c1) as (select 1 union select c1 + 1 c1 from cte2 where c1 < 100) select * from cte2) select * from cte1; -- recursive 'cte2' inside non-recursive 'cte1';
 id	estRows	task	access object	operator info
 CTEFullScan	2.00	root	CTE:cte2	data:CTE_2
@@ -3166,8 +3168,8 @@ Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_pl
 └─Apply	10000.00	root		CARTESIAN inner join
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	10000.00	root		funcs:max(Column#14)->Column#8, funcs:count(distinct Column#15)->Column#9, funcs:sum(Column#16)->Column#10, funcs:count(1)->Column#11
-    └─Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#14, planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#15, cast(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b), decimal(20,0) BINARY)->Column#16
+  └─StreamAgg(Probe)	10000.00	root		funcs:max(Column#20)->Column#8, funcs:count(distinct Column#21)->Column#9, funcs:sum(Column#22)->Column#10, funcs:count(1)->Column#11
+    └─Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#20, planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#21, cast(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b), decimal(20,0) BINARY)->Column#22
       └─TableReader	10000.00	root		data:TableRangeScan
         └─TableRangeScan	10000.00	cop[tikv]	table:t2	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t1.b)], keep order:false, stats:pseudo
 select t1.a, t1.a != any (select t2.b from t2 where t2.a = t1.b) from t1;
@@ -3182,8 +3184,8 @@ Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_pl
 └─Apply	10000.00	root		CARTESIAN inner join
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	10000.00	root		funcs:max(Column#14)->Column#8, funcs:count(distinct Column#15)->Column#9, funcs:sum(Column#16)->Column#10, funcs:count(1)->Column#11
-    └─Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#14, planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#15, cast(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b), decimal(20,0) BINARY)->Column#16
+  └─StreamAgg(Probe)	10000.00	root		funcs:max(Column#20)->Column#8, funcs:count(distinct Column#21)->Column#9, funcs:sum(Column#22)->Column#10, funcs:count(1)->Column#11
+    └─Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#20, planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#21, cast(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b), decimal(20,0) BINARY)->Column#22
       └─TableReader	10000.00	root		data:TableRangeScan
         └─TableRangeScan	10000.00	cop[tikv]	table:t2	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t1.b)], keep order:false, stats:pseudo
 select t1.a, t1.a != any (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b) from t1;
@@ -3998,12 +4000,12 @@ Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type
 set tidb_cost_model_version=DEFAULT;
 explain select /*+ USE_INDEX_MERGE(t3, aid_c1, aid_c2) */ * from t3 where (aid = 1 and c1='aaa') or (aid = 1 and c2='bbb') limit 1;
 id	estRows	task	access object	operator info
-IndexMerge_20	1.00	root		type: union, limit embedded(offset:0, count:1)
-├─Limit_18(Build)	0.01	cop[tikv]		offset:0, count:1
-│ └─IndexRangeScan_11	0.01	cop[tikv]	table:t3, index:aid_c1(aid, c1)	range:[1 "aaa",1 "aaa"], keep order:false, stats:pseudo
-├─Limit_19(Build)	0.01	cop[tikv]		offset:0, count:1
-│ └─IndexRangeScan_12	0.01	cop[tikv]	table:t3, index:aid_c2(aid, c2)	range:[1 "bbb",1 "bbb"], keep order:false, stats:pseudo
-└─TableRowIDScan_13(Probe)	1.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+IndexMerge_22	1.00	root		type: union, limit embedded(offset:0, count:1)
+├─Limit_20(Build)	0.01	cop[tikv]		offset:0, count:1
+│ └─IndexRangeScan_13	0.01	cop[tikv]	table:t3, index:aid_c1(aid, c1)	range:[1 "aaa",1 "aaa"], keep order:false, stats:pseudo
+├─Limit_21(Build)	0.01	cop[tikv]		offset:0, count:1
+│ └─IndexRangeScan_14	0.01	cop[tikv]	table:t3, index:aid_c2(aid, c2)	range:[1 "bbb",1 "bbb"], keep order:false, stats:pseudo
+└─TableRowIDScan_15(Probe)	1.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 CREATE TABLE `tbl_43` (

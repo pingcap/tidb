@@ -21,6 +21,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
@@ -64,7 +65,21 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		return 0, nil, err
 	}
 
-	var jobID, taskID int64
+	logicalPlan := &LogicalPlan{
+		Plan:              *plan,
+		Stmt:              stmt,
+		EligibleInstances: instances,
+		ChunkMap:          chunkMap,
+	}
+	planCtx := planner.PlanCtx{
+		Ctx:        ctx,
+		TaskType:   proto.ImportInto,
+		ThreadCnt:  plan.ThreadCnt,
+		MaxNodeCnt: plan.MaxNodeCnt,
+	}
+	var (
+		jobID, taskID int64
+	)
 	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		var err2 error
 		exec := se.GetSQLExecutor()
@@ -73,41 +88,52 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		if err2 != nil {
 			return err2
 		}
-
-		// TODO: use planner.Run to run the logical plan
-		// now creating import job and submitting distributed task should be in the same transaction.
-		logicalPlan := &LogicalPlan{
-			JobID:             jobID,
-			Plan:              *plan,
-			Stmt:              stmt,
-			EligibleInstances: instances,
-			ChunkMap:          chunkMap,
-		}
-		planCtx := planner.PlanCtx{
-			Ctx:        ctx,
-			SessionCtx: se,
-			TaskKey:    TaskKey(jobID),
-			TaskType:   proto.ImportInto,
-			ThreadCnt:  plan.ThreadCnt,
-			MaxNodeCnt: plan.MaxNodeCnt,
-		}
-		p := planner.NewPlanner()
-		taskID, err2 = p.Run(planCtx, logicalPlan)
-		if err2 != nil {
-			return err2
+		// in classical kernel or if we are inside SYSTEM keyspace itself, we
+		// submit the task to DXF in the same transaction as creating the job.
+		if kerneltype.IsClassic() || config.GetGlobalKeyspaceName() == keyspace.System {
+			logicalPlan.JobID = jobID
+			planCtx.SessionCtx = se
+			planCtx.TaskKey = TaskKey(jobID)
+			if taskID, err2 = submitTask2DXF(logicalPlan, planCtx); err2 != nil {
+				return err2
+			}
 		}
 		return nil
 	}); err != nil {
 		return 0, nil, err
 	}
+	// in next-gen kernel and we are not running in SYSTEM KS, we submit the task
+	// to DXF service after creating the job, as DXF service runs in SYSTEM keyspace.
+	// TODO: we need to cleanup the job, if we failed to submit the task to DXF service.
+	dxfTaskMgr := taskManager
+	if keyspace.IsRunningOnUser() {
+		var err2 error
+		dxfTaskMgr, err2 = handle.GetTaskMgrToAccessDXFService()
+		if err2 != nil {
+			return 0, nil, err2
+		}
+		if err2 = dxfTaskMgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			logicalPlan.JobID = jobID
+			planCtx.SessionCtx = se
+			planCtx.TaskKey = TaskKey(jobID)
+			var err2 error
+			if taskID, err2 = submitTask2DXF(logicalPlan, planCtx); err2 != nil {
+				return err2
+			}
+			return nil
+		}); err2 != nil {
+			return 0, nil, err2
+		}
+	}
 	handle.NotifyTaskChange()
-	task, err := taskManager.GetTaskBaseByID(ctx, taskID)
+	task, err := dxfTaskMgr.GetTaskBaseByID(ctx, taskID)
 	if err != nil {
 		return 0, nil, err
 	}
 
 	logutil.BgLogger().Info("job submitted to task queue",
 		zap.Int64("job-id", jobID),
+		zap.String("task-key", task.Key),
 		zap.Int64("task-id", task.ID),
 		zap.String("data-size", units.BytesSize(float64(plan.TotalFileSize))),
 		zap.Int("thread-cnt", plan.ThreadCnt),
@@ -116,22 +142,30 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	return jobID, task, nil
 }
 
+func submitTask2DXF(logicalPlan *LogicalPlan, planCtx planner.PlanCtx) (int64, error) {
+	// TODO: use planner.Run to run the logical plan
+	// now creating import job and submitting distributed task should be in the same transaction.
+	p := planner.NewPlanner()
+	return p.Run(planCtx, logicalPlan)
+}
+
 // RuntimeInfo is the runtime information of the task for corresponding job.
 type RuntimeInfo struct {
 	Status     proto.TaskState
-	ImportRows uint64
+	ImportRows int64
 	ErrorMsg   string
 }
 
 // GetRuntimeInfoForJob get the corresponding DXF task runtime info for the job.
 func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error) {
-	taskManager, err := storage.GetTaskManager()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	dxfTaskMgr, err := handle.GetTaskMgrToAccessDXFService()
 	if err != nil {
 		return nil, err
 	}
+
 	taskKey := TaskKey(jobID)
-	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
+	task, err := dxfTaskMgr.GetTaskByKeyWithHistory(ctx, taskKey)
 	if err != nil {
 		return nil, err
 	}
@@ -139,32 +173,22 @@ func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error
 	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
 	}
-	var importedRows uint64
-	if taskMeta.Plan.CloudStorageURI == "" {
-		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepImport)
-		if err != nil {
-			return nil, err
-		}
-		for _, subtask := range subtasks {
-			var subtaskMeta ImportStepMeta
-			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return nil, errors.Trace(err2)
-			}
-			importedRows += subtaskMeta.Result.LoadedRowCnt
-		}
-	} else {
-		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepWriteAndIngest)
-		if err != nil {
-			return nil, err
-		}
-		for _, subtask := range subtasks {
-			var subtaskMeta WriteIngestStepMeta
-			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return nil, errors.Trace(err2)
-			}
-			importedRows += subtaskMeta.Result.LoadedRowCnt
-		}
+
+	step := proto.ImportStepImport
+	if taskMeta.Plan.CloudStorageURI != "" {
+		step = proto.ImportStepWriteAndIngest
 	}
+
+	summaries, err := dxfTaskMgr.GetAllSubtaskSummaryByStep(ctx, task.ID, step)
+	if err != nil {
+		return nil, err
+	}
+
+	var importedRows int64
+	for _, summary := range summaries {
+		importedRows += summary.RowCnt.Load()
+	}
+
 	var errMsg string
 	if task.Error != nil {
 		errMsg = task.Error.Error()

@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -797,8 +798,8 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalApply{},
 		&plannercore.PhysicalHashAgg{},
 		&plannercore.PhysicalStreamAgg{},
-		&plannercore.PhysicalLimit{},
-		&plannercore.PhysicalSort{},
+		&physicalop.PhysicalLimit{},
+		&physicalop.PhysicalSort{},
 		&plannercore.PhysicalTopN{},
 		&plannercore.PhysicalCTE{},
 		&plannercore.PhysicalCTETable{},
@@ -808,7 +809,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalTableDual{},
 		&plannercore.PhysicalWindow{},
 		&plannercore.PhysicalShuffle{},
-		&plannercore.PhysicalUnionAll{},
+		&physicalop.PhysicalUnionAll{},
 	}
 
 	opsNeedsCoveredMask := uint64(1<<len(opsNeedsCovered) - 1)
@@ -846,7 +847,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
 
 		nodeW := resolve.NewNodeW(stmt)
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
@@ -937,7 +938,7 @@ func TestTwiceCloseUnionExec(t *testing.T) {
 		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
 		nodeW := resolve.NewNodeW(stmt)
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		e := executorBuilder.Build(p)
