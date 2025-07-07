@@ -575,7 +575,7 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 		result := min(lessCountB, hg.NotNullCount()-lessCountA)
 		rangeEst = min(result, lowEqual+ndvAvg)
 	}
-	//If values in the same bucket, use skewRatio to adjust the range estimate to account for potential skew.
+	// If values in the same bucket, use skewRatio to adjust the range estimate to account for potential skew.
 	if len(hg.Buckets) != 0 && bktIndexA == bktIndexB {
 		// sctx may be nil for stats version 1
 		if sctx != nil {
