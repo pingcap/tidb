@@ -71,3 +71,11 @@ CREATE TABLE default_from_other_col (
  new_col timestamp NULL DEFAULT(src_col),
  PRIMARY KEY (id)
 );
+
+create table default_from_other_col (id bigint primary key, src_col timestamp NULL DEFAULT NULL);
+--error 1105
+alter table default_from_other_col add column new_col timestamp default(src_col);
+alter table default_from_other_col add column new_col timestamp;
+--error 1105
+alter table default_from_other_col modify column new_col timestamp default(src_col);
+drop table default_from_other_col;
