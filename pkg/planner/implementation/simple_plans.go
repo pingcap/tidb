@@ -144,14 +144,14 @@ type TiDBTopNImpl struct {
 
 // CalcCost implements Implementation CalcCost interface.
 func (impl *TiDBTopNImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
-	topN := impl.plan.(*plannercore.PhysicalTopN)
+	topN := impl.plan.(*physicalop.PhysicalTopN)
 	childCount := children[0].GetPlan().StatsInfo().RowCount
 	impl.cost = topN.GetCost(childCount, true) + children[0].GetCost()
 	return impl.cost
 }
 
 // NewTiDBTopNImpl creates a new TiDBTopNImpl.
-func NewTiDBTopNImpl(topN *plannercore.PhysicalTopN) *TiDBTopNImpl {
+func NewTiDBTopNImpl(topN *physicalop.PhysicalTopN) *TiDBTopNImpl {
 	return &TiDBTopNImpl{baseImpl{plan: topN}}
 }
 
@@ -162,14 +162,14 @@ type TiKVTopNImpl struct {
 
 // CalcCost implements Implementation CalcCost interface.
 func (impl *TiKVTopNImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
-	topN := impl.plan.(*plannercore.PhysicalTopN)
+	topN := impl.plan.(*physicalop.PhysicalTopN)
 	childCount := children[0].GetPlan().StatsInfo().RowCount
 	impl.cost = topN.GetCost(childCount, false) + children[0].GetCost()
 	return impl.cost
 }
 
 // NewTiKVTopNImpl creates a new TiKVTopNImpl.
-func NewTiKVTopNImpl(topN *plannercore.PhysicalTopN) *TiKVTopNImpl {
+func NewTiKVTopNImpl(topN *physicalop.PhysicalTopN) *TiKVTopNImpl {
 	return &TiKVTopNImpl{baseImpl{plan: topN}}
 }
 

@@ -72,6 +72,10 @@ func init() {
 	// for physical limit.
 	utilfuncp.ResolveIndices4PhysicalLimit = resolveIndices4PhysicalLimit
 	utilfuncp.Attach2Task4PhysicalLimit = attach2Task4PhysicalLimit
+	// for physical topN.
+	utilfuncp.GetPlanCostVer14PhysicalTopN = getPlanCostVer14PhysicalTopN
+	utilfuncp.GetPlanCostVer24PhysicalTopN = getPlanCostVer24PhysicalTopN
+	utilfuncp.ResolveIndices4PhysicalTopN = resolveIndices4PhysicalTopN
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.IsSingleScan = isSingleScan

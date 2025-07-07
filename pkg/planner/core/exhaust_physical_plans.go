@@ -2376,7 +2376,7 @@ func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp
 		// 3: mppTask is always in the cbo comparing.
 		// 4: when none copTask exists, we will consider rootTask vs mppTask.
 		// the following check priority logic is compatible with former pushLimitOrTopNForcibly prop pruning logic.
-		_, isTopN := pp.(*PhysicalTopN)
+		_, isTopN := pp.(*physicalop.PhysicalTopN)
 		if isTopN {
 			if state.topNCopExist {
 				if _, ok := childTasks[0].(*RootTask); ok {
@@ -3175,7 +3175,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus}
-		topN := PhysicalTopN{
+		topN := physicalop.PhysicalTopN{
 			ByItems:     lt.ByItems,
 			PartitionBy: lt.PartitionBy,
 			Count:       lt.Count,
@@ -3214,7 +3214,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 		}
 		resultProp.VectorProp.VSInfo = vs
 		resultProp.VectorProp.TopK = uint32(lt.Count + lt.Offset)
-		topN := PhysicalTopN{
+		topN := physicalop.PhysicalTopN{
 			ByItems:     lt.ByItems,
 			PartitionBy: lt.PartitionBy,
 			Count:       lt.Count,

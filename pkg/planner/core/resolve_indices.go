@@ -726,8 +726,9 @@ func resolveIndexForInlineProjection(p *physicalop.PhysicalSchemaProducer) error
 	return nil
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalTopN) ResolveIndices() (err error) {
+// resolveIndices4PhysicalTopN implements Plan interface.
+func resolveIndices4PhysicalTopN(pp base.PhysicalPlan) (err error) {
+	p := pp.(*physicalop.PhysicalTopN)
 	err = p.PhysicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
