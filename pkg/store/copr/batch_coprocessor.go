@@ -958,7 +958,6 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		rpcCtxs := make([]*tikv.RPCContext, 0, len(tasks))
 		usedTiFlashStores := make([][]uint64, 0, len(tasks))
 		usedTiFlashStoresMap := make(map[uint64]struct{}, 0)
-		minReplicaNum := uint64(math.MaxUint64)
 		var needRetry bool
 		for _, task := range tasks {
 			rpcCtx, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, isMPP, tikv.LabelFilterNoTiFlashWriteNode)
@@ -981,10 +980,6 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			allStores, _ := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store, tikv.LabelFilterNoTiFlashWriteNode)
 			for _, storeID := range allStores {
 				usedTiFlashStoresMap[storeID] = struct{}{}
-			}
-			// Collect the min replica num of all regions.
-			if minReplicaNum > uint64(len(allStores)) {
-				minReplicaNum = uint64(len(allStores))
 			}
 			rpcCtxs = append(rpcCtxs, rpcCtx)
 			usedTiFlashStores = append(usedTiFlashStores, allStores)
