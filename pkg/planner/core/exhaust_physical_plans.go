@@ -3278,7 +3278,6 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Parallel Apply rejects the possible order properties of its outer child currently"))
 		return nil, true, nil
 	}
-	disableAggPushDownToCop(la.Children()[0])
 	join := GetHashJoin(la, prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
@@ -3308,19 +3307,10 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 	}.Init(la.SCtx(),
 		la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt),
 		la.QueryBlockOffset(),
-		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus},
+		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: true},
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus})
 	apply.SetSchema(la.Schema())
 	return []base.PhysicalPlan{apply}, true, nil
-}
-
-func disableAggPushDownToCop(p base.LogicalPlan) {
-	for _, child := range p.Children() {
-		disableAggPushDownToCop(child)
-	}
-	if agg, ok := p.(*logicalop.LogicalAggregation); ok {
-		agg.NoCopPushDown = true
-	}
 }
 
 func tryToGetMppWindows(lw *logicalop.LogicalWindow, prop *property.PhysicalProperty) []base.PhysicalPlan {
@@ -3551,8 +3541,8 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 		// The table read of "CopDoubleReadTaskType" can't promises the sort
 		// property that the stream aggregation required, no need to consider.
 		taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.RootTaskType}
-		// aggregation has a special case that it can be pushed down to TiKV which is indicated by the la.NoCopPushDown
-		if la.NoCopPushDown {
+		// aggregation has a special case that it can be pushed down to TiKV which is indicated by the prop.NoCopPushDown
+		if prop.NoCopPushDown {
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 		if la.HasDistinct() && la.SCtx().GetSessionVars().AllowDistinctAggPushDown && !la.DistinctArgsMeetsProperty() {
@@ -3790,8 +3780,8 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 	}
 	hashAggs := make([]base.PhysicalPlan, 0, len(prop.GetAllPossibleChildTaskTypes()))
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
-	// aggregation has a special case that it can be pushed down to TiKV which is indicated by the la.NoCopPushDown
-	if la.NoCopPushDown {
+	// aggregation has a special case that it can be pushed down to TiKV which is indicated by the prop.NoCopPushDown
+	if prop.NoCopPushDown {
 		taskTypes = []property.TaskType{property.RootTaskType}
 	}
 	// lift the recursive check of canPushToCop(tiFlash)
