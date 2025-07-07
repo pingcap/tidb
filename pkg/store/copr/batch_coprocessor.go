@@ -1084,7 +1084,8 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				zap.Duration("elapsed", elapsed),
 				zap.Duration("balanceElapsed", balanceElapsed),
 				zap.Int("range len", rangesLen),
-				zap.Int("task len", len(batchTasks)),
+				zap.Int("batchCopTask len", len(batchTasks)),
+				zap.Int("copTask len", len(tasks)),
 				zap.Int("retry num", retryNum))
 		}
 		metrics.TxnRegionsNumHistogramWithBatchCoprocessor.Observe(float64(len(batchTasks)))
@@ -1139,7 +1140,7 @@ func checkAliveStore(aliveStores *aliveStoresBundle, usedTiFlashStores [][]uint6
 				cache.InvalidateCachedRegion(tasks[i].region)
 				needRetry = true
 				// To avoid too many logs.
-				if len(invalidRegions) < 10 {
+				if log.GetLevel() <= zap.DebugLevel || len(invalidRegions) < 10 {
 					invalidRegions = append(invalidRegions, tasks[i].region)
 				}
 			}
