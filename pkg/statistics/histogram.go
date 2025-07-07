@@ -591,7 +591,7 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 				if lessCountB <= float64(hg.Buckets[bktIndexA].Count-hg.Buckets[bktIndexA].Repeat) {
 					skewEstimate -= hg.Buckets[bktIndexA].Repeat
 				}
-				//Add a scaled ratio of the worst case skewed estimate to our regular estimate
+				// Add a scaled ratio of the worst case skewed estimate to our regular estimate
 				return rangeEst + max(0, (float64(skewEstimate)-rangeEst)*skewRatio)
 			}
 		}
