@@ -16,9 +16,6 @@ package core
 
 import (
 	"fmt"
-	"math"
-	"slices"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
@@ -46,6 +43,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"math"
+	"slices"
 )
 
 func exhaustPhysicalPlans4LogicalUnionScan(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
@@ -1113,10 +1112,25 @@ func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *propert
 		// when parent operator ask current op to be mppTaskType, check operator itself here.
 		return logicalop.CanSelfBeingPushedToCopImpl(p, kv.TiFlash)
 	case property.CopSingleReadTaskType, property.CopMultiReadTaskType:
+		if isClusterTableDatasource(p) {
+			// Cluster table is also supported to be cop pushed down to peer tidb, which
+			// can be seen as cop[tidb] way of accessing the cluster table. So for cluster
+			// table, to storeTp is not kv.TiKV, actually it's kv.TiDB. Otherwise, the
+			// store type check inside will fail.
+			return logicalop.CanSelfBeingPushedToCopImpl(p, kv.TiDB)
+		}
 		return logicalop.CanSelfBeingPushedToCopImpl(p, kv.TiKV)
 	default:
 		return true
 	}
+}
+
+// isClusterTableDatasource checks whether the given logical plan is a DataSource and its table is a cluster table.
+func isClusterTableDatasource(p base.LogicalPlan) bool {
+	if ds, ok := p.(*logicalop.DataSource); ok {
+		return ds.Table.Type().IsClusterTable()
+	}
+	return false
 }
 
 // admitIndexJoinInnerChildPattern is used to check whether current physical choosing is under an index join's
