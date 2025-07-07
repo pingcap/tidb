@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -49,6 +50,9 @@ type Loader struct {
 	infoCache *infoschema.InfoCache
 	// deferFn is used to release infoschema object lazily during v1 and v2 switch
 	deferFn *deferFn
+	// if true, it means the loader is used for cross keyspace, we only allow
+	// loading system tables
+	crossKS bool
 
 	// below fields are set when running background routines
 	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the client to the autoid service.
@@ -58,12 +62,13 @@ type Loader struct {
 	sysExecutorFactory func() (pools.Resource, error)
 }
 
-// NewLoader creates a new Loader instance.
-func NewLoader(store kv.Storage, infoCache *infoschema.InfoCache) *Loader {
+// NewLoaderForCrossKS creates a new Loader instance.
+func NewLoaderForCrossKS(store kv.Storage, infoCache *infoschema.InfoCache) *Loader {
 	return &Loader{
 		store:     store,
 		infoCache: infoCache,
 		deferFn:   &deferFn{},
+		crossKS:   true,
 	}
 }
 
@@ -318,6 +323,16 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, erro
 	allSchemas, err := m.ListDatabases()
 	if err != nil {
 		return nil, err
+	}
+	if l.crossKS {
+		filteredSchemas := make([]*model.DBInfo, 0, len(allSchemas))
+		for _, di := range allSchemas {
+			if metadef.IsSystemDB(di.Name.L) {
+				filteredSchemas = append(filteredSchemas, di)
+				break
+			}
+		}
+		allSchemas = filteredSchemas
 	}
 	if len(allSchemas) == 0 {
 		return nil, nil

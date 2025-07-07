@@ -192,7 +192,9 @@ type session struct {
 
 	// dom is *domain.Domain, use `any` to avoid import cycle.
 	// cross keyspace session doesn't have domain set.
-	dom             any
+	dom any
+	// we cannot compare dom == nil, as dom is untyped, golang will always return true.
+	crossKS         bool
 	schemaValidator validatorapi.Validator
 	infoCache       *infoschema.InfoCache
 	store           kv.Storage
@@ -3906,8 +3908,10 @@ func createSessionWithOpt(
 		// we don't set dom for cross keyspace access.
 		ddlOwnerMgr = dom.DDL().OwnerManager()
 	}
+	crossKS := dom == nil
 	s := &session{
 		dom:                   dom,
+		crossKS:               crossKS,
 		schemaValidator:       schemaValidator,
 		infoCache:             infoCache,
 		store:                 store,
@@ -4422,6 +4426,10 @@ func (s *session) GetLatestISWithoutSessExt() infoschemactx.MetaOnlyInfoSchema {
 
 func (s *session) GetSQLServer() sqlsvrapi.Server {
 	return s.dom.(sqlsvrapi.Server)
+}
+
+func (s *session) IsCrossKS() bool {
+	return s.crossKS
 }
 
 func (s *session) GetSchemaValidator() validatorapi.Validator {
