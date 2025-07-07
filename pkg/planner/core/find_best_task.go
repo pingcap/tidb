@@ -1475,12 +1475,6 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		planCounter.Dec(1)
 		return
 	}
-	// check whether the DataSource can satisfy the property.
-	if !checkOpSelfSatisfyPropTaskTypeRequirement(ds, prop) {
-		// Currently all plan cannot totally push down to TiKV.
-		ds.StoreTask(prop, base.InvalidTask)
-		return base.InvalidTask, 0, nil
-	}
 	// if prop is require an index join's probe side, check the inner pattern admission here.
 	if prop.IndexJoinProp != nil {
 		pass := admitIndexJoinInnerChildPattern(lp)
