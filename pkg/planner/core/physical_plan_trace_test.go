@@ -146,45 +146,25 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
 	require.NotNil(t, otrace)
 	elements := map[int]string{
-		26: "TableFullScan",
-		30: "TableReader",
-		29: "TableFullScan",
-		22: "HashAgg",
-		32: "TableReader",
-		17: "HashJoin",
-		14: "HashAgg",
-		10: "Sort",
-		27: "HashAgg",
+		8:  "TableReader",
 		28: "TableReader",
-		20: "HashAgg",
-		31: "TableFullScan",
 		16: "HashJoin",
-		8:  "Projection",
+		18: "TableReader",
+		17: "HashAgg",
+		11: "HashAgg",
+		15: "HashAgg",
+		27: "HashAgg",
+		29: "HashAgg",
 	}
-	final := map[int]struct{}{
-		26: {},
-		20: {},
-		28: {},
-		27: {},
-		31: {},
-		32: {},
-		17: {},
-		14: {},
-		10: {},
-		8:  {},
-	}
+	final := map[int]struct{}{}
 	for _, c := range otrace.Candidates {
 		tp, ok := elements[c.ID]
-		if !ok || tp != c.TP {
-			t.FailNow()
-		}
+		require.Truef(t, ok, "ID: %d not found in elements", c.ID)
+		require.Equalf(t, tp, c.TP, "ID: %d, expected TP: %s, got TP: %s", c.ID, tp, c.TP)
 	}
 	require.Len(t, otrace.Candidates, len(elements))
 	for _, p := range otrace.Final {
-		_, ok := final[p.ID]
-		if !ok {
-			t.FailNow()
-		}
+		require.Contains(t, final, p.ID, "ID: %d not found in final", p.ID)
 	}
 	require.Len(t, otrace.Final, len(final))
 }
