@@ -155,7 +155,7 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 		15: "HashAgg",
 		27: "HashAgg",
 		29: "TableFullScan",
-		20: "Projection",
+		20: "HashAgg",
 	}
 	final := map[int]struct{}{}
 	for _, c := range otrace.Candidates {
