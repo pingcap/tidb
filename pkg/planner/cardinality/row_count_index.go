@@ -331,10 +331,6 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 		// If the current table row count has changed, we should scale the row count accordingly.
 		count *= idx.GetIncreaseFactor(realtimeRowCount)
 
-		histNDV := idx.NDV
-		if idx.StatsVer == statistics.Version2 {
-			histNDV = histNDV - int64(idx.TopN.Num())
-		}
 		isSingleColIdx := len(idx.Info.Columns) == 1
 		// handling the out-of-range part
 		if (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
