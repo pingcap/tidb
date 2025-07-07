@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -2875,7 +2876,7 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 		return base.InvalidTask
 	}
 
-	if tidbutil.IsMemDB(ds.DBName.L) {
+	if metadef.IsMemDB(ds.DBName.L) {
 		return base.InvalidTask
 	}
 
