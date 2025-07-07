@@ -1106,48 +1106,50 @@ func checkAliveStore(aliveStores *aliveStoresBundle, usedTiFlashStores [][]uint6
 			aliveStores.storesInAllZones = []*tikv.Store{}
 		}
 	})
-	if !skipCheck {
-		checkAliveStoreTarget := aliveStores.storeIDsInAllZones
-		if tiflashReplicaReadPolicy.IsClosestReplicas() {
-			checkAliveStoreTarget = aliveStores.storeIDsInTiDBZone
-		}
+	if skipCheck {
+		return
+	}
 
-		notAliveNum := len(usedTiFlashStores) - len(checkAliveStoreTarget)
-		if notAliveNum < 0 {
-			return true, errors.New(fmt.Sprintf("expect len(usedTiFlashStores)(%v) >= len(checkAliveStoreTarget)(%v)",
-				len(usedTiFlashStores), len(checkAliveStoreTarget)))
-		}
-		// Fast path: all regions will have at least one alive store.
-		if minReplicaNum > uint64(notAliveNum) {
-			return
-		}
+	checkAliveStoreTarget := aliveStores.storeIDsInAllZones
+	if tiflashReplicaReadPolicy.IsClosestReplicas() {
+		checkAliveStoreTarget = aliveStores.storeIDsInTiDBZone
+	}
 
-		var invalidRegions []tikv.RegionVerID
-		for i, allStoresPerRegion := range usedTiFlashStores {
-			var storeOk bool
-			if len(checkAliveStoreTarget) == 0 {
-				// Fast path: all stores are dead.
-				storeOk = false
-			} else {
-				for _, storeID := range allStoresPerRegion {
-					if _, ok := checkAliveStoreTarget[storeID]; ok {
-						storeOk = true
-						break
-					}
-				}
-			}
-			if !storeOk {
-				cache.InvalidateCachedRegion(tasks[i].region)
-				needRetry = true
-				// To avoid too many logs.
-				if log.GetLevel() <= zap.DebugLevel || len(invalidRegions) < 10 {
-					invalidRegions = append(invalidRegions, tasks[i].region)
+	notAliveNum := len(usedTiFlashStores) - len(checkAliveStoreTarget)
+	if notAliveNum < 0 {
+		return true, errors.New(fmt.Sprintf("expect len(usedTiFlashStores)(%v) >= len(checkAliveStoreTarget)(%v)",
+			len(usedTiFlashStores), len(checkAliveStoreTarget)))
+	}
+	// Fast path: all regions will have at least one alive store.
+	if minReplicaNum > uint64(notAliveNum) {
+		return
+	}
+
+	var invalidRegions []tikv.RegionVerID
+	for i, allStoresPerRegion := range usedTiFlashStores {
+		var storeOk bool
+		if len(checkAliveStoreTarget) == 0 {
+			// Fast path: all stores are dead.
+			storeOk = false
+		} else {
+			for _, storeID := range allStoresPerRegion {
+				if _, ok := checkAliveStoreTarget[storeID]; ok {
+					storeOk = true
+					break
 				}
 			}
 		}
-		if needRetry {
-			logutil.BgLogger().Info("need retry because region has no alive tiflash store", zap.Any("invalid regions", invalidRegions))
+		if !storeOk {
+			cache.InvalidateCachedRegion(tasks[i].region)
+			needRetry = true
+			// To avoid too many logs.
+			if log.GetLevel() <= zap.DebugLevel || len(invalidRegions) < 10 {
+				invalidRegions = append(invalidRegions, tasks[i].region)
+			}
 		}
+	}
+	if needRetry {
+		logutil.BgLogger().Info("need retry because region has no alive tiflash store", zap.Any("invalid regions", invalidRegions))
 	}
 	return
 }
