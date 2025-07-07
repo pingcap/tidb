@@ -1475,6 +1475,12 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		planCounter.Dec(1)
 		return
 	}
+	// check whether the DataSource can satisfy the property.
+	if !checkOpSelfSatisfyPropTaskTypeRequirement(ds, prop) {
+		// Currently all plan cannot totally push down to TiKV.
+		ds.StoreTask(prop, base.InvalidTask)
+		return base.InvalidTask, 0, nil
+	}
 	// if prop is require an index join's probe side, check the inner pattern admission here.
 	if prop.IndexJoinProp != nil {
 		pass := admitIndexJoinInnerChildPattern(lp)
@@ -3205,6 +3211,10 @@ func findBestTask4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalPropert
 	p := lp.(*logicalop.LogicalCTE)
 	if p.ChildLen() > 0 {
 		return p.BaseLogicalPlan.FindBestTask(prop, counter, pop)
+	}
+	if !checkOpSelfSatisfyPropTaskTypeRequirement(lp, prop) {
+		// Currently all plan cannot totally push down to TiKV.
+		return base.InvalidTask, 0, nil
 	}
 	if !prop.IsSortItemEmpty() && !prop.CanAddEnforcer {
 		return base.InvalidTask, 1, nil
