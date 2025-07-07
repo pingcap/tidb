@@ -1623,7 +1623,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 				return nil, errors.New("tiflash_compute node is unavailable")
 			}
 			logutil.BgLogger().Info("buildBatchCopTasksConsistentHashForPD retry because no alive tiflash", zap.Int("retryNum", retryNum))
-			cache.InvalidateTiFlashComputeStores(bo.GetCtx())
+			cache.InvalidateTiFlashComputeStores()
 			if err := bo.Backoff(tikv.BoTiFlashRPC(), errors.New("tiflash_compute node is unavailable")); err != nil {
 				return nil, errors.Trace(err)
 			}
