@@ -118,20 +118,12 @@ func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, t
 			if tp.EvalType() == types.ETString && tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
 				tp = types.NewFieldType(mysql.TypeBlob)
 			}
-<<<<<<< HEAD
-			lowerBound, err = d.ConvertTo(sc, tp)
-=======
-			lowerBound, err = convertBoundFromBlob(statistics.UTCWithAllowInvalidDateCtx, d, tp)
->>>>>>> 25dde1c45d1 (stats: use an alternative function to read the bound from `BLOB` stored in `mysql.stats_buckets`. (#59791))
+			lowerBound, err = convertBoundFromBlob(sctx.GetSessionVars().StmtCtx, d, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
-<<<<<<< HEAD
-			upperBound, err = d.ConvertTo(sc, tp)
-=======
-			upperBound, err = convertBoundFromBlob(statistics.UTCWithAllowInvalidDateCtx, d, tp)
->>>>>>> 25dde1c45d1 (stats: use an alternative function to read the bound from `BLOB` stored in `mysql.stats_buckets`. (#59791))
+			upperBound, err = convertBoundFromBlob(sctx.GetSessionVars().StmtCtx, d, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -699,7 +691,7 @@ func StatsMetaByTableIDFromStorage(sctx sessionctx.Context, tableID int64, snaps
 // convertBoundFromBlob reads the bound from blob. The `blob` is read from the `mysql.stats_buckets` table.
 // The `convertBoundFromBlob(convertBoundToBlob(a))` should be equal to `a`.
 // TODO: add a test to make sure that this assumption is correct.
-func convertBoundFromBlob(ctx types.Context, blob types.Datum, tp *types.FieldType) (types.Datum, error) {
+func convertBoundFromBlob(sc *stmtctx.StatementContext, blob types.Datum, tp *types.FieldType) (types.Datum, error) {
 	// For `BIT` type, when converting to `BLOB`, it's formated as an integer (when it's possible). Therefore, we should try to
 	// parse it as an integer first.
 	if tp.GetType() == mysql.TypeBit {
@@ -709,7 +701,7 @@ func convertBoundFromBlob(ctx types.Context, blob types.Datum, tp *types.FieldTy
 		// always be able to format the integer because the `BIT` length is limited to 64. Therefore, this err should never
 		// happen.
 		uintValue, err := strconv.ParseUint(string(blob.GetBytes()), 10, 64)
-		intest.AssertNoError(err)
+		intest.Assert(err == nil)
 		if err != nil {
 			// Fail to parse, return the original blob as BIT directly.
 			ret.SetBinaryLiteral(types.BinaryLiteral(blob.GetBytes()))
@@ -727,5 +719,5 @@ func convertBoundFromBlob(ctx types.Context, blob types.Datum, tp *types.FieldTy
 		ret.SetMysqlBit(types.NewBinaryLiteralFromUint(uintValue, byteSize))
 		return ret, errors.Trace(err)
 	}
-	return blob.ConvertTo(ctx, tp)
+	return blob.ConvertTo(sc, tp)
 }

@@ -1068,13 +1068,9 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	case KindMysqlBit:
 		// https://github.com/pingcap/tidb/issues/31124.
 		// Consider converting to uint first.
-<<<<<<< HEAD
 		val, err := d.GetBinaryLiteral().ToInt(sc)
-=======
-		val, err := d.GetBinaryLiteral().ToInt(ctx)
 		// The length of BIT is limited to 64, so this function will never fail / truncated.
-		intest.AssertNoError(err)
->>>>>>> 25dde1c45d1 (stats: use an alternative function to read the bound from `BLOB` stored in `mysql.stats_buckets`. (#59791))
+		intest.Assert(err == nil)
 		if err != nil {
 			s = d.GetBinaryLiteral().ToString()
 		} else {
