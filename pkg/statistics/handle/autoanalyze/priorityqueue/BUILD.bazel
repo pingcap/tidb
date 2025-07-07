@@ -20,6 +20,7 @@ go_library(
         "//pkg/ddl/notifier",
         "//pkg/infoschema",
         "//pkg/meta",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",

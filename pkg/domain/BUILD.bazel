@@ -53,6 +53,7 @@ go_library(
         "//pkg/lightning/common",
         "//pkg/meta",
         "//pkg/meta/autoid",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/owner",

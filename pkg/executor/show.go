@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -68,14 +69,12 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/format"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -457,14 +456,14 @@ func (e *ShowExec) fetchShowEngines(ctx context.Context) error {
 
 // moveInfoSchemaToFront moves information_schema to the first, and the others are sorted in the origin ascending order.
 func moveInfoSchemaToFront(dbs []string) {
-	if len(dbs) > 0 && strings.EqualFold(dbs[0], filter.InformationSchemaName) {
+	if len(dbs) > 0 && strings.EqualFold(dbs[0], metadef.InformationSchemaName.O) {
 		return
 	}
 
-	i := sort.SearchStrings(dbs, filter.InformationSchemaName)
-	if i < len(dbs) && strings.EqualFold(dbs[i], filter.InformationSchemaName) {
+	i := sort.SearchStrings(dbs, metadef.InformationSchemaName.O)
+	if i < len(dbs) && strings.EqualFold(dbs[i], metadef.InformationSchemaName.O) {
 		copy(dbs[1:i+1], dbs[0:i])
-		dbs[0] = filter.InformationSchemaName
+		dbs[0] = metadef.InformationSchemaName.O
 	}
 }
 
@@ -545,7 +544,7 @@ func (e *ShowExec) getTableType(tb *model.TableInfo) string {
 		return "VIEW"
 	case tb.IsSequence():
 		return "SEQUENCE"
-	case util.IsSystemView(e.DBName.L):
+	case metadef.IsMemDB(e.DBName.L):
 		return "SYSTEM VIEW"
 	default:
 		return "BASE TABLE"
