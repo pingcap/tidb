@@ -2236,3 +2236,7 @@ select * from t_str where s in ('a', 'a', 'a', 'b', 'a');
 select * from t_dec where d in (1.5, 1.5, 2.5, 1.5);
 select * from t where a in (1, NULL, NULL, NULL, 2);
 select * from t_date where dt in ('2023-01-01', '2023-01-01', '2023-01-02');
+
+# TestIssue59428
+SELECT sec_to_time(b'1111');
+SELECT sec_to_time(0x1E0);

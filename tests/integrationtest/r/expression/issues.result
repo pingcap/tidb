@@ -3308,3 +3308,9 @@ select * from t_date where dt in ('2023-01-01', '2023-01-01', '2023-01-02');
 dt
 2023-01-01
 2023-01-02
+SELECT sec_to_time(b'1111');
+sec_to_time(b'1111')
+00:00:15
+SELECT sec_to_time(0x1E0);
+sec_to_time(0x1E0)
+00:08:00
