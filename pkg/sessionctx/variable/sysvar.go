@@ -947,12 +947,7 @@ var defaultSysVars = []*SysVar{
 			}
 			return origin, nil
 		}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableTelemetry, Value: BoolToOnOff(vardef.DefTiDBEnableTelemetry), Type: vardef.TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return "OFF", nil
-	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("tidb_enable_telemetry is deprecated since Telemetry has been removed, this variable is 'OFF' always."))
-		return nil
-	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableTelemetry, Value: BoolToOnOff(vardef.DefTiDBEnableTelemetry), Type: vardef.TypeBool},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableHistoricalStats, Value: vardef.Off, Type: vardef.TypeBool, Depended: true},
 	/* tikv gc metrics */
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBGCEnable, Value: vardef.On, Type: vardef.TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
@@ -1697,13 +1692,13 @@ var defaultSysVars = []*SysVar{
 	{
 		Scope:                   vardef.ScopeGlobal,
 		Name:                    vardef.TiDBLoadBindingTimeout,
-		Value:                   "200",
+		Value:                   strconv.Itoa(vardef.DefTiDBLoadBindingTimeout),
 		Type:                    vardef.TypeUnsigned,
 		MinValue:                0,
 		MaxValue:                math.MaxInt32,
 		IsHintUpdatableVerified: false,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-			timeoutMS := tidbOptPositiveInt32(s, 0)
+			timeoutMS := tidbOptPositiveInt32(s, vardef.DefTiDBLoadBindingTimeout)
 			vars.LoadBindingTimeout = uint64(timeoutMS)
 			return nil
 		}},
@@ -2687,8 +2682,7 @@ var defaultSysVars = []*SysVar{
 			}
 			return vardef.On, nil
 		},
-		SetSession: func(vars *SessionVars, s string) error {
-			vars.EnableNewCostInterface = TiDBOptOn(s)
+		SetSession: func(*SessionVars, string) error {
 			return nil
 		},
 	},
@@ -3563,19 +3557,19 @@ var defaultSysVars = []*SysVar{
 			return (*SetPDClientDynamicOption.Load())(vardef.TiDBTSOClientRPCMode, val)
 		},
 	},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdPct, Value: strconv.FormatFloat(vardef.DefTiDBCircuitBreakerPDMetaErrorRatePct, 'f', -1, 64),
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio, Value: strconv.FormatFloat(vardef.DefTiDBCircuitBreakerPDMetaErrorRateRatio, 'f', -1, 64),
 		Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return strconv.FormatFloat(vardef.CircuitBreakerPDMetadataErrorRateThresholdPct.Load(), 'f', -1, 64), nil
+			return strconv.FormatFloat(vardef.CircuitBreakerPDMetadataErrorRateThresholdRatio.Load(), 'f', -1, 64), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			v := tidbOptFloat64(val, vardef.DefTiDBCircuitBreakerPDMetaErrorRatePct)
+			v := tidbOptFloat64(val, vardef.DefTiDBCircuitBreakerPDMetaErrorRateRatio)
 			if v < 0 || v > 1 {
-				return errors.Errorf("invalid tidb_cb_pd_metadata_error_rate_threshold_pct value %s", val)
+				return errors.Errorf("invalid tidb_cb_pd_metadata_error_rate_threshold_ratio value %s", val)
 			}
-			vardef.CircuitBreakerPDMetadataErrorRateThresholdPct.Store(v)
-			if ChangePDMetadataCircuitBreakerErrorRateThresholdPct != nil {
-				ChangePDMetadataCircuitBreakerErrorRateThresholdPct(uint32(v * 100))
+			vardef.CircuitBreakerPDMetadataErrorRateThresholdRatio.Store(v)
+			if ChangePDMetadataCircuitBreakerErrorRateThresholdRatio != nil {
+				ChangePDMetadataCircuitBreakerErrorRateThresholdRatio(uint32(v * 100))
 			}
 			return nil
 		},

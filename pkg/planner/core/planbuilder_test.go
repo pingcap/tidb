@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -213,8 +214,8 @@ func TestDeepClone(t *testing.T) {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	expr := &expression.Column{RetType: tp}
 	byItems := []*util.ByItems{{Expr: expr}}
-	sort1 := &PhysicalSort{ByItems: byItems}
-	sort2 := &PhysicalSort{ByItems: byItems}
+	sort1 := &physicalop.PhysicalSort{ByItems: byItems}
+	sort2 := &physicalop.PhysicalSort{ByItems: byItems}
 	checkDeepClone := func(p1, p2 base.PhysicalPlan) error {
 		whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context"}
 		return checkDeepClonedCore(reflect.ValueOf(p1), reflect.ValueOf(p2), typeName(reflect.TypeOf(p1)), nil, whiteList, nil)
@@ -351,13 +352,13 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(proj))
 
 	// limit
-	lim := &PhysicalLimit{Count: 1, Offset: 2}
+	lim := &physicalop.PhysicalLimit{Count: 1, Offset: 2}
 	lim = lim.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(lim))
 
 	// sort
 	byItems := []*util.ByItems{{Expr: col}, {Expr: cst}}
-	sort := &PhysicalSort{ByItems: byItems}
+	sort := &physicalop.PhysicalSort{ByItems: byItems}
 	sort = sort.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(sort))
 

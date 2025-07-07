@@ -357,28 +357,6 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 	return mdl, nil
 }
 
-type fileType int
-
-const (
-	fileTypeDatabaseSchema fileType = iota
-	fileTypeTableSchema
-	fileTypeTableData
-)
-
-// String implements the Stringer interface.
-func (ftype fileType) String() string {
-	switch ftype {
-	case fileTypeDatabaseSchema:
-		return "database schema"
-	case fileTypeTableSchema:
-		return "table schema"
-	case fileTypeTableData:
-		return "table data"
-	default:
-		return "(unknown)"
-	}
-}
-
 // FileInfo contains the information for a data file in a table.
 type FileInfo struct {
 	TableName filter.Table

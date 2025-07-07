@@ -180,6 +180,11 @@ func rebuildChildTasks(p *logicalop.BaseLogicalPlan, childTasks *[]base.Task, pp
 	return nil
 }
 
+type enumerateState struct {
+	topNCopExist  bool
+	limitCopExist bool
+}
+
 // @first: indicates the best task returned.
 // @second: indicates the plan cnt in this subtree.
 // @third: indicates whether this plan apply the hint.
@@ -210,6 +215,10 @@ func enumeratePhysicalPlans4Task(
 			fd = logicalPlan.ExtractFD()
 		}
 	}
+	if len(physicalPlans) == 0 {
+		return base.InvalidTask, 0, false, nil
+	}
+	initState := &enumerateState{}
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()
@@ -245,15 +254,10 @@ func enumeratePhysicalPlans4Task(
 			curTask = curTask.ConvertToRootTask(p.SCtx())
 		}
 
-		// Get the most preferred and efficient one by hint and low-cost priority.
-		// since hint applicable plan may greater than 1, like inl_join can suit for:
-		// index_join, index_hash_join, index_merge_join, we should chase the most efficient
-		// one among them.
-		//
 		// we need to check the hint is applicable before enforcing the property. otherwise
 		// what we get is Sort ot Exchanger kind of operators.
 		// todo: extend applyLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
-		hintApplicable := applyLogicalJoinHint(p.Self(), curTask.Plan())
+		hintApplicable := applyLogicalHintVarEigen(p.Self(), initState, pp, childTasks)
 
 		// Enforce curTask property
 		if addEnforcer {
@@ -297,11 +301,38 @@ func enumeratePhysicalPlans4Task(
 	}
 	// if there is no valid preferred low-cost physical one, return the normal low one.
 	// if the hint is specified without any valid plan, we should also record the warnings.
-	if warn := recordIndexJoinHintWarnings(p.Self(), prop, addEnforcer); warn != nil {
-		bestTask.AppendWarning(warn)
+	if !bestTask.Invalid() {
+		if warn := recordWarnings(p.Self(), prop, addEnforcer); warn != nil {
+			bestTask.AppendWarning(warn)
+		}
 	}
 	// return the normal lowest-cost physical one.
 	return bestTask, cntPlan, false, nil
+}
+
+// TODO: remove the taskTypeSatisfied function, it is only used to check the task type in the root, cop, mpp task.
+func taskTypeSatisfied(propRequired *property.PhysicalProperty, childTask base.Task) bool {
+	// check the root, cop, mpp task type matched the required property.
+	if childTask == nil || propRequired == nil {
+		// index join v1 may occur that propRequired is nil, and return task is nil too. Return true
+		// to make sure let it walk through the following logic.
+		return true
+	}
+	_, isRoot := childTask.(*RootTask)
+	_, isCop := childTask.(*CopTask)
+	_, isMpp := childTask.(*MppTask)
+	switch propRequired.TaskTp {
+	case property.RootTaskType:
+		// If the required property is root task type, root, cop, and mpp task are all satisfied.
+		return isRoot || isCop || isMpp
+	case property.CopSingleReadTaskType, property.CopMultiReadTaskType:
+		return isCop
+	case property.MppTaskType:
+		return isMpp
+	default:
+		// shouldn't be here
+		return false
+	}
 }
 
 // iteratePhysicalPlan4BaseLogical is used to iterate the physical plan and get all child tasks.
@@ -323,6 +354,10 @@ func iteratePhysicalPlan4BaseLogical(
 		childCnts[j] = cnt
 		if err != nil {
 			return nil, 0, childCnts, err
+		}
+		if !taskTypeSatisfied(childProp, childTask) {
+			// If the task type is not satisfied, we should skip this plan.
+			return nil, 0, childCnts, nil
 		}
 		curCntPlan = curCntPlan * cnt
 		if childTask != nil && childTask.Invalid() {
@@ -417,7 +452,6 @@ func compareTaskCost(curTask, bestTask base.Task, op *optimizetrace.PhysicalOpti
 }
 
 // getTaskPlanCost returns the cost of this task.
-// The new cost interface will be used if EnableNewCostInterface is true.
 // The second returned value indicates whether this task is valid.
 func getTaskPlanCost(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float64, bool, error) {
 	if t.Invalid() {
@@ -572,6 +606,11 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 			// even enforce hint can not work with this.
 			return base.InvalidTask, 0, nil
 		}
+	}
+	if !checkOpSelfSatisfyPropTaskTypeRequirement(p.Self(), prop) {
+		// Currently all plan cannot totally push down to TiKV.
+		p.StoreTask(prop, base.InvalidTask)
+		return base.InvalidTask, 0, nil
 	}
 
 	canAddEnforcer := prop.CanAddEnforcer
@@ -1296,7 +1335,6 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		fixcontrol.Fix52869,
 		false,
 	)
-	ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix52869)
 	if preferRange {
 		// Override preferRange with the following limitations to scope
 		preferRange = preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
@@ -1305,8 +1343,11 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		// If a candidate path is TiFlash-path or forced-path or MV index or global index, we just keep them. For other
 		// candidate paths, if there exists any range scan path, we remove full scan paths and keep range scan paths.
 		preferredPaths := make([]*candidatePath, 0, len(candidates))
-		var hasRangeScanPath bool
+		var hasRangeScanPath, hasMultiRange bool
 		for _, c := range candidates {
+			if len(c.path.Ranges) > 1 {
+				hasMultiRange = true
+			}
 			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && (c.path.Index.Global || c.path.Index.MVIndex)) {
 				preferredPaths = append(preferredPaths, c)
 				continue
@@ -1319,6 +1360,10 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 					hasRangeScanPath = true
 				}
 			}
+		}
+		if hasMultiRange {
+			// Only log the fix control if we had multiple ranges
+			ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix52869)
 		}
 		if hasRangeScanPath {
 			return preferredPaths

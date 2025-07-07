@@ -604,12 +604,6 @@ var referConstCols = []columnInfo{
 	{name: "REFERENCED_TABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/information-schema-variables-table.html
-var sessionVarCols = []columnInfo{
-	{name: "VARIABLE_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "VARIABLE_VALUE", tp: mysql.TypeVarchar, size: 1024},
-}
-
 // See https://dev.mysql.com/doc/refman/5.7/en/information-schema-plugins-table.html
 var pluginsCols = []columnInfo{
 	{name: "PLUGIN_NAME", tp: mysql.TypeVarchar, size: 64},
@@ -1403,6 +1397,8 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.PlanDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "Digest of its execution plan"},
 	{name: stmtsummary.PlanStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled execution plan"},
 	{name: stmtsummary.BinaryPlan, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled binary plan"},
+	{name: stmtsummary.BindingDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "Digest of normalized statement for bindings"},
+	{name: stmtsummary.BindingDigestTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag, comment: "Normalized statement for bindings"},
 	{name: stmtsummary.Charset, tp: mysql.TypeVarchar, size: 64, comment: "Sampled charset"},
 	{name: stmtsummary.Collation, tp: mysql.TypeVarchar, size: 64, comment: "Sampled collation"},
 	{name: stmtsummary.PlanHint, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled plan hint"},
@@ -1487,6 +1483,8 @@ var tableTiDBStatementsStatsCols = []columnInfo{
 	{name: stmtsummary.PlanDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "Digest of its execution plan"},
 	{name: stmtsummary.PlanStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled execution plan"},
 	{name: stmtsummary.BinaryPlan, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled binary plan"},
+	{name: stmtsummary.BindingDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "Digest of normalized statement for bindings"},
+	{name: stmtsummary.BindingDigestTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag, comment: "Normalized statement for bindings"},
 	{name: stmtsummary.Charset, tp: mysql.TypeVarchar, size: 64, comment: "Sampled charset"},
 	{name: stmtsummary.Collation, tp: mysql.TypeVarchar, size: 64, comment: "Sampled collation"},
 	{name: stmtsummary.PlanHint, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled plan hint"},

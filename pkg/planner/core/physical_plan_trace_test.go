@@ -48,17 +48,17 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		{
 			sql: "select * from t",
 			physicalList: []string{
-				"TableFullScan_4", "TableReader_5", "Projection_3",
+				"TableFullScan_5", "TableReader_6", "Projection_3",
 			},
 		},
 		{
 			sql: "select max(b) from t",
 			physicalList: []string{
-				"IndexFullScan_19",
+				"IndexFullScan_28",
+				"Limit_29",
+				"IndexReader_30",
 				"Limit_20",
-				"IndexReader_21",
-				"Limit_14",
-				"StreamAgg_10",
+				"StreamAgg_15",
 				"Projection_8",
 			},
 		},
@@ -78,6 +78,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 		plan, err := builder.Build(context.TODO(), nodeW)
 		require.NoError(t, err)
+		plan.SCtx().GetSessionVars().StmtCtx.OriginalSQL = testcase.sql
 		_, _, err = core.DoOptimize(context.TODO(), sctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
 		require.NoError(t, err)
 		otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
@@ -145,31 +146,31 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
 	require.NotNil(t, otrace)
 	elements := map[int]string{
-		19: "TableReader",
-		12: "HashJoin",
-		13: "HashJoin",
-		21: "TableReader",
-		16: "HashAgg",
-		22: "TableFullScan",
-		9:  "Sort",
-		17: "TableFullScan",
-		20: "TableFullScan",
-		18: "HashAgg",
+		26: "TableFullScan",
+		30: "TableReader",
+		29: "TableFullScan",
+		22: "HashAgg",
+		32: "TableReader",
+		17: "HashJoin",
 		14: "HashAgg",
-		23: "TableReader",
-		11: "HashAgg",
+		10: "Sort",
+		27: "HashAgg",
+		28: "TableReader",
+		20: "HashAgg",
+		31: "TableFullScan",
+		16: "HashJoin",
 		8:  "Projection",
 	}
 	final := map[int]struct{}{
+		26: {},
+		20: {},
+		28: {},
+		27: {},
+		31: {},
+		32: {},
 		17: {},
 		14: {},
-		19: {},
-		18: {},
-		22: {},
-		23: {},
-		13: {},
-		11: {},
-		9:  {},
+		10: {},
 		8:  {},
 	}
 	for _, c := range otrace.Candidates {
