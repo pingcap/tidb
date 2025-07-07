@@ -126,6 +126,7 @@ go_test(
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
+        "//pkg/util",
         "//pkg/util/mock",
         "@com_github_docker_go_units//:go-units",
         "@com_github_fsouza_fake_gcs_server//fakestorage",

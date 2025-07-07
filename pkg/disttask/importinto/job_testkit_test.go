@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/atomic"
@@ -51,7 +52,6 @@ func switchTaskStep(
 }
 
 func TestSubmitTaskNextgen(t *testing.T) {
-	t.Skip("to run this test, we need DXF service ready")
 	if kerneltype.IsClassic() {
 		t.Skip("This test is only for nextgen")
 	}
@@ -77,28 +77,34 @@ func TestSubmitTaskNextgen(t *testing.T) {
 
 	ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 
-	manuallyInitFn := func(t *testing.T, store kv.Storage) {
+	manuallyInitFn := func(t *testing.T, currKSStore, sysKSStore kv.Storage) {
 		t.Helper()
 		// as we have disabled the dist task in domain, we need init the task manager
 		// and framework meta manually.
-		pool := pools.NewResourcePool(func() (pools.Resource, error) {
-			return testkit.NewTestKit(t, store).Session(), nil
-		}, 1, 1, time.Second)
-		t.Cleanup(func() {
-			pool.Close()
-		})
-		taskMgr := storage.NewTaskManager(pool)
+		getPoolFn := func(store kv.Storage) tidbutil.SessionPool {
+			pool := pools.NewResourcePool(func() (pools.Resource, error) {
+				return testkit.NewTestKit(t, store).Session(), nil
+			}, 1, 1, time.Second)
+			t.Cleanup(func() {
+				pool.Close()
+			})
+			return pool
+		}
+		taskMgr := storage.NewTaskManager(getPoolFn(currKSStore))
 		storage.SetTaskManager(taskMgr)
-		require.NoError(t, taskMgr.InitMeta(ctx, "tidb", "dxf_service"))
+		sysKSTaskMgr := taskMgr
+		if keyspace.IsRunningOnUser() {
+			sysKSTaskMgr = storage.NewTaskManager(getPoolFn(sysKSStore))
+			storage.SetDXFSvcTaskMgr(sysKSTaskMgr)
+		}
+		require.NoError(t, sysKSTaskMgr.InitMeta(ctx, "tidb", "dxf_service"))
 	}
-	// the second test requires the node initialized in dist_framework_meta.
-	manuallyInitFn(t, sysKSStore)
 
 	t.Run("submit task in system keyspace", func(t *testing.T) {
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.KeyspaceName = keyspace.System
 		})
-		manuallyInitFn(t, sysKSStore)
+		manuallyInitFn(t, sysKSStore, sysKSStore)
 		jobID, task, err := importinto.SubmitTask(ctx, &importer.Plan{
 			TableInfo:  &model.TableInfo{},
 			Parameters: &importer.ImportParameters{},
@@ -118,7 +124,7 @@ func TestSubmitTaskNextgen(t *testing.T) {
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.KeyspaceName = "ks"
 		})
-		manuallyInitFn(t, userKSStore)
+		manuallyInitFn(t, userKSStore, sysKSStore)
 		jobID, task, err := importinto.SubmitTask(ctx, &importer.Plan{
 			TableInfo:  &model.TableInfo{},
 			Parameters: &importer.ImportParameters{},
