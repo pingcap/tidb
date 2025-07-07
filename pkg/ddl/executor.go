@@ -5776,11 +5776,8 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{
-				Database:      schema.Name.O,
-				Table:         table.Meta().Name.O,
-				Policy:        "",
-				ResourceGroup: "",
-				Mode:          0,
+				Database: schema.Name.O,
+				Table:    table.Meta().Name.O,
 			},
 		},
 	}
@@ -7092,11 +7089,8 @@ func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaA
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{
-				Database:      "",
-				Table:         "",
-				Policy:        "",
-				ResourceGroup: "",
-				Mode:          0,
+				Database: "",
+				Table:    "",
 			},
 		},
 	}
