@@ -169,7 +169,7 @@ func buildHist(
 	// In extreme cases, it could be that this value only appears once, and that one row happens to be sampled.
 	// Therefore, if the sample count of this value is only once, we use a more conservative ndvFactor.
 	// However, if the calculated ndvFactor is larger than the sampleFactor, we still use the sampleFactor.
-	hg.AppendBucket(&samples[0].Value, &samples[0].Value, int64(sampleFactor), int64(ndvFactor))
+	hg.AppendBucket(&samples[0].OriginalValue, &samples[0].OriginalValue, int64(sampleFactor), int64(ndvFactor))
 	bufferedMemSize := int64(0)
 	bufferedReleaseSize := int64(0)
 	defer func() {
@@ -179,11 +179,10 @@ func buildHist(
 		}
 	}()
 
-	var upper = new(types.Datum)
+	upper := &samples[0].Value
 	// Note: Start from 1 because we have already processed the first sample.
 	for i := int64(1); i < sampleNum; i++ {
 		corrXYSum += float64(i) * float64(samples[i].Ordinal)
-		hg.UpperToDatum(bucketIdx, upper)
 		if memTracker != nil {
 			// tmp memory usage
 			deltaSize := upper.MemUsage()
@@ -215,13 +214,15 @@ func buildHist(
 			}
 		} else if totalCount-float64(lastCount) <= valuesPerBucket {
 			// The bucket still has room to store a new item, update the bucket.
-			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
+			upper = &samples[i].Value
+			hg.updateLastBucket(&samples[i].OriginalValue, int64(totalCount), int64(ndvFactor), false)
 		} else {
 			lastCount = hg.Buckets[bucketIdx].Count
 			// The bucket is full, store the item in the next bucket.
 			bucketIdx++
+			upper = &samples[i].Value
 			// Refer to the comments for the first bucket for the reason why we use ndvFactor here.
-			hg.AppendBucket(&samples[i].Value, &samples[i].Value, int64(totalCount), int64(ndvFactor))
+			hg.AppendBucket(&samples[i].OriginalValue, &samples[i].OriginalValue, int64(totalCount), int64(ndvFactor))
 		}
 	}
 	return corrXYSum, nil

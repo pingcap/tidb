@@ -40,6 +40,8 @@ import (
 type SampleItem struct {
 	// Value is the sampled column value.
 	Value types.Datum
+	// OriginalValue is the original column value
+	OriginalValue types.Datum
 	// Handle is the handle of the sample in its key.
 	// This property is used to calculate Ordinal in fast analyze.
 	Handle kv.Handle
