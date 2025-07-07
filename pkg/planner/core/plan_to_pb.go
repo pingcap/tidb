@@ -505,7 +505,7 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, store kv.StoreType) (*t
 			Unique:           &unique,
 			PrimaryColumnIds: pkColIDs,
 			FtsQueryInfo: &tipb.FTSQueryInfo{
-				QueryType:   tipb.FTSQueryType_FTSQueryTypeFilter,
+				QueryType:   tipb.FTSQueryType_FTSQueryTypeNoScore,
 				IndexId:     p.Index.ID,
 				Columns:     util.ColumnsToProto(queryColumns, p.Table.PKIsHandle, true, false),
 				ColumnNames: nil,
