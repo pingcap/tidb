@@ -4229,7 +4229,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 
 	dagPB := ret.dagPB
 	user := b.ctx.GetSessionVars().User
-	if (b.ctx.GetSessionVars().SessionAlias == "test" || (user != nil && user.Username == "test")) && is.Table.GetPartitionInfo() == nil {
+	if (b.ctx.GetSessionVars().SessionAlias == "test" || (user != nil && user.Username == "test")) && (!is.KeepOrder || is.Table.GetPartitionInfo() == nil) {
 		var handleLen, extraColCnt int
 		if v.IndexPlans[0].(*plannercore.PhysicalIndexScan).NeedExtraOutputCol() {
 			extraColCnt = 1
