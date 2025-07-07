@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -37,7 +37,7 @@ func TestLogicalSchemaClone(t *testing.T) {
 	schema.Columns = make([]*expression.Column, 0, 10)
 	sp.SetSchema(schema)
 	sp.Schema().Append(col1)
-	name := &types.FieldName{ColName: ast.NewCIStr("a")}
+	name := &types.FieldName{ColName: model.NewCIStr("a")}
 	names := types.NameSlice{name}
 	sp.SetOutputNames(names)
 	sp.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, "test", nil, 0)
@@ -76,7 +76,7 @@ func TestLogicalApplyClone(t *testing.T) {
 		ID: 1,
 	}
 	sp.SetSchema(expression.NewSchema(col1))
-	name := &types.FieldName{ColName: ast.NewCIStr("a")}
+	name := &types.FieldName{ColName: model.NewCIStr("a")}
 	names := types.NameSlice{name}
 	sp.SetOutputNames(names)
 	sp.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, "test", nil, 0)
@@ -90,11 +90,11 @@ func TestLogicalApplyClone(t *testing.T) {
 		},
 	}
 	apply.EqualConditions = make([]*expression.ScalarFunction, 0, 17)
-	apply.EqualConditions = append(apply.EqualConditions, &expression.ScalarFunction{FuncName: ast.NewCIStr("f1")})
-	apply.EqualConditions = append(apply.EqualConditions, &expression.ScalarFunction{FuncName: ast.NewCIStr("f2")})
+	apply.EqualConditions = append(apply.EqualConditions, &expression.ScalarFunction{FuncName: model.NewCIStr("f1")})
+	apply.EqualConditions = append(apply.EqualConditions, &expression.ScalarFunction{FuncName: model.NewCIStr("f2")})
 	clonedApply := *apply
 	// require.True(t, &apply.EqualConditions == &clonedApply.EqualConditions)
-	clonedApply.EqualConditions = append(clonedApply.EqualConditions, &expression.ScalarFunction{FuncName: ast.NewCIStr("f3")})
+	clonedApply.EqualConditions = append(clonedApply.EqualConditions, &expression.ScalarFunction{FuncName: model.NewCIStr("f3")})
 	require.True(t, len(apply.LogicalJoin.EqualConditions) == 2)
 	require.True(t, len(clonedApply.LogicalJoin.EqualConditions) == 3)
 
@@ -113,19 +113,19 @@ func TestLogicalProjectionPushDownTopN(t *testing.T) {
 col16 json DEFAULT NULL,
 col17 json DEFAULT NULL
 );`)
-	sql := `explain format='brief' SELECT 
+	sql := `explain format='brief' SELECT
        s.column16 AS column16,
        s.column17 AS column17
 FROM
-  (SELECT 
+  (SELECT
           col16 -> '$[].optUid' AS column16,
           JSON_UNQUOTE(JSON_EXTRACT(col17, '$[0].value')) AS column17
    FROM
-     (SELECT 
+     (SELECT
              col16,
              col17
       FROM table_test) ta24e
-   ) AS s 
+   ) AS s
 ORDER BY CONVERT(column16 USING GBK) ASC,column17 ASC
 LIMIT 0,
       20;`

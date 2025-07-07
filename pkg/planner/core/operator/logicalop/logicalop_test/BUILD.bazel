@@ -6,19 +6,17 @@ go_test(
     srcs = [
         "hash64_equals_test.go",
         "logical_mem_table_predicate_extractor_test.go",
+        "logical_operator_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 16,
-=======
-    shard_count = 37,
->>>>>>> 15c9cb797a6 (planner: fix wrong TopN's ByItem with expression.ScalarFunction when to PushDownTopN (#60822))
+    shard_count = 19,
     deps = [
         "//pkg/domain",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/parser",
         "//pkg/parser/ast",
+        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/planner",
         "//pkg/planner/cascades/base",
