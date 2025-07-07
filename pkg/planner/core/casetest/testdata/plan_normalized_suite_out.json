@@ -322,7 +322,7 @@
         ]
       },
       {
-        "Digest": "c3b0c0b4844f65d08430c45f539cca8c7cc11aca1b491e62e2ba3eda6822f9d6",
+        "Digest": "5fc0a796273b90410acda281d59ff137547ace7422739f9b1dbf90ded8cb836c",
         "Plan": [
           " TableReader           root         ",
           " └─ExchangeSender      cop[tiflash] ",

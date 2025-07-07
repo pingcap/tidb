@@ -374,6 +374,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	if err != nil {
 		return nil, err
 	}
+
 	logger.Info("generate subtasks", zap.Int("subtask-count", len(metaBytes)))
 	return metaBytes, nil
 }
@@ -506,48 +507,16 @@ func getStepOfEncode(globalSort bool) proto.Step {
 // we will update taskMeta in place and make task.Meta point to the new taskMeta.
 func updateResult(handle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta, globalSort bool) error {
 	stepOfEncode := getStepOfEncode(globalSort)
-	metas, err := handle.GetPreviousSubtaskMetas(task.ID, stepOfEncode)
+	summaries, err := handle.GetPreviousSubtaskSummary(task.ID, stepOfEncode)
 	if err != nil {
 		return err
 	}
 
-	subtaskMetas := make([]*ImportStepMeta, 0, len(metas))
-	for _, bs := range metas {
-		var subtaskMeta ImportStepMeta
-		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
-			return errors.Trace(err)
-		}
-		subtaskMetas = append(subtaskMetas, &subtaskMeta)
-	}
-	for _, subtaskMeta := range subtaskMetas {
-		taskMeta.Result.LoadedRowCnt += subtaskMeta.Result.LoadedRowCnt
-	}
-
-	if globalSort {
-		taskMeta.Result.LoadedRowCnt, err = getLoadedRowCountOnGlobalSort(handle, task)
-		if err != nil {
-			return err
-		}
+	for _, summary := range summaries {
+		taskMeta.Result.LoadedRowCnt += uint64(summary.RowCnt.Load())
 	}
 
 	return updateMeta(task, taskMeta)
-}
-
-func getLoadedRowCountOnGlobalSort(handle storage.TaskHandle, task *proto.Task) (uint64, error) {
-	metas, err := handle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepWriteAndIngest)
-	if err != nil {
-		return 0, err
-	}
-
-	var loadedRowCount uint64
-	for _, bs := range metas {
-		var subtaskMeta WriteIngestStepMeta
-		if err = json.Unmarshal(bs, &subtaskMeta); err != nil {
-			return 0, errors.Trace(err)
-		}
-		loadedRowCount += subtaskMeta.Result.LoadedRowCnt
-	}
-	return loadedRowCount, nil
 }
 
 func (sch *importScheduler) startJob(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, jobStep string) error {
@@ -606,9 +575,7 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
-				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, &importer.JobImportResult{
-					Affected: taskMeta.Result.LoadedRowCnt,
-				}); err != nil {
+				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, int64(taskMeta.Result.LoadedRowCnt)); err != nil {
 					logger.Warn("flush table stats failed", zap.Error(err))
 				}
 				exec := se.GetSQLExecutor()

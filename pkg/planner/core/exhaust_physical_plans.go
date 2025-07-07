@@ -2212,10 +2212,24 @@ func handleFilterIndexJoinHints(p *logicalop.LogicalJoin, candidates []base.Phys
 }
 
 func recordWarnings(lp base.LogicalPlan, prop *property.PhysicalProperty, inEnforce bool) error {
-	if err := recordIndexJoinHintWarnings(lp, prop, inEnforce); err != nil {
-		return err
+	switch x := lp.(type) {
+	case *logicalop.LogicalAggregation:
+		return recordAggregationHintWarnings(x)
+	case *logicalop.LogicalTopN, *logicalop.LogicalLimit:
+		return recordLimitToCopWarnings(lp)
+	case *logicalop.LogicalJoin:
+		return recordIndexJoinHintWarnings(x, prop, inEnforce)
+	default:
+		// no warnings to record
+		return nil
 	}
-	return recordLimitToCopWarnings(lp)
+}
+
+func recordAggregationHintWarnings(la *logicalop.LogicalAggregation) error {
+	if la.PreferAggToCop {
+		return plannererrors.ErrInternal.FastGen("Optimizer Hint AGG_TO_COP is inapplicable")
+	}
+	return nil
 }
 
 func recordLimitToCopWarnings(lp base.LogicalPlan) error {
@@ -2236,11 +2250,18 @@ func recordLimitToCopWarnings(lp base.LogicalPlan) error {
 
 // recordIndexJoinHintWarnings records the warnings msg if no valid preferred physic are picked.
 // todo: extend recordIndexJoinHintWarnings to support all kind of operator's warnings handling.
-func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalProperty, inEnforce bool) error {
-	p, ok := lp.(*logicalop.LogicalJoin)
-	if !ok {
-		return nil
+func recordIndexJoinHintWarnings(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, inEnforce bool) error {
+	// handle mpp join hints first.
+	if (p.PreferJoinType&h.PreferShuffleJoin) > 0 || (p.PreferJoinType&h.PreferBCJoin) > 0 {
+		var errMsg string
+		if (p.PreferJoinType & h.PreferShuffleJoin) > 0 {
+			errMsg = "The join can not push down to the MPP side, the shuffle_join() hint is invalid"
+		} else {
+			errMsg = "The join can not push down to the MPP side, the broadcast_join() hint is invalid"
+		}
+		return plannererrors.ErrInternal.FastGen(errMsg)
 	}
+	// handle index join hints.
 	if !p.PreferAny(h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
 		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner) {
 		return nil // no force index join hints
@@ -2281,9 +2302,10 @@ func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalPro
 	return nil
 }
 
-func applyLogicalHintVarEigen(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, task base.Task, childTasks []base.Task) (preferred bool) {
-	return applyLogicalJoinHint(lp, task.Plan()) ||
-		applyLogicalTopNAndLimitHint(lp, state, pp, childTasks)
+func applyLogicalHintVarEigen(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
+	return applyLogicalJoinHint(lp, pp) ||
+		applyLogicalTopNAndLimitHint(lp, state, pp, childTasks) ||
+		applyLogicalAggregationHint(lp, pp, childTasks)
 }
 
 // Get the most preferred and efficient one by hint and low-cost priority.
@@ -2296,7 +2318,46 @@ func applyLogicalHintVarEigen(lp base.LogicalPlan, state *enumerateState, pp bas
 // we cache the most preferred one among this valid and preferred physic plans. If there is no preferred physic applicable
 // for the logic hint, we will return false and the optimizer will continue to return the normal low-cost one.
 func applyLogicalJoinHint(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
-	return preferMergeJoin(lp, physicPlan) || preferIndexJoinFamily(lp, physicPlan) || preferHashJoin(lp, physicPlan)
+	return preferMergeJoin(lp, physicPlan) || preferIndexJoinFamily(lp, physicPlan) ||
+		preferHashJoin(lp, physicPlan)
+}
+
+func applyLogicalAggregationHint(lp base.LogicalPlan, physicPlan base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
+	la, ok := lp.(*logicalop.LogicalAggregation)
+	if !ok {
+		return false
+	}
+	if physicPlan == nil {
+		return false
+	}
+	if la.HasDistinct() {
+		// TODO: remove after the cost estimation of distinct pushdown is implemented.
+		if la.SCtx().GetSessionVars().AllowDistinctAggPushDown {
+			// when AllowDistinctAggPushDown is true, we will not consider root task type as before.
+			if _, ok := childTasks[0].(*CopTask); ok {
+				return true
+			}
+		} else {
+			switch childTasks[0].(type) {
+			case *RootTask:
+				// If the distinct agg can't be allowed to push down, we will consider root task type.
+				// which is try to get the same behavior as before like types := {RootTask} only.
+				return true
+			case *MppTask:
+				// If the distinct agg can't be allowed to push down, we will consider mpp task type too --- RootTask vs MPPTask
+				// which is try to get the same behavior as before like types := {RootTask} and appended {MPPTask}.
+				return true
+			default:
+				return false
+			}
+		}
+	} else if la.PreferAggToCop {
+		// If the aggregation is preferred to be pushed down to coprocessor, we will prefer it.
+		if _, ok := childTasks[0].(*CopTask); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
@@ -2369,6 +2430,16 @@ func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp
 	return false
 }
 
+// hash join has two types:
+// one is hash join type: normal hash join, shuffle join, broadcast join
+// another is the build side hint type: prefer left as build side, prefer right as build side
+// the first one is used to control the join type, the second one is used to control the build side of hash join.
+// the priority is:
+// once the join type is set, we should respect them first, not this type are all ignored.
+// after we see all the joins under this type, then we only consider the build side hints satisfied or not.
+//
+// for the priority among the hash join types, we will respect the join fine-grained hints first, then the normal hash join type,
+// that is, the priority is: shuffle join / broadcast join > normal hash join.
 func preferHashJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
 	p, ok := lp.(*logicalop.LogicalJoin)
 	if !ok {
@@ -2388,8 +2459,39 @@ func preferHashJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferre
 	if !ok {
 		return false
 	}
-	preferHashJoin := p.PreferJoinType&h.PreferHashJoin > 0 || (forceRightToBuild && physicalHashJoin.InnerChildIdx == 1) || (forceLeftToBuild && physicalHashJoin.InnerChildIdx == 0)
-	return preferHashJoin
+	// If the hint is set, we should prefer MPP shuffle join.
+	preferShuffle := (p.PreferJoinType & h.PreferShuffleJoin) > 0
+	preferBCJ := (p.PreferJoinType & h.PreferBCJoin) > 0
+	if preferShuffle {
+		if physicalHashJoin.storeTp == kv.TiFlash && physicalHashJoin.mppShuffleJoin {
+			// first: respect the shuffle join hint.
+			// BCJ build side hint are handled in the enumeration phase.
+			return true
+		}
+		return false
+	}
+	if preferBCJ {
+		if physicalHashJoin.storeTp == kv.TiFlash && !physicalHashJoin.mppShuffleJoin {
+			// first: respect the broadcast join hint.
+			// BCJ build side hint are handled in the enumeration phase.
+			return true
+		}
+		return false
+	}
+	// Respect the join type and join side hints.
+	if p.PreferJoinType&h.PreferHashJoin > 0 {
+		// first: normal hash join hint are set.
+		if forceLeftToBuild || forceRightToBuild {
+			// second: respect the join side if join side hints are set.
+			return (forceRightToBuild && physicalHashJoin.InnerChildIdx == 1) ||
+				(forceLeftToBuild && physicalHashJoin.InnerChildIdx == 0)
+		}
+		// second: no join side hints are set, respect the join type is enough.
+		return true
+	}
+	// no hash join type hint is set, we only need to respect the hash join side hints.
+	return (forceRightToBuild && physicalHashJoin.InnerChildIdx == 1) ||
+		(forceLeftToBuild && physicalHashJoin.InnerChildIdx == 0)
 }
 
 func preferMergeJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferred bool) {
@@ -2864,24 +2966,21 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 		return nil, false, nil
 	}
 	joins := make([]base.PhysicalPlan, 0, 8)
-	canPushToTiFlash := p.CanPushToCop(kv.TiFlash)
-	if p.SCtx().GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
-		if (p.PreferJoinType & h.PreferShuffleJoin) > 0 {
-			if shuffleJoins := tryToGetMppHashJoin(p, prop, false); len(shuffleJoins) > 0 {
-				return shuffleJoins, true, nil
-			}
-		}
-		if (p.PreferJoinType & h.PreferBCJoin) > 0 {
-			if bcastJoins := tryToGetMppHashJoin(p, prop, true); len(bcastJoins) > 0 {
-				return bcastJoins, true, nil
-			}
-		}
-		if preferMppBCJ(p) {
-			mppJoins := tryToGetMppHashJoin(p, prop, true)
-			joins = append(joins, mppJoins...)
+	// we lift the p.canPushToTiFlash check here, because we want to generate all the plans to be decided by the attachment layer.
+	if p.SCtx().GetSessionVars().IsMPPAllowed() {
+		// prefer hint should be handled in the attachment layer. because the enumerated mpp join may couldn't be built bottom-up.
+		if hasMPPJoinHints(p.PreferJoinType) {
+			// generate them all for later attachment prefer picking. cause underlying ds may not have tiFlash path.
+			// even all mpp join is invalid, they can still resort to root joins as an alternative.
+			joins = append(joins, tryToGetMppHashJoin(p, prop, true)...)
+			joins = append(joins, tryToGetMppHashJoin(p, prop, false)...)
 		} else {
-			mppJoins := tryToGetMppHashJoin(p, prop, false)
-			joins = append(joins, mppJoins...)
+			// join don't have a mpp join hints, only generate preferMppBCJ mpp joins.
+			if preferMppBCJ(p) {
+				joins = append(joins, tryToGetMppHashJoin(p, prop, true)...)
+			} else {
+				joins = append(joins, tryToGetMppHashJoin(p, prop, false)...)
+			}
 		}
 	} else {
 		hasMppHints := false
@@ -3016,13 +3115,15 @@ func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.
 	// generate a mpp task candidate if mpp mode is allowed
 	ctx := p.SCtx()
 	pushDownCtx := util.GetPushDownCtx(ctx)
-	if newProp.TaskTp != property.MppTaskType && ctx.GetSessionVars().IsMPPAllowed() && p.CanPushToCop(kv.TiFlash) &&
+	// lift the recursive check of canPushToCop(tiFlash)
+	if newProp.TaskTp != property.MppTaskType && ctx.GetSessionVars().IsMPPAllowed() &&
 		expression.CanExprsPushDown(pushDownCtx, p.Exprs, kv.TiFlash) {
 		mppProp := newProp.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType
 		newProps = append(newProps, mppProp)
 	}
-	if newProp.TaskTp != property.CopSingleReadTaskType && ctx.GetSessionVars().AllowProjectionPushDown && p.CanPushToCop(kv.TiKV) &&
+	// lift the recursive check of canPushToCop(tikv)
+	if newProp.TaskTp != property.CopSingleReadTaskType && ctx.GetSessionVars().AllowProjectionPushDown &&
 		expression.CanExprsPushDown(pushDownCtx, p.Exprs, kv.TiKV) && !expression.ContainVirtualColumn(p.Exprs) &&
 		expression.ProjectionBenefitsFromPushedDown(p.Exprs, p.Children()[0].Schema().Len()) {
 		copProp := newProp.CloneEssentialFields()
@@ -3064,6 +3165,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 	// topN should always generate rootTaskType for:
 	// case1: after v7.5, since tiFlash Cop has been banned, mppTaskType may return invalid task when there are some root conditions.
 	// case2: for index merge case which can only be run in root type, topN and limit can't be pushed to the inside index merge when it's an intersection.
+	// note: don't change the task enumeration order here.
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
 	// we move the pushLimitOrTopNForcibly check to attach2Task to do the prefer choice.
 	mppAllowed := lt.SCtx().GetSessionVars().IsMPPAllowed()
@@ -3129,12 +3231,12 @@ func getPhysLimits(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) [
 	if !canPass {
 		return nil
 	}
-
+	// note: don't change the task enumeration order here.
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), SortItems: p.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
-		limit := PhysicalLimit{
+		limit := physicalop.PhysicalLimit{
 			Count:       lt.Count,
 			Offset:      lt.Offset,
 			PartitionBy: lt.GetPartitionBy(),
@@ -3332,8 +3434,8 @@ func exhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 	lw := lp.(*logicalop.LogicalWindow)
 	windows := make([]base.PhysicalPlan, 0, 2)
 
-	canPushToTiFlash := lw.CanPushToCop(kv.TiFlash)
-	if lw.SCtx().GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
+	// we lift the p.CanPushToCop(tiFlash) check here.
+	if lw.SCtx().GetSessionVars().IsMPPAllowed() {
 		mppWindows := tryToGetMppWindows(lw, prop)
 		windows = append(windows, mppWindows...)
 	}
@@ -3387,16 +3489,7 @@ func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.Phys
 		// empty
 		return enforcedAggs
 	}
-	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
-	if la.HasDistinct() {
-		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
-		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
-		if !la.CanPushToCop(kv.TiKV) || !la.SCtx().GetSessionVars().AllowDistinctAggPushDown {
-			taskTypes = []property.TaskType{property.RootTaskType}
-		}
-	} else if !la.PreferAggToCop {
-		taskTypes = append(taskTypes, property.RootTaskType)
-	}
+	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
 	// only admit special types for index join prop
 	taskTypes = admitIndexJoinTypes(taskTypes, prop)
 	for _, taskTp := range taskTypes {
@@ -3457,22 +3550,15 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 		}
 		// The table read of "CopDoubleReadTaskType" can't promises the sort
 		// property that the stream aggregation required, no need to consider.
-		taskTypes := []property.TaskType{property.CopSingleReadTaskType}
-		if la.HasDistinct() {
-			// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
-			// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
-			if !la.SCtx().GetSessionVars().AllowDistinctAggPushDown || !la.CanPushToCop(kv.TiKV) {
-				// if variable doesn't allow DistinctAggPushDown, just produce root task type.
-				// if variable does allow DistinctAggPushDown, but OP itself can't be pushed down to tikv, just produce root task type.
-				taskTypes = []property.TaskType{property.RootTaskType}
-			} else if !la.DistinctArgsMeetsProperty() {
-				continue
-			}
-		} else if !la.PreferAggToCop {
-			taskTypes = append(taskTypes, property.RootTaskType)
-		}
-		if !la.CanPushToCop(kv.TiKV) && !la.CanPushToCop(kv.TiFlash) {
+		taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.RootTaskType}
+		// aggregation has a special case that it can be pushed down to TiKV which is indicated by the la.NoCopPushDown
+		if la.NoCopPushDown {
 			taskTypes = []property.TaskType{property.RootTaskType}
+		}
+		if la.HasDistinct() && la.SCtx().GetSessionVars().AllowDistinctAggPushDown && !la.DistinctArgsMeetsProperty() {
+			// if distinct agg push down is allowed, while the distinct args doesn't meet the required property, continue
+			// to next possible property check.
+			continue
 		}
 		taskTypes = admitIndexJoinTypes(taskTypes, prop)
 		for _, taskTp := range taskTypes {
@@ -3703,22 +3789,13 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 		return nil
 	}
 	hashAggs := make([]base.PhysicalPlan, 0, len(prop.GetAllPossibleChildTaskTypes()))
-	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
-	canPushDownToTiFlash := la.CanPushToCop(kv.TiFlash)
-	canPushDownToMPP := canPushDownToTiFlash && la.SCtx().GetSessionVars().IsMPPAllowed() && checkCanPushDownToMPP(la)
-	if la.HasDistinct() {
-		// TODO: remove after the cost estimation of distinct pushdown is implemented.
-		if !la.SCtx().GetSessionVars().AllowDistinctAggPushDown || !la.CanPushToCop(kv.TiKV) {
-			// if variable doesn't allow DistinctAggPushDown, just produce root task type.
-			// if variable does allow DistinctAggPushDown, but OP itself can't be pushed down to tikv, just produce root task type.
-			taskTypes = []property.TaskType{property.RootTaskType}
-		}
-	} else if !la.PreferAggToCop {
-		taskTypes = append(taskTypes, property.RootTaskType)
-	}
-	if !la.CanPushToCop(kv.TiKV) && !canPushDownToTiFlash {
+	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
+	// aggregation has a special case that it can be pushed down to TiKV which is indicated by the la.NoCopPushDown
+	if la.NoCopPushDown {
 		taskTypes = []property.TaskType{property.RootTaskType}
 	}
+	// lift the recursive check of canPushToCop(tiFlash)
+	canPushDownToMPP := la.SCtx().GetSessionVars().IsMPPAllowed() && checkCanPushDownToMPP(la)
 	if canPushDownToMPP {
 		taskTypes = append(taskTypes, property.MppTaskType)
 	} else {
@@ -3763,13 +3840,6 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 
 func exhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	la := lp.(*logicalop.LogicalAggregation)
-	if la.PreferAggToCop {
-		if !la.CanPushToCop(kv.TiKV) {
-			la.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
-				"Optimizer Hint AGG_TO_COP is inapplicable")
-			la.PreferAggToCop = false
-		}
-	}
 	preferHash, preferStream := la.ResetHintIfConflicted()
 	hashAggs := getHashAggs(la, prop)
 	if len(hashAggs) > 0 && preferHash {
@@ -3850,10 +3920,13 @@ func exhaustPhysicalPlans4LogicalSelection(lp base.LogicalPlan, prop *property.P
 	newProps := make([]*property.PhysicalProperty, 0, 2)
 	childProp := prop.CloneEssentialFields()
 	newProps = append(newProps, childProp)
+	// we lift the p.CanPushDown(kv.TiFlash) check here, which may depend on the children.
+	canPushDownToTiFlash := !expression.ContainVirtualColumn(p.Conditions) &&
+		expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Conditions, kv.TiFlash)
 
 	if prop.TaskTp != property.MppTaskType &&
 		p.SCtx().GetSessionVars().IsMPPAllowed() &&
-		p.CanPushDown(kv.TiFlash) {
+		canPushDownToTiFlash {
 		childPropMpp := prop.CloneEssentialFields()
 		childPropMpp.TaskTp = property.MppTaskType
 		newProps = append(newProps, childPropMpp)
@@ -3881,13 +3954,14 @@ func getLimitPhysicalPlans(p *logicalop.LogicalLimit, prop *property.PhysicalPro
 	}
 
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
-	if p.CanPushToCop(kv.TiFlash) && p.SCtx().GetSessionVars().IsMPPAllowed() {
+	// lift the recursive check of canPushToCop(tiFlash)
+	if p.SCtx().GetSessionVars().IsMPPAllowed() {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(p.Count + p.Offset), CTEProducerStatus: prop.CTEProducerStatus}
-		limit := PhysicalLimit{
+		limit := physicalop.PhysicalLimit{
 			Offset:      p.Offset,
 			Count:       p.Count,
 			PartitionBy: p.GetPartitionBy(),
