@@ -147,9 +147,9 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	require.NotNil(t, otrace)
 	elements := map[int]string{
 		8:  "Projection",
-		28: "TableReader",
+		28: "HashAgg",
 		16: "HashJoin",
-		18: "HashAgg",
+		18: "HashJoin",
 		17: "HashJoin",
 		11: "Sort",
 		15: "HashAgg",
