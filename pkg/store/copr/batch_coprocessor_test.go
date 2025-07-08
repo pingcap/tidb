@@ -492,3 +492,96 @@ func TestAliveStoreSkipCheck(t *testing.T) {
 		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 2))
 	}
 }
+
+func TestCheckAliveStore(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash", `return(false)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash"))
+	}()
+	aliveStores := &aliveStoresBundle{
+		storeIDsInAllZones: map[uint64]struct{}{
+			1: {},
+			2: {},
+			3: {},
+		},
+		storeIDsInTiDBZone: map[uint64]struct{}{
+			1: {},
+		},
+	}
+
+	usedTiFlashStoresMap := map[uint64]struct{}{
+		1: {},
+		2: {},
+		3: {},
+	}
+
+	usedTiFlashStores := [][]uint64{
+		{1, 2}, // region-1
+		{2, 3}, // region-2
+		{3},    // region-3
+	}
+
+	tasks := []*copTask{
+		{
+			region: tikv.NewRegionVerID(1, 1, 1),
+		},
+		{
+			region: tikv.NewRegionVerID(2, 2, 2),
+		},
+		{
+			region: tikv.NewRegionVerID(3, 3, 3),
+		},
+	}
+
+	var minReplicaNum uint64
+	var maxAllowedRemote int
+	{
+		// Test closest_replica. 2 remote region, 1 tidb zone region.
+		maxAllowedRemote = 1
+		needRetry, invalidRegions := checkAliveStore(aliveStores, usedTiFlashStores, usedTiFlashStoresMap,
+			nil, tiflash.ClosestReplicas, 2, tasks, minReplicaNum, maxAllowedRemote)
+		require.True(t, needRetry)
+		require.Equal(t, 2, len(invalidRegions))
+	}
+	{
+		// Test closest_replica. 2 remote region, 1 tidb zone region.
+		maxAllowedRemote = 3
+		needRetry, invalidRegions := checkAliveStore(aliveStores, usedTiFlashStores, usedTiFlashStoresMap,
+			nil, tiflash.ClosestReplicas, 2, tasks, minReplicaNum, maxAllowedRemote)
+		require.False(t, needRetry)
+		require.Equal(t, 0, len(invalidRegions))
+	}
+	{
+		// Test non closest_replica.
+		needRetry, invalidRegions := checkAliveStore(aliveStores, usedTiFlashStores, usedTiFlashStoresMap,
+			nil, tiflash.ClosestReplicas, 2, tasks, minReplicaNum, maxAllowedRemote)
+		require.False(t, needRetry)
+		require.Equal(t, 0, len(invalidRegions))
+	}
+	{
+		// Test non closest_replica.
+		aliveStores := &aliveStoresBundle{
+			storeIDsInAllZones: map[uint64]struct{}{
+				1: {},
+				2: {},
+			},
+			storeIDsInTiDBZone: map[uint64]struct{}{
+				1: {},
+			},
+		}
+		needRetry, invalidRegions := checkAliveStore(aliveStores, usedTiFlashStores, usedTiFlashStoresMap,
+			nil, tiflash.ClosestReplicas, 2, tasks, minReplicaNum, maxAllowedRemote)
+		require.True(t, needRetry)
+		require.Equal(t, 1, len(invalidRegions))
+	}
+	{
+		aliveStores := &aliveStoresBundle{
+			storeIDsInAllZones: map[uint64]struct{}{},
+			storeIDsInTiDBZone: map[uint64]struct{}{},
+		}
+		needRetry, invalidRegions := checkAliveStore(aliveStores, usedTiFlashStores, usedTiFlashStoresMap,
+			nil, tiflash.ClosestReplicas, 2, tasks, minReplicaNum, maxAllowedRemote)
+		require.True(t, needRetry)
+		require.Equal(t, 3, len(invalidRegions))
+	}
+}
