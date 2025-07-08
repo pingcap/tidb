@@ -16,6 +16,7 @@ go_library(
         "//pkg/kv",
         "//pkg/lightning/backend/local",
         "//pkg/meta",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/terror",

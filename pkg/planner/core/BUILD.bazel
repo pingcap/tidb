@@ -111,6 +111,7 @@ go_library(
         "//pkg/lock",
         "//pkg/lock/context",
         "//pkg/meta/autoid",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser",
