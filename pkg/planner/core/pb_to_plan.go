@@ -24,8 +24,10 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -66,6 +68,8 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 		p, err = b.pbToTableScan(e)
 	case tipb.ExecType_TypeSelection:
 		p, err = b.pbToSelection(e)
+	case tipb.ExecType_TypeProjection:
+		p, err = b.pbToProjection(e)
 	case tipb.ExecType_TypeTopN:
 		p, err = b.pbToTopN(e)
 	case tipb.ExecType_TypeLimit:
@@ -76,16 +80,19 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 		p, err = b.pbToAgg(e, true)
 	case tipb.ExecType_TypeKill:
 		p, err = b.pbToKill(e)
+	case tipb.ExecType_TypeBroadcastQuery:
+		p, err = b.pbToBroadcastQuery(e)
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet", e.GetTp())
 	}
 	if subPlan != nil {
+		// p may nil if the executor is not supported, for example, Projection.
 		p.SetChildren(subPlan)
 	}
 	// The limit missed its output cols via the protobuf.
 	// We need to add it back and do a ResolveIndicies for the later inline projection.
-	if limit, ok := p.(*PhysicalLimit); ok {
+	if limit, ok := p.(*physicalop.PhysicalLimit); ok {
 		limit.SetSchema(p.Children()[0].Schema().Clone())
 		for i, col := range limit.Schema().Columns {
 			col.Index = i
@@ -156,6 +163,17 @@ func (b *PBPlanBuilder) buildTableScanSchema(tblInfo *model.TableInfo, columns [
 	return schema
 }
 
+func (b *PBPlanBuilder) pbToProjection(e *tipb.Executor) (base.PhysicalPlan, error) {
+	exprs, err := expression.PBToExprs(b.sctx.GetExprCtx(), e.Projection.Exprs, b.tps)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	p := PhysicalProjection{
+		Exprs: exprs,
+	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
+	return p, nil
+}
+
 func (b *PBPlanBuilder) pbToSelection(e *tipb.Executor) (base.PhysicalPlan, error) {
 	conds, err := expression.PBToExprs(b.sctx.GetExprCtx(), e.Selection.Conditions, b.tps)
 	if err != nil {
@@ -186,7 +204,7 @@ func (b *PBPlanBuilder) pbToTopN(e *tipb.Executor) (base.PhysicalPlan, error) {
 }
 
 func (b *PBPlanBuilder) pbToLimit(e *tipb.Executor) (base.PhysicalPlan, error) {
-	p := PhysicalLimit{
+	p := physicalop.PhysicalLimit{
 		Count: e.Limit.Limit,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
@@ -269,6 +287,18 @@ func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (base.PhysicalPlan, error) {
 		Query:        e.Kill.Query,
 	}
 	simple := Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
+	return &PhysicalSimpleWrapper{Inner: simple}, nil
+}
+
+func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan, error) {
+	vars := b.sctx.GetSessionVars()
+	charset, collation := vars.GetCharsetInfo()
+	pa := parser.New()
+	stmt, err := pa.ParseOneStmt(*e.BroadcastQuery.Query, charset, collation)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	simple := Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
 	return &PhysicalSimpleWrapper{Inner: simple}, nil
 }
 

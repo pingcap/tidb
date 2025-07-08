@@ -48,7 +48,7 @@ var (
 
 	// updateSubtaskSummaryInterval is the interval for updating the subtask summary to
 	// subtask table.
-	updateSubtaskSummaryInterval = 3 * time.Second
+	updateSubtaskSummaryInterval = 5 * time.Second
 	// DetectParamModifyInterval is the interval to detect whether task params
 	// are modified.
 	// exported for testing.
@@ -197,7 +197,7 @@ func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 	curSubtaskID := e.currSubtaskID.Load()
 	update := func() {
 		summary := stepExec.RealtimeSummary()
-		err := taskMgr.UpdateSubtaskRowCount(runStepCtx, curSubtaskID, summary.RowCount)
+		err := taskMgr.UpdateSubtaskSummary(runStepCtx, curSubtaskID, summary)
 		if err != nil {
 			e.logger.Info("update subtask row count failed", zap.Error(err))
 		}

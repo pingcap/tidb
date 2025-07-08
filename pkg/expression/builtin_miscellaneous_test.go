@@ -97,7 +97,7 @@ func TestIsIPv4(t *testing.T) {
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
-	testutil.DatumEqual(t, types.NewDatum(0), r)
+	require.True(t, r.IsNull())
 }
 
 func TestIsUUID(t *testing.T) {
@@ -112,6 +112,10 @@ func TestIsUUID(t *testing.T) {
 		{"{6ccd780c-baba-1026-9564-5b8c656024db}", 1},
 		{"6ccd780c-baba-1026-9564-5b8c6560", 0},
 		{"6CCD780C-BABA-1026-9564-5B8C656024DQ", 0},
+		// Test leading/trailing spaces should return 0 to match MySQL behavior
+		{" 6ccd780c-baba-1026-9564-5b8c656024db", 0},
+		{"6ccd780c-baba-1026-9564-5b8c656024db ", 0},
+		{" 6ccd780c-baba-1026-9564-5b8c656024db ", 0},
 		// This is a bug in google/uuid#60
 		{"{99a9ad03-5298-11ec-8f5c-00ff90147ac3*", 1},
 		// This is a format google/uuid support, while mysql doesn't
@@ -209,7 +213,7 @@ func TestIsIPv6(t *testing.T) {
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
-	testutil.DatumEqual(t, types.NewDatum(0), r)
+	require.True(t, r.IsNull())
 }
 
 func TestInetNtoa(t *testing.T) {
@@ -344,7 +348,7 @@ func TestIsIPv4Mapped(t *testing.T) {
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
-	testutil.DatumEqual(t, types.NewDatum(int64(0)), r)
+	require.True(t, r.IsNull())
 }
 
 func TestIsIPv4Compat(t *testing.T) {
@@ -374,7 +378,7 @@ func TestIsIPv4Compat(t *testing.T) {
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
-	testutil.DatumEqual(t, types.NewDatum(0), r)
+	require.True(t, r.IsNull())
 }
 
 func TestNameConst(t *testing.T) {
@@ -480,6 +484,28 @@ func TestUUIDToBin(t *testing.T) {
 		},
 		{
 			[]any{"6ccd780c-baba-1026-9564-5b8c6560"},
+			[]byte{},
+			false,
+			false,
+			true,
+		},
+		{
+			// Test leading/trailing spaces should cause error to match MySQL behavior
+			[]any{" 6ccd780c-baba-1026-9564-5b8c656024db"},
+			[]byte{},
+			false,
+			false,
+			true,
+		},
+		{
+			[]any{"6ccd780c-baba-1026-9564-5b8c656024db "},
+			[]byte{},
+			false,
+			false,
+			true,
+		},
+		{
+			[]any{" 6ccd780c-baba-1026-9564-5b8c656024db "},
 			[]byte{},
 			false,
 			false,

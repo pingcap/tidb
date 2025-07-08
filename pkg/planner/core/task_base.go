@@ -105,9 +105,7 @@ func (s *simpleWarnings) GetWarnings() []context.SQLWarn {
 
 // RootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.
 type RootTask struct {
-	p       base.PhysicalPlan
-	isEmpty bool // isEmpty indicates if this task contains a dual table and returns empty data.
-	// TODO: The flag 'isEmpty' is only checked by Projection and UnionAll. We should support more cases in the future.
+	p base.PhysicalPlan
 
 	// For copTask and rootTask, when we compose physical tree bottom-up, index join need some special info
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
@@ -125,16 +123,6 @@ func (t *RootTask) GetPlan() base.PhysicalPlan {
 // SetPlan sets the root task' plan.
 func (t *RootTask) SetPlan(p base.PhysicalPlan) {
 	t.p = p
-}
-
-// IsEmpty indicates whether root task is empty.
-func (t *RootTask) IsEmpty() bool {
-	return t.isEmpty
-}
-
-// SetEmpty set the root task as empty.
-func (t *RootTask) SetEmpty(x bool) {
-	t.isEmpty = x
 }
 
 // Copy implements Task interface.
@@ -495,7 +483,6 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 			KeepOrder:          t.keepOrder,
 		}.Init(ctx, t.idxMergePartPlans[0].QueryBlockOffset())
 		p.PlanPartInfo = t.physPlanPartInfo
-		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.SetPlan(p)
 		if t.needExtraProj {
 			schema := t.originSchema

@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"math"
 	"net"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
@@ -66,6 +68,7 @@ import (
 	"github.com/tikv/pd/client/pkg/caller"
 	"github.com/tikv/pd/client/pkg/retry"
 	sd "github.com/tikv/pd/client/servicediscovery"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -84,9 +87,6 @@ const (
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute
 	gRPCBackOffMaxDelay  = 10 * time.Minute
-
-	// The max ranges count in a batch to split and scatter.
-	maxBatchSplitRanges = 4096
 
 	propRangeIndex = "tikv.range_index"
 
@@ -517,17 +517,20 @@ type Backend struct {
 	tls       *common.TLS
 	tikvCodec tikvclient.Codec
 
+	collector execute.Collector
+
 	BackendConfig
 	engineMgr *engineManager
 
 	supportMultiIngest  bool
 	importClientFactory importClientFactory
 
-	metrics      *metric.Common
-	writeLimiter StoreWriteLimiter
-	logger       log.Logger
-	// This mutex is used to do some mutual exclusion work in the backend, flushKVs() in writer for now.
-	mu sync.Mutex
+	metrics       *metric.Common
+	writeLimiter  StoreWriteLimiter
+	ingestLimiter atomic.Pointer[ingestLimiter]
+	logger        log.Logger
+
+	nextgenHTTPCli *http.Client
 }
 
 var _ DiskUsage = (*Backend)(nil)
@@ -692,6 +695,11 @@ func NewBackendForTest(ctx context.Context, config BackendConfig, storeHelper St
 	return local, nil
 }
 
+// SetCollector sets the collector for the local backend
+func (local *Backend) SetCollector(c execute.Collector) {
+	local.collector = c
+}
+
 // TotalMemoryConsume returns the total memory usage of the local backend.
 func (local *Backend) TotalMemoryConsume() int64 {
 	return local.engineMgr.totalMemoryConsume()
@@ -792,6 +800,9 @@ func (local *Backend) Close() {
 	_ = local.tikvCli.Close()
 	local.pdHTTPCli.Close()
 	local.pdCli.Close()
+	if local.nextgenHTTPCli != nil {
+		local.nextgenHTTPCli.CloseIdleConnections()
+	}
 }
 
 // FlushEngine ensure the written data is saved successfully, to make sure no data lose after restart
@@ -822,10 +833,6 @@ func (local *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig,
 // CloseEngine closes backend engine by uuid.
 func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
 	return local.engineMgr.closeEngine(ctx, cfg, engineUUID)
-}
-
-func (local *Backend) getImportClient(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
-	return local.importClientFactory.create(ctx, storeID)
 }
 
 func splitRangeBySizeProps(fullRange engineapi.Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []engineapi.Range {
@@ -904,7 +911,14 @@ func (local *Backend) prepareAndSendJob(
 	jobWg *sync.WaitGroup,
 ) error {
 	lfTotalSize, lfLength := engine.KVStatistics()
-	log.FromContext(ctx).Info("import engine ranges", zap.Int("len(regionSplitKeyCnt)", len(regionSplitKeys)))
+	splitRangesBatch := GetMaxBatchSplitRanges()
+	maxRangesPerSec := GetMaxSplitRangePerSec()
+
+	log.FromContext(ctx).Info("import engine ranges",
+		zap.Int("len(regionSplitKeys)", len(regionSplitKeys)),
+		zap.Int("splitRangesBatch", splitRangesBatch),
+		zap.Float64("splitRangePerSec", maxRangesPerSec),
+	)
 
 	// if all the kv can fit in one region, skip split regions. TiDB will split one region for
 	// the table when table is created.
@@ -923,7 +937,7 @@ func (local *Backend) prepareAndSendJob(
 				failpoint.Break()
 			})
 
-			err = local.splitAndScatterRegionInBatches(ctx, regionSplitKeys, maxBatchSplitRanges)
+			err = local.splitAndScatterRegionInBatches(ctx, regionSplitKeys, splitRangesBatch, maxRangesPerSec)
 			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}
@@ -1211,11 +1225,17 @@ func (local *Backend) ImportEngine(
 		}()
 	}
 
+	maxReqInFlight := GetMaxIngestConcurrency()
+	maxReqPerSec := GetMaxIngestPerSec()
+	local.ingestLimiter.Store(newIngestLimiter(ctx, maxReqInFlight, maxReqPerSec))
 	log.FromContext(ctx).Info("start import engine",
 		zap.Stringer("uuid", engineUUID),
 		zap.Int("region ranges", len(splitKeys)-1),
 		zap.Int64("count", lfLength),
-		zap.Int64("size", lfTotalSize))
+		zap.Int64("size", lfTotalSize),
+		zap.Int("maxReqInFlight", maxReqInFlight),
+		zap.Float64("maxReqPerSec", maxReqPerSec),
+	)
 
 	failpoint.Inject("ReadyForImportEngine", func() {})
 
@@ -1451,9 +1471,13 @@ func (local *Backend) newRegionJobWorker(
 		regenerateJobsFn: local.generateJobForRange,
 	}
 	if kerneltype.IsNextGen() {
-		httpClient := util.ClientWithTLS(local.tls.TLSConfig())
+		tlsConfig := local.tls.TLSConfig()
+		if local.nextgenHTTPCli == nil {
+			local.nextgenHTTPCli = util.ClientWithTLS(tlsConfig)
+		}
+		isHTTPS := tlsConfig != nil
 		cloudW := &objStoreRegionJobWorker{
-			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, clusterID, httpClient, local.splitCli),
+			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, clusterID, isHTTPS, local.nextgenHTTPCli, local.splitCli),
 			writeBatchSize: local.KVWriteBatchSize,
 			bufPool:        local.engineMgr.getBufferPool(),
 		}

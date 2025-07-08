@@ -48,7 +48,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	plan := &Plan{
 		DataSourceType: DataSourceTypeQuery,
 	}
-	plan.initDefaultOptions(10)
+	plan.initDefaultOptions(context.Background(), 10, nil)
 	require.Equal(t, 2, plan.ThreadCnt)
 
 	plan = &Plan{
@@ -58,7 +58,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	t.Cleanup(func() {
 		vardef.CloudStorageURI.Store("")
 	})
-	plan.initDefaultOptions(1)
+	plan.initDefaultOptions(context.Background(), 1, nil)
 	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
 	require.Equal(t, config.OpLevelRequired, plan.Checksum)
 	require.Equal(t, 1, plan.ThreadCnt)
@@ -71,7 +71,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
 	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
 
-	plan.initDefaultOptions(10)
+	plan.initDefaultOptions(context.Background(), 10, nil)
 	require.Equal(t, 5, plan.ThreadCnt)
 }
 
@@ -278,14 +278,14 @@ func TestGetLocalBackendCfg(t *testing.T) {
 	c := &LoadDataController{
 		Plan: &Plan{},
 	}
-	cfg := c.getLocalBackendCfg("http://1.1.1.1:1234", "/tmp")
+	cfg := c.getLocalBackendCfg("", "http://1.1.1.1:1234", "/tmp")
 	require.Equal(t, "http://1.1.1.1:1234", cfg.PDAddr)
 	require.Equal(t, "/tmp", cfg.LocalStoreDir)
 	require.True(t, cfg.DisableAutomaticCompactions)
 	require.Zero(t, cfg.RaftKV2SwitchModeDuration)
 
 	c.Plan.IsRaftKV2 = true
-	cfg = c.getLocalBackendCfg("http://1.1.1.1:1234", "/tmp")
+	cfg = c.getLocalBackendCfg("", "http://1.1.1.1:1234", "/tmp")
 	require.Greater(t, cfg.RaftKV2SwitchModeDuration, time.Duration(0))
 	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
 }

@@ -2399,19 +2399,6 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(ctx EvalContext, row chunk.R
 	}
 }
 
-// inCastContext is session key type that indicates whether executing
-// in special cast context that negative unsigned num will be zero.
-type inCastContext int
-
-func (inCastContext) String() string {
-	return "__cast_ctx"
-}
-
-// inUnionCastContext is session key value that indicates whether executing in
-// union cast context.
-// @see BuildCastFunction4Union
-const inUnionCastContext inCastContext = 0
-
 // CanImplicitEvalInt represents the builtin functions that have an implicit path to evaluate as integer,
 // regardless of the type that type inference decides it to be.
 // This is a nasty way to match the weird behavior of MySQL functions like `dayname()` being implicitly evaluated as integer.
@@ -2525,7 +2512,7 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 	// since we may reset the flag of the field type of CastAsJson later which
 	// would affect the evaluation of it.
 	if tp.EvalType() != types.ETJson && err == nil {
-		res = FoldConstant(ctx, res)
+		return FoldConstant(ctx, res), nil
 	}
 	return res, err
 }

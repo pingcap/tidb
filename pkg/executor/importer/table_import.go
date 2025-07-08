@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -193,7 +194,7 @@ func NewTableImporter(
 		return nil, err
 	}
 
-	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
+	backendConfig := e.getLocalBackendCfg(kvStore.GetKeyspace(), tidbCfg.Path, dir)
 	d := kvStore.(tidbkv.StorageWithPD).GetPDClient().GetServiceDiscovery()
 	localBackend, err := local.NewBackend(ctx, tls, backendConfig, d)
 	if err != nil {
@@ -260,7 +261,7 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 		return nil, err
 	}
 
-	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
+	backendConfig := e.getLocalBackendCfg("", tidbCfg.Path, dir)
 	localBackend, err := local.NewBackendForTest(ctx, backendConfig, helper)
 	if err != nil {
 		return nil, err
@@ -320,7 +321,7 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 	return parser, nil
 }
 
-func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEncoder, error) {
+func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (*TableKVEncoder, error) {
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        ti.SQLMode,
@@ -333,6 +334,20 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEnc
 		Logger: log.Logger{Logger: ti.logger.With(zap.String("path", chunk.FileMeta.Path))},
 	}
 	return NewTableKVEncoder(cfg, ti)
+}
+
+// GetKVEncoderForDupResolve get the KV encoder for duplicate resolution.
+func (ti *TableImporter) GetKVEncoderForDupResolve() (*TableKVEncoder, error) {
+	cfg := &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{
+			SQLMode: ti.SQLMode,
+			SysVars: ti.ImportantSysVars,
+		},
+		Table:                ti.encTable,
+		Logger:               log.Logger{Logger: ti.logger},
+		UseIdentityAutoRowID: true,
+	}
+	return NewTableKVEncoderForDupResolve(cfg, ti)
 }
 
 func (e *LoadDataController) calculateSubtaskCnt() int {
@@ -634,7 +649,7 @@ func (ti *TableImporter) closeAndCleanupEngine(engine *backend.OpenedEngine) {
 }
 
 // ImportSelectedRows imports selected rows.
-func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.Context) (*JobImportResult, error) {
+func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.Context) (int64, error) {
 	var (
 		err                     error
 		dataEngine, indexEngine *backend.OpenedEngine
@@ -656,11 +671,11 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 
 	dataEngine, err = ti.OpenDataEngine(ctx, 1)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	indexEngine, err = ti.OpenIndexEngine(ctx, common.IndexEngineID)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
 	var (
@@ -677,37 +692,37 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 				defer mu.Unlock()
 				checksum.Add(chunkChecksum)
 			}()
-			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, ti.logger, chunkChecksum)
+			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, ti.logger, chunkChecksum, nil)
 		})
 	}
 	if err = eg.Wait(); err != nil {
-		return nil, err
+		return 0, err
 	}
 
 	closedDataEngine, err := dataEngine.Close(ctx)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	failpoint.Inject("mockImportFromSelectErr", func() {
-		failpoint.Return(nil, errors.New("mock import from select error"))
+		failpoint.Return(0, errors.New("mock import from select error"))
 	})
 	if err = closedDataEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
 		}
-		return nil, err
+		return 0, err
 	}
 	dataKVCount := ti.backend.GetImportedKVCount(closedDataEngine.GetUUID())
 
 	closedIndexEngine, err := indexEngine.Close(ctx)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	if err = closedIndexEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
 		}
-		return nil, err
+		return 0, err
 	}
 
 	allocators := ti.Allocators()
@@ -717,12 +732,10 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		autoid.AutoRandomType:    allocators.Get(autoid.AutoRandomType).Base(),
 	}
 	if err = PostProcess(ctx, se, maxIDs, ti.Plan, checksum, ti.logger); err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	return &JobImportResult{
-		Affected: uint64(dataKVCount),
-	}, nil
+	return dataKVCount, nil
 }
 
 func adjustDiskQuota(diskQuota int64, sortDir string, logger *zap.Logger) int64 {
@@ -788,7 +801,7 @@ func (r *autoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
 
 // RebaseAllocatorBases rebase the allocator bases.
 func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs map[autoid.AllocatorType]int64, plan *Plan, logger *zap.Logger) (err error) {
-	callLog := log.BeginTask(logger, "rebase allocators")
+	callLog := log.BeginTask(logger.With(zap.Any("maxIDs", maxIDs)), "rebase allocators")
 	defer func() {
 		callLog.End(zap.ErrorLevel, err)
 	}()
@@ -969,18 +982,21 @@ func GetImportRootDir(tidbCfg *tidb.Config) string {
 }
 
 // FlushTableStats flushes the stats of the table.
-// stats will be flushed in domain.updateStatsWorker, default interval is [1, 2) minutes,
-// see DumpStatsDeltaToKV for more details. then the background analyzer will analyze
-// the table.
-// the stats stay in memory until the next flush, so it might be lost if the tidb-server restarts.
-func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, result *JobImportResult) error {
+// stats will be stored in the stat collector, and be applied to to mysql.stats_meta
+// in the domain.UpdateTableStatsLoop with a random interval between [1, 2) minutes.
+// These stats will stay in memory until the next flush, so it might be lost if the tidb-server restarts.
+func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, importedRows int64) error {
 	if err := sessiontxn.NewTxn(ctx, se); err != nil {
 		return err
 	}
+
+	exec := statshandle.AttachStatsCollector(se.GetSQLExecutor())
+	defer statshandle.DetachStatsCollector(exec)
+
 	sessionVars := se.GetSessionVars()
 	sessionVars.TxnCtxMu.Lock()
 	defer sessionVars.TxnCtxMu.Unlock()
-	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected))
+	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, importedRows, importedRows)
 	se.StmtCommit(ctx)
 	return se.CommitTxn(ctx)
 }

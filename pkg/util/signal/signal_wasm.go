@@ -14,6 +14,9 @@
 
 package signal
 
+// SetupUSR1Handler sets up a signal handler for SIGUSR1.
+func SetupUSR1Handler() {}
+
 // SetupSignalHandler setup signal handler for TiDB Server
 func SetupSignalHandler(shutdownFunc func(bool)) {
 }

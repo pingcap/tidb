@@ -34,15 +34,7 @@ func exceedEndKey(current, endKey []byte) bool {
 func sortAndDedupHashVals(hashVals []uint64) []uint64 {
 	if len(hashVals) > 1 {
 		slices.Sort(hashVals)
-		idx := 0
-		for i, v := range hashVals {
-			if i > 0 && hashVals[i] == hashVals[i-1] {
-				continue
-			}
-			hashVals[idx] = v
-			idx++
-		}
-		hashVals = hashVals[0:idx]
+		hashVals = slices.Compact(hashVals)
 	}
 	return hashVals
 }
