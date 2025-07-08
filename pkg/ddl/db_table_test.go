@@ -1026,7 +1026,7 @@ func TestCreateTableAutoIncrementSQLMode(t *testing.T) {
 	// Test signed INT with value exceeding max (should produce error in strict mode)
 	err := tk.ExecToErr("CREATE TABLE t1 (id INT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 2147483648")
 	require.Error(t, err, "Expected error in strict mode for AUTO_INCREMENT overflow")
-	require.Contains(t, err.Error(), "Out of range value for column 'id' at row 1", 
+	require.Contains(t, err.Error(), "Out of range value for column 'id' at row 1",
 		"Expected ErrWarnDataOutOfRange error message, got: %v", err)
 
 	// Test with non-strict mode (should produce warning)
@@ -1036,26 +1036,26 @@ func TestCreateTableAutoIncrementSQLMode(t *testing.T) {
 	// In non-strict mode, this should succeed but generate a warning
 	tk.MustExec("CREATE TABLE t1 (id INT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 2147483648")
 	warnings := tk.MustQuery("SHOW WARNINGS")
-	
+
 	// Verify we got the expected warning
 	require.GreaterOrEqual(t, len(warnings.Rows()), 1, "Expected at least one warning in non-strict mode")
-	
+
 	found := false
 	for _, row := range warnings.Rows() {
 		if len(row) >= 3 {
 			level := row[0].(string)
 			code := row[1].(string)
 			message := row[2].(string)
-			
-			if level == "Warning" && code == "1264" && 
-			   strings.Contains(message, "Out of range value for column 'id'") {
+
+			if level == "Warning" && code == "1264" &&
+				strings.Contains(message, "Out of range value for column 'id'") {
 				found = true
 				break
 			}
 		}
 	}
 	require.True(t, found, "Expected warning with code 1264 for out of range value in non-strict mode. Warnings: %v", warnings.Rows())
-	
+
 	tk.MustExec("DROP TABLE t1")
 
 	// Test with STRICT_ALL_TABLES mode (should also return error)
@@ -1064,7 +1064,7 @@ func TestCreateTableAutoIncrementSQLMode(t *testing.T) {
 
 	err = tk.ExecToErr("CREATE TABLE t1 (id TINYINT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 256")
 	require.Error(t, err, "Expected error in STRICT_ALL_TABLES mode for AUTO_INCREMENT overflow")
-	require.Contains(t, err.Error(), "Out of range value for column 'id' at row 1", 
+	require.Contains(t, err.Error(), "Out of range value for column 'id' at row 1",
 		"Expected ErrWarnDataOutOfRange error message, got: %v", err)
 
 	// Reset SQL mode
