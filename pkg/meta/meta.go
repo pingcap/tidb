@@ -214,8 +214,8 @@ func (m *Mutator) GenGlobalID() (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if newID > metadef.ReservedSchemaIDLowerBound {
-		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.ReservedSchemaIDLowerBound)
+	if newID > metadef.MaxUserGlobalID {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.MaxUserGlobalID)
 	}
 	return newID, err
 }
@@ -230,8 +230,8 @@ func (m *Mutator) AdvanceGlobalIDs(n int) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if newID > metadef.ReservedSchemaIDLowerBound {
-		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.ReservedSchemaIDLowerBound)
+	if newID > metadef.MaxUserGlobalID {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.MaxUserGlobalID)
 	}
 	origID := newID - int64(n)
 	return origID, nil
@@ -246,8 +246,8 @@ func (m *Mutator) GenGlobalIDs(n int) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	if newID > metadef.ReservedSchemaIDLowerBound {
-		return nil, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.ReservedSchemaIDLowerBound)
+	if newID > metadef.MaxUserGlobalID {
+		return nil, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.MaxUserGlobalID)
 	}
 	origID := newID - int64(n)
 	ids := make([]int64, 0, n)

@@ -309,7 +309,7 @@ func getTableDataKeyRanges(nonFlashbackTableIDs []int64) []kv.KeyRange {
 	// Add all other key ranges.
 	keyRanges = append(keyRanges, kv.KeyRange{
 		StartKey: tablecodec.EncodeTablePrefix(nonFlashbackTableIDs[len(nonFlashbackTableIDs)-1] + 1),
-		EndKey:   tablecodec.EncodeTablePrefix(metadef.ReservedSchemaIDLowerBound),
+		EndKey:   tablecodec.EncodeTablePrefix(metadef.MaxUserGlobalID),
 	})
 
 	return keyRanges
@@ -433,7 +433,7 @@ func getFlashbackKeyRanges(ctx context.Context, sess sessionctx.Context, flashba
 			return nil, errors.Trace(err2)
 		}
 		for _, table := range tbls {
-			if !table.IsBaseTable() || table.ID > metadef.ReservedSchemaIDLowerBound {
+			if !table.IsBaseTable() || table.ID > metadef.MaxUserGlobalID {
 				continue
 			}
 			nonFlashbackTableIDs = addToSlice(db.Name.L, table.Name.L, table.ID, nonFlashbackTableIDs)

@@ -15,31 +15,33 @@
 package metadef
 
 const (
-	// ReservedSchemaIDUpperBound is the max value of any physical schema object ID.
+	// ReservedGlobalIDUpperBound is the max value of any physical schema object ID.
 	// due to history reasons, the first 2 bytes are planned to be used for multi
 	// tenancy, but it's replaced by keyspace.
-	ReservedSchemaIDUpperBound = 0x0000FFFFFFFFFFFF
-	// ReservedSchemaIDLowerBound reserves 1000 IDs.
-	// valid usable ID range for user schema objects is [1, ReservedSchemaIDLowerBound].
+	ReservedGlobalIDUpperBound = 0x0000FFFFFFFFFFFF
+	// ReservedGlobalIDLowerBound reserves 1000 IDs.
+	// valid usable ID range for user schema objects is [1, ReservedGlobalIDLowerBound].
 	//
-	// (ReservedSchemaIDLowerBound, ReservedSchemaIDUpperBound] is reserved for
+	// (ReservedGlobalIDLowerBound, ReservedGlobalIDUpperBound] is reserved for
 	// system schema objects.
-	ReservedSchemaIDLowerBound = ReservedSchemaIDUpperBound - 1000
+	ReservedGlobalIDLowerBound = ReservedGlobalIDUpperBound - 1000
+	// MaxUserGlobalID is the max value of user schema object ID, inclusive.
+	MaxUserGlobalID = ReservedGlobalIDLowerBound
 )
 
 const (
 	// TiDBDDLJobTableID is the table ID of `tidb_ddl_job`.
-	TiDBDDLJobTableID = ReservedSchemaIDUpperBound - 1
+	TiDBDDLJobTableID = ReservedGlobalIDUpperBound - 1
 	// TiDBDDLReorgTableID is the table ID of `tidb_ddl_reorg`.
-	TiDBDDLReorgTableID = ReservedSchemaIDUpperBound - 2
+	TiDBDDLReorgTableID = ReservedGlobalIDUpperBound - 2
 	// TiDBDDLHistoryTableID is the table ID of `tidb_ddl_history`.
-	TiDBDDLHistoryTableID = ReservedSchemaIDUpperBound - 3
+	TiDBDDLHistoryTableID = ReservedGlobalIDUpperBound - 3
 	// TiDBMDLInfoTableID is the table ID of `tidb_mdl_info`.
-	TiDBMDLInfoTableID = ReservedSchemaIDUpperBound - 4
+	TiDBMDLInfoTableID = ReservedGlobalIDUpperBound - 4
 	// TiDBBackgroundSubtaskTableID is the table ID of `tidb_background_subtask`.
-	TiDBBackgroundSubtaskTableID = ReservedSchemaIDUpperBound - 5
+	TiDBBackgroundSubtaskTableID = ReservedGlobalIDUpperBound - 5
 	// TiDBBackgroundSubtaskHistoryTableID is the table ID of `tidb_background_subtask_history`.
-	TiDBBackgroundSubtaskHistoryTableID = ReservedSchemaIDUpperBound - 6
+	TiDBBackgroundSubtaskHistoryTableID = ReservedGlobalIDUpperBound - 6
 	// TiDBDDLNotifierTableID is the table ID of `tidb_ddl_notifier`.
-	TiDBDDLNotifierTableID = ReservedSchemaIDUpperBound - 7
+	TiDBDDLNotifierTableID = ReservedGlobalIDUpperBound - 7
 )
