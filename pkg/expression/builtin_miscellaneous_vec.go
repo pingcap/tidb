@@ -170,7 +170,12 @@ func (b *builtinIsUUIDSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 		if result.IsNull(i) {
 			continue
 		}
-		if _, err = uuid.Parse(buf.GetString(i)); err != nil {
+		val := buf.GetString(i)
+		// MySQL's IS_UUID is strict and doesn't trim spaces, unlike Go's uuid.Parse
+		// We need to check if the string has leading/trailing spaces before parsing
+		if strings.TrimSpace(val) != val {
+			i64s[i] = 0
+		} else if _, err = uuid.Parse(val); err != nil {
 			i64s[i] = 0
 		} else {
 			i64s[i] = 1
@@ -695,6 +700,11 @@ func (b *builtinUUIDToBinSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 			continue
 		}
 		val := valBuf.GetString(i)
+		// MySQL's UUID_TO_BIN is strict and doesn't trim spaces, unlike Go's uuid.Parse
+		// We need to check if the string has leading/trailing spaces before parsing
+		if strings.TrimSpace(val) != val {
+			return errWrongValueForType.GenWithStackByArgs("string", val, "uuid_to_bin")
+		}
 		u, err := uuid.Parse(val)
 		if err != nil {
 			return errWrongValueForType.GenWithStackByArgs("string", val, "uuid_to_bin")
