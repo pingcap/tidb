@@ -75,6 +75,7 @@ func TestInitDDLTables(t *testing.T) {
 			require.NoError(t, err2)
 
 			tables, err2 := m.ListTables(ctx, systemDBID)
+			require.NoError(t, err2)
 			require.Len(t, tables, len(c.tables))
 			gotTables := make([]session.TableBasicInfo, 0, len(tables))
 			for _, tbl := range tables {
