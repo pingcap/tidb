@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
@@ -1346,4 +1347,32 @@ func TestApplyDiff(t *testing.T) {
 		tc.runCreateTables([]string{"test1", "test2"})
 	}
 	// TODO(ywqzzy): check all actions.
+}
+
+func TestFix62253(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	// use v2
+	tk1.MustExec("set global tidb_schema_cache_size = 20*1024*1024")
+	tk2.MustExec("set global tidb_schema_cache_size = 20*1024*1024")
+	tk1.MustExec("drop database if exists test; create database test;")
+	tk1.MustExec("begin")
+	tk2.MustExec("alter database test charset ascii;")
+	tk2.MustExec("create placement policy p1 followers=4;")
+	tk2.MustExec("alter database test placement policy=`p1`;")
+	tk1.MustQuery("show create schema test;").Check(testkit.Rows("test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+	tk2.MustQuery("show create schema test;").Check(testkit.Rows("test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET ascii */ /*T![placement] PLACEMENT POLICY=`p1` */"))
+
+	is1 := sessiontxn.GetTxnManager(tk1.Session()).GetTxnInfoSchema()
+	dbInfo1, ok := is1.SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	require.Equal(t, "utf8mb4", dbInfo1.Charset)
+	require.Nil(t, dbInfo1.PlacementPolicyRef)
+	is2 := sessiontxn.GetTxnManager(tk2.Session()).GetTxnInfoSchema()
+	dbInfo2, ok := is2.SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	require.Equal(t, "ascii", dbInfo2.Charset)
+	require.Equal(t, "p1", dbInfo2.PlacementPolicyRef.Name.L)
+	tk1.MustExec("commit")
 }
