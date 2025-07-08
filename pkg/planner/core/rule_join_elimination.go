@@ -52,27 +52,34 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 
 	outerPlan := p.Children()[1^innerChildIdx]
 	innerPlan := p.Children()[innerChildIdx]
-	outerUniqueIDs := intset.NewFastIntSet()
-	for _, outerCol := range outerPlan.Schema().Columns {
-		outerUniqueIDs.Insert(int(outerCol.UniqueID))
-	}
 
 	// in case of count(*) FROM R LOJ S, the parentCols is empty, but
 	// still need to proceed to check whether we can eliminate outer join.
 	// In fact, we only care about whether there is any column from inner
 	// table, if there is none, we are good.
 	if len(parentCols) > 0 {
+		outerUniqueIDs := intset.NewFastIntSet()
+		for _, outerCol := range outerPlan.Schema().Columns {
+			outerUniqueIDs.Insert(int(outerCol.UniqueID))
+		}
 		matched := ruleutil.IsColsAllFromOuterTable(parentCols, &outerUniqueIDs)
 		if !matched {
 			return p, false, nil
 		}
 	}
 
-	// outer join elimination with duplicate agnostic aggregate functions
-	matched := ruleutil.IsColsAllFromOuterTable(aggCols, &outerUniqueIDs)
-	if matched {
-		appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
-		return outerPlan, true, nil
+	if len(aggCols) > 0 {
+		innerUniqueIDs := intset.NewFastIntSet()
+		for _, innerCol := range innerPlan.Schema().Columns {
+			innerUniqueIDs.Insert(int(innerCol.UniqueID))
+		}
+		// Check if any column is from the inner table.
+		// If any column is from the inner table, we cannot eliminate the outer join.
+		innerFound := ruleutil.IsColFromInnerTable(aggCols, &innerUniqueIDs)
+		if !innerFound {
+			appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
+			return outerPlan, true, nil
+		}
 	}
 	// outer join elimination without duplicate agnostic aggregate functions
 	innerJoinKeys := o.extractInnerJoinKeys(p, innerChildIdx)

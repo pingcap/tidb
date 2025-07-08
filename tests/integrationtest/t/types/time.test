@@ -150,3 +150,54 @@ SELECT { t '14:00:00' };
 SELECT { d '2024-01-01 01:12:31' };
 
 # TODO: Also test if there are difference between explicitly give the timestamp/datetime as literal/string or having it from a varchar in a table
+
+SET time_zone = 'UTC';
+CREATE TABLE t (id int primary key, ts TIMESTAMP);
+INSERT INTO t VALUES (1, '2025-03-30 00:59:59');
+INSERT INTO t VALUES (2, '2025-03-30 01:00:00');
+SET time_zone = 'Europe/Paris';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t;
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = '2025-03-30 02:00:00';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts < '2025-03-30 02:00:00';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <= '2025-03-30 02:00:00';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts > '2025-03-30 02:00:00';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts >= '2025-03-30 02:00:00';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <=> '2025-03-30 02:00:00';
+# All these probably converts to DATETIME (including tz conversions) before comparing
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE date_add(ts, interval 20 minute) = '2025-03-30 02:19:59';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE date_add(ts, interval -20 minute) = '2025-03-30 02:40:00';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = date_add('2025-03-30 02:40:00', interval 20 minute);
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = date_add('2025-03-30 02:19:59', interval -20 minute);
+
+ALTER TABLE t ADD INDEX idx_ts (ts);
+# Note: MySQL would return 03:00:00 on '=', different from not being indexed!
+# reference: https://bugs.mysql.com/bug.php?id=38455
+# TiDB is better, by being consistent regardless if indexed or not!
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = '2025-03-30 02:00:00';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts < '2025-03-30 02:00:00';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <= '2025-03-30 02:00:00';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts > '2025-03-30 02:00:00';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts >= '2025-03-30 02:00:00';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <=> '2025-03-30 02:00:00';
+# All these probably converts to DATETIME (including tz conversions) before comparing
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE date_add(ts, interval 20 minute) = '2025-03-30 02:19:59';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE date_add(ts, interval -20 minute) = '2025-03-30 02:40:00';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = date_add('2025-03-30 02:40:00', interval 20 minute);
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = date_add('2025-03-30 02:19:59', interval -20 minute);
+
+SELECT DATE_ADD(ts, INTERVAL 1 HOUR) FROM t;
+SELECT DATE_SUB(ts, INTERVAL 1 HOUR) FROM t;
+# If not error, his returns NULL, but MySQL returns 02:59:59.
+# TODO: issue#61567, also understand when it returns NULL and when it gives error!
+--error 8179
+SELECT TIMESTAMPADD(HOUR, 1, ts) FROM t;
+SELECT TIMESTAMPDIFF(HOUR, '2025-03-30 01:59:59', ts) FROM t;
+SELECT UNIX_TIMESTAMP(ts) FROM t;
+SELECT FROM_UNIXTIME(UNIX_TIMESTAMP(ts)) FROM t;
+
+SELECT DATE_ADD('2025-03-30 02:30:00', INTERVAL 1 HOUR);
+SELECT DATE_SUB('2025-03-30 02:30:00', INTERVAL 1 HOUR);
+SELECT TIMESTAMPADD(HOUR, 1, '2025-03-30 02:30:00');
+SELECT TIMESTAMPDIFF(HOUR, '2025-03-30 01:59:59', '2025-03-30 02:30:00');
+SELECT UNIX_TIMESTAMP('2025-03-30 02:30:00');
+SELECT FROM_UNIXTIME(UNIX_TIMESTAMP('2025-03-30 02:30:00'));

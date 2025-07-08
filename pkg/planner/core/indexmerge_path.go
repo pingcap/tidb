@@ -176,7 +176,7 @@ func isInIndexMergeHints(ds *logicalop.DataSource, name string) bool {
 			return true
 		}
 		for _, hintName := range hint.IndexHint.IndexNames {
-			if strings.EqualFold(strings.ToLower(name), strings.ToLower(hintName.String())) {
+			if strings.EqualFold(name, hintName.String()) {
 				return true
 			}
 		}
@@ -204,7 +204,7 @@ func isSpecifiedInIndexMergeHints(ds *logicalop.DataSource, name string) bool {
 			continue
 		}
 		for _, hintName := range hint.IndexHint.IndexNames {
-			if strings.EqualFold(strings.ToLower(name), strings.ToLower(hintName.String())) {
+			if strings.EqualFold(name, hintName.String()) {
 				return true
 			}
 		}
@@ -387,7 +387,7 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 	}
 
 	// Keep these partial filters as a part of table filters for safety if there is any parameter.
-	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), partialFilters) {
+	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), partialFilters...) {
 		dedupedFinalFilters = append(dedupedFinalFilters, partialFilters...)
 	}
 
@@ -634,7 +634,6 @@ func generateANDIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt
 
 	// Collect access paths that satisfy the hints, and make sure there is at least one MV index path.
 	var mvIndexPathCnt int
-	candidateAccessPaths := make([]*util.AccessPath, 0, len(ds.PossibleAccessPaths))
 	for idx := range normalPathCnt {
 		if (ds.PossibleAccessPaths[idx].IsTablePath() &&
 			!isInIndexMergeHints(ds, "primary")) ||
@@ -645,7 +644,6 @@ func generateANDIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt
 		if isMVIndexPath(ds.PossibleAccessPaths[idx]) {
 			mvIndexPathCnt++
 		}
-		candidateAccessPaths = append(candidateAccessPaths, ds.PossibleAccessPaths[idx])
 	}
 	if mvIndexPathCnt == 0 {
 		return nil
@@ -1319,7 +1317,7 @@ func jsonArrayExpr2Exprs(
 	targetType *types.FieldType,
 	checkForSkipPlanCache bool,
 ) ([]expression.Expression, bool) {
-	if checkForSkipPlanCache && expression.MaybeOverOptimized4PlanCache(sctx, []expression.Expression{jsonArrayExpr}) {
+	if checkForSkipPlanCache && expression.MaybeOverOptimized4PlanCache(sctx, jsonArrayExpr) {
 		// skip plan cache and try to generate the best plan in this case.
 		sctx.SetSkipPlanCache(jsonFuncName + " function with immutable parameters can affect index selection")
 	}

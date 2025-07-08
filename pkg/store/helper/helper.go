@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -67,7 +68,7 @@ type Storage interface {
 	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
 	GetLockResolver() *txnlock.LockResolver
 	GetSafePointKV() tikv.SafePointKV
-	UpdateSPCache(cachedSP uint64, cachedTime time.Time)
+	UpdateTxnSafePointCache(txnSafePoint uint64, now time.Time)
 	SetOracle(oracle oracle.Oracle)
 	SetTiKVClient(client tikv.Client)
 	GetTiKVClient() tikv.Client
@@ -78,6 +79,8 @@ type Storage interface {
 	GetPDHTTPClient() pd.Client
 	GetOption(any) (any, bool)
 	SetOption(any, any)
+	GetClusterID() uint64
+	GetKeyspace() string
 }
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
@@ -669,7 +672,7 @@ func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model
 // FilterMemDBs filters memory databases in the input schemas.
 func (*Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo) {
 	for _, dbInfo := range oldSchemas {
-		if util.IsMemDB(dbInfo.Name.L) {
+		if metadef.IsMemDB(dbInfo.Name.L) {
 			continue
 		}
 		schemas = append(schemas, dbInfo)
