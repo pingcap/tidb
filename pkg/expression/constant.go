@@ -158,12 +158,6 @@ func (c *Constant) MarshalJSON() ([]byte, error) {
 func (c *Constant) Clone() Expression {
 	con := *c
 	con.RetType = c.RetType.Clone()
-	if c.ParamMarker != nil {
-		con.ParamMarker = &ParamMarker{order: c.ParamMarker.order}
-	}
-	if c.DeferredExpr != nil {
-		con.DeferredExpr = c.DeferredExpr.Clone()
-	}
 	return &con
 }
 
