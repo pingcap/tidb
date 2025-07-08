@@ -58,6 +58,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -1315,4 +1316,29 @@ func TestGetAllTableInfos(t *testing.T) {
 		require.Equal(t, tblInfos1[i].ID, tblInfos2[i].ID)
 		require.Equal(t, tblInfos1[i].DBID, tblInfos2[i].DBID)
 	}
+}
+
+func TestGetVersionFailed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockGetCurrentVersionFailed", "return(true)")
+
+	eg := errgroup.Group{}
+	eg.Go(func() error {
+		tk.MustExec("alter table t add column b int")
+		return nil
+	})
+
+	eg.Go(func() error {
+		time.Sleep(2 * time.Second)
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockGetCurrentVersionFailed")
+		return nil
+	})
+
+	eg.Wait()
 }
