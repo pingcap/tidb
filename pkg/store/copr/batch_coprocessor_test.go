@@ -408,7 +408,7 @@ func TestAliveStoreSkipCheck(t *testing.T) {
 	}
 
 	{
-		// closest_replica. min replica num is 1.
+		// closest_replica(always need check). min replica num is 1.
 		usedTiFlashStores := [][]uint64{
 			{1, 2}, // region-1
 			{2, 3}, // region-2
@@ -440,7 +440,7 @@ func TestAliveStoreSkipCheck(t *testing.T) {
 			2: {},
 			3: {},
 		}
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 1))
+		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 1))
 	}
 
 	{
@@ -477,7 +477,7 @@ func TestAliveStoreSkipCheck(t *testing.T) {
 			2: {},
 			3: {},
 		}
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 2))
+		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 2))
 
 		// 1, 2 is alive, can skip check.
 		usedTiFlashStores = [][]uint64{
@@ -489,7 +489,7 @@ func TestAliveStoreSkipCheck(t *testing.T) {
 			1: {},
 			2: {},
 		}
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 2))
+		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 2))
 	}
 }
 
