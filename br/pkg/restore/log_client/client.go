@@ -80,108 +80,10 @@ const maxSplitKeysOnce = 10240
 // rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 const rawKVBatchCount = 64
 
-<<<<<<< HEAD
-=======
 // session count for repairing ingest indexes. Currently only one TiDB node executes adding index jobs
 // at the same time and the add-index job concurrency is about min(10, `TiDB CPUs / 4`).
 const defaultRepairIndexSessionCount uint = 10
 
-// LogRestoreManager is a comprehensive wrapper that encapsulates all logic related to log restoration,
-// including concurrency management, checkpoint handling, and file importing for efficient log processing.
-type LogRestoreManager struct {
-	fileImporter     *LogFileImporter
-	workerPool       *tidbutil.WorkerPool
-	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
-}
-
-func NewLogRestoreManager(
-	ctx context.Context,
-	fileImporter *LogFileImporter,
-	poolSize uint,
-	createCheckpointSessionFn func() (glue.Session, error),
-) (*LogRestoreManager, error) {
-	// for compacted reason, user only set --concurrency for log file restore speed.
-	log.Info("log restore worker pool", zap.Uint("size", poolSize))
-	l := &LogRestoreManager{
-		fileImporter: fileImporter,
-		workerPool:   tidbutil.NewWorkerPool(poolSize, "log manager worker pool"),
-	}
-	se, err := createCheckpointSessionFn()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if se != nil {
-		l.checkpointRunner, err = checkpoint.StartCheckpointRunnerForLogRestore(ctx, se)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return l, nil
-}
-
-func (l *LogRestoreManager) Close(ctx context.Context) {
-	if l.fileImporter != nil {
-		if err := l.fileImporter.Close(); err != nil {
-			log.Warn("failed to close file importer")
-		}
-	}
-	if l.checkpointRunner != nil {
-		l.checkpointRunner.WaitForFinish(ctx, true)
-	}
-}
-
-// SstRestoreManager is a comprehensive wrapper that encapsulates all logic related to sst restoration,
-// including concurrency management, checkpoint handling, and file importing(splitting) for efficient log processing.
-type SstRestoreManager struct {
-	restorer         restore.SstRestorer
-	workerPool       *tidbutil.WorkerPool
-	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
-}
-
-func (s *SstRestoreManager) Close(ctx context.Context) {
-	if s.restorer != nil {
-		if err := s.restorer.Close(); err != nil {
-			log.Warn("failed to close file restorer")
-		}
-	}
-	if s.checkpointRunner != nil {
-		s.checkpointRunner.WaitForFinish(ctx, true)
-	}
-}
-
-func NewSstRestoreManager(
-	ctx context.Context,
-	snapFileImporter *snapclient.SnapFileImporter,
-	concurrencyPerStore uint,
-	storeCount uint,
-	createCheckpointSessionFn func() (glue.Session, error),
-) (*SstRestoreManager, error) {
-	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
-	// This poolSize is similar to full restore, as both workflows are comparable.
-	// The poolSize should be greater than concurrencyPerStore multiplied by the number of stores.
-	poolSize := concurrencyPerStore * 32 * storeCount
-	log.Info("sst restore worker pool", zap.Uint("size", poolSize))
-	sstWorkerPool := tidbutil.NewWorkerPool(poolSize, "sst file")
-
-	s := &SstRestoreManager{
-		workerPool: tidbutil.NewWorkerPool(poolSize, "log manager worker pool"),
-	}
-	se, err := createCheckpointSessionFn()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if se != nil {
-		checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner)
-	return s, nil
-}
-
->>>>>>> e7d7cdc600e (br: concurrently repairing indexes (#59159))
 type LogClient struct {
 	cipher        *backuppb.CipherInfo
 	pdClient      pd.Client
@@ -364,19 +266,9 @@ func closeSessions(sessions []glue.Session) {
 }
 
 // Init create db connection and domain for storage.
-func (rc *LogClient) Init(g glue.Glue, store kv.Storage) error {
+func (rc *LogClient) Init(ctx context.Context, g glue.Glue, store kv.Storage) error {
 	var err error
-<<<<<<< HEAD
-	rc.se, err = g.CreateSession(store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Set SQL mode to None for avoiding SQL compatibility problem
-	err = rc.se.Execute(context.Background(), "set @@sql_mode=''")
-=======
-	rc.unsafeSession, err = createSession(ctx, g, store)
->>>>>>> e7d7cdc600e (br: concurrently repairing indexes (#59159))
+	rc.se, err = createSession(ctx, g, store)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1631,13 +1523,8 @@ func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *inge
 			// restored metakv and then skips repairing it.
 
 			// only when first execution or old index id is not dropped
-<<<<<<< HEAD
-			if !fromCheckpoint || oldIndexIDFound {
-				if err := rc.se.ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
-=======
 			if !fromCheckpoint || sql.OldIndexIDFound {
 				if err := indexSession.ExecuteInternal(ectx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
->>>>>>> e7d7cdc600e (br: concurrently repairing indexes (#59159))
 					return errors.Trace(err)
 				}
 			}
@@ -1647,15 +1534,7 @@ func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *inge
 				}
 			})
 			// create the repaired index when first execution or not found it
-<<<<<<< HEAD
-			if err := rc.se.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
-				return errors.Trace(err)
-			}
-			w.Inc()
-			if err := w.Wait(ctx); err != nil {
-=======
 			if err := indexSession.ExecuteInternal(ectx, sql.AddSQL, sql.AddArgs...); err != nil {
->>>>>>> e7d7cdc600e (br: concurrently repairing indexes (#59159))
 				return errors.Trace(err)
 			}
 			w.Increment()

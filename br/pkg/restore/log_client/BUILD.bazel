@@ -92,11 +92,8 @@ go_test(
         "//br/pkg/glue",
         "//br/pkg/gluetidb",
         "//br/pkg/mock",
-<<<<<<< HEAD
-=======
         "//br/pkg/restore",
         "//br/pkg/restore/ingestrec",
->>>>>>> e7d7cdc600e (br: concurrently repairing indexes (#59159))
         "//br/pkg/restore/internal/import_client",
         "//br/pkg/restore/split",
         "//br/pkg/restore/utils",
