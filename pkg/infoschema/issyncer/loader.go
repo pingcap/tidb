@@ -325,7 +325,7 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, erro
 		return nil, err
 	}
 	if l.crossKS {
-		filteredSchemas := make([]*model.DBInfo, 0, len(allSchemas))
+		filteredSchemas := make([]*model.DBInfo, 0, 1)
 		for _, di := range allSchemas {
 			if metadef.IsSystemDB(di.Name.L) {
 				filteredSchemas = append(filteredSchemas, di)
