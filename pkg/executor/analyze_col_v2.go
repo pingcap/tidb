@@ -90,21 +90,8 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeRes
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
 	}
 	idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
-<<<<<<< HEAD
-	// subIndexWorkerWg is better to be initialized in handleNDVForSpecialIndexes, however if we do so, golang would
-	// report unexpected/unreasonable data race error on subIndexWorkerWg when running TestAnalyzeVirtualCol test
-	// case with `-race` flag now.
-	var wg util.WaitGroupWrapper
-	wg.Run(func() {
-		e.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh, statsConcurrncy)
-	})
-	defer wg.Wait()
-
-	count, hists, topNs, fmSketches, extStats, err := e.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency)
-=======
 	e.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh, samplingStatsConcurrency)
-	count, hists, topNs, fmSketches, extStats, err := e.buildSamplingStats(gp, ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency)
->>>>>>> 1c05c7fe383 (planner: avoid exceeding the configured concurrency limit (#61786))
+	count, hists, topNs, fmSketches, extStats, err := e.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency)
 	if err != nil {
 		e.memTracker.Release(e.memTracker.BytesConsumed())
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
@@ -452,13 +439,8 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 		samplingStatsConcurrency = len(tasks)
 	}
 	var subIndexWorkerWg = NewAnalyzeResultsNotifyWaitGroupWrapper(resultsCh)
-<<<<<<< HEAD
-	subIndexWorkerWg.Add(statsConcurrncy)
-	for i := 0; i < statsConcurrncy; i++ {
-=======
 	subIndexWorkerWg.Add(samplingStatsConcurrency)
-	for range samplingStatsConcurrency {
->>>>>>> 1c05c7fe383 (planner: avoid exceeding the configured concurrency limit (#61786))
+	for i := 0; i < samplingStatsConcurrency; i++ {
 		subIndexWorkerWg.Run(func() { e.subIndexWorkerForNDV(taskCh, resultsCh) })
 	}
 	for _, task := range tasks {
@@ -470,12 +452,7 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 		results: make(map[int64]*statistics.AnalyzeResults, len(indexInfos)),
 	}
 	var err error
-<<<<<<< HEAD
-	for panicCnt < statsConcurrncy {
-=======
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	for panicCnt < samplingStatsConcurrency {
->>>>>>> 1c05c7fe383 (planner: avoid exceeding the configured concurrency limit (#61786))
 		results, ok := <-resultsCh
 		if !ok {
 			break
