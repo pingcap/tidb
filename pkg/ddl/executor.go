@@ -5776,8 +5776,8 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{
-				Database: schema.Name.O,
-				Table:    table.Meta().Name.O,
+				Database: schema.Name.L,
+				Table:    table.Meta().Name.L,
 			},
 		},
 	}
