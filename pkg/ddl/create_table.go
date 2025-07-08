@@ -986,6 +986,10 @@ func handleTableOptions(ctx *metabuild.Context, options []*ast.TableOption, tbIn
 				// Check for underflow (value too small for signed types)
 				// Note: Since op.UintValue is uint64, negative values are represented as large positive numbers
 				// For signed types, check if the value when cast to int64 is below the minimum
+				// 
+				// IMPORTANT: This validation code is kept for defensive programming, but cannot be
+				// fully tested via SQL because TiDB parser currently does not support negative
+				// AUTO_INCREMENT literals (unlike MySQL). This is a known difference from MySQL.
 				if !isUnsigned {
 					signedValue := int64(op.UintValue)
 					if signedValue < minValue {
