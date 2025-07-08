@@ -339,15 +339,11 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 	tk.MustExec("drop table planReplayer.t")
 	tk.MustExec("drop table planReplayer2.t")
 	tk.MustExec("drop table planReplayer.v")
-<<<<<<< HEAD
-	tk.MustExec(`plan replayer load "/tmp/plan_replayer.zip"`)
-=======
 	tk.MustExec("drop table planReplayer.a")
 	tk.MustExec("drop table planReplayer.b")
 	tk.MustExec("drop table planReplayer.c")
 	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 1;`)
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
->>>>>>> 1f32c8e0052 (domain: fix the issue where defining FKs in a circular manner causes an infinite loop (#60987))
 
 	// 3-3. check whether binding takes effect
 	tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
@@ -478,13 +474,8 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 	tk.MustExec("create table planReplayer2.t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer.v(id) ON DELETE CASCADE);")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
-<<<<<<< HEAD
-	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer2.t(a) ON DELETE CASCADE) placement policy p;")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-=======
 	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, b_id int, FOREIGN KEY (b_id) REFERENCES B(id),FOREIGN KEY (author_id) REFERENCES planReplayer2.t(a) ON DELETE CASCADE) placement policy p;")
-	err = statstestutil.HandleNextDDLEventWithTxn(h)
->>>>>>> 1f32c8e0052 (domain: fix the issue where defining FKs in a circular manner causes an infinite loop (#60987))
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 	// defining FKs in a circular manner
 	tk.MustExec(`CREATE TABLE A (
@@ -493,7 +484,7 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
     b_id INT,
     FOREIGN KEY (b_id) REFERENCES B(id)
 );`)
-	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 	tk.MustExec(`CREATE TABLE B (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -501,7 +492,7 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
     c_id INT,
     FOREIGN KEY (c_id) REFERENCES C(id)
 );`)
-	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 	tk.MustExec(`CREATE TABLE C(
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -509,7 +500,7 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
     a_id INT,
     FOREIGN KEY (a_id) REFERENCES A(id)
 );`)
-	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 1;`)
 	tk.MustExec("create global binding for select a, b from t where a in (1, 2, 3) using select a, b from t use index (ib) where a in (1, 2, 3)")
