@@ -200,6 +200,12 @@ var GetPlanCostVer14PhysicalUnionAll func(pp base.PhysicalPlan, taskType propert
 var GetPlanCostVer24PhysicalUnionAll func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
 
+// ResolveIndices4PhysicalLimit will be called by PhysicalLimit in physicalOp pkg.
+var ResolveIndices4PhysicalLimit func(pp base.PhysicalPlan) (err error)
+
+// Attach2Task4PhysicalLimit will be called by PhysicalLimit in physicalOp pkg.
+var Attach2Task4PhysicalLimit func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -68,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
-	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -4868,9 +4868,9 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName ast.CIStr, tableIn
 
 	// Some memory tables can receive some predicates
 	switch dbName.L {
-	case util2.MetricSchemaName.L:
+	case metadef.MetricSchemaName.L:
 		p.Extractor = newMetricTableExtractor()
-	case util2.InformationSchemaName.L:
+	case metadef.InformationSchemaName.L:
 		switch upTbl := strings.ToUpper(tableInfo.Name.O); upTbl {
 		case infoschema.TableClusterConfig, infoschema.TableClusterLoad, infoschema.TableClusterHardware, infoschema.TableClusterSystemInfo:
 			p.Extractor = &ClusterTableExtractor{}

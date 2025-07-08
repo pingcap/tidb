@@ -707,7 +707,7 @@ func (t *CopTask) handleRootTaskConds(ctx base.PlanContext, newTask *RootTask) {
 	}
 }
 
-// Attach2Task attach limit to different cases.
+// attach2Task4PhysicalLimit attach limit to different cases.
 // For Normal Index Lookup
 // 1: attach the limit to table side or index side of normal index lookup cop task. (normal case, old code, no more
 // explanation here)
@@ -723,7 +723,8 @@ func (t *CopTask) handleRootTaskConds(ctx base.PlanContext, newTask *RootTask) {
 //
 // 4: attach the limit to the TOP of root index merge operator if there is some root condition exists for index merge
 // intersection/union case.
-func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
+func attach2Task4PhysicalLimit(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalLimit)
 	t := tasks[0].Copy()
 	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
 	for _, expr := range p.GetPartitionBy() {
@@ -737,7 +738,7 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 			childProfile := cop.tablePlan.StatsInfo()
 			// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
 			stats := util.DeriveLimitStats(childProfile, float64(newCount))
-			pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+			pushedDownLimit := physicalop.PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 			pushedDownLimit.SetChildren(cop.tablePlan)
 			cop.tablePlan = pushedDownLimit
 			// Don't use clone() so that Limit and its children share the same schema. Otherwise, the virtual generated column may not be resolved right.
@@ -754,13 +755,13 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 				// Strictly speaking, for the row count of stats, we should multiply newCount with "regionNum",
 				// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
 				stats := util.DeriveLimitStats(childProfile, float64(newCount))
-				pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+				pushedDownLimit := physicalop.PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 				cop = attachPlan2Task(pushedDownLimit, cop).(*CopTask)
 				// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
 				pushedDownLimit.SetSchema(pushedDownLimit.Children()[0].Schema())
 			}
 			t = cop.ConvertToRootTask(p.SCtx())
-			sunk = p.sinkIntoIndexLookUp(t)
+			sunk = sinkIntoIndexLookUp(p, t)
 		} else if !cop.idxMergeIsIntersection {
 			// We only support push part of the order prop down to index merge build case.
 			if len(cop.rootTaskConds) == 0 {
@@ -776,23 +777,23 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 					for _, partialScan := range cop.idxMergePartPlans {
 						childProfile := partialScan.StatsInfo()
 						stats := util.DeriveLimitStats(childProfile, float64(newCount))
-						pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+						pushedDownLimit := physicalop.PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 						pushedDownLimit.SetChildren(partialScan)
 						pushedDownLimit.SetSchema(pushedDownLimit.Children()[0].Schema())
 						limitChildren = append(limitChildren, pushedDownLimit)
 					}
 					cop.idxMergePartPlans = limitChildren
 					t = cop.ConvertToRootTask(p.SCtx())
-					sunk = p.sinkIntoIndexMerge(t)
+					sunk = sinkIntoIndexMerge(p, t)
 				} else {
 					// when there are some limitations, just sink the limit upon the index merge reader.
 					t = cop.ConvertToRootTask(p.SCtx())
-					sunk = p.sinkIntoIndexMerge(t)
+					sunk = sinkIntoIndexMerge(p, t)
 				}
 			} else {
 				// when there are some root conditions, just sink the limit upon the index merge reader.
 				t = cop.ConvertToRootTask(p.SCtx())
-				sunk = p.sinkIntoIndexMerge(t)
+				sunk = sinkIntoIndexMerge(p, t)
 			}
 		} else if cop.idxMergeIsIntersection {
 			// In the index merge with intersection case, only the limit can be pushed down to the index merge table side.
@@ -805,12 +806,12 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 					suspendLimitAboveTablePlan()
 				} else {
 					t = cop.ConvertToRootTask(p.SCtx())
-					sunk = p.sinkIntoIndexMerge(t)
+					sunk = sinkIntoIndexMerge(p, t)
 				}
 			} else {
 				// Otherwise, suspend the limit out of index merge reader.
 				t = cop.ConvertToRootTask(p.SCtx())
-				sunk = p.sinkIntoIndexMerge(t)
+				sunk = sinkIntoIndexMerge(p, t)
 			}
 		} else {
 			// Whatever the remained case is, we directly convert to it to root task.
@@ -820,7 +821,7 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 		newCount := p.Offset + p.Count
 		childProfile := mpp.Plan().StatsInfo()
 		stats := util.DeriveLimitStats(childProfile, float64(newCount))
-		pushedDownLimit := PhysicalLimit{Count: newCount, PartitionBy: newPartitionBy}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+		pushedDownLimit := physicalop.PhysicalLimit{Count: newCount, PartitionBy: newPartitionBy}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 		mpp = attachPlan2Task(pushedDownLimit, mpp).(*MppTask)
 		pushedDownLimit.SetSchema(pushedDownLimit.Children()[0].Schema())
 		t = mpp.ConvertToRootTask(p.SCtx())
@@ -836,7 +837,7 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 	return attachPlan2Task(p, t)
 }
 
-func (p *PhysicalLimit) sinkIntoIndexLookUp(t base.Task) bool {
+func sinkIntoIndexLookUp(p *physicalop.PhysicalLimit, t base.Task) bool {
 	root := t.(*RootTask)
 	reader, isDoubleRead := root.GetPlan().(*PhysicalIndexLookUpReader)
 	proj, isProj := root.GetPlan().(*PhysicalProjection)
@@ -888,7 +889,7 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t base.Task) bool {
 	return true
 }
 
-func (p *PhysicalLimit) sinkIntoIndexMerge(t base.Task) bool {
+func sinkIntoIndexMerge(p *physicalop.PhysicalLimit, t base.Task) bool {
 	root := t.(*RootTask)
 	imReader, isIm := root.GetPlan().(*PhysicalIndexMergeReader)
 	proj, isProj := root.GetPlan().(*PhysicalProjection)
@@ -1326,7 +1327,7 @@ func (p *PhysicalTopN) pushLimitDownToTiDBCop(copTsk *CopTask) (base.Task, bool)
 	childProfile := copTsk.Plan().StatsInfo()
 	newCount := p.Offset + p.Count
 	stats := util.DeriveLimitStats(childProfile, float64(newCount))
-	pushedLimit := PhysicalLimit{
+	pushedLimit := physicalop.PhysicalLimit{
 		Count: newCount,
 	}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 	pushedLimit.SetSchema(copTsk.tablePlan.Schema())

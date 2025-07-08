@@ -28,6 +28,7 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -234,27 +235,6 @@ func (p *PhysicalTopN) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalLimit) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
-	client := ctx.GetClient()
-	limitExec := &tipb.Limit{
-		Limit: p.Count,
-	}
-	executorID := ""
-	for _, item := range p.PartitionBy {
-		limitExec.PartitionBy = append(limitExec.PartitionBy, expression.SortByItemToPB(ctx.GetExprCtx().GetEvalCtx(), client, item.Col.Clone(), item.Desc))
-	}
-	if storeType == kv.TiFlash {
-		var err error
-		limitExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		executorID = p.ExplainID().String()
-	}
-	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec, ExecutorId: &executorID}, nil
-}
-
-// ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	if storeType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return p.partitionTableScanToPBForFlash(ctx)
@@ -294,6 +274,11 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 	executorID := ""
 	if storeType == kv.TiFlash {
 		executorID = p.ExplainID().String()
+
+		telemetry.CurrentTiflashTableScanCount.Inc()
+		if *(tsExec.IsFastScan) {
+			telemetry.CurrentTiflashTableScanWithFastScanCount.Inc()
+		}
 	}
 	err = tables.SetPBColumnsDefaultValue(ctx.GetExprCtx(), tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec, ExecutorId: &executorID}, err
@@ -301,6 +286,10 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 
 func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBContext) (*tipb.Executor, error) {
 	ptsExec := tables.BuildPartitionTableScanFromInfos(p.Table, p.Columns, ctx.TiFlashFastScan)
+	telemetry.CurrentTiflashTableScanCount.Inc()
+	if *(ptsExec.IsFastScan) {
+		telemetry.CurrentTiflashTableScanWithFastScanCount.Inc()
+	}
 
 	if len(p.LateMaterializationFilterCondition) > 0 {
 		client := ctx.GetClient()

@@ -38,7 +38,7 @@ func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 	var structures = []any{core.PhysicalTableScan{}, core.PhysicalIndexScan{}, core.PhysicalSelection{},
 		core.PhysicalProjection{}, core.PhysicalTopN{}, core.PhysicalStreamAgg{},
 		core.PhysicalHashAgg{}, core.PhysicalHashJoin{}, core.PhysicalMergeJoin{}, core.PhysicalTableReader{},
-		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{}, core.PhysicalLimit{},
+		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{},
 		core.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
 		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalLock{}, core.PhysicalUnionScan{}}
 

@@ -278,19 +278,6 @@ func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 }
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalLimit) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalLimit)
-	*cloned = *op
-	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.PartitionBy = util.CloneSortItems(op.PartitionBy)
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
 func (op *PhysicalIndexJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexJoin)
 	*cloned = *op

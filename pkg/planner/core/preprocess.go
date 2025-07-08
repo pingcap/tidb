@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -1797,7 +1798,7 @@ func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
 
 func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 	// Check the whether the repaired table is system table.
-	if util.IsMemOrSysDB(tn.Schema.L) {
+	if metadef.IsMemOrSysDB(tn.Schema.L) {
 		p.err = dbterror.ErrRepairTableFail.GenWithStackByArgs("memory or system database is not for repair")
 		return
 	}

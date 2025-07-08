@@ -67,7 +67,7 @@ var (
 	_ base.PhysicalPlan = &physicalop.PhysicalSort{}
 	_ base.PhysicalPlan = &physicalop.NominalSort{}
 	_ base.PhysicalPlan = &PhysicalLock{}
-	_ base.PhysicalPlan = &PhysicalLimit{}
+	_ base.PhysicalPlan = &physicalop.PhysicalLimit{}
 	_ base.PhysicalPlan = &PhysicalIndexScan{}
 	_ base.PhysicalPlan = &PhysicalTableScan{}
 	_ base.PhysicalPlan = &PhysicalTableReader{}
@@ -2031,47 +2031,6 @@ func (pl *PhysicalLock) MemoryUsage() (sum int64) {
 	for _, val := range pl.TblID2PhysTblIDCol {
 		sum += size.SizeOfInt64 + size.SizeOfPointer + val.MemoryUsage()
 	}
-	return
-}
-
-// PhysicalLimit is the physical operator of Limit.
-type PhysicalLimit struct {
-	physicalop.PhysicalSchemaProducer
-
-	PartitionBy []property.SortItem
-	Offset      uint64
-	Count       uint64
-}
-
-// GetPartitionBy returns partition by fields
-func (p *PhysicalLimit) GetPartitionBy() []property.SortItem {
-	return p.PartitionBy
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalLimit) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalLimit)
-	*cloned = *p
-	cloned.SetSCtx(newCtx)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
-	for _, it := range p.PartitionBy {
-		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
-	}
-	cloned.PhysicalSchemaProducer = *base
-	return cloned, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalLimit
-func (p *PhysicalLimit) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfUint64*2
 	return
 }
 

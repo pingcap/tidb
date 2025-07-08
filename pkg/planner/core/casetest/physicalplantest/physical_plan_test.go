@@ -328,11 +328,9 @@ func TestMPPHintsScope(t *testing.T) {
 	tk.MustExec("select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustExec("select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the shuffle_join() hint is invalid",
-		"Warning 1815 The join can not push down to the MPP side, the shuffle_join() hint is invalid"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the shuffle_join() hint is invalid"))
 	tk.MustExec("select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the broadcast_join() hint is invalid",
-		"Warning 1815 The join can not push down to the MPP side, the broadcast_join() hint is invalid"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the broadcast_join() hint is invalid"))
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
 	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)

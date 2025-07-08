@@ -352,7 +352,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(proj))
 
 	// limit
-	lim := &PhysicalLimit{Count: 1, Offset: 2}
+	lim := &physicalop.PhysicalLimit{Count: 1, Offset: 2}
 	lim = lim.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(lim))
 

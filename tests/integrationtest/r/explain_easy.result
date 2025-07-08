@@ -266,52 +266,52 @@ subgraph cluster15{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"StreamAgg_15" -> "Projection_39"
-"Projection_39" -> "HashJoin_37"
-"HashJoin_37" -> "TableReader_24"
-"HashJoin_37" -> "IndexReader_30"
+"StreamAgg_15" -> "Projection_42"
+"Projection_42" -> "HashJoin_40"
+"HashJoin_40" -> "TableReader_25"
+"HashJoin_40" -> "IndexReader_31"
 }
-subgraph cluster23{
+subgraph cluster24{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_23"
+"TableFullScan_24"
 }
-subgraph cluster29{
+subgraph cluster30{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"IndexFullScan_29"
+"IndexFullScan_30"
 }
-"TableReader_24" -> "TableFullScan_23"
-"IndexReader_30" -> "IndexFullScan_29"
+"TableReader_25" -> "TableFullScan_24"
+"IndexReader_31" -> "IndexFullScan_30"
 }
 
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
-digraph HashJoin_15 {
-subgraph cluster15{
-node [style=filled, color=lightgrey]
-color=black
-label = "root"
-"HashJoin_15" -> "TableReader_17"
-"HashJoin_15" -> "TableReader_21"
-}
+digraph HashJoin_16 {
 subgraph cluster16{
 node [style=filled, color=lightgrey]
 color=black
-label = "cop"
-"TableFullScan_16"
+label = "root"
+"HashJoin_16" -> "TableReader_18"
+"HashJoin_16" -> "TableReader_22"
 }
-subgraph cluster20{
+subgraph cluster17{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_20"
+"TableFullScan_17"
 }
-"TableReader_17" -> "TableFullScan_16"
-"TableReader_21" -> "TableFullScan_20"
+subgraph cluster21{
+node [style=filled, color=lightgrey]
+color=black
+label = "cop"
+"TableFullScan_21"
+}
+"TableReader_18" -> "TableFullScan_17"
+"TableReader_22" -> "TableFullScan_21"
 }
 
 drop table if exists t1, t2, t3, t4;

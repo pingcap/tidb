@@ -514,8 +514,7 @@
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:inner_t1 keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 10000.00 root  left outer join, left side:TableReader, equal:[eq(test.ti.i, test.ti.i)]",
-          "  ├─Selection(Build) 0.00 root  not(isnull(test.ti.i))",
-          "  │ └─TableDual 0.00 root  rows:0",
+          "  ├─TableDual(Build) 0.00 root  rows:0",
           "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:ti keep order:false, stats:pseudo"
         ]

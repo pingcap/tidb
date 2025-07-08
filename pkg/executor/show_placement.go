@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -111,7 +112,7 @@ func (*showPlacementLabelsResultBuilder) sortMapKeys(m map[string]any) []string 
 
 func (e *ShowExec) fetchShowPlacementLabels(ctx context.Context) error {
 	exec := e.Ctx().GetRestrictedSQLExecutor()
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "SELECT DISTINCT LABEL FROM %n.%n", "INFORMATION_SCHEMA", infoschema.TableTiKVStoreStatus)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "SELECT DISTINCT LABEL FROM %n.%n", metadef.InformationSchemaName.O, infoschema.TableTiKVStoreStatus)
 	if err != nil {
 		return errors.Trace(err)
 	}

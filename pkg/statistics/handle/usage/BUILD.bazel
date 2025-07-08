@@ -11,6 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/infoschema",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/sessionctx",

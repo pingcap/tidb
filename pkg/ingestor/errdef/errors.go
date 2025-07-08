@@ -14,7 +14,11 @@
 
 package errdef
 
-import "github.com/pingcap/errors"
+import (
+	"fmt"
+
+	"github.com/pingcap/errors"
+)
 
 // errors of ingest API
 var (
@@ -27,3 +31,19 @@ var (
 	ErrKVIngestFailed        = errors.Normalize("ingest tikv failed", errors.RFCCodeText("Ingest:ErrKVIngestFailed"))
 	ErrKVRaftProposalDropped = errors.Normalize("raft proposal dropped", errors.RFCCodeText("Ingest:ErrKVRaftProposalDropped"))
 )
+
+// HTTPStatusError is used in nextgen write and ingest API to indicate that the
+// request failed with a non 200 status code, and there is no response body to
+// indicate what the error detail is, we use this to help determine whether it
+// can be retried or not.
+type HTTPStatusError struct {
+	StatusCode int
+	Message    string
+}
+
+var _ error = (*HTTPStatusError)(nil)
+
+// Error implements the error interface.
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("request failed with status code %d: %s", e.StatusCode, e.Message)
+}

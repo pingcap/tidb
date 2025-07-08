@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -1869,7 +1870,7 @@ var tableKeyspaceMetaCols = []columnInfo{
 // The returned nil indicates that sharding information is not suitable for the table(for example, when the table is a View).
 // This function is exported for unit test.
 func GetShardingInfo(dbInfo ast.CIStr, tableInfo *model.TableInfo) any {
-	if tableInfo == nil || tableInfo.IsView() || util.IsMemOrSysDB(dbInfo.L) {
+	if tableInfo == nil || tableInfo.IsView() || metadef.IsMemOrSysDB(dbInfo.L) {
 		return nil
 	}
 	shardingInfo := "NOT_SHARDED"
@@ -2527,7 +2528,7 @@ func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error)
 		columns[i] = table.ToColumn(col)
 	}
 	tp := table.VirtualTable
-	if IsClusterTableByName(util.InformationSchemaName.L, meta.Name.L) {
+	if IsClusterTableByName(metadef.InformationSchemaName.L, meta.Name.L) {
 		tp = table.ClusterTable
 	}
 	return &infoschemaTable{meta: meta, cols: columns, tp: tp}, nil

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -91,7 +92,7 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 	}
 	// The limit missed its output cols via the protobuf.
 	// We need to add it back and do a ResolveIndicies for the later inline projection.
-	if limit, ok := p.(*PhysicalLimit); ok {
+	if limit, ok := p.(*physicalop.PhysicalLimit); ok {
 		limit.SetSchema(p.Children()[0].Schema().Clone())
 		for i, col := range limit.Schema().Columns {
 			col.Index = i
@@ -203,7 +204,7 @@ func (b *PBPlanBuilder) pbToTopN(e *tipb.Executor) (base.PhysicalPlan, error) {
 }
 
 func (b *PBPlanBuilder) pbToLimit(e *tipb.Executor) (base.PhysicalPlan, error) {
-	p := PhysicalLimit{
+	p := physicalop.PhysicalLimit{
 		Count: e.Limit.Limit,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil

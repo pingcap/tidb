@@ -133,7 +133,7 @@ type LimitImpl struct {
 }
 
 // NewLimitImpl creates a new LimitImpl.
-func NewLimitImpl(limit *plannercore.PhysicalLimit) *LimitImpl {
+func NewLimitImpl(limit *physicalop.PhysicalLimit) *LimitImpl {
 	return &LimitImpl{baseImpl{plan: limit}}
 }
 

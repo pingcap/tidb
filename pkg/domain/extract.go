@@ -32,10 +32,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -209,7 +209,7 @@ func (w *extractWorker) handleTableNames(tableNames string, record *stmtSummaryH
 		record.schemaName = dbName
 		// skip internal schema record
 		switch strings.ToLower(record.schemaName) {
-		case util.PerformanceSchemaName.L, util.InformationSchemaName.L, util.MetricSchemaName.L, "mysql":
+		case metadef.PerformanceSchemaName.L, metadef.InformationSchemaName.L, metadef.MetricSchemaName.L, "mysql":
 			return false, nil
 		}
 		exists := is.TableExists(ast.NewCIStr(dbName), ast.NewCIStr(tblName))

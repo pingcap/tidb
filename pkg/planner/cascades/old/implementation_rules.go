@@ -358,7 +358,7 @@ func (*ImplLimit) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) (mat
 func (*ImplLimit) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicalLimit := expr.ExprNode.(*logicalop.LogicalLimit)
 	newProp := &property.PhysicalProperty{ExpectedCnt: float64(logicalLimit.Count + logicalLimit.Offset)}
-	physicalLimit := plannercore.PhysicalLimit{
+	physicalLimit := physicalop.PhysicalLimit{
 		Offset: logicalLimit.Offset,
 		Count:  logicalLimit.Count,
 	}.Init(logicalLimit.SCtx(), expr.Group.Prop.Stats, logicalLimit.QueryBlockOffset(), newProp)
@@ -420,7 +420,7 @@ func (*ImplTopNAsLimit) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalPr
 		newProp.SortItems[i].Col = item.Expr.(*expression.Column)
 		newProp.SortItems[i].Desc = item.Desc
 	}
-	physicalLimit := plannercore.PhysicalLimit{
+	physicalLimit := physicalop.PhysicalLimit{
 		Offset: lt.Offset,
 		Count:  lt.Count,
 	}.Init(lt.SCtx(), expr.Group.Prop.Stats, lt.QueryBlockOffset(), newProp)

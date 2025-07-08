@@ -1578,3 +1578,56 @@ func TestRiskEqSkewRatio(t *testing.T) {
 	// Reset global variable to default.
 	testKit.MustExec("set @@global.tidb_opt_risk_eq_skew_ratio = default")
 }
+
+func TestRiskRangeSkewRatio(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, index idx(a))")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Insert enough rows to produce skewed distribution.
+	testKit.MustExec("insert into t values (1), (1), (1), (1), (2), (2), (3), (4), (5), (5)")
+	// Do not collect topn and only collect 1 bucket to ensure later queries will be within a bucket.
+	testKit.MustExec(`analyze table t with 0 topn, 1 buckets`)
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+
+	sctx := testKit.Session()
+	idxID := tblInfo.Indices[0].ID
+	statsTbl := h.GetTableStats(tb.Meta())
+	// Search for the range from 2 to 3, since there is only one bucket it will be a query within
+	// a bucket.
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0")
+	count, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	require.NoError(t, err)
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.5")
+	count2, _, err2 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	require.NoError(t, err2)
+	// Result of count2 should be larger than count because the risk ratio is higher
+	require.Less(t, count, count2)
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 1")
+	count3, _, err3 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	require.NoError(t, err3)
+	// Result of count3 should be larger because the risk ratio is higher
+	require.Less(t, count2, count3)
+	// Repeat the prior test by setting the global variable instead of the session variable. This should have no effect.
+	testKit.MustExec("set @@global.tidb_opt_risk_range_skew_ratio = 0.5")
+	count4, _, err4 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	require.NoError(t, err4)
+	require.Less(t, count2, count4)
+	// Repeat the prior test by setting the session variable to the default. Count4 should inherit the global
+	// variable and be less than count3.
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = default")
+	count4, _, err4 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	require.NoError(t, err4)
+	require.Less(t, count4, count3)
+	// Reset global variable to default.
+	testKit.MustExec("set @@global.tidb_opt_risk_range_skew_ratio = default")
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = default")
+}

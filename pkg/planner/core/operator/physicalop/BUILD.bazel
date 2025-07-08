@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "base_physical_plan.go",
         "nominal_sort.go",
+        "physical_limit.go",
         "physical_schema_producer.go",
         "physical_sort.go",
         "physical_union_all.go",

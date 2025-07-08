@@ -1375,7 +1375,10 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		defer manager.Close()
+		// it's nil when checksum=off
+		if manager != nil {
+			defer manager.Close()
+		}
 		ctx = context.WithValue(ctx, &checksumManagerKey, manager)
 
 		undo, err := rc.registerTaskToPD(ctx)

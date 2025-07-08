@@ -229,7 +229,7 @@ type Config struct {
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 	// SkipRegisterToDashboard tells TiDB don't register itself to the dashboard.
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
-	// EnableTelemetry enables the usage data report to PingCAP. Deprecated: Telemetry has been removed.
+	// EnableTelemetry enables the usage data print to log.
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 	// Labels indicates the labels set for the tidb server. The labels describe some specific properties for the tidb
 	// server like `zone`/`rack`/`host`. Currently, labels won't affect the tidb server except for some special
@@ -340,6 +340,7 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 		Path:                  c.Path,
 		EnableForwarding:      c.EnableForwarding,
 		TxnScope:              c.Labels["zone"],
+		ZoneLabel:             c.Labels["zone"],
 	}
 }
 
@@ -1336,6 +1337,11 @@ func (c *Config) Valid() error {
 
 	// txn-local-latches
 	if err := c.TxnLocalLatches.Valid(); err != nil {
+		return err
+	}
+
+	// pd-client
+	if err := c.PDClient.Valid(); err != nil {
 		return err
 	}
 

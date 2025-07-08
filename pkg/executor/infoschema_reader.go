@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -65,7 +66,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -667,7 +667,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			autoIncID = getAutoIncrementID(e.is, sctx, table)
 		}
 		tableType := "BASE TABLE"
-		if util.IsSystemView(schema.L) {
+		if metadef.IsMemDB(schema.L) {
 			tableType = "SYSTEM VIEW"
 		}
 		if table.IsSequence() {
@@ -2102,7 +2102,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 		}
 		for j, regionTable := range regionTableList {
 			// Exclude virtual schemas
-			if util.IsMemDB(regionTable.DB.Name.L) {
+			if metadef.IsMemDB(regionTable.DB.Name.L) {
 				continue
 			}
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, regionTable.DB.Name.L, regionTable.Table.Name.L, "", mysql.AllPrivMask) {
@@ -2425,7 +2425,7 @@ func (e *tableStorageStatsRetriever) initialize(ctx context.Context, sctx sessio
 
 	// Filter the sys or memory schema.
 	for schema := range schemas {
-		if !util.IsMemDB(schema) {
+		if !metadef.IsMemDB(schema) {
 			databases = append(databases, schema)
 		}
 	}
@@ -3081,7 +3081,7 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 		for i := start; i < end; i++ {
 			row := make([]types.Datum, 0, len(e.columns))
 			for _, c := range e.columns {
-				if c.Name.O == util.ClusterTableInstanceColumnName {
+				if c.Name.O == metadef.ClusterTableInstanceColumnName {
 					row = append(row, types.NewDatum(instanceAddr))
 				} else if c.Name.O == txninfo.CurrentSQLDigestTextStr {
 					if text, ok := sqlRetriever.SQLDigestsMap[e.txnInfo[i].CurrentSQLDigest]; ok && len(text) != 0 {
@@ -3407,7 +3407,7 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 			waitChainItem := deadlock.WaitChain[r.currentWaitChainIdx]
 
 			for _, c := range r.columns {
-				if c.Name.O == util.ClusterTableInstanceColumnName {
+				if c.Name.O == metadef.ClusterTableInstanceColumnName {
 					row = append(row, types.NewDatum(instanceAddr))
 				} else if c.Name.O == deadlockhistory.ColCurrentSQLDigestTextStr {
 					if text, ok := sqlRetriever.SQLDigestsMap[waitChainItem.SQLDigest]; ok && len(text) > 0 {

@@ -1497,7 +1497,7 @@ func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildCont
 	return res, allWarnings, nil
 }
 
-func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
+func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string) local.BackendConfig {
 	backendConfig := local.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,
@@ -1517,7 +1517,7 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		TiKVWorkerURL:               tidb.GetGlobalConfig().TiKVWorkerURL,
 		StoreWriteBWLimit:           int(e.MaxWriteSpeed),
 		MaxOpenFiles:                int(tidbutil.GenRLimit("table_import")),
-		KeyspaceName:                tidb.GetGlobalKeyspaceName(),
+		KeyspaceName:                keyspace,
 		PausePDSchedulerScope:       config.PausePDSchedulerScopeTable,
 		DisableAutomaticCompactions: true,
 		BlockSize:                   config.DefaultBlockSize,
@@ -1538,12 +1538,6 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 		return DataSourceTypeQuery
 	}
 	return DataSourceTypeFile
-}
-
-// JobImportResult is the result of the job import.
-type JobImportResult struct {
-	Affected uint64
-	Warnings []contextutil.SQLWarn
 }
 
 // GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.

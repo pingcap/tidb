@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
@@ -328,13 +327,6 @@ func (p *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expre
 }
 
 // *************************** end implementation of logicalPlan interface ***************************
-
-// CanPushDown is utility function to check whether we can push down Selection to TiKV or TiFlash
-func (p *LogicalSelection) CanPushDown(storeTp kv.StoreType) bool {
-	return !expression.ContainVirtualColumn(p.Conditions) &&
-		p.CanPushToCop(storeTp) &&
-		expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Conditions, storeTp)
-}
 
 func splitSetGetVarFunc(filters []expression.Expression) (canBePushDown, canNotBePushDown []expression.Expression) {
 	canBePushDown = make([]expression.Expression, 0, len(filters))

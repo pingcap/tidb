@@ -336,6 +336,7 @@ func (p *BaseLogicalPlan) RollBackTaskMap(ts uint64) {
 // it checks if it can be pushed to some stores. For TiKV, it only checks datasource.
 // For TiFlash, it will check whether the operator is supported, but note that the check
 // might be inaccurate.
+// Deprecated: don't depend subtree based push check, see CanSelfBeingPushedToCopImpl based op-self push check.
 func (p *BaseLogicalPlan) CanPushToCop(storeTp kv.StoreType) bool {
 	return CanPushToCopImpl(p, storeTp)
 }

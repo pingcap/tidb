@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -202,7 +203,7 @@ func (s *jobScheduler) close() {
 
 func hasSysDB(job *model.Job) bool {
 	for _, info := range job.GetInvolvingSchemaInfo() {
-		if tidbutil.IsSysDB(info.Database) {
+		if metadef.IsSystemRelatedDB(info.Database) {
 			return true
 		}
 	}
@@ -629,7 +630,7 @@ func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 		return
 	}
 	var sql string
-	if tidbutil.IsSysDB(strings.ToLower(job.SchemaName)) {
+	if metadef.IsSystemRelatedDB(strings.ToLower(job.SchemaName)) {
 		// DDLs that modify system tables could only happen in upgrade process,
 		// we should not reference 'owner_id'. Otherwise, there is a circular blocking problem.
 		sql = fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", job.ID)
