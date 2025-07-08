@@ -14,7 +14,7 @@ your contribution accepted.
 
 Developing BR requires:
 
-* [Go 1.16+](http://golang.org/doc/code.html)
+* [Go 1.23+](http://golang.org/doc/code.html)
 * An internet connection to download the dependencies
 
 1. Navigate to the tidb directory

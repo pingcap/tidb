@@ -110,19 +110,19 @@ select * from t limit 1;
 a
 explain format = 'plan_cache' select * from (select * from t) t1 limit 1;
 id	estRows	task	access object	operator info
-Limit_8	1.00	root		offset:0, count:1
-└─TableReader_12	1.00	root		data:Limit_11
-  └─Limit_11	1.00	cop[tikv]		offset:0, count:1
-    └─TableFullScan_10	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Limit_9	1.00	root		offset:0, count:1
+└─TableReader_15	1.00	root		data:Limit_14
+  └─Limit_14	1.00	cop[tikv]		offset:0, count:1
+    └─TableFullScan_13	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 Warning	1105	skip non-prepared plan-cache: queries that have sub-queries are not supported
 explain format = 'plan_cache' select * from (select * from t) t1 limit 1;
 id	estRows	task	access object	operator info
-Limit_8	1.00	root		offset:0, count:1
-└─TableReader_12	1.00	root		data:Limit_11
-  └─Limit_11	1.00	cop[tikv]		offset:0, count:1
-    └─TableFullScan_10	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Limit_9	1.00	root		offset:0, count:1
+└─TableReader_15	1.00	root		data:Limit_14
+  └─Limit_14	1.00	cop[tikv]		offset:0, count:1
+    └─TableFullScan_13	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
@@ -136,14 +136,14 @@ select @@last_plan_from_cache;
 0
 explain format = 'plan_cache' select * from t;
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_6	10000.00	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 explain format = 'plan_cache' select * from t;
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_6	10000.00	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
@@ -156,8 +156,8 @@ select @@last_plan_from_cache;
 1
 explain select * from t;
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_6	10000.00	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
@@ -171,20 +171,20 @@ select @@last_plan_from_cache;
 explain format = 'dot' select * from t;
 dot contents
 
-digraph TableReader_5 {
-subgraph cluster5{
+digraph TableReader_6 {
+subgraph cluster6{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"TableReader_5"
+"TableReader_6"
 }
-subgraph cluster4{
+subgraph cluster5{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_4"
+"TableFullScan_5"
 }
-"TableReader_5" -> "TableFullScan_4"
+"TableReader_6" -> "TableFullScan_5"
 }
 
 select @@last_plan_from_cache;
@@ -198,28 +198,28 @@ select @@last_plan_from_cache;
 0
 explain format = 'row' select * from t;
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_6	10000.00	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
 explain format = 'verbose' select * from t;
 id	estRows	estCost	task	access object	operator info
-TableReader_5	10000.00	313573.33	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	4070000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_6	10000.00	313573.33	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	4070000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
 explain format = 'traditional' select * from t;
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_6	10000.00	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
 explain format = 'binary' select * from t;
 binary plan
-9AFYCu8BCg1UYWJsZVJlYWRlcl81EncKD1QBEVBGdWxsU2Nhbl80IQEAAAA4DU9BKQABAfBGiMNAOAJAAkoYChYKEWV4ZWN1dG9yX19leHBsYWluEgF0Uh5rZWVwIG9yZGVyOmZhbHNlLCBzdGF0czpwc2V1ZG9w//////8BAwQBeAEGBQEgASFVVVVVlSMTHWYoAUABUhRkYXRhOlQ2kgA4WiN0aW1lOjBzLCBvcGVuBQkMY2xvcwkTHGxvb3BzOjBwBVgBATQBeP///////////wEYAQ==
+9AFUCu8BCg1UYWJsZVJlYWRlcl82EncKDwURUEZ1bGxTY2FuXzUhAQAAADgNT0EpAAEB8EaIw0A4AkACShgKFgoRZXhlY3V0b3JfX2V4cGxhaW4SAXRSHmtlZXAgb3JkZXI6ZmFsc2UsIHN0YXRzOnBzZXVkb3D//////wEDBAF4AQYFASABIVVVVVWVIxMdZigBQAFSFGRhdGE6VAGjGZI4WiN0aW1lOjBzLCBvcGVuBQkMY2xvcwkTHGxvb3BzOjBwBVgBATQBeP///////////wEYAQ==
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
@@ -227,13 +227,13 @@ explain format = 'tidb_json' select * from t;
 TiDB_JSON
 [
     {
-        "id": "TableReader_5",
+        "id": "TableReader_6",
         "estRows": "10000.00",
         "taskType": "root",
-        "operatorInfo": "data:TableFullScan_4",
+        "operatorInfo": "data:TableFullScan_5",
         "subOperators": [
             {
-                "id": "TableFullScan_4",
+                "id": "TableFullScan_5",
                 "estRows": "10000.00",
                 "taskType": "cop[tikv]",
                 "accessObject": "table:t",
@@ -248,8 +248,8 @@ select @@last_plan_from_cache;
 0
 explain format = 'cost_trace' select * from t;
 id	estRows	estCost	costFormula	task	access object	operator info
-TableReader_5	10000.00	313573.33	(((((scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00) + (net(10000*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00)*1.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	4070000.00	((scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_6	10000.00	313573.33	(((((scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00) + (net(10000*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00)*1.00	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	4070000.00	((scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
@@ -294,12 +294,12 @@ explain select * from v2;
 Error 1345 (HY000): EXPLAIN/SHOW can not be issued; lacking privileges for underlying table
 explain select * from t3;
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+TableReader_6	10000.00	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 explain select * from v3;
 id	estRows	task	access object	operator info
-TableReader_7	10000.00	root		data:TableFullScan_6
-└─TableFullScan_6	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+TableReader_8	10000.00	root		data:TableFullScan_7
+└─TableFullScan_7	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 drop table if exists t1;
 create table t1(
 id1 varchar(2) DEFAULT '00',

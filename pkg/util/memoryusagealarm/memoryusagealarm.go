@@ -27,10 +27,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -289,10 +291,13 @@ func (record *memoryUsageAlarm) tryRemoveRedundantRecords() {
 
 func getPlanString(info *util.ProcessInfo) string {
 	var buf strings.Builder
-	rows := info.PlanExplainRows
+	rows, _ := plancodec.DecodeBinaryPlan4Connection(info.BriefBinaryPlan, types.ExplainFormatROW, true)
 	buf.WriteString(fmt.Sprintf("|%v|%v|%v|%v|%v|", "id", "estRows", "task", "access object", "operator info"))
 	for _, row := range rows {
-		buf.WriteString(fmt.Sprintf("\n|%v|%v|%v|%v|%v|", row[0], row[1], row[2], row[3], row[4]))
+		buf.WriteString("\n|")
+		for _, col := range row {
+			buf.WriteString(fmt.Sprintf("%v|", col))
+		}
 	}
 	return buf.String()
 }

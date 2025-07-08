@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -193,7 +194,7 @@ func NewTableImporter(
 		return nil, err
 	}
 
-	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
+	backendConfig := e.getLocalBackendCfg(kvStore.GetKeyspace(), tidbCfg.Path, dir)
 	d := kvStore.(tidbkv.StorageWithPD).GetPDClient().GetServiceDiscovery()
 	localBackend, err := local.NewBackend(ctx, tls, backendConfig, d)
 	if err != nil {
@@ -260,7 +261,7 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 		return nil, err
 	}
 
-	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
+	backendConfig := e.getLocalBackendCfg("", tidbCfg.Path, dir)
 	localBackend, err := local.NewBackendForTest(ctx, backendConfig, helper)
 	if err != nil {
 		return nil, err
@@ -320,7 +321,7 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 	return parser, nil
 }
 
-func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEncoder, error) {
+func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (*TableKVEncoder, error) {
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        ti.SQLMode,
@@ -333,6 +334,20 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEnc
 		Logger: log.Logger{Logger: ti.logger.With(zap.String("path", chunk.FileMeta.Path))},
 	}
 	return NewTableKVEncoder(cfg, ti)
+}
+
+// GetKVEncoderForDupResolve get the KV encoder for duplicate resolution.
+func (ti *TableImporter) GetKVEncoderForDupResolve() (*TableKVEncoder, error) {
+	cfg := &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{
+			SQLMode: ti.SQLMode,
+			SysVars: ti.ImportantSysVars,
+		},
+		Table:                ti.encTable,
+		Logger:               log.Logger{Logger: ti.logger},
+		UseIdentityAutoRowID: true,
+	}
+	return NewTableKVEncoderForDupResolve(cfg, ti)
 }
 
 func (e *LoadDataController) calculateSubtaskCnt() int {
@@ -788,7 +803,7 @@ func (r *autoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
 
 // RebaseAllocatorBases rebase the allocator bases.
 func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs map[autoid.AllocatorType]int64, plan *Plan, logger *zap.Logger) (err error) {
-	callLog := log.BeginTask(logger, "rebase allocators")
+	callLog := log.BeginTask(logger.With(zap.Any("maxIDs", maxIDs)), "rebase allocators")
 	defer func() {
 		callLog.End(zap.ErrorLevel, err)
 	}()
@@ -969,14 +984,17 @@ func GetImportRootDir(tidbCfg *tidb.Config) string {
 }
 
 // FlushTableStats flushes the stats of the table.
-// stats will be flushed in domain.updateStatsWorker, default interval is [1, 2) minutes,
-// see DumpStatsDeltaToKV for more details. then the background analyzer will analyze
-// the table.
-// the stats stay in memory until the next flush, so it might be lost if the tidb-server restarts.
+// stats will be stored in the stat collector, and be applied to to mysql.stats_meta
+// in the domain.UpdateTableStatsLoop with a random interval between [1, 2) minutes.
+// These stats will stay in memory until the next flush, so it might be lost if the tidb-server restarts.
 func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, result *JobImportResult) error {
 	if err := sessiontxn.NewTxn(ctx, se); err != nil {
 		return err
 	}
+
+	exec := statshandle.AttachStatsCollector(se.GetSQLExecutor())
+	defer statshandle.DetachStatsCollector(exec)
+
 	sessionVars := se.GetSessionVars()
 	sessionVars.TxnCtxMu.Lock()
 	defer sessionVars.TxnCtxMu.Unlock()

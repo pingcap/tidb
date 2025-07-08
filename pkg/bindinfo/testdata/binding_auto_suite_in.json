@@ -1,0 +1,30 @@
+[
+  {
+    "name": "TestPlanGeneration",
+    "cases": [
+      "explain explore select max(b) from t where a=1",
+      "explain explore select * from t where a=1",
+      "explain explore select * from t where b=1",
+      "explain explore select * from t1, t2, t3",
+      "explain explore select * from t1, t2 where t1.a=t2.a"
+    ]
+  },
+  {
+    "name": "TestRelevantOptVarsAndFixes",
+    "cases": [
+      "select 1 from t1",
+      "select 1 from t1 where a=1",
+      "select * from t1 where a=1",
+      "select * from t1 where a>1",
+      "select a from t1 where a=1",
+      "select a from t1 where a=1 and b = 1 and c =1",
+      "select max(a) from t1 where a=1",
+      "select sum(b) from t1 where a=1",
+      "select a from t1 where a=1 order by b",
+      "select a from t1 where a=1 order by b limit 10",
+      "select 1 from t1, t2 where t1.a=t2.a",
+      "select 1 from t1, t2 where t1.a=t2.b",
+      "select 1 from t1, t2 where t1.c=t2.c"
+    ]
+  }
+]

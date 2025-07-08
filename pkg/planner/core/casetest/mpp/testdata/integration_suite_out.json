@@ -13,9 +13,9 @@
           "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
           "        └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -29,21 +29,21 @@
           "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d3_t.d3_k))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d3_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d3_t keep order:false",
           "        └─Projection(Probe) 8.00 mpp[tiflash]  test.fact_t.d3_k",
           "          └─HashJoin 8.00 mpp[tiflash]  inner join, equal:[eq(test.fact_t.d2_k, test.d2_t.d2_k)]",
           "            ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "            │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "            │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d2_t.d2_k))",
-          "            │     └─TableFullScan 2.00 mpp[tiflash] table:d2_t pushed down filter:empty, keep order:false",
+          "            │     └─TableFullScan 2.00 mpp[tiflash] table:d2_t keep order:false",
           "            └─Projection(Probe) 8.00 mpp[tiflash]  test.fact_t.d2_k, test.fact_t.d3_k",
           "              └─HashJoin 8.00 mpp[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
           "                ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "                │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "                │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "                │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "                │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
           "                └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
-          "                  └─TableFullScan 8.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "                  └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -57,9 +57,9 @@
           "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
           "        └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -73,7 +73,7 @@
           "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
           "        └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
@@ -88,7 +88,7 @@
           "        ├─ExchangeReceiver(Build) 8.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "        │     └─TableFullScan 8.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false",
           "        └─TableFullScan(Probe) 2.00 mpp[tiflash] table:d1_t keep order:false"
         ]
       },
@@ -103,9 +103,9 @@
           "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
           "        └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -119,7 +119,7 @@
           "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
           "        └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
@@ -134,7 +134,7 @@
           "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
           "        └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
@@ -149,7 +149,7 @@
           "        ├─ExchangeReceiver(Build) 8.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "        │     └─TableFullScan 8.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false",
           "        └─TableFullScan(Probe) 2.00 mpp[tiflash] table:d1_t keep order:false"
         ]
       },
@@ -164,7 +164,7 @@
           "        ├─ExchangeReceiver(Build) 8.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 8.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "        │     └─TableFullScan 8.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false",
           "        └─TableFullScan(Probe) 2.00 mpp[tiflash] table:d1_t keep order:false"
         ]
       },
@@ -178,9 +178,9 @@
           "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "      │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "      │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
           "      └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "        └─TableFullScan 8.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "        └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -194,9 +194,9 @@
           "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
           "        └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -214,9 +214,9 @@
           "        │       └─ExchangeReceiver 2.00 mpp[tiflash]  ",
           "        │         └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
           "        │           └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │             └─TableFullScan 2.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "        │             └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
           "        └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -230,9 +230,9 @@
           "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
           "        └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -273,9 +273,9 @@
           "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
           "        └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "          └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -289,7 +289,7 @@
           "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
           "        └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
@@ -304,7 +304,7 @@
           "        ├─ExchangeReceiver(Build) 8.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "        │     └─TableFullScan 8.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false",
           "        └─TableFullScan(Probe) 2.00 mpp[tiflash] table:d1_t keep order:false"
         ]
       },
@@ -575,7 +575,7 @@
           "        ├─ExchangeReceiver(Build) 3.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
-          "        │     └─TableFullScan 3.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false",
           "        └─TableFullScan(Probe) 2.00 mpp[tiflash] table:a keep order:false"
         ]
       },
@@ -590,7 +590,7 @@
           "        ├─ExchangeReceiver(Build) 3.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
-          "        │     └─TableFullScan 3.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false",
           "        └─TableFullScan(Probe) 2.00 mpp[tiflash] table:a keep order:false"
         ]
       }
@@ -610,7 +610,7 @@
           "        ├─ExchangeReceiver(Build) 3.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.b.id, collate: binary]",
           "        │   └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
-          "        │     └─TableFullScan 3.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false",
           "        └─ExchangeReceiver(Probe) 2.00 mpp[tiflash]  ",
           "          └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.a.id, collate: binary]",
           "            └─TableFullScan 2.00 mpp[tiflash] table:a keep order:false"
@@ -626,7 +626,7 @@
           "      ├─ExchangeReceiver(Build) 3.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.b.id, collate: binary]",
           "      │   └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
-          "      │     └─TableFullScan 3.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false",
+          "      │     └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false",
           "      └─ExchangeReceiver(Probe) 2.00 mpp[tiflash]  ",
           "        └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.a.id, collate: binary]",
           "          └─TableFullScan 2.00 mpp[tiflash] table:a keep order:false"
@@ -651,7 +651,7 @@
           "        └─ExchangeReceiver(Probe) 3.00 mpp[tiflash]  ",
           "          └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.b.id, collate: binary]",
           "            └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
-          "              └─TableFullScan 3.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false"
+          "              └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false"
         ]
       },
       {
@@ -667,7 +667,7 @@
           "      └─ExchangeReceiver(Probe) 3.00 mpp[tiflash]  ",
           "        └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.b.id, collate: binary]",
           "          └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
-          "            └─TableFullScan 3.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false"
+          "            └─TableFullScan 3.00 mpp[tiflash] table:b keep order:false"
         ]
       }
     ]
@@ -686,11 +686,11 @@
           "        ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
           "        │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
           "        └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
           "          └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "            └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "              └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "              └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -705,7 +705,7 @@
           "          ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
           "          │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d3_t.d3_k, collate: binary]",
           "          │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d3_t.d3_k))",
-          "          │     └─TableFullScan 4.00 mpp[tiflash] table:d3_t pushed down filter:empty, keep order:false",
+          "          │     └─TableFullScan 4.00 mpp[tiflash] table:d3_t keep order:false",
           "          └─ExchangeReceiver(Probe) 64.00 mpp[tiflash]  ",
           "            └─ExchangeSender 64.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d3_k, collate: binary]",
           "              └─Projection 64.00 mpp[tiflash]  test.fact_t.d3_k, test.fact_t.d2_k",
@@ -713,7 +713,7 @@
           "                  ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
           "                  │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d2_t.d2_k, collate: binary]",
           "                  │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d2_t.d2_k))",
-          "                  │     └─TableFullScan 4.00 mpp[tiflash] table:d2_t pushed down filter:empty, keep order:false",
+          "                  │     └─TableFullScan 4.00 mpp[tiflash] table:d2_t keep order:false",
           "                  └─ExchangeReceiver(Probe) 32.00 mpp[tiflash]  ",
           "                    └─ExchangeSender 32.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d2_k, collate: binary]",
           "                      └─Projection 32.00 mpp[tiflash]  test.fact_t.d2_k, test.fact_t.d3_k, test.fact_t.d1_k",
@@ -721,11 +721,11 @@
           "                          ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
           "                          │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
           "                          │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "                          │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "                          │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
           "                          └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
           "                            └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "                              └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
-          "                                └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "                                └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -739,11 +739,11 @@
           "        ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
           "        │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
           "        └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
           "          └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "            └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "              └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "              └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -758,23 +758,23 @@
           "          ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
           "          │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d3_t.value, collate: binary]",
           "          │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d3_t.value))",
-          "          │     └─TableFullScan 4.00 mpp[tiflash] table:d3_t pushed down filter:empty, keep order:false",
+          "          │     └─TableFullScan 4.00 mpp[tiflash] table:d3_t keep order:false",
           "          └─Projection(Probe) 64.00 mpp[tiflash]  test.fact_t.d1_k",
           "            └─HashJoin 64.00 mpp[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d2_t.value)]",
           "              ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
           "              │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d2_t.value, collate: binary]",
           "              │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d2_t.value))",
-          "              │     └─TableFullScan 4.00 mpp[tiflash] table:d2_t pushed down filter:empty, keep order:false",
+          "              │     └─TableFullScan 4.00 mpp[tiflash] table:d2_t keep order:false",
           "              └─Projection(Probe) 32.00 mpp[tiflash]  test.fact_t.d1_k",
           "                └─HashJoin 32.00 mpp[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
           "                  ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
           "                  │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
           "                  │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "                  │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "                  │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
           "                  └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
           "                    └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "                      └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "                        └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "                        └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -789,7 +789,7 @@
           "          ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
           "          │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
           "          │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "          │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "          │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
           "          └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
           "            └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "              └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
@@ -809,7 +809,7 @@
           "        └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
           "          └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "            └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "              └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "              └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -824,11 +824,11 @@
           "          ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
           "          │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
           "          │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "          │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "          │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
           "          └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
           "            └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "              └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "                └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "                └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -843,7 +843,7 @@
           "          ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
           "          │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
           "          │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "          │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "          │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
           "          └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
           "            └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "              └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
@@ -860,7 +860,7 @@
           "        ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
           "        │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "        │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
           "        └─Projection(Probe) 102.40 mpp[tiflash]  test.fact_t.d1_k",
           "          └─Selection 102.40 mpp[tiflash]  gt(case(isnull(test.fact_t.col1), plus(test.fact_t.col1, 5), 10), 5)",
           "            └─Projection 128.00 mpp[tiflash]  test.fact_t.col1, test.fact_t.d1_k, test.fact_t.col1",
@@ -868,11 +868,11 @@
           "                ├─ExchangeReceiver(Build) 16.00 mpp[tiflash]  ",
           "                │ └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "                │   └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "                │     └─TableFullScan 16.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
+          "                │     └─TableFullScan 16.00 mpp[tiflash] table:t1 keep order:false",
           "                └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
           "                  └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "                    └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "                      └─TableFullScan 16.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
+          "                      └─TableFullScan 16.00 mpp[tiflash] table:t2 keep order:false"
         ]
       },
       {
@@ -887,7 +887,7 @@
           "          ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
           "          │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
           "          │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "          │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "          │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
           "          └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
           "            └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "              └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
@@ -908,7 +908,7 @@
           "          └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
           "            └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "              └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "                └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "                └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -926,7 +926,7 @@
           "          └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
           "            └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "              └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "                └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "                └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -939,11 +939,11 @@
           "      ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
           "      │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "      │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "      │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
           "      └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
           "        └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "          └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "            └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "            └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -957,11 +957,11 @@
           "        ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
           "        │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "        │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "        │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t keep order:false",
           "        └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
           "          └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "            └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "              └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+          "              └─TableFullScan 16.00 mpp[tiflash] table:fact_t keep order:false"
         ]
       },
       {
@@ -1018,12 +1018,12 @@
           "              ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "              │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.v1, collate: binary], [name: test.t1.v2, collate: binary]",
           "              │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.t1.v1)), not(isnull(test.t1.v2))",
-          "              │     └─TableFullScan 2.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
+          "              │     └─TableFullScan 2.00 mpp[tiflash] table:t1 keep order:false",
           "              └─ExchangeReceiver(Probe) 8.00 mpp[tiflash]  ",
           "                └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#15, collate: binary], [name: Column#16, collate: binary]",
           "                  └─Projection 8.00 mpp[tiflash]  test.t2.v1, test.t2.v2, cast(test.t2.v1, decimal(20,2))->Column#15, cast(test.t2.v2, decimal(20,2))->Column#16",
           "                    └─Selection 8.00 mpp[tiflash]  not(isnull(test.t2.v1)), not(isnull(test.t2.v2))",
-          "                      └─TableFullScan 8.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
+          "                      └─TableFullScan 8.00 mpp[tiflash] table:t2 keep order:false"
         ]
       },
       {
@@ -1045,7 +1045,7 @@
           "                  └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#14, collate: binary], [name: Column#15, collate: binary]",
           "                    └─Projection 8.00 mpp[tiflash]  test.t2.v1, test.t2.v2, cast(test.t2.v1, decimal(20,2))->Column#14, cast(test.t2.v2, decimal(20,2))->Column#15",
           "                      └─Selection 8.00 mpp[tiflash]  not(isnull(test.t2.v1)), not(isnull(test.t2.v2))",
-          "                        └─TableFullScan 8.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
+          "                        └─TableFullScan 8.00 mpp[tiflash] table:t2 keep order:false"
         ]
       },
       {
@@ -1065,7 +1065,7 @@
           "              └─ExchangeReceiver(Probe) 8.00 mpp[tiflash]  ",
           "                └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t2.v1, collate: binary], [name: test.t2.v2, collate: binary]",
           "                  └─Selection 8.00 mpp[tiflash]  not(isnull(test.t2.v1)), not(isnull(test.t2.v2))",
-          "                    └─TableFullScan 8.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
+          "                    └─TableFullScan 8.00 mpp[tiflash] table:t2 keep order:false"
         ]
       }
     ]
@@ -1135,11 +1135,11 @@
           "    ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.table_1.value, collate: utf8mb4_general_ci]",
           "    │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.table_1.value))",
-          "    │     └─TableFullScan 2.00 mpp[tiflash] table:a pushed down filter:empty, keep order:false",
+          "    │     └─TableFullScan 2.00 mpp[tiflash] table:a keep order:false",
           "    └─ExchangeReceiver(Probe) 2.00 mpp[tiflash]  ",
           "      └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.table_1.value, collate: utf8mb4_general_ci]",
           "        └─Selection 2.00 mpp[tiflash]  not(isnull(test.table_1.value))",
-          "          └─TableFullScan 2.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false"
+          "          └─TableFullScan 2.00 mpp[tiflash] table:b keep order:false"
         ]
       },
       {
@@ -1151,11 +1151,11 @@
           "    ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.table_1.value, collate: utf8mb4_bin]",
           "    │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.table_1.value))",
-          "    │     └─TableFullScan 2.00 mpp[tiflash] table:a pushed down filter:empty, keep order:false",
+          "    │     └─TableFullScan 2.00 mpp[tiflash] table:a keep order:false",
           "    └─ExchangeReceiver(Probe) 2.00 mpp[tiflash]  ",
           "      └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.table_2.value, collate: utf8mb4_bin]",
           "        └─Selection 2.00 mpp[tiflash]  not(isnull(test.table_2.value))",
-          "          └─TableFullScan 2.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false"
+          "          └─TableFullScan 2.00 mpp[tiflash] table:b keep order:false"
         ]
       },
       {
@@ -1168,15 +1168,15 @@
           "    │ ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "    │ │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.table_1.value, collate: utf8mb4_bin]",
           "    │ │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.table_1.value))",
-          "    │ │     └─TableFullScan 2.00 mpp[tiflash] table:a pushed down filter:empty, keep order:false",
+          "    │ │     └─TableFullScan 2.00 mpp[tiflash] table:a keep order:false",
           "    │ └─ExchangeReceiver(Probe) 2.00 mpp[tiflash]  ",
           "    │   └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.table_2.value, collate: utf8mb4_bin]",
           "    │     └─Selection 2.00 mpp[tiflash]  not(isnull(test.table_2.value))",
-          "    │       └─TableFullScan 2.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false",
+          "    │       └─TableFullScan 2.00 mpp[tiflash] table:b keep order:false",
           "    └─ExchangeReceiver(Probe) 2.00 mpp[tiflash]  ",
           "      └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.table_1.value, collate: utf8mb4_bin]",
           "        └─Selection 2.00 mpp[tiflash]  not(isnull(test.table_1.value))",
-          "          └─TableFullScan 2.00 mpp[tiflash] table:c pushed down filter:empty, keep order:false"
+          "          └─TableFullScan 2.00 mpp[tiflash] table:c keep order:false"
         ]
       },
       {
@@ -1191,15 +1191,15 @@
           "    │     ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "    │     │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.table_1.value, collate: utf8mb4_bin]",
           "    │     │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.table_1.value))",
-          "    │     │     └─TableFullScan 2.00 mpp[tiflash] table:a pushed down filter:empty, keep order:false",
+          "    │     │     └─TableFullScan 2.00 mpp[tiflash] table:a keep order:false",
           "    │     └─ExchangeReceiver(Probe) 2.00 mpp[tiflash]  ",
           "    │       └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.table_2.value, collate: utf8mb4_bin]",
           "    │         └─Selection 2.00 mpp[tiflash]  not(isnull(test.table_2.value))",
-          "    │           └─TableFullScan 2.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false",
+          "    │           └─TableFullScan 2.00 mpp[tiflash] table:b keep order:false",
           "    └─ExchangeReceiver(Probe) 2.00 mpp[tiflash]  ",
           "      └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.table_1.value, collate: utf8mb4_general_ci]",
           "        └─Selection 2.00 mpp[tiflash]  not(isnull(test.table_1.value))",
-          "          └─TableFullScan 2.00 mpp[tiflash] table:c pushed down filter:empty, keep order:false"
+          "          └─TableFullScan 2.00 mpp[tiflash] table:c keep order:false"
         ]
       },
       {
@@ -1252,9 +1252,9 @@
           "    ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.table_1.value))",
-          "    │     └─TableFullScan 2.00 mpp[tiflash] table:a pushed down filter:empty, keep order:false",
+          "    │     └─TableFullScan 2.00 mpp[tiflash] table:a keep order:false",
           "    └─Selection(Probe) 2.00 mpp[tiflash]  not(isnull(test.table_1.value))",
-          "      └─TableFullScan 2.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false"
+          "      └─TableFullScan 2.00 mpp[tiflash] table:b keep order:false"
         ]
       }
     ]
@@ -1316,33 +1316,28 @@
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#10)->Column#6",
-          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(Column#11)->Column#10",
-          "      └─Projection 10000.00 mpp[tiflash]  plus(test.t.id, 1)->Column#11",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(Column#8)->Column#6",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(plus(test.t.id, 1))->Column#8",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#9)->Column#6",
-          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t._tidb_rowid)->Column#9",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#6",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#10)->Column#6",
-          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#11)->Column#10",
-          "      └─Projection 10000.00 mpp[tiflash]  cast(plus(test.t.id, 1), decimal(20,0) BINARY)->Column#11",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:sum(Column#8)->Column#6",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:sum(plus(test.t.id, 1))->Column#8",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1356,10 +1351,10 @@
           "      │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Projection 8000.00 mpp[tiflash]  minus(test.t.id, 2)->Column#5",
           "      │     └─Selection 8000.00 mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "      │       └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "      │       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "      └─Projection(Probe) 8000.00 mpp[tiflash]  minus(test.t.id, 2)->Column#10",
           "        └─Selection 8000.00 mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1372,9 +1367,9 @@
           "    │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Projection 8000.00 mpp[tiflash]  minus(test.t.id, 2)->Column#9",
           "    │     └─Selection 8000.00 mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "    │       └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1387,7 +1382,7 @@
           "    │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Projection 8000.00 mpp[tiflash]  minus(test.t.id, 2)->Column#9",
           "    │     └─Selection 8000.00 mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "    │       └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -1400,7 +1395,7 @@
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─Projection(Probe) 10000.00 mpp[tiflash]  minus(test.t.id, 2)->Column#9",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
@@ -1416,10 +1411,10 @@
           "      │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Projection 8000.00 mpp[tiflash]  minus(test.t.id, 2)->Column#5",
           "      │     └─Selection 8000.00 mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "      │       └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "      │       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "      └─Projection(Probe) 8000.00 mpp[tiflash]  minus(test.t.id, 2)->Column#10",
           "        └─Selection 8000.00 mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1431,9 +1426,9 @@
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:A pushed down filter:empty, keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:A keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1498,7 +1493,7 @@
           "TableReader 3323.33 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Selection 3323.33 mpp[tiflash]  lt(test.t.id, 2)",
-          "    └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -1566,11 +1561,7 @@
         "SQL": "explain format = 'brief' select count(*) from (select a , b from t where false union all select a , c from t1 where false) tt",
         "Plan": [
           "StreamAgg 1.00 root  funcs:count(1)->Column#11",
-          "└─Union 0.00 root  ",
-          "  ├─Projection 0.00 root  test.t.a->Column#9, cast(test.t.b, double BINARY)->Column#10",
-          "  │ └─TableDual 0.00 root  rows:0",
-          "  └─Projection 0.00 root  test.t1.a->Column#9, cast(test.t1.c, double BINARY)->Column#10",
-          "    └─TableDual 0.00 root  rows:0"
+          "└─TableDual 0.00 root  rows:0"
         ]
       }
     ]
@@ -1614,7 +1605,7 @@
           "        │           └─ExchangeSender 7976.02 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c1, collate: binary], [name: test.t.c2, collate: binary], [name: test.t.c5, collate: binary]",
           "        │             └─HashAgg 7976.02 mpp[tiflash]  group by:test.t.c1, test.t.c2, test.t.c5, funcs:count(1)->Column#15",
           "        │               └─Selection 9970.03 mpp[tiflash]  not(isnull(test.t.c1)), not(isnull(test.t.c2)), not(isnull(test.t.c5))",
-          "        │                 └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "        │                 └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "        └─ExchangeReceiver(Probe) 7984.01 mpp[tiflash]  ",
           "          └─ExchangeSender 7984.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c2, collate: binary], [name: Column#59, collate: binary], [name: Column#60, collate: binary]",
           "            └─Projection 7984.01 mpp[tiflash]  Column#14, test.t.c1, test.t.c2, test.t.c3, cast(test.t.c3, decimal(10,5))->Column#59, cast(test.t.c1, decimal(40,20))->Column#60",
@@ -1624,7 +1615,7 @@
           "                    └─ExchangeSender 7984.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c2, collate: binary], [name: test.t.c3, collate: binary], [name: test.t.c1, collate: binary]",
           "                      └─HashAgg 7984.01 mpp[tiflash]  group by:test.t.c1, test.t.c2, test.t.c3, funcs:count(1)->Column#23",
           "                        └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t.c1)), not(isnull(test.t.c2))",
-          "                          └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "                          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1636,11 +1627,11 @@
           "    ├─ExchangeReceiver(Build) 9970.03 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9970.03 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c1, collate: binary], [name: test.t.c2, collate: binary], [name: test.t.c3, collate: binary], [name: test.t.c4, collate: binary], [name: test.t.c5, collate: binary]",
           "    │   └─Selection 9970.03 mpp[tiflash]  not(isnull(test.t.c1)), not(isnull(test.t.c2)), not(isnull(test.t.c5))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 9980.01 mpp[tiflash]  ",
           "      └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c2, collate: binary], [name: test.t.c2, collate: binary], [name: test.t.c3, collate: binary], [name: test.t.c4, collate: binary], [name: test.t.c5, collate: binary]",
           "        └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t.c2)), not(isnull(test.t.c5))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1655,12 +1646,12 @@
           "        │ └─ExchangeSender 9970.03 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c2, collate: binary], [name: Column#18, collate: binary], [name: Column#20, collate: binary], [name: test.t.c3, collate: binary], [name: test.t.c5, collate: binary]",
           "        │   └─Projection 9970.03 mpp[tiflash]  test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5, cast(test.t.c3, decimal(10,5))->Column#18, cast(test.t.c1, decimal(10,5))->Column#20",
           "        │     └─Selection 9970.03 mpp[tiflash]  not(isnull(test.t.c1)), not(isnull(test.t.c2)), not(isnull(test.t.c5))",
-          "        │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
+          "        │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "        └─ExchangeReceiver(Probe) 9980.01 mpp[tiflash]  ",
           "          └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c1, collate: binary], [name: Column#19, collate: binary], [name: Column#21, collate: binary], [name: test.t.c4, collate: binary], [name: Column#22, collate: binary]",
           "            └─Projection 9980.01 mpp[tiflash]  test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5, cast(test.t.c2, decimal(10,5))->Column#19, cast(test.t.c3, decimal(10,5))->Column#21, cast(test.t.c1, decimal(40,20))->Column#22",
           "              └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t.c1)), not(isnull(test.t.c2))",
-          "                └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1693,12 +1684,12 @@
           "      │ └─ExchangeSender 9970.03 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c2, collate: binary], [name: Column#19, collate: binary], [name: Column#21, collate: binary], [name: test.t.c3, collate: binary], [name: test.t.c5, collate: binary]",
           "      │   └─Projection 9970.03 mpp[tiflash]  test.t.c1, test.t.c2, test.t.c3, test.t.c5, cast(test.t.c3, decimal(10,5))->Column#19, cast(test.t.c1, decimal(10,5))->Column#21",
           "      │     └─Selection 9970.03 mpp[tiflash]  not(isnull(test.t.c1)), not(isnull(test.t.c2)), not(isnull(test.t.c5))",
-          "      │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
+          "      │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "      └─ExchangeReceiver(Probe) 9980.01 mpp[tiflash]  ",
           "        └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c1, collate: binary], [name: Column#18, collate: binary], [name: Column#20, collate: binary], [name: test.t.c4, collate: binary], [name: Column#22, collate: binary]",
           "          └─Projection 9980.01 mpp[tiflash]  test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5, cast(test.t.c2, decimal(10,5))->Column#18, cast(test.t.c3, decimal(10,5))->Column#20, cast(test.t.c1, decimal(40,20))->Column#22",
           "            └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t.c1)), not(isnull(test.t.c2))",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1725,11 +1716,11 @@
           "                  ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
           "                  │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c2, collate: binary]",
           "                  │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t.c2)), not(isnull(test.t.c5))",
-          "                  │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
+          "                  │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "                  └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "                    └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c1, collate: binary]",
           "                      └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.c1))",
-          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1749,11 +1740,11 @@
           "            │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tt.col_varchar_key, collate: utf8mb4_bin]",
           "            │   └─Projection 9990.00 mpp[tiflash]  test.tt.col_varchar_key, cast(test.tt.col_tinyint, decimal(3,0) BINARY)->Column#19",
           "            │     └─Selection 9990.00 mpp[tiflash]  not(isnull(test.tt.col_varchar_key))",
-          "            │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
+          "            │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "            └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "              └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tt.col_varchar_64, collate: utf8mb4_bin]",
           "                └─Selection 9990.00 mpp[tiflash]  not(isnull(test.tt.col_varchar_64))",
-          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t3 pushed down filter:empty, keep order:false, stats:pseudo"
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -1771,11 +1762,11 @@
           "    │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c3, collate: binary]",
           "    │   └─Projection 8000.00 mpp[tiflash]  test.t.c3",
           "    │     └─Selection 8000.00 mpp[tiflash]  lt(test.t.c1, test.t.c2)",
-          "    │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tt.b1, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.tt.b1))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -1793,11 +1784,11 @@
           "    │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c3, collate: binary], stream_count: 8",
           "    │   └─Projection 8000.00 mpp[tiflash]  test.t.c3",
           "    │     └─Selection 8000.00 mpp[tiflash]  lt(test.t.c1, test.t.c2)",
-          "    │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tt.b1, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.tt.b1))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1966,11 +1957,11 @@
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  Column#4, plus(test.t.id, 1)->Column#5",
           "    └─Projection 8000.00 mpp[tiflash]  Column#4, test.t.id",
-          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#17, funcs:sum(Column#18)->Column#4, funcs:firstrow(Column#19)->test.t.id",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#16, funcs:sum(Column#17)->Column#4, funcs:firstrow(Column#18)->test.t.id",
           "        └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#17, collate: binary]",
-          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#21, funcs:count(1)->Column#18, funcs:firstrow(Column#20)->Column#19",
-          "              └─Projection 10000.00 mpp[tiflash]  test.t.id->Column#20, plus(test.t.id, 1)->Column#21",
+          "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#16, collate: binary]",
+          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#20, funcs:count(1)->Column#17, funcs:firstrow(Column#19)->Column#18",
+          "              └─Projection 10000.00 mpp[tiflash]  test.t.id->Column#19, plus(test.t.id, 1)->Column#20",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -1986,11 +1977,11 @@
           "    │     └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "    │       └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:count(1)->Column#8",
           "    │         └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "    │           └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │           └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2005,7 +1996,7 @@
           "└─TableReader(Probe) 9990.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2091,11 +2082,11 @@
           "          ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "          │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "          │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "          │     └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "          │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "          └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "            └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "              └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "                └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2110,7 +2101,7 @@
           "    │     └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "    │       └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, ",
           "    │         └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "    │           └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │           └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─Projection(Probe) 7992.00 mpp[tiflash]  Column#11, test.t.id",
           "      └─HashAgg 7992.00 mpp[tiflash]  group by:Column#38, funcs:sum(Column#37)->Column#11, funcs:firstrow(Column#38)->test.t.id",
           "        └─Projection 9990.00 mpp[tiflash]  cast(test.t.id, decimal(10,0) BINARY)->Column#37, test.t.id->Column#38",
@@ -2122,11 +2113,11 @@
           "              │     └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "              │       └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:count(1)->Column#17",
           "              │         └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "              │           └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "              │           └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "              └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "                └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "                  └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2163,11 +2154,11 @@
           "    │     └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "    │       └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, test.t.value, ",
           "    │         └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "    │           └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │           └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2183,11 +2174,11 @@
           "    │       └─HashAgg 7992.00 mpp[tiflash]  group by:Column#19, funcs:count(Column#18)->Column#8",
           "    │         └─Projection 9990.00 mpp[tiflash]  div(1, test.t.value)->Column#18, test.t.id->Column#19",
           "    │           └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "    │             └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │             └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2204,7 +2195,7 @@
           "              └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.value, collate: binary]",
           "                └─HashAgg 6400.00 mpp[tiflash]  group by:test.t.id, test.t.value, ",
           "                  └─Selection 8000.00 mpp[tiflash]  gt(cast(test.t.id, decimal(10,0) BINARY), test.t.value)",
-          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2223,7 +2214,7 @@
           "            │     └─ExchangeSender 7984.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "            │       └─HashAgg 7984.01 mpp[tiflash]  group by:test.t.id, test.t.value, funcs:count(1)->Column#24",
           "            │         └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t.id)), not(isnull(test.t.value))",
-          "            │           └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "            │           └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "            └─ExchangeReceiver(Probe) 10000.00 mpp[tiflash]  ",
           "              └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:B keep order:false, stats:pseudo"
@@ -2268,14 +2259,14 @@
         "Plan": [
           "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 1.00 mpp[tiflash]  Column#4, Column#5, div(Column#6, cast(case(eq(Column#15, 0), 1, Column#15), decimal(20,0) BINARY))->Column#6",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#19)->Column#4, funcs:sum(Column#20)->Column#5, funcs:sum(Column#21)->Column#15, funcs:sum(Column#22)->Column#6",
+          "  └─Projection 1.00 mpp[tiflash]  Column#4, Column#5, div(Column#6, cast(case(eq(Column#21, 0), 1, Column#21), decimal(20,0) BINARY))->Column#6",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#25)->Column#4, funcs:sum(Column#26)->Column#5, funcs:sum(Column#27)->Column#21, funcs:sum(Column#28)->Column#6",
           "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.value)->Column#19, funcs:sum(Column#16)->Column#20, funcs:sum(Column#17)->Column#21, funcs:sum(Column#18)->Column#22",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.value)->Column#25, funcs:sum(Column#22)->Column#26, funcs:sum(Column#23)->Column#27, funcs:sum(Column#24)->Column#28",
           "            └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "              └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.value, collate: binary]",
-          "                └─HashAgg 1.00 mpp[tiflash]  group by:test.t.value, funcs:count(test.t.value)->Column#16, funcs:count(test.t.value)->Column#17, funcs:sum(test.t.value)->Column#18",
+          "                └─HashAgg 1.00 mpp[tiflash]  group by:test.t.value, funcs:count(test.t.value)->Column#22, funcs:count(test.t.value)->Column#23, funcs:sum(test.t.value)->Column#24",
           "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       }
@@ -2298,9 +2289,9 @@
           "    │         └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "    │           └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:count(1)->Column#8",
           "    │             └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "    │               └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │               └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2320,7 +2311,7 @@
           "    │               └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:count(1)->Column#11",
           "    │                 └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2339,9 +2330,9 @@
           "      │           └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.value, collate: binary], [name: test.t.id, collate: binary]",
           "      │             └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, test.t.value, funcs:count(1)->Column#10",
           "      │               └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "      │                 └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "      │                 └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2356,7 +2347,7 @@
           "└─TableReader(Probe) 9990.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2373,9 +2364,9 @@
           "              ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "              │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "              │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "              │     └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "              │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "              └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "                └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2392,14 +2383,14 @@
           "    │         └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "    │           └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, ",
           "    │             └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "    │               └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │               └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─Projection(Probe) 7992.00 mpp[tiflash]  Column#7, test.t.id",
           "      └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:sum(Column#9)->Column#7, funcs:firstrow(test.t.id)->test.t.id",
           "        └─ExchangeReceiver 7992.00 mpp[tiflash]  ",
           "          └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "            └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:sum(test.t.value)->Column#9",
           "              └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "                └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2416,7 +2407,7 @@
           "    │         └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "    │           └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, ",
           "    │             └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "    │               └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │               └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─Projection(Probe) 7992.00 mpp[tiflash]  Column#11, test.t.id",
           "      └─HashAgg 7992.00 mpp[tiflash]  group by:Column#33, funcs:sum(Column#32)->Column#11, funcs:firstrow(Column#33)->test.t.id",
           "        └─Projection 9990.00 mpp[tiflash]  cast(test.t.id, decimal(10,0) BINARY)->Column#32, test.t.id->Column#33",
@@ -2432,9 +2423,9 @@
           "                  │         └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "                  │           └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:count(1)->Column#16",
           "                  │             └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "                  │               └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "                  │               └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "                  └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2448,9 +2439,9 @@
           "        ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2468,9 +2459,9 @@
           "                ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "                │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "                │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "                │     └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "                │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "                └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2486,9 +2477,9 @@
           "            ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "            │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "            │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "            │     └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "            │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "            └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2502,9 +2493,9 @@
           "        ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "        └─Selection(Probe) 0.80 mpp[tiflash]  not(isnull(test.t.id))",
-          "          └─TableFullScan 0.80 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 0.80 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2518,9 +2509,9 @@
           "        ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "        └─Selection(Probe) 0.80 mpp[tiflash]  not(isnull(test.t.id))",
-          "          └─TableFullScan 0.80 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 0.80 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2536,9 +2527,9 @@
           "            ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "            │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "            │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "            │     └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "            │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "            └─Selection(Probe) 16.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "              └─TableFullScan 16.02 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "              └─TableFullScan 16.02 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -2607,9 +2598,9 @@
           "        │         └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
           "        │           └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, ",
           "        │             └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "        │               └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "        │               └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2622,9 +2613,9 @@
           "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2689,7 +2680,7 @@
           "                  └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#14, collate: binary], [name: Column#15, collate: binary]",
           "                    └─Projection 8.00 mpp[tiflash]  test.t2.v1, test.t2.v2, cast(test.t2.v1, decimal(20,2))->Column#14, cast(test.t2.v2, decimal(20,2))->Column#15",
           "                      └─Selection 8.00 mpp[tiflash]  not(isnull(test.t2.v1)), not(isnull(test.t2.v2))",
-          "                        └─TableFullScan 8.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
+          "                        └─TableFullScan 8.00 mpp[tiflash] table:t2 keep order:false"
         ]
       },
       {
@@ -2709,7 +2700,7 @@
           "              └─ExchangeReceiver(Probe) 8.00 mpp[tiflash]  ",
           "                └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t2.v1, collate: binary], [name: test.t2.v2, collate: binary]",
           "                  └─Selection 8.00 mpp[tiflash]  not(isnull(test.t2.v1)), not(isnull(test.t2.v2))",
-          "                    └─TableFullScan 8.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
+          "                    └─TableFullScan 8.00 mpp[tiflash] table:t2 keep order:false"
         ]
       },
       {
@@ -2724,7 +2715,7 @@
           "          ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "          │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d3_t.d3_k, collate: binary]",
           "          │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.d3_t.d3_k))",
-          "          │     └─TableFullScan 10000.00 mpp[tiflash] table:d3_t pushed down filter:empty, keep order:false, stats:pseudo",
+          "          │     └─TableFullScan 10000.00 mpp[tiflash] table:d3_t keep order:false, stats:pseudo",
           "          └─ExchangeReceiver(Probe) 15578.17 mpp[tiflash]  ",
           "            └─ExchangeSender 15578.17 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d3_k, collate: binary]",
           "              └─Projection 15578.17 mpp[tiflash]  test.fact_t.d3_k, test.fact_t.d2_k",
@@ -2732,7 +2723,7 @@
           "                  ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "                  │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d2_t.d2_k, collate: binary]",
           "                  │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.d2_t.d2_k))",
-          "                  │     └─TableFullScan 10000.00 mpp[tiflash] table:d2_t pushed down filter:empty, keep order:false, stats:pseudo",
+          "                  │     └─TableFullScan 10000.00 mpp[tiflash] table:d2_t keep order:false, stats:pseudo",
           "                  └─ExchangeReceiver(Probe) 12462.54 mpp[tiflash]  ",
           "                    └─ExchangeSender 12462.54 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d2_k, collate: binary]",
           "                      └─Projection 12462.54 mpp[tiflash]  test.fact_t.d2_k, test.fact_t.d3_k, test.d1_t.d1_k",
@@ -2740,11 +2731,11 @@
           "                          ├─ExchangeReceiver(Build) 9970.03 mpp[tiflash]  ",
           "                          │ └─ExchangeSender 9970.03 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "                          │   └─Selection 9970.03 mpp[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
-          "                          │     └─TableFullScan 10000.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false, stats:pseudo",
+          "                          │     └─TableFullScan 10000.00 mpp[tiflash] table:fact_t keep order:false, stats:pseudo",
           "                          └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "                            └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
           "                              └─Selection 9990.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "                                └─TableFullScan 10000.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false, stats:pseudo"
+          "                                └─TableFullScan 10000.00 mpp[tiflash] table:d1_t keep order:false, stats:pseudo"
         ]
       }
     ]
