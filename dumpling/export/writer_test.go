@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -145,8 +144,7 @@ func TestWriteTableData(t *testing.T) {
 		"(4,'female','sarah@mail.com','020-1235','healthy');\n"
 	require.Equal(t, expected, string(bytes))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/dumpling/export/FailToCloseDataFile", "return(true)"))
-	defer failpoint.Disable("github.com/pingcap/tidb/dumpling/export/FailToCloseDataFile")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/dumpling/export/FailToCloseDataFile", "return(true)")
 
 	tableIR = newMockTableIR("test", "employee", data, specCmts, colTypes)
 	err = writer.WriteTableData(tableIR, tableIR, 0)
