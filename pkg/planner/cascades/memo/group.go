@@ -362,7 +362,7 @@ func (g *Group) GetBestTask(prop *property.PhysicalProperty) corebase.Task {
 // todo: this is used in group merge case, when impl and xForm rules is mixed, when the
 // group merge is happened, and there is old GE that substituted by new GE inside one
 // group, we should replace the best expression in the group.
-func (g *Group) ReplaceBestExpression(old, new corebase.PhysicalPlan) {
+func (*Group) ReplaceBestExpression(_, _ corebase.PhysicalPlan) {
 	//for key, costPair := range g.bestPhysicalMap {
 	//	if costPair.Physical == old {
 	//		costPair.Physical = new
