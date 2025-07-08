@@ -71,7 +71,7 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 	// since we don't know the exact number of rows before encoding.
 	require.EqualValues(s.T(), 10000, summaries.MergeSummary.RowCnt)
 	require.EqualValues(s.T(), 10000, summaries.IngestSummary.RowCnt)
-	require.EqualValues(s.T(), 10000, summaries.PostprocessSummary.RowCnt)
+	require.EqualValues(s.T(), 10000, summaries.RowCnt)
 
 	rs = s.tk.MustQuery("show import jobs where Job_ID = ?", jobID).Rows()
 	importedRows, err := strconv.Atoi(rs[0][7].(string))
@@ -129,7 +129,7 @@ func (s *mockGCSSuite) TestLocallSortSummary() {
 	require.NoError(s.T(), json.Unmarshal([]byte(rs[0][0].(string)), &summaries))
 
 	require.EqualValues(s.T(), 0, summaries.MergeSummary.RowCnt)
-	require.EqualValues(s.T(), 1000, summaries.PostprocessSummary.RowCnt)
+	require.EqualValues(s.T(), 1000, summaries.RowCnt)
 
 	rs = s.tk.MustQuery("show import jobs where Job_ID = ?", jobID).Rows()
 	importedRows, err := strconv.Atoi(rs[0][7].(string))

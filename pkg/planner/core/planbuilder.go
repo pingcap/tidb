@@ -4516,12 +4516,16 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 }
 
 var (
-	importIntoSchemaNames = []string{"Job_ID", "Data_Source", "Target_Table", "Table_ID",
+	importIntoSchemaNames = []string{
+		"Job_ID", "Group_Key", "Data_Source", "Target_Table", "Table_ID",
 		"Phase", "Status", "Source_File_Size", "Imported_Rows",
-		"Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
-	importIntoSchemaFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
+		"Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By", "Last_Update_Time",
+		"Cur_Step", "Cur_Step_Processed_Size", "Cur_Step_Total_Size", "Cur_Step_Progress_Pct", "Cur_Step_Speed", "Cur_Step_ETA",
+	}
+	importIntoSchemaFTypes = []byte{
+		mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
 		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
-		mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString}
+		mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString, mysql.TypeTimestamp}
 
 	// ImportIntoDataSource used inplannererrors.ErrLoadDataInvalidURI.
 	ImportIntoDataSource = "data source"

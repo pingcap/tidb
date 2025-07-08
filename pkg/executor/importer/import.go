@@ -316,27 +316,21 @@ type StepSummary struct {
 // Summary records the amount of data needed to be processed in each step of the import job.
 // And this information will be saved into tidb_import_jobs table after the job is finished.
 type Summary struct {
-	// bytes and rows to encode
-	// Note that this is not the same as the number of rows in the table,
-	// since this value is get from chunk info.
+	// bytes and rows to encode. Note that this is not the same a
+	// the number of rows in the table since it's get from chunk info.
 	EncodeSummary StepSummary `json:"encode-summary,omitempty"`
 
-	// bytes and rows to merge
 	MergeSummary StepSummary `json:"merge-summary,omitempty"`
 
-	// bytes and rows to ingest
 	IngestSummary StepSummary `json:"ingest-summary,omitempty"`
 
-	// bytes and rows to post process
-	PostprocessSummary StepSummary `json:"postprocess-summary,omitempty"`
+	RowCnt int64 `json:"row-count,omitempty"`
 }
 
 // MockSummary creates a mock summary for testing.
 func MockSummary(rowCnt int64) *Summary {
 	return &Summary{
-		PostprocessSummary: StepSummary{
-			RowCnt: rowCnt,
-		},
+		RowCnt: rowCnt,
 	}
 }
 

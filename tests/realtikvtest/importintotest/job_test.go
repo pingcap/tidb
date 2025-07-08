@@ -62,7 +62,7 @@ func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row 
 	if jobInfo.Summary == nil {
 		s.Equal("<nil>", row[7].(string))
 	} else {
-		s.Equal(strconv.Itoa(int(jobInfo.Summary.ImportedRows)), row[7])
+		s.Equal(strconv.Itoa(int(jobInfo.Summary.RowCnt)), row[7])
 	}
 	s.Regexp(jobInfo.ErrorMessage, row[8])
 	s.Equal(jobInfo.CreatedBy, row[12])

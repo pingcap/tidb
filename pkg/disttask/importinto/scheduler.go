@@ -547,7 +547,7 @@ func updateTaskSummary(
 		}
 
 		for _, subtaskSummary := range subtaskSummaries {
-			importSummary.PostprocessSummary.RowCnt += subtaskSummary.RowCnt.Load()
+			importSummary.RowCnt += subtaskSummary.RowCnt.Load()
 		}
 	}
 
