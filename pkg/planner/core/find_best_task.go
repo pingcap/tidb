@@ -840,7 +840,12 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty, planC
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
 	// so we try to get the task without the enforced sort first.
-	plansFitsProp, hintWorksWithProp, err = self.ExhaustPhysicalPlans(newProp)
+	exhaustObj := self
+	if ge != nil {
+		exhaustObj = ge
+	}
+	// make sure call ExhaustPhysicalPlans over GE or Self, rather than the BaseLogicalPlan.
+	plansFitsProp, hintWorksWithProp, err = exhaustObj.ExhaustPhysicalPlans(newProp)
 	if err != nil {
 		return nil, 0, err
 	}
