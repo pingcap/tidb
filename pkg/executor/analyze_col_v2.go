@@ -318,7 +318,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 
 	// Calculate handle from the row data for each row. It will be used to sort the samples.
 	for _, sample := range rootRowCollector.Base().Samples {
-		sample.Handle, err = e.handleCols.BuildHandleByDatums(sample.Columns)
+		sample.Handle, err = e.handleCols.BuildHandleByDatums(sc, sample.Columns)
 		if err != nil {
 			return 0, nil, nil, nil, nil, err
 		}
