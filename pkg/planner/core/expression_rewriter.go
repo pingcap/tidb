@@ -543,18 +543,9 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 		er.err = err
 		return v, true
 	}
-<<<<<<< HEAD
 
-	noDecorrelate := hintFlags&HintFlagNoDecorrelate > 0
-	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 {
-		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
-		noDecorrelate = false
-	}
-=======
-	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
-	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags)
->>>>>>> 9331aeab088 (collate: latin1_bin has the same collate with utf8mb4_bin,utf8_bin (#60702))
+	corCols := extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())
+	noDecorrelate := isNoDecorrelate(er.sctx, corCols, hintFlags)
 
 	// Only (a,b,c) = any (...) and (a,b,c) != all (...) can use row expression.
 	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
@@ -842,22 +833,10 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		er.err = err
 		return v, true
 	}
-<<<<<<< HEAD
 	np = er.popExistsSubPlan(np)
-
-	noDecorrelate := hintFlags&HintFlagNoDecorrelate > 0
-	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 {
-		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
-		noDecorrelate = false
-	}
+	corCols := extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())
+	noDecorrelate := isNoDecorrelate(er.sctx, corCols, hintFlags)
 	semiJoinRewrite := hintFlags&HintFlagSemiJoinRewrite > 0
-=======
-	np = er.popExistsSubPlan(planCtx, np)
-	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
-	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags)
-	semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
->>>>>>> 9331aeab088 (collate: latin1_bin has the same collate with utf8mb4_bin,utf8_bin (#60702))
 	if semiJoinRewrite && noDecorrelate {
 		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
 			"NO_DECORRELATE() and SEMI_JOIN_REWRITE() are in conflict. Both will be ineffective."))
@@ -1021,25 +1000,11 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	// If the leftKey and the rightKey have different collations, don't convert the sub-query to an inner-join
 	// since when converting we will add a distinct-agg upon the right child and this distinct-agg doesn't have the right collation.
 	// To keep it simple, we forbid this converting if they have different collations.
-<<<<<<< HEAD
+	// tested by TestCollateSubQuery.
 	lt, rt := lexpr.GetType(), rexpr.GetType()
 	collFlag := collate.CompatibleCollate(lt.GetCollate(), rt.GetCollate())
-
-	noDecorrelate := hintFlags&HintFlagNoDecorrelate > 0
 	corCols := extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())
-	if len(corCols) == 0 && noDecorrelate {
-		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
-		noDecorrelate = false
-	}
-=======
-	// tested by TestCollateSubQuery.
-	lt, rt := lexpr.GetType(er.sctx.GetEvalCtx()), rexpr.GetType(er.sctx.GetEvalCtx())
-	collFlag := collate.CompatibleCollate(lt.GetCollate(), rt.GetCollate())
-	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
-	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags)
->>>>>>> 9331aeab088 (collate: latin1_bin has the same collate with utf8mb4_bin,utf8_bin (#60702))
-
+	noDecorrelate := isNoDecorrelate(er.sctx, corCols, hintFlags)
 	// If it's not the form of `not in (SUBQUERY)`,
 	// and has no correlated column from the current level plan(if the correlated column is from upper level,
 	// we can treat it as constant, because the upper LogicalApply cannot be eliminated since current node is a join node),
@@ -1088,44 +1053,27 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	return v, true
 }
 
-<<<<<<< HEAD
-func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.SubqueryExpr) (ast.Node, bool) {
-	ci := er.b.prepareCTECheckForSubQuery()
-=======
-func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.CorrelatedColumn, hintFlags uint64) bool {
-	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
+func isNoDecorrelate(sctx sessionctx.Context, corCols []*expression.CorrelatedColumn, hintFlags uint64) bool {
+	noDecorrelate := hintFlags&HintFlagNoDecorrelate > 0
 	if noDecorrelate && len(corCols) == 0 {
-		planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
+		sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
+			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
 		noDecorrelate = false
 	}
 	return noDecorrelate
 }
 
-func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, v *ast.SubqueryExpr) (ast.Node, bool) {
-	intest.AssertNotNil(planCtx)
-	ci := planCtx.builder.prepareCTECheckForSubQuery()
->>>>>>> 9331aeab088 (collate: latin1_bin has the same collate with utf8mb4_bin,utf8_bin (#60702))
+func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.SubqueryExpr) (ast.Node, bool) {
+	ci := er.b.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
 	np, hintFlags, err := er.buildSubquery(ctx, v, handlingScalarSubquery)
 	if err != nil {
 		er.err = err
 		return v, true
 	}
-<<<<<<< HEAD
 	np = er.b.buildMaxOneRow(np)
-
-	noDecorrelate := hintFlags&HintFlagNoDecorrelate > 0
-	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 {
-		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
-		noDecorrelate = false
-	}
-=======
-	np = planCtx.builder.buildMaxOneRow(np)
-	correlatedColumn := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
-	noDecorrelate := isNoDecorrelate(planCtx, correlatedColumn, hintFlags)
->>>>>>> 9331aeab088 (collate: latin1_bin has the same collate with utf8mb4_bin,utf8_bin (#60702))
+	correlatedColumn := extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())
+	noDecorrelate := isNoDecorrelate(er.sctx, correlatedColumn, hintFlags)
 
 	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
 		er.p = er.b.buildApplyWithJoinType(er.p, np, LeftOuterJoin, noDecorrelate)
