@@ -1562,7 +1562,14 @@ func RemoveMutableConst(ctx sessionctx.Context, exprs []Expression) (err error) 
 			}
 			v.DeferredExpr = nil // do nothing since v.Value has already been evaluated in this case.
 		case *ScalarFunction:
+<<<<<<< HEAD
 			return RemoveMutableConst(ctx, v.GetArgs())
+=======
+			err := RemoveMutableConst(ctx, v.GetArgs()...)
+			if err != nil {
+				return err
+			}
+>>>>>>> 9accc3cfa3d (planner: Fix expression rewriting and method signature mismatch in plan cache (#58506))
 		}
 	}
 	return nil
