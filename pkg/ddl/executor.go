@@ -7089,8 +7089,10 @@ func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaA
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{
-				Database: "",
-				Table:    "",
+				// For RefreshMeta, the table/schema might not exist anymore.
+				// Since we can't determine the exact target, use model.InvolvingAll to block concurrent DDLs as a safe default.
+				Database: model.InvolvingAll,
+				Table:    model.InvolvingAll,
 			},
 		},
 	}
