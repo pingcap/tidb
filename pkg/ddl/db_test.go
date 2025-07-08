@@ -58,7 +58,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -1326,19 +1325,8 @@ func TestGetVersionFailed(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockGetCurrentVersionFailed", "return(true)")
+	// Simulate the failure of getting the current version twice.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockGetCurrentVersionFailed", "2*return(true)")
 
-	eg := errgroup.Group{}
-	eg.Go(func() error {
-		tk.MustExec("alter table t add column b int")
-		return nil
-	})
-
-	eg.Go(func() error {
-		time.Sleep(2 * time.Second)
-		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockGetCurrentVersionFailed")
-		return nil
-	})
-
-	eg.Wait()
+	tk.MustExec("alter table t add column b int")
 }
