@@ -75,7 +75,6 @@ func TestWriteTableMeta(t *testing.T) {
 	require.Equal(t, "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n/*!40101 SET NAMES binary*/;\nCREATE TABLE t (a INT);\n", string(bytes))
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/dumpling/export/FailToCloseMetaFile", "return(true)")
-	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/dumpling/export/FailToCloseMetaFile")
 
 	err = writer.WriteTableMeta("test", "t", "CREATE TABLE t (a INT)")
 	require.ErrorContains(t, err, "injected error: fail to close meta file")

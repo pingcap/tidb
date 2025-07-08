@@ -12,7 +12,6 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -313,7 +312,6 @@ func TestSetSessionParams(t *testing.T) {
 		WillReturnError(tikvErr)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/dumpling/export/SkipResetDB", "return(true)")
-	defer failpoint.Disable("github.com/pingcap/tidb/dumpling/export/SkipResetDB")
 
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
 	defer cancel()

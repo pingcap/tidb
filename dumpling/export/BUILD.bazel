@@ -103,6 +103,7 @@ go_test(
         "//pkg/config",
         "//pkg/errno",
         "//pkg/parser",
+        "//pkg/testkit/testfailpoint",
         "//pkg/util/filter",
         "//pkg/util/promutil",
         "//pkg/util/table-filter",
