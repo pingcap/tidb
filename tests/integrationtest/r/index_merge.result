@@ -453,8 +453,8 @@ c1	c2	c3
 ///// MEMORY Table
 explain format = 'brief' select count(c1) from (select /*+ use_index_merge(t_alias), stream_agg() */ count(1) c1 from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1) dt;
 id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:count(Column#117)->Column#118
-└─StreamAgg	1.00	root		funcs:count(1)->Column#117
+StreamAgg	1.00	root		funcs:count(Column#119)->Column#120
+└─StreamAgg	1.00	root		funcs:count(1)->Column#119
   └─MemTableScan	10000.00	root	table:STATEMENTS_SUMMARY	
 show warnings;
 Level	Code	Message
