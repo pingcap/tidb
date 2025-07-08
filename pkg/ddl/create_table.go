@@ -868,7 +868,7 @@ func handleTableOptions(ctx *metabuild.Context, options []*ast.TableOption, tbIn
 				isUnsigned := mysql.HasUnsignedFlag(autoIncrCol.GetFlag())
 				var maxValue uint64
 				var minValue int64
-				
+
 				switch autoIncrCol.GetType() {
 				// TINYINT
 				case mysql.TypeTiny:
@@ -916,21 +916,20 @@ func handleTableOptions(ctx *metabuild.Context, options []*ast.TableOption, tbIn
 						minValue = math.MinInt64
 					}
 				}
-				
+
 				// Check for overflow (value too large)
 				if maxValue > 0 && op.UintValue > maxValue {
 					err := types.ErrWarnDataOutOfRange.GenWithStackByArgs(autoIncrCol.Name.O, 1)
 					if ctx.GetSQLMode().HasStrictMode() {
 						return err
-					} else {
-						ctx.AppendWarning(err)
 					}
+					ctx.AppendWarning(err)
 				}
-				
+
 				// Check for underflow (value too small for signed types)
 				// Note: Since op.UintValue is uint64, negative values are represented as large positive numbers
 				// For signed types, check if the value when cast to int64 is below the minimum
-				// 
+				//
 				// IMPORTANT: This validation code is kept for defensive programming, but cannot be
 				// fully tested via SQL because TiDB parser currently does not support negative
 				// AUTO_INCREMENT literals (unlike MySQL). This is a known difference from MySQL.
@@ -940,9 +939,8 @@ func handleTableOptions(ctx *metabuild.Context, options []*ast.TableOption, tbIn
 						err := types.ErrWarnDataOutOfRange.GenWithStackByArgs(autoIncrCol.Name.O, 1)
 						if ctx.GetSQLMode().HasStrictMode() {
 							return err
-						} else {
-							ctx.AppendWarning(err)
 						}
+						ctx.AppendWarning(err)
 					}
 				}
 			}
