@@ -133,10 +133,13 @@ const (
 	typeJSON    int = 1
 	// todo: customized handler.
 
-	// MaxInt48 is the max value of int48.
-	MaxInt48 = 0x0000FFFFFFFFFFFF
-	// MaxGlobalID reserves 1000 IDs. Use MaxInt48 to reserves the high 2 bytes to compatible with Multi-tenancy.
-	MaxGlobalID = MaxInt48 - 1000
+	// ReservedSchemaIDUpperBound is the max value of int48.
+	ReservedSchemaIDUpperBound = 0x0000FFFFFFFFFFFF
+	// ReservedSchemaIDLowerBound reserves 1000 IDs.
+	// valid usable ID range for user schema objects is [1, ReservedSchemaIDLowerBound].
+	// (ReservedSchemaIDLowerBound, ReservedSchemaIDUpperBound] is reserved for
+	// system schema objects.
+	ReservedSchemaIDLowerBound = ReservedSchemaIDUpperBound - 1000
 )
 
 var (
@@ -218,8 +221,8 @@ func (m *Mutator) GenGlobalID() (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if newID > MaxGlobalID {
-		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	if newID > ReservedSchemaIDLowerBound {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, ReservedSchemaIDLowerBound)
 	}
 	return newID, err
 }
@@ -234,8 +237,8 @@ func (m *Mutator) AdvanceGlobalIDs(n int) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if newID > MaxGlobalID {
-		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	if newID > ReservedSchemaIDLowerBound {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, ReservedSchemaIDLowerBound)
 	}
 	origID := newID - int64(n)
 	return origID, nil
@@ -250,8 +253,8 @@ func (m *Mutator) GenGlobalIDs(n int) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	if newID > MaxGlobalID {
-		return nil, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	if newID > ReservedSchemaIDLowerBound {
+		return nil, errors.Errorf("global id:%d exceeds the limit:%d", newID, ReservedSchemaIDLowerBound)
 	}
 	origID := newID - int64(n)
 	ids := make([]int64, 0, n)
@@ -737,8 +740,8 @@ func (m *Mutator) ClearBDRRole() error {
 	return errors.Trace(m.txn.Clear(mBDRRole))
 }
 
-// SetDDLTables write a key into storage.
-func (m *Mutator) SetDDLTables(ddlTableVersion DDLTableVersion) error {
+// SetDDLTableVersion write a key into storage.
+func (m *Mutator) SetDDLTableVersion(ddlTableVersion DDLTableVersion) error {
 	return errors.Trace(m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes()))
 }
 

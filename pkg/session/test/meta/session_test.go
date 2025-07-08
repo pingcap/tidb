@@ -15,6 +15,7 @@
 package meta_test
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"sync/atomic"
@@ -22,6 +23,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -33,6 +36,49 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
+
+func TestInitDDLTables(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	for _, c := range []struct {
+		initVer    meta.DDLTableVersion
+		tableCount int
+	}{
+		{meta.InitDDLTableVersion, 7},
+		{meta.BaseDDLTableVersion, 4},
+		{meta.MDLTableVersion, 3},
+		{meta.BackfillTableVersion, 1},
+		{meta.DDLNotifierTableVersion, 0},
+	} {
+		if c.initVer != meta.InitDDLTableVersion {
+			require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+				m := meta.NewMutator(txn)
+				require.NoError(t, m.SetDDLTableVersion(c.initVer))
+				return nil
+			}))
+		}
+		require.NoError(t, session.InitDDLTables(store))
+		require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			m := meta.NewMutator(txn)
+			systemDBID, err2 := m.GetSystemDBID()
+			require.NoError(t, err2)
+
+			tables, err2 := m.ListTables(ctx, systemDBID)
+			require.Len(t, tables, c.tableCount)
+			postVer, err2 := m.CheckDDLTableVersion()
+			require.NoError(t, err2)
+			require.Equal(t, meta.DDLNotifierTableVersion, postVer)
+
+			require.NoError(t, m.SetDDLTableVersion(meta.InitDDLTableVersion))
+			require.NoError(t, m.DropDatabase(systemDBID))
+			return nil
+		}))
+	}
+}
 
 func TestInitMetaTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -80,20 +126,20 @@ func TestMetaTableRegion(t *testing.T) {
 
 	ddlReorgTableRegionID := tk.MustQuery("show table mysql.tidb_ddl_reorg regions").Rows()[0][0]
 	ddlReorgTableRegionStartKey := tk.MustQuery("show table mysql.tidb_ddl_reorg regions").Rows()[0][1]
-	require.Equal(t, ddlReorgTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.ReorgTableID))
+	require.Equal(t, ddlReorgTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.TiDBDDLReorgTableID))
 
 	ddlJobTableRegionID := tk.MustQuery("show table mysql.tidb_ddl_job regions").Rows()[0][0]
 	ddlJobTableRegionStartKey := tk.MustQuery("show table mysql.tidb_ddl_job regions").Rows()[0][1]
-	require.Equal(t, ddlJobTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.JobTableID))
+	require.Equal(t, ddlJobTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.TiDBDDLJobTableID))
 
 	require.NotEqual(t, ddlJobTableRegionID, ddlReorgTableRegionID)
 
 	ddlBackfillTableRegionID := tk.MustQuery("show table mysql.tidb_background_subtask regions").Rows()[0][0]
 	ddlBackfillTableRegionStartKey := tk.MustQuery("show table mysql.tidb_background_subtask regions").Rows()[0][1]
-	require.Equal(t, ddlBackfillTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.BackgroundSubtaskTableID))
+	require.Equal(t, ddlBackfillTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.TiDBBackgroundSubtaskTableID))
 	ddlBackfillHistoryTableRegionID := tk.MustQuery("show table mysql.tidb_background_subtask_history regions").Rows()[0][0]
 	ddlBackfillHistoryTableRegionStartKey := tk.MustQuery("show table mysql.tidb_background_subtask_history regions").Rows()[0][1]
-	require.Equal(t, ddlBackfillHistoryTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.BackgroundSubtaskHistoryTableID))
+	require.Equal(t, ddlBackfillHistoryTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.TiDBBackgroundSubtaskHistoryTableID))
 
 	require.NotEqual(t, ddlBackfillTableRegionID, ddlBackfillHistoryTableRegionID)
 }

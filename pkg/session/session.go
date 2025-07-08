@@ -3263,34 +3263,44 @@ func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
 }
 
 type tableBasicInfo struct {
-	SQL string
 	id  int64
+	SQL string
+}
+
+type versionedDDLTables struct {
+	ver    meta.DDLTableVersion
+	tables []tableBasicInfo
 }
 
 var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 	// DDLJobTables is a list of tables definitions used in concurrent DDL.
 	DDLJobTables = []tableBasicInfo{
-		{ddl.JobTableSQL, ddl.JobTableID},
-		{ddl.ReorgTableSQL, ddl.ReorgTableID},
-		{ddl.HistoryTableSQL, ddl.HistoryTableID},
+		{id: ddl.TiDBDDLJobTableID, SQL: ddl.JobTableSQL},
+		{id: ddl.TiDBDDLReorgTableID, SQL: ddl.ReorgTableSQL},
+		{id: ddl.TiDBDDLHistoryTableID, SQL: ddl.HistoryTableSQL},
+	}
+	// MDLTables is a list of tables definitions used for metadata lock.
+	MDLTables = []tableBasicInfo{
+		{id: ddl.TiDBMDLInfoTableID, SQL: ddl.MDLTableSQL},
 	}
 	// BackfillTables is a list of tables definitions used in dist reorg DDL.
 	BackfillTables = []tableBasicInfo{
-		{ddl.BackgroundSubtaskTableSQL, ddl.BackgroundSubtaskTableID},
-		{ddl.BackgroundSubtaskHistoryTableSQL, ddl.BackgroundSubtaskHistoryTableID},
+		{id: ddl.TiDBBackgroundSubtaskTableID, SQL: ddl.BackgroundSubtaskTableSQL},
+		{id: ddl.TiDBBackgroundSubtaskHistoryTableID, SQL: ddl.BackgroundSubtaskHistoryTableSQL},
 	}
-	mdlTable = `create table mysql.tidb_mdl_info(
-		job_id BIGINT NOT NULL PRIMARY KEY,
-		version BIGINT NOT NULL,
-		table_ids text(65535),
-		owner_id varchar(64) NOT NULL DEFAULT ''
-	);`
 	// DDLNotifierTables contains the table definitions used in DDL notifier.
 	// It only contains the notifier table.
 	// Put it here to reuse a unified initialization function and make it easier to find.
 	DDLNotifierTables = []tableBasicInfo{
-		{ddl.NotifierTableSQL, ddl.NotifierTableID},
+		{id: ddl.TiDBDDLNotifierTableID, SQL: ddl.NotifierTableSQL},
+	}
+
+	ddlTableVersionTables = []versionedDDLTables{
+		{ver: meta.BaseDDLTableVersion, tables: DDLJobTables},
+		{ver: meta.MDLTableVersion, tables: MDLTables},
+		{ver: meta.BackfillTableVersion, tables: BackfillTables},
+		{ver: meta.DDLNotifierTableVersion, tables: DDLNotifierTables},
 	}
 )
 
@@ -3308,30 +3318,35 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 	}
 }
 
-// InitDDLJobTables creates system tables that DDL uses. Because CREATE TABLE is
+// InitDDLTables creates system tables that DDL uses. Because CREATE TABLE is
 // also a DDL, we must directly modify KV data to create these tables.
-func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
-	targetTables := DDLJobTables
-	if targetVer == meta.BackfillTableVersion {
-		targetTables = BackfillTables
-	}
-	if targetVer == meta.DDLNotifierTableVersion {
-		targetTables = DDLNotifierTables
-	}
-	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
+func InitDDLTables(store kv.Storage) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	return kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
-		tableVer, err := t.CheckDDLTableVersion()
-		if err != nil || tableVer >= targetVer {
+		currVer, err := t.CheckDDLTableVersion()
+		if err != nil {
 			return errors.Trace(err)
 		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
 		if err != nil {
 			return err
 		}
-		if err = createAndSplitTables(store, t, dbID, targetTables); err != nil {
-			return err
+
+		largestVer := currVer
+		for _, vt := range ddlTableVersionTables {
+			if currVer >= vt.ver {
+				continue
+			}
+			largestVer = max(largestVer, vt.ver)
+			if err = createAndSplitTables(store, t, dbID, vt.tables); err != nil {
+				return err
+			}
 		}
-		return t.SetDDLTables(targetVer)
+		if largestVer > currVer {
+			return t.SetDDLTableVersion(largestVer)
+		}
+		return nil
 	})
 }
 
@@ -3360,40 +3375,6 @@ func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables 
 		}
 	}
 	return nil
-}
-
-// InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.
-func InitMDLTable(store kv.Storage) error {
-	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-		ver, err := t.CheckDDLTableVersion()
-		if err != nil || ver >= meta.MDLTableVersion {
-			return errors.Trace(err)
-		}
-		dbID, err := t.CreateMySQLDatabaseIfNotExists()
-		if err != nil {
-			return err
-		}
-		splitAndScatterTable(store, []int64{ddl.MDLTableID})
-		p := parser.New()
-		stmt, err := p.ParseOneStmt(mdlTable, "", "")
-		if err != nil {
-			return errors.Trace(err)
-		}
-		tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		tblInfo.State = model.StatePublic
-		tblInfo.ID = ddl.MDLTableID
-		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableOrView(dbID, tblInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		return t.SetDDLTables(meta.MDLTableVersion)
-	})
 }
 
 // InitMDLVariableForBootstrap initializes the metadata lock variable.
@@ -3527,19 +3508,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			return nil, err
 		}
 	}
-	err := InitDDLJobTables(store, meta.BaseDDLTableVersion)
-	if err != nil {
-		return nil, err
-	}
-	err = InitMDLTable(store)
-	if err != nil {
-		return nil, err
-	}
-	err = InitDDLJobTables(store, meta.BackfillTableVersion)
-	if err != nil {
-		return nil, err
-	}
-	err = InitDDLJobTables(store, meta.DDLNotifierTableVersion)
+	err := InitDDLTables(store)
 	if err != nil {
 		return nil, err
 	}
