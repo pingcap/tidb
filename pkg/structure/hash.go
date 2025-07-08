@@ -253,6 +253,34 @@ func (t *TxStructure) IterateHash(key []byte, fn func(k []byte, v []byte) error)
 	return nil
 }
 
+// IterateHashWithBoundedKey iterates all the fields and values in hash with a bounded key.
+func (t *TxStructure) IterateHashWithBoundedKey(hashStartKey []byte, hashEndKey []byte, fn func(k []byte, f []byte, v []byte) error) error {
+	hashStartKey = t.hashDataKeyPrefix(hashStartKey)
+	hashEndKey = t.hashDataKeyPrefix(hashEndKey)
+	it, err := t.reader.Iter(hashStartKey, hashEndKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var field []byte
+	var key []byte
+	for it.Valid() {
+		key, field, err = t.decodeHashDataKey(it.Key())
+		if err != nil {
+			continue
+		}
+		if err = fn(key, field, it.Value()); err != nil {
+			return errors.Trace(err)
+		}
+		err = it.Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
 // ReverseHashIterator is the reverse hash iterator.
 type ReverseHashIterator struct {
 	t      *TxStructure

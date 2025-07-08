@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -302,7 +303,6 @@ func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
 }
 
 func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
-	step := external.MergeSortFileCountStep
 	result := make([]planner.PipelineSpec, 0, 16)
 	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort])
 	if err != nil {
@@ -316,16 +316,16 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 			continue
 		}
 		dataFiles := kvMeta.GetDataFiles()
-		length := len(dataFiles)
-		for start := 0; start < length; start += step {
-			end := start + step
-			if end > length {
-				end = length
-			}
+		nodeCnt := max(1, planCtx.ExecuteNodesCnt)
+		dataFilesGroup, err := external.DivideMergeSortDataFiles(dataFiles, nodeCnt, planCtx.ThreadCnt)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, files := range dataFilesGroup {
 			result = append(result, &MergeSortSpec{
 				MergeSortStepMeta: &MergeSortStepMeta{
 					KVGroup:   kvGroup,
-					DataFiles: dataFiles[start:end],
+					DataFiles: files,
 				},
 			})
 		}
@@ -536,9 +536,14 @@ func getRangeSplitter(
 	}
 	regionSplitSize = max(regionSplitSize, int64(config.SplitRegionSize))
 	regionSplitKeys = max(regionSplitKeys, int64(config.SplitRegionKeys))
+	nodeRc := handle.GetNodeResource()
+	rangeSize, rangeKeys := external.CalRangeSize(nodeRc.TotalMem/int64(nodeRc.TotalCPU), regionSplitSize, regionSplitKeys)
 	logutil.Logger(ctx).Info("split kv range with split size and keys",
 		zap.Int64("region-split-size", regionSplitSize),
-		zap.Int64("region-split-keys", regionSplitKeys))
+		zap.Int64("region-split-keys", regionSplitKeys),
+		zap.Int64("range-size", rangeSize),
+		zap.Int64("range-keys", rangeKeys),
+	)
 
 	// no matter region split size and keys, we always split range jobs by 96MB
 	return external.NewRangeSplitter(
@@ -547,8 +552,8 @@ func getRangeSplitter(
 		store,
 		int64(config.DefaultBatchSize),
 		int64(math.MaxInt64),
-		int64(config.SplitRegionSize),
-		int64(config.SplitRegionKeys),
+		rangeSize,
+		rangeKeys,
 		regionSplitSize,
 		regionSplitKeys,
 	)

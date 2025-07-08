@@ -38,7 +38,10 @@ go_library(
 go_test(
     name = "cache_test",
     timeout = "short",
-    srcs = ["bench_test.go"],
+    srcs = [
+        "bench_test.go",
+        "statscache_test.go",
+    ],
     embed = [":cache"],
     flaky = True,
     deps = [
@@ -47,5 +50,6 @@ go_test(
         "//pkg/statistics/handle/cache/internal/testutil",
         "//pkg/statistics/handle/types",
         "//pkg/util/benchdaily",
+        "@com_github_stretchr_testify//require",
     ],
 )

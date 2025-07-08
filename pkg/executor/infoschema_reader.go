@@ -482,7 +482,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(
 		nameToCol[c.Name.L] = c
 	}
 	for _, index := range table.Indices {
-		if !ex.HasIndex(index.Name.L) {
+		if !ex.HasIndex(index.Name.L) || index.State != model.StatePublic {
 			continue
 		}
 		nonUnique := "1"
@@ -654,12 +654,14 @@ func (e *memtableRetriever) setDataFromOneTable(
 
 		var rowCount, avgRowLength, dataLength, indexLength uint64
 		if useStatsCache {
-			if table.GetPartitionInfo() == nil {
-				err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
-				if err != nil {
-					return rows, err
-				}
-			} else {
+			// Even for partitioned tables, we must update the stats cache for the main table itself.
+			// This is necessary because the global index length from the table also needs to be included.
+			// For further details, see: https://github.com/pingcap/tidb/issues/54173
+			err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
+			if err != nil {
+				return rows, err
+			}
+			if table.GetPartitionInfo() != nil {
 				// needs to update all partitions for partition table.
 				for _, pi := range table.GetPartitionInfo().Definitions {
 					err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
@@ -1994,7 +1996,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 			for _, tableID := range extractorTableIDs {
 				regionsInfo, err := e.getRegionsInfoForTable(ctx, tikvHelper, is, tableID)
 				if err != nil {
-					if errors.ErrorEqual(err, infoschema.ErrTableExists) {
+					if errors.ErrorEqual(err, infoschema.ErrTableNotExists) {
 						continue
 					}
 					return err
@@ -2014,6 +2016,10 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 			return err
 		}
 	}
+	if allRegionsInfo == nil {
+		return nil
+	}
+
 	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, is, nil)
 	for i := range allRegionsInfo.Regions {
 		regionTableList := tableInfos[allRegionsInfo.Regions[i].ID]
@@ -2038,7 +2044,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 func (e *memtableRetriever) getRegionsInfoForTable(ctx context.Context, h *helper.Helper, is infoschema.InfoSchema, tableID int64) (*pd.RegionsInfo, error) {
 	tbl, _ := is.TableByID(ctx, tableID)
 	if tbl == nil {
-		return nil, infoschema.ErrTableExists.GenWithStackByArgs(tableID)
+		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tableID)
 	}
 
 	pt := tbl.Meta().GetPartitionInfo()

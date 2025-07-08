@@ -29,6 +29,7 @@ import (
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -45,7 +46,7 @@ type BackendCtxMgr interface {
 	// BackendCtx will be created and returned.
 	Register(
 		ctx context.Context,
-		jobID int64,
+		job *model.Job,
 		hasUnique bool,
 		etcdClient *clientv3.Client,
 		pdSvcDiscovery pd.ServiceDiscovery,
@@ -53,6 +54,7 @@ type BackendCtxMgr interface {
 		importConc int,
 		maxWriteSpeed int,
 		initTS uint64,
+		adjustedWorkerConcurrency int,
 	) (BackendCtx, error)
 	Unregister(jobID int64)
 	// EncodeJobSortPath encodes the job ID to the local disk sort path.
@@ -113,7 +115,7 @@ var ResignOwnerForTest = atomic.NewBool(false)
 // Register creates a new backend and registers it to the backend context.
 func (m *litBackendCtxMgr) Register(
 	ctx context.Context,
-	jobID int64,
+	job *model.Job,
 	hasUnique bool,
 	etcdClient *clientv3.Client,
 	pdSvcDiscovery pd.ServiceDiscovery,
@@ -121,8 +123,9 @@ func (m *litBackendCtxMgr) Register(
 	concurrency int,
 	maxWriteSpeed int,
 	initTS uint64,
+	adjustedWorkerConcurrency int,
 ) (BackendCtx, error) {
-	bc, exist := m.Load(jobID)
+	bc, exist := m.Load(job.ID)
 	if exist {
 		return bc, nil
 	}
@@ -130,17 +133,17 @@ func (m *litBackendCtxMgr) Register(
 	m.memRoot.RefreshConsumption()
 	ok := m.memRoot.CheckConsume(structSizeBackendCtx)
 	if !ok {
-		return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, jobID)
+		return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, job.ID)
 	}
-	sortPath := m.EncodeJobSortPath(jobID)
+	sortPath := m.EncodeJobSortPath(job.ID)
 	err := os.MkdirAll(sortPath, 0700)
 	if err != nil {
 		logutil.Logger(ctx).Error(LitErrCreateDirFail, zap.Error(err))
 		return nil, err
 	}
-	cfg, err := genConfig(ctx, sortPath, m.memRoot, hasUnique, resourceGroupName, concurrency, maxWriteSpeed)
+	cfg, err := genConfig(ctx, sortPath, m.memRoot, hasUnique, resourceGroupName, concurrency, maxWriteSpeed, job.ReorgMeta.UseCloudStorage)
 	if err != nil {
-		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
+		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", job.ID), zap.Error(err))
 		return nil, err
 	}
 	failpoint.Inject("beforeCreateLocalBackend", func() {
@@ -150,19 +153,19 @@ func (m *litBackendCtxMgr) Register(
 	// folder, which may cause cleanupSortPath wrongly delete the sort folder if only
 	// checking the existence of the entry in backends.
 	m.backends.mu.Lock()
-	bd, err := createLocalBackend(ctx, cfg, pdSvcDiscovery)
+	bd, err := createLocalBackend(ctx, cfg, pdSvcDiscovery, adjustedWorkerConcurrency)
 	if err != nil {
 		m.backends.mu.Unlock()
-		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
+		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", job.ID), zap.Error(err))
 		return nil, err
 	}
 
-	bcCtx := newBackendContext(ctx, jobID, bd, cfg, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient, initTS)
-	m.backends.m[jobID] = bcCtx
+	bcCtx := newBackendContext(ctx, job.ID, bd, cfg, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient, initTS)
+	m.backends.m[job.ID] = bcCtx
 	m.memRoot.Consume(structSizeBackendCtx)
 	m.backends.mu.Unlock()
 
-	logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", jobID),
+	logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", job.ID),
 		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()),
 		zap.Bool("has unique index", hasUnique))
@@ -178,7 +181,11 @@ func createLocalBackend(
 	ctx context.Context,
 	cfg *local.BackendConfig,
 	pdSvcDiscovery pd.ServiceDiscovery,
+	adjustedWorkerConcurrency int,
 ) (*local.Backend, error) {
+	if adjustedWorkerConcurrency > 0 {
+		cfg.WorkerConcurrency = adjustedWorkerConcurrency
+	}
 	tidbCfg := config.GetGlobalConfig()
 	tls, err := common.NewTLS(
 		tidbCfg.Security.ClusterSSLCA,

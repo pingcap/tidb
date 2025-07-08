@@ -132,6 +132,10 @@ type ExternalEngineConfig struct {
 	// TotalKVCount can be an estimated value.
 	TotalKVCount int64
 	CheckHotspot bool
+	// MemCapacity is the memory capacity for the whole subtask.
+	MemCapacity int64
+	// OnDup is the action when a duplicate key is found during global sort.
+	OnDup common.OnDuplicateKey
 }
 
 // CheckCtx contains all parameters used in CheckRequirements

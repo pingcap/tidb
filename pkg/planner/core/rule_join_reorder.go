@@ -57,7 +57,12 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
 	if !isJoin || (join.PreferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
 		(join.JoinType != logicalop.InnerJoin && join.JoinType != logicalop.LeftOuterJoin && join.JoinType != logicalop.RightOuterJoin) ||
-		((join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin) && join.EqualConditions == nil) {
+		((join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin) && join.EqualConditions == nil) ||
+		// with NullEQ in the EQCond, the join order needs to consider the transitivity of null and avoid the wrong result.
+		// so we skip the join order when to meet the NullEQ in the EQCond
+		(slices.ContainsFunc(join.EqualConditions, func(e *expression.ScalarFunction) bool {
+			return e.FuncName.L == ast.NullEQ
+		})) {
 		if joinOrderHintInfo != nil {
 			// The leading hint can not work for some reasons. So clear it in the join node.
 			join.HintInfo = nil
@@ -517,9 +522,10 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 				rightNode, leftNode = leftPlan, rightPlan
 				usedEdges = append(usedEdges, edge)
 			} else {
-				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetStaticType(), rCol, lCol).(*expression.ScalarFunction)
+				funcName := edge.FuncName.L
+				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, edge.GetStaticType(), rCol, lCol).(*expression.ScalarFunction)
 
-				// after creating the new EQ function, the 2 args might not be column anymore, for example `sf=sf(cast(col))`,
+				// after creating the new EQCondition function, the 2 args might not be column anymore, for example `sf=sf(cast(col))`,
 				// which breaks the assumption that join eq keys must be `col=col`, to handle this, inject 2 projections.
 				_, isCol0 := newSf.GetArgs()[0].(*expression.Column)
 				_, isCol1 := newSf.GetArgs()[1].(*expression.Column)
@@ -531,7 +537,7 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 						rightPlan, lCol = s.injectExpr(rightPlan, newSf.GetArgs()[1])
 					}
 					leftNode, rightNode = leftPlan, rightPlan
-					newSf = expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetStaticType(),
+					newSf = expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, edge.GetStaticType(),
 						rCol, lCol).(*expression.ScalarFunction)
 				}
 				usedEdges = append(usedEdges, newSf)
