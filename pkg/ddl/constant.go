@@ -47,6 +47,7 @@ const (
 		table_ids text(65535),
 		create_time datetime,
 		primary key(job_id))`
+	// MDLTableSQL is the CREATE TABLE SQL of `tidb_mdl_info`.
 	MDLTableSQL = `create table mysql.tidb_mdl_info (
 		job_id BIGINT NOT NULL PRIMARY KEY,
 		version BIGINT NOT NULL,

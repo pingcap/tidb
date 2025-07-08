@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "metadef",
-    srcs = ["db.go"],
+    srcs = [
+        "db.go",
+        "system.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/meta/metadef",
     visibility = ["//visibility:public"],
     deps = [
