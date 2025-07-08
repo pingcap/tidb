@@ -193,7 +193,7 @@ type session struct {
 	// dom is *domain.Domain, use `any` to avoid import cycle.
 	// cross keyspace session doesn't have domain set.
 	dom any
-	// we cannot compare dom == nil, as dom is untyped, golang will always return true.
+	// we cannot compare dom == nil, as dom is untyped, golang will always return false.
 	crossKS         bool
 	schemaValidator validatorapi.Validator
 	infoCache       *infoschema.InfoCache
