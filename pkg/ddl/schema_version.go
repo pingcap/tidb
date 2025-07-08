@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 )
 
@@ -405,7 +406,17 @@ func waitVersionSyncedWithoutMDL(ctx context.Context, jobCtx *jobContext, job *m
 		return nil
 	}
 
-	ver, _ := jobCtx.store.CurrentVersion(kv.GlobalTxnScope)
+	ver, err := jobCtx.store.CurrentVersion(kv.GlobalTxnScope)
+	failpoint.Inject("mockGetCurrentVersionFailed", func() {
+		// ref: https://github.com/tikv/client-go/blob/master/tikv/kv.go#L505-L532
+		ver, err = kv.NewVersion(0), tikverr.NewErrPDServerTimeout("mock PD timeout")
+	})
+
+	// If we failed to get the current version, caller will retry after one second again.
+	if err != nil {
+		logutil.DDLLogger().Warn("get current version failed", zap.Int64("jobID", job.ID), zap.Error(err))
+		return err
+	}
 	snapshot := jobCtx.store.GetSnapshot(ver)
 	m := meta.NewReader(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
