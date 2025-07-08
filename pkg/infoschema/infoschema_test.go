@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -121,7 +121,7 @@ func TestBasic(t *testing.T) {
 
 	schemaNames := infoschema.AllSchemaNames(is)
 	require.Len(t, schemaNames, 3)
-	require.True(t, testutil.CompareUnorderedStringSlice(schemaNames, []string{util.InformationSchemaName.O, util.MetricSchemaName.O, "Test"}))
+	require.True(t, testutil.CompareUnorderedStringSlice(schemaNames, []string{metadef.InformationSchemaName.O, metadef.MetricSchemaName.O, "Test"}))
 
 	schemas := is.AllSchemaNames()
 	require.Len(t, schemas, 3)
@@ -374,7 +374,7 @@ func TestInfoTables(t *testing.T) {
 		"VIEWS",
 	}
 	for _, tbl := range infoTables {
-		tb, err1 := is.TableByName(context.Background(), util.InformationSchemaName, ast.NewCIStr(tbl))
+		tb, err1 := is.TableByName(context.Background(), metadef.InformationSchemaName, ast.NewCIStr(tbl))
 		require.Nil(t, err1)
 		require.NotNil(t, tb)
 	}

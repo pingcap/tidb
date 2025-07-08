@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -2304,7 +2305,7 @@ func InitSnapshotWithSessCtx(snapshot kv.Snapshot, ctx sessionctx.Context, txnRe
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Executor {
 	switch v.DBName.L {
-	case util.MetricSchemaName.L:
+	case metadef.MetricSchemaName.L:
 		return &MemTableReaderExec{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 			table:        v.Table,
@@ -2313,7 +2314,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 				extractor: v.Extractor.(*plannercore.MetricTableExtractor),
 			},
 		}
-	case util.InformationSchemaName.L:
+	case metadef.InformationSchemaName.L:
 		switch v.Table.Name.L {
 		case strings.ToLower(infoschema.TableClusterConfig):
 			return &MemTableReaderExec{
