@@ -25,8 +25,10 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -936,4 +938,28 @@ func TestIssue57345(t *testing.T) {
 		Check(testkit.Rows())
 	tk.MustQuery("select table_name from information_schema.referential_constraints where constraint_schema = 'a' and constraint_schema = 'b';").
 		Check(testkit.Rows())
+}
+
+func TestStatisticShowPublicIndexes(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteOnly {
+			rs := tk1.MustQuery(`SELECT count(1) FROM INFORMATION_SCHEMA.STATISTICS where 
+			TABLE_SCHEMA = 'test' and table_name = 't' and index_name = 'idx';`).Rows()
+			require.Equal(t, "0", rs[0][0].(string))
+		}
+	}
+
+	originalHook := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originalHook)
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t add index idx(b);")
 }
