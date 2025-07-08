@@ -52,67 +52,67 @@ func (p PhysicalTopN) Init(ctx base.PlanContext, stats *property.StatsInfo, offs
 }
 
 // GetPartitionBy returns partition by fields
-func (lt *PhysicalTopN) GetPartitionBy() []property.SortItem {
-	return lt.PartitionBy
+func (p *PhysicalTopN) GetPartitionBy() []property.SortItem {
+	return p.PartitionBy
 }
 
 // Clone implements op.PhysicalPlan interface.
-func (lt *PhysicalTopN) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+func (p *PhysicalTopN) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalTopN)
-	*cloned = *lt
+	*cloned = *p
 	cloned.SetSCtx(newCtx)
-	base, err := lt.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
+	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
 	if err != nil {
 		return nil, err
 	}
 	cloned.PhysicalSchemaProducer = *base
-	cloned.ByItems = make([]*util.ByItems, 0, len(lt.ByItems))
-	for _, it := range lt.ByItems {
+	cloned.ByItems = make([]*util.ByItems, 0, len(p.ByItems))
+	for _, it := range p.ByItems {
 		cloned.ByItems = append(cloned.ByItems, it.Clone())
 	}
-	cloned.PartitionBy = make([]property.SortItem, 0, len(lt.PartitionBy))
-	for _, it := range lt.PartitionBy {
+	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
+	for _, it := range p.PartitionBy {
 		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
 	}
 	return cloned, nil
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (lt *PhysicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(lt.ByItems))
-	for _, item := range lt.ByItems {
+func (p *PhysicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.ByItems))
+	for _, item := range p.ByItems {
 		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
 	}
 	return corCols
 }
 
 // MemoryUsage return the memory usage of PhysicalTopN
-func (lt *PhysicalTopN) MemoryUsage() (sum int64) {
-	if lt == nil {
+func (p *PhysicalTopN) MemoryUsage() (sum int64) {
+	if p == nil {
 		return
 	}
 
-	sum = lt.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
-	for _, byItem := range lt.ByItems {
+	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(p.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
+	for _, byItem := range p.ByItems {
 		sum += byItem.MemoryUsage()
 	}
-	for _, item := range lt.PartitionBy {
+	for _, item := range p.PartitionBy {
 		sum += item.MemoryUsage()
 	}
 	return
 }
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalTopN) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+func (p *PhysicalTopN) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalTopN)
-	*cloned = *op
-	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
+	*cloned = *p
+	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
 	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.ByItems = util.CloneByItemss(op.ByItems)
-	cloned.PartitionBy = util.CloneSortItems(op.PartitionBy)
+	cloned.ByItems = util.CloneByItemss(p.ByItems)
+	cloned.PartitionBy = util.CloneSortItems(p.PartitionBy)
 	return cloned, true
 }
 
