@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -308,7 +309,7 @@ func getTableDataKeyRanges(nonFlashbackTableIDs []int64) []kv.KeyRange {
 	// Add all other key ranges.
 	keyRanges = append(keyRanges, kv.KeyRange{
 		StartKey: tablecodec.EncodeTablePrefix(nonFlashbackTableIDs[len(nonFlashbackTableIDs)-1] + 1),
-		EndKey:   tablecodec.EncodeTablePrefix(meta.ReservedSchemaIDLowerBound),
+		EndKey:   tablecodec.EncodeTablePrefix(metadef.ReservedSchemaIDLowerBound),
 	})
 
 	return keyRanges
@@ -432,7 +433,7 @@ func getFlashbackKeyRanges(ctx context.Context, sess sessionctx.Context, flashba
 			return nil, errors.Trace(err2)
 		}
 		for _, table := range tbls {
-			if !table.IsBaseTable() || table.ID > meta.ReservedSchemaIDLowerBound {
+			if !table.IsBaseTable() || table.ID > metadef.ReservedSchemaIDLowerBound {
 				continue
 			}
 			nonFlashbackTableIDs = addToSlice(db.Name.L, table.Name.L, table.ID, nonFlashbackTableIDs)

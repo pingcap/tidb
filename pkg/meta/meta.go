@@ -32,6 +32,7 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -132,14 +133,6 @@ const (
 	typeUnknown int = 0
 	typeJSON    int = 1
 	// todo: customized handler.
-
-	// ReservedSchemaIDUpperBound is the max value of int48.
-	ReservedSchemaIDUpperBound = 0x0000FFFFFFFFFFFF
-	// ReservedSchemaIDLowerBound reserves 1000 IDs.
-	// valid usable ID range for user schema objects is [1, ReservedSchemaIDLowerBound].
-	// (ReservedSchemaIDLowerBound, ReservedSchemaIDUpperBound] is reserved for
-	// system schema objects.
-	ReservedSchemaIDLowerBound = ReservedSchemaIDUpperBound - 1000
 )
 
 var (
@@ -221,8 +214,8 @@ func (m *Mutator) GenGlobalID() (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if newID > ReservedSchemaIDLowerBound {
-		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, ReservedSchemaIDLowerBound)
+	if newID > metadef.ReservedSchemaIDLowerBound {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.ReservedSchemaIDLowerBound)
 	}
 	return newID, err
 }
@@ -237,8 +230,8 @@ func (m *Mutator) AdvanceGlobalIDs(n int) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if newID > ReservedSchemaIDLowerBound {
-		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, ReservedSchemaIDLowerBound)
+	if newID > metadef.ReservedSchemaIDLowerBound {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.ReservedSchemaIDLowerBound)
 	}
 	origID := newID - int64(n)
 	return origID, nil
@@ -253,8 +246,8 @@ func (m *Mutator) GenGlobalIDs(n int) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	if newID > ReservedSchemaIDLowerBound {
-		return nil, errors.Errorf("global id:%d exceeds the limit:%d", newID, ReservedSchemaIDLowerBound)
+	if newID > metadef.ReservedSchemaIDLowerBound {
+		return nil, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.ReservedSchemaIDLowerBound)
 	}
 	origID := newID - int64(n)
 	ids := make([]int64, 0, n)

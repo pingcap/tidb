@@ -67,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -3262,38 +3263,40 @@ func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
 	return false, nil
 }
 
-type tableBasicInfo struct {
-	id  int64
-	SQL string
+// TableBasicInfo contains the basic information of a table used in DDL.
+type TableBasicInfo struct {
+	ID   int64
+	Name string
+	SQL  string
 }
 
 type versionedDDLTables struct {
 	ver    meta.DDLTableVersion
-	tables []tableBasicInfo
+	tables []TableBasicInfo
 }
 
 var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 	// DDLJobTables is a list of tables definitions used in concurrent DDL.
-	DDLJobTables = []tableBasicInfo{
-		{id: ddl.TiDBDDLJobTableID, SQL: ddl.JobTableSQL},
-		{id: ddl.TiDBDDLReorgTableID, SQL: ddl.ReorgTableSQL},
-		{id: ddl.TiDBDDLHistoryTableID, SQL: ddl.HistoryTableSQL},
+	DDLJobTables = []TableBasicInfo{
+		{ID: metadef.TiDBDDLJobTableID, Name: "tidb_ddl_job", SQL: ddl.JobTableSQL},
+		{ID: metadef.TiDBDDLReorgTableID, Name: "tidb_ddl_reorg", SQL: ddl.ReorgTableSQL},
+		{ID: metadef.TiDBDDLHistoryTableID, Name: "tidb_ddl_history", SQL: ddl.HistoryTableSQL},
 	}
 	// MDLTables is a list of tables definitions used for metadata lock.
-	MDLTables = []tableBasicInfo{
-		{id: ddl.TiDBMDLInfoTableID, SQL: ddl.MDLTableSQL},
+	MDLTables = []TableBasicInfo{
+		{ID: metadef.TiDBMDLInfoTableID, Name: "tidb_mdl_info", SQL: ddl.MDLTableSQL},
 	}
 	// BackfillTables is a list of tables definitions used in dist reorg DDL.
-	BackfillTables = []tableBasicInfo{
-		{id: ddl.TiDBBackgroundSubtaskTableID, SQL: ddl.BackgroundSubtaskTableSQL},
-		{id: ddl.TiDBBackgroundSubtaskHistoryTableID, SQL: ddl.BackgroundSubtaskHistoryTableSQL},
+	BackfillTables = []TableBasicInfo{
+		{ID: metadef.TiDBBackgroundSubtaskTableID, Name: "tidb_background_subtask", SQL: ddl.BackgroundSubtaskTableSQL},
+		{ID: metadef.TiDBBackgroundSubtaskHistoryTableID, Name: "tidb_background_subtask_history", SQL: ddl.BackgroundSubtaskHistoryTableSQL},
 	}
 	// DDLNotifierTables contains the table definitions used in DDL notifier.
 	// It only contains the notifier table.
 	// Put it here to reuse a unified initialization function and make it easier to find.
-	DDLNotifierTables = []tableBasicInfo{
-		{id: ddl.TiDBDDLNotifierTableID, SQL: ddl.NotifierTableSQL},
+	DDLNotifierTables = []TableBasicInfo{
+		{ID: metadef.TiDBDDLNotifierTableID, Name: "tidb_ddl_notifier", SQL: ddl.NotifierTableSQL},
 	}
 
 	ddlTableVersionTables = []versionedDDLTables{
@@ -3350,10 +3353,10 @@ func InitDDLTables(store kv.Storage) error {
 	})
 }
 
-func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables []tableBasicInfo) error {
+func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables []TableBasicInfo) error {
 	tableIDs := make([]int64, 0, len(tables))
 	for _, tbl := range tables {
-		tableIDs = append(tableIDs, tbl.id)
+		tableIDs = append(tableIDs, tbl.ID)
 	}
 	splitAndScatterTable(store, tableIDs)
 	p := parser.New()
@@ -3367,7 +3370,7 @@ func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables 
 			return errors.Trace(err)
 		}
 		tblInfo.State = model.StatePublic
-		tblInfo.ID = tbl.id
+		tblInfo.ID = tbl.ID
 		tblInfo.UpdateTS = t.StartTS
 		err = t.CreateTableOrView(dbID, tblInfo)
 		if err != nil {

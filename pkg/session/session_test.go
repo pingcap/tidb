@@ -16,7 +16,9 @@ package session
 
 import (
 	"cmp"
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -34,11 +36,16 @@ func TestDDLTableVersionTables(t *testing.T) {
 	require.True(t, slices.IsSortedFunc(ddlTableVersionTables, func(a, b versionedDDLTables) int {
 		return cmp.Compare(a.ver, b.ver)
 	}), "ddlTableVersionTables should be sorted by version")
-	allDDLTables := make([]tableBasicInfo, 0, len(ddlTableVersionTables)*2)
+	allDDLTables := make([]TableBasicInfo, 0, len(ddlTableVersionTables)*2)
 	for _, v := range ddlTableVersionTables {
 		allDDLTables = append(allDDLTables, v.tables...)
 	}
-	require.True(t, slices.IsSortedFunc(allDDLTables, func(a, b tableBasicInfo) int {
-		return cmp.Compare(b.id, a.id)
+	require.True(t, slices.IsSortedFunc(allDDLTables, func(a, b TableBasicInfo) int {
+		return cmp.Compare(b.ID, a.ID)
 	}), "ddlTableVersionTables should be sorted by table ID in descending order")
+	for _, vt := range allDDLTables {
+		require.Equal(t, strings.ToLower(vt.Name), vt.Name, "table name should be in lower case")
+		require.Contains(t, vt.SQL, fmt.Sprintf(" mysql.%s (", vt.Name),
+			"table SQL should contain table name and follow the format 'mysql.<table_name> ('")
+	}
 }
