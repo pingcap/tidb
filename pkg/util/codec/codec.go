@@ -1260,7 +1260,7 @@ func HashGroupKey(loc *time.Location, n int, col *chunk.Column, buf [][]byte, ft
 				buf[i] = append(buf[i], decimalFlag)
 				buf[i], err = EncodeDecimal(buf[i], &ds[i], ft.GetFlen(), ft.GetDecimal())
 				if err != nil {
-					return nil, err
+					return buf, err
 				}
 			}
 		}
@@ -1273,7 +1273,7 @@ func HashGroupKey(loc *time.Location, n int, col *chunk.Column, buf [][]byte, ft
 				buf[i] = append(buf[i], uintFlag)
 				buf[i], err = EncodeMySQLTime(loc, ts[i], mysql.TypeUnspecified, buf[i])
 				if err != nil {
-					return nil, err
+					return buf, err
 				}
 			}
 		}
