@@ -284,13 +284,8 @@
     "Name": "TestWindowParallelFunction",
     "Cases": [
       "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(partition by test.t.a))->Projection",
-<<<<<<< HEAD
-      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_10])->Projection",
-      "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Sort->Window(avg(cast(Column#16, decimal(20,0) BINARY))->Column#17 over(partition by Column#15))->Partition(execution info: concurrency:4, data sources:[Projection_8])->Projection",
-=======
       "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_13])->Projection",
       "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Sort->Window(avg(cast(Column#16, decimal(20,0) BINARY))->Column#17 over(partition by Column#15))->Partition(execution info: concurrency:4, data sources:[Projection_12])->Projection",
->>>>>>> d87ec2b1884 (planner: RegardNULLAsPoint should be true as default (#62194))
       "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(order by test.t.a, test.t.b desc range between unbounded preceding and current row))->Projection",
       "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(partition by test.t.a))->Projection",
       "[planner:1054]Unknown column 'z' in 'field list'",
@@ -332,11 +327,7 @@
       "[planner:1210]Incorrect arguments to nth_value",
       "[planner:1210]Incorrect arguments to ntile",
       "IndexReader(Index(t.f)[[NULL,+inf]])->Window(ntile(<nil>)->Column#14 over())->Projection",
-<<<<<<< HEAD
-      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_10])->Projection",
-=======
       "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_13])->Projection",
->>>>>>> d87ec2b1884 (planner: RegardNULLAsPoint should be true as default (#62194))
       "TableReader(Table(t))->Window(nth_value(test.t.i_date, 1)->Column#14 over())->Projection",
       "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(10,0) BINARY))->Column#15, sum(cast(test.t.c, decimal(10,0) BINARY))->Column#16 over(order by test.t.a range between unbounded preceding and current row))->Projection",
       "[planner:3593]You cannot use the window function 'sum' in this context.'",
