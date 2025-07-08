@@ -882,8 +882,8 @@ func TestCreateTableAutoIncrementMaxValue(t *testing.T) {
 
 	err := tk.ExecToErr(failedSQL)
 	require.Error(t, err, "Expected error for AUTO_INCREMENT value exceeding int32 max")
-	require.Contains(t, err.Error(), "auto_increment overflows",
-		"Expected auto_increment overflow error, got: %v", err)
+	require.Contains(t, err.Error(), "Out of range value for column 'id' at row 1",
+		"Expected ErrWarnDataOutOfRange error message, got: %v", err)
 
 	// Test with math.MaxInt32 (should succeed)
 	tk.MustExec("CREATE TABLE t1 (id INT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 2147483647")
@@ -897,8 +897,8 @@ func TestCreateTableAutoIncrementMaxValue(t *testing.T) {
 	err = tk.ExecToErr(failedSQL)
 	if err != nil {
 		// If validation is implemented, expect overflow error
-		require.Contains(t, err.Error(), "overflow",
-			"Expected overflow error for unsigned int AUTO_INCREMENT, got: %v", err)
+		require.Contains(t, err.Error(), "Out of range value for column 'id' at row 1",
+			"Expected ErrWarnDataOutOfRange error message, got: %v", err)
 	} else {
 		// Current behavior: accepts values > uint32 max for unsigned int
 		t.Logf("Warning: AUTO_INCREMENT value %s exceeds uint32 max for unsigned int but was accepted", maxUint32Plus1)
@@ -917,8 +917,8 @@ func TestCreateTableAutoIncrementMaxValue(t *testing.T) {
 	err = tk.ExecToErr(failedSQL)
 	if err != nil {
 		// If validation is implemented, expect overflow error
-		require.Contains(t, err.Error(), "overflow",
-			"Expected overflow error for signed bigint AUTO_INCREMENT, got: %v", err)
+		require.Contains(t, err.Error(), "Out of range value for column 'id' at row 1",
+			"Expected ErrWarnDataOutOfRange error message, got: %v", err)
 	} else {
 		// Current behavior: accepts values > int64 max for signed bigint
 		t.Logf("Warning: AUTO_INCREMENT value %s exceeds int64 max for signed bigint but was accepted", maxInt64Plus1)
@@ -940,8 +940,8 @@ func TestCreateTableAutoIncrementMaxValue(t *testing.T) {
 	failedSQL = fmt.Sprintf("CREATE TABLE t1 (id TINYINT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = %s", maxInt8Plus1)
 	err = tk.ExecToErr(failedSQL)
 	require.Error(t, err, "Expected error for AUTO_INCREMENT value exceeding int8 max")
-	require.Contains(t, err.Error(), "auto_increment overflows",
-		"Expected auto_increment overflow error, got: %v", err)
+	require.Contains(t, err.Error(), "Out of range value for column 'id' at row 1",
+		"Expected ErrWarnDataOutOfRange error message, got: %v", err)
 
 	// Test with math.MaxInt8 (should succeed)
 	tk.MustExec("CREATE TABLE t1 (id TINYINT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 127")
@@ -953,8 +953,8 @@ func TestCreateTableAutoIncrementMaxValue(t *testing.T) {
 	failedSQL = fmt.Sprintf("CREATE TABLE t1 (id TINYINT UNSIGNED PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = %s", maxUint8Plus1)
 	err = tk.ExecToErr(failedSQL)
 	require.Error(t, err, "Expected error for AUTO_INCREMENT value exceeding uint8 max")
-	require.Contains(t, err.Error(), "auto_increment overflows",
-		"Expected auto_increment overflow error, got: %v", err)
+	require.Contains(t, err.Error(), "Out of range value for column 'id' at row 1",
+		"Expected ErrWarnDataOutOfRange error message, got: %v", err)
 
 	// Test with math.MaxUint8 (should succeed)
 	tk.MustExec("CREATE TABLE t1 (id TINYINT UNSIGNED PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 255")
@@ -966,8 +966,8 @@ func TestCreateTableAutoIncrementMaxValue(t *testing.T) {
 	failedSQL = fmt.Sprintf("CREATE TABLE t1 (id SMALLINT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = %s", maxInt16Plus1)
 	err = tk.ExecToErr(failedSQL)
 	require.Error(t, err, "Expected error for AUTO_INCREMENT value exceeding int16 max")
-	require.Contains(t, err.Error(), "auto_increment overflows",
-		"Expected auto_increment overflow error, got: %v", err)
+	require.Contains(t, err.Error(), "Out of range value for column 'id' at row 1",
+		"Expected ErrWarnDataOutOfRange error message, got: %v", err)
 
 	// Test with math.MaxInt16 (should succeed)
 	tk.MustExec("CREATE TABLE t1 (id SMALLINT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 32767")
@@ -979,8 +979,8 @@ func TestCreateTableAutoIncrementMaxValue(t *testing.T) {
 	failedSQL = fmt.Sprintf("CREATE TABLE t1 (id SMALLINT UNSIGNED PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = %s", maxUint16Plus1)
 	err = tk.ExecToErr(failedSQL)
 	require.Error(t, err, "Expected error for AUTO_INCREMENT value exceeding uint16 max")
-	require.Contains(t, err.Error(), "auto_increment overflows",
-		"Expected auto_increment overflow error, got: %v", err)
+	require.Contains(t, err.Error(), "Out of range value for column 'id' at row 1",
+		"Expected ErrWarnDataOutOfRange error message, got: %v", err)
 
 	// Test with math.MaxUint16 (should succeed)
 	tk.MustExec("CREATE TABLE t1 (id SMALLINT UNSIGNED PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 65535")
@@ -992,8 +992,8 @@ func TestCreateTableAutoIncrementMaxValue(t *testing.T) {
 	failedSQL = fmt.Sprintf("CREATE TABLE t1 (id MEDIUMINT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = %s", maxInt24Plus1)
 	err = tk.ExecToErr(failedSQL)
 	require.Error(t, err, "Expected error for AUTO_INCREMENT value exceeding int24 max")
-	require.Contains(t, err.Error(), "auto_increment overflows",
-		"Expected auto_increment overflow error, got: %v", err)
+	require.Contains(t, err.Error(), "Out of range value for column 'id' at row 1",
+		"Expected ErrWarnDataOutOfRange error message, got: %v", err)
 
 	// Test with MaxInt24 (should succeed)
 	tk.MustExec("CREATE TABLE t1 (id MEDIUMINT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 8388607")
@@ -1005,8 +1005,8 @@ func TestCreateTableAutoIncrementMaxValue(t *testing.T) {
 	failedSQL = fmt.Sprintf("CREATE TABLE t1 (id MEDIUMINT UNSIGNED PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = %s", maxUint24Plus1)
 	err = tk.ExecToErr(failedSQL)
 	require.Error(t, err, "Expected error for AUTO_INCREMENT value exceeding uint24 max")
-	require.Contains(t, err.Error(), "auto_increment overflows",
-		"Expected auto_increment overflow error, got: %v", err)
+	require.Contains(t, err.Error(), "Out of range value for column 'id' at row 1",
+		"Expected ErrWarnDataOutOfRange error message, got: %v", err)
 
 	// Test with MaxUint24 (should succeed)
 	tk.MustExec("CREATE TABLE t1 (id MEDIUMINT UNSIGNED PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 16777215")
@@ -1034,7 +1034,8 @@ func TestCreateTableAutoIncrementSQLMode(t *testing.T) {
 	tk.MustExec("DROP TABLE IF EXISTS t1")
 
 	// In non-strict mode, this should succeed but generate a warning
-	warnings := tk.MustQuery("CREATE TABLE t1 (id INT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 2147483648; SHOW WARNINGS")
+	tk.MustExec("CREATE TABLE t1 (id INT PRIMARY KEY AUTO_INCREMENT) AUTO_INCREMENT = 2147483648")
+	warnings := tk.MustQuery("SHOW WARNINGS")
 	
 	// Verify we got the expected warning
 	require.GreaterOrEqual(t, len(warnings.Rows()), 1, "Expected at least one warning in non-strict mode")
