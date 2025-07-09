@@ -2370,7 +2370,7 @@ func (er *expressionRewriter) funcCallToExpressionWithPlanCtx(planCtx *exprRewri
 				return
 			}
 			newArg := planCtx.rollExpand.GID.Clone()
-			init := func(groupingFunc *expression.ScalarFunction) (expression.Expression, error) {
+			init := func(groupingFunc *expression.ScalarFunction) (*expression.ScalarFunction, error) {
 				err = groupingFunc.Function.(*expression.BuiltinGroupingImplSig).SetMetadata(planCtx.rollExpand.GroupingMode, planCtx.rollExpand.GenerateGroupingMarks(resolvedCols))
 				return groupingFunc, err
 			}
