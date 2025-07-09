@@ -42,7 +42,7 @@ for i in {1..200000}; do
 done
 set -x
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/lightning/backend/local/shortWaitNTimeout=100*return(1)" 
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/local/shortWaitNTimeout=100*return(1)" 
 
 run_lightning --backend local -d "$TEST_DIR/data" --config "$CUR/config.toml"
 check_lightning_log_contains 'Experiencing a wait timeout while writing to tikv'
