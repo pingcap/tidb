@@ -176,12 +176,32 @@ func buildHistWithTopN(
 	bucketIdx := 0
 	var lastCount int64
 	corrXYSum = float64(0)
+
 	// The underlying idea is that when a value is sampled,
 	// it does not necessarily mean that the actual row count of this value reaches the sample factor.
 	// In extreme cases, it could be that this value only appears once, and that one row happens to be sampled.
 	// Therefore, if the sample count of this value is only once, we use a more conservative ndvFactor.
 	// However, if the calculated ndvFactor is larger than the sampleFactor, we still use the sampleFactor.
-	hg.AppendBucket(&samples[0].Value, &samples[0].Value, int64(sampleFactor), int64(ndvFactor))
+
+	// Check if the first sample is in TopN
+	firstSampleInTopN := false
+	if topN != nil && len(topN.TopN) > 0 {
+		sampleBytes, err := getComparedBytes(samples[0].Value)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		for _, topNItem := range topN.TopN {
+			if bytes.Equal(sampleBytes, topNItem.Encoded) {
+				firstSampleInTopN = true
+				break
+			}
+		}
+	}
+
+	// Only add the first sample to histogram if it's not in TopN
+	if !firstSampleInTopN {
+		hg.AppendBucket(&samples[0].Value, &samples[0].Value, int64(sampleFactor), int64(ndvFactor))
+	}
 	bufferedMemSize := int64(0)
 	bufferedReleaseSize := int64(0)
 	defer func() {
@@ -194,6 +214,24 @@ func buildHistWithTopN(
 	var upper = new(types.Datum)
 	// Note: Start from 1 because we have already processed the first sample.
 	for i := int64(1); i < sampleNum; i++ {
+		// Skip samples that are in TopN
+		if topN != nil && len(topN.TopN) > 0 {
+			sampleBytes, err := getComparedBytes(samples[i].Value)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			foundInTopN := false
+			for _, topNItem := range topN.TopN {
+				if bytes.Equal(sampleBytes, topNItem.Encoded) {
+					foundInTopN = true
+					break
+				}
+			}
+			if foundInTopN {
+				continue
+			}
+		}
+
 		corrXYSum += float64(i) * float64(samples[i].Ordinal)
 		hg.UpperToDatum(bucketIdx, upper)
 		if memTracker != nil {
