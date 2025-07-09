@@ -183,16 +183,19 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 	}
 	childStats := make([]*property.StatsInfo, 0, len(e.Inputs))
 	childSchema := make([]*expression.Schema, 0, len(e.Inputs))
+	childProperties := make([][][]*expression.Column, 0, len(e.Inputs))
 	for _, childG := range e.Inputs {
 		childGProp := childG.GetLogicalProperty()
 		childStats = append(childStats, childGProp.Stats)
 		childSchema = append(childSchema, childGProp.Schema)
+		childProperties = append(childProperties, childGProp.PossibleProps)
 	}
 	e.GetGroup().SetLogicalProperty(property.NewLogicalProp())
 	// currently the schemaProducer side logical op is still useful for group schema.
 	tmpFD := e.LogicalPlan.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan).FDs()
 	tmpSchema := e.LogicalPlan.Schema()
 	tmpStats := e.LogicalPlan.StatsInfo()
+	var tmpPossibleProps [][]*expression.Column
 	// the leaves node may have already had their stats in join reorder est phase, while
 	// their group ndv signal is passed in CollectPredicateColumnsPoint which is applied
 	// behind join reorder rule, we should build their group ndv again (implied in DeriveStats).
@@ -206,11 +209,15 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 		if err != nil {
 			return err
 		}
+		// todo: extractFD should be refactored as take in childFDs, and return the new FDSet rather than depend on tree.
 		tmpFD = e.LogicalPlan.ExtractFD()
+		// prepare the possible sort columns for the group, which require fillIndexPath to fill index cols.
+		tmpPossibleProps = e.LogicalPlan.PreparePossibleProperties(tmpSchema, childProperties...)
 	}
 	e.GetGroup().GetLogicalProperty().Schema = tmpSchema
 	e.GetGroup().GetLogicalProperty().Stats = tmpStats
 	e.GetGroup().GetLogicalProperty().FD = tmpFD
+	e.GetGroup().GetLogicalProperty().PossibleProps = tmpPossibleProps
 	return nil
 }
 
@@ -272,7 +279,7 @@ func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	case *logicalop.LogicalUnionScan:
 		return utilfuncp.ExhaustPhysicalPlans4LogicalUnionScan(x, prop)
 	case *logicalop.LogicalProjection:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalProjection(x, prop)
+		return utilfuncp.ExhaustPhysicalPlans4LogicalProjection(e, prop)
 	case *logicalop.LogicalAggregation:
 		return utilfuncp.ExhaustPhysicalPlans4LogicalAggregation(x, prop)
 	case *logicalop.LogicalPartitionUnionAll:

@@ -428,6 +428,10 @@ func iteratePhysicalPlan4GroupExpression(
 		if err != nil {
 			return nil, 0, childCnts, err
 		}
+		if !taskTypeSatisfied(childProp, childTask) {
+			// If the task type is not satisfied, we should skip this plan.
+			return nil, 0, childCnts, nil
+		}
 		curCntPlan = curCntPlan * cnt
 		if childTask != nil && childTask.Invalid() {
 			return nil, 0, childCnts, nil
@@ -513,6 +517,10 @@ func iterateChildPlan4LogicalSequenceGE(
 		if err != nil {
 			return nil, 0, nil, err
 		}
+		if !taskTypeSatisfied(childProp, childTask) {
+			// If the task type is not satisfied, we should skip this plan.
+			return nil, 0, nil, nil
+		}
 		curCntPlan = curCntPlan * cnt
 		if childTask != nil && childTask.Invalid() {
 			return nil, 0, nil, nil
@@ -573,6 +581,10 @@ func iterateChildPlan4LogicalSequence(
 		childCnts[j] = cnt
 		if err != nil {
 			return nil, 0, nil, err
+		}
+		if !taskTypeSatisfied(childProp, childTask) {
+			// If the task type is not satisfied, we should skip this plan.
+			return nil, 0, nil, nil
 		}
 		curCntPlan = curCntPlan * cnt
 		if childTask != nil && childTask.Invalid() {

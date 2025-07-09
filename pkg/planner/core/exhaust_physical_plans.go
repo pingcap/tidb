@@ -429,7 +429,7 @@ func canUseHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Co
 }
 
 func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (joins []base.PhysicalPlan, forced bool) {
-	_, p := getGEAndLogicalJoin(super)
+	ge, p := getGEAndLogicalJoin(super)
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return
 	}
@@ -449,13 +449,13 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 		leftNAJoinKeys, _ := p.GetNAJoinKeys()
 		if p.SCtx().GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && canUseHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) {
 			if !forceLeftToBuild {
-				joins = append(joins, getHashJoin(super, prop, 1, false))
+				joins = append(joins, getHashJoin(ge, p, prop, 1, false))
 			}
 			if !forceRightToBuild {
-				joins = append(joins, getHashJoin(super, prop, 1, true))
+				joins = append(joins, getHashJoin(ge, p, prop, 1, true))
 			}
 		} else {
-			joins = append(joins, getHashJoin(super, prop, 1, false))
+			joins = append(joins, getHashJoin(ge, p, prop, 1, false))
 			if forceLeftToBuild || forceRightToBuild {
 				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf(
 					"The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for %s with hash join version 1. "+
@@ -466,7 +466,7 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 			}
 		}
 	case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
-		joins = append(joins, getHashJoin(super, prop, 1, false))
+		joins = append(joins, getHashJoin(ge, p, prop, 1, false))
 		if forceLeftToBuild || forceRightToBuild {
 			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf(
 				"HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for %s because the build side is fixed. "+
@@ -477,26 +477,26 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 		}
 	case logicalop.LeftOuterJoin:
 		if !forceLeftToBuild {
-			joins = append(joins, getHashJoin(super, prop, 1, false))
+			joins = append(joins, getHashJoin(ge, p, prop, 1, false))
 		}
 		if !forceRightToBuild {
-			joins = append(joins, getHashJoin(super, prop, 1, true))
+			joins = append(joins, getHashJoin(ge, p, prop, 1, true))
 		}
 	case logicalop.RightOuterJoin:
 		if !forceLeftToBuild {
-			joins = append(joins, getHashJoin(super, prop, 0, true))
+			joins = append(joins, getHashJoin(ge, p, prop, 0, true))
 		}
 		if !forceRightToBuild {
-			joins = append(joins, getHashJoin(super, prop, 0, false))
+			joins = append(joins, getHashJoin(ge, p, prop, 0, false))
 		}
 	case logicalop.InnerJoin:
 		if forceLeftToBuild {
-			joins = append(joins, getHashJoin(super, prop, 0, false))
+			joins = append(joins, getHashJoin(ge, p, prop, 0, false))
 		} else if forceRightToBuild {
-			joins = append(joins, getHashJoin(super, prop, 1, false))
+			joins = append(joins, getHashJoin(ge, p, prop, 1, false))
 		} else {
-			joins = append(joins, getHashJoin(super, prop, 1, false))
-			joins = append(joins, getHashJoin(super, prop, 0, false))
+			joins = append(joins, getHashJoin(ge, p, prop, 1, false))
+			joins = append(joins, getHashJoin(ge, p, prop, 0, false))
 		}
 	}
 
@@ -512,8 +512,7 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 	return
 }
 
-func getHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *PhysicalHashJoin {
-	ge, p := getGEAndLogicalJoin(super)
+func getHashJoin(ge *memo.GroupExpression, p *logicalop.LogicalJoin, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *PhysicalHashJoin {
 	selfStats, stats0, stats1, selfSchema, _, _ := getJoinSelfAndChildStatsAndSchema(ge, p)
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
@@ -2707,6 +2706,17 @@ func isJoinChildFitMPPBCJ(p *logicalop.LogicalJoin, childIndexToBC int, mppStore
 	return rowBC*float64(mppStoreCnt) <= rowHash
 }
 
+func getSelfAndChildStatsAndSchema(ge *memo.GroupExpression, p base.LogicalPlan) (selfStats, stats0 *property.StatsInfo, selfSchema, schema0 *expression.Schema) {
+	if ge != nil {
+		stats0, schema0 = ge.Inputs[0].GetLogicalProperty().Stats, ge.Inputs[0].GetLogicalProperty().Schema
+		selfStats, selfSchema = ge.GetGroup().GetLogicalProperty().Stats, ge.GetGroup().GetLogicalProperty().Schema
+	} else {
+		stats0, schema0 = p.Children()[0].StatsInfo(), p.Children()[0].Schema()
+		selfStats, selfSchema = p.StatsInfo(), p.Schema()
+	}
+	return
+}
+
 func getJoinSelfAndChildStatsAndSchema(ge *memo.GroupExpression, p base.LogicalPlan) (selfStats, stats0, stats1 *property.StatsInfo, selfSchema, schema0, schema1 *expression.Schema) {
 	if ge != nil {
 		stats0, schema0 = ge.Inputs[0].GetLogicalProperty().Stats, ge.Inputs[0].GetLogicalProperty().Schema
@@ -3181,8 +3191,25 @@ func exhaustPhysicalPlans4LogicalExpand(lp base.LogicalPlan, prop *property.Phys
 	return physicalExpands, true, nil
 }
 
-func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	p := lp.(*logicalop.LogicalProjection)
+// get the possible group expression and logical operator from common super pointer.
+func getGEAndLogicalProjection(super base.LogicalPlan) (ge *memo.GroupExpression, proj *logicalop.LogicalProjection) {
+	switch x := super.(type) {
+	case *logicalop.LogicalProjection:
+		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
+		// to downcast as the every specific logical operator.
+		proj = x
+	case *memo.GroupExpression:
+		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
+		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
+		// get the specific logical operator inside.
+		ge = x
+		proj = ge.GetWrappedLogicalPlan().(*logicalop.LogicalProjection)
+	}
+	return ge, proj
+}
+
+func exhaustPhysicalPlans4LogicalProjection(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	ge, p := getGEAndLogicalProjection(super)
 	newProp, ok := p.TryToGetChildProp(prop)
 	if !ok {
 		return nil, true, nil
@@ -3191,6 +3218,7 @@ func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.
 	// generate a mpp task candidate if mpp mode is allowed
 	ctx := p.SCtx()
 	pushDownCtx := util.GetPushDownCtx(ctx)
+	_, _, _, childSchema := getSelfAndChildStatsAndSchema(ge, p)
 	// lift the recursive check of canPushToCop(tiFlash)
 	if newProp.TaskTp != property.MppTaskType && ctx.GetSessionVars().IsMPPAllowed() &&
 		expression.CanExprsPushDown(pushDownCtx, p.Exprs, kv.TiFlash) {
@@ -3201,7 +3229,7 @@ func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.
 	// lift the recursive check of canPushToCop(tikv)
 	if newProp.TaskTp != property.CopSingleReadTaskType && ctx.GetSessionVars().AllowProjectionPushDown &&
 		expression.CanExprsPushDown(pushDownCtx, p.Exprs, kv.TiKV) && !expression.ContainVirtualColumn(p.Exprs) &&
-		expression.ProjectionBenefitsFromPushedDown(p.Exprs, p.Children()[0].Schema().Len()) {
+		expression.ProjectionBenefitsFromPushedDown(p.Exprs, childSchema.Len()) {
 		copProp := newProp.CloneEssentialFields()
 		copProp.TaskTp = property.CopSingleReadTaskType
 		newProps = append(newProps, copProp)
@@ -3340,8 +3368,8 @@ func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 }
 
 // GetHashJoin is public for cascades planner.
-func GetHashJoin(la *logicalop.LogicalApply, prop *property.PhysicalProperty) *PhysicalHashJoin {
-	return getHashJoin(&la.LogicalJoin, prop, 1, false)
+func GetHashJoin(ge *memo.GroupExpression, la *logicalop.LogicalApply, prop *property.PhysicalProperty) *PhysicalHashJoin {
+	return getHashJoin(ge, &la.LogicalJoin, prop, 1, false)
 }
 
 // get the possible group expression and logical operator from common super pointer.
@@ -3364,7 +3392,6 @@ func getGEAndLogicalApply(super base.LogicalPlan) (ge *memo.GroupExpression, app
 // exhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
 func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	ge, la := getGEAndLogicalApply(super)
-	var outerSchema *expression.Schema
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -3372,11 +3399,10 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 		}
 	}()
 	if ge != nil {
-		outerSchema = ge.Inputs[0].GetLogicalProperty().Schema
-	} else {
-		outerSchema = la.Children()[0].Schema()
+		fmt.Println(1)
 	}
-	if !prop.AllColsFromSchema(outerSchema) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
+	selfStats, _, _, selfSchema, schema0, _ := getJoinSelfAndChildStatsAndSchema(ge, la)
+	if !prop.AllColsFromSchema(schema0) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
 		return nil, true, nil
@@ -3385,7 +3411,7 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Parallel Apply rejects the possible order properties of its outer child currently"))
 		return nil, true, nil
 	}
-	join := GetHashJoin(la, prop)
+	join := GetHashJoin(ge, la, prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
 		// fix the liner warning.
@@ -3393,11 +3419,11 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 		columns = append(columns, &tmp.Column)
 	}
 	cacheHitRatio := 0.0
-	if la.StatsInfo().RowCount != 0 {
-		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(columns, la.Schema(), la.StatsInfo())
+	if selfStats.RowCount != 0 {
+		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(columns, selfSchema, selfStats)
 		// for example, if there are 100 rows and the number of distinct values of these correlated columns
 		// are 70, then we can assume 30 rows can hit the cache so the cache hit ratio is 1 - (70/100) = 0.3
-		cacheHitRatio = 1 - (ndv / la.StatsInfo().RowCount)
+		cacheHitRatio = 1 - (ndv / selfStats.RowCount)
 	}
 
 	var canUseCache bool
@@ -3412,11 +3438,11 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 		OuterSchema:      la.CorCols,
 		CanUseCache:      canUseCache,
 	}.Init(la.SCtx(),
-		la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt),
+		selfStats.ScaleByExpectCnt(prop.ExpectedCnt),
 		la.QueryBlockOffset(),
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: true},
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown})
-	apply.SetSchema(la.Schema())
+	apply.SetSchema(selfSchema)
 	return []base.PhysicalPlan{apply}, true, nil
 }
 

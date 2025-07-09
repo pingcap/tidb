@@ -127,12 +127,6 @@ func ImplementMemoAndCost(rootGroup *memo.Group, planCounter *base.PlanCounterTp
 // ImplementGroupAndCost is the implementation and cost logic based on ONE group unit.
 func ImplementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, costLimit float64,
 	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
-	// cache the invalid task for the group.
-	if prop.TaskTp != property.RootTaskType && !prop.IsFlashProp() {
-		// Currently all plan cannot totally push down to TiKV.
-		group.SetBestTask(prop, base.InvalidTask)
-		return base.InvalidTask, 0, nil
-	}
 	// Check whether the child group is already optimized for the physical property.
 	task := group.GetBestTask(prop)
 	if task != nil {
