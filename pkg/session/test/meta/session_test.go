@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -104,11 +105,13 @@ func TestInitMetaTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	for _, sql := range session.DDLJobTables {
-		tk.MustExec(sql.SQL)
+		theSQL := strings.Replace(sql.SQL, "mysql.", "", 1)
+		tk.MustExec(theSQL)
 	}
 
 	for _, sql := range session.BackfillTables {
-		tk.MustExec(sql.SQL)
+		theSQL := strings.Replace(sql.SQL, "mysql.", "", 1)
+		tk.MustExec(theSQL)
 	}
 
 	tbls := map[string]struct{}{
