@@ -322,8 +322,6 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	} else {
 		err = completeInsertErr(c, val, rowIdx, err)
 	}
-<<<<<<< HEAD
-=======
 	if col != nil && col.GetType() == mysql.TypeTimestamp &&
 		types.ErrTimestampInDSTTransition.Equal(err) {
 		newErr := exeerrors.ErrTruncateWrongInsertValue.FastGenByArgs(types.TypeStr(col.GetType()), val.GetString(), col.Name.O, rowIdx+1)
@@ -335,7 +333,6 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(newErr)
 		return nil
 	}
->>>>>>> bed8f2573a7 (executor: fix INSERT IGNORE + STRICT Mode + DST transition. (#61440))
 
 	// TODO: should not filter all types of errors here.
 	if err != nil {

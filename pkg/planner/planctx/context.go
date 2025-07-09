@@ -78,6 +78,9 @@ type PlanContext interface {
 	GetReadonlyUserVarMap() map[string]struct{}
 	// Reset reset the local context.
 	Reset()
+	// BuiltinFunctionUsageInc increase the counting of each builtin function usage
+	// Notice that this is a thread safe function
+	BuiltinFunctionUsageInc(scalarFuncSigName string)
 }
 
 // EmptyPlanContextExtended is used to provide some empty implementations for PlanContext.

@@ -2010,6 +2010,17 @@ func parseTime(ctx Context, str string, tp byte, fsp int, isFloat bool) (Time, e
 
 	t.SetType(tp)
 	if err = t.Check(ctx); err != nil {
+		minTS, maxTS := MinTimestamp, MaxTimestamp
+		minErr := minTS.ConvertTimeZone(gotime.UTC, ctx.Location())
+		maxErr := maxTS.ConvertTimeZone(gotime.UTC, ctx.Location())
+		if minErr == nil && maxErr == nil && tp == mysql.TypeTimestamp && !t.IsZero() &&
+			t.Compare(minTS) > 0 && t.Compare(maxTS) < 0 {
+			// Handle the case when the timestamp given is in the DST transition
+			if tAdjusted, err2 := t.AdjustedGoTime(ctx.Location()); err2 == nil {
+				t.SetCoreTime(FromGoTime(tAdjusted))
+				return t, errors.Trace(ErrTimestampInDSTTransition.GenWithStackByArgs(str, ctx.Location().String()))
+			}
+		}
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 	return t, nil
