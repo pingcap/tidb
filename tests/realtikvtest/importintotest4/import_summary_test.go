@@ -74,7 +74,7 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 	require.EqualValues(s.T(), 10000, summaries.RowCnt)
 
 	rs = s.tk.MustQuery("show import jobs where Job_ID = ?", jobID).Rows()
-	importedRows, err := strconv.Atoi(rs[0][7].(string))
+	importedRows, err := strconv.Atoi(rs[0][fmap["ImportedRows"]].(string))
 	require.NoError(s.T(), err)
 	require.EqualValues(s.T(), 10000, importedRows)
 
@@ -132,7 +132,7 @@ func (s *mockGCSSuite) TestLocallSortSummary() {
 	require.EqualValues(s.T(), 1000, summaries.RowCnt)
 
 	rs = s.tk.MustQuery("show import jobs where Job_ID = ?", jobID).Rows()
-	importedRows, err := strconv.Atoi(rs[0][7].(string))
+	importedRows, err := strconv.Atoi(rs[0][fmap["ImportedRows"]].(string))
 	require.NoError(s.T(), err)
 	require.EqualValues(s.T(), 10000, importedRows)
 }

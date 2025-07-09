@@ -316,8 +316,8 @@ type StepSummary struct {
 // Summary records the amount of data needed to be processed in each step of the import job.
 // And this information will be saved into tidb_import_jobs table after the job is finished.
 type Summary struct {
-	// bytes and rows to encode. Note that this is not the same a
-	// the number of rows in the table since it's get from chunk info.
+	// EncodeSummary stores the bytes and rows needed to be processed in encode step.
+	// Same for other summaries.
 	EncodeSummary StepSummary `json:"encode-summary,omitempty"`
 
 	MergeSummary StepSummary `json:"merge-summary,omitempty"`

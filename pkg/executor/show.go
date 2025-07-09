@@ -2434,37 +2434,53 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *importinto.RuntimeInfo) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
 	result.AppendInt64(0, info.ID)
-	result.AppendString(1, info.Parameters.FileLocation)
-	result.AppendString(2, fullTableName)
-	result.AppendInt64(3, info.TableID)
-	result.AppendString(4, info.Step)
-	result.AppendString(5, info.Status)
-	result.AppendString(6, units.BytesSize(float64(info.SourceFileSize)))
+	result.AppendNull(1) // group key, which will be filled in next PR
+	result.AppendString(2, info.Parameters.FileLocation)
+	result.AppendString(3, fullTableName)
+	result.AppendInt64(4, info.TableID)
+	result.AppendString(5, info.Step)
+	result.AppendString(6, info.Status)
+	result.AppendString(7, units.BytesSize(float64(info.SourceFileSize)))
 
 	if info.Summary != nil {
 		// successful import job
-		result.AppendUint64(7, uint64(info.Summary.IngestSummary.RowCnt))
+		result.AppendUint64(8, uint64(info.Summary.IngestSummary.RowCnt))
 	} else if runInfo != nil {
 		// running import job
-		result.AppendUint64(7, uint64(runInfo.ImportRows))
+		result.AppendUint64(8, uint64(runInfo.ImportRows))
 	} else {
 		// failed import job
-		result.AppendNull(7)
+		result.AppendNull(8)
 	}
 
-	result.AppendString(8, info.ErrorMessage)
-	result.AppendTime(9, info.CreateTime)
+	result.AppendString(9, info.ErrorMessage)
+	result.AppendTime(10, info.CreateTime)
 	if info.StartTime.IsZero() {
-		result.AppendNull(10)
-	} else {
-		result.AppendTime(10, info.StartTime)
-	}
-	if info.EndTime.IsZero() {
 		result.AppendNull(11)
 	} else {
-		result.AppendTime(11, info.EndTime)
+		result.AppendTime(11, info.StartTime)
 	}
-	result.AppendString(12, info.CreatedBy)
+	if info.EndTime.IsZero() {
+		result.AppendNull(12)
+	} else {
+		result.AppendTime(12, info.EndTime)
+	}
+	result.AppendString(13, info.CreatedBy)
+	if runInfo == nil {
+		for i := 14; i < 21; i++ {
+			result.AppendNull(i)
+		}
+		return
+	}
+
+	result.AppendTime(14, runInfo.UpdateTime)
+	result.AppendString(15, proto.Step2Str(proto.ImportInto, runInfo.Step))
+	result.AppendString(16, runInfo.ProcessedSize())
+	result.AppendString(17, runInfo.TotalSize())
+	result.AppendString(18, runInfo.Percent())
+	speed, eta := runInfo.SpeedAndETA()
+	result.AppendString(19, speed)
+	result.AppendString(20, eta)
 }
 
 func handleImportJobInfo(

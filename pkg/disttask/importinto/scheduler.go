@@ -306,7 +306,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 			return nil, err
 		}
 		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = sortAndEncodeMeta
-		// Update timestamp
+		// Update update_time in tidb_import_jobs
 		if err = sch.job2Step(ctx, logger, taskMeta, importer.JobStepGlobalSorting); err != nil {
 			return nil, err
 		}
@@ -512,7 +512,7 @@ func getStepOfEncode(globalSort bool) proto.Step {
 	return proto.ImportStepImport
 }
 
-// Update task summary in task meta.
+// Store task summary in task meta.
 // We will update it in place and make task.Meta point to the new taskMeta.
 func updateTaskSummary(
 	handle storage.TaskHandle,
@@ -623,7 +623,7 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
-				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, summary.IngestSummary.RowCnt); err != nil {
+				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, summary.RowCnt); err != nil {
 					logger.Warn("flush table stats failed", zap.Error(err))
 				}
 				exec := se.GetSQLExecutor()

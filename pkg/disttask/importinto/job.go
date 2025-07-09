@@ -164,7 +164,6 @@ type RuntimeInfo struct {
 	UpdateTime types.Time
 	Processed  int64
 	Total      int64
-	Duration   int64
 }
 
 // Percent returns the progress percentage of the current step.
@@ -182,18 +181,29 @@ func (ri *RuntimeInfo) Percent() string {
 	return strconv.FormatInt(int64(percentage*100), 10)
 }
 
+func formatSecondToTime(sec int64) string {
+	days := sec / (24 * 3600)
+	hours := (sec % (24 * 3600)) / 3600
+	minutes := (sec % 3600) / 60
+	seconds := sec % 60
+	if days > 0 {
+		return fmt.Sprintf("%d d %02d:%02d:%02d", days, hours, minutes, seconds)
+	}
+	return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)
+}
+
 // SpeedAndETA returns the speed and estimated time of arrival (ETA) for the current step.
 func (ri *RuntimeInfo) SpeedAndETA() (speed, eta string) {
 	s := int64(0)
-	if ri.Duration > 0 && ri.Processed > 0 {
-		s = ri.Processed / ri.Duration
+	duration := types.TimestampDiff("SECOND", ri.StartTime, ri.UpdateTime)
+	if duration > 0 && ri.Processed > 0 {
+		s = ri.Processed / int64(duration)
 	}
 
 	remainTime := "N/A"
-	if s > 0 {
+	if s > 0 && ri.Total > 0 {
 		remainSecond := max((ri.Total-ri.Processed)/s, 0)
-		remain := time.Duration(remainSecond) * time.Second
-		remainTime = remain.String()
+		remainTime = formatSecondToTime(remainSecond)
 	}
 
 	return fmt.Sprintf("%s/s", units.HumanSize(float64(s))), remainTime
@@ -311,8 +321,8 @@ func GetRuntimeInfoForJob(
 
 	return &RuntimeInfo{
 		Status:     task.State,
-		Step:       task.Step,
 		ImportRows: importedRows,
+		Step:       task.Step,
 		UpdateTime: latestTypeTime,
 		Total:      totalBytes,
 		Processed:  processedBytes,
