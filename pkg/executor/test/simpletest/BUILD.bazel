@@ -9,11 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 11,
-=======
-    shard_count = 13,
->>>>>>> c48a03d6c3f (types/time: invalid timestamp during DST spring forward fixed to next valid ts instead of zero date. (#61533))
+    shard_count = 12,
     deps = [
         "//pkg/config",
         "//pkg/parser/auth",

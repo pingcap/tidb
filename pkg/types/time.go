@@ -2017,15 +2017,12 @@ func parseTime(ctx Context, str string, tp byte, fsp int, isFloat bool) (Time, e
 
 	t.SetType(tp)
 	if err = t.Check(ctx); err != nil {
-<<<<<<< HEAD
-=======
 		if tp == mysql.TypeTimestamp && !t.IsZero() {
 			tAdjusted, errAdjusted := adjustTimestampErrForDST(ctx.Location(), str, tp, t, err)
 			if ErrTimestampInDSTTransition.Equal(errAdjusted) {
 				return tAdjusted, errors.Trace(errAdjusted)
 			}
 		}
->>>>>>> c48a03d6c3f (types/time: invalid timestamp during DST spring forward fixed to next valid ts instead of zero date. (#61533))
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 	return t, nil

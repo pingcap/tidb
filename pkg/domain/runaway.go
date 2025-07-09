@@ -18,22 +18,13 @@ import (
 	"context"
 	"net"
 	"strconv"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
-	"go.uber.org/zap"
-)
-
-const (
-	runawayWatchSyncInterval         = time.Second
-	runawayLoopLogErrorIntervalCount = 1800
 )
 
 func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.Client, uniqueID uint64) error {
@@ -58,34 +49,4 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 	do.resourceGroupsController = control
 	tikv.SetResourceControlInterceptor(control)
 	return nil
-}
-
-func (do *Domain) runawayStartLoop() {
-	defer util.Recover(metrics.LabelDomain, "runawayStartLoop", nil, false)
-	runawayWatchSyncTicker := time.NewTicker(runawayWatchSyncInterval)
-	count := 0
-	var err error
-	logutil.BgLogger().Info("try to start runaway manager loop")
-	for {
-		select {
-		case <-do.exit:
-			return
-		case <-runawayWatchSyncTicker.C:
-			// Due to the watch and watch done tables is created later than runaway queries table
-			err = do.runawayManager.UpdateNewAndDoneWatch()
-			if err == nil {
-				logutil.BgLogger().Info("preparations for the runaway manager are finished and start runaway manager loop")
-				do.wg.Run(do.runawayManager.RunawayRecordFlushLoop, "runawayRecordFlushLoop")
-				do.wg.Run(do.runawayManager.RunawayWatchSyncLoop, "runawayWatchSyncLoop")
-				do.runawayManager.MarkSyncerInitialized()
-				return
-			}
-		}
-		if count %= runawayLoopLogErrorIntervalCount; count == 0 {
-			logutil.BgLogger().Warn(
-				"failed to start runaway manager loop, please check whether the bootstrap or update is finished",
-				zap.Error(err))
-		}
-		count++
-	}
 }
