@@ -3524,6 +3524,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if ver < currentBootstrapVersion {
 		runInBootstrapSession(store, ver)
 	} else {
+		logutil.BgLogger().Info("cluster already bootstrapped", zap.Int64("version", ver))
 		err = InitMDLVariable(store)
 		if err != nil {
 			return nil, err
@@ -3754,7 +3755,12 @@ func getStartMode(ver int64) ddl.StartMode {
 // TODO: Using a bootstrap tool for doing this may be better later.
 func runInBootstrapSession(store kv.Storage, ver int64) {
 	startMode := getStartMode(ver)
-
+	startTime := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("bootstrap cluster finished",
+			zap.String("bootMode", string(startMode)),
+			zap.Duration("cost", time.Since(startTime)))
+	}()
 	if startMode == ddl.Upgrade {
 		// TODO at this time domain must not be created, else it will register server
 		// info, and cause deadlock, we need to make sure this in a clear way
