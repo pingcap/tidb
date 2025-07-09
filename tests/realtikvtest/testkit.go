@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/store"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -129,8 +128,9 @@ func CreateMockStoreAndSetup(t *testing.T, opts ...RealTiKVStoreOption) kv.Stora
 
 // Setup initializes a kv.Storage and a domain.Domain.
 func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption) (kv.Storage, *domain.Domain) {
-	kvstore.Register(config.StoreTypeTiKV, &driver.TiKVDriver{})
-	store.SetSystemStorage(nil)
+	//nolint: errcheck
+	_ = kvstore.Register(config.StoreTypeTiKV, &driver.TiKVDriver{})
+	kvstore.SetSystemStorage(nil)
 	// set it to 5 seconds for testing lock resolve.
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff.Store(500)
