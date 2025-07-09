@@ -344,14 +344,12 @@ func NewGroup(prop *property.LogicalProperty) *Group {
 
 // SetBestTask sets the best expression for the given physical property.
 func (g *Group) SetBestTask(prop *property.PhysicalProperty, task corebase.Task) {
-	key := string(prop.HashCode())
-	g.bestPhysicalMap[key] = task
+	g.bestPhysicalMap[string(prop.HashCode())] = task
 }
 
 // GetBestTask gets the best expression for the given physical property.
 func (g *Group) GetBestTask(prop *property.PhysicalProperty) corebase.Task {
-	key := string(prop.HashCode())
-	task, ok := g.bestPhysicalMap[key]
+	task, ok := g.bestPhysicalMap[string(prop.HashCode())]
 	if !ok {
 		return nil
 	}
