@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"runtime/trace"
+	"sort"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -517,6 +518,73 @@ func (e *InsertExec) doDupRowUpdate(
 		e.evalBuffer4Dup.SetDatum(idx, val)
 		e.row4Update[assign.Col.Index] = val
 		assignFlag[assign.Col.Index] = true
+	}
+
+	// After updating non-generated columns, we need to re-evaluate all generated columns
+	// in the correct dependency order to ensure cascading updates work properly.
+	allGenCols := make([]*table.Column, 0)
+	for _, col := range e.Table.Cols() {
+		if col.IsGenerated() {
+			allGenCols = append(allGenCols, col)
+		}
+	}
+
+	sort.Slice(allGenCols, func(i, j int) bool {
+		return allGenCols[i].Offset < allGenCols[j].Offset
+	})
+
+	for _, col := range allGenCols {
+		if col.GeneratedExpr != nil {
+			tableColumns := e.Table.Cols()
+			exprColumns := make([]*expression.Column, 0, len(tableColumns))
+			names := make(types.NameSlice, 0, len(tableColumns))
+			for i, tblCol := range tableColumns {
+				names = append(names, &types.FieldName{
+					OrigTblName: e.Table.Meta().Name,
+					OrigColName: tblCol.Name,
+					TblName:     e.Table.Meta().Name,
+					ColName:     tblCol.Name,
+				})
+				exprColumns = append(exprColumns, &expression.Column{
+					RetType:  tblCol.FieldType.Clone(),
+					ID:       tblCol.ID,
+					UniqueID: int64(i),
+					Index:    tblCol.Offset,
+					OrigName: names[i].String(),
+					IsHidden: tblCol.Hidden,
+				})
+			}
+			schema := expression.NewSchema(exprColumns...)
+
+			expr, err := expression.BuildSimpleExpr(
+				sctx.GetExprCtx(),
+				col.GeneratedExpr.Internal(),
+				expression.WithInputSchemaAndNames(schema, names, e.Table.Meta()),
+				expression.WithAllowCastArray(true),
+			)
+			if err != nil {
+				assignFlag[col.Offset] = true
+				continue
+			}
+
+			val, err := expr.Eval(evalCtx, e.evalBuffer4Dup.ToRow())
+			if err != nil {
+				assignFlag[col.Offset] = true
+				continue
+			}
+
+			val, err = table.CastValue(sctx, val, col.ToInfo(), false, false)
+			if err != nil {
+				assignFlag[col.Offset] = true
+				continue
+			}
+
+			e.evalBuffer4Dup.SetDatum(col.Offset, val)
+			e.row4Update[col.Offset] = val
+			assignFlag[col.Offset] = true
+		} else {
+			assignFlag[col.Offset] = true
+		}
 	}
 
 	newData := e.row4Update[:len(oldRow)]
