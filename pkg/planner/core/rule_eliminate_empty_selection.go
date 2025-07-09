@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
