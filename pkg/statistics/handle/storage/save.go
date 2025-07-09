@@ -137,7 +137,10 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	// 1. Save mysql.stats_meta.
 	var rs sqlexec.RecordSet
 	// Lock this row to prevent writing of concurrent analyze.
-	rs, err = util.Exec(sctx, "select snapshot, count, modify_count from mysql.stats_meta where table_id = %? for update", tableID)
+	// Add a fake table ID to prevent the deadlock between the batch update and the point update.
+	// TODO: Add more details in the comment.
+	tableIDStrs := []string{"-1988", fmt.Sprintf("%d", tableID)}
+	rs, err = util.Exec(sctx, "select snapshot, count, modify_count from mysql.stats_meta where table_id in (%?) for update", tableIDStrs)
 	if err != nil {
 		return 0, err
 	}
