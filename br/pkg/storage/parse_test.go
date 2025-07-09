@@ -420,11 +420,11 @@ func TestParseBackend(t *testing.T) {
 func TestS3DefaultForceStylePath(t *testing.T) {
 	s, err := ParseBackend(`s3://bucket3/prefix/path`, nil)
 	require.NoError(t, err)
-	require.Equal(t, false, s.GetS3().ForcePathStyle)
+	require.False(t, s.GetS3().ForcePathStyle)
 	s, err = ParseBackend(`s3://bucket3/prefix/path?force_path_style=false`, nil)
 	require.NoError(t, err)
-	require.Equal(t, false, s.GetS3().ForcePathStyle)
+	require.False(t, s.GetS3().ForcePathStyle)
 	s, err = ParseBackend(`s3://bucket3/prefix/path?force_path_style=true`, nil)
 	require.NoError(t, err)
-	require.Equal(t, true, s.GetS3().ForcePathStyle)
+	require.True(t, s.GetS3().ForcePathStyle)
 }
