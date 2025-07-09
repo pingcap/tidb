@@ -20,7 +20,6 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
