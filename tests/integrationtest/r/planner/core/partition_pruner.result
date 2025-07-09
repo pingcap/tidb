@@ -3684,13 +3684,9 @@ TableReader_9	250.00	root		data:Selection_8
   └─TableFullScan_7	10000.00	cop[tikv]	table:t, partition:p0	keep order:false, stats:pseudo
 desc select * from t where a > 9223372036854775808;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-TableDual_7	0.00	root		rows:0
-=======
 TableReader_7	1.00	root	partition:dual	data:Selection_6
 └─Selection_6	1.00	cop[tikv]		gt(planner__core__partition_pruner.t.a, 9223372036854775808)
   └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 desc select * from t where a in (-6895222, 3125507, 9223372036854775809);
 id	estRows	task	access object	operator info
 TableReader_9	20.00	root		data:Selection_8

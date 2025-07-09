@@ -127,11 +127,6 @@ TableReader	0.00	root		data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select f from t where f != NULL  and f in (NULL,2,3) -- Special case of NULL with no simplification.;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-TableReader	0.00	root		data:Selection
-└─Selection	0.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, NULL, 2, 3), ne(planner__core__casetest__predicate_simplification.t.f, NULL)
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-=======
 TableDual	0.00	root		rows:0
 drop table if exists dt;
 drop table if exists it;
@@ -658,4 +653,3 @@ IndexMerge	0.00	root		type: union
 ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t4, index:iad(a, d)	range:[1 6,1 6], keep order:false, stats:pseudo
 └─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t4.a, 1), or(or(eq(planner__core__casetest__predicate_simplification.t4.b, 2), eq(planner__core__casetest__predicate_simplification.t4.c, 4)), or(eq(planner__core__casetest__predicate_simplification.t4.b, 12), or(eq(planner__core__casetest__predicate_simplification.t4.c, 5), eq(planner__core__casetest__predicate_simplification.t4.d, 6))))
   └─TableRowIDScan	8.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))

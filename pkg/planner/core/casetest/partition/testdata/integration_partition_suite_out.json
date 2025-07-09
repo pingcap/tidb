@@ -1224,15 +1224,9 @@
           "└─TableRangeScan 2.00 cop[tikv] table:thash2 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-<<<<<<< HEAD
-          "PartitionUnion 0.04 root  ",
-          "├─Batch_Point_Get 2.00 root table:thash2, clustered index:PRIMARY(a, b) keep order:false, desc:false",
-          "└─Batch_Point_Get 2.00 root table:thash2, clustered index:PRIMARY(a, b) keep order:false, desc:false"
-=======
           "PartitionUnion 2.00 root  ",
           "├─Batch_Point_Get 2.00 root table:thash2, partition:p0, clustered index:PRIMARY(a, b) keep order:false, desc:false",
           "└─Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:false, desc:false"
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
         ],
         "Result": [
           "1 1",
@@ -1246,17 +1240,10 @@
           "└─TableRangeScan 2.00 cop[tikv] table:thash2 range:[1 1,1 1], [1 2,1 2], keep order:true, stats:pseudo"
         ],
         "StaticPlan": [
-<<<<<<< HEAD
-          "Sort 0.04 root  test.thash2.b",
-          "└─PartitionUnion 0.04 root  ",
-          "  ├─Batch_Point_Get 2.00 root table:thash2, clustered index:PRIMARY(a, b) keep order:false, desc:false",
-          "  └─Batch_Point_Get 2.00 root table:thash2, clustered index:PRIMARY(a, b) keep order:false, desc:false"
-=======
           "Sort 2.00 root  test.thash2.b",
           "└─PartitionUnion 2.00 root  ",
           "  ├─Batch_Point_Get 2.00 root table:thash2, partition:p0, clustered index:PRIMARY(a, b) keep order:false, desc:false",
           "  └─Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:false, desc:false"
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
         ],
         "Result": [
           "1 1",
@@ -1271,17 +1258,10 @@
           "  └─TableRangeScan 2.00 cop[tikv] table:thash2 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-<<<<<<< HEAD
-          "Sort 0.04 root  test.thash2.b:desc",
-          "└─PartitionUnion 0.04 root  ",
-          "  ├─Batch_Point_Get 2.00 root table:thash2, clustered index:PRIMARY(a, b) keep order:false, desc:false",
-          "  └─Batch_Point_Get 2.00 root table:thash2, clustered index:PRIMARY(a, b) keep order:false, desc:false"
-=======
           "Sort 2.00 root  test.thash2.b:desc",
           "└─PartitionUnion 2.00 root  ",
           "  ├─Batch_Point_Get 2.00 root table:thash2, partition:p0, clustered index:PRIMARY(a, b) keep order:false, desc:false",
           "  └─Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:false, desc:false"
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
         ],
         "Result": [
           "1 2",
@@ -1479,13 +1459,8 @@
       {
         "SQL": "select * from tlist2 where a = 1 and b in (1,2) order by b desc",
         "DynamicPlan": [
-<<<<<<< HEAD
-          "Sort 0.02 root  test.tlist2.b:desc",
-          "└─TableReader 2.00 root partition:p0,p1 data:TableRangeScan",
-=======
           "Sort 1.00 root  test.tlist2.b:desc",
           "└─TableReader 2.00 root partition:all data:TableRangeScan",
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
           "  └─TableRangeScan 2.00 cop[tikv] table:tlist2 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [

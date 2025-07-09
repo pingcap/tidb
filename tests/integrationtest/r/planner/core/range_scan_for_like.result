@@ -433,17 +433,10 @@ a	b	c
 测试1	asdfgh	345346
 explain select * from t use index (primary) where a like '测试1' and b like 'asdfgh %' order by a,b;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-Sort_5	0.25	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
-└─TableReader_10	0.25	root		data:Selection_9
-  └─Selection_9	0.25	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试1", 92), like(planner__core__range_scan_for_like.t.b, "asdfgh %", 92)
-    └─TableRangeScan_8	10.00	cop[tikv]	table:t	range:["\xfb@\xedK","\xfb@\xedK"], keep order:false, stats:pseudo
-=======
 Sort	1.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
 └─TableReader	1.00	root		data:Selection
   └─Selection	1.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试1", 92), like(planner__core__range_scan_for_like.t.b, "asdfgh %", 92)
     └─TableRangeScan	10.00	cop[tikv]	table:t	range:["\xfb@\xedK","\xfb@\xedK"], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from t use index (primary) where a like '测试1' and b like 'asdfgh %' order by a,b;
 a	b	c
 explain select * from t use index (primary) where a like 'こんにち_' and b like 'zxc%' order by a,b;
@@ -482,17 +475,10 @@ select * from t use index (primary) where a like '%HoLa%' and b like '  asdfgh' 
 a	b	c
 explain select * from t use index (primary) where a like 'bonjour _%' and b like '' order by a,b;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-Sort_5	0.25	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
-└─TableReader_10	0.25	root		data:Selection_9
-  └─Selection_9	0.25	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "bonjour _%", 92), like(planner__core__range_scan_for_like.t.b, "", 92)
-    └─TableRangeScan_8	250.00	cop[tikv]	table:t	range:["\x1c`","\x1ca"), keep order:false, stats:pseudo
-=======
 Sort	1.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
 └─TableReader	1.00	root		data:Selection
   └─Selection	1.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "bonjour _%", 92), like(planner__core__range_scan_for_like.t.b, "", 92)
     └─TableRangeScan	250.00	cop[tikv]	table:t	range:["\x1c`","\x1ca"), keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from t use index (primary) where a like 'bonjour _%' and b like '' order by a,b;
 a	b	c
 Bonjour   		888888888
@@ -549,20 +535,12 @@ a	b	c
 测试1	asdfgh	345346
 explain select * from t use index (primary) where a like '测试1' and b like 'asdfgh %' order by a,b;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-Sort_5	2.50	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
-└─IndexLookUp_11	2.50	root		
-  ├─IndexRangeScan_8(Build)	2.50	cop[tikv]	table:t, index:PRIMARY(a, b)	range:["\x89\a\xba%1" "asdfg","\x89\a\xba%1" "asdfh"), keep order:false, stats:pseudo
-  └─Selection_10(Probe)	2.50	cop[tikv]		like(planner__core__range_scan_for_like.t.b, "asdfgh %", 92)
-    └─TableRowIDScan_9	2.50	cop[tikv]	table:t	keep order:false, stats:pseudo
-=======
 Sort	1.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
 └─IndexLookUp	1.00	root		
   ├─Selection(Build)	1.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试1", 92)
   │ └─IndexRangeScan	10.00	cop[tikv]	table:t, index:PRIMARY(a, b)	range:["\x89\a\xba%1","\x89\a\xba%1"], keep order:false, stats:pseudo
   └─Selection(Probe)	1.00	cop[tikv]		like(planner__core__range_scan_for_like.t.b, "asdfgh %", 92)
     └─TableRowIDScan	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from t use index (primary) where a like '测试1' and b like 'asdfgh %' order by a,b;
 a	b	c
 set names latin1;
@@ -598,39 +576,22 @@ a	b	c
 Ciao5	  asdfgh	444400
 explain select * from t use index (primary) where b like 'HoLa%' and a like '  asdfgh' order by a,b;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-Sort_5	2.50	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
-└─IndexLookUp_11	2.50	root		
-  ├─IndexRangeScan_8(Build)	2.50	cop[tikv]	table:t, index:PRIMARY(a, b)	range:["  ASDFGH" "HoLa","  ASDFGH" "HoLb"), keep order:false, stats:pseudo
-  └─Selection_10(Probe)	2.50	cop[tikv]		like(planner__core__range_scan_for_like.t.b, "HoLa%", 92)
-    └─TableRowIDScan_9	2.50	cop[tikv]	table:t	keep order:false, stats:pseudo
-=======
 Sort	1.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
 └─IndexLookUp	1.00	root		
   ├─Selection(Build)	1.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "  asdfgh", 92)
   │ └─IndexRangeScan	10.00	cop[tikv]	table:t, index:PRIMARY(a, b)	range:["  ASDFGH","  ASDFGH"], keep order:false, stats:pseudo
   └─Selection(Probe)	1.00	cop[tikv]		like(planner__core__range_scan_for_like.t.b, "HoLa%", 92)
     └─TableRowIDScan	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from t use index (primary) where b like 'HoLa%' and a like '  asdfgh' order by a,b;
 a	b	c
 explain select * from t use index (primary) where a like 'bonjour _%' and b like '' order by a,b;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-Sort_5	0.25	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
-└─IndexLookUp_12	0.25	root		
-  ├─Selection_10(Build)	6.25	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "bonjour _%", 92)
-  │ └─IndexRangeScan_8	250.00	cop[tikv]	table:t, index:PRIMARY(a, b)	range:["BONJOUR","BONJOUR!"), keep order:false, stats:pseudo
-  └─Selection_11(Probe)	0.25	cop[tikv]		like(planner__core__range_scan_for_like.t.b, "", 92)
-    └─TableRowIDScan_9	6.25	cop[tikv]	table:t	keep order:false, stats:pseudo
-=======
 Sort	1.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
 └─IndexLookUp	1.00	root		
   ├─Selection(Build)	6.25	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "bonjour _%", 92)
   │ └─IndexRangeScan	250.00	cop[tikv]	table:t, index:PRIMARY(a, b)	range:["BONJOUR","BONJOUR!"), keep order:false, stats:pseudo
   └─Selection(Probe)	1.00	cop[tikv]		like(planner__core__range_scan_for_like.t.b, "", 92)
     └─TableRowIDScan	6.25	cop[tikv]	table:t	keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from t use index (primary) where a like 'bonjour _%' and b like '' order by a,b;
 a	b	c
 Bonjour   		888888888
@@ -1047,15 +1008,6 @@ aABBccdd	890
 测试Abc	324
 explain select * from t where a >= 'aabb' and a <= 'aabd' and b = 456 order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-Projection_6	0.01	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
-└─Sort_7	0.01	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─IndexLookUp_16	0.01	root		
-    ├─Selection_14(Build)	0.01	cop[tikv]		eq(planner__core__range_scan_for_like.t.b, 456)
-    │ └─IndexRangeScan_12	10.00	cop[tikv]	table:t, index:ia(a, b)	range:["\x00A\x00A\x00B","\x00A\x00A\x00B"], keep order:false, stats:pseudo
-    └─Selection_15(Probe)	0.01	cop[tikv]		ge(planner__core__range_scan_for_like.t.a, "aabb"), le(planner__core__range_scan_for_like.t.a, "aabd")
-      └─TableRowIDScan_13	0.01	cop[tikv]	table:t	keep order:false, stats:pseudo
-=======
 Projection	1.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
 └─Sort	1.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexLookUp	1.00	root		
@@ -1063,7 +1015,6 @@ Projection	1.00	root		planner__core__range_scan_for_like.t.a, planner__core__ran
     │ └─IndexRangeScan	10.00	cop[tikv]	table:t, index:ia(a, b)	range:["\x00A\x00A\x00B","\x00A\x00A\x00B"], keep order:false, stats:pseudo
     └─Selection(Probe)	1.00	cop[tikv]		ge(planner__core__range_scan_for_like.t.a, "aabb"), le(planner__core__range_scan_for_like.t.a, "aabd")
       └─TableRowIDScan	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from t where a >= 'aabb' and a <= 'aabd' and b = 456 order by a,_tidb_rowid;
 a	b
 aabB	456

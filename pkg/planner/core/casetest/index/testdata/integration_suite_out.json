@@ -1083,14 +1083,6 @@
       {
         "SQL": "SELECT /*+ inl_join(t1)*/ `t2`.`c` AS `r0` FROM `t1` JOIN `t2` ON `t1`.`a`=`t2`.`d` WHERE `t2`.`d`='' AND NOT (6252179388429456273 MEMBER OF (`t1`.`c`));",
         "Plan": [
-<<<<<<< HEAD
-          "HashJoin 12.50 root  inner join, equal:[eq(test.t2.d, test.t1.a)]",
-          "├─TableReader(Build) 10.00 root  data:Selection",
-          "│ └─Selection 10.00 cop[tikv]  eq(test.t2.d, \"\")",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 7992.00 root  data:Selection",
-          "  └─Selection 7992.00 cop[tikv]  not(isnull(test.t1.a)), not(istrue_with_null(json_memberof(cast(6252179388429456273, json BINARY), test.t1.c)))",
-=======
           "IndexReader 3366.67 root  index:Projection",
           "└─Projection 3366.67 cop[tikv]  test.t1.k1",
           "  └─IndexRangeScan 3366.67 cop[tikv] table:t1, index:pk1(k1, k2) range:(1 2,1 +inf], (1,+inf], keep order:false, stats:pseudo"
@@ -1184,7 +1176,6 @@
           "TableReader 3335.56 root  data:Projection",
           "└─Projection 3335.56 cop[tikv]  test.t1.k1",
           "  └─Selection 3335.56 cop[tikv]  or(gt(test.t1.k2, 1), and(eq(test.t1.k2, 1), gt(test.t1.k3, 2)))",
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [

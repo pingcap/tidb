@@ -25,11 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/sessionctx"
-=======
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"

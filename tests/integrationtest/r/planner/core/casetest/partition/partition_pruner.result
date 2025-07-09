@@ -882,8 +882,6 @@ abc	2
 select * from t where b = 2;
 a	b
 abc	2
-<<<<<<< HEAD
-=======
 select * from t where b in (1,2);
 a	b
 Ab	1
@@ -922,4 +920,3 @@ IndexLookUp_8	1.60	root	partition:p1,p2
 ├─IndexRangeScan_5(Build)	2.00	cop[tikv]	table:t, index:PRIMARY(b)	range:[1,1], [2,2], keep order:false, stats:pseudo
 └─Selection_7(Probe)	1.60	cop[tikv]		like(issue42135.t.a, "%a%", 92)
   └─TableRowIDScan_6	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
