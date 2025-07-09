@@ -32,9 +32,6 @@ func (e *EmptySelectionEliminator) Optimize(_ context.Context, p base.LogicalPla
 }
 
 func (e *EmptySelectionEliminator) recursivePlan(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	if !p.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	for idx, child := range p.Children() {
 		// The selection may be useless, check and remove it.
 		if sel, ok := child.(*logicalop.LogicalSelection); ok {
