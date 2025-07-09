@@ -46,6 +46,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
@@ -692,4 +693,21 @@ func CreateCertificates(certpath string, keypath string, rsaKeySize int, pubKeyA
 func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
 	// use RSA and unspecified signature algorithm
 	return CreateCertificates(certpath, keypath, rsaKeySize, x509.RSA, x509.UnknownSignatureAlgorithm)
+}
+
+// GetTypeFlagsForInsert gets the type flags for insert statement.
+func GetTypeFlagsForInsert(baseFlags types.Flags, sqlMode mysql.SQLMode, ignoreErr bool) types.Flags {
+	strictSQLMode := sqlMode.HasStrictMode()
+	return baseFlags.
+		WithTruncateAsWarning(!strictSQLMode || ignoreErr).
+		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!sqlMode.HasNoZeroInDateMode() ||
+			!sqlMode.HasNoZeroDateMode() || !strictSQLMode || ignoreErr ||
+			sqlMode.HasAllowInvalidDatesMode())
+}
+
+// GetTypeFlagsForImportInto gets the type flags for import into statement which
+// has the same flags as normal `INSERT INTO xxx`.
+func GetTypeFlagsForImportInto(baseFlags types.Flags, sqlMode mysql.SQLMode) types.Flags {
+	return GetTypeFlagsForInsert(baseFlags, sqlMode, false)
 }
