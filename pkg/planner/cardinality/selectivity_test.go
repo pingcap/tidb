@@ -505,13 +505,8 @@ func TestSelectivity(t *testing.T) {
 		},
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
-<<<<<<< HEAD
-			selectivity:              5.870830440255832e-05,
-			selectivityAfterIncrease: 1.51329827770157e-05,
-=======
 			selectivity:              0.001851851851851852,
 			selectivityAfterIncrease: 0.21916666666666668,
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 		},
 		{
 			exprs:                    longExpr,
