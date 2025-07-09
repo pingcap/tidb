@@ -1735,10 +1735,11 @@ func TestLoadStatsForBitColumn(t *testing.T) {
 		_, err = h.TableStatsFromStorage(tbl.Meta(), tbl.Meta().ID, true, 0)
 		require.NoError(t, err)
 
+		// In release-7.5, `analyze table %s all columns with 0 topn;` will still use 1 topn.
+		// Ref https://github.com/pingcap/tidb/pull/49068
 		tk.MustQuery(
 			fmt.Sprintf("SELECT hex(lower_bound), hex(upper_bound) FROM mysql.stats_buckets WHERE table_id = %d ORDER BY lower_bound", tbl.Meta().ID),
 		).Check(testkit.Rows(
-			fmt.Sprintf("%s %s", testCase.expectedLowerBoundHex, testCase.expectedLowerBoundHex),
 			fmt.Sprintf("%s %s", testCase.expectedUpperBoundHex, testCase.expectedUpperBoundHex),
 		))
 
