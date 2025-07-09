@@ -171,7 +171,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepImport)
 
-	runInfo, err := importinto.GetRuntimeInfoForJob(ctx, 111)
+	runInfo, err := importinto.GetRuntimeInfoForJob(ctx, tk.Session(), 111)
 	require.NoError(t, err)
 	require.EqualValues(t, 3, runInfo.ImportRows)
 
@@ -199,7 +199,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 	}
 
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
-	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, 222)
+	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, tk.Session(), 222)
 	require.NoError(t, err)
 	require.EqualValues(t, 33, runInfo.ImportRows)
 }

@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -743,7 +744,7 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 	sql := fmt.Sprintf(`IMPORT INTO load_test_write_speed.t FROM 'gs://test-load/speed-test.csv?endpoint=%s'`,
 		gcsEndpoint)
 	result := s.tk.MustQuery(sql)
-	fileSize := result.Rows()[0][6].(string)
+	fileSize := result.Rows()[0][plannercore.ImportIntoFieldMap["SourceFileSize"]].(string)
 	s.Equal("7.598KiB", fileSize)
 	duration := time.Since(start).Seconds()
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(

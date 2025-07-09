@@ -271,15 +271,12 @@ func GetRuntimeInfoForJob(
 		}, nil
 	}
 
-	// Not started yet
-	if len(taskMeta.TaskResult) == 0 {
-		return nil, nil
+	if len(taskMeta.TaskResult) != 0 {
+		if err = json.Unmarshal(taskMeta.TaskResult, &summary); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
-	// Calculate the progress of the task if no error.
-	if err = json.Unmarshal(taskMeta.TaskResult, &summary); err != nil {
-		return nil, errors.Trace(err)
-	}
 	summaries, err := taskManager.GetAllSubtaskSummaryByStep(ctx, task.ID, task.Step)
 	if err != nil {
 		return nil, err
