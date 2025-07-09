@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 
+	"gitee.com/Trisia/gotlcp/tlcp"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -236,12 +237,13 @@ func (ts *TiDBStatement) GetRowContainer() *chunk.RowContainer {
 
 // OpenCtx implements IDriver.
 func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, _ string,
-	tlsState *tls.ConnectionState, extensions *extension.SessionExtensions) (*TiDBContext, error) {
+	tlsState *tls.ConnectionState, tlcpState *tlcp.ConnectionState, extensions *extension.SessionExtensions) (*TiDBContext, error) {
 	se, err := session.CreateSession(qd.store)
 	if err != nil {
 		return nil, err
 	}
 	se.SetTLSState(tlsState)
+	se.SetTLCPState(tlcpState)
 	err = se.SetCollation(int(collation))
 	if err != nil {
 		return nil, err

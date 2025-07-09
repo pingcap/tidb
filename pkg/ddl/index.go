@@ -21,7 +21,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"slices"
 	"strings"
@@ -70,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -286,6 +286,11 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 	}
 
 	switch col.GetType() {
+	case mysql.TypeTiDBVectorFloat32:
+		// Vector Index does not actually create KV index, so it has length of 0.
+		// however 0 may cause some issues in other calculations, so we use 1 here.
+		// 1 is also minimal enough anyway.
+		return 1, nil
 	case mysql.TypeBit:
 		return (length + 7) >> 3, nil
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
@@ -1119,6 +1124,7 @@ SwitchIndexState:
 
 func checkIfTableReorgWorkCanSkip(
 	store kv.Storage,
+	sessCtx sessionctx.Context,
 	tbl table.Table,
 	job *model.Job,
 ) bool {
@@ -1126,21 +1132,30 @@ func checkIfTableReorgWorkCanSkip(
 		// Reorg work has begun.
 		return false
 	}
+	txn, err := sessCtx.Txn(false)
+	validTxn := err == nil && txn != nil && txn.Valid()
+	intest.Assert(validTxn)
+	if !validTxn {
+		logutil.DDLLogger().Warn("check if table is empty failed", zap.Error(err))
+		return false
+	}
+	startTS := txn.StartTS()
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
 	ctx.setDDLLabelForTopSQL(job.Query)
-	return checkIfTableIsEmpty(ctx, store, tbl)
+	return checkIfTableIsEmpty(ctx, store, tbl, startTS)
 }
 
 func checkIfTableIsEmpty(
 	ctx *ReorgContext,
 	store kv.Storage,
 	tbl table.Table,
+	startTS uint64,
 ) bool {
 	if pTbl, ok := tbl.(table.PartitionedTable); ok {
 		for _, pid := range pTbl.GetAllPartitionIDs() {
 			pTbl := pTbl.GetPartition(pid)
-			if !checkIfPhysicalTableIsEmpty(ctx, store, pTbl) {
+			if !checkIfPhysicalTableIsEmpty(ctx, store, pTbl, startTS) {
 				return false
 			}
 		}
@@ -1148,15 +1163,17 @@ func checkIfTableIsEmpty(
 	}
 	//nolint:forcetypeassert
 	plainTbl := tbl.(table.PhysicalTable)
-	return checkIfPhysicalTableIsEmpty(ctx, store, plainTbl)
+	return checkIfPhysicalTableIsEmpty(ctx, store, plainTbl, startTS)
 }
 
 func checkIfPhysicalTableIsEmpty(
 	ctx *ReorgContext,
 	store kv.Storage,
 	tbl table.PhysicalTable,
+	startTS uint64,
 ) bool {
-	hasRecord, err := ExistsTableRow(ctx, store, math.MaxInt64, tbl)
+	hasRecord, err := existsTableRow(ctx, store, tbl, startTS)
+	intest.Assert(err == nil)
 	if err != nil {
 		logutil.DDLLogger().Info("check if table is empty failed", zap.Error(err))
 		return false
@@ -1166,6 +1183,7 @@ func checkIfPhysicalTableIsEmpty(
 
 func checkIfTempIndexReorgWorkCanSkip(
 	store kv.Storage,
+	sessCtx sessionctx.Context,
 	tbl table.Table,
 	allIndexInfos []*model.IndexInfo,
 	job *model.Job,
@@ -1179,6 +1197,14 @@ func checkIfTempIndexReorgWorkCanSkip(
 		// Reorg work has begun.
 		return false
 	}
+	txn, err := sessCtx.Txn(false)
+	validTxn := err == nil && txn != nil && txn.Valid()
+	intest.Assert(validTxn)
+	if !validTxn {
+		logutil.DDLLogger().Warn("check if temp index is empty failed", zap.Error(err))
+		return false
+	}
+	startTS := txn.StartTS()
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
 	ctx.setDDLLabelForTopSQL(job.Query)
@@ -1190,7 +1216,7 @@ func checkIfTempIndexReorgWorkCanSkip(
 			globalIdxIDs = append(globalIdxIDs, idxInfo.ID)
 		}
 	}
-	return checkIfTempIndexIsEmpty(ctx, store, tbl, firstIdxID, lastIdxID, globalIdxIDs)
+	return checkIfTempIndexIsEmpty(ctx, store, tbl, firstIdxID, lastIdxID, globalIdxIDs, startTS)
 }
 
 func checkIfTempIndexIsEmpty(
@@ -1199,22 +1225,23 @@ func checkIfTempIndexIsEmpty(
 	tbl table.Table,
 	firstIdxID, lastIdxID int64,
 	globalIdxIDs []int64,
+	startTS uint64,
 ) bool {
 	tblMetaID := tbl.Meta().ID
 	if pTbl, ok := tbl.(table.PartitionedTable); ok {
 		for _, pid := range pTbl.GetAllPartitionIDs() {
-			if !checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, pid, firstIdxID, lastIdxID) {
+			if !checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, pid, firstIdxID, lastIdxID, startTS) {
 				return false
 			}
 		}
 		for _, globalIdxID := range globalIdxIDs {
-			if !checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, tblMetaID, globalIdxID, globalIdxID) {
+			if !checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, tblMetaID, globalIdxID, globalIdxID, startTS) {
 				return false
 			}
 		}
 		return true
 	}
-	return checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, tblMetaID, firstIdxID, lastIdxID)
+	return checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, tblMetaID, firstIdxID, lastIdxID, startTS)
 }
 
 func checkIfTempIndexIsEmptyForPhysicalTable(
@@ -1222,15 +1249,17 @@ func checkIfTempIndexIsEmptyForPhysicalTable(
 	store kv.Storage,
 	pid int64,
 	firstIdxID, lastIdxID int64,
+	startTS uint64,
 ) bool {
 	start, end := encodeTempIndexRange(pid, firstIdxID, lastIdxID)
 	foundKey := false
 	idxPrefix := tablecodec.GenTableIndexPrefix(pid)
-	err := iterateSnapshotKeys(ctx, store, kv.PriorityLow, idxPrefix, math.MaxUint64, start, end,
+	err := iterateSnapshotKeys(ctx, store, kv.PriorityLow, idxPrefix, startTS, start, end,
 		func(_ kv.Handle, _ kv.Key, _ []byte) (more bool, err error) {
 			foundKey = true
 			return false, nil
 		})
+	intest.Assert(err == nil)
 	if err != nil {
 		logutil.DDLLogger().Info("check if temp index is empty failed", zap.Error(err))
 		return false
@@ -1306,7 +1335,7 @@ func doReorgWorkForCreateIndex(
 		return false, ver, err
 	}
 	if !reorgTp.NeedMergeProcess() {
-		skipReorg := checkIfTableReorgWorkCanSkip(w.store, tbl, job)
+		skipReorg := checkIfTableReorgWorkCanSkip(w.store, w.sess.Session(), tbl, job)
 		if skipReorg {
 			logutil.DDLLogger().Info("table is empty, skipping reorg work",
 				zap.Int64("jobID", job.ID),
@@ -1317,7 +1346,7 @@ func doReorgWorkForCreateIndex(
 	}
 	switch allIndexInfos[0].BackfillState {
 	case model.BackfillStateRunning:
-		skipReorg := checkIfTableReorgWorkCanSkip(w.store, tbl, job)
+		skipReorg := checkIfTableReorgWorkCanSkip(w.store, w.sess.Session(), tbl, job)
 		if !skipReorg {
 			logutil.DDLLogger().Info("index backfill state running",
 				zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
@@ -1337,6 +1366,7 @@ func doReorgWorkForCreateIndex(
 				return false, ver, errors.Trace(err)
 			}
 		} else {
+			failpoint.InjectCall("afterCheckTableReorgCanSkip")
 			logutil.DDLLogger().Info("table is empty, skipping reorg work",
 				zap.Int64("jobID", job.ID),
 				zap.String("table", tbl.Meta().Name.O))
@@ -1367,13 +1397,14 @@ func doReorgWorkForCreateIndex(
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateMerging:
-		skipReorg := checkIfTempIndexReorgWorkCanSkip(w.store, tbl, allIndexInfos, job)
+		skipReorg := checkIfTempIndexReorgWorkCanSkip(w.store, w.sess.Session(), tbl, allIndexInfos, job)
 		if !skipReorg {
 			done, ver, err = runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, true)
 			if !done {
 				return false, ver, err
 			}
 		} else {
+			failpoint.InjectCall("afterCheckTempIndexReorgCanSkip")
 			logutil.DDLLogger().Info("temp index is empty, skipping reorg work",
 				zap.Int64("jobID", job.ID),
 				zap.String("table", tbl.Meta().Name.O))
@@ -1487,7 +1518,7 @@ func runReorgJobAndHandleErr(
 	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
-	err = w.runReorgJob(reorgInfo, tbl.Meta(), func() (addIndexErr error) {
+	err = w.runReorgJob(jobCtx, reorgInfo, tbl.Meta(), func() (addIndexErr error) {
 		defer util.Recover(metrics.LabelDDL, "onCreateIndex",
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, allIndexInfos[0].Name)
@@ -1572,8 +1603,12 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		}
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
+		isTiFlashIndex := false
 		indexIDs := make([]int64, 0, len(allIndexInfos))
 		for _, indexInfo := range allIndexInfos {
+			if indexInfo.IsTiFlashLocalIndex() {
+				isTiFlashIndex = true
+			}
 			indexInfo.State = model.StateNone
 			// Set column index flag.
 			DropIndexColumnFlag(tblInfo, indexInfo)
@@ -1592,6 +1627,13 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != model.StateNone)
 		if err != nil {
 			return ver, errors.Trace(err)
+		}
+
+		if isTiFlashIndex {
+			// Send sync schema notification to TiFlash.
+			if err := infosync.SyncTiFlashTableSchema(jobCtx.stepCtx, tblInfo.ID); err != nil {
+				logutil.DDLLogger().Warn("run drop tiflash index but syncing schema failed", zap.Error(err))
+			}
 		}
 
 		// Finish this job.
@@ -2362,7 +2404,7 @@ func (w *worker) addTableIndex(
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			err := w.executeDistTask(t, reorgInfo)
+			err := w.executeDistTask(ctx, t, reorgInfo)
 			if err != nil {
 				return err
 			}
@@ -2429,7 +2471,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if bc == nil {
 				bc, err = ingest.LitBackCtxMgr.Register(
-					ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName, 1, reorgInfo.RealStartTS)
+					ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName, 1, 0, reorgInfo.RealStartTS, 0)
 				if err != nil {
 					return err
 				}
@@ -2443,7 +2485,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 	return nil
 }
 
-func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
+func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
 	}
@@ -2494,7 +2536,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 				return err
 			}
 			err = handle.WaitTaskDoneOrPaused(ctx, task.ID)
-			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+			if err := w.isReorgRunnable(stepCtx, true); err != nil {
 				if dbterror.ErrPausedDDLJob.Equal(err) {
 					logutil.DDLLogger().Warn("job paused by user", zap.Error(err))
 					return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
@@ -2531,7 +2573,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 			defer close(done)
 			err := submitAndWaitTask(ctx, taskKey, taskType, concurrency, reorgInfo.ReorgMeta.TargetScope, metaData)
 			failpoint.InjectCall("pauseAfterDistTaskFinished")
-			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+			if err := w.isReorgRunnable(stepCtx, true); err != nil {
 				if dbterror.ErrPausedDDLJob.Equal(err) {
 					logutil.DDLLogger().Warn("job paused by user", zap.Error(err))
 					return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
@@ -2552,7 +2594,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 				w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
 				return nil
 			case <-checkFinishTk.C:
-				if err = w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+				if err = w.isReorgRunnable(stepCtx, true); err != nil {
 					if dbterror.ErrPausedDDLJob.Equal(err) {
 						if err = handle.PauseTask(w.workCtx, taskKey); err != nil {
 							logutil.DDLLogger().Error("pause task error", zap.String("task_key", taskKey), zap.Error(err))
@@ -2888,7 +2930,7 @@ type cleanUpIndexWorker struct {
 }
 
 func newCleanUpIndexWorker(id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*cleanUpIndexWorker, error) {
-	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, "cleanup_idx_rate", false, false)
+	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblCleanupIdxRate, false, false)
 	if err != nil {
 		return nil, err
 	}
@@ -2896,6 +2938,9 @@ func newCleanUpIndexWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 	indexes := make([]table.Index, 0, len(t.Indices()))
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	for _, index := range t.Indices() {
+		if index.Meta().IsTiFlashLocalIndex() {
+			continue
+		}
 		if index.Meta().Global {
 			indexes = append(indexes, index)
 		}

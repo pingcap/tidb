@@ -83,9 +83,6 @@ func (generator *RuntimeFilterGenerator) GenerateRuntimeFilter(plan base.Physica
 func (generator *RuntimeFilterGenerator) generateRuntimeFilterInterval(hashJoinPlan *PhysicalHashJoin) {
 	// precondition: the storage type of hash join must be TiFlash
 	if hashJoinPlan.storeTp != kv.TiFlash {
-		logutil.BgLogger().Warn("RF only support TiFlash compute engine while storage type of hash join node is not TiFlash",
-			zap.Int("PhysicalHashJoinId", hashJoinPlan.ID()),
-			zap.String("StoreTP", hashJoinPlan.storeTp.Name()))
 		return
 	}
 	// check hash join pattern

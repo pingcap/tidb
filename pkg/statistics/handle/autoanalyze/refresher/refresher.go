@@ -15,6 +15,7 @@
 package refresher
 
 import (
+	"context"
 	stderrors "errors"
 	"time"
 
@@ -34,6 +35,8 @@ import (
 // Refresher provides methods to refresh stats info.
 // NOTE: Refresher is not thread-safe.
 type Refresher struct {
+	// This context is used to cancel background tasks when the domain exits.
+	ctx context.Context
 	// This will be refreshed every time we rebuild the priority queue.
 	autoAnalysisTimeWindow priorityqueue.AutoAnalysisTimeWindow
 
@@ -57,12 +60,14 @@ type Refresher struct {
 
 // NewRefresher creates a new Refresher and starts the goroutine.
 func NewRefresher(
+	ctx context.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 	ddlNotifier *notifier.DDLNotifier,
 ) *Refresher {
 	maxConcurrency := int(variable.AutoAnalyzeConcurrency.Load())
 	r := &Refresher{
+		ctx:            ctx,
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
 		jobs:           priorityqueue.NewAnalysisPriorityQueue(statsHandle),
@@ -97,7 +102,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	currentAutoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 	currentPruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	if !r.jobs.IsInitialized() {
-		if err := r.jobs.Initialize(); err != nil {
+		if err := r.jobs.Initialize(r.ctx); err != nil {
 			statslogutil.StatsLogger().Error("Failed to initialize the queue", zap.Error(err))
 			return false
 		}
@@ -261,6 +266,7 @@ func (*Refresher) OnBecomeOwner() {
 
 // OnRetireOwner is used to handle the event when the current TiDB instance retires from being the stats owner.
 func (r *Refresher) OnRetireOwner() {
-	// Stop the worker and close the queue.
+	// Theoretically we should stop the worker here, but stopping analysis jobs can be time-consuming.
+	// To avoid blocking etcd leader re-election, we only close the priority queue.
 	r.jobs.Close()
 }

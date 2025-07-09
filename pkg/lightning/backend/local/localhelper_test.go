@@ -325,3 +325,40 @@ func TestStoreWriteLimiter(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestTuneStoreWriteLimiter(t *testing.T) {
+	limiter := newStoreWriteLimiter(100)
+	testLimiter := func(ctx context.Context, maxT int) {
+		var wg sync.WaitGroup
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func(storeID uint64) {
+				defer wg.Done()
+				start := time.Now()
+				var gotTokens int
+				for {
+					n := rand.Intn(50)
+					if limiter.WaitN(ctx, storeID, n) != nil {
+						break
+					}
+					gotTokens += n
+				}
+				elapsed := time.Since(start)
+				maxTokens := int(1.2*float64(maxT)) + int(elapsed.Seconds()*float64(maxT))
+				// In theory, gotTokens should be less than or equal to maxT.
+				// But we allow a little of error to avoid the test being flaky.
+				require.LessOrEqual(t, gotTokens, maxTokens+1)
+			}(uint64(i))
+		}
+		wg.Wait()
+	}
+
+	ctx0, cancel0 := context.WithTimeout(context.Background(), time.Second*2)
+	defer cancel0()
+	testLimiter(ctx0, 100)
+
+	limiter.UpdateLimit(200)
+	ctx1, cancel1 := context.WithTimeout(context.Background(), time.Second*2)
+	defer cancel1()
+	testLimiter(ctx1, 200)
+}

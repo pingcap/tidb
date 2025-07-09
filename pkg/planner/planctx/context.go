@@ -72,6 +72,12 @@ type PlanContext interface {
 	GetRangerCtx() *rangerctx.RangerContext
 	// GetBuildPBCtx returns the context used in `ToPB` method.
 	GetBuildPBCtx() *BuildPBContext
+	// SetReadonlyUserVarMap sets the readonly user variable map.
+	SetReadonlyUserVarMap(readonlyUserVars map[string]struct{})
+	// GetReadonlyUserVarMap gets the readonly user variable map.
+	GetReadonlyUserVarMap() map[string]struct{}
+	// Reset reset the local context.
+	Reset()
 }
 
 // EmptyPlanContextExtended is used to provide some empty implementations for PlanContext.
@@ -81,6 +87,15 @@ type EmptyPlanContextExtended struct{}
 
 // AdviseTxnWarmup advises the txn to warm up.
 func (EmptyPlanContextExtended) AdviseTxnWarmup() error { return nil }
+
+// SetReadonlyUserVarMap sets the readonly user variable map.
+func (EmptyPlanContextExtended) SetReadonlyUserVarMap(map[string]struct{}) {}
+
+// GetReadonlyUserVarMap gets the readonly user variable map.
+func (EmptyPlanContextExtended) GetReadonlyUserVarMap() map[string]struct{} { return nil }
+
+// Reset implements the PlanContext interface.
+func (EmptyPlanContextExtended) Reset() {}
 
 // BuildPBContext is used to build the `*tipb.Executor` according to the plan.
 type BuildPBContext struct {

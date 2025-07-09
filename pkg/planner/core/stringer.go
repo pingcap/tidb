@@ -75,6 +75,8 @@ func fdToString(in base.LogicalPlan, strs []string, idxs []int) ([]string, []int
 		strs = append(strs, "{"+x.FDs().String()+"}")
 	case *logicalop.LogicalJoin:
 		strs = append(strs, "{"+x.FDs().String()+"}")
+	case *logicalop.LogicalUnionAll:
+		strs = append(strs, "{"+x.FDs().String()+"}")
 	default:
 	}
 	return strs, idxs

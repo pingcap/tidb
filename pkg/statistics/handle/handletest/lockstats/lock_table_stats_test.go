@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -60,6 +61,17 @@ func TestLockAndUnlockTableStats(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, 1, len(lockedTables))
 
+	// Insert a new row to the table.
+	tk.MustExec("insert into t(a, b) values(3,'c')")
+	// Enable the failpoint to test the historical stats meta is not recorded.
+	err = failpoint.Enable(
+		"github.com/pingcap/tidb/pkg/statistics/handle/usage/panic-when-record-historical-stats-meta",
+		"1*return(true)",
+	)
+	require.NoError(t, err)
+	// Dump stats delta to KV.
+	require.NotPanics(t, func() { handle.DumpStatsDeltaToKV(true) })
+
 	tk.MustExec("unlock stats t")
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
@@ -67,7 +79,7 @@ func TestLockAndUnlockTableStats(t *testing.T) {
 
 	tk.MustExec("analyze table test.t")
 	tblStats2 := handle.GetTableStats(tbl)
-	require.Equal(t, int64(2), tblStats2.RealtimeCount)
+	require.Equal(t, int64(3), tblStats2.RealtimeCount)
 }
 
 func TestLockAndUnlockPartitionedTableStats(t *testing.T) {

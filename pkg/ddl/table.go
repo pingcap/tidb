@@ -581,7 +581,11 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		partitions = tblInfo.GetPartitionInfo().Definitions
 	}
-	preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, partitions)
+	var scatterScope string
+	if val, ok := job.GetSessionVars(variable.TiDBScatterRegion); ok {
+		scatterScope = val
+	}
+	preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, partitions, scatterScope)
 
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
@@ -1239,7 +1243,7 @@ func checkConstraintNamesNotExists(t *meta.Mutator, schemaID int64, constraints 
 	if len(constraints) == 0 {
 		return nil
 	}
-	tbInfos, err := t.ListTables(schemaID)
+	tbInfos, err := t.ListTables(context.Background(), schemaID)
 	if err != nil {
 		return err
 	}

@@ -80,6 +80,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
@@ -115,10 +116,29 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 
 	// Cache the ret full rows in schemataRetriever
 	if !e.initialized {
-		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-		e.is = is
-
 		var err error
+		// InTxn() should be true in most of the cases.
+		// Because the transaction should have been activated in MemTableReaderExec Open().
+		// Why not just activate the txn here (sctx.Txn(true)) and do it in Open() instead?
+		// Because it could DATA RACE here and in Open() it's safe.
+		if sctx.GetSessionVars().InTxn() {
+			e.is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(sctx.GetSessionVars().TxnCtx.StartTS)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			// When the excutor is built from tidb coprocessor request, the transaction is not valid.
+			// Then InTxn() is false.
+			//
+			// What's the difference between using latest infoschema and using snapshot infoschema?
+			// A query *should* use the infoschema of the txn start ts, but it's still safe to use the latest.
+			// If now it's 12:00:00, the ts of the latest infoschema might be 11:59:30 or 11:52:12 or anything.
+			// Say, default GC interval is 10min, the ts of the latest infoschema is 11:52:12.
+			// Then the valid lifetime range on infoschema API become [11:52:12, 12:12:12) using latest infoschema,
+			// but it should be [12:00:00, 12:10:00) if using the snapshot infoschema.
+			e.is = sctx.GetInfoSchema().(infoschema.InfoSchema)
+		}
+
 		switch e.table.Name.O {
 		case infoschema.TableSchemata:
 			err = e.setDataFromSchemata(sctx)
@@ -179,7 +199,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
 		case infoschema.TableAttributes:
-			err = e.setDataForAttributes(ctx, sctx, is)
+			err = e.setDataForAttributes(ctx, sctx, e.is)
 		case infoschema.TablePlacementPolicies:
 			err = e.setDataFromPlacementPolicies(sctx)
 		case infoschema.TableTrxSummary:
@@ -198,6 +218,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForMemoryUsageOpsHistory()
 		case infoschema.ClusterTableMemoryUsageOpsHistory:
 			err = e.setDataForClusterMemoryUsageOpsHistory(sctx)
+		case infoschema.TableUserLoginHistory:
+			err = e.setDataForUserLoginHistory(ctx, sctx)
 		case infoschema.TableResourceGroups:
 			err = e.setDataFromResourceGroups()
 		case infoschema.TableRunawayWatches:
@@ -212,6 +234,14 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
+		case infoschema.TableRoutines:
+			err = e.setDataForRoutines(ctx, sctx)
+		case infoschema.TableColumnPrivileges:
+			err = e.setDataFromColumnPrivileges(ctx, sctx)
+		case infoschema.TableTablePrivileges:
+			err = e.setDataFromTablePrivileges(ctx, sctx)
+		case infoschema.TableSchemaPrivileges:
+			err = e.setDataFromSchemaPrivileges(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -635,12 +665,14 @@ func (e *memtableRetriever) setDataFromOneTable(
 
 		var rowCount, avgRowLength, dataLength, indexLength uint64
 		if useStatsCache {
-			if table.GetPartitionInfo() == nil {
-				err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
-				if err != nil {
-					return rows, err
-				}
-			} else {
+			// Even for partitioned tables, we must update the stats cache for the main table itself.
+			// This is necessary because the global index length from the table also needs to be included.
+			// For further details, see: https://github.com/pingcap/tidb/issues/54173
+			err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
+			if err != nil {
+				return rows, err
+			}
+			if table.GetPartitionInfo() != nil {
 				// needs to update all partitions for partition table.
 				for _, pi := range table.GetPartitionInfo().Definitions {
 					err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
@@ -729,6 +761,19 @@ func onlySchemaOrTableColumns(columns []*model.ColumnInfo) bool {
 	return false
 }
 
+func onlySchemaOrTableColPredicates(predicates map[string]set.StringSet) bool {
+	for str := range predicates {
+		switch str {
+		case "table_name":
+		case "table_schema":
+		case "table_catalog":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
@@ -745,7 +790,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	//     select count(*) from INFORMATION_SCHEMA.TABLES
 	//     select table_schema, table_name from INFORMATION_SCHEMA.TABLES
 	// column pruning in general is not supported here.
-	if onlySchemaOrTableColumns(e.columns) {
+	if onlySchemaOrTableColumns(e.columns) && onlySchemaOrTableColPredicates(ex.ColPredicates) {
 		is := e.is
 		if raw, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
 			is = raw.InfoSchema
@@ -820,6 +865,9 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, rows, useStatsCache)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if ctx.Err() != nil {
+			return errors.Trace(ctx.Err())
 		}
 	}
 	e.rows = rows
@@ -963,6 +1011,56 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	return adjustColumns(e.rows, e.columns, e.table), nil
 }
 
+func (e *memtableRetriever) setDataForRoutines(ctx context.Context, sctx sessionctx.Context) error {
+	exec, _ := sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnProcedure)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil, `select route_schema,name,type,definition_utf8,parameter_str,is_deterministic,sql_data_access,security_type,definer,sql_mode,
+	character_set_client,connection_collation,schema_collation,created,last_altered,comment,options,external_language from mysql.routines;`)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	for _, chunkRow := range chunkRows {
+		if chunkRow.Len() != 18 {
+			continue
+		}
+		routineType := chunkRow.GetEnum(2)
+		if routineType.String() != "PROCEDURE" {
+			return errors.Errorf("Not support %s", routineType.String())
+		}
+		routeSchema := chunkRow.GetString(0)
+		name := chunkRow.GetString(1)
+		definitionUtf8 := chunkRow.GetString(3)
+		isDeterministic := chunkRow.GetInt64(5)
+		sqlDataAccess := chunkRow.GetEnum(6)
+		securityType := chunkRow.GetEnum(7)
+		definer := chunkRow.GetString(8)
+		sqlMode := chunkRow.GetSet(9)
+		characterSetClient := chunkRow.GetString(10)
+		connectionCollation := chunkRow.GetString(11)
+		schemaCollation := chunkRow.GetString(12)
+		created := chunkRow.GetTime(13)
+		lastAltered := chunkRow.GetTime(14)
+		comment := chunkRow.GetString(15)
+		externalLanguage := chunkRow.GetString(17)
+		deterministicStatus := "NO"
+		if isDeterministic == 1 {
+			deterministicStatus = "YES"
+		}
+		// unspport function
+		row := types.MakeDatums(name, "def", routeSchema, name, routineType.String(), "", nil, nil, nil, nil, nil, nil, nil, nil, "SQL",
+			definitionUtf8, nil, externalLanguage, "SQL", deterministicStatus, sqlDataAccess.String(), nil, securityType.String(), created,
+			lastAltered, sqlMode.String(), comment, definer, characterSetClient, connectionCollation, schemaCollation)
+		rows = append(rows, row)
+	}
+
+	e.rows = rows
+	return nil
+}
+
 func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	e.rows = e.rows[:0]
@@ -1028,7 +1126,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 			// Build plan is not thread safe, there will be concurrency on sessionctx.
 			if err := runWithSystemSession(internalCtx, sctx, func(s sessionctx.Context) error {
 				is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
-				planBuilder, _ := plannercore.NewPlanBuilder().Init(s.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+				planBuilder, _ := plannercore.NewPlanBuilder(plannercore.PlanBuilderOptNoExecution{}).Init(s.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 				var err error
 				viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema, tbl, nil, nil)
 				return errors.Trace(err)
@@ -1190,6 +1288,10 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 			continue
 		}
 		createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
+
+		if ctx.Err() != nil {
+			return errors.Trace(ctx.Err())
+		}
 
 		var rowCount, dataLength, indexLength uint64
 		if useStatsCache {
@@ -1955,7 +2057,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 			for _, tableID := range extractorTableIDs {
 				regionsInfo, err := e.getRegionsInfoForTable(ctx, tikvHelper, is, tableID)
 				if err != nil {
-					if errors.ErrorEqual(err, infoschema.ErrTableExists) {
+					if errors.ErrorEqual(err, infoschema.ErrTableNotExists) {
 						continue
 					}
 					return err
@@ -1975,6 +2077,10 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 			return err
 		}
 	}
+	if allRegionsInfo == nil {
+		return nil
+	}
+
 	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, is, nil)
 	for i := range allRegionsInfo.Regions {
 		regionTableList := tableInfos[allRegionsInfo.Regions[i].ID]
@@ -1999,7 +2105,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 func (e *memtableRetriever) getRegionsInfoForTable(ctx context.Context, h *helper.Helper, is infoschema.InfoSchema, tableID int64) (*pd.RegionsInfo, error) {
 	tbl, _ := is.TableByID(ctx, tableID)
 	if tbl == nil {
-		return nil, infoschema.ErrTableExists.GenWithStackByArgs(tableID)
+		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tableID)
 	}
 
 	pt := tbl.Meta().GetPartitionInfo()
@@ -2856,6 +2962,46 @@ func (e *memtableRetriever) setDataForClusterMemoryUsageOpsHistory(ctx sessionct
 	return nil
 }
 
+func (e *memtableRetriever) setDataForUserLoginHistory(ctx context.Context, sctx sessionctx.Context) error {
+	loginUser := sctx.GetSessionVars().User
+	if loginUser == nil {
+		return nil
+	}
+
+	exec := sctx.GetRestrictedSQLExecutor()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil,
+		`SELECT * FROM mysql.login_history WHERE user = %? AND user_host = %?`, loginUser.AuthUsername, loginUser.AuthHostname)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	for _, chunkRow := range chunkRows {
+		time := chunkRow.GetTime(0)
+		serverHost := chunkRow.GetString(1)
+		user := chunkRow.GetString(2)
+		if user != loginUser.AuthUsername {
+			continue
+		}
+
+		userHost := chunkRow.GetString(3)
+		database := chunkRow.GetString(4)
+		connectionID := chunkRow.GetUint64(5)
+		result := chunkRow.GetString(6)
+		clientHost := chunkRow.GetString(7)
+		detail := chunkRow.GetString(8)
+
+		row := types.MakeDatums(time, serverHost, user, userHost, database, connectionID, result, clientHost, detail)
+		rows = append(rows, row)
+	}
+
+	e.rows = rows
+	return nil
+}
+
 // tidbTrxTableRetriever is the memtable retriever for the TIDB_TRX and CLUSTER_TIDB_TRX table.
 type tidbTrxTableRetriever struct {
 	dummyCloser
@@ -2887,7 +3033,7 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 		for _, info := range infoList {
 			// If you have the PROCESS privilege, you can see all running transactions.
 			// Otherwise, you can see only your own transactions.
-			if !hasProcessPriv && loginUser != nil && info.Username != loginUser.Username {
+			if !hasProcessPriv && loginUser != nil && info.ProcessInfo.Username != loginUser.Username {
 				continue
 			}
 			e.txnInfo = append(e.txnInfo, info)
@@ -3439,9 +3585,10 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 	if !ok {
 		return nil, errors.New("Get tiflash system tables can only run with tikv compatible storage")
 	}
-	// send request to tiflash, timeout is 1s
+	// send request to tiflash, use 5 minutes as per-request timeout
 	instanceID := e.instanceIDs[e.instanceIdx]
-	resp, err := tikvStore.GetTiKVClient().SendRequest(ctx, instanceID, &request, time.Second)
+	timeout := time.Duration(5*60) * time.Second
+	resp, err := tikvStore.GetTiKVClient().SendRequest(ctx, instanceID, &request, timeout)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3897,6 +4044,199 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 	rows, err := infoschema.AppendHostInfoToRows(sctx, e.rows)
 	if err != nil {
 		return err
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromColumnPrivileges(ctx context.Context, sctx sessionctx.Context) error {
+	exec := sctx.GetRestrictedSQLExecutor()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	user := sctx.GetSessionVars().User
+	pm := privilege.GetPrivilegeManager(sctx)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil,
+		`SELECT c.user,
+			concat("'", c.user, "'@'", c.host, "'") AS GRANTEE,
+			'def' AS TABLE_CATALOG,
+			c.db AS TABLE_SCHEMA,
+			c.table_name AS TABLE_NAME,
+			c.column_name AS COLUMN_NAME,
+			c.column_priv AS PRIVILEGE_TYPE,
+			CASE
+				WHEN find_in_set('Grant', t.table_priv) > 0 THEN "YES"
+				ELSE "NO"
+			END AS IS_GRANTABLE
+		FROM mysql.columns_priv AS c
+    	JOIN mysql.tables_priv AS t
+			ON c.user = t.user
+				AND c.host = t.host
+				AND c.db = t.db
+				AND c.table_name = t.table_name;`)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	for _, chunkRow := range chunkRows {
+		if chunkRow.Len() != 8 {
+			continue
+		}
+		userName := chunkRow.GetString(0)
+		if !(pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "columns_priv", "", mysql.SelectPriv) &&
+			pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv)) &&
+			user != nil && userName != user.Username {
+			continue
+		}
+		grantee := chunkRow.GetString(1)
+		tableCatalog := chunkRow.GetString(2) // always "def"
+		db := chunkRow.GetString(3)
+		tableName := chunkRow.GetString(4)
+		columnName := chunkRow.GetString(5)
+		privilegeTypes := chunkRow.GetSet(6)
+		isGrantable := chunkRow.GetString(7)
+		for _, priv := range strings.Split(privilegeTypes.String(), ",") {
+			rows = append(rows, types.MakeDatums(
+				grantee,
+				tableCatalog,
+				db,
+				tableName,
+				columnName,
+				strings.ToUpper(priv),
+				isGrantable,
+			))
+		}
+	}
+
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromTablePrivileges(ctx context.Context, sctx sessionctx.Context) error {
+	exec := sctx.GetRestrictedSQLExecutor()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	user := sctx.GetSessionVars().User
+	pm := privilege.GetPrivilegeManager(sctx)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil,
+		`SELECT user,
+			concat("'", user, "'@'", host, "'") AS GRANTEE,
+			"def" AS TABLE_CATALOG,
+			db AS TABLE_SCHEMA,
+			table_name AS TABLE_NAME,
+			table_priv AS PRIVILEGE_TYPE,
+			CASE
+				WHEN find_in_set('Grant', table_priv) > 0 THEN "YES"
+				ELSE "NO"
+			END AS IS_GRANTABLE
+		FROM mysql.tables_priv
+		WHERE table_priv != '';`)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	for _, chunkRow := range chunkRows {
+		if chunkRow.Len() != 7 {
+			continue
+		}
+		userName := chunkRow.GetString(0)
+		if !pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv) && user != nil && userName != user.Username {
+			continue
+		}
+		grantee := chunkRow.GetString(1)
+		tableCatalog := chunkRow.GetString(2) // always "def"
+		db := chunkRow.GetString(3)
+		tableName := chunkRow.GetString(4)
+		privilegeTypes := chunkRow.GetSet(5)
+		isGrantable := chunkRow.GetString(6)
+		for _, priv := range strings.Split(privilegeTypes.String(), ",") {
+			if u := strings.ToUpper(priv); u != "GRANT" {
+				rows = append(rows, types.MakeDatums(
+					grantee,
+					tableCatalog,
+					db,
+					tableName,
+					u,
+					isGrantable,
+				))
+			}
+		}
+	}
+
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromSchemaPrivileges(ctx context.Context, sctx sessionctx.Context) error {
+	exec := sctx.GetRestrictedSQLExecutor()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	user := sctx.GetSessionVars().User
+	pm := privilege.GetPrivilegeManager(sctx)
+	chunkRows, resFields, err := exec.ExecRestrictedSQL(ctx, nil,
+		`SELECT user,
+			concat("'", user, "'@'", host, "'") AS GRANTEE,
+			"def" AS TABLE_CATALOG,
+			db AS TABLE_SCHEMA,
+			Grant_priv,
+			Select_priv,
+			Insert_priv,
+			Update_priv,
+			Delete_priv,
+			Create_priv,
+			Drop_priv,
+			References_priv,
+			Index_priv,
+			Alter_priv,
+			Create_tmp_table_priv,
+			Lock_tables_priv,
+			Create_view_priv,
+			Show_view_priv,
+			Create_routine_priv,
+			Alter_routine_priv,
+			Execute_priv,
+			Event_priv,
+			Trigger_priv
+		FROM mysql.db;`)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	for _, chunkRow := range chunkRows {
+		if chunkRow.Len() != 23 {
+			continue
+		}
+		userName := chunkRow.GetString(0)
+		if !pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "db", "", mysql.SelectPriv) && user != nil && userName != user.Username {
+			continue
+		}
+		grantee := chunkRow.GetString(1)
+		tableCatalog := chunkRow.GetString(2) // always "def"
+		tableSchema := chunkRow.GetString(3)
+		isGrantable := "NO"
+		if chunkRow.GetEnum(4).String() == "Y" {
+			isGrantable = "YES"
+		}
+		for i := 5; i < 23; i++ {
+			if chunkRow.GetEnum(i).String() == "Y" {
+				privilegeType := strings.ToUpper(mysql.Priv2Str[mysql.Col2PrivType[resFields[i].Column.Name.O]])
+				rows = append(rows, types.MakeDatums(
+					grantee,
+					tableCatalog,
+					tableSchema,
+					privilegeType,
+					isGrantable,
+				))
+			}
+		}
 	}
 	e.rows = rows
 	return nil

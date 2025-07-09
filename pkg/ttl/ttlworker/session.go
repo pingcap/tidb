@@ -87,7 +87,7 @@ func getSession(pool util.SessionPool) (session.Session, error) {
 	originalIsolationReadEngines, restoreIsolationReadEngines := "", false
 
 	se := session.NewSession(sctx, exec, func(se session.Session) {
-		_, err = se.ExecuteSQL(context.Background(), fmt.Sprintf("set tidb_retry_limit=%d", originalRetryLimit))
+		_, err := se.ExecuteSQL(context.Background(), fmt.Sprintf("set tidb_retry_limit=%d", originalRetryLimit))
 		if err != nil {
 			intest.AssertNoError(err)
 			logutil.BgLogger().Error("fail to reset tidb_retry_limit", zap.Int64("originalRetryLimit", originalRetryLimit), zap.Error(err))

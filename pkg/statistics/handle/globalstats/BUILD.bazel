@@ -45,7 +45,7 @@ go_test(
     ],
     embed = [":globalstats"],
     flaky = True,
-    shard_count = 26,
+    shard_count = 27,
     deps = [
         "//pkg/domain",
         "//pkg/kv",
@@ -54,6 +54,7 @@ go_test(
         "//pkg/session",
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics",
+        "//pkg/statistics/handle/ddl/testutil",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/types",

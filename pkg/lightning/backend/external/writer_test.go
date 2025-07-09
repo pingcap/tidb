@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -596,4 +597,12 @@ func TestFlushKVsRetry(t *testing.T) {
 		lastKey = append(lastKey[:0], p.firstKey...)
 		p, err = r.nextProp()
 	}
+}
+
+func TestGetAdjustedIndexBlockSize(t *testing.T) {
+	require.EqualValues(t, 1*units.MiB, GetAdjustedBlockSize(1*units.MiB))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(15*units.MiB))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(16*units.MiB))
+	require.EqualValues(t, 17*units.MiB, GetAdjustedBlockSize(17*units.MiB))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(166*units.MiB))
 }

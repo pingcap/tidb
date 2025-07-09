@@ -110,7 +110,6 @@ type SharedVars struct {
 	TableImporter *importer.TableImporter
 	DataEngine    *backend.OpenedEngine
 	IndexEngine   *backend.OpenedEngine
-	Progress      *importer.Progress
 
 	mu       sync.Mutex
 	Checksum *verification.KVGroupChecksum
@@ -183,5 +182,4 @@ type Checksum struct {
 // This portion of the code may be implemented uniformly in the framework in the future.
 type Result struct {
 	LoadedRowCnt uint64
-	ColSizeMap   map[int64]int64
 }

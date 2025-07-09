@@ -16,7 +16,7 @@ package tables
 
 import (
 	"bytes"
-	stdctx "context"
+	"context"
 	stderr "errors"
 	"fmt"
 	"hash/crc32"
@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
@@ -131,19 +132,27 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	origIndices := ret.meta.Indices
 	DroppingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
 	AddingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
+	changesArePublic := pi.DDLState == model.StateDeleteReorganization || pi.DDLState == model.StatePublic
 	for _, idx := range origIndices {
 		newIdx, ok := pi.DDLChangedIndex[idx.ID]
 		if !ok {
 			// Untouched index
-			DroppingDefinitionIndices = append(DroppingDefinitionIndices, idx)
-			if pi.DDLState != model.StateDeleteReorganization {
-				// If pi.DDLState == DeleteReorg, then keep the StatePublic.
-				// Otherwise, set same state as DDLState. Like DeleteOnly is needed to
-				// set the correct assertion on the index.
-				idx = idx.Clone()
-				idx.State = pi.DDLState
+			clonedIdx := idx.Clone()
+			if changesArePublic {
+				// Adding partitions are now public, so we should assert on them.
+				AddingDefinitionIndices = append(AddingDefinitionIndices, idx)
+				// Dropping partitions are no longer public, so we cannot assert on them.
+				// Using WriteOnly, since DeleteOnly/DeleteReorganization is not classified
+				// as Writable, see tables.IsIndexWritable().
+				clonedIdx.State = model.StateWriteOnly
+				DroppingDefinitionIndices = append(DroppingDefinitionIndices, clonedIdx)
+				continue
 			}
-			AddingDefinitionIndices = append(AddingDefinitionIndices, idx)
+			// Currently used partitions, continue use StatePublic for assertions
+			DroppingDefinitionIndices = append(DroppingDefinitionIndices, idx)
+			// new partitions, use current state for skipping assertions
+			clonedIdx.State = pi.DDLState
+			AddingDefinitionIndices = append(AddingDefinitionIndices, clonedIdx)
 			continue
 		}
 		if newIdx {
@@ -180,19 +189,30 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		partitions[p.ID] = &t
 	}
 	ret.partitions = partitions
-	if pi.DDLAction != model.ActionReorganizePartition &&
-		pi.DDLAction != model.ActionRemovePartitioning &&
-		pi.DDLAction != model.ActionAlterTablePartitioning {
+	switch pi.DDLAction {
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
+		// continue after switch!
+	case model.ActionTruncateTablePartition:
+		for _, def := range pi.DroppingDefinitions {
+			p, err := initPartition(ret, def)
+			if err != nil {
+				return nil, err
+			}
+			partitions[def.ID] = p
+		}
+		fallthrough
+	default:
 		return ret, nil
 	}
-	// In StateWriteReorganization we are using the 'old' partition definitions
+	// In WriteReorganization we are using the 'old' partition definitions
 	// and if any new change happens in DroppingDefinitions, it needs to be done
 	// also in AddingDefinitions (with new evaluation of the new expression)
-	// In StateDeleteReorganization we are using the 'new' partition definitions
+	// In DeleteReorganization/Public we are using the 'new' partition definitions
 	// and if any new change happens in AddingDefinitions, it needs to be done
 	// also in DroppingDefinitions (since session running on schema version -1)
-	// should also see the changes
-	if pi.DDLState == model.StateDeleteReorganization {
+	// should also see the changes.
+	if pi.DDLState == model.StateDeleteReorganization || pi.DDLState == model.StatePublic {
 		// TODO: Explicitly explain the different DDL/New fields!
 		if pi.NewTableID != 0 {
 			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.DroppingDefinitions)
@@ -213,6 +233,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 			if err != nil {
 				return nil, err
 			}
+			p.skipAssert = true
 			partitions[def.ID] = p
 			ret.doubleWritePartitions[def.ID] = nil
 		}
@@ -236,6 +257,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 				if err != nil {
 					return nil, err
 				}
+				p.skipAssert = true
 				partitions[def.ID] = p
 			}
 		}
@@ -1464,18 +1486,23 @@ func (t *partitionedTable) locateReorgPartition(ctx expression.EvalContext, r []
 	// all partitions will be reorganized,
 	// so we can use the number in Dropping or AddingDefinitions,
 	// depending on current state.
-	num := len(pi.AddingDefinitions)
-	if pi.DDLState == model.StateDeleteReorganization {
-		num = len(pi.DroppingDefinitions)
+	reorgDefs := pi.AddingDefinitions
+	switch pi.DDLAction {
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
+		if pi.DDLState == model.StatePublic {
+			reorgDefs = pi.DroppingDefinitions
+		}
+		fallthrough
+	default:
+		if pi.DDLState == model.StateDeleteReorganization {
+			reorgDefs = pi.DroppingDefinitions
+		}
 	}
-	idx, err := t.locatePartitionCommon(ctx, pi.DDLType, t.reorgPartitionExpr, uint64(num), columnsSet, r)
+	idx, err := t.locatePartitionCommon(ctx, pi.DDLType, t.reorgPartitionExpr, uint64(len(reorgDefs)), columnsSet, r)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if pi.DDLState == model.StateDeleteReorganization {
-		return pi.DroppingDefinitions[idx].ID, nil
-	}
-	return pi.AddingDefinitions[idx].ID, nil
+	return reorgDefs[idx].ID, nil
 }
 
 func (t *partitionedTable) locateRangeColumnPartition(ctx expression.EvalContext, partitionExpr *PartitionExpr, r []types.Datum) (int, error) {
@@ -1645,7 +1672,9 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	pi.Type = pi.DDLType
 	pi.Expr = pi.DDLExpr
 	pi.Columns = pi.DDLColumns
-	tblInfo.ID = pi.NewTableID
+	if pi.NewTableID != 0 {
+		tblInfo.ID = pi.NewTableID
+	}
 
 	constraints, err := table.LoadCheckConstraint(tblInfo)
 	if err != nil {
@@ -1693,14 +1722,14 @@ func checkConstraintForExchangePartition(ctx table.MutateContext, row []types.Da
 	}
 
 	type InfoSchema interface {
-		TableByID(ctx stdctx.Context, id int64) (val table.Table, ok bool)
+		TableByID(ctx context.Context, id int64) (val table.Table, ok bool)
 	}
 
 	is, ok := support.GetInfoSchemaToCheckExchangeConstraint().(InfoSchema)
 	if !ok {
 		return errors.Errorf("exchange partition process assert inforSchema failed")
 	}
-	gCtx := stdctx.Background()
+	gCtx := context.Background()
 	nt, tableFound := is.TableByID(gCtx, ntID)
 	if !tableFound {
 		// Now partID is nt tableID.
@@ -1735,9 +1764,6 @@ func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *p
 			return nil, errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
-	if t.Meta().Partition.HasTruncatingPartitionID(pid) {
-		return nil, errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
-	}
 	exchangePartitionInfo := t.Meta().ExchangePartitionInfo
 	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionDefID == pid &&
 		variable.EnableCheckConstraint.Load() {
@@ -1751,7 +1777,7 @@ func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *p
 	if err != nil {
 		return
 	}
-	if t.Meta().Partition.DDLState == model.StateDeleteOnly {
+	if t.Meta().Partition.DDLState == model.StateDeleteOnly || t.Meta().Partition.DDLState == model.StatePublic {
 		return
 	}
 	if _, ok := t.reorganizePartitions[pid]; ok {
@@ -1761,6 +1787,10 @@ func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *p
 			return nil, errors.Trace(err)
 		}
 		tbl = t.getPartition(pid)
+		if !tbl.Meta().HasClusteredIndex() {
+			// Preserve the _tidb_rowid also in the new partition!
+			r = append(r, types.NewIntDatum(recordID.IntValue()))
+		}
 		recordID, err = tbl.addRecord(ctx, txn, r, opt)
 		if err != nil {
 			return
@@ -1801,30 +1831,63 @@ func (t *partitionTableWithGivenSets) GetAllPartitionIDs() []int64 {
 	return ptIDs
 }
 
+func dataEqRec(loc *time.Location, tblInfo *model.TableInfo, row []types.Datum, rec []byte) (bool, error) {
+	columnFt := make(map[int64]*types.FieldType)
+	for idx := range tblInfo.Columns {
+		col := tblInfo.Columns[idx]
+		columnFt[col.ID] = &col.FieldType
+	}
+	foundData, err := tablecodec.DecodeRowToDatumMap(rec, columnFt, loc)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	for idx, col := range tblInfo.Cols() {
+		if d, ok := foundData[col.ID]; ok {
+			if !d.Equals(row[idx]) {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
+
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...table.RemoveRecordOption) error {
 	opt := table.NewRemoveRecordOpt(opts...)
 	ectx := ctx.GetExprCtx()
-	pid, err := t.locatePartition(ectx.GetEvalCtx(), r)
+	from, err := t.locatePartition(ectx.GetEvalCtx(), r)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	tbl := t.getPartition(pid)
+	tbl := t.getPartition(from)
 	err = tbl.removeRecord(ctx, txn, h, r, opt)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	if _, ok := t.reorganizePartitions[pid]; ok {
-		pid, err = t.locateReorgPartition(ectx.GetEvalCtx(), r)
+	if _, ok := t.reorganizePartitions[from]; ok {
+		newFrom, err := t.locateReorgPartition(ectx.GetEvalCtx(), r)
+		if err != nil || newFrom == 0 {
+			return errors.Trace(err)
+		}
+
+		if t.Meta().HasClusteredIndex() {
+			return t.getPartition(newFrom).removeRecord(ctx, txn, h, r, opt)
+		}
+		encodedRecordID := codec.EncodeInt(nil, h.IntValue())
+		newFromKey := tablecodec.EncodeRowKey(newFrom, encodedRecordID)
+
+		val, err := getKeyInTxn(context.Background(), txn, newFromKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tbl = t.getPartition(pid)
-		err = tbl.removeRecord(ctx, txn, h, r, opt)
-		if err != nil {
-			return errors.Trace(err)
+		if len(val) > 0 {
+			same, err := dataEqRec(ctx.GetExprCtx().GetEvalCtx().Location(), t.Meta(), r, val)
+			if err != nil || !same {
+				return errors.Trace(err)
+			}
+			return t.getPartition(newFrom).removeRecord(ctx, txn, h, r, opt)
 		}
 	}
 	return nil
@@ -1872,9 +1935,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
-	if t.Meta().Partition.HasTruncatingPartitionID(to) {
-		return errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
-	}
+	// TODO: Remove this and require EXCHANGE PARTITION to have same CONSTRAINTs on the tables!
 	exchangePartitionInfo := t.Meta().ExchangePartitionInfo
 	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionDefID == to &&
 		variable.EnableCheckConstraint.Load() {
@@ -1888,104 +1949,203 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
-	// The old and new data locate in different partitions.
-	// Remove record from old partition and add record to new partition.
-	if from != to {
-		err = t.GetPartition(from).RemoveRecord(ctx, txn, h, currData)
+	deleteOnly := t.Meta().Partition.DDLState == model.StateDeleteOnly || t.Meta().Partition.DDLState == model.StatePublic
+	newRecordHandle := h
+	finishFunc := func(err error, _ kv.Handle) error {
+		if err != nil {
+			return err
+		}
+		memBuffer.Release(sh)
+		return nil
+	}
+	if from == to && t.Meta().HasClusteredIndex() {
+		err = t.getPartition(to).updateRecord(ctx, txn, h, currData, newData, touched, opt)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		_, err = t.getPartition(to).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
+	} else if from != to {
+		// The old and new data locate in different partitions.
+		// Remove record from old partition
+		err = t.getPartition(from).RemoveRecord(ctx, txn, h, currData)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		newTo, newFrom := int64(0), int64(0)
-		if _, ok := t.reorganizePartitions[to]; ok {
-			newTo, err = t.locateReorgPartition(ectx.GetEvalCtx(), newData)
-			// There might be valid cases when errors should be accepted?
-			if err != nil {
-				return errors.Trace(err)
-			}
+		// and add record to new partition, which will also give it a new Record ID/_tidb_rowid!
+		newRecordHandle, err = t.getPartition(to).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
+		if err != nil {
+			return errors.Trace(err)
 		}
-		if _, ok := t.reorganizePartitions[from]; ok {
-			newFrom, err = t.locateReorgPartition(ectx.GetEvalCtx(), currData)
-			// There might be valid cases when errors should be accepted?
+	} else {
+		// to == from && !t.Meta().HasClusteredIndex()
+		// We don't yet know if there will be a new record id generate or not,
+		// better defer handling current record until checked reorganized partitions so we know!
+		finishFunc = func(err error, newRecordHandle kv.Handle) error {
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
-		}
-		if newTo == newFrom && newTo != 0 {
-			// Update needs to be done in StateDeleteOnly as well
-			err = t.getPartition(newTo).updateRecord(ctx, txn, h, currData, newData, touched, opt)
+			if newRecordHandle == nil {
+				err = t.getPartition(to).updateRecord(ctx, txn, h, currData, newData, touched, opt)
+				if err != nil {
+					return err
+				}
+				memBuffer.Release(sh)
+				return nil
+			}
+			err = t.getPartition(from).RemoveRecord(ctx, txn, h, currData)
 			if err != nil {
-				return errors.Trace(err)
+				return err
+			}
+			if !deleteOnly {
+				// newData now contains the new record ID
+				_, err = t.getPartition(to).addRecord(ctx, txn, newData, opt.GetAddRecordOptKeepRecordID())
+				if err != nil {
+					return err
+				}
 			}
 			memBuffer.Release(sh)
 			return nil
 		}
+	}
 
+	var newTo, newFrom int64
+	if _, ok := t.reorganizePartitions[to]; ok {
+		newTo, err = t.locateReorgPartition(ectx.GetEvalCtx(), newData)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if _, ok := t.reorganizePartitions[from]; ok {
+		newFrom, err = t.locateReorgPartition(ectx.GetEvalCtx(), currData)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if newFrom == 0 && newTo == 0 {
+		return finishFunc(err, nil)
+	}
+	if t.Meta().HasClusteredIndex() {
+		// Always do Remove+Add, to always have the indexes in-sync,
+		// since the indexes might not been created yet, i.e. not backfilled yet.
 		if newFrom != 0 {
 			err = t.getPartition(newFrom).RemoveRecord(ctx, txn, h, currData)
-			// TODO: Can this happen? When the data is not yet backfilled?
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
-		if newTo != 0 && t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
+		if newTo != 0 && !deleteOnly {
 			_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
-		memBuffer.Release(sh)
-		return nil
+		return finishFunc(err, nil)
 	}
-	tbl := t.getPartition(to)
-	err = tbl.updateRecord(ctx, txn, h, currData, newData, touched, opt)
+
+	var found map[string][]byte
+	var newFromKey, newToKey kv.Key
+
+	keys := make([]kv.Key, 0, 2)
+	encodedRecordID := codec.EncodeInt(nil, h.IntValue())
+	if newFrom != 0 {
+		newFromKey = tablecodec.EncodeRowKey(newFrom, encodedRecordID)
+		keys = append(keys, newFromKey)
+	}
+	if !deleteOnly && newTo != 0 {
+		// Only need to check if writing.
+		if newTo == newFrom {
+			newToKey = newFromKey
+		} else if newRecordHandle.Equal(h) {
+			// And no new record id generated (else new unique id, cannot be found)
+			newToKey = tablecodec.EncodeRowKey(newTo, encodedRecordID)
+			keys = append(keys, newToKey)
+		}
+	}
+	var newFromVal, newToVal []byte
+	switch len(keys) {
+	case 0:
+	// No lookup
+	case 1:
+		val, err := getKeyInTxn(context.Background(), txn, keys[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if newFrom != 0 {
+			newFromVal = val
+		}
+		if !deleteOnly && newTo != 0 {
+			newToVal = val
+		}
+	default:
+		found, err = txn.BatchGet(context.Background(), keys)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(newFromKey) > 0 {
+			if val, ok := found[string(newFromKey)]; ok {
+				newFromVal = val
+			}
+		}
+		if len(newToKey) > 0 {
+			if val, ok := found[string(newToKey)]; ok {
+				newToVal = val
+			}
+		}
+	}
+	var newToKeyAndValIsSame *bool
+	if len(newFromVal) > 0 {
+		var same bool
+		same, err = dataEqRec(ctx.GetExprCtx().GetEvalCtx().Location(), t.Meta(), currData, newFromVal)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if same {
+			// Always do Remove+Add, to always have the indexes in-sync,
+			// since the indexes might not been created yet, i.e. not backfilled yet.
+			err = t.getPartition(newFrom).RemoveRecord(ctx, txn, h, currData)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		if newTo == newFrom {
+			newToKeyAndValIsSame = &same
+		}
+	}
+	if deleteOnly || newTo == 0 {
+		return finishFunc(err, nil)
+	}
+	if len(newToVal) > 0 {
+		if newToKeyAndValIsSame == nil {
+			same, err := dataEqRec(ctx.GetExprCtx().GetEvalCtx().Location(), t.Meta(), currData, newToVal)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			newToKeyAndValIsSame = &same
+		}
+		if !*newToKeyAndValIsSame {
+			// Generate a new ID
+			newRecordHandle, err = AllocHandle(context.Background(), ctx, t)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	// Set/Add the recordID/_tidb_rowid to newData so it will be used also in the
+	// newTo partition, and all its indexes.
+	if len(newData) > len(t.Cols()) {
+		newData[len(t.Cols())] = types.NewIntDatum(newRecordHandle.IntValue())
+	} else {
+		newData = append(newData, types.NewIntDatum(newRecordHandle.IntValue()))
+	}
+	addRecordOpt := opt.GetAddRecordOptKeepRecordID()
+	_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, addRecordOpt)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if _, ok := t.reorganizePartitions[to]; ok {
-		// Even if to == from, in the reorganized partitions they may differ
-		// like in case of a split
-		newTo, err := t.locateReorgPartition(ectx.GetEvalCtx(), newData)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		newFrom, err := t.locateReorgPartition(ectx.GetEvalCtx(), currData)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if newTo == newFrom {
-			tbl = t.getPartition(newTo)
-			if t.Meta().Partition.DDLState == model.StateDeleteOnly {
-				err = tbl.RemoveRecord(ctx, txn, h, currData)
-			} else {
-				err = tbl.updateRecord(ctx, txn, h, currData, newData, touched, opt)
-			}
-			if err != nil {
-				return errors.Trace(err)
-			}
-			memBuffer.Release(sh)
-			return nil
-		}
-		tbl = t.getPartition(newFrom)
-		err = tbl.RemoveRecord(ctx, txn, h, currData)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
-			tbl = t.getPartition(newTo)
-			_, err = tbl.addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
+	var newHandle kv.Handle
+	if !h.Equal(newRecordHandle) {
+		newHandle = newRecordHandle
 	}
-	memBuffer.Release(sh)
-	return nil
+	return finishFunc(err, newHandle)
 }
 
 // FindPartitionByName finds partition in table meta by name.

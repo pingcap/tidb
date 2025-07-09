@@ -13,6 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	session "github.com/pingcap/tidb/pkg/ddl/session"
 	model "github.com/pingcap/tidb/pkg/meta/model"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -46,10 +47,10 @@ func (m *MockManager) ISGOMOCK() struct{} {
 }
 
 // GetJobByID mocks base method.
-func (m *MockManager) GetJobByID(arg0 context.Context, arg1 int64) (*model.Job, error) {
+func (m *MockManager) GetJobByID(arg0 context.Context, arg1 int64) (*model.JobW, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetJobByID", arg0, arg1)
-	ret0, _ := ret[0].(*model.Job)
+	ret0, _ := ret[0].(*model.JobW)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -58,6 +59,21 @@ func (m *MockManager) GetJobByID(arg0 context.Context, arg1 int64) (*model.Job, 
 func (mr *MockManagerMockRecorder) GetJobByID(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJobByID", reflect.TypeOf((*MockManager)(nil).GetJobByID), arg0, arg1)
+}
+
+// GetJobBytesByIDWithSe mocks base method.
+func (m *MockManager) GetJobBytesByIDWithSe(arg0 context.Context, arg1 *session.Session, arg2 int64) ([]byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetJobBytesByIDWithSe", arg0, arg1, arg2)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetJobBytesByIDWithSe indicates an expected call of GetJobBytesByIDWithSe.
+func (mr *MockManagerMockRecorder) GetJobBytesByIDWithSe(arg0, arg1, arg2 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJobBytesByIDWithSe", reflect.TypeOf((*MockManager)(nil).GetJobBytesByIDWithSe), arg0, arg1, arg2)
 }
 
 // GetMDLVer mocks base method.
