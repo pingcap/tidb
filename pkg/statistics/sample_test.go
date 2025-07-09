@@ -245,7 +245,7 @@ func TestBuildSampleFullNDV(t *testing.T) {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	// Build histogram buckets with 0 buckets, and default 100 TopN.
 	_, topN, err := BuildHistAndTopN(ctx, 0, 100, 1, collector, tp, true, nil, false)
-	require.Nilf(t, err, "%+v", err)
+	require.NoError(t, err)
 	topNStr, err := topN.DecodedString(ctx, []byte{tp.GetType()})
 	require.NoError(t, err)
 	require.Equal(t, "TopN{length: 3, [(2, 80), (4, 60), (7, 48)]}", topNStr)
