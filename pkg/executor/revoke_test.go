@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -207,5 +208,37 @@ func TestRevokeColumnPriv(t *testing.T) {
 	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1' AND Column_name='c1'").
 		Check(testkit.Rows())
 	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1'`).
+		Check(testkit.Rows())
+
+	// Grant a column privilege WITH GRANT OPTION applies to all privileges on this table and not to the columns mentioned only.
+	tk.MustExec("GRANT UPDATE(c1) ON test.t1 TO u1 WITH GRANT OPTION")
+	tk.MustExec("REVOKE UPDATE ON test.t1 FROM u1")
+	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1' AND Column_name='c1'").
+		Check(testkit.Rows())
+	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1'`).
+		Check(testkit.RowsWithSep("|", "Grant|"))
+
+	// Table-level and column-level privilege can exist together
+	tk.MustExec("DROP USER u1")
+	tk.MustExec("CREATE USER u1")
+	tk.MustExec("GRANT select,update,insert,select (c1), update (c1),insert(c1), references(c1) on t1 to u1;")
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	tk.MustQuery("show grants for u1").Check(testkit.Rows("GRANT USAGE ON *.* TO 'u1'@'%'",
+		"GRANT SELECT,INSERT,UPDATE ON `test`.`t1` TO 'u1'@'%'",
+		"GRANT SELECT(c1), INSERT(c1), UPDATE(c1), REFERENCES(c1) ON `test`.`t1` TO 'u1'@'%'"))
+	tk.MustQuery("select table_priv,column_priv from mysql.tables_priv where user='u1'").
+		Check(testkit.RowsWithSep(" | ", "Select,Insert,Update | Select,Insert,Update,References"))
+
+	// Note that column-level UPDATE will be revoked
+	tk.MustExec("REVOKE select (c1), update on t1 from u1")
+	tk.MustQuery("select table_priv,column_priv from mysql.tables_priv where user='u1'").
+		Check(testkit.RowsWithSep(" | ", "Select,Insert | Insert,References"))
+	tk.MustExec("REVOKE select,update,insert,insert (c1) on t1 from u1")
+	tk.MustQuery("select table_priv,column_priv from mysql.tables_priv where user='u1'").
+		Check(testkit.RowsWithSep(" | ", " | References"))
+
+	// Note that column-level REFERENCES will be revoked
+	tk.MustExec("REVOKE ALL on t1 from u1")
+	tk.MustQuery("select table_priv,column_priv from mysql.tables_priv where user='u1'").
 		Check(testkit.Rows())
 }
