@@ -668,13 +668,8 @@ insert into tik values (1, 1, 1);
 set @@session.tidb_regard_null_as_point=true;
 explain select * from tuk where a<=>null and b=1;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_6	0.10	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	0.10	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
-=======
 IndexReader	1.25	root		index:IndexRangeScan
 └─IndexRangeScan	1.25	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tuk where a<=>null and b=1;
 a	b	c
 NULL	1	NULL
@@ -684,15 +679,9 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=false;
 explain select * from tuk where a<=>null and b=1;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_7	0.01	root		index:Selection_6
-└─Selection_6	0.01	cop[tikv]		eq(planner__core__casetest__integration.tuk.b, 1)
-  └─IndexRangeScan_5	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
-=======
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.b, 1)
   └─IndexRangeScan	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tuk where a<=>null and b=1;
 a	b	c
 NULL	1	NULL
@@ -702,13 +691,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=true;
 explain select * from tik where a<=>null and b=1;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_6	0.10	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	0.10	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
-=======
 IndexReader	1.25	root		index:IndexRangeScan
 └─IndexRangeScan	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tik where a<=>null and b=1;
 a	b	c
 NULL	1	NULL
@@ -718,15 +702,9 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=false;
 explain select * from tik where a<=>null and b=1;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_7	0.01	root		index:Selection_6
-└─Selection_6	0.01	cop[tikv]		eq(planner__core__casetest__integration.tik.b, 1)
-  └─IndexRangeScan_5	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
-=======
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tik.b, 1)
   └─IndexRangeScan	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tik where a<=>null and b=1;
 a	b	c
 NULL	1	NULL
@@ -747,15 +725,9 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=false;
 explain select * from tuk where a<=>null and b>0 and b<2;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_7	0.25	root		index:Selection_6
-└─Selection_6	0.25	cop[tikv]		eq(planner__core__casetest__integration.tuk.b, 1)
-  └─IndexRangeScan_5	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
-=======
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.b, 1)
   └─IndexRangeScan	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tuk where a<=>null and b>0 and b<2;
 a	b	c
 NULL	1	NULL
@@ -765,13 +737,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=true;
 explain select * from tik where a<=>null and b>0 and b<2;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_6	0.10	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	0.10	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
-=======
 IndexReader	1.25	root		index:IndexRangeScan
 └─IndexRangeScan	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tik where a<=>null and b>0 and b<2;
 a	b	c
 NULL	1	NULL
@@ -781,15 +748,9 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=false;
 explain select * from tik where a<=>null and b>0 and b<2;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_7	0.25	root		index:Selection_6
-└─Selection_6	0.25	cop[tikv]		eq(planner__core__casetest__integration.tik.b, 1)
-  └─IndexRangeScan_5	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
-=======
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tik.b, 1)
   └─IndexRangeScan	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tik where a<=>null and b>0 and b<2;
 a	b	c
 NULL	1	NULL
@@ -799,13 +760,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=true;
 explain select * from tuk where a<=>null and b>=1 and b<2;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_6	0.10	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	0.10	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
-=======
 IndexReader	1.25	root		index:IndexRangeScan
 └─IndexRangeScan	1.25	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tuk where a<=>null and b>=1 and b<2;
 a	b	c
 NULL	1	NULL
@@ -815,15 +771,9 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=false;
 explain select * from tuk where a<=>null and b>=1 and b<2;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_7	0.25	root		index:Selection_6
-└─Selection_6	0.25	cop[tikv]		eq(planner__core__casetest__integration.tuk.b, 1)
-  └─IndexRangeScan_5	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
-=======
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.b, 1)
   └─IndexRangeScan	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tuk where a<=>null and b>=1 and b<2;
 a	b	c
 NULL	1	NULL
@@ -844,15 +794,9 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=false;
 explain select * from tik where a<=>null and b>=1 and b<2;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_7	0.25	root		index:Selection_6
-└─Selection_6	0.25	cop[tikv]		eq(planner__core__casetest__integration.tik.b, 1)
-  └─IndexRangeScan_5	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
-=======
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tik.b, 1)
   └─IndexRangeScan	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tik where a<=>null and b>=1 and b<2;
 a	b	c
 NULL	1	NULL
@@ -871,15 +815,9 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=false;
 explain select * from tuk where a<=>null and b=1 and c=1;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_7	0.00	root		index:Selection_6
-└─Selection_6	0.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.b, 1), eq(planner__core__casetest__integration.tuk.c, 1)
-  └─IndexRangeScan_5	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
-=======
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.b, 1), eq(planner__core__casetest__integration.tuk.c, 1)
   └─IndexRangeScan	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tuk where a<=>null and b=1 and c=1;
 a	b	c
 NULL	1	1
@@ -887,13 +825,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=true;
 explain select * from tik where a<=>null and b=1 and c=1;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_6	0.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	0.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1 1,NULL 1 1], keep order:false, stats:pseudo
-=======
 IndexReader	1.25	root		index:IndexRangeScan
 └─IndexRangeScan	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1 1,NULL 1 1], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tik where a<=>null and b=1 and c=1;
 a	b	c
 NULL	1	1
@@ -901,15 +834,9 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=false;
 explain select * from tik where a<=>null and b=1 and c=1;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_7	0.00	root		index:Selection_6
-└─Selection_6	0.00	cop[tikv]		eq(planner__core__casetest__integration.tik.b, 1), eq(planner__core__casetest__integration.tik.c, 1)
-  └─IndexRangeScan_5	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
-=======
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tik.b, 1), eq(planner__core__casetest__integration.tik.c, 1)
   └─IndexRangeScan	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tik where a<=>null and b=1 and c=1;
 a	b	c
 NULL	1	1
@@ -926,15 +853,9 @@ a	b	c
 set @@session.tidb_regard_null_as_point=false;
 explain select * from tuk where a=1 and b<=>null and c=1;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_7	0.00	root		index:Selection_6
-└─Selection_6	0.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.c, 1)
-  └─IndexRangeScan_5	0.10	cop[tikv]	table:tuk, index:a(a, b, c)	range:[1 NULL,1 NULL], keep order:false, stats:pseudo
-=======
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.c, 1)
   └─IndexRangeScan	1.25	cop[tikv]	table:tuk, index:a(a, b, c)	range:[1 NULL,1 NULL], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tuk where a=1 and b<=>null and c=1;
 a	b	c
 1	NULL	1
@@ -942,13 +863,8 @@ a	b	c
 set @@session.tidb_regard_null_as_point=true;
 explain select * from tik where a=1 and b<=>null and c=1;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_6	0.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	0.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[1 NULL 1,1 NULL 1], keep order:false, stats:pseudo
-=======
 IndexReader	1.25	root		index:IndexRangeScan
 └─IndexRangeScan	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[1 NULL 1,1 NULL 1], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tik where a=1 and b<=>null and c=1;
 a	b	c
 1	NULL	1
@@ -956,15 +872,9 @@ a	b	c
 set @@session.tidb_regard_null_as_point=false;
 explain select * from tik where a=1 and b<=>null and c=1;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_7	0.00	root		index:Selection_6
-└─Selection_6	0.00	cop[tikv]		eq(planner__core__casetest__integration.tik.c, 1)
-  └─IndexRangeScan_5	0.10	cop[tikv]	table:tik, index:a(a, b, c)	range:[1 NULL,1 NULL], keep order:false, stats:pseudo
-=======
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tik.c, 1)
   └─IndexRangeScan	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[1 NULL,1 NULL], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tik where a=1 and b<=>null and c=1;
 a	b	c
 1	NULL	1
@@ -981,15 +891,9 @@ NULL	NULL	1
 set @@session.tidb_regard_null_as_point=false;
 explain select * from tuk where a<=>null and b<=>null and c=1;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_7	0.00	root		index:Selection_6
-└─Selection_6	0.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.c, 1), nulleq(planner__core__casetest__integration.tuk.b, NULL)
-  └─IndexRangeScan_5	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
-=======
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tuk.c, 1), nulleq(planner__core__casetest__integration.tuk.b, NULL)
   └─IndexRangeScan	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tuk where a<=>null and b<=>null and c=1;
 a	b	c
 NULL	NULL	1
@@ -997,13 +901,8 @@ NULL	NULL	1
 set @@session.tidb_regard_null_as_point=true;
 explain select * from tik where a<=>null and b<=>null and c=1;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_6	0.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	0.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL NULL 1,NULL NULL 1], keep order:false, stats:pseudo
-=======
 IndexReader	1.25	root		index:IndexRangeScan
 └─IndexRangeScan	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL NULL 1,NULL NULL 1], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tik where a<=>null and b<=>null and c=1;
 a	b	c
 NULL	NULL	1
@@ -1011,15 +910,9 @@ NULL	NULL	1
 set @@session.tidb_regard_null_as_point=false;
 explain select * from tik where a<=>null and b<=>null and c=1;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_7	0.00	root		index:Selection_6
-└─Selection_6	0.00	cop[tikv]		eq(planner__core__casetest__integration.tik.c, 1), nulleq(planner__core__casetest__integration.tik.b, NULL)
-  └─IndexRangeScan_5	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
-=======
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.tik.c, 1), nulleq(planner__core__casetest__integration.tik.b, NULL)
   └─IndexRangeScan	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tik where a<=>null and b<=>null and c=1;
 a	b	c
 NULL	NULL	1
@@ -1036,15 +929,9 @@ NULL	NULL	NULL
 set @@session.tidb_regard_null_as_point=false;
 explain select * from tuk where a<=>null and b<=>null and c<=>null;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_7	0.00	root		index:Selection_6
-└─Selection_6	0.00	cop[tikv]		nulleq(planner__core__casetest__integration.tuk.b, NULL), nulleq(planner__core__casetest__integration.tuk.c, NULL)
-  └─IndexRangeScan_5	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
-=======
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		nulleq(planner__core__casetest__integration.tuk.b, NULL), nulleq(planner__core__casetest__integration.tuk.c, NULL)
   └─IndexRangeScan	10.00	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tuk where a<=>null and b<=>null and c<=>null;
 a	b	c
 NULL	NULL	NULL
@@ -1052,13 +939,8 @@ NULL	NULL	NULL
 set @@session.tidb_regard_null_as_point=true;
 explain select * from tik where a<=>null and b<=>null and c<=>null;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_6	0.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	0.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL NULL NULL,NULL NULL NULL], keep order:false, stats:pseudo
-=======
 IndexReader	1.25	root		index:IndexRangeScan
 └─IndexRangeScan	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL NULL NULL,NULL NULL NULL], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tik where a<=>null and b<=>null and c<=>null;
 a	b	c
 NULL	NULL	NULL
@@ -1066,15 +948,9 @@ NULL	NULL	NULL
 set @@session.tidb_regard_null_as_point=false;
 explain select * from tik where a<=>null and b<=>null and c<=>null;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-IndexReader_7	0.00	root		index:Selection_6
-└─Selection_6	0.00	cop[tikv]		nulleq(planner__core__casetest__integration.tik.b, NULL), nulleq(planner__core__casetest__integration.tik.c, NULL)
-  └─IndexRangeScan_5	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
-=======
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		nulleq(planner__core__casetest__integration.tik.b, NULL), nulleq(planner__core__casetest__integration.tik.c, NULL)
   └─IndexRangeScan	10.00	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL,NULL], keep order:false, stats:pseudo
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
 select * from tik where a<=>null and b<=>null and c<=>null;
 a	b	c
 NULL	NULL	NULL
