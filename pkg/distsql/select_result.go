@@ -589,7 +589,9 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			consumption := &rmpb.Consumption{
 				ReadCrossAzTrafficBytes: interZoneBytes,
 			}
-			r.ctx.RUConsumptionReporter.ReportConsumption(r.ctx.ResourceGroupName, consumption)
+			if r.ctx.RUConsumptionReporter != nil {
+				r.ctx.RUConsumptionReporter.ReportConsumption(r.ctx.ResourceGroupName, consumption)
+			}
 		}
 	} else {
 		// For cop task cases, we still need this protection.
