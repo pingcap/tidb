@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -31,7 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -154,49 +158,164 @@ type RuntimeInfo struct {
 	Status     proto.TaskState
 	ImportRows int64
 	ErrorMsg   string
+
+	Step       proto.Step
+	StartTime  types.Time
+	UpdateTime types.Time
+	Processed  int64
+	Total      int64
+	Duration   int64
 }
 
-// GetRuntimeInfoForJob get the corresponding DXF task runtime info for the job.
-func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error) {
+// Percent returns the progress percentage of the current step.
+func (ri *RuntimeInfo) Percent() string {
+	// Currently, we can't track the progress of post process
+	if ri.Step == proto.ImportStepPostProcess || ri.Step == proto.StepInit {
+		return "N/A"
+	}
+
+	percentage := 0.0
+	if ri.Total > 0 {
+		percentage = float64(ri.Processed) / float64(ri.Total)
+		percentage = min(percentage, 1.0)
+	}
+	return strconv.FormatInt(int64(percentage*100), 10)
+}
+
+// SpeedAndETA returns the speed and estimated time of arrival (ETA) for the current step.
+func (ri *RuntimeInfo) SpeedAndETA() (speed, eta string) {
+	s := int64(0)
+	if ri.Duration > 0 && ri.Processed > 0 {
+		s = ri.Processed / ri.Duration
+	}
+
+	remainTime := "N/A"
+	if s > 0 {
+		remainSecond := max((ri.Total-ri.Processed)/s, 0)
+		remain := time.Duration(remainSecond) * time.Second
+		remainTime = remain.String()
+	}
+
+	return fmt.Sprintf("%s/s", units.HumanSize(float64(s))), remainTime
+}
+
+// TotalSize returns the total size of the current step in human-readable format.
+func (ri *RuntimeInfo) TotalSize() string {
+	return units.HumanSize(float64(ri.Total))
+}
+
+// ProcessedSize returns the processed size of the current step in human-readable format.
+func (ri *RuntimeInfo) ProcessedSize() string {
+	return units.HumanSize(float64(ri.Processed))
+}
+
+// convertToMySQLTime converts go time to MySQL time with the specified location.
+// It's partially copied from builtin_time.go
+func convertToMySQLTime(t time.Time, loc *time.Location) (types.Time, error) {
+	tr, err := types.TruncateFrac(t, 0)
+	if err != nil {
+		return types.ZeroTime, err
+	}
+
+	result := types.NewTime(types.FromGoTime(tr), mysql.TypeDatetime, 0)
+	err = result.ConvertTimeZone(t.Location(), loc)
+	return result, err
+}
+
+func GetRuntimeInfoForJob(
+	ctx context.Context, sctx sessionctx.Context,
+	jobID int64,
+) (*RuntimeInfo, error) {
+	taskManager, err := storage.GetTaskManager()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-	dxfTaskMgr, err := handle.GetTaskMgrToAccessDXFService()
+	if err != nil {
+		return nil, err
+	}
+	taskKey := TaskKey(jobID)
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	if err != nil {
 		return nil, err
 	}
 
-	taskKey := TaskKey(jobID)
-	task, err := dxfTaskMgr.GetTaskByKeyWithHistory(ctx, taskKey)
-	if err != nil {
-		return nil, err
-	}
-	taskMeta := TaskMeta{}
+	var (
+		taskMeta TaskMeta
+		summary  importer.Summary
+
+		processedBytes  int64
+		processedRowCnt int64
+		totalBytes      int64
+		importedRows    int64
+		latestTime      time.Time
+		latestTypeTime  types.Time
+	)
+
 	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	step := proto.ImportStepImport
-	if taskMeta.Plan.CloudStorageURI != "" {
-		step = proto.ImportStepWriteAndIngest
+	if task.Error != nil {
+		return &RuntimeInfo{
+			Status:   task.State,
+			ErrorMsg: task.Error.Error(),
+		}, nil
 	}
 
-	summaries, err := dxfTaskMgr.GetAllSubtaskSummaryByStep(ctx, task.ID, step)
+	// Not started yet
+	if len(taskMeta.TaskResult) == 0 {
+		return nil, nil
+	}
+
+	// Calculate the progress of the task if no error.
+	if err = json.Unmarshal(taskMeta.TaskResult, &summary); err != nil {
+		return nil, errors.Trace(err)
+	}
+	summaries, err := taskManager.GetAllSubtaskSummaryByStep(ctx, task.ID, task.Step)
 	if err != nil {
 		return nil, err
 	}
 
-	var importedRows int64
-	for _, summary := range summaries {
-		importedRows += summary.RowCnt.Load()
+	for _, s := range summaries {
+		processedBytes += s.Bytes.Load()
+		processedRowCnt += s.RowCnt.Load()
+		if s.UpdateTime.After(latestTime) {
+			latestTime = s.UpdateTime
+		}
 	}
 
-	var errMsg string
-	if task.Error != nil {
-		errMsg = task.Error.Error()
+	importedRows = processedRowCnt
+	if task.Step == proto.ImportStepPostProcess {
+		importedRows = summary.RowCnt
+	} else if task.Step != proto.ImportStepWriteAndIngest && task.Step != proto.ImportStepImport {
+		importedRows = 0
 	}
+
+	switch task.Step {
+	case proto.ImportStepImport:
+		totalBytes = summary.IngestSummary.Bytes
+	case proto.ImportStepEncodeAndSort:
+		totalBytes = summary.EncodeSummary.Bytes
+	case proto.ImportStepMergeSort:
+		totalBytes = summary.MergeSummary.Bytes
+	case proto.ImportStepWriteAndIngest:
+		totalBytes = summary.IngestSummary.Bytes
+	case proto.ImportStepPostProcess:
+		// TODO(joechenrh): add progress for post process
+	}
+
+	if !latestTime.IsZero() {
+		latestTypeTime, err = convertToMySQLTime(latestTime, sctx.GetSessionVars().Location())
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &RuntimeInfo{
 		Status:     task.State,
+		Step:       task.Step,
 		ImportRows: importedRows,
-		ErrorMsg:   errMsg,
+		UpdateTime: latestTypeTime,
+		Total:      totalBytes,
+		Processed:  processedBytes,
 	}, nil
 }
 

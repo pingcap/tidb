@@ -2431,7 +2431,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 }
 
 // FillOneImportJobInfo is exported for testing.
-func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, importedRowCount int64) {
+func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *importinto.RuntimeInfo) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
 	result.AppendInt64(0, info.ID)
 	result.AppendString(1, info.Parameters.FileLocation)
@@ -2440,13 +2440,18 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, importedR
 	result.AppendString(4, info.Step)
 	result.AppendString(5, info.Status)
 	result.AppendString(6, units.BytesSize(float64(info.SourceFileSize)))
+
 	if info.Summary != nil {
+		// successful import job
 		result.AppendUint64(7, uint64(info.Summary.IngestSummary.RowCnt))
-	} else if importedRowCount >= 0 {
-		result.AppendUint64(7, uint64(importedRowCount))
+	} else if runInfo != nil {
+		// running import job
+		result.AppendUint64(7, uint64(runInfo.ImportRows))
 	} else {
+		// failed import job
 		result.AppendNull(7)
 	}
+
 	result.AppendString(8, info.ErrorMessage)
 	result.AppendTime(9, info.CreateTime)
 	if info.StartTime.IsZero() {
@@ -2462,21 +2467,28 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, importedR
 	result.AppendString(12, info.CreatedBy)
 }
 
-func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *chunk.Chunk) error {
-	var importedRowCount int64 = -1
+func handleImportJobInfo(
+	ctx context.Context, sctx sessionctx.Context,
+	info *importer.JobInfo, result *chunk.Chunk,
+) error {
+	var (
+		runInfo *importinto.RuntimeInfo
+		err     error
+	)
+
 	if info.Summary == nil && info.Status == importer.JobStatusRunning {
 		// for running jobs, need get from distributed framework.
-		runInfo, err := importinto.GetRuntimeInfoForJob(ctx, info.ID)
+		runInfo, err = importinto.GetRuntimeInfoForJob(ctx, sctx, info.ID)
 		if err != nil {
 			return err
 		}
-		importedRowCount = runInfo.ImportRows
+		runInfo.StartTime = info.StartTime
 		if runInfo.Status == proto.TaskStateAwaitingResolution {
 			info.Status = string(runInfo.Status)
 			info.ErrorMessage = runInfo.ErrorMsg
 		}
 	}
-	FillOneImportJobInfo(result, info, importedRowCount)
+	FillOneImportJobInfo(result, info, runInfo)
 	return nil
 }
 
@@ -2580,9 +2592,11 @@ func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result 
 // "Phase", "Status", "Source_File_Size", "Imported_Rows",
 // "Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
 func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
+	sctx := e.Ctx()
+
 	var hasSuperPriv bool
-	if pm := privilege.GetPrivilegeManager(e.Ctx()); pm != nil {
-		hasSuperPriv = pm.RequestVerification(e.Ctx().GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
+	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+		hasSuperPriv = pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
 	}
 	// we use sessionCtx from GetTaskManager, user ctx might not have system table privileges.
 	taskManager, err := fstorage.GetTaskManager()
@@ -2595,24 +2609,24 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 			exec := se.GetSQLExecutor()
 			var err2 error
-			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
+			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, sctx.GetSessionVars().User.String(), hasSuperPriv)
 			return err2
 		}); err != nil {
 			return err
 		}
-		return handleImportJobInfo(ctx, info, e.result)
+		return handleImportJobInfo(ctx, sctx, info, e.result)
 	}
 	var infos []*importer.JobInfo
 	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.GetSQLExecutor()
 		var err2 error
-		infos, err2 = importer.GetAllViewableJobs(ctx, exec, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
+		infos, err2 = importer.GetAllViewableJobs(ctx, exec, sctx.GetSessionVars().User.String(), hasSuperPriv)
 		return err2
 	}); err != nil {
 		return err
 	}
 	for _, info := range infos {
-		if err2 := handleImportJobInfo(ctx, info, e.result); err2 != nil {
+		if err2 := handleImportJobInfo(ctx, sctx, info, e.result); err2 != nil {
 			return err2
 		}
 	}
