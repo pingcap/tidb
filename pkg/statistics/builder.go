@@ -21,12 +21,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"go.uber.org/zap"
 )
 
 // SortedBuilder is used to build histograms for PK and index.
@@ -149,6 +147,20 @@ func buildHist(
 	samples []*SampleItem,
 	count, ndv, numBuckets int64,
 	memTracker *memory.Tracker,
+) (corrXYSum float64, err error) {
+	return buildHistWithTopN(sc, hg, samples, count, ndv, numBuckets, memTracker, nil, nil)
+}
+
+// buildHistWithTopN builds histogram from samples and other information, optionally skipping TopN values.
+// It stores the built histogram in hg and returns corrXYSum used for calculating the correlation.
+func buildHistWithTopN(
+	sc *stmtctx.StatementContext,
+	hg *Histogram,
+	samples []*SampleItem,
+	count, ndv, numBuckets int64,
+	memTracker *memory.Tracker,
+	topN *TopN,
+	getComparedBytes func(datum types.Datum) ([]byte, error),
 ) (corrXYSum float64, err error) {
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
@@ -419,65 +431,6 @@ func BuildHistAndTopN(
 	topn := &TopN{TopN: topNList}
 	lenTopN := int64(len(topn.TopN))
 
-	// Step2: exclude TopN from samples if the NDV is larger than the number of topN items.
-	lenSamples := int64(len(samples))
-	if lenTopN > 0 && lenTopN < hg.NDV && lenSamples > 0 {
-		for i := int64(0); i < lenSamples; i++ {
-			sampleBytes, err := getComparedBytes(samples[i].Value)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			// Safety:
-			// When a sample value matches an entry in the topN list, it is removed from the samples array,
-			// so it can never match the previous sample. Therefore, this equality check will never be true
-			// in that case. For values not found in topN, we don't need keep checking the same value.
-			if i > 0 && bytes.Equal(sampleBytes, samples[i-1].Value.GetBytes()) {
-				// If the sample is the same as the previous one, we can skip it.
-				continue
-			}
-			// For debugging invalid sample data.
-			var (
-				foundTwice      bool
-				firstTimeSample types.Datum
-			)
-			for j := range topNList {
-				if bytes.Equal(sampleBytes, topNList[j].Encoded) {
-					// This should never happen, but we met this panic before, so we add this check here.
-					// See: https://github.com/pingcap/tidb/issues/35948
-					if foundTwice {
-						datumString, err := firstTimeSample.ToString()
-						if err != nil {
-							statslogutil.StatsLogger().Error("try to convert datum to string failed", zap.Error(err))
-						}
-
-						statslogutil.StatsLogger().Warn(
-							"invalid sample data",
-							zap.Bool("isColumn", isColumn),
-							zap.Int64("columnID", id),
-							zap.String("datum", datumString),
-							zap.Binary("sampleBytes", sampleBytes),
-							zap.Binary("topNBytes", topNList[j].Encoded),
-						)
-						// NOTE: if we don't return here, we may meet panic in the following code.
-						// The i may decrease to a negative value.
-						// We haven't fix the issue here, because we don't know how to
-						// remove the invalid sample data from the samples.
-						break
-					}
-					// First time to find the same value in topN: need to record the sample data for debugging.
-					firstTimeSample = samples[i].Value
-					// Found the same value in topn: need to skip over this value in samples.
-					copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
-					samples = samples[:uint64(len(samples))-topNList[j].Count]
-					lenSamples = int64(len(samples))
-					i--
-					foundTwice = true
-					continue
-				}
-			}
-		}
-	}
-
 	var topNTotalCount uint64
 	for i := range topn.TopN {
 		topn.TopN[i].Count = uint64(float64(topn.TopN[i].Count) * sampleFactor)
@@ -489,8 +442,8 @@ func BuildHistAndTopN(
 		return hg, topn, nil
 	}
 
-	// Step3: build histogram with the rest samples
-	if lenSamples > 0 {
+	// Step2: build histogram with samples, skipping TopN values
+	if len(samples) > 0 {
 		remainingNDV := ndv - lenTopN
 		// if we pruned the topN, it means that there are no remaining skewed values in the samples
 		if lenTopN < int64(numTopN) && numBuckets == 256 {
@@ -498,7 +451,7 @@ func BuildHistAndTopN(
 			// but no less than 1 and no more than the original number of buckets
 			numBuckets = int(min(max(1, remainingNDV/2), int64(numBuckets)))
 		}
-		_, err = buildHist(sc, hg, samples, count-int64(topNTotalCount), remainingNDV, int64(numBuckets), memTracker)
+		_, err = buildHistWithTopN(sc, hg, samples, count-int64(topNTotalCount), remainingNDV, int64(numBuckets), memTracker, topn, getComparedBytes)
 		if err != nil {
 			return nil, nil, err
 		}
