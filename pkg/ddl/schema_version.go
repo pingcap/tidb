@@ -221,7 +221,7 @@ func SetSchemaDiffForReorganizePartition(diff *model.SchemaDiff, job *model.Job,
 func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job, jobCtx *jobContext) {
 	diff.TableID = job.TableID
 	diff.OldTableID = job.TableID
-	if job.SchemaState == model.StateDeleteReorganization {
+	if job.SchemaState == model.StateNone {
 		args := jobCtx.jobArgs.(*model.TablePartitionArgs)
 		partInfo := args.PartInfo
 		// Final part, new table id is assigned

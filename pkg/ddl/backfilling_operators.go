@@ -145,6 +145,9 @@ func (*EmptyRowCntListener) Written(_ int) {}
 // SetTotal implements RowCountListener.
 func (*EmptyRowCntListener) SetTotal(_ int) {}
 
+// MockDMLExecutionBeforeScan is only used for test.
+var MockDMLExecutionBeforeScan func()
+
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
 func NewAddIndexIngestPipeline(
 	ctx *OperatorCtx,
@@ -179,6 +182,13 @@ func NewAddIndexIngestPipeline(
 		// Currently, only the batch size of local ingest mode can be adjusted
 		rm = nil
 	}
+
+	failpoint.Inject("mockDMLExecutionBeforeScan", func(_ failpoint.Value) {
+		if MockDMLExecutionBeforeScan != nil {
+			MockDMLExecutionBeforeScan()
+		}
+	})
+	failpoint.InjectCall("mockDMLExecutionBeforeScanV2")
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, cpMgr)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, cpMgr,
@@ -410,6 +420,7 @@ func (src *TableScanTaskSource) generateTasks() error {
 			src.store,
 			startKey,
 			src.endKey,
+			nil,
 			backfillTaskChanSize,
 		)
 		if err != nil {
@@ -650,6 +661,7 @@ func NewWriteExternalStoreOperator(
 	}
 
 	totalCount := new(atomic.Int64)
+	blockSize := external.GetAdjustedBlockSize(memoryQuota)
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
@@ -661,6 +673,7 @@ func NewWriteExternalStoreOperator(
 					SetOnCloseFunc(onClose).
 					SetKeyDuplicationEncoding(hasUnique).
 					SetMemorySizeLimit(memoryQuota).
+					SetBlockSize(blockSize).
 					SetGroupOffset(i)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
@@ -745,10 +758,6 @@ func NewIndexIngestOperator(
 				writers = append(writers, writer)
 			}
 
-			indexIDs := make([]int64, len(indexes))
-			for i := 0; i < len(indexes); i++ {
-				indexIDs[i] = indexes[i].Meta().ID
-			}
 			return &indexIngestLocalWorker{
 				indexIngestBaseWorker: indexIngestBaseWorker{
 					ctx:     ctx,
@@ -762,7 +771,6 @@ func NewIndexIngestOperator(
 					srcChunkPool: srcChunkPool,
 					reorgMeta:    reorgMeta,
 				},
-				indexIDs:       indexIDs,
 				backendCtx:     backendCtx,
 				rowCntListener: rowCntListener,
 				cpMgr:          cpMgr,
@@ -793,7 +801,6 @@ func (w *indexIngestExternalWorker) HandleTask(ck IndexRecordChunk, send func(In
 
 type indexIngestLocalWorker struct {
 	indexIngestBaseWorker
-	indexIDs       []int64
 	backendCtx     ingest.BackendCtx
 	rowCntListener RowCountListener
 	cpMgr          *ingest.CheckpointManager

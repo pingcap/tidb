@@ -165,7 +165,7 @@
       {
         "SQL": "select /*+ hash_join_build(t1) */ * from t1, t2 where t1.k1<=>t2.k1; -- Doesn't support null safe eq predicate",
         "Plan": [
-          "HashJoin_8 1.00 root  CARTESIAN inner join, other cond:nulleq(test.t1.k1, test.t2.k1)",
+          "HashJoin_8 1.00 root  inner join, equal:[nulleq(test.t1.k1, test.t2.k1)]",
           "├─TableReader_13(Build) 1.00 root  MppVersion: 2, data:ExchangeSender_12",
           "│ └─ExchangeSender_12 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─TableFullScan_11 1.00 mpp[tiflash] table:t1 keep order:false",

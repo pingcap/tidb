@@ -18,8 +18,10 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"maps"
 	"math"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -98,6 +100,14 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	if len(tasks) == 0 {
 		return nil
+	}
+	tableAndPartitionIDs := make([]int64, 0, len(tasks))
+	for _, task := range tasks {
+		tableID := getTableIDFromTask(task)
+		tableAndPartitionIDs = append(tableAndPartitionIDs, tableID.TableID)
+		if tableID.IsPartitionTable() {
+			tableAndPartitionIDs = append(tableAndPartitionIDs, tableID.PartitionID)
+		}
 	}
 
 	// Get the min number of goroutines for parallel execution.
@@ -186,7 +196,7 @@ TASKLOOP:
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
-	return statsHandle.Update(ctx, infoSchema)
+	return statsHandle.Update(ctx, infoSchema, tableAndPartitionIDs...)
 }
 
 func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, resultsCh chan *statistics.AnalyzeResults) error {
@@ -465,10 +475,12 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	wg.Wait()
 	close(errCh)
 	if len(errCh) > 0 {
-		errMsg := make([]string, 0)
-		for err1 := range errCh {
-			errMsg = append(errMsg, err1.Error())
+		errSet := make(map[string]struct{}, len(errCh))
+		for workerError := range errCh {
+			errSet[workerError.Error()] = struct{}{}
 		}
+		intest.Assert(len(errSet) > 0, "errSet should at least contain one error")
+		errMsg := slices.Collect(maps.Keys(errSet))
 		err = errors.New(strings.Join(errMsg, ","))
 	}
 	for tableID := range tableIDs {

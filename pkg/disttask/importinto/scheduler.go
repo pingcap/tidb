@@ -577,14 +577,9 @@ func updateResult(handle storage.TaskHandle, task *proto.Task, taskMeta *TaskMet
 		}
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
-	columnSizeMap := make(map[int64]int64)
 	for _, subtaskMeta := range subtaskMetas {
 		taskMeta.Result.LoadedRowCnt += subtaskMeta.Result.LoadedRowCnt
-		for key, val := range subtaskMeta.Result.ColSizeMap {
-			columnSizeMap[key] += val
-		}
 	}
-	taskMeta.Result.ColSizeMap = columnSizeMap
 
 	if globalSort {
 		taskMeta.Result.LoadedRowCnt, err = getLoadedRowCountOnGlobalSort(handle, task)
@@ -662,8 +657,7 @@ func (sch *ImportSchedulerExt) finishJob(ctx context.Context, logger *zap.Logger
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
 				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, &importer.JobImportResult{
-					Affected:   taskMeta.Result.LoadedRowCnt,
-					ColSizeMap: taskMeta.Result.ColSizeMap,
+					Affected: taskMeta.Result.LoadedRowCnt,
 				}); err != nil {
 					logger.Warn("flush table stats failed", zap.Error(err))
 				}

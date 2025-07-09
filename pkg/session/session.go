@@ -36,6 +36,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"gitee.com/Trisia/gotlcp/tlcp"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -227,6 +228,8 @@ type session struct {
 
 	// Used to wait for all async commit background jobs to finish.
 	commitWaitGroup sync.WaitGroup
+
+	writeResultset sessionctx.SessionExec
 }
 
 var parserPool = &sync.Pool{New: func() any { return parser.New() }}
@@ -369,6 +372,13 @@ func (s *session) SetTLSState(tlsState *tls.ConnectionState) {
 	}
 }
 
+func (s *session) SetTLCPState(tlcpState *tlcp.ConnectionState) {
+	// If user is not connected via TLS, then tlsState == nil.
+	if tlcpState != nil {
+		s.sessionVars.TLCPConnectionState = tlcpState
+	}
+}
+
 func (s *session) SetCompressionAlgorithm(ca int) {
 	s.sessionVars.CompressionAlgorithm = ca
 }
@@ -431,13 +441,7 @@ func (s *session) FieldList(tableName string) ([]*resolve.ResultField, error) {
 	pm := privilege.GetPrivilegeManager(s)
 	if pm != nil && s.sessionVars.User != nil {
 		if !pm.RequestVerification(s.sessionVars.ActiveRoles, dbName.O, tName.O, "", mysql.AllPrivMask) {
-			user := s.sessionVars.User
-			u := user.Username
-			h := user.Hostname
-			if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
-				u = user.AuthUsername
-				h = user.AuthHostname
-			}
+			u, h := auth.GetUserAndHostName(s.sessionVars.User)
 			return nil, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", u, h, tableName)
 		}
 	}
@@ -462,6 +466,7 @@ func (s *session) FieldList(tableName string) ([]*resolve.ResultField, error) {
 }
 
 // TxnInfo returns a pointer to a *copy* of the internal TxnInfo, thus is *read only*
+// Process field may not initialize if this is a session used internally.
 func (s *session) TxnInfo() *txninfo.TxnInfo {
 	s.txn.mu.RLock()
 	// Copy on read to get a snapshot, this API shouldn't be frequently called.
@@ -474,17 +479,18 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 
 	processInfo := s.ShowProcess()
 	if processInfo == nil {
-		return nil
+		return &txnInfo
 	}
-	txnInfo.ConnectionID = processInfo.ID
-	txnInfo.Username = processInfo.User
-	txnInfo.CurrentDB = processInfo.DB
-	txnInfo.RelatedTableIDs = make(map[int64]struct{})
+	txnInfo.ProcessInfo = &txninfo.ProcessInfo{
+		ConnectionID:    processInfo.ID,
+		Username:        processInfo.User,
+		CurrentDB:       processInfo.DB,
+		RelatedTableIDs: make(map[int64]struct{}),
+	}
 	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, _ any) bool {
-		txnInfo.RelatedTableIDs[key.(int64)] = struct{}{}
+		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
 		return true
 	})
-
 	return &txnInfo
 }
 
@@ -905,7 +911,7 @@ func (s *session) updateStatsDeltaToCollector() {
 	if s.statsCollector != nil && mapper != nil {
 		for _, item := range mapper {
 			if item.TableID > 0 {
-				s.statsCollector.Update(item.TableID, item.Delta, item.Count, &item.ColSize)
+				s.statsCollector.Update(item.TableID, item.Delta, item.Count)
 			}
 		}
 	}
@@ -1373,6 +1379,10 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 	defer tracing.StartRegion(ctx, "ParseSQL").End()
 
 	p := parserPool.Get().(*parser.Parser)
+	if s.sessionVars.GetCallProcedure() {
+		p.InProcedure()
+		defer p.OutProcedure()
+	}
 	defer parserPool.Put(p)
 
 	sqlMode := s.sessionVars.SQLMode
@@ -2019,6 +2029,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		if preparedCore, ok := execStmt.PrepStmt.(*plannercore.PlanCacheStmt); ok {
+			preparedCore.InUse = true
+			defer func() { preparedCore.InUse = false }()
+		}
 		if binParam, ok := execStmt.BinaryArgs.([]param.BinaryParam); ok {
 			args, err := expression.ExecBinaryParam(s.GetSessionVars().StmtCtx.TypeCtx(), binParam)
 			if err != nil {
@@ -2748,6 +2762,11 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 			return err
 		}
 		if lockStatusChanged {
+			s.extensions.OnConnectionEvent(extension.ConnConnected, &extension.ConnEventInfo{
+				ConnectionInfo: s.sessionVars.ConnectionInfo,
+				ActiveRoles:    s.sessionVars.ActiveRoles,
+				Info:           fmt.Sprintf("lock %s@%s for consecutive incorrect password", authUser.Username, authUser.Hostname),
+			})
 			// Notification auto unlock.
 			err = domain.GetDomain(s).NotifyUpdatePrivilege()
 			if err != nil {
@@ -2896,6 +2915,11 @@ func verifyAccountAutoLock(s *session, user, host string) (bool, error) {
 		// Generate unlock json string.
 		plJSON = privileges.BuildPasswordLockingJSON(pl.FailedLoginAttempts,
 			pl.PasswordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
+		s.GetExtensions().OnConnectionEvent(extension.ConnConnected, &extension.ConnEventInfo{
+			ConnectionInfo: s.sessionVars.ConnectionInfo,
+			ActiveRoles:    s.sessionVars.ActiveRoles,
+			Info:           fmt.Sprintf("unlock %s@%s automatically", user, host),
+		})
 	}
 	if plJSON != "" {
 		lockStatusChanged = true
@@ -3397,6 +3421,62 @@ func InitMDLVariable(store kv.Storage) error {
 	return err
 }
 
+func executeDutySeparation(s types.Session, sql string, args ...any) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, sql, args...)
+	defer cancel()
+	if err != nil {
+		logutil.BgLogger().Fatal("failed to execute grant admin role", zap.Error(err))
+	}
+	return err
+}
+
+// GrantDutySeparation creates the 4 admin roles and grants corresponding privilege.
+func GrantDutySeparation(s types.Session) error {
+	for _, sqls := range executor.DutyRoles {
+		for _, sql := range sqls {
+			if err := executeDutySeparation(s, sql); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// checkAndGrantDutySeparation checks duty separation, grant it if need.
+func checkAndGrantDutySeparation(store kv.Storage) error {
+	sess, err := CreateSession(store)
+	if err != nil {
+		logutil.BgLogger().Error("failed to create session", zap.Error(err))
+		return err
+	}
+
+	// if the TiDBEnableDutySeparationMode is On already, do not need to grant duty repeatedly.
+	if variable.EnableDutySeparationMode.Load() {
+		return nil
+	}
+
+	if err = GrantDutySeparation(sess); err != nil {
+		logutil.BgLogger().Error("failed to grant admin role", zap.Error(err))
+		return err
+	}
+
+	if err = sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVarOnly(
+		context.TODO(),
+		variable.TiDBEnableDutySeparationMode,
+		variable.BoolToOnOff(true),
+		true,
+	); err != nil {
+		logutil.BgLogger().Error("failed to set config", zap.String("item", variable.TiDBEnableDutySeparationMode), zap.Error(err))
+		return err
+	}
+
+	logutil.BgLogger().Info("set duty separation successfully", zap.Bool("duty-separation", variable.EnableDutySeparationMode.Load()))
+	return nil
+}
+
 // BootstrapSession bootstrap session and domain.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	return bootstrapSessionImpl(context.Background(), store, createSessions)
@@ -3452,8 +3532,10 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		return nil, err
 	}
 	ver := getStoreBootstrapVersionWithCache(store)
-	if ver < currentBootstrapVersion {
-		runInBootstrapSession(store, ver)
+	verEE := getStoreEEBootstrapVersion(store)
+	startMode := ddl.Normal
+	if ver < currentBootstrapVersion || verEE < currentEEBootstrapVersion {
+		startMode = runInBootstrapSession(store, ver, verEE)
 	} else {
 		err = InitMDLVariable(store)
 		if err != nil {
@@ -3529,6 +3611,13 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		}
 	}
 
+	// check TiDBEnableDutySeparationMode config and grant duty separation
+	if (startMode == ddl.Bootstrap || startMode == ddl.Upgrade) && cfg.Security.TidbEnableDutySeparationMode {
+		if err := checkAndGrantDutySeparation(store); err != nil {
+			return nil, err
+		}
+	}
+
 	// Rebuild sysvar cache in a loop
 	err = dom.LoadSysVarCacheLoop(ses[4])
 	if err != nil {
@@ -3591,14 +3680,12 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			failToLoadOrParseSQLFile = true
 		}
 	}
-	// A sub context for update table stats, and other contexts for concurrent stats loading.
-	cnt := 1 + concurrency
-	syncStatsCtxs, err := createSessions(store, cnt)
+	syncStatsCtxs, err := createSessions(store, concurrency)
 	if err != nil {
 		return nil, err
 	}
-	subCtxs := make([]sessionctx.Context, cnt)
-	for i := 0; i < cnt; i++ {
+	subCtxs := make([]sessionctx.Context, concurrency)
+	for i := 0; i < concurrency; i++ {
 		subCtxs[i] = sessionctx.Context(syncStatsCtxs[i])
 	}
 
@@ -3651,15 +3738,16 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		}
 	}
 
+	err = dom.InitDistTaskLoop()
+	if err != nil {
+		return nil, err
+	}
+
 	// This only happens in testing, since the failure of loading or parsing sql file
 	// would panic the bootstrapping.
 	if intest.InTest && failToLoadOrParseSQLFile {
 		dom.Close()
 		return nil, errors.New("Fail to load or parse sql file")
-	}
-	err = dom.InitDistTaskLoop()
-	if err != nil {
-		return nil, err
 	}
 	return dom, err
 }
@@ -3669,21 +3757,21 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return domap.Get(store)
 }
 
-func getStartMode(ver int64) ddl.StartMode {
-	if ver == notBootstrapped {
+func getStartMode(ver, verEE int64) ddl.StartMode {
+	if ver >= currentBootstrapVersion && verEE >= currentEEBootstrapVersion {
+		return ddl.Normal
+	} else if ver == notBootstrapped && verEE == notBootstrapped {
 		return ddl.Bootstrap
-	} else if ver < currentBootstrapVersion {
-		return ddl.Upgrade
 	}
-	return ddl.Normal
+	return ddl.Upgrade
 }
 
 // runInBootstrapSession create a special session for bootstrap to run.
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
-func runInBootstrapSession(store kv.Storage, ver int64) {
-	startMode := getStartMode(ver)
+func runInBootstrapSession(store kv.Storage, ver, verEE int64) ddl.StartMode {
+	startMode := getStartMode(ver, verEE)
 
 	if startMode == ddl.Upgrade {
 		// TODO at this time domain must not be created, else it will register server
@@ -3695,7 +3783,8 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 		}
 		defer releaseFn()
 		currVer := mustGetStoreBootstrapVersion(store)
-		if currVer >= currentBootstrapVersion {
+		currEEVersion := mustGetStoreEEBootstrapVersion(store)
+		if currVer >= currentBootstrapVersion && currEEVersion >= currentEEBootstrapVersion {
 			// It is already bootstrapped/upgraded by another TiDB instance, but
 			// we still need to go through the following domain Start/Close code
 			// right now as we have already initialized it when creating the session,
@@ -3738,6 +3827,8 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 	}
 	domap.Delete(store)
+
+	return startMode
 }
 
 func createSessions(store kv.Storage, cnt int) ([]*session, error) {
@@ -3884,6 +3975,22 @@ func mustGetStoreBootstrapVersion(store kv.Storage) int64 {
 	return ver
 }
 
+func mustGetStoreEEBootstrapVersion(store kv.Storage) int64 {
+	var ver int64
+	// check in kv store
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+		var err error
+		t := meta.NewMutator(txn)
+		ver, err = t.GetBootstrapEEVersion()
+		return err
+	})
+	if err != nil {
+		logutil.BgLogger().Fatal("get store bootstrap version failed", zap.Error(err))
+	}
+	return ver
+}
+
 func getStoreBootstrapVersionWithCache(store kv.Storage) int64 {
 	storeBootstrappedLock.Lock()
 	defer storeBootstrappedLock.Unlock()
@@ -3904,6 +4011,25 @@ func getStoreBootstrapVersionWithCache(store kv.Storage) int64 {
 	return ver
 }
 
+func getStoreEEBootstrapVersion(store kv.Storage) int64 {
+	storeBootstrappedLock.Lock()
+	defer storeBootstrappedLock.Unlock()
+	// check in memory
+	_, ok := storeEEBootstrapped[store.UUID()]
+	if ok {
+		return currentEEBootstrapVersion
+	}
+
+	ver := mustGetStoreEEBootstrapVersion(store)
+
+	if ver > notBootstrapped {
+		// here means memory is not ok, but other server has already finished it
+		storeEEBootstrapped[store.UUID()] = true
+	}
+
+	return ver
+}
+
 func finishBootstrap(store kv.Storage) {
 	setStoreBootstrapped(store.UUID())
 
@@ -3911,6 +4037,10 @@ func finishBootstrap(store kv.Storage) {
 	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
 		err := t.FinishBootstrap(currentBootstrapVersion)
+		if err != nil {
+			return err
+		}
+		err = t.FinishBootstrapEE(currentEEBootstrapVersion)
 		return err
 	})
 	if err != nil {
@@ -4062,9 +4192,10 @@ func GetStartTSFromSession(se any) (startTS, processInfoID uint64) {
 	txnInfo := tmp.TxnInfo()
 	if txnInfo != nil {
 		startTS = txnInfo.StartTS
-		processInfoID = txnInfo.ConnectionID
+		if txnInfo.ProcessInfo != nil {
+			processInfoID = txnInfo.ProcessInfo.ConnectionID
+		}
 	}
-
 	logutil.BgLogger().Debug(
 		"GetStartTSFromSession getting startTS of internal session",
 		zap.Uint64("startTS", startTS), zap.Time("start time", oracle.GetTimeFromTS(startTS)))
@@ -4661,4 +4792,12 @@ func (s *session) GetCursorTracker() cursor.Tracker {
 // GetCommitWaitGroup returns the internal `sync.WaitGroup` for async commit and secondary key lock cleanup
 func (s *session) GetCommitWaitGroup() *sync.WaitGroup {
 	return &s.commitWaitGroup
+}
+
+func (s *session) SetSessionExec(cc sessionctx.SessionExec) {
+	s.writeResultset = cc
+}
+
+func (s *session) GetSessionExec() sessionctx.SessionExec {
+	return s.writeResultset
 }

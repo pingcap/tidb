@@ -289,7 +289,7 @@ func TestMeta(t *testing.T) {
 	tableNames, err := m.ListSimpleTables(1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableNameInfo{tblName, tblName2}, tableNames)
-	tables, err := m.ListTables(1)
+	tables, err := m.ListTables(context.Background(), 1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo, tbInfo2}, tables)
 	{
@@ -327,7 +327,7 @@ func TestMeta(t *testing.T) {
 	tableNames, err = m.ListSimpleTables(1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableNameInfo{tblName}, tableNames)
-	tables, err = m.ListTables(1)
+	tables, err = m.ListTables(context.Background(), 1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo}, tables)
 	{
@@ -410,6 +410,25 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, int64(10), bootstrapVer)
+
+	bootstrapEEVer, err := m.GetBootstrapEEVersion()
+	require.NoError(t, err)
+	require.Equal(t, int64(0), bootstrapEEVer)
+
+	err = m.FinishBootstrapEE(int64(1))
+	require.NoError(t, err)
+
+	bootstrapEEVer, err = m.GetBootstrapEEVersion()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), bootstrapEEVer)
+
+	// Test case for meta.FinishBootstrap with a version.
+	err = m.FinishBootstrapEE(int64(10))
+	require.NoError(t, err)
+	bootstrapEEVer, err = m.GetBootstrapEEVersion()
+	require.NoError(t, err)
+
+	require.Equal(t, int64(10), bootstrapEEVer)
 
 	// Test case for SchemaDiff.
 	schemaDiff := &model.SchemaDiff{

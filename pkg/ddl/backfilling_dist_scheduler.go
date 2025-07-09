@@ -447,7 +447,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 	startKey := kvMeta.StartKey
 	var endKey kv.Key
 	for {
-		endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
+		endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, interiorRegionSplitKeys, err := splitter.SplitOneRangesGroup()
 		if err != nil {
 			return nil, err
 		}
@@ -468,6 +468,10 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		rangeJobKeys = append(rangeJobKeys, startKey)
 		rangeJobKeys = append(rangeJobKeys, interiorRangeJobKeys...)
 		rangeJobKeys = append(rangeJobKeys, endKey)
+		regionSplitKeys := make([][]byte, 0, len(interiorRegionSplitKeys)+2)
+		regionSplitKeys = append(regionSplitKeys, startKey)
+		regionSplitKeys = append(regionSplitKeys, interiorRegionSplitKeys...)
+		regionSplitKeys = append(regionSplitKeys, endKey)
 		m := &BackfillSubTaskMeta{
 			MetaGroups: []*external.SortedKVMeta{{
 				StartKey:    startKey,
@@ -618,11 +622,17 @@ func getRangeSplitter(
 			logger.Warn("fail to get region split keys and size", zap.Error(err))
 		}
 	}
-
-	// no matter region split size and keys, we always split range jobs by 96MB
+	nodeRc := handle.GetNodeResource()
+	rangeSize, rangeKeys := external.CalRangeSize(nodeRc.TotalMem/int64(nodeRc.TotalCPU), regionSplitSize, regionSplitKeys)
+	logutil.DDLIngestLogger().Info("split kv range with split size and keys",
+		zap.Int64("region-split-size", regionSplitSize),
+		zap.Int64("region-split-keys", regionSplitKeys),
+		zap.Int64("range-size", rangeSize),
+		zap.Int64("range-keys", rangeKeys),
+	)
 	return external.NewRangeSplitter(ctx, multiFileStat, extStore,
 		rangeGroupSize, rangeGroupKeys,
-		int64(config.SplitRegionSize), int64(config.SplitRegionKeys),
+		rangeSize, rangeKeys,
 		regionSplitSize, regionSplitKeys)
 }
 

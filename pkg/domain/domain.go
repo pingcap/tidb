@@ -42,12 +42,14 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	disthandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
@@ -153,8 +155,10 @@ type Domain struct {
 	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
 	schemaLease     time.Duration
-	sysSessionPool  util.SessionPool
-	exit            chan struct{}
+	// Note: If you no longer need the session, you must call Destroy to release it.
+	// Otherwise, the session will be leaked. Because there is a strong reference from the domain to the session.
+	sysSessionPool util.DestroyableSessionPool
+	exit           chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
 	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the client to the autoid service.
@@ -356,6 +360,16 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		// We can fall back to full load, don't need to return the error.
 		logutil.BgLogger().Error("failed to load schema diff", zap.Error(err))
 	}
+
+	// add failpoint to simulate long-running schema loading scenario
+	failpoint.Inject("mock-load-schema-long-time", func(val failpoint.Value) {
+		if val.(bool) {
+			// not ideal to use sleep, but not sure if there is a better way
+			logutil.BgLogger().Error("sleep before doing a full load")
+			time.Sleep(15 * time.Second)
+		}
+	})
+
 	// full load.
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
@@ -521,7 +535,7 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 			di.TableName2ID = name2ID
 			tables = specialTableInfos
 		} else {
-			tables, err = m.ListTables(di.ID)
+			tables, err = m.ListTables(ctx, di.ID)
 			if err != nil {
 				return err
 			}
@@ -997,6 +1011,291 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	}
 }
 
+type securityEventInfo struct {
+	info string
+}
+
+func (e *securityEventInfo) SecurityInfo() string {
+	return e.info
+}
+
+func (e *securityEventInfo) User() string { return "" }
+
+func (e *securityEventInfo) Host() string { return "" }
+
+func (e *securityEventInfo) OriginalText() string { return "" }
+
+func (e *securityEventInfo) RedactedText() string { return "" }
+
+func auditServerInfos(last, cur []infoschema.ServerInfo, label string) string {
+	var res []string
+	lastMap, curMap := make(map[string]any, len(last)), make(map[string]any, len(cur))
+	// add
+	for _, s := range last {
+		lastMap[s.Address] = nil
+	}
+	for _, s := range cur {
+		curMap[s.Address] = nil
+	}
+
+	for _, s := range last {
+		k := s.Address
+		_, ok := curMap[k]
+		if ok {
+			delete(lastMap, k)
+			delete(curMap, k)
+		}
+	}
+	if len(lastMap) != 0 {
+		var sb strings.Builder
+		var nodes []string
+		sb.WriteString(fmt.Sprintf("Remove %d %s node(s): ", len(lastMap), label))
+		for addr := range lastMap {
+			nodes = append(nodes, addr)
+		}
+		sb.WriteString(strings.Join(nodes, ","))
+		res = append(res, sb.String())
+	}
+	if len(curMap) != 0 {
+		var sb strings.Builder
+		var nodes []string
+		sb.WriteString(fmt.Sprintf("Add %d %s node(s): ", len(curMap), label))
+		for addr := range curMap {
+			nodes = append(nodes, addr)
+		}
+		sb.WriteString(strings.Join(nodes, ","))
+		res = append(res, sb.String())
+	}
+	return strings.Join(res, ". ")
+}
+
+func auditStoresStat(last, cur *pdhttp.StoresInfo) string {
+	var res []string
+	lastMap, curMap := make(map[string]string, len(last.Stores)), make(map[string]string, len(cur.Stores))
+	// add
+	for _, s := range last.Stores {
+		lastMap[s.Store.Address] = s.Store.StateName
+	}
+	for _, s := range cur.Stores {
+		curMap[s.Store.Address] = s.Store.StateName
+	}
+
+	for _, s := range last.Stores {
+		k := s.Store.Address
+		_, ok := curMap[k]
+		if ok {
+			// audit if its state has changed
+			if cv, lv := curMap[k], lastMap[k]; cv != lv {
+				if cv == "Up" {
+					res = append(res, fmt.Sprintf("Store node %s state change (%s -> %s, data consistency checked)", k, lv, cv))
+				} else {
+					res = append(res, fmt.Sprintf("Store node %s state change (%s -> %s)", k, lv, cv))
+				}
+			}
+			delete(lastMap, k)
+			delete(curMap, k)
+		}
+	}
+	if len(lastMap) != 0 {
+		var sb strings.Builder
+		var nodes []string
+		sb.WriteString(fmt.Sprintf("Remove %d store node(s): ", len(lastMap)))
+		for addr := range lastMap {
+			nodes = append(nodes, addr)
+		}
+		sb.WriteString(strings.Join(nodes, ","))
+		res = append(res, sb.String())
+	}
+	if len(curMap) != 0 {
+		var sb strings.Builder
+		var nodes []string
+		sb.WriteString(fmt.Sprintf("Add %d store node(s): ", len(curMap)))
+		for addr := range curMap {
+			nodes = append(nodes, addr)
+		}
+		sb.WriteString(strings.Join(nodes, ","))
+		sb.WriteString(" (data consistency checked)")
+		res = append(res, sb.String())
+	}
+
+	return strings.Join(res, ". ")
+}
+
+func getEarliestStartComponents(tidbs, pds []infoschema.ServerInfo, tikvs *pdhttp.StoresInfo) int64 {
+	earliestTime := time.Now().Unix()
+	for _, tidb := range tidbs {
+		if tidb.StartTimestamp < earliestTime {
+			earliestTime = tidb.StartTimestamp
+		}
+	}
+	for _, pd := range pds {
+		if pd.StartTimestamp < earliestTime {
+			earliestTime = pd.StartTimestamp
+		}
+	}
+	if tikvs != nil {
+		for _, node := range tikvs.Stores {
+			if strings.ToUpper(node.Store.StateName) == "UP" {
+				if node.Store.StartTimestamp < earliestTime {
+					earliestTime = node.Store.StartTimestamp
+				}
+			}
+		}
+	}
+	return earliestTime
+}
+
+// checkClusterRestart Check whether all components in the current cluster restart within `times` minutes.
+// If the restart occurs, the audit log is printed only once within `times` minutes.
+func ifClusterRestartRecent(tidbs, pds []infoschema.ServerInfo, tikvs *pdhttp.StoresInfo, times int64) bool {
+	earliestTime := getEarliestStartComponents(tidbs, pds, tikvs)
+	return time.Now().Unix()-times*60 < earliestTime
+}
+
+// ifTikvClusterRunning CheckTikvClusterRunStatus check whether tikv cluster can normal execution.
+func ifTikvClusterRunning(tikvs *pdhttp.StoresInfo) bool {
+	if len(tikvs.Stores) <= 0 {
+		return false
+	}
+	upNum := 0
+	for _, node := range tikvs.Stores {
+		if strings.ToUpper(node.Store.StateName) == "UP" {
+			upNum++
+		}
+	}
+	return (upNum * 2) > tikvs.Count
+}
+
+func (do *Domain) auditComponentsLoop() {
+	ticker := time.Tick(2 * time.Second)
+	e, err := extension.GetExtensions()
+	if err != nil {
+		logutil.BgLogger().Warn("get extensions failed", zap.Error(err))
+		return
+	}
+	extensions := e.NewSessionExtensions()
+
+	var (
+		lastTiDBs, lastPDs            []infoschema.ServerInfo
+		lastStoresInfo                *pdhttp.StoresInfo
+		failOnPDNodes                 = false
+		failOnTiDBNodes               = false
+		failOnTikvNodes               = false
+		failOnMostTikvNodeUnavailable = false
+		ifClusterRestartInLast5min    = false
+	)
+
+	for {
+		select {
+		case <-do.exit:
+			logutil.BgLogger().Info("Domain stop auditing components")
+			return
+		case <-ticker:
+		}
+		se, err := do.sysSessionPool.Get()
+		if err != nil {
+			logutil.BgLogger().Warn("get system session failed", zap.Error(err))
+			if se != nil {
+				do.sysSessionPool.Put(se)
+			}
+			continue
+		}
+
+		//failOnAllNodes := true
+		// 1. TiDB
+		curTiDBs, err := infoschema.GetTiDBServerInfo(se.(sessionctx.Context))
+		if err == nil {
+			failOnTiDBNodes = false
+			if lastTiDBs != nil {
+				info := auditServerInfos(lastTiDBs, curTiDBs, "tidb")
+				if len(info) > 0 {
+					extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+						info: info,
+					})
+				}
+			}
+			lastTiDBs = curTiDBs
+		} else if !failOnTiDBNodes {
+			failOnTiDBNodes = true
+			extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+				info: "the cluster is unavailable because tidb nodes information cannot be obtained",
+			})
+		}
+
+		// 2. PD
+		curPDs, err := infoschema.GetPDServerInfo(se.(sessionctx.Context))
+		if err == nil {
+			failOnPDNodes = false
+			if lastPDs != nil {
+				info := auditServerInfos(lastPDs, curPDs, "pd")
+				if len(info) > 0 {
+					extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+						info: info,
+					})
+				}
+			}
+			lastPDs = curPDs
+		} else if !failOnPDNodes {
+			failOnPDNodes = true
+			extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+				info: "the cluster is unavailable because pd nodes information cannot be obtained",
+			})
+		}
+
+		// 3. TiKV
+		tikvStore, ok := se.(sessionctx.Context).GetStore().(helper.Storage)
+		if ok {
+			tikvHelper := &helper.Helper{
+				Store:       tikvStore,
+				RegionCache: tikvStore.GetRegionCache(),
+			}
+			var curStoresStat *pdhttp.StoresInfo
+			pdCli, err := tikvHelper.TryGetPDHTTPClient()
+			if err == nil {
+				curStoresStat, err = pdCli.GetStores(context.Background())
+			}
+			if err == nil {
+				failOnTikvNodes = false
+				if lastStoresInfo != nil {
+					info := auditStoresStat(lastStoresInfo, curStoresStat)
+					if len(info) > 0 {
+						extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+							info: info,
+						})
+					}
+				}
+				if !ifTikvClusterRunning(curStoresStat) {
+					if !failOnMostTikvNodeUnavailable {
+						failOnMostTikvNodeUnavailable = true
+						extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+							info: "the cluster is unavailable because most tikv nodes are unavailable",
+						})
+					}
+				} else {
+					failOnMostTikvNodeUnavailable = false
+				}
+				lastStoresInfo = curStoresStat
+			} else if !failOnTikvNodes {
+				failOnTikvNodes = true
+				extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+					info: "the cluster is unavailable because tikv nodes information cannot be obtained",
+				})
+			}
+		}
+		if ifClusterRestartRecent(curTiDBs, curPDs, lastStoresInfo, 5) {
+			if !ifClusterRestartInLast5min {
+				ifClusterRestartInLast5min = true
+				extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+					info: "the cluster has restarted in last 5 minutes",
+				})
+			}
+		} else {
+			ifClusterRestartInLast5min = false
+		}
+		do.sysSessionPool.Put(se)
+	}
+}
+
 func (do *Domain) mdlCheckLoop() {
 	ticker := time.Tick(mdlCheckLookDuration)
 	var saveMaxSchemaVersion int64
@@ -1281,8 +1580,16 @@ func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Dura
 				infosync.StoreInternalSession(r)
 			},
 			func(r pools.Resource) {
-				_, ok := r.(sessionctx.Context)
+				sctx, ok := r.(sessionctx.Context)
 				intest.Assert(ok)
+				intest.AssertFunc(func() bool {
+					txn, _ := sctx.Txn(false)
+					return txn == nil || !txn.Valid()
+				})
+				infosync.DeleteInternalSession(r)
+			},
+			func(r pools.Resource) {
+				intest.Assert(r != nil)
 				infosync.DeleteInternalSession(r)
 			},
 		),
@@ -1389,7 +1696,7 @@ func (do *Domain) Init(
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 		do.etcdClient, do.unprefixedEtcdCli, pdCli, pdHTTPCli,
-		do.Store().GetCodec(), skipRegisterToDashboard)
+		do.Store().GetCodec(), skipRegisterToDashboard, do.infoCache)
 	if err != nil {
 		return err
 	}
@@ -1483,6 +1790,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(do.infoSyncerKeeper, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
+	do.wg.Run(do.auditComponentsLoop, "auditComponentsLoop")
 	do.wg.Run(do.runawayStartLoop, "runawayStartLoop")
 	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
 	skipRegisterToDashboard := gCfg.SkipRegisterToDashboard
@@ -1507,6 +1815,11 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 // GetSchemaLease return the schema lease.
 func (do *Domain) GetSchemaLease() time.Duration {
 	return do.schemaLease
+}
+
+// IsLeaseExpired returns whether lease has expired
+func (do *Domain) IsLeaseExpired() bool {
+	return do.SchemaValidator.IsLeaseExpired()
 }
 
 // InitInfo4Test init infosync for distributed execution test.
@@ -1674,6 +1987,11 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 
 // InitDistTaskLoop initializes the distributed task framework.
 func (do *Domain) InitDistTaskLoop() error {
+	rc, err := disthandle.CalculateNodeResource()
+	if err != nil {
+		return err
+	}
+	disthandle.SetNodeResource(rc)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1764,7 +2082,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 }
 
 // SysSessionPool returns the system session pool.
-func (do *Domain) SysSessionPool() util.SessionPool {
+func (do *Domain) SysSessionPool() util.DestroyableSessionPool {
 	return do.sysSessionPool
 }
 
@@ -1814,6 +2132,9 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		return err
 	}
 	do.privHandle = privileges.NewHandle(sctx.GetRestrictedSQLExecutor())
+	if err := do.privHandle.Update(); err != nil {
+		return errors.Trace(err)
+	}
 
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
@@ -2262,7 +2583,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 }
 
 // CreateStatsHandle is used only for test.
-func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
+func (do *Domain) CreateStatsHandle(ctx context.Context, initStatsCtx sessionctx.Context) error {
 	h, err := handle.NewHandle(
 		ctx,
 		initStatsCtx,
@@ -2298,20 +2619,19 @@ func (do *Domain) SetStatsUpdating(val bool) {
 
 // LoadAndUpdateStatsLoop loads and updates stats info.
 func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx sessionctx.Context) error {
-	if err := do.UpdateTableStatsLoop(ctxs[0], initStatsCtx); err != nil {
+	if err := do.UpdateTableStatsLoop(initStatsCtx); err != nil {
 		return err
 	}
-	do.StartLoadStatsSubWorkers(ctxs[1:])
+	do.StartLoadStatsSubWorkers(ctxs)
 	return nil
 }
 
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
-func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
-	ctx.GetSessionVars().InRestrictedSQL = true
+func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
 	statsHandle, err := handle.NewHandle(
-		ctx,
+		do.ctx,
 		initStatsCtx,
 		do.statsLease,
 		do.InfoSchema(),
@@ -2346,42 +2666,31 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		do.indexUsageWorker()
 	}, "indexUsageWorker")
 	if do.statsLease <= 0 {
-		// For statsLease > 0, `updateStatsWorker` handles the quit of stats owner.
+		// For statsLease > 0, `gcStatsWorker` handles the quit of stats owner.
 		do.wg.Run(func() { quitStatsOwner(do, do.statsOwner) }, "quitStatsOwner")
 		return nil
 	}
+	waitStartTask := func(do *Domain, fn func()) {
+		select {
+		case <-do.StatsHandle().InitStatsDone:
+		case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
+			return
+		}
+		fn()
+	}
 	do.SetStatsUpdating(true)
-	// The stats updated worker doesn't require the stats initialization to be completed.
-	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
-	// These tasks do not interfere with or depend on the initialization process.
-	do.wg.Run(func() { do.updateStatsWorker(ctx) }, "updateStatsWorker")
-	do.wg.Run(func() {
-		do.handleDDLEvent()
-	}, "handleDDLEvent")
+	// The asyncLoadHistogram/dumpColStatsUsageWorker/deltaUpdateTickerWorker doesn't require the stats initialization to be completed.
+	// This is because thos workers' primary responsibilities are to update the change delta and handle DDL operations.
+	// These tasks need to be in work mod as soon as possible to avoid the problem.
+	do.wg.Run(do.asyncLoadHistogram, "asyncLoadHistogram")
+	do.wg.Run(do.deltaUpdateTickerWorker, "deltaUpdateTickerWorker")
+	do.wg.Run(do.dumpColStatsUsageWorker, "dumpColStatsUsageWorker")
+	do.wg.Run(func() { waitStartTask(do, do.gcStatsWorker) }, "gcStatsWorker")
+
 	// Wait for the stats worker to finish the initialization.
 	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
-	do.wg.Run(
-		func() {
-			select {
-			case <-do.StatsHandle().InitStatsDone:
-			case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
-				return
-			}
-			do.autoAnalyzeWorker()
-		},
-		"autoAnalyzeWorker",
-	)
-	do.wg.Run(
-		func() {
-			select {
-			case <-do.StatsHandle().InitStatsDone:
-			case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
-				return
-			}
-			do.analyzeJobsCleanupWorker()
-		},
-		"analyzeJobsCleanupWorker",
-	)
+	do.wg.Run(func() { waitStartTask(do, do.autoAnalyzeWorker) }, "autoAnalyzeWorker")
+	do.wg.Run(func() { waitStartTask(do, do.analyzeJobsCleanupWorker) }, "analyzeJobsCleanupWorker")
 	do.wg.Run(
 		func() {
 			// The initStatsCtx is used to store the internal session for initializing stats,
@@ -2473,7 +2782,7 @@ func (do *Domain) initStats(ctx context.Context) {
 	}
 	initstats.InitStatsPercentage.Store(100)
 	if err != nil {
-		logutil.BgLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
+		logutil.ErrVerboseLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
 	} else {
 		logutil.BgLogger().Info("init stats info time", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)))
 	}
@@ -2504,11 +2813,38 @@ func (do *Domain) loadStatsWorker() {
 		case <-loadTicker.C:
 			err = statsHandle.Update(ctx, do.InfoSchema())
 			if err != nil {
-				logutil.BgLogger().Debug("update stats info failed", zap.Error(err))
+				logutil.BgLogger().Warn("update stats info failed", zap.Error(err))
 			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) asyncLoadHistogram() {
+	defer util.Recover(metrics.LabelDomain, "asyncLoadStats", nil, false)
+	lease := do.statsLease
+	if lease == 0 {
+		lease = 3 * time.Second
+	}
+	cleanupTicker := time.NewTicker(lease)
+	defer func() {
+		cleanupTicker.Stop()
+		logutil.BgLogger().Info("asyncLoadStats exited.")
+	}()
+	select {
+	case <-do.StatsHandle().InitStatsDone:
+	case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
+		return
+	}
+	statsHandle := do.StatsHandle()
+	var err error
+	for {
+		select {
+		case <-cleanupTicker.C:
 			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
 			if err != nil {
-				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
+				logutil.ErrVerboseLogger().Warn("load histograms failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return
@@ -2535,96 +2871,126 @@ func (do *Domain) indexUsageWorker() {
 	}
 }
 
-func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle) {
+func (do *Domain) gcStatsWorkerExitPreprocessing() {
 	ch := make(chan struct{}, 1)
 	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	go func() {
-		logutil.BgLogger().Info("updateStatsWorker is going to exit, start to flush stats")
-		statsHandle.FlushStats()
-		logutil.BgLogger().Info("updateStatsWorker ready to release owner")
+		logutil.BgLogger().Info("gcStatsWorker ready to release owner")
 		do.statsOwner.Close()
 		ch <- struct{}{}
 	}()
 	select {
 	case <-ch:
-		logutil.BgLogger().Info("updateStatsWorker exit preprocessing finished")
+		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
 		return
 	case <-timeout.Done():
-		logutil.BgLogger().Warn("updateStatsWorker exit preprocessing timeout, force exiting")
+		logutil.BgLogger().Warn("gcStatsWorker exit preprocessing timeout, force exiting")
 		return
 	}
 }
 
-func (do *Domain) handleDDLEvent() {
-	logutil.BgLogger().Info("handleDDLEvent started.")
-	defer util.Recover(metrics.LabelDomain, "handleDDLEvent", nil, false)
-	statsHandle := do.StatsHandle()
-	for {
-		select {
-		case <-do.exit:
-			return
-			// This channel is sent only by ddl owner.
-		case t := <-statsHandle.DDLEventCh():
-			err := statsHandle.HandleDDLEvent(t)
-			if err != nil {
-				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
-			}
-		}
+func (*Domain) deltaUpdateTickerWorkerExitPreprocessing(statsHandle *handle.Handle) {
+	ch := make(chan struct{}, 1)
+	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() {
+		logutil.BgLogger().Info("deltaUpdateTicker is going to exit, start to flush stats")
+		statsHandle.FlushStats()
+		ch <- struct{}{}
+	}()
+	select {
+	case <-ch:
+		logutil.BgLogger().Info("deltaUpdateTicker exit preprocessing finished")
+		return
+	case <-timeout.Done():
+		logutil.BgLogger().Warn("deltaUpdateTicker exit preprocessing timeout, force exiting")
+		return
 	}
 }
 
-func (do *Domain) updateStatsWorker(_ sessionctx.Context) {
-	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
-	logutil.BgLogger().Info("updateStatsWorker started.")
+func (do *Domain) gcStatsWorker() {
+	defer util.Recover(metrics.LabelDomain, "gcStatsWorker", nil, false)
+	logutil.BgLogger().Info("gcStatsWorker started.")
 	lease := do.statsLease
-	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
-	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
-	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
 	gcStatsTicker := time.NewTicker(100 * lease)
-	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
 	updateStatsHealthyTicker := time.NewTicker(20 * lease)
 	readMemTicker := time.NewTicker(memory.ReadMemInterval)
 	statsHandle := do.StatsHandle()
 	defer func() {
-		dumpColStatsUsageTicker.Stop()
 		gcStatsTicker.Stop()
-		deltaUpdateTicker.Stop()
 		readMemTicker.Stop()
 		updateStatsHealthyTicker.Stop()
 		do.SetStatsUpdating(false)
-		logutil.BgLogger().Info("updateStatsWorker exited.")
+		logutil.BgLogger().Info("gcStatsWorker exited.")
 	}()
-	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
+	defer util.Recover(metrics.LabelDomain, "gcStatsWorker", nil, false)
 
 	for {
 		select {
 		case <-do.exit:
-			do.updateStatsWorkerExitPreprocessing(statsHandle)
+			do.gcStatsWorkerExitPreprocessing()
 			return
-		case <-deltaUpdateTicker.C:
-			err := statsHandle.DumpStatsDeltaToKV(false)
-			if err != nil {
-				logutil.BgLogger().Debug("dump stats delta failed", zap.Error(err))
-			}
 		case <-gcStatsTicker.C:
 			if !do.statsOwner.IsOwner() {
 				continue
 			}
 			err := statsHandle.GCStats(do.InfoSchema(), do.GetSchemaLease())
 			if err != nil {
-				logutil.BgLogger().Debug("GC stats failed", zap.Error(err))
+				logutil.BgLogger().Warn("GC stats failed", zap.Error(err))
 			}
 			do.CheckAutoAnalyzeWindows()
+		case <-readMemTicker.C:
+			memory.ForceReadMemStats()
+			do.StatsHandle().StatsCache.TriggerEvict()
+		case <-updateStatsHealthyTicker.C:
+			statsHandle.UpdateStatsHealthyMetrics()
+		}
+	}
+}
+
+func (do *Domain) dumpColStatsUsageWorker() {
+	logutil.BgLogger().Info("dumpColStatsUsageWorker started.")
+	lease := do.statsLease
+	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
+	statsHandle := do.StatsHandle()
+	defer func() {
+		dumpColStatsUsageTicker.Stop()
+		logutil.BgLogger().Info("dumpColStatsUsageWorker exited.")
+	}()
+	defer util.Recover(metrics.LabelDomain, "dumpColStatsUsageWorker", nil, false)
+
+	for {
+		select {
+		case <-do.exit:
+			return
 		case <-dumpColStatsUsageTicker.C:
 			err := statsHandle.DumpColStatsUsageToKV()
 			if err != nil {
-				logutil.BgLogger().Debug("dump column stats usage failed", zap.Error(err))
+				logutil.BgLogger().Warn("dump column stats usage failed", zap.Error(err))
 			}
-		case <-readMemTicker.C:
-			memory.ForceReadMemStats()
-		case <-updateStatsHealthyTicker.C:
-			statsHandle.UpdateStatsHealthyMetrics()
+		}
+	}
+}
+
+func (do *Domain) deltaUpdateTickerWorker() {
+	defer util.Recover(metrics.LabelDomain, "deltaUpdateTickerWorker", nil, false)
+	logutil.BgLogger().Info("deltaUpdateTickerWorker started.")
+	lease := do.statsLease
+	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
+	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
+	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
+	statsHandle := do.StatsHandle()
+	for {
+		select {
+		case <-do.exit:
+			do.deltaUpdateTickerWorkerExitPreprocessing(statsHandle)
+			return
+		case <-deltaUpdateTicker.C:
+			err := statsHandle.DumpStatsDeltaToKV(false)
+			if err != nil {
+				logutil.BgLogger().Warn("dump stats delta failed", zap.Error(err))
+			}
 		}
 	}
 }

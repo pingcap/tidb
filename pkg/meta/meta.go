@@ -16,6 +16,7 @@ package meta
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -37,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/structure"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/partialjson"
@@ -81,6 +84,7 @@ var (
 	mIncIDPrefix         = "IID"
 	mRandomIDPrefix      = "TARID"
 	mBootstrapKey        = []byte("BootstrapKey")
+	mBootstrapEEKey      = []byte("BootstrapEEKey")
 	mSchemaDiffPrefix    = "Diff"
 	mPolicies            = []byte("Policies")
 	mPolicyPrefix        = "Policy"
@@ -996,6 +1000,87 @@ func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) e
 	return errors.Trace(err)
 }
 
+func splitRangeInt64Max(n int64) [][]string {
+	ranges := make([][]string, n)
+
+	// 9999999999999999999 is the max number than maxInt64 in string format.
+	batch := 9999999999999999999 / uint64(n)
+
+	for k := int64(0); k < n; k++ {
+		start := batch * uint64(k)
+		end := batch * uint64(k+1)
+
+		startStr := fmt.Sprintf("%019d", start)
+		if k == 0 {
+			startStr = "0"
+		}
+		endStr := fmt.Sprintf("%019d", end)
+
+		ranges[k] = []string{startStr, endStr}
+	}
+
+	return ranges
+}
+
+// IterAllTables iterates all the table at once, in order to avoid oom. It can use at most 15 concurrency to iterate.
+// This function is optimized for 'many databases' scenario. Only 1 concurrency can work for 'many tables in one database' scenario.
+func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error) error {
+	cancelCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	workGroup, egCtx := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
+
+	if concurrency >= 15 {
+		concurrency = 15
+	}
+
+	kvRanges := splitRangeInt64Max(int64(concurrency))
+
+	mu := sync.Mutex{}
+	for i := 0; i < concurrency; i++ {
+		snapshot := store.GetSnapshot(kv.NewVersion(startTs))
+		snapshot.SetOption(kv.RequestSourceInternal, true)
+		snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
+		t := structure.NewStructure(snapshot, nil, mMetaPrefix)
+		workGroup.Go(func() error {
+			startKey := []byte(fmt.Sprintf("%s:", mDBPrefix))
+			startKey = codec.EncodeBytes(startKey, []byte(kvRanges[i][0]))
+			endKey := []byte(fmt.Sprintf("%s:", mDBPrefix))
+			endKey = codec.EncodeBytes(endKey, []byte(kvRanges[i][1]))
+
+			return t.IterateHashWithBoundedKey(startKey, endKey, func(key []byte, field []byte, value []byte) error {
+				select {
+				case <-egCtx.Done():
+					return egCtx.Err()
+				default:
+				}
+				// only handle table meta
+				tableKey := string(field)
+				if !strings.HasPrefix(tableKey, mTablePrefix) {
+					return nil
+				}
+
+				tbInfo := &model.TableInfo{}
+				err := json.Unmarshal(value, tbInfo)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				dbID, err := ParseDBKey(key)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				tbInfo.DBID = dbID
+
+				mu.Lock()
+				err = fn(tbInfo)
+				mu.Unlock()
+				return errors.Trace(err)
+			})
+		})
+	}
+
+	return errors.Trace(workGroup.Wait())
+}
+
 // GetMetasByDBID return all meta information of a database.
 // Note(dongmen): This method is used by TiCDC to reduce the time of changefeed initialization.
 // Ref: https://github.com/pingcap/tiflow/issues/11109
@@ -1131,7 +1216,7 @@ func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...string) (
 }
 
 // ListTables shows all tables in database.
-func (m *Mutator) ListTables(dbID int64) ([]*model.TableInfo, error) {
+func (m *Mutator) ListTables(ctx context.Context, dbID int64) ([]*model.TableInfo, error) {
 	res, err := m.GetMetasByDBID(dbID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1143,6 +1228,9 @@ func (m *Mutator) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		tableKey := string(r.Field)
 		if !strings.HasPrefix(tableKey, mTablePrefix) {
 			continue
+		}
+		if ctx.Err() != nil {
+			return nil, errors.Trace(ctx.Err())
 		}
 
 		tbInfo := &model.TableInfo{}
@@ -1704,9 +1792,22 @@ func (m *Mutator) GetBootstrapVersion() (int64, error) {
 	return value, errors.Trace(err)
 }
 
+// GetBootstrapEEVersion returns the version of the server which bootstrap the store.
+// If the store is not bootstraped, the version will be zero.
+func (m *Mutator) GetBootstrapEEVersion() (int64, error) {
+	value, err := m.txn.GetInt64(mBootstrapEEKey)
+	return value, errors.Trace(err)
+}
+
 // FinishBootstrap finishes bootstrap.
 func (m *Mutator) FinishBootstrap(version int64) error {
 	err := m.txn.Set(mBootstrapKey, []byte(strconv.FormatInt(version, 10)))
+	return errors.Trace(err)
+}
+
+// FinishBootstrapEE finishes bootstrap.
+func (m *Mutator) FinishBootstrapEE(version int64) error {
+	err := m.txn.Set(mBootstrapEEKey, []byte(strconv.FormatInt(version, 10)))
 	return errors.Trace(err)
 }
 

@@ -35,7 +35,9 @@ var (
 // to access the job/MDL related tables.
 type Manager interface {
 	// GetJobByID gets the job by ID, returns ErrNotFound if the job does not exist.
-	GetJobByID(ctx context.Context, jobID int64) (*model.Job, error)
+	GetJobByID(ctx context.Context, jobID int64) (*model.JobW, error)
+	// GetJobBytesByIDWithSe gets the job binary by ID with the given session.
+	GetJobBytesByIDWithSe(ctx context.Context, se *session.Session, jobID int64) ([]byte, error)
 	// GetMDLVer gets the MDL version by job ID, returns ErrNotFound if the MDL info does not exist.
 	GetMDLVer(ctx context.Context, jobID int64) (int64, error)
 	// GetMinJobID gets current minimum job ID in the job table for job_id >= prevMinJobID,
@@ -71,27 +73,36 @@ func (mgr *manager) withNewSession(fn func(se *session.Session) error) error {
 	return fn(ddlse)
 }
 
-func (mgr *manager) GetJobByID(ctx context.Context, jobID int64) (*model.Job, error) {
+func (mgr *manager) GetJobByID(ctx context.Context, jobID int64) (*model.JobW, error) {
 	job := model.Job{}
+	var jobBytes []byte
 	if err := mgr.withNewSession(func(se *session.Session) error {
-		sql := fmt.Sprintf(`select job_meta from mysql.tidb_ddl_job where job_id = %d`, jobID)
-		rows, err := se.Execute(ctx, sql, "get-job-by-id")
+		bytes, err := mgr.GetJobBytesByIDWithSe(ctx, se, jobID)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if len(rows) == 0 {
-			return ErrNotFound
-		}
-		jobBinary := rows[0].GetBytes(0)
-		err = job.Decode(jobBinary)
+		err = job.Decode(bytes)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		jobBytes = bytes
 		return nil
 	}); err != nil {
 		return nil, err
 	}
-	return &job, nil
+	return model.NewJobW(&job, jobBytes), nil
+}
+
+func (*manager) GetJobBytesByIDWithSe(ctx context.Context, se *session.Session, jobID int64) ([]byte, error) {
+	sql := fmt.Sprintf(`select job_meta from mysql.tidb_ddl_job where job_id = %d`, jobID)
+	rows, err := se.Execute(ctx, sql, "get-job-by-id")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil, ErrNotFound
+	}
+	return rows[0].GetBytes(0), nil
 }
 
 func (mgr *manager) GetMDLVer(ctx context.Context, jobID int64) (int64, error) {

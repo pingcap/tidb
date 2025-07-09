@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 )
 
@@ -53,7 +52,7 @@ func (msm *MockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
 	rs := make([]*txninfo.TxnInfo, 0, len(msm.Conn))
 	for _, se := range msm.Conn {
 		info := se.TxnInfo()
-		if info != nil {
+		if info != nil && info.ProcessInfo != nil {
 			rs = append(rs, info)
 		}
 	}
@@ -138,6 +137,17 @@ func (msm *MockSessionManager) StoreInternalSession(s any) {
 	msm.mu.Unlock()
 }
 
+// ContainsInternalSession checks if the internal session pointer is in the map in the SessionManager
+func (msm *MockSessionManager) ContainsInternalSession(se any) bool {
+	msm.mu.Lock()
+	defer msm.mu.Unlock()
+	if msm.internalSessions == nil {
+		return false
+	}
+	_, ok := msm.internalSessions[se]
+	return ok
+}
+
 // DeleteInternalSession is to delete the internal session pointer from the map in the SessionManager
 func (msm *MockSessionManager) DeleteInternalSession(s any) {
 	msm.mu.Lock()
@@ -161,13 +171,6 @@ func (msm *MockSessionManager) GetInternalSessionStartTSList() []uint64 {
 			}
 			continue
 		}
-
-		se := internalSess.(sessionctx.Context)
-		sessVars := se.GetSessionVars()
-		sessVars.TxnCtxMu.Lock()
-		startTS := sessVars.TxnCtx.StartTS
-		sessVars.TxnCtxMu.Unlock()
-		ret = append(ret, startTS)
 	}
 	return ret
 }

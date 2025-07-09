@@ -664,6 +664,9 @@ func (tr *TableImporter) preprocessEngine(
 	logTask := tr.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
 	dataEngineCfg := &backend.EngineConfig{
 		TableInfo: tr.tableInfo,
+		Local: backend.LocalEngineConfig{
+			BlockSize: int(rc.cfg.TikvImporter.BlockSize),
+		},
 	}
 	if !tr.tableMeta.IsRowOrdered {
 		dataEngineCfg.Local.Compact = true
@@ -851,7 +854,7 @@ ChunkLoop:
 	for _, chunk := range cp.Chunks {
 		totalKVSize += chunk.Checksum.SumSize()
 		totalSQLSize += chunk.UnfinishedSize()
-		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+		if chunk.FileMeta.Type == mydump.SourceTypeParquet || chunk.FileMeta.Type == mydump.SourceTypeORC {
 			logKeyName = "read(rows)"
 		}
 	}
