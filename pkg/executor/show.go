@@ -28,6 +28,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -2444,7 +2445,7 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 
 	if info.Summary != nil {
 		// successful import job
-		result.AppendUint64(8, uint64(info.Summary.IngestSummary.RowCnt))
+		result.AppendUint64(8, uint64(info.Summary.RowCnt))
 	} else if runInfo != nil {
 		// running import job
 		result.AppendUint64(8, uint64(runInfo.ImportRows))
@@ -2466,8 +2467,16 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 		result.AppendTime(12, info.EndTime)
 	}
 	result.AppendString(13, info.CreatedBy)
+
+	// For finished job, only keep the update time same as end time
+	// and fill other fields with null.
 	if runInfo == nil {
-		for i := 14; i < 21; i++ {
+		if info.EndTime.IsZero() {
+			result.AppendNull(14)
+		} else {
+			result.AppendTime(14, info.EndTime)
+		}
+		for i := 15; i < 21; i++ {
 			result.AppendNull(i)
 		}
 		return
@@ -2493,7 +2502,7 @@ func handleImportJobInfo(
 	)
 
 	if info.Summary == nil && info.Status == importer.JobStatusRunning {
-		// for running jobs, need get from distributed framework.
+		// need to get more info from distributed framework for running jobs
 		runInfo, err = importinto.GetRuntimeInfoForJob(ctx, sctx, info.ID)
 		if err != nil {
 			return err
@@ -2503,6 +2512,14 @@ func handleImportJobInfo(
 			info.Status = string(runInfo.Status)
 			info.ErrorMessage = runInfo.ErrorMsg
 		}
+
+		failpoint.Inject("mockUpdateTime", func(val failpoint.Value) {
+			if v, ok := val.(int); ok {
+				ti := time.Now()
+				runInfo.StartTime = types.NewTime(types.FromGoTime(ti), mysql.TypeTimestamp, 0)
+				runInfo.UpdateTime = types.NewTime(types.FromGoTime(ti.Add(time.Duration(v)*time.Second)), mysql.TypeTimestamp, 0)
+			}
+		})
 	}
 	FillOneImportJobInfo(result, info, runInfo)
 	return nil

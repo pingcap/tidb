@@ -48,9 +48,10 @@ func Test_fillOneImportJobInfo(t *testing.T) {
 		Parameters: importer.ImportParameters{},
 	}
 
-	rowCntIdx := plannercore.ImportIntoFieldMap["ImportedRows"]
-	startIdx := plannercore.ImportIntoFieldMap["StartTime"]
-	endIdx := plannercore.ImportIntoFieldMap["EndTime"]
+	fmap := plannercore.ImportIntoFieldMap
+	rowCntIdx := fmap["ImportedRows"]
+	startIdx := fmap["StartTime"]
+	endIdx := fmap["EndTime"]
 
 	executor.FillOneImportJobInfo(c, jobInfo, nil)
 	require.True(t, c.GetRow(0).IsNull(rowCntIdx))
@@ -71,6 +72,21 @@ func Test_fillOneImportJobInfo(t *testing.T) {
 	require.Equal(t, uint64(123), c.GetRow(2).GetUint64(rowCntIdx))
 	require.False(t, c.GetRow(2).IsNull(startIdx))
 	require.False(t, c.GetRow(2).IsNull(endIdx))
+
+	ti := time.Now()
+	ri := &importinto.RuntimeInfo{
+		Processed:  10,
+		Total:      100000,
+		StartTime:  types.NewTime(types.FromGoTime(ti), mysql.TypeTimestamp, 0),
+		UpdateTime: types.NewTime(types.FromGoTime(ti.Add(time.Second*5)), mysql.TypeTimestamp, 0),
+	}
+	jobInfo.Summary = &importer.Summary{RowCnt: 0}
+	executor.FillOneImportJobInfo(c, jobInfo, ri)
+	require.Equal(t, "10B", c.GetRow(3).GetString(fmap["CurStepProcessedSize"]))
+	require.Equal(t, "100kB", c.GetRow(3).GetString(fmap["CurStepTotalSize"]))
+	require.Equal(t, "0", c.GetRow(3).GetString(fmap["CurStepProgressPct"]))
+	require.Equal(t, "2B/s", c.GetRow(3).GetString(fmap["CurStepSpeed"]))
+	require.Equal(t, "13:53:15", c.GetRow(3).GetString(fmap["CurStepETA"]))
 }
 
 func TestShow(t *testing.T) {

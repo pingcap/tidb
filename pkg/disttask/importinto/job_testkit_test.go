@@ -17,6 +17,8 @@ package importinto_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -32,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -152,16 +155,31 @@ func TestGetTaskImportedRows(t *testing.T) {
 	taskMeta := importinto.TaskMeta{
 		Plan: importer.Plan{},
 	}
+	taskSummary := &importer.Summary{
+		EncodeSummary: importer.StepSummary{
+			Bytes:  10000,
+			RowCnt: 1000,
+		},
+		IngestSummary: importer.StepSummary{
+			Bytes:  10000,
+			RowCnt: 1000,
+		},
+	}
+	taskMeta.TaskResult, err = json.Marshal(taskSummary)
+	require.NoError(t, err)
+
 	bytes, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
 	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(111), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 	importStepSummaries := []*execute.SubtaskSummary{
 		{
-			RowCnt: *atomic.NewInt64(1),
+			RowCnt: *atomic.NewInt64(300),
+			Bytes:  *atomic.NewInt64(4000),
 		},
 		{
-			RowCnt: *atomic.NewInt64(2),
+			RowCnt: *atomic.NewInt64(400),
+			Bytes:  *atomic.NewInt64(4000),
 		},
 	}
 	for _, m := range importStepSummaries {
@@ -173,7 +191,8 @@ func TestGetTaskImportedRows(t *testing.T) {
 
 	runInfo, err := importinto.GetRuntimeInfoForJob(ctx, tk.Session(), 111)
 	require.NoError(t, err)
-	require.EqualValues(t, 3, runInfo.ImportRows)
+	require.EqualValues(t, 700, runInfo.ImportRows)
+	require.Equal(t, "80", runInfo.Percent())
 
 	// global sort
 	taskMeta = importinto.TaskMeta{
@@ -181,16 +200,28 @@ func TestGetTaskImportedRows(t *testing.T) {
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},
 	}
+
+	taskSummary = &importer.Summary{
+		IngestSummary: importer.StepSummary{
+			Bytes:  10000,
+			RowCnt: 1000,
+		},
+	}
+	taskMeta.TaskResult, err = json.Marshal(taskSummary)
+	require.NoError(t, err)
+
 	bytes, err = json.Marshal(taskMeta)
 	require.NoError(t, err)
 	taskID, err = manager.CreateTask(ctx, importinto.TaskKey(222), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 	ingestStepSummaries := []*execute.SubtaskSummary{
 		{
-			RowCnt: *atomic.NewInt64(11),
+			RowCnt: *atomic.NewInt64(100),
+			Bytes:  *atomic.NewInt64(1000),
 		},
 		{
-			RowCnt: *atomic.NewInt64(22),
+			RowCnt: *atomic.NewInt64(200),
+			Bytes:  *atomic.NewInt64(2000),
 		},
 	}
 	for _, m := range ingestStepSummaries {
@@ -201,5 +232,121 @@ func TestGetTaskImportedRows(t *testing.T) {
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
 	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, tk.Session(), 222)
 	require.NoError(t, err)
-	require.EqualValues(t, 33, runInfo.ImportRows)
+	require.EqualValues(t, 300, runInfo.ImportRows)
+	require.Equal(t, "30", runInfo.Percent())
+}
+
+func TestShowImportProgress(t *testing.T) {
+	fmap := plannercore.ImportIntoFieldMap
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctx := context.WithValue(context.Background(), "etcd", true)
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+
+	mgr := storage.NewTaskManager(pool)
+	storage.SetTaskManager(mgr)
+	manager, err := storage.GetTaskManager()
+	require.NoError(t, err)
+
+	// global sort
+	taskMeta := importinto.TaskMeta{
+		Plan: importer.Plan{
+			CloudStorageURI: "s3://test-bucket/test-path",
+		},
+	}
+
+	taskSummary := &importer.Summary{
+		EncodeSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
+		MergeSummary:  importer.StepSummary{Bytes: 0, RowCnt: 0},
+		IngestSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
+		RowCnt:        100,
+	}
+
+	taskMeta.TaskResult, err = json.Marshal(taskSummary)
+	require.NoError(t, err)
+	bytes, err := json.Marshal(taskMeta)
+	require.NoError(t, err)
+
+	conn := tk.Session().GetSQLExecutor()
+	jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
+		"root", &importer.ImportParameters{}, 1000)
+	require.NoError(t, err)
+
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
+	require.NoError(t, err)
+
+	subtasks := []struct {
+		summary execute.SubtaskSummary
+		state   proto.SubtaskState
+	}{
+		{
+			execute.SubtaskSummary{RowCnt: *atomic.NewInt64(20), Bytes: *atomic.NewInt64(200)},
+			proto.SubtaskStateRunning,
+		},
+		{
+			execute.SubtaskSummary{RowCnt: *atomic.NewInt64(30), Bytes: *atomic.NewInt64(300)},
+			proto.SubtaskStateSucceed,
+		},
+	}
+
+	checkShowInfo := func(step, processed, total, percent, speed, eta string, imported int64) {
+		rs := tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
+		require.Equal(t, rs[0][fmap["CurStep"]], step)
+		require.Equal(t, rs[0][fmap["CurStepProcessedSize"]], processed)
+		require.Equal(t, rs[0][fmap["CurStepTotalSize"]], total)
+		require.Equal(t, rs[0][fmap["CurStepProgressPct"]], percent)
+		require.Equal(t, rs[0][fmap["CurStepSpeed"]], speed)
+		require.Equal(t, rs[0][fmap["CurStepETA"]], eta)
+
+		importedRows, err := strconv.Atoi(rs[0][fmap["ImportedRows"]].(string))
+		require.NoError(t, err)
+		require.EqualValues(t, importedRows, imported)
+	}
+
+	// Init step
+	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepGlobalSorting))
+	checkShowInfo("init", "0B", "0B", "N/A", "0B/s", "N/A", 0)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockUpdateTime", "return(5)")
+
+	// Encode step
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepEncodeAndSort)
+	for _, s := range subtasks {
+		testutil.CreateSubTaskWithSummary(t, manager, taskID, proto.ImportStepEncodeAndSort,
+			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
+	}
+
+	runInfo, err := importinto.GetRuntimeInfoForJob(ctx, tk.Session(), jobID)
+	require.NoError(t, err)
+	require.EqualValues(t, 1000, runInfo.Total)
+	require.EqualValues(t, 500, runInfo.Processed)
+	checkShowInfo("encode", "500B", "1kB", "50", "100B/s", "00:00:05", 0)
+
+	// Merge step
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepMergeSort)
+
+	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, tk.Session(), jobID)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, runInfo.Total)
+	require.EqualValues(t, 0, runInfo.Processed)
+	checkShowInfo("merge-sort", "0B", "0B", "0", "0B/s", "N/A", 0)
+
+	// Ingest step
+	for _, s := range subtasks {
+		testutil.CreateSubTaskWithSummary(t, manager, taskID, proto.ImportStepWriteAndIngest,
+			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
+	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockUpdateTime", "return(500)")
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
+	checkShowInfo("ingest", "500B", "1kB", "50", "1B/s", "00:08:20", 50)
+
+	// Post-process step
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepPostProcess)
+	checkShowInfo("post-process", "0B", "0B", "N/A", "0B/s", "N/A", 100)
 }

@@ -58,7 +58,7 @@ func (s *mockGCSSuite) runTaskToAwaitingState() (context.Context, int64, *proto.
 	s.NoError(err)
 	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
 	s.Len(rows, 1)
-	s.EqualValues("awaiting-resolution", rows[0][fmap["Phase"]])
+	s.EqualValues("awaiting-resolution", rows[0][fmap["Status"]])
 	s.Contains(rows[0][fmap["ResultMessage"]].(string), "incorrect DOUBLE value")
 	return ctx, int64(jobID), task
 }
