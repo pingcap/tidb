@@ -197,7 +197,7 @@ func (ri *RuntimeInfo) SpeedAndETA() (speed, eta string) {
 	s := int64(0)
 	duration := types.TimestampDiff("SECOND", ri.StartTime, ri.UpdateTime)
 	if duration > 0 && ri.Processed > 0 {
-		s = ri.Processed / int64(duration)
+		s = ri.Processed / duration
 	}
 
 	remainTime := "N/A"
@@ -232,6 +232,7 @@ func convertToMySQLTime(t time.Time, loc *time.Location) (types.Time, error) {
 	return result, err
 }
 
+// GetRuntimeInfoForJob get the corresponding DXF task runtime info for the job.
 func GetRuntimeInfoForJob(
 	ctx context.Context, sctx sessionctx.Context,
 	jobID int64,
