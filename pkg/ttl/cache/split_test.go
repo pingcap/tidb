@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -41,13 +40,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
-<<<<<<< HEAD
-=======
-	"github.com/tikv/pd/client/clients/router"
-	"github.com/tikv/pd/client/opt"
-	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
->>>>>>> fc28ff6fa1b (ttl: fix the issue that TTL cannot start if regions are merged frequently (#61530))
 )
 
 func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
@@ -72,24 +65,16 @@ type mockPDClient struct {
 	t  *testing.T
 	mu sync.Mutex
 	pd.Client
-<<<<<<< HEAD
+
+	nextRegionID  uint64
 	regions       []*pd.Region
 	regionsSorted bool
 }
 
 func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit int, _ ...pd.GetRegionOption) ([]*pd.Region, error) {
-=======
-
-	nextRegionID  uint64
-	regions       []*router.Region
-	regionsSorted bool
-}
-
-func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit int, _ ...opt.GetRegionOption) ([]*router.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
->>>>>>> fc28ff6fa1b (ttl: fix the issue that TTL cannot start if regions are merged frequently (#61530))
 	if len(c.regions) == 0 {
 		return []*pd.Region{newMockRegion(1, []byte{}, []byte{0xFF, 0xFF})}, nil
 	}
@@ -124,7 +109,7 @@ func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit 
 	return result, nil
 }
 
-func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64, opts ...opt.GetRegionOption) (*router.Region, error) {
+func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64, opts ...pd.GetRegionOption) (*pd.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -136,7 +121,7 @@ func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64, opts 
 	return nil, fmt.Errorf("region %d not found", regionID)
 }
 
-func (c *mockPDClient) GetRegion(ctx context.Context, key []byte, _ ...opt.GetRegionOption) (*router.Region, error) {
+func (c *mockPDClient) GetRegion(ctx context.Context, key []byte, _ ...pd.GetRegionOption) (*pd.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -149,13 +134,13 @@ func (c *mockPDClient) GetRegion(ctx context.Context, key []byte, _ ...opt.GetRe
 	return nil, fmt.Errorf("region not found for key %s", key)
 }
 
-func (c *mockPDClient) BatchScanRegions(ctx context.Context, ranges []router.KeyRange, limit int, opts ...opt.GetRegionOption) ([]*router.Region, error) {
+func (c *mockPDClient) BatchScanRegions(ctx context.Context, ranges []pd.KeyRange, limit int, opts ...pd.GetRegionOption) ([]*pd.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	logutil.BgLogger().Info("BatchScanRegions", zap.Any("ranges", ranges))
 
-	var reg []*router.Region
+	var reg []*pd.Region
 	for _, r := range c.regions {
 		for _, kr := range ranges {
 			if kv.Key(r.Meta.StartKey).Cmp(kr.EndKey) < 0 && kv.Key(r.Meta.EndKey).Cmp(kr.StartKey) > 0 {
@@ -179,22 +164,6 @@ func (c *mockPDClient) GetClusterID(_ context.Context) uint64 {
 	return 1
 }
 
-<<<<<<< HEAD
-=======
-func (c *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
-	return c
-}
-
-func (c *mockPDClient) GetAllStores(ctx context.Context, _ ...opt.GetStoreOption) ([]*metapb.Store, error) {
-	return []*metapb.Store{
-		{
-			Id:      1,
-			Address: "",
-			State:   metapb.StoreState_Up,
-		},
-	}, nil
-}
-
 func (c *mockPDClient) addRegion(key, endKey []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -213,7 +182,7 @@ func (c *mockPDClient) addRegion(key, endKey []byte) {
 		Role:    metapb.PeerRole_Voter,
 	}
 
-	c.regions = append(c.regions, &router.Region{
+	c.regions = append(c.regions, &pd.Region{
 		Meta: &metapb.Region{
 			Id:       regionID,
 			StartKey: key,
@@ -248,7 +217,7 @@ func (c *mockPDClient) randomlyMergeRegions() int {
 	r1Idx := rand.IntN(len(c.regions) - 1)
 	r2Idx := r1Idx + 1
 
-	newRegion := &router.Region{
+	newRegion := &pd.Region{
 		Meta: &metapb.Region{
 			Id:       c.regions[r1Idx].Meta.Id,
 			StartKey: c.regions[r1Idx].Meta.StartKey,
@@ -268,7 +237,6 @@ func (c *mockPDClient) randomlyMergeRegions() int {
 	return len(c.regions)
 }
 
->>>>>>> fc28ff6fa1b (ttl: fix the issue that TTL cannot start if regions are merged frequently (#61530))
 type mockTiKVStore struct {
 	t *testing.T
 	helper.Storage
@@ -314,37 +282,8 @@ func (s *mockTiKVStore) addRegionWithTablePrefix(tableID int64, start kv.Handle,
 	return s
 }
 
-<<<<<<< HEAD
-func (s *mockTiKVStore) addRegion(key, endKey []byte) *mockTiKVStore {
-	require.True(s.t, kv.Key(endKey).Cmp(key) > 0)
-	if len(s.pdClient.regions) > 0 {
-		lastRegion := s.pdClient.regions[len(s.pdClient.regions)-1]
-		require.True(s.t, kv.Key(endKey).Cmp(lastRegion.Meta.EndKey) >= 0)
-	}
-
-	regionID := s.nextRegionID
-	s.nextRegionID++
-	leader := &metapb.Peer{
-		Id:      regionID,
-		StoreId: 1,
-		Role:    metapb.PeerRole_Voter,
-	}
-
-	s.pdClient.regions = append(s.pdClient.regions, &pd.Region{
-		Meta: &metapb.Region{
-			Id:       regionID,
-			StartKey: key,
-			EndKey:   endKey,
-			Peers:    []*metapb.Peer{leader},
-		},
-		Leader: leader,
-	})
-
-	s.pdClient.regionsSorted = false
-=======
 func (s *mockTiKVStore) addRegion(start, end []byte) *mockTiKVStore {
 	s.pdClient.addRegion(start, end)
->>>>>>> fc28ff6fa1b (ttl: fix the issue that TTL cannot start if regions are merged frequently (#61530))
 	s.refreshCache()
 	return s
 }
@@ -1469,9 +1408,6 @@ func TestRegionDisappearDuringSplitRange(t *testing.T) {
 
 	testStartTime := time.Now()
 	testDuration := 5 * time.Second
-	if testflag.Long() {
-		testDuration = 5 * time.Minute
-	}
 
 	i := 0
 	for time.Since(testStartTime) < testDuration {

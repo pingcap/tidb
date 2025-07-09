@@ -14,7 +14,6 @@
 
 package logutil
 
-<<<<<<< HEAD:pkg/bindinfo/internal/logutil/logutil.go
 import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -23,15 +22,4 @@ import (
 // BindLogger with category "sql-bind" is used to log statistic related messages.
 func BindLogger() *zap.Logger {
 	return logutil.BgLogger().With(zap.String("category", "sql-bind"))
-=======
-var longTests = map[string][]string{
-	"pkg/ttl/ttlworker": {
-		"TestParallelLockNewJob",
-		"TestParallelLockNewTask",
-		"TestJobManagerWithFault",
-	},
-	"pkg/ttl/cache": {
-		"TestRegionDisappearDuringSplitRange",
-	},
->>>>>>> fc28ff6fa1b (ttl: fix the issue that TTL cannot start if regions are merged frequently (#61530)):tools/check/longtests.go
 }
