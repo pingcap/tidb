@@ -264,7 +264,7 @@ func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	case *logicalop.LogicalUnionAll:
 		return utilfuncp.ExhaustPhysicalPlans4LogicalUnionAll(x, prop)
 	case *logicalop.LogicalSequence:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalSequence(x, prop)
+		return utilfuncp.ExhaustPhysicalPlans4LogicalSequence(e, prop)
 	case *logicalop.LogicalSelection:
 		return utilfuncp.ExhaustPhysicalPlans4LogicalSelection(x, prop)
 	case *logicalop.LogicalMaxOneRow:
