@@ -441,3 +441,32 @@ func TestInitStatsIssue41938(t *testing.T) {
 	require.NoError(t, h.InitStats(dom.InfoSchema()))
 	h.SetLease(0)
 }
+
+func TestStatsCacheProcess(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int)")
+	testKit.MustExec("insert into t values(1, 2)")
+	tbl, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	require.True(t, statsTbl.Pseudo)
+	require.Zero(t, statsTbl.Version)
+	currentVersion := do.StatsHandle().MaxTableStatsVersion()
+	testKit.MustExec("analyze table t")
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	require.False(t, statsTbl.Pseudo)
+	require.NotZero(t, statsTbl.Version)
+	require.Equal(t, currentVersion, do.StatsHandle().MaxTableStatsVersion())
+	newVersion := do.StatsHandle().MaxTableStatsVersion()
+	require.Equal(t, currentVersion, newVersion, "analyze should not move forward the stats cache version")
+
+	// Insert more rows
+	testKit.MustExec("insert into t values(2, 3)")
+	require.NoError(t, do.StatsHandle().DumpStatsDeltaToKV(true))
+	require.NoError(t, do.StatsHandle().Update(do.InfoSchema()))
+	newVersion = do.StatsHandle().MaxTableStatsVersion()
+	require.NotEqual(t, currentVersion, newVersion, "update with no table should move forward the stats cache version")
+}

@@ -146,7 +146,7 @@ func (p *PhysicalTableScan) getPlanCostVer2(taskType property.TaskType, option *
 		return p.planCostVer2, nil
 	}
 
-	rows := getCardinality(p, option.CostFlag)
+	rows := max(1.0, getCardinality(p, option.CostFlag))
 	var rowSize float64
 	if p.StoreType == kv.TiKV {
 		rowSize = getAvgRowSize(p.StatsInfo(), p.tblCols) // consider all columns if TiKV
@@ -200,8 +200,8 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 		return p.planCostVer2, nil
 	}
 
-	rows := getCardinality(p.tablePlan, option.CostFlag)
-	rowSize := getAvgRowSize(p.StatsInfo(), p.schema.Columns)
+	rows := max(1.0, getCardinality(p.tablePlan, option.CostFlag))
+	rowSize := max(2.0, getAvgRowSize(p.StatsInfo(), p.schema.Columns))
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
 	childType := property.CopSingleReadTaskType
@@ -361,8 +361,8 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 		return p.planCostVer2, nil
 	}
 
-	rows := math.Max(getCardinality(p.children[0], option.CostFlag), 1)
-	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
+	rows := max(1.0, getCardinality(p.Children()[0], option.CostFlag))
+	rowSize := max(2.0, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	diskFactor := defaultVer2Factors.TiDBDisk
@@ -409,14 +409,14 @@ func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanC
 		return p.planCostVer2, nil
 	}
 
-	rows := getCardinality(p.children[0], option.CostFlag)
+	rows := max(1.0, getCardinality(p.Children()[0], option.CostFlag))
 	n := max(1, float64(p.Count+p.Offset))
 	if n > 10000 {
 		// It's only used to prevent some extreme cases, e.g. `select * from t order by a limit 18446744073709551615`.
 		// For normal cases, considering that `rows` may be under-estimated, better to keep `n` unchanged.
 		n = min(n, rows)
 	}
-	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
+	rowSize := max(2.0, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 
@@ -465,9 +465,9 @@ func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *Pl
 		return p.planCostVer2, nil
 	}
 
-	inputRows := getCardinality(p.children[0], option.CostFlag)
-	outputRows := getCardinality(p, option.CostFlag)
-	outputRowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
+	inputRows := max(1.0, getCardinality(p.Children()[0], option.CostFlag))
+	outputRows := max(1.0, getCardinality(p, option.CostFlag))
+	outputRowSize := max(2.0, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().HashAggFinalConcurrency())
@@ -497,8 +497,8 @@ func (p *PhysicalMergeJoin) getPlanCostVer2(taskType property.TaskType, option *
 		return p.planCostVer2, nil
 	}
 
-	leftRows := getCardinality(p.children[0], option.CostFlag)
-	rightRows := getCardinality(p.children[1], option.CostFlag)
+	leftRows := max(1.0, getCardinality(p.Children()[0], option.CostFlag))
+	rightRows := max(1.0, getCardinality(p.Children()[1], option.CostFlag))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
 	filterCost := sumCostVer2(filterCostVer2(option, leftRows, p.LeftConditions, cpuFactor),
@@ -536,9 +536,9 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 		build, probe = probe, build
 		buildFilters, probeFilters = probeFilters, buildFilters
 	}
-	buildRows := getCardinality(build, option.CostFlag)
+	buildRows := max(1.0, getCardinality(build, option.CostFlag))
 	probeRows := getCardinality(probe, option.CostFlag)
-	buildRowSize := getAvgRowSize(build.StatsInfo(), build.Schema().Columns)
+	buildRowSize := max(2.0, getAvgRowSize(build.StatsInfo(), build.Schema().Columns))
 	tidbConcurrency := float64(p.Concurrency)
 	mppConcurrency := float64(3) // TODO: remove this empirical value
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
@@ -1093,10 +1093,12 @@ func sumCostVer2(costs ...costVer2) (ret costVer2) {
 			for factor, factorCost := range c.trace.factorCosts {
 				ret.trace.factorCosts[factor] += factorCost
 			}
-			if ret.trace.formula != "" {
-				ret.trace.formula += " + "
+			if c.trace.formula != "" { // this empty formula is created NewZeroCostVer2 and no update happened,
+				if ret.trace.formula != "" {
+					ret.trace.formula += " + "
+				}
+				ret.trace.formula += "(" + c.trace.formula + ")"
 			}
-			ret.trace.formula += "(" + c.trace.formula + ")"
 		}
 	}
 	return ret
