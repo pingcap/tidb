@@ -44,7 +44,7 @@ TableReader	1999.00	root		data:TableRangeScan
 explain format = 'brief' select t1.c1, t1.c2 from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
 IndexReader	1.25	root		index:IndexRangeScan
-└─IndexRangeScan	1.25	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:partial[c2:missing]
+└─IndexRangeScan	1.25	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false
 explain format = 'brief' select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	estRows	task	access object	operator info
 HashJoin	2481.25	root		left outer join, equal:[eq(explain_easy_stats.t1.c2, explain_easy_stats.t2.c1)]
@@ -60,8 +60,9 @@ Update	N/A	root		N/A
 explain format = 'brief' delete from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
-└─IndexReader	1.25	root		index:IndexRangeScan
-  └─IndexRangeScan	1.25	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:partial[c2:missing]
+└─IndexLookUp	1.25	root		
+  ├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false
+  └─TableRowIDScan(Probe)	1.25	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	access object	operator info
 Projection	1985.00	root		Column#7
@@ -81,9 +82,9 @@ TopN	1.00	root		explain_easy_stats.t2.c2, offset:0, count:1
 explain format = 'brief' select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	estRows	task	access object	operator info
 IndexLookUp	1.00	root		
-├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t1, index:c2(c2)	range:(1 1,1 +inf], keep order:false, stats:partial[c2:missing]
+├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t1, index:c2(c2)	range:(1 1,1 +inf], keep order:false
 └─Selection(Probe)	1.00	cop[tikv]		lt(explain_easy_stats.t1.c3, 1)
-  └─TableRowIDScan	1.25	cop[tikv]	table:t1	keep order:false, stats:partial[c2:missing]
+  └─TableRowIDScan	1.25	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from t1 where c1 = 1 and c2 > 1;
 id	estRows	task	access object	operator info
 Selection	1.00	root		gt(explain_easy_stats.t1.c2, 1)

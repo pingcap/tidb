@@ -368,8 +368,8 @@ a	b	c
 2	2	3
 explain format='brief' select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;
 id	estRows	task	access object	operator info
-IndexReader	0.75	root		index:Selection
-└─Selection	0.75	cop[tikv]		eq(util__ranger.t.c, 3), or(eq(util__ranger.t.a, 1), and(eq(util__ranger.t.a, 2), eq(util__ranger.t.b, 2)))
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		eq(util__ranger.t.c, 3), or(eq(util__ranger.t.a, 1), and(eq(util__ranger.t.a, 2), eq(util__ranger.t.b, 2)))
   └─IndexRangeScan	2.00	cop[tikv]	table:t, index:PRIMARY(a, b, c)	range:[1,1], [2,2], keep order:false
 select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;
 a	b	c
@@ -415,10 +415,10 @@ a	b	c
 2	2	3
 explain format='brief' select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;
 id	estRows	task	access object	operator info
-IndexLookUp	0.75	root		
+IndexLookUp	1.00	root		
 ├─Selection(Build)	2.00	cop[tikv]		or(eq(util__ranger.t.a, 1), and(eq(util__ranger.t.a, 2), eq(util__ranger.t.b, 2)))
 │ └─IndexRangeScan	2.00	cop[tikv]	table:t, index:PRIMARY(a, b)	range:[1,1], [2,2], keep order:false
-└─Selection(Probe)	0.75	cop[tikv]		eq(util__ranger.t.c, 3)
+└─Selection(Probe)	1.00	cop[tikv]		eq(util__ranger.t.c, 3)
   └─TableRowIDScan	2.00	cop[tikv]	table:t	keep order:false
 select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;
 a	b	c
@@ -471,7 +471,7 @@ a	b	c
 1	2	2
 explain format='brief' select * from t where a = 1 and (b = 1 or b = 2) and b = 3 and c > 1;
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableDual	1.00	root		rows:0
 select * from t where a = 1 and (b = 1 or b = 2) and b = 3 and c > 1;
 a	b	c
 explain format='brief' select * from t where a = 1 and (b is null or b = 2);
@@ -483,8 +483,9 @@ a	b	c
 1	2	2
 explain format='brief' select * from t where a = 1 and (b is null or b = 2) and c > 1;
 id	estRows	task	access object	operator info
-IndexReader	1.25	root		index:IndexRangeScan
-└─IndexRangeScan	1.25	cop[tikv]	table:t, index:a(a, b, c)	range:(1 NULL 1,1 NULL +inf], (1 2 1,1 2 +inf], keep order:false, stats:pseudo
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		gt(util__ranger.t.c, 1)
+  └─IndexRangeScan	1.25	cop[tikv]	table:t, index:a(a, b, c)	range:[1 NULL,1 NULL], [1 2,1 2], keep order:false, stats:pseudo
 select * from t where a = 1 and (b is null or b = 2) and c > 1;
 a	b	c
 1	2	2
@@ -504,7 +505,7 @@ select * from t where a = 1 and b is null and b is null and c > 1;
 a	b	c
 explain format='brief' select * from t where a = 1 and b is null and b = 1 and c > 1;
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableDual	1.00	root		rows:0
 select * from t where a = 1 and b is null and b = 1 and c > 1;
 a	b	c
 set @@session.tidb_regard_null_as_point=default;

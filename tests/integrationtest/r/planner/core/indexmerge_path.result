@@ -306,8 +306,8 @@ Selection	8.00	root		or(json_overlaps(planner__core__indexmerge_path.t.j, cast("
     └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ use_index_merge(t, idx1) */ * from t where (json_contains(j, '[1, 2]')) or (json_contains(j, '[3, 4]'));
 id	estRows	task	access object	operator info
-TableReader	2.00	root		data:Selection
-└─Selection	2.00	cop[tikv]		or(json_contains(planner__core__indexmerge_path.t.j, cast("[1, 2]", json BINARY)), json_contains(planner__core__indexmerge_path.t.j, cast("[3, 4]", json BINARY)))
+TableReader	9600.00	root		data:Selection
+└─Selection	9600.00	cop[tikv]		or(json_contains(planner__core__indexmerge_path.t.j, cast("[1, 2]", json BINARY)), json_contains(planner__core__indexmerge_path.t.j, cast("[3, 4]", json BINARY)))
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ use_index_merge(t, idx2) */ * from t where (a=1 and b=2 and (3 member of (j))) or (a=11 and b=12 and (13 member of (j)));
 id	estRows	task	access object	operator info
@@ -424,8 +424,8 @@ IndexMerge	3.32	root		type: union
   └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select (j->'$.int') from t where json_contains((j->'$.int'), '[1, 2, 3]');
 id	estRows	task	access object	operator info
-Projection	1.00	root		json_extract(planner__core__indexmerge_path.t.j, $.int)->Column#5
-└─IndexMerge	0.00	root		type: intersection
+Projection	8000.00	root		json_extract(planner__core__indexmerge_path.t.j, $.int)->Column#5
+└─IndexMerge	10.00	root		type: intersection
   ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:i_int(cast(json_extract(`j`, _utf8mb4'$.int') as signed array))	range:[1,1], keep order:false, stats:pseudo
   ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:i_int(cast(json_extract(`j`, _utf8mb4'$.int') as signed array))	range:[2,2], keep order:false, stats:pseudo
   ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:i_int(cast(json_extract(`j`, _utf8mb4'$.int') as signed array))	range:[3,3], keep order:false, stats:pseudo
