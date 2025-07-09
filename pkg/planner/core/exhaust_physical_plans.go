@@ -16,9 +16,10 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"math"
 	"slices"
+
+	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -2946,17 +2947,18 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 		lPartitionKeys, rPartitionKeys := p.GetPotentialPartitionKeys()
 		if prop.MPPPartitionTp == property.HashType {
 			var matches []int
-			if p.JoinType == logicalop.InnerJoin {
+			switch p.JoinType {
+			case logicalop.InnerJoin:
 				if matches = prop.IsSubsetOf(lPartitionKeys); len(matches) == 0 {
 					matches = prop.IsSubsetOf(rPartitionKeys)
 				}
-			} else if p.JoinType == logicalop.RightOuterJoin {
+			case logicalop.RightOuterJoin:
 				// for right out join, only the right partition keys can possibly matches the prop, because
 				// the left partition keys will generate NULL values randomly
 				// todo maybe we can add a null-sensitive flag in the MPPPartitionColumn to indicate whether the partition column is
 				//  null-sensitive(used in aggregation) or null-insensitive(used in join)
 				matches = prop.IsSubsetOf(rPartitionKeys)
-			} else {
+			default:
 				// for left out join, only the left partition keys can possibly matches the prop, because
 				// the right partition keys will generate NULL values randomly
 				// for semi/anti semi/left out semi/anti left out semi join, only left partition keys are returned,
