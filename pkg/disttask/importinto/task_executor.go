@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	disttaskStorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	dxfstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
@@ -630,9 +630,9 @@ func NewPostProcessStepExecutor(
 
 func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
 	logger := p.logger.With(zap.Int64("subtask-id", subtask.ID))
-	task := log.BeginTask(logger, "run subtask")
+	logTask := log.BeginTask(logger, "run subtask")
 	defer func() {
-		task.End(zapcore.ErrorLevel, err)
+		logTask.End(zapcore.ErrorLevel, err)
 	}()
 	stepMeta := PostProcessStepMeta{}
 	if err = json.Unmarshal(subtask.Meta, &stepMeta); err != nil {
@@ -683,21 +683,18 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 		return nil, errors.Trace(err)
 	}
 	logger := logutil.BgLogger().With(
-		zap.Stringer("type", proto.ImportInto),
 		zap.Int64("task-id", task.ID),
+		zap.String("task-key", task.Key),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)),
 	)
 	store := e.store
 	if keyspace.IsRunningOnSystem() && task.Keyspace != tidbconfig.GetGlobalKeyspaceName() {
-		taskMgr, err := disttaskStorage.GetTaskManager()
+		taskMgr, err := dxfstorage.GetTaskManager()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
 			store, err = se.GetSQLServer().GetKSStore(task.Keyspace)
-			if err != nil {
-				return err
-			}
 			return err
 		})
 		if err != nil {
