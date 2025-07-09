@@ -129,7 +129,7 @@ func (s *mockGCSSuite) TestLocallSortSummary() {
 	require.NoError(s.T(), json.Unmarshal([]byte(rs[0][0].(string)), &summaries))
 
 	require.EqualValues(s.T(), 0, summaries.MergeSummary.RowCnt)
-	require.EqualValues(s.T(), 1000, summaries.RowCnt)
+	require.EqualValues(s.T(), 10000, summaries.RowCnt)
 
 	rs = s.tk.MustQuery("show import jobs where Job_ID = ?", jobID).Rows()
 	importedRows, err := strconv.Atoi(rs[0][fmap["ImportedRows"]].(string))

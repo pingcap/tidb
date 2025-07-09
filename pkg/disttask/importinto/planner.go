@@ -56,6 +56,7 @@ type LogicalPlan struct {
 	EligibleInstances []*infosync.ServerInfo
 	ChunkMap          map[int32][]importer.Chunk
 
+	// summary for next step
 	summary importer.StepSummary
 }
 

@@ -249,15 +249,14 @@ func GetRuntimeInfoForJob(
 	}
 
 	var (
-		taskMeta TaskMeta
-		summary  importer.Summary
+		taskMeta    TaskMeta
+		taskSummary importer.Summary
 
-		processedBytes  int64
-		processedRowCnt int64
-		totalBytes      int64
-		importedRows    int64
-		latestTime      time.Time
-		latestTypeTime  types.Time
+		latestTime time.Time
+		ri         = &RuntimeInfo{
+			Status: task.State,
+			Step:   task.Step,
+		}
 	)
 
 	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
@@ -265,14 +264,12 @@ func GetRuntimeInfoForJob(
 	}
 
 	if task.Error != nil {
-		return &RuntimeInfo{
-			Status:   task.State,
-			ErrorMsg: task.Error.Error(),
-		}, nil
+		ri.ErrorMsg = task.Error.Error()
+		return ri, nil
 	}
 
 	if len(taskMeta.TaskResult) != 0 {
-		if err = json.Unmarshal(taskMeta.TaskResult, &summary); err != nil {
+		if err = json.Unmarshal(taskMeta.TaskResult, &taskSummary); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -283,48 +280,36 @@ func GetRuntimeInfoForJob(
 	}
 
 	for _, s := range summaries {
-		processedBytes += s.Bytes.Load()
-		processedRowCnt += s.RowCnt.Load()
+		ri.Processed += s.Bytes.Load()
+		ri.ImportRows += s.RowCnt.Load()
 		if s.UpdateTime.After(latestTime) {
 			latestTime = s.UpdateTime
 		}
 	}
 
-	importedRows = processedRowCnt
 	if task.Step == proto.ImportStepPostProcess {
-		importedRows = summary.RowCnt
+		ri.ImportRows = taskSummary.RowCnt
 	} else if task.Step != proto.ImportStepWriteAndIngest && task.Step != proto.ImportStepImport {
-		importedRows = 0
+		ri.ImportRows = 0
 	}
 
 	switch task.Step {
-	case proto.ImportStepImport:
-		totalBytes = summary.IngestSummary.Bytes
+	case proto.ImportStepImport, proto.ImportStepWriteAndIngest:
+		ri.Total = taskSummary.IngestSummary.Bytes
 	case proto.ImportStepEncodeAndSort:
-		totalBytes = summary.EncodeSummary.Bytes
+		ri.Total = taskSummary.EncodeSummary.Bytes
 	case proto.ImportStepMergeSort:
-		totalBytes = summary.MergeSummary.Bytes
-	case proto.ImportStepWriteAndIngest:
-		totalBytes = summary.IngestSummary.Bytes
-	case proto.ImportStepPostProcess:
-		// TODO(joechenrh): add progress for post process
+		ri.Total = taskSummary.MergeSummary.Bytes
 	}
 
 	if !latestTime.IsZero() {
-		latestTypeTime, err = convertToMySQLTime(latestTime, sctx.GetSessionVars().Location())
+		ri.UpdateTime, err = convertToMySQLTime(latestTime, sctx.GetSessionVars().Location())
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	return &RuntimeInfo{
-		Status:     task.State,
-		ImportRows: importedRows,
-		Step:       task.Step,
-		UpdateTime: latestTypeTime,
-		Total:      totalBytes,
-		Processed:  processedBytes,
-	}, nil
+	return ri, nil
 }
 
 // TaskKey returns the task key for a job.
