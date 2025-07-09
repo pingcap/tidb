@@ -425,7 +425,7 @@ func BuildHistAndTopN(
 		// in the sample, but the length of the TopN is less than the true column/index NDV.
 		// Ensure that we keep at least one item in the topN list. If the sampleNDV is small, all remaining
 		// values are likely to added as the last value of a bucket such that skew will still be recognized.
-		keepTopN := max(1, len(topNList)-int(ndv-sampleNDV))
+		keepTopN := max(1, sampleNDV-1)
 		topNList = topNList[:keepTopN]
 		allowPruning = true
 	}
