@@ -1013,11 +1013,7 @@ EXPLAIN format = brief SELECT * FROM t WHERE a = 1 AND (c = 13 OR c = 15 OR c = 
 id	estRows	task	access object	operator info
 IndexLookUp	1.00	root		
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ia(a)	range:[1,1], keep order:false, stats:pseudo
-<<<<<<< HEAD
-└─Selection(Probe)	0.05	cop[tikv]		or(or(eq(planner__core__indexmerge_path.t.c, 13), or(eq(planner__core__indexmerge_path.t.c, 15), eq(planner__core__indexmerge_path.t.c, 5))), or(eq(planner__core__indexmerge_path.t.b, "12"), or(eq(planner__core__indexmerge_path.t.c, 13), eq(planner__core__indexmerge_path.t.b, "11"))))
-=======
 └─Selection(Probe)	1.00	cop[tikv]		or(or(eq(planner__core__indexmerge_path.t.c, 13), eq(planner__core__indexmerge_path.t.c, 15)), or(eq(planner__core__indexmerge_path.t.c, 5), or(eq(planner__core__indexmerge_path.t.b, "12"), eq(planner__core__indexmerge_path.t.b, "11"))))
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
   └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 SET @@tidb_opt_fix_control = '52869:on';
 EXPLAIN format = brief SELECT * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
