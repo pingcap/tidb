@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
+// EmptySelectionEliminator is a logical optimization rule that removes empty selections
 type EmptySelectionEliminator struct{}
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
