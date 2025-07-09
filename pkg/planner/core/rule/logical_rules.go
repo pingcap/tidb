@@ -43,6 +43,7 @@ const (
 	FlagPushDownSequence
 	FlagEliminateUnionAllDualItem
 	FlagResolveExpand
+	FlagEmptySelectionEliminator
 )
 
 func setPredicatePushDownFlag(u uint64) uint64 {

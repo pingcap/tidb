@@ -1,0 +1,56 @@
+// Copyright 2023 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package core
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+)
+
+type EmptySelectionEliminator struct{}
+
+// Optimize implements base.LogicalOptRule.<0th> interface.
+func (e *EmptySelectionEliminator) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+	planChanged := false
+	return e.recursivePlan(p, opt), planChanged, nil
+}
+
+func (e *EmptySelectionEliminator) recursivePlan(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
+	for idx, child := range p.Children() {
+		// The selection may be useless, check and remove it.
+		if sel, ok := child.(*logicalop.LogicalSelection); ok {
+			if len(sel.Conditions) == 0 {
+				p.SetChild(idx, sel.Children()[0])
+				appendRemoveSelectionTraceStep(p, sel, opt)
+				e.recursivePlan(sel.Children()[0], opt)
+			}
+		} else {
+			e.recursivePlan(child, opt)
+		}
+	}
+	return p
+}
+
+// Name implements base.LogicalOptRule.<1st> interface.
+func (*EmptySelectionEliminator) Name() string {
+	return "derive_topn_from_window"
+}

@@ -112,6 +112,7 @@ var optRuleList = []base.LogicalOptRule{
 	&PushDownSequenceSolver{},
 	&EliminateUnionAllDualItem{},
 	&ResolveExpand{},
+	&EmptySelectionEliminator{},
 }
 
 // Interaction Rule List
