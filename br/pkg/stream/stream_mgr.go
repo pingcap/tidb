@@ -372,8 +372,6 @@ func (*MetadataHelper) Marshal(meta *backuppb.Metadata) ([]byte, error) {
 	return meta.Marshal()
 }
 
-<<<<<<< HEAD
-=======
 func (m *MetadataHelper) Close() {
 	if m.decoder != nil {
 		m.decoder.Close()
@@ -419,7 +417,6 @@ func FilterPathByTs(path string, left, right uint64) string {
 	return path
 }
 
->>>>>>> c8e7dd4d6f2 (log restore: filter backupmeta file by ts to speed up pitr (#61347))
 // FastUnmarshalMetaData used a 128 worker pool to speed up
 // read metadata content from external_storage.
 func FastUnmarshalMetaData(
