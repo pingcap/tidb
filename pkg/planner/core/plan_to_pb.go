@@ -210,31 +210,6 @@ func (p *PhysicalProjection) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTy
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalTopN) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
-	client := ctx.GetClient()
-	topNExec := &tipb.TopN{
-		Limit: p.Count,
-	}
-	evalCtx := ctx.GetExprCtx().GetEvalCtx()
-	for _, item := range p.ByItems {
-		topNExec.OrderBy = append(topNExec.OrderBy, expression.SortByItemToPB(evalCtx, client, item.Expr, item.Desc))
-	}
-	for _, item := range p.PartitionBy {
-		topNExec.PartitionBy = append(topNExec.PartitionBy, expression.SortByItemToPB(evalCtx, client, item.Col.Clone(), item.Desc))
-	}
-	executorID := ""
-	if storeType == kv.TiFlash {
-		var err error
-		topNExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		executorID = p.ExplainID().String()
-	}
-	return &tipb.Executor{Tp: tipb.ExecType_TypeTopN, TopN: topNExec, ExecutorId: &executorID}, nil
-}
-
-// ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	if storeType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return p.partitionTableScanToPBForFlash(ctx)

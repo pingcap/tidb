@@ -243,7 +243,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Projection"
 	case *logicalop.LogicalTopN:
 		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)
-	case *PhysicalTopN:
+	case *physicalop.PhysicalTopN:
 		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)
 	case *logicalop.LogicalTableDual, *PhysicalTableDual:
 		str = "Dual"

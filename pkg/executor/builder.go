@@ -254,7 +254,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildSetConfig(v)
 	case *physicalop.PhysicalSort:
 		return b.buildSort(v)
-	case *plannercore.PhysicalTopN:
+	case *physicalop.PhysicalTopN:
 		return b.buildTopN(v)
 	case *physicalop.PhysicalUnionAll:
 		return b.buildUnionAll(v)
@@ -2608,7 +2608,7 @@ func (b *executorBuilder) buildSort(v *physicalop.PhysicalSort) exec.Executor {
 	return &sortExec
 }
 
-func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) exec.Executor {
+func (b *executorBuilder) buildTopN(v *physicalop.PhysicalTopN) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -3421,7 +3421,7 @@ func (*executorBuilder) corColInDistPlan(plans []base.PhysicalPlan) bool {
 					return true
 				}
 			}
-		case *plannercore.PhysicalTopN:
+		case *physicalop.PhysicalTopN:
 			for _, byItem := range x.ByItems {
 				if len(expression.ExtractCorColumns(byItem.Expr)) > 0 {
 					return true
