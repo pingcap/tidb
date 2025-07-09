@@ -1732,4 +1732,20 @@ SELECT * FROM t ORDER BY id;
 DROP TABLE t;
 SET @@time_zone = @old_time_zone;
 SET @@sql_mode = @old_sql_mode;
+
+# Testing INSERT IGNORE with STRICT mode, #61439
+SET @old_time_zone = @@time_zone;
+SET @@time_zone = 'Europe/Amsterdam';
+SET @old_sql_mode = @@sql_mode;
+create table t (ts timestamp);
+set time_zone = 'Europe/Amsterdam';
+set sql_mode = 'strict_trans_tables,no_zero_date,no_zero_in_date,error_for_division_by_zero';
+--error 1292
+insert into t values ('2025-03-30 02:00:00');
+select * from t;
+insert ignore into t values ('2025-03-30 02:00:00');
+select * from t;
+DROP TABLE t;
+SET @@time_zone = @old_time_zone;
+SET @@sql_mode = @old_sql_mode;
 --disable_warnings
