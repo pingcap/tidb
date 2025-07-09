@@ -2226,6 +2226,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableRedactLog:               DefTiDBRedactLog,
 		EnableWindowFunction:          DefEnableWindowFunction,
 		OptOrderingIdxSelRatio:        DefTiDBOptOrderingIdxSelRatio,
+		CostModelVersion:              DefTiDBCostModelVer,
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
