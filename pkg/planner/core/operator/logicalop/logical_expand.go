@@ -84,7 +84,10 @@ func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression, op
 	// 		2. group-by item related filters. (there condition is always related with grouping sets columns, which can't be pushed down)
 	// As a whole, we banned all the predicates pushing-down logic here that remained in Expand OP, and constructing a new selection above it if any.
 	remained, child, err := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-	return append(remained, predicates...), child, err
+	if err != nil {
+		return nil, nil, err
+	}
+	return append(remained, predicates...), child, nil
 }
 
 // PruneColumns implement the base.LogicalPlan.<2nd> interface.

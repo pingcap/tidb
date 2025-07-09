@@ -319,8 +319,8 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, op
 			canNotBePushed = append(canNotBePushed, cond)
 		}
 	}
-	p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
-	return canNotBePushed, p, nil
+	_, _, err := p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
+	return canNotBePushed, p, err
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.

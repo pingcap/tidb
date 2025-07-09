@@ -107,8 +107,8 @@ func (la *LogicalAggregation) ReplaceExprColumns(replace map[string]*expression.
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	condsToPush, ret := la.splitCondForAggregation(predicates)
-	la.BaseLogicalPlan.PredicatePushDown(condsToPush, opt)
-	return ret, la, nil
+	_, _, err := la.BaseLogicalPlan.PredicatePushDown(condsToPush, opt)
+	return ret, la, err
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.

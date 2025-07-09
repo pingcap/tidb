@@ -78,8 +78,8 @@ func (p *LogicalLimit) HashCode() []byte {
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (p *LogicalLimit) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	// Limit forbids any condition to push down.
-	p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-	return predicates, p, nil
+	_, _, err := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
+	return predicates, p, err
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
