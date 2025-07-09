@@ -236,3 +236,8 @@ func (p *PhysicalTopN) GetPlanCostVer2(taskType property.TaskType, option *optim
 func (p *PhysicalTopN) ResolveIndices() (err error) {
 	return utilfuncp.ResolveIndices4PhysicalTopN(p)
 }
+
+// Attach2Task implements the PhysicalPlan interface.
+func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
+	return utilfuncp.Attach2Task4PhysicalTopN(p, tasks...)
+}

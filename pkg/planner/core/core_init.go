@@ -75,6 +75,7 @@ func init() {
 	// for physical topN.
 	utilfuncp.GetPlanCostVer14PhysicalTopN = getPlanCostVer14PhysicalTopN
 	utilfuncp.GetPlanCostVer24PhysicalTopN = getPlanCostVer24PhysicalTopN
+	utilfuncp.Attach2Task4PhysicalTopN = attach2Task4PhysicalTopN
 	utilfuncp.ResolveIndices4PhysicalTopN = resolveIndices4PhysicalTopN
 
 	utilfuncp.DoOptimize = doOptimize

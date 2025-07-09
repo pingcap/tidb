@@ -214,6 +214,9 @@ var GetPlanCostVer14PhysicalTopN func(pp base.PhysicalPlan, taskType property.Ta
 var GetPlanCostVer24PhysicalTopN func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
 
+// Attach2Task4PhysicalTopN will be called by PhysicalTopN in physicalOp pkg.
+var Attach2Task4PhysicalTopN func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
 // ResolveIndices4PhysicalTopN will be called by PhysicalTopN in physicalOp pkg.
 var ResolveIndices4PhysicalTopN func(pp base.PhysicalPlan) (err error)
 
