@@ -55,7 +55,8 @@ const (
 	JobStatusRunning   = "running"
 	jogStatusCancelled = "cancelled"
 	jobStatusFailed    = "failed"
-	jobStatusFinished  = "finished"
+	// JobStatusFinished exported since it's used in show import jobs
+	JobStatusFinished = "finished"
 
 	// when the job is finished, step will be set to none.
 	jobStepNone = ""
@@ -261,7 +262,7 @@ func FinishJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, summa
 	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
 		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, step = %?, summary = %?
 		WHERE id = %? AND status = %?;`,
-		jobStatusFinished, jobStepNone, summaryStr, jobID, JobStatusRunning)
+		JobStatusFinished, jobStepNone, summaryStr, jobID, JobStatusRunning)
 	return err
 }
 

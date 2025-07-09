@@ -134,7 +134,7 @@ func (s *mockGCSSuite) TestImportIntoStatsUpdate() {
 
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/*.csv?endpoint=%s'`, gcsEndpoint)
 	result := s.tk.MustQuery(importSQL).Rows()
-	require.Equal(s.T(), "finished", result[0][5].(string))
+	require.Equal(s.T(), "finished", result[0][fmap["Status"]].(string))
 
 	// After import success, the table stat should be updated
 	require.Eventually(s.T(), func() bool {
