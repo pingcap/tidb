@@ -238,7 +238,11 @@ func GetRuntimeInfoForJob(
 	jobID int64,
 ) (*RuntimeInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+
 	dxfTaskMgr, err := storage.GetDXFSvcTaskMgr()
+	if err != nil {
+		return nil, err
+	}
 
 	task, err := dxfTaskMgr.GetTaskByKeyWithHistory(ctx, TaskKey(jobID))
 	if err != nil {
