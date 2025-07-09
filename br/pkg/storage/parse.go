@@ -86,7 +86,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		}
 		prefix := strings.Trim(u.Path, "/")
 		s3 := &backuppb.S3{Bucket: u.Host, Prefix: prefix}
-		var s3Options S3BackendOptions = S3BackendOptions{ForcePathStyle: true}
+		var s3Options S3BackendOptions = S3BackendOptions{ForcePathStyle: false}
 		if options != nil {
 			s3Options = options.S3
 		}

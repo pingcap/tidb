@@ -88,7 +88,7 @@ func TestCreateStorage(t *testing.T) {
 	require.Equal(t, "******", s3.AccessKey)
 	require.Equal(t, "******+", s3.SecretAccessKey)
 	require.Equal(t, "******", s3.SessionToken)
-	require.True(t, s3.ForcePathStyle)
+	require.False(t, s3.ForcePathStyle)
 
 	// parse role ARN and external ID
 	testRoleARN := "arn:aws:iam::888888888888:role/my-role"
@@ -390,7 +390,7 @@ func TestParseBackend(t *testing.T) {
 			Endpoint:       "https://127.0.0.1:9000",
 			Bucket:         "bucket3",
 			Prefix:         "prefix/path",
-			ForcePathStyle: true,
+			ForcePathStyle: false,
 			SseKmsKeyId:    "TestKey",
 		}, *retBackend1.S3)
 		u, err = ParseBackend("gcs://bucket?endpoint=http://127.0.0.1&predefined-acl=1234", nil)
@@ -415,4 +415,16 @@ func TestParseBackend(t *testing.T) {
 			EncryptionScope: "test",
 		}, *retBackend3.AzureBlobStorage)
 	}
+}
+
+func TestS3DefaultForceStylePath(t *testing.T) {
+	s, err := ParseBackend(`s3://bucket3/prefix/path`, nil)
+	require.NoError(t, err)
+	require.Equal(t, false, s.GetS3().ForcePathStyle)
+	s, err = ParseBackend(`s3://bucket3/prefix/path?force_path_style=false`, nil)
+	require.NoError(t, err)
+	require.Equal(t, false, s.GetS3().ForcePathStyle)
+	s, err = ParseBackend(`s3://bucket3/prefix/path?force_path_style=true`, nil)
+	require.NoError(t, err)
+	require.Equal(t, true, s.GetS3().ForcePathStyle)
 }
