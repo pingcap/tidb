@@ -1221,6 +1221,9 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optim
 func addCandidateSelection(currentPlan base.LogicalPlan, currentChildIdx int, parentPlan base.LogicalPlan,
 	candidatePredicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
 	// generate a new selection for candidatePredicates
+	if !currentPlan.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	selection := LogicalSelection{Conditions: candidatePredicates}.Init(currentPlan.SCtx(), currentPlan.QueryBlockOffset())
 	// add selection above of p
 	if parentPlan == nil {
