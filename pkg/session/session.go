@@ -3341,6 +3341,8 @@ func InitDDLTables(store kv.Storage) error {
 			if currVer >= vt.ver {
 				continue
 			}
+			logutil.BgLogger().Info("init DDL tables", zap.Int("currVer", int(currVer)),
+				zap.Int("targetVer", int(vt.ver)))
 			largestVer = max(largestVer, vt.ver)
 			if err = createAndSplitTables(store, t, dbID, vt.tables); err != nil {
 				return err
