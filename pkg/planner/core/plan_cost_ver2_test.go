@@ -72,11 +72,11 @@ func TestCostModelVer2ScanRowSize(t *testing.T) {
 	}
 
 	tk.MustQuery("explain select a from t where a=1").Check(testkit.Rows(
-		`IndexReader_6 10.00 root  index:IndexRangeScan_5`, // use idx_ab automatically since it has the smallest row-size in all access paths.
-		`└─IndexRangeScan_5 10.00 cop[tikv] table:t, index:ab(a, b) range:[1,1], keep order:false, stats:pseudo`))
+		`IndexReader_7 10.00 root  index:IndexRangeScan_6`, // use idx_ab automatically since it has the smallest row-size in all access paths.
+		`└─IndexRangeScan_6 10.00 cop[tikv] table:t, index:ab(a, b) range:[1,1], keep order:false, stats:pseudo`))
 	tk.MustQuery("explain select a, b, c from t where a=1").Check(testkit.Rows(
-		`IndexReader_6 10.00 root  index:IndexRangeScan_5`, // use idx_abc automatically
-		`└─IndexRangeScan_5 10.00 cop[tikv] table:t, index:abc(a, b, c) range:[1,1], keep order:false, stats:pseudo`))
+		`IndexReader_7 10.00 root  index:IndexRangeScan_6`, // use idx_abc automatically
+		`└─IndexRangeScan_6 10.00 cop[tikv] table:t, index:abc(a, b, c) range:[1,1], keep order:false, stats:pseudo`))
 }
 
 func TestCostModelTraceVer2(t *testing.T) {

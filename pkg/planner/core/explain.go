@@ -489,25 +489,6 @@ func (p *PhysicalTableDual) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalLimit) ExplainInfo() string {
-	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	redact := p.SCtx().GetSessionVars().EnableRedactLog
-	buffer := bytes.NewBufferString("")
-	if len(p.GetPartitionBy()) > 0 {
-		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
-		fmt.Fprintf(buffer, ", ")
-	}
-	if redact == perrors.RedactLogDisable {
-		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
-	} else if redact == perrors.RedactLogMarker {
-		fmt.Fprintf(buffer, "offset:‹%v›, count:‹%v›", p.Offset, p.Count)
-	} else if redact == perrors.RedactLogEnable {
-		fmt.Fprintf(buffer, "offset:?, count:?")
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalExpand) ExplainInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	if len(p.LevelExprs) > 0 {

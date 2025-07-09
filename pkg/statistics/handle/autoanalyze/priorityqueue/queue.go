@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -236,7 +237,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			func(info *model.TableInfo) error {
 				// Ignore the memory and system database.
 				db, ok := is.SchemaByID(info.DBID)
-				if !ok || util.IsMemOrSysDB(db.Name.L) {
+				if !ok || metadef.IsMemOrSysDB(db.Name.L) {
 					return nil
 				}
 				tbls = append(tbls, info)
@@ -252,7 +253,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			verifyTbls := make([]*model.TableInfo, 0, 512)
 			for _, db := range dbs {
 				// Ignore the memory and system database.
-				if util.IsMemOrSysDB(db.L) {
+				if metadef.IsMemOrSysDB(db.L) {
 					continue
 				}
 

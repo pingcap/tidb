@@ -27,6 +27,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -201,7 +202,7 @@ func TestGetInsertGroupImpl(t *testing.T) {
 	emptyProp := &property.PhysicalProperty{}
 	require.Nil(t, g.GetImpl(emptyProp))
 
-	impl := &fakeImpl{plan: &plannercore.PhysicalLimit{}}
+	impl := &fakeImpl{plan: &physicalop.PhysicalLimit{}}
 	g.InsertImpl(emptyProp, impl)
 	require.Equal(t, impl, g.GetImpl(emptyProp))
 

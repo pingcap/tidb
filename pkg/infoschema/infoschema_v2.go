@@ -34,12 +34,12 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -87,7 +87,7 @@ func (si *schemaItem) Name() string {
 func btreeSet[T any](ptr *atomic.Pointer[btree.BTreeG[T]], item T) {
 	succ := false
 	for !succ {
-		var t *btree.BTreeG[T] = ptr.Load()
+		var t = ptr.Load()
 		t2 := t.Clone()
 		t2.ReplaceOrInsert(item)
 		succ = ptr.CompareAndSwap(t, t2)
@@ -966,9 +966,7 @@ func (is *infoschemaV2) TableIsCached(id int64) (ok bool) {
 
 // IsSpecialDB tells whether the database is a special database.
 func IsSpecialDB(dbName string) bool {
-	return dbName == util.InformationSchemaName.L ||
-		dbName == util.PerformanceSchemaName.L ||
-		dbName == util.MetricSchemaName.L
+	return metadef.IsMemDB(dbName)
 }
 
 // EvictTable is exported for testing only.
