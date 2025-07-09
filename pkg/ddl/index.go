@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -87,6 +88,8 @@ const (
 	// MaxCommentLength is exported for testing.
 	MaxCommentLength = 1024
 )
+
+var telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
 
 func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, isVector bool) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
@@ -994,6 +997,8 @@ SwitchIndexState:
 		}
 		loadCloudStorageURI(w, job)
 		if reorgTp.NeedMergeProcess() {
+			// Increase telemetryAddIndexIngestUsage
+			telemetryAddIndexIngestUsage.Inc()
 			for _, indexInfo := range allIndexInfos {
 				indexInfo.BackfillState = model.BackfillStateRunning
 			}
@@ -1375,6 +1380,7 @@ func doReorgWorkForCreateIndex(
 			indexInfo.BackfillState = model.BackfillStateReadyToMerge
 		}
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+		failpoint.InjectCall("afterBackfillStateRunningDone", job)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
 		failpoint.Inject("mockDMLExecutionStateBeforeMerge", func(_ failpoint.Value) {
@@ -2394,6 +2400,11 @@ func (w *worker) addPhysicalTableIndex(
 		return w.writePhysicalTableRecord(ctx, w.sessPool, t, typeAddIndexMergeTmpWorker, reorgInfo)
 	}
 	logutil.DDLLogger().Info("start to add table index", zap.Stringer("job", reorgInfo.Job), zap.Stringer("reorgInfo", reorgInfo))
+	m := metrics.RegisterLightningCommonMetricsForDDL(reorgInfo.ID)
+	ctx = lightningmetric.WithCommonMetric(ctx, m)
+	defer func() {
+		metrics.UnregisterLightningCommonMetricsForDDL(reorgInfo.ID, m)
+	}()
 	return w.writePhysicalTableRecord(ctx, w.sessPool, t, typeAddIndexWorker, reorgInfo)
 }
 
@@ -2526,6 +2537,7 @@ func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgIn
 		// It's possible that the task state is succeed but the ddl job is paused.
 		// When task in succeed state, we can skip the dist task execution/scheduing process.
 		if task.State == proto.TaskStateSucceed {
+			w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
 			logutil.DDLLogger().Info(
 				"task succeed, start to resume the ddl job",
 				zap.String("task-key", taskKey))
