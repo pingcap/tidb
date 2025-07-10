@@ -53,8 +53,30 @@ func init() {
 	utilfuncp.ExhaustPhysicalPlans4LogicalAggregation = exhaustPhysicalPlans4LogicalAggregation
 	utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll = exhaustPhysicalPlans4LogicalPartitionUnionAll
 
+	// for physical operators.
 	utilfuncp.GetActualProbeCntFromProbeParents = getActualProbeCntFromProbeParents
 	utilfuncp.GetEstimatedProbeCntFromProbeParents = getEstimatedProbeCntFromProbeParents
+	// for physical sort.
+	utilfuncp.ToPB4PhysicalSort = toPB4PhysicalSort
+	utilfuncp.GetCost4PhysicalSort = getCost4PhysicalSort
+	utilfuncp.ResolveIndicesForSort = resolveIndicesForSort
+	utilfuncp.Attach2Task4PhysicalSort = attach2Task4PhysicalSort
+	utilfuncp.GetPlanCostVer14PhysicalSort = getPlanCostVer14PhysicalSort
+	utilfuncp.GetPlanCostVer24PhysicalSort = getPlanCostVer24PhysicalSort
+	// for nominal sort.
+	utilfuncp.Attach2Task4NominalSort = attach2Task4NominalSort
+	// for physical union all.
+	utilfuncp.Attach2Task4PhysicalUnionAll = attach2Task4PhysicalUnionAll
+	utilfuncp.GetPlanCostVer14PhysicalUnionAll = getPlanCostVer14PhysicalUnionAll
+	utilfuncp.GetPlanCostVer24PhysicalUnionAll = getPlanCostVer24PhysicalUnionAll
+	// for physical limit.
+	utilfuncp.ResolveIndices4PhysicalLimit = resolveIndices4PhysicalLimit
+	utilfuncp.Attach2Task4PhysicalLimit = attach2Task4PhysicalLimit
+	// for physical topN.
+	utilfuncp.GetPlanCostVer14PhysicalTopN = getPlanCostVer14PhysicalTopN
+	utilfuncp.GetPlanCostVer24PhysicalTopN = getPlanCostVer24PhysicalTopN
+	utilfuncp.Attach2Task4PhysicalTopN = attach2Task4PhysicalTopN
+	utilfuncp.ResolveIndices4PhysicalTopN = resolveIndices4PhysicalTopN
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.IsSingleScan = isSingleScan

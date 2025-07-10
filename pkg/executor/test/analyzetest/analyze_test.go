@@ -3156,3 +3156,23 @@ func TestIssue55438(t *testing.T) {
 	tk.MustExec("CREATE INDEX i0 ON t0(c1);")
 	tk.MustExec("analyze table t0")
 }
+
+func TestIssue61609(t *testing.T) {
+	// Analyze table with only 1 sample (of 10 rows) - TopN result should multiply the 1 value by 10.
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (0),(0),(0),(0),(0),(0),(0),(0),(0),(0);")
+
+	tk.MustExec("explain select * from t where a = 0")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
+	tk.MustExec("analyze table t with 1 topn, 1 samples")
+	tk.MustExec("explain select * from t where a = 0")
+
+	h := dom.StatsHandle()
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
+		"test t  a 0 0 10",
+	))
+}

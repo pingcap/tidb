@@ -1351,7 +1351,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			u = strings.TrimPrefix(u, "https://")
 			urlsWithoutScheme = append(urlsWithoutScheme, u)
 		}
-		kvStore, err = driver.TiKVDriver{}.OpenWithOptions(
+		kvStore, err = (&driver.TiKVDriver{}).OpenWithOptions(
 			fmt.Sprintf(
 				"tikv://%s?disableGC=true&keyspaceName=%s",
 				strings.Join(urlsWithoutScheme, ","), rc.keyspaceName,
@@ -1374,6 +1374,10 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		manager, err := NewChecksumManager(ctx, rc, kvStore)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		// it's nil when checksum=off
+		if manager != nil {
+			defer manager.Close()
 		}
 		ctx = context.WithValue(ctx, &checksumManagerKey, manager)
 

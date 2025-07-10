@@ -15,6 +15,9 @@
 package expression
 
 import (
+	"slices"
+	"sync"
+
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -23,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/disjointset"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -30,41 +34,59 @@ import (
 // MaxPropagateColsCnt means the max number of columns that can participate propagation.
 var MaxPropagateColsCnt = 100
 
-// nolint:structcheck
 type basePropConstSolver struct {
 	colMapper map[int64]int             // colMapper maps column to its index
-	eqList    []*Constant               // if eqList[i] != nil, it means col_i = eqList[i]
+	eqMapper  map[int]*Constant         // if eqMapper[i] != nil, it means col_i = eqMapper[i]
 	unionSet  *disjointset.SimpleIntSet // unionSet stores the relations like col_i = col_j
 	columns   []*Column                 // columns stores all columns appearing in the conditions
 	ctx       exprctx.ExprContext
+}
+
+func newBasePropConstSolver() basePropConstSolver {
+	return basePropConstSolver{
+		colMapper: make(map[int64]int, 4),
+		eqMapper:  make(map[int]*Constant, 4),
+		columns:   make([]*Column, 0, 4),
+		unionSet:  disjointset.NewIntSet(4),
+	}
+}
+
+func (s *basePropConstSolver) Clear() {
+	clear(s.colMapper)
+	clear(s.eqMapper)
+	s.columns = s.columns[:0]
+	s.unionSet.Clear()
+	s.ctx = nil
 }
 
 func (s *basePropConstSolver) getColID(col *Column) int {
 	return s.colMapper[col.UniqueID]
 }
 
-func (s *basePropConstSolver) insertCol(col *Column) {
-	_, ok := s.colMapper[col.UniqueID]
-	if !ok {
-		s.colMapper[col.UniqueID] = len(s.colMapper)
-		s.columns = append(s.columns, col)
+func (s *basePropConstSolver) insertCols(cols ...*Column) {
+	for _, col := range cols {
+		_, ok := s.colMapper[col.UniqueID]
+		if !ok {
+			s.colMapper[col.UniqueID] = len(s.colMapper)
+			s.columns = append(s.columns, col)
+		}
 	}
 }
 
-// tryToUpdateEQList tries to update the eqList. When the eqList has store this column with a different constant, like
+// tryToUpdateEQList tries to update the eqMapper. When the eqMapper has store this column with a different constant, like
 // a = 1 and a = 2, we set the second return value to false.
 func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (bool, bool) {
 	if con.Value.IsNull() && ConstExprConsiderPlanCache(con, s.ctx.IsUseCache()) {
 		return false, true
 	}
 	id := s.getColID(col)
-	oldCon := s.eqList[id]
-	if oldCon != nil {
+	oldCon, ok := s.eqMapper[id]
+	if ok {
 		evalCtx := s.ctx.GetEvalCtx()
 		res, err := oldCon.Value.Compare(evalCtx.TypeCtx(), &con.Value, collate.GetCollator(col.GetType(s.ctx.GetEvalCtx()).GetCollate()))
 		return false, res != 0 || err != nil
 	}
-	s.eqList[id] = con
+	s.eqMapper[id] = con
 	return true, false
 }
 
@@ -208,9 +230,38 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 	return false, false, cond
 }
 
+var propConstSolverPool = sync.Pool{
+	New: func() any {
+		solver := &propConstSolver{
+			basePropConstSolver: newBasePropConstSolver(),
+			conditions:          make([]Expression, 0, 4),
+		}
+		return solver
+	},
+}
+
 type propConstSolver struct {
 	basePropConstSolver
 	conditions []Expression
+}
+
+// newPropConstSolver returns a PropagateConstantSolver.
+func newPropConstSolver() PropagateConstantSolver {
+	solver := propConstSolverPool.Get().(*propConstSolver)
+	return solver
+}
+
+// PropagateConstant propagate constant values of deterministic predicates in a condition.
+func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression {
+	s.ctx = ctx
+	return s.solve(conditions)
+}
+
+// Clear clears the solver and returns it to the pool.
+func (s *propConstSolver) Clear() {
+	s.basePropConstSolver.Clear()
+	s.conditions = s.conditions[:0]
+	propConstSolverPool.Put(s)
 }
 
 // propagateConstantEQ propagates expressions like 'column = constant' by substituting the constant for column, the
@@ -219,15 +270,17 @@ type propConstSolver struct {
 // d = 4 & 2 = c & c = d + 2 & b = 1 & a = 4, we propagate b = 1 and a = 4 and pick eq cond c = 2 and d = 4
 // d = 4 & 2 = c & false & b = 1 & a = 4, we propagate c = 2 and d = 4, and do constant folding: c = d + 2 will be folded as false.
 func (s *propConstSolver) propagateConstantEQ() {
-	s.eqList = make([]*Constant, len(s.columns))
+	intest.Assert(len(s.eqMapper) == 0 && s.eqMapper != nil)
 	visited := make([]bool, len(s.conditions))
+	cols := make([]*Column, 0, 4)
+	cons := make([]Expression, 0, 4)
 	for range MaxPropagateColsCnt {
 		mapper := s.pickNewEQConds(visited)
 		if len(mapper) == 0 {
 			return
 		}
-		cols := make([]*Column, 0, len(mapper))
-		cons := make([]Expression, 0, len(mapper))
+		cols = slices.Grow(cols, len(mapper))
+		cons = slices.Grow(cons, len(mapper))
 		for id, con := range mapper {
 			cols = append(cols, s.columns[id])
 			cons = append(cons, con)
@@ -237,6 +290,8 @@ func (s *propConstSolver) propagateConstantEQ() {
 				s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
 			}
 		}
+		cols = cols[:0]
+		cons = cons[:0]
 	}
 }
 
@@ -260,7 +315,11 @@ func (s *propConstSolver) propagateConstantEQ() {
 // We maintain a unionSet representing the equivalent for every two columns.
 func (s *propConstSolver) propagateColumnEQ() {
 	visited := make([]bool, len(s.conditions))
-	s.unionSet = disjointset.NewIntSet(len(s.columns))
+	if s.unionSet == nil {
+		s.unionSet = disjointset.NewIntSet(len(s.columns))
+	} else {
+		s.unionSet.GrowNewIntSet(len(s.columns))
+	}
 	for i := range s.conditions {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.GetArgs()[0].(*Column)
@@ -303,13 +362,14 @@ func (s *propConstSolver) propagateColumnEQ() {
 }
 
 func (s *propConstSolver) setConds2ConstFalse() {
-	if MaybeOverOptimized4PlanCache(s.ctx, s.conditions) {
+	if MaybeOverOptimized4PlanCache(s.ctx, s.conditions...) {
 		s.ctx.SetSkipPlanCache("some parameters may be overwritten when constant propagation")
 	}
-	s.conditions = []Expression{&Constant{
+	s.conditions = s.conditions[:0]
+	s.conditions = append(s.conditions, &Constant{
 		Value:   types.NewDatum(false),
 		RetType: types.NewFieldType(mysql.TypeTiny),
-	}}
+	})
 }
 
 // pickNewEQConds tries to pick new equal conds and puts them to retMapper.
@@ -357,13 +417,10 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 }
 
 func (s *propConstSolver) solve(conditions []Expression) []Expression {
-	cols := make([]*Column, 0, len(conditions))
+	s.conditions = slices.Grow(s.conditions, len(conditions))
 	for _, cond := range conditions {
 		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
-		cols = append(cols, ExtractColumns(cond)...)
-	}
-	for _, col := range cols {
-		s.insertCol(col)
+		s.insertCols(ExtractColumns(cond)...)
 	}
 	if len(s.columns) > MaxPropagateColsCnt {
 		logutil.BgLogger().Warn("too many columns in a single CNF",
@@ -374,15 +431,33 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	}
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
-	s.conditions = propagateConstantDNF(s.ctx, s.conditions)
+	s.conditions = propagateConstantDNF(s.ctx, s.conditions...)
 	s.conditions = RemoveDupExprs(s.conditions)
-	return s.conditions
+	return slices.Clone(s.conditions)
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
 // This is a constant propagation logic for expression list such as ['a=1', 'a=b']
-func PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression {
-	return newPropConstSolver().PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), conditions)
+func PropagateConstant(ctx exprctx.ExprContext, conditions ...Expression) []Expression {
+	if len(conditions) == 0 {
+		return conditions
+	}
+	solver := newPropConstSolver()
+	defer func() {
+		solver.Clear()
+	}()
+	return solver.PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), conditions)
+}
+
+var propOuterJoinConstSolverPool = sync.Pool{
+	New: func() any {
+		solver := &propOuterJoinConstSolver{
+			basePropConstSolver: newBasePropConstSolver(),
+			joinConds:           make([]Expression, 0, 4),
+			filterConds:         make([]Expression, 0, 4),
+		}
+		return solver
+	},
 }
 
 type propOuterJoinConstSolver struct {
@@ -397,16 +472,34 @@ type propOuterJoinConstSolver struct {
 	nullSensitive bool
 }
 
+func newPropOuterJoinConstSolver() *propOuterJoinConstSolver {
+	solver := propOuterJoinConstSolverPool.Get().(*propOuterJoinConstSolver)
+	return solver
+}
+
+// clear resets the solver.
+func (s *propOuterJoinConstSolver) Clear() {
+	s.basePropConstSolver.Clear()
+	s.joinConds = s.joinConds[:0]
+	s.filterConds = s.filterConds[:0]
+	s.outerSchema = nil
+	s.innerSchema = nil
+	s.nullSensitive = false
+	propOuterJoinConstSolverPool.Put(s)
+}
+
 func (s *propOuterJoinConstSolver) setConds2ConstFalse(filterConds bool) {
-	s.joinConds = []Expression{&Constant{
+	s.joinConds = s.joinConds[:0]
+	s.joinConds = append(s.joinConds, &Constant{
 		Value:   types.NewDatum(false),
 		RetType: types.NewFieldType(mysql.TypeTiny),
-	}}
+	})
 	if filterConds {
-		s.filterConds = []Expression{&Constant{
+		s.filterConds = s.filterConds[:0]
+		s.filterConds = append(s.filterConds, &Constant{
 			Value:   types.NewDatum(false),
 			RetType: types.NewFieldType(mysql.TypeTiny),
-		}}
+		})
 	}
 }
 
@@ -419,7 +512,7 @@ func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Const
 		if err != nil {
 			return nil, false
 		}
-		if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
+		if MaybeOverOptimized4PlanCache(s.ctx, con) {
 			s.ctx.SetSkipPlanCache("Skip plan cache since mutable constant is restored and propagated")
 		}
 		switch d.Kind() {
@@ -527,7 +620,7 @@ func (s *propOuterJoinConstSolver) pickNewEQConds(visited []bool) map[int]*Const
 // propagateConstantEQ propagates expressions like `outerCol = const` by substituting `outerCol` in *JOIN* condition
 // with `const`, the procedure repeats multiple times.
 func (s *propOuterJoinConstSolver) propagateConstantEQ() {
-	s.eqList = make([]*Constant, len(s.columns))
+	clear(s.eqMapper)
 	lenFilters := len(s.filterConds)
 	visited := make([]bool, lenFilters+len(s.joinConds))
 	for range MaxPropagateColsCnt {
@@ -613,7 +706,11 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 		return
 	}
 	visited := make([]bool, 2*len(s.joinConds)+len(s.filterConds))
-	s.unionSet = disjointset.NewIntSet(len(s.columns))
+	if s.unionSet == nil {
+		s.unionSet = disjointset.NewIntSet(len(s.columns))
+	} else {
+		s.unionSet.GrowNewIntSet(len(s.columns))
+	}
 	var outerCol, innerCol *Column
 	// Only consider column equal condition in joinConds.
 	// If we have column equal in filter condition, the outer join should have been simplified already.
@@ -659,17 +756,13 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 }
 
 func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([]Expression, []Expression) {
-	cols := make([]*Column, 0, len(joinConds)+len(filterConds))
 	for _, cond := range joinConds {
 		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
-		cols = append(cols, ExtractColumns(cond)...)
+		s.insertCols(ExtractColumns(cond)...)
 	}
 	for _, cond := range filterConds {
 		s.filterConds = append(s.filterConds, SplitCNFItems(cond)...)
-		cols = append(cols, ExtractColumns(cond)...)
-	}
-	for _, col := range cols {
-		s.insertCol(col)
+		s.insertCols(ExtractColumns(cond)...)
 	}
 	if len(s.columns) > MaxPropagateColsCnt {
 		logutil.BgLogger().Warn("too many columns",
@@ -680,18 +773,18 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 	}
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
-	s.joinConds = propagateConstantDNF(s.ctx, s.joinConds)
-	s.filterConds = propagateConstantDNF(s.ctx, s.filterConds)
-	return s.joinConds, s.filterConds
+	s.joinConds = propagateConstantDNF(s.ctx, s.joinConds...)
+	s.filterConds = propagateConstantDNF(s.ctx, s.filterConds...)
+	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
-func propagateConstantDNF(ctx exprctx.ExprContext, conds []Expression) []Expression {
+func propagateConstantDNF(ctx exprctx.ExprContext, conds ...Expression) []Expression {
 	for i, cond := range conds {
 		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.LogicOr {
 			dnfItems := SplitDNFItems(cond)
 			for j, item := range dnfItems {
-				dnfItems[j] = ComposeCNFCondition(ctx, PropagateConstant(ctx, []Expression{item})...)
+				dnfItems[j] = ComposeCNFCondition(ctx, PropagateConstant(ctx, item)...)
 			}
 			conds[i] = ComposeDNFCondition(ctx, dnfItems...)
 		}
@@ -707,12 +800,13 @@ func propagateConstantDNF(ctx exprctx.ExprContext, conds []Expression) []Express
 // expressions in join conditions and filter conditions;
 func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Expression,
 	outerSchema, innerSchema *Schema, nullSensitive bool) ([]Expression, []Expression) {
-	solver := &propOuterJoinConstSolver{
-		outerSchema:   outerSchema,
-		innerSchema:   innerSchema,
-		nullSensitive: nullSensitive,
-	}
-	solver.colMapper = make(map[int64]int)
+	solver := newPropOuterJoinConstSolver()
+	defer func() {
+		solver.Clear()
+	}()
+	solver.outerSchema = outerSchema
+	solver.innerSchema = innerSchema
+	solver.nullSensitive = nullSensitive
 	solver.ctx = ctx
 	return solver.solve(joinConds, filterConds)
 }
@@ -720,17 +814,5 @@ func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Ex
 // PropagateConstantSolver is a constant propagate solver.
 type PropagateConstantSolver interface {
 	PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression
-}
-
-// newPropConstSolver returns a PropagateConstantSolver.
-func newPropConstSolver() PropagateConstantSolver {
-	solver := &propConstSolver{}
-	solver.colMapper = make(map[int64]int)
-	return solver
-}
-
-// PropagateConstant propagate constant values of deterministic predicates in a condition.
-func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression {
-	s.ctx = ctx
-	return s.solve(conditions)
+	Clear()
 }

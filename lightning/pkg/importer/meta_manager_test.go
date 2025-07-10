@@ -442,10 +442,14 @@ type testChecksumMgr struct {
 	callCnt  int
 }
 
+var _ local.ChecksumManager = (*testChecksumMgr)(nil)
+
 func (t *testChecksumMgr) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*local.RemoteChecksum, error) {
 	t.callCnt++
 	return &t.checksum, nil
 }
+
+func (*testChecksumMgr) Close() {}
 
 func TestSingleTaskMetaMgr(t *testing.T) {
 	metaBuilder := singleMgrBuilder{

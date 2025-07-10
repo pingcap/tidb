@@ -100,7 +100,7 @@
       },
       {
         "SQL": "select * from t where t.c = 1 and t.a > 1 order by t.d limit 1",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([gt(test.t.a, 1)])->Limit, Table(t))"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([gt(test.t.a, 1)]), Table(t))->Limit"
       },
       {
         "SQL": "select * from t use index(e_d_c_str_prefix) where t.c_str = 'abcdefghijk' and t.d_str = 'd' and t.e_str = 'e'",
@@ -120,7 +120,7 @@
       },
       {
         "SQL": "select * from ((SELECT 1 a,6 b) UNION (SELECT 2,5) UNION (SELECT 2, 4) ORDER BY 1) t order by 1, 2",
-        "Best": "UnionAll{Dual->Projection->Dual->Projection->Dual->Projection}->HashAgg->Projection->Sort"
+        "Best": "UnionAll{Dual->Projection->Dual->Projection->Dual->Projection}->HashAgg->Sort->Sort"
       },
       {
         "SQL": "select * from (select *, NULL as xxx from t) t order by xxx",
@@ -688,7 +688,7 @@
       },
       {
         "SQL": "select lead(a, 1) over (partition by b) as c from t",
-        "Best": "TableReader(Table(t))->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_10])->Projection"
+        "Best": "TableReader(Table(t))->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_13])->Projection"
       }
     ]
   }

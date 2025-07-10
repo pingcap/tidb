@@ -101,11 +101,20 @@ func AppendRangesForRestore(
 	})
 }
 
+type PreallocIDs struct {
+	Start          int64
+	ReusableBorder int64
+	End            int64
+	Hash           [32]byte
+}
+
 type CheckpointMetadataForSnapshotRestore struct {
 	UpstreamClusterID uint64                `json:"upstream-cluster-id"`
 	RestoredTS        uint64                `json:"restored-ts"`
 	LogRestoredTS     uint64                `json:"log-restored-ts"`
 	SchedulersConfig  *pdutil.ClusterConfig `json:"schedulers-config"`
+	Hash              []byte                `json:"hash"`
+	PreallocIDs       *PreallocIDs          `json:"prealloc-ids"`
 
 	RestoreUUID uuid.UUID `json:"restore-uuid"`
 }

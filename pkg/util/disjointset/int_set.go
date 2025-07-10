@@ -14,6 +14,10 @@
 
 package disjointset
 
+import (
+	"slices"
+)
+
 // SimpleIntSet is the int disjoint set.
 // It's not designed for sparse case. You should use it when the elements are continuous.
 // Time complexity: the union operation is inverse ackermann function, which is very close to O(1).
@@ -43,4 +47,18 @@ func (m *SimpleIntSet) FindRoot(a int) int {
 	// Path compression, which leads the time complexity to the inverse Ackermann function.
 	m.parent[a] = m.FindRoot(m.parent[a])
 	return m.parent[a]
+}
+
+// Clear clears the int disjoint set.
+func (m *SimpleIntSet) Clear() {
+	m.parent = m.parent[:0]
+}
+
+// GrowNewIntSet grows the int disjoint set to at least `n` elements.
+func (m *SimpleIntSet) GrowNewIntSet(n int) {
+	m.parent = m.parent[:0]
+	m.parent = slices.Grow(m.parent, n)
+	for i := range n {
+		m.parent = append(m.parent, i)
+	}
 }
