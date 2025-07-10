@@ -42,7 +42,7 @@ import (
 // to physicalize the new subtree halfway to see if it can generate a more optimal physical plan according the history
 // props.
 //
-// For current phase here, logical transformation and physical implementation is seperated. After the logical phase is
+// For current phase here, logical transformation and physical implementation is separated. After the logical phase is
 // done, ImplementMemoAndCost is portal for implementing the entire memo and find the most cost-effective physical plan.
 // And since memo structure is made up from tons of Group inside and linked with group expression with more group as its
 // input child. so for each Group unit, ImplementGroupAndCost is responsible for implementing current group, mainly iter
