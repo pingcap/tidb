@@ -724,3 +724,155 @@ INSERT INTO t1 (id,num) VALUES
                             (6915,0.05876909),
                             (7043,NULL),
                             (7171,NULL);
+<<<<<<< HEAD:executor/testdata/analyze_test_data.sql
+=======
+analyze table t1;
+set @@tidb_partition_prune_mode=default;
+
+# TestMergeGlobalStatsWithUnAnalyzedPartition
+set tidb_partition_prune_mode=dynamic;
+drop table if exists t;
+CREATE TABLE `t` (   `id` int(11) DEFAULT NULL,   `a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL, `c` int(11) DEFAULT NULL ) PARTITION BY RANGE (`id`) (PARTITION `p0` VALUES LESS THAN (3),  PARTITION `p1` VALUES LESS THAN (7),  PARTITION `p2` VALUES LESS THAN (11));
+insert into t values (1,1,1,1),(2,2,2,2),(4,4,4,4),(5,5,5,5),(6,6,6,6),(8,8,8,8),(9,9,9,9);
+create index idxa on t (a);
+create index idxb on t (b);
+create index idxc on t (c);
+analyze table t partition p0 index idxa;
+analyze table t partition p1 index idxb;
+analyze table t partition p2 index idxc;
+SHOW WARNINGS WHERE Level IN ('Warning', 'Error');
+analyze table t partition p0;
+SHOW WARNINGS WHERE Level IN ('Warning', 'Error');
+set tidb_partition_prune_mode=default;
+
+
+# TestSetFastAnalyzeSystemVariable
+set @@session.tidb_enable_fast_analyze=1;
+show warnings;
+set @@session.tidb_enable_fast_analyze=default;
+
+# TestIncrementalAnalyze
+drop table if exists t;
+create table t(a int, b int, primary key(a), index idx(b));
+-- error 1105
+analyze incremental table t index;
+drop table if exists t;
+create table t(a int, b int, primary key(a), index idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20));
+-- error 1105
+analyze incremental table t partition p0 index idx;
+
+# TestClusterIndexAnalyze
+drop table if exists t;
+set tidb_enable_clustered_index=on;
+create table t (a int, b int, c int, primary key(a, b));
+insert into t values (0, 0, 0);
+insert into t values (1, 1, 1);
+insert into t values (2, 2, 2);
+insert into t values (3, 3, 3);
+insert into t values (4, 4, 4);
+insert into t values (5, 5, 5);
+insert into t values (6, 6, 6);
+insert into t values (7, 7, 7);
+insert into t values (8, 8, 8);
+insert into t values (9, 9, 9);
+analyze table t;
+drop table t;
+create table t (a varchar(255), b int, c float, primary key(c, a));
+insert into t values (0, 0, 0);
+insert into t values (1, 1, 1);
+insert into t values (2, 2, 2);
+insert into t values (3, 3, 3);
+insert into t values (4, 4, 4);
+insert into t values (5, 5, 5);
+insert into t values (6, 6, 6);
+insert into t values (7, 7, 7);
+insert into t values (8, 8, 8);
+insert into t values (9, 9, 9);
+analyze table t;
+drop table t;
+create table t (a char(10), b decimal(5, 3), c int, primary key(a, c, b));
+insert into t values (0, 0, 0);
+insert into t values (1, 1, 1);
+insert into t values (2, 2, 2);
+insert into t values (3, 3, 3);
+insert into t values (4, 4, 4);
+insert into t values (5, 5, 5);
+insert into t values (6, 6, 6);
+insert into t values (7, 7, 7);
+insert into t values (8, 8, 8);
+insert into t values (9, 9, 9);
+analyze table t;
+drop table t;
+set tidb_enable_clustered_index=default;
+
+# TestAnlyzeIssue
+set @@tidb_analyze_version = 1;
+## Issue15993
+drop table if exists t0;
+CREATE TABLE t0(c0 INT PRIMARY KEY);
+ANALYZE TABLE t0 INDEX PRIMARY;
+## Issue15751
+drop table if exists t0;
+CREATE TABLE t0(c0 INT, c1 INT, PRIMARY KEY(c0, c1));
+INSERT INTO t0 VALUES (0, 0);
+ANALYZE TABLE t0;
+## Issue15752
+drop table if exists t0;
+CREATE TABLE t0(c0 INT);
+INSERT INTO t0 VALUES (0);
+CREATE INDEX i0 ON t0(c0);
+ANALYZE TABLE t0 INDEX i0;
+set @@tidb_analyze_version = default;
+
+# TestManualAnalyzeSkipColumnTypes
+drop table if exists t;
+create table t(a int, b int, c json, d text, e mediumtext, f blob, g mediumblob, index idx(d(10)));
+set @@session.tidb_analyze_skip_column_types = 'json,blob,mediumblob,text,mediumtext';
+delete from mysql.analyze_jobs;
+analyze table t;
+select job_info from mysql.analyze_jobs where job_info like '%analyze table%';
+delete from mysql.analyze_jobs;
+analyze table t columns a, e;
+select job_info from mysql.analyze_jobs where job_info like '%analyze table%';
+set @@session.tidb_analyze_skip_column_types = default;
+
+# TestIssue34228
+DROP TABLE IF EXISTS Issue34228;
+CREATE TABLE Issue34228 (id bigint NOT NULL, dt datetime NOT NULL) PARTITION BY RANGE COLUMNS(dt) (PARTITION p202201 VALUES LESS THAN ("2022-02-01"), PARTITION p202202 VALUES LESS THAN ("2022-03-01"));
+INSERT INTO Issue34228 VALUES (1, '2022-02-01 00:00:02'), (2, '2022-02-01 00:00:02');
+SET @@global.tidb_analyze_version = 1;
+SET @@session.tidb_partition_prune_mode = 'static';
+ANALYZE TABLE Issue34228;
+SET @@session.tidb_partition_prune_mode = 'dynamic';
+ANALYZE TABLE Issue34228;
+--sorted_result
+SELECT * FROM Issue34228;
+
+## Needs a second run to hit the issue
+connect (conn1, localhost, root,, executor__analyze);
+DROP TABLE IF EXISTS Issue34228;
+CREATE TABLE Issue34228 (id bigint NOT NULL, dt datetime NOT NULL) PARTITION BY RANGE COLUMNS(dt) (PARTITION p202201 VALUES LESS THAN ("2022-02-01"), PARTITION p202202 VALUES LESS THAN ("2022-03-01"));
+INSERT INTO Issue34228 VALUES (1, '2022-02-01 00:00:02'), (2, '2022-02-01 00:00:02');
+SET @@global.tidb_analyze_version = 1;
+SET @@session.tidb_partition_prune_mode = 'static';
+ANALYZE TABLE Issue34228;
+SET @@session.tidb_partition_prune_mode = 'dynamic';
+ANALYZE TABLE Issue34228;
+--sorted_result
+SELECT * FROM Issue34228;
+
+connection default;
+disconnect conn1;
+
+
+# https://github.com/pingcap/tidb/issues/61606
+create table analyze_virtual_col(a int generated always as (1) virtual, b int);
+insert into analyze_virtual_col(b) values(2);
+analyze table analyze_virtual_col all columns;
+select * from analyze_virtual_col where a > 1 and b > 1;
+--sorted_result
+show stats_topn where table_name = 'analyze_virtual_col';
+
+SET @@global.tidb_analyze_version = default;
+SET @@session.tidb_partition_prune_mode = default;
+>>>>>>> 01c2af36e93 (executor: fix the issue during analyze when first col is virtual col (#62333)):tests/integrationtest/t/executor/analyze.test
