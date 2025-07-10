@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -728,6 +729,7 @@ func (h *globalBindingHandle) LoadBindingsFromStorage(sctx sessionctx.Context, s
 	if sqlDigest == "" {
 		return nil, nil
 	}
+	intest.Assert(sctx.GetSessionVars().LoadBindingTimeout != 0)
 	timeout := time.Duration(sctx.GetSessionVars().LoadBindingTimeout) * time.Millisecond
 	resultChan := h.syncBindingSingleflight.DoChan(sqlDigest, func() (any, error) {
 		return h.loadBindingsFromStorageInternal(sqlDigest)

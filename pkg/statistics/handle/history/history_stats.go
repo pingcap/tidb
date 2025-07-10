@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -171,7 +170,6 @@ func RecordHistoricalStatsMeta(
 	); err != nil {
 		return errors.Trace(err)
 	}
-	cache.TableRowStatsCache.Invalidate(tableID)
 
 	return nil
 }

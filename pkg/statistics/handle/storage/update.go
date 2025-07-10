@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
@@ -157,11 +156,6 @@ func UpdateStatsMeta(
 		if _, err = statsutil.ExecWithCtx(ctx, sctx, sql); err != nil {
 			return err
 		}
-	}
-
-	// Invalidate cache for all unlocked tables
-	for _, id := range cacheInvalidateIDs {
-		cache.TableRowStatsCache.Invalidate(id)
 	}
 
 	return nil
@@ -298,8 +292,8 @@ func ChangeGlobalStatsID(
 	return nil
 }
 
-// UpdateStatsMetaVersion updates the version to the newest TS for a table.
-func UpdateStatsMetaVersion(
+// UpdateStatsMetaVerAndLastHistUpdateVer updates the version to the newest TS for a table.
+func UpdateStatsMetaVerAndLastHistUpdateVer(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	physicalID int64,
@@ -311,8 +305,8 @@ func UpdateStatsMetaVersion(
 	if _, err = statsutil.ExecWithCtx(
 		ctx,
 		sctx,
-		"update mysql.stats_meta set version=%? where table_id =%?",
-		startTS, physicalID,
+		"update mysql.stats_meta set version=%?, last_stats_histograms_version=%? where table_id =%?",
+		startTS, startTS, physicalID,
 	); err != nil {
 		return 0, errors.Trace(err)
 	}

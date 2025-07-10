@@ -738,29 +738,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			maxChunkSize:    e.MaxChunkSize(),
 			PushedLimit:     e.PushedLimit,
 		}
-		var builder distsql.RequestBuilder
-		builder.SetDAGRequest(e.dagPB).
-			SetStartTS(e.startTS).
-			SetDesc(e.desc).
-			SetKeepOrder(e.keepOrder).
-			SetTxnScope(e.txnScope).
-			SetReadReplicaScope(e.readReplicaScope).
-			SetIsStaleness(e.isStaleness).
-			SetFromSessionVars(e.dctx).
-			SetFromInfoSchema(e.infoSchema).
-			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
-			SetMemTracker(tracker).
-			SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
-
 		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
-		if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
-			// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
-			// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
-			builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
-			if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
-				builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
-			}
-		}
+
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
 		for _, kvRange := range kvRanges {
 			// check if executor is closed
@@ -772,6 +751,28 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			}
 			if finished {
 				break
+			}
+			var builder distsql.RequestBuilder
+			builder.SetDAGRequest(e.dagPB).
+				SetStartTS(e.startTS).
+				SetDesc(e.desc).
+				SetKeepOrder(e.keepOrder).
+				SetTxnScope(e.txnScope).
+				SetReadReplicaScope(e.readReplicaScope).
+				SetIsStaleness(e.isStaleness).
+				SetFromSessionVars(e.dctx).
+				SetFromInfoSchema(e.infoSchema).
+				SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
+				SetMemTracker(tracker).
+				SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
+
+			if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
+				// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
+				// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
+				builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
+				if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
+					builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
+				}
 			}
 
 			// init kvReq, result and worker for this partition
@@ -890,7 +891,9 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, task.handles, true)
 	if err != nil {
-		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
+		if ctx.Err() != context.Canceled {
+			logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
+		}
 		return nil, err
 	}
 	return tableReader, nil
@@ -1533,7 +1536,9 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	tableReader, err := w.idxLookup.buildTableReader(ctx, task)
 	task.buildDoneTime = time.Now()
 	if err != nil {
-		logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
+		if ctx.Err() != context.Canceled {
+			logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
+		}
 		return err
 	}
 	defer func() { terror.Log(exec.Close(tableReader)) }()
@@ -1564,7 +1569,9 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		chk := exec.TryNewCacheChunk(tableReader)
 		err = exec.Next(ctx, tableReader, chk)
 		if err != nil {
-			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
+			if ctx.Err() != context.Canceled {
+				logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
+			}
 			return err
 		}
 		if chk.NumRows() == 0 {

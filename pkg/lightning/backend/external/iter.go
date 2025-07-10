@@ -19,11 +19,13 @@ import (
 	"container/heap"
 	"context"
 	"io"
+	"sort"
 	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -528,6 +530,8 @@ func NewMergeKVIter(
 			if err != nil {
 				return nil, err
 			}
+			rd.byteReader.readDurHist = metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("merge_sort_read")
+			rd.byteReader.readRateHist = metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("merge_sort_read")
 			rd.byteReader.enableConcurrentRead(
 				exStorage,
 				paths[i],
@@ -793,6 +797,12 @@ func NewMergePropIter(
 	multiStat []MultipleFilesStat,
 	exStorage storage.ExternalStorage,
 ) (*MergePropIter, error) {
+	// sort the multiStat by minKey
+	// otherwise, if the number of readers is less than the weight, the kv may not in order
+	sort.Slice(multiStat, func(i, j int) bool {
+		return bytes.Compare(multiStat[i].MinKey, multiStat[j].MinKey) < 0
+	})
+
 	closeReaderFlag := false
 	readerOpeners := make([]readerOpenerFn[*rangeProperty, mergePropBaseIter], 0, len(multiStat))
 	for _, m := range multiStat {

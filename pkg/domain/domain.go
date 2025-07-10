@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	disthandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -76,6 +77,7 @@ import (
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -1503,7 +1505,8 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(do.infoSyncerKeeper, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
-	do.wg.Run(do.runawayStartLoop, "runawayStartLoop")
+	do.wg.Run(do.runawayManager.RunawayRecordFlushLoop, "runawayRecordFlushLoop")
+	do.wg.Run(do.runawayManager.RunawayWatchSyncLoop, "runawayWatchSyncLoop")
 	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
 	skipRegisterToDashboard := gCfg.SkipRegisterToDashboard
 	if !skipRegisterToDashboard {
@@ -1699,6 +1702,11 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 
 // InitDistTaskLoop initializes the distributed task framework.
 func (do *Domain) InitDistTaskLoop() error {
+	rc, err := disthandle.CalculateNodeResource()
+	if err != nil {
+		return err
+	}
+	disthandle.SetNodeResource(rc)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1866,7 +1874,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			case <-time.After(duration):
 			}
 			if !ok {
-				logutil.BgLogger().Error("load privilege loop watch channel closed")
+				logutil.BgLogger().Warn("load privilege loop watch channel closed")
 				watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
 				count++
 				if count > 10 {
@@ -1879,7 +1887,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			err := do.privHandle.Update()
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
-				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
+				logutil.BgLogger().Warn("load privilege failed", zap.Error(err))
 			}
 		}
 	}, "loadPrivilegeInLoop")
@@ -1929,7 +1937,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			})
 
 			if !ok {
-				logutil.BgLogger().Error("LoadSysVarCacheLoop loop watch channel closed")
+				logutil.BgLogger().Warn("LoadSysVarCacheLoop loop watch channel closed")
 				watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
 				count++
 				if count > 10 {
@@ -1942,7 +1950,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			err := do.rebuildSysVarCache(ctx)
 			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
-				logutil.BgLogger().Error("LoadSysVarCacheLoop failed", zap.Error(err))
+				logutil.BgLogger().Warn("LoadSysVarCacheLoop failed", zap.Error(err))
 			}
 		}
 	}, "LoadSysVarCacheLoop")
@@ -2084,6 +2092,40 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 			}
 		}
 	}, "globalBindHandleWorkerLoop")
+}
+
+// TelemetryLoop create a goroutine that reports usage data in a loop, it should be called only once
+// in BootstrapSession.
+func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
+	ctx.GetSessionVars().InRestrictedSQL = true
+	err := telemetry.InitialRun(ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("Initial telemetry run failed", zap.Error(err))
+	}
+
+	reportTicker := time.NewTicker(telemetry.ReportInterval)
+	subWindowTicker := time.NewTicker(telemetry.SubWindowSize)
+
+	do.wg.Run(func() {
+		defer func() {
+			logutil.BgLogger().Info("TelemetryReportLoop exited.")
+		}()
+		defer util.Recover(metrics.LabelDomain, "TelemetryReportLoop", nil, false)
+
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-reportTicker.C:
+				err := telemetry.ReportUsageData(ctx)
+				if err != nil {
+					logutil.BgLogger().Warn("TelemetryLoop retports usaged data failed", zap.Error(err))
+				}
+			case <-subWindowTicker.C:
+				telemetry.RotateSubWindow()
+			}
+		}
+	}, "TelemetryLoop")
 }
 
 // SetupPlanReplayerHandle setup plan replayer handle
@@ -2587,6 +2629,11 @@ func (do *Domain) gcStatsWorkerExitPreprocessing() {
 		do.statsOwner.Close()
 		ch <- struct{}{}
 	}()
+	if intest.InTest {
+		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
+		<-ch
+		return
+	}
 	select {
 	case <-ch:
 		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
@@ -3292,6 +3339,9 @@ func (do *Domain) planCacheEvictTrigger() {
 
 func init() {
 	initByLDFlagsForGlobalKill()
+	telemetry.GetDomainInfoSchema = func(ctx sessionctx.Context) infoschema.InfoSchema {
+		return GetDomain(ctx).InfoSchema()
+	}
 }
 
 var (

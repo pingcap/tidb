@@ -61,6 +61,7 @@ type importStepExecutor struct {
 
 	dataKVMemSizePerCon     uint64
 	perIndexKVMemSizePerCon uint64
+	indexBlockSize          int
 
 	importCtx    context.Context
 	importCancel context.CancelFunc
@@ -113,9 +114,11 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 		}()
 	}
 	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
-	s.logger.Info("KV writer memory size limit per concurrency",
-		zap.String("data", units.BytesSize(float64(s.dataKVMemSizePerCon))),
-		zap.String("per-index", units.BytesSize(float64(s.perIndexKVMemSizePerCon))))
+	s.indexBlockSize = external.GetAdjustedBlockSize(s.perIndexKVMemSizePerCon)
+	s.logger.Info("KV writer memory buf info",
+		zap.String("data-buf-limit", units.BytesSize(float64(s.dataKVMemSizePerCon))),
+		zap.String("per-index-buf-limit", units.BytesSize(float64(s.perIndexKVMemSizePerCon))),
+		zap.String("index-buf-block-size", units.BytesSize(float64(s.indexBlockSize))))
 	return nil
 }
 
@@ -347,7 +350,8 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		getKVGroupBlockSize(sm.KVGroup),
 		onClose,
 		subtask.Concurrency,
-		false)
+		false,
+		common.OnDuplicateKeyIgnore)
 	logger.Info(
 		"merge sort finished",
 		zap.Uint64("total-kv-size", m.subtaskSortedKVMeta.TotalKVSize),
@@ -410,7 +414,6 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
-	localBackend.WorkerConcurrency = subtask.Concurrency * 2
 	// compatible with old version task meta
 	jobKeys := sm.RangeJobKeys
 	if jobKeys == nil {
@@ -428,6 +431,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			TotalFileSize: int64(sm.TotalKVSize),
 			TotalKVCount:  0,
 			CheckHotspot:  false,
+			MemCapacity:   e.GetResource().Mem.Capacity(),
 		},
 		TS: sm.TS,
 	}, engineUUID)

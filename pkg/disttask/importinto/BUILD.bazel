@@ -114,6 +114,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/session",
+        "//pkg/store/driver/error",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//pkg/util/mock",
