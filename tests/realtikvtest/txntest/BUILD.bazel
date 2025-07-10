@@ -23,6 +23,7 @@ go_test(
         "//pkg/sessiontxn",
         "//pkg/sessiontxn/staleread",
         "//pkg/store/driver",
+        "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//pkg/types",

@@ -903,7 +903,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	go func() {
 		if backfillDML != "" {
 			// This can be used for testing concurrent writes during backfill.
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", func(b bool) {
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillDataNoCheck", func(b bool) {
 				if b {
 					seTk, err := session.CreateSessionWithDomain(store, domOwner)
 					require.NoError(t, err)
@@ -922,7 +922,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		err = tkDDL.ExecToErr(alterSQL)
 		logutil.BgLogger().Info("XXXXXXXXXXX DDL done!", zap.String("alterSQL", alterSQL))
 		if backfillDML != "" {
-			testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData")
+			testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillDataNoCheck")
 		}
 		alterChan <- err
 	}()
@@ -1946,158 +1946,9 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 	}
 	postFn := func(tkO *testkit.TestKit, _ kv.Storage) {
 		tkO.MustExec(`admin check table t`)
-		res := tkO.MustQuery(`select * from t`).Sort()
-		if hasUniqueKey {
-			tkO.MustQuery(`select a from t group by a having count(*) > 1`).Check(testkit.Rows())
-			res.Check(testkit.Rows(""+
-				"10 113 10 Insert s:6 f:2 Update s:6 f:2",
-				"100 203 100 Insert s:1 f:2 ODKU s:1 f:1",
-				"101 101 101 Insert s:1 f:2",
-				"102 102 102 InsertODKU s:1 f:2",
-				"11 114 11 Insert s:6 f:2 ODKU s:6 f:2",
-				"14 117 14 Insert s:6 f:2 Update s:6 f:1",
-				"15 118 15 Insert s:6 f:2 ODKU s:6 f:1",
-				"16 16 16 Insert s:6 f:2",
-				"17 17 17 InsertODKU s:6 f:2",
-				"19 122 19 Original s:5 Update s:5 f:2",
-				"2 105 2 Original s:6 Update s:6 f:2",
-				"20 123 20 Original s:5 ODKU s:5 f:2",
-				"23 126 23 Insert s:5 f:1 Update s:5 f:2",
-				"24 127 24 Insert s:5 f:1 ODKU s:5 f:2",
-				"27 130 27 Insert s:5 f:2 Update s:5 f:2",
-				"28 131 28 Insert s:5 f:2 ODKU s:5 f:2",
-				"3 106 3 Original s:6 ODKU s:6 f:2",
-				"31 134 31 Insert s:5 f:2 Update s:5 f:1",
-				"32 135 32 Insert s:5 f:2 ODKU s:5 f:1",
-				"33 33 33 Insert s:5 f:2",
-				"34 34 34 InsertODKU s:5 f:2",
-				"36 139 36 Original s:4 Update s:4 f:2",
-				"37 140 37 Original s:4 ODKU s:4 f:2",
-				"40 143 40 Insert s:4 f:1 Update s:4 f:2",
-				"41 144 41 Insert s:4 f:1 ODKU s:4 f:2",
-				"44 147 44 Insert s:4 f:2 Update s:4 f:2",
-				"45 148 45 Insert s:4 f:2 ODKU s:4 f:2",
-				"48 151 48 Insert s:4 f:2 Update s:4 f:1",
-				"49 152 49 Insert s:4 f:2 ODKU s:4 f:1",
-				"50 50 50 Insert s:4 f:2",
-				"51 51 51 InsertODKU s:4 f:2",
-				"53 156 53 Original s:3 Update s:3 f:2",
-				"54 157 54 Original s:3 ODKU s:3 f:2",
-				"57 160 57 Insert s:3 f:1 Update s:3 f:2",
-				"58 161 58 Insert s:3 f:1 ODKU s:3 f:2",
-				"6 109 6 Insert s:6 f:1 Update s:6 f:2",
-				"61 164 61 Insert s:3 f:2 Update s:3 f:2",
-				"62 165 62 Insert s:3 f:2 ODKU s:3 f:2",
-				"65 168 65 Insert s:3 f:2 Update s:3 f:1",
-				"66 169 66 Insert s:3 f:2 ODKU s:3 f:1",
-				"67 67 67 Insert s:3 f:2",
-				"68 68 68 InsertODKU s:3 f:2",
-				"7 110 7 Insert s:6 f:1 ODKU s:6 f:2",
-				"70 173 70 Original s:2 Update s:2 f:2",
-				"71 174 71 Original s:2 ODKU s:2 f:2",
-				"74 177 74 Insert s:2 f:1 Update s:2 f:2",
-				"75 178 75 Insert s:2 f:1 ODKU s:2 f:2",
-				"78 181 78 Insert s:2 f:2 Update s:2 f:2",
-				"79 182 79 Insert s:2 f:2 ODKU s:2 f:2",
-				"82 185 82 Insert s:2 f:2 Update s:2 f:1",
-				"83 186 83 Insert s:2 f:2 ODKU s:2 f:1",
-				"84 84 84 Insert s:2 f:2",
-				"85 85 85 InsertODKU s:2 f:2",
-				"87 190 87 Original s:1 Update s:1 f:2",
-				"88 191 88 Original s:1 ODKU s:1 f:2",
-				"91 194 91 Insert s:1 f:1 Update s:1 f:2",
-				"92 195 92 Insert s:1 f:1 ODKU s:1 f:2",
-				"95 198 95 Insert s:1 f:2 Update s:1 f:2",
-				"96 199 96 Insert s:1 f:2 ODKU s:1 f:2",
-				"99 202 99 Insert s:1 f:2 Update s:1 f:1"))
-		} else {
-			res.Sort().Check(testkit.Rows(""+
-				// There are duplicate of InsertODKU is because no unique index, so no Duplicate Key!
-				"10 113 10 Insert s:6 f:2 Update s:6 f:2",
-				"100 100 100 Insert s:1 f:2",
-				"100 100 100 InsertODKU s:1 f:1",
-				"101 101 101 Insert s:1 f:2",
-				"102 102 102 InsertODKU s:1 f:2",
-				"11 11 11 Insert s:6 f:2",
-				"11 11 11 InsertODKU s:6 f:2",
-				"14 117 14 Insert s:6 f:2 Update s:6 f:1",
-				"15 15 15 Insert s:6 f:2",
-				"15 15 15 InsertODKU s:6 f:1",
-				"16 16 16 Insert s:6 f:2",
-				"17 17 17 InsertODKU s:6 f:2",
-				"19 122 19 Original s:5 Update s:5 f:2",
-				"2 105 2 Original s:6 Update s:6 f:2",
-				"20 20 20 InsertODKU s:5 f:2",
-				"20 20 20 Original s:5",
-				"23 126 23 Insert s:5 f:1 Update s:5 f:2",
-				"24 24 24 Insert s:5 f:1",
-				"24 24 24 InsertODKU s:5 f:2",
-				"27 130 27 Insert s:5 f:2 Update s:5 f:2",
-				"28 28 28 Insert s:5 f:2",
-				"28 28 28 InsertODKU s:5 f:2",
-				"3 3 3 InsertODKU s:6 f:2",
-				"3 3 3 Original s:6",
-				"31 134 31 Insert s:5 f:2 Update s:5 f:1",
-				"32 32 32 Insert s:5 f:2",
-				"32 32 32 InsertODKU s:5 f:1",
-				"33 33 33 Insert s:5 f:2",
-				"34 34 34 InsertODKU s:5 f:2",
-				"36 139 36 Original s:4 Update s:4 f:2",
-				"37 37 37 InsertODKU s:4 f:2",
-				"37 37 37 Original s:4",
-				"40 143 40 Insert s:4 f:1 Update s:4 f:2",
-				"41 41 41 Insert s:4 f:1",
-				"41 41 41 InsertODKU s:4 f:2",
-				"44 147 44 Insert s:4 f:2 Update s:4 f:2",
-				"45 45 45 Insert s:4 f:2",
-				"45 45 45 InsertODKU s:4 f:2",
-				"48 151 48 Insert s:4 f:2 Update s:4 f:1",
-				"49 49 49 Insert s:4 f:2",
-				"49 49 49 InsertODKU s:4 f:1",
-				"50 50 50 Insert s:4 f:2",
-				"51 51 51 InsertODKU s:4 f:2",
-				"53 156 53 Original s:3 Update s:3 f:2",
-				"54 54 54 InsertODKU s:3 f:2",
-				"54 54 54 Original s:3",
-				"57 160 57 Insert s:3 f:1 Update s:3 f:2",
-				"58 58 58 Insert s:3 f:1",
-				"58 58 58 InsertODKU s:3 f:2",
-				"6 109 6 Insert s:6 f:1 Update s:6 f:2",
-				"61 164 61 Insert s:3 f:2 Update s:3 f:2",
-				"62 62 62 Insert s:3 f:2",
-				"62 62 62 InsertODKU s:3 f:2",
-				"65 168 65 Insert s:3 f:2 Update s:3 f:1",
-				"66 66 66 Insert s:3 f:2",
-				"66 66 66 InsertODKU s:3 f:1",
-				"67 67 67 Insert s:3 f:2",
-				"68 68 68 InsertODKU s:3 f:2",
-				"7 7 7 Insert s:6 f:1",
-				"7 7 7 InsertODKU s:6 f:2",
-				"70 173 70 Original s:2 Update s:2 f:2",
-				"71 71 71 InsertODKU s:2 f:2",
-				"71 71 71 Original s:2",
-				"74 177 74 Insert s:2 f:1 Update s:2 f:2",
-				"75 75 75 Insert s:2 f:1",
-				"75 75 75 InsertODKU s:2 f:2",
-				"78 181 78 Insert s:2 f:2 Update s:2 f:2",
-				"79 79 79 Insert s:2 f:2",
-				"79 79 79 InsertODKU s:2 f:2",
-				"82 185 82 Insert s:2 f:2 Update s:2 f:1",
-				"83 83 83 Insert s:2 f:2",
-				"83 83 83 InsertODKU s:2 f:1",
-				"84 84 84 Insert s:2 f:2",
-				"85 85 85 InsertODKU s:2 f:2",
-				"87 190 87 Original s:1 Update s:1 f:2",
-				"88 88 88 InsertODKU s:1 f:2",
-				"88 88 88 Original s:1",
-				"91 194 91 Insert s:1 f:1 Update s:1 f:2",
-				"92 92 92 Insert s:1 f:1",
-				"92 92 92 InsertODKU s:1 f:2",
-				"95 198 95 Insert s:1 f:2 Update s:1 f:2",
-				"96 96 96 Insert s:1 f:2",
-				"96 96 96 InsertODKU s:1 f:2",
-				"99 202 99 Insert s:1 f:2 Update s:1 f:1"))
-		}
+		// No need to check this, since we will compare the same operations with a non-partitioned
+		// table if the rows will match.
+		//res := tkO.MustQuery(`select a,b,c,_tidb_rowid, d from t`).Sort()
 		logutil.BgLogger().Info("postFn done", zap.Int("state", state))
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, true)
@@ -2495,7 +2346,7 @@ func TestBackfillConcurrentDML(t *testing.T) {
 		columnFt[col.ID] = &col.FieldType
 	}
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillNonClustered", func(vals []byte) {
+	callback := func(vals []byte) {
 		m, err := tablecodec.DecodeRowWithMapNew(vals, columnFt, time.UTC, nil)
 		require.NoError(t, err)
 		var col1 int64
@@ -2518,138 +2369,139 @@ func TestBackfillConcurrentDML(t *testing.T) {
 			tk2.MustExec("use test")
 			tk2.MustExec(fmt.Sprintf("update t set b = b + 300 where a = %d", col1))
 		}
-		// TODO: Also start a transaction that will fail due to conflict with the backfill?
-		// probably have to continue in another failpoint hook?
-	})
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillNonClusteredNoCheck", callback)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillNonClusteredCheck", callback)
 	tk.MustExec("alter table t coalesce partition 1")
 	tk.MustExec("admin check table t")
+	require.Equal(t, int32(2), i.Load(), "backfill should have been retried once")
 	tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows(
 		"1 301 129",
-		"10 10 30035",
-		"100 100 30065",
+		"10 10 30003",
+		"100 100 30033",
 		"101 101 34",
 		"102 102 34",
-		"103 103 30066",
+		"103 103 30034",
 		"104 104 35",
 		"105 105 35",
-		"106 106 30067",
+		"106 106 30035",
 		"107 107 36",
 		"108 108 36",
-		"109 109 30068",
+		"109 109 30036",
 		"11 11 4",
 		"110 110 37",
 		"111 111 37",
-		"112 112 30069",
+		"112 112 30037",
 		"113 113 38",
 		"114 114 38",
-		"115 115 30070",
+		"115 115 30038",
 		"116 116 39",
 		"117 117 39",
-		"118 118 30071",
+		"118 118 30039",
 		"119 119 40",
 		"12 12 4",
 		"120 120 40",
-		"121 121 30072",
+		"121 121 30040",
 		"122 122 41",
 		"123 123 41",
-		"124 124 30073",
+		"124 124 30041",
 		"125 125 42",
 		"126 126 42",
 		"127 127 43",
 		"128 128 43",
-		"13 13 30036",
+		"13 13 30004",
 		"14 14 5",
 		"15 15 5",
-		"16 16 30037",
+		"16 16 30005",
 		"17 17 6",
 		"18 18 6",
-		"19 19 30038",
+		"19 19 30006",
 		"2 2 1",
 		"20 20 7",
 		"21 21 7",
-		"22 22 30039",
+		"22 22 30007",
 		"23 23 8",
 		"24 24 8",
-		"25 25 30040",
+		"25 25 30008",
 		"26 26 9",
 		"27 27 9",
-		"28 28 30041",
+		"28 28 30009",
 		"29 29 10",
 		"3 3 1",
 		"30 30 10",
-		"31 31 30042",
+		"31 31 30010",
 		"32 32 11",
 		"33 33 11",
-		"34 34 30043",
+		"34 34 30011",
 		"35 35 12",
 		"36 36 12",
-		"37 37 30044",
+		"37 37 30012",
 		"38 38 13",
 		"39 39 13",
-		"4 4 30033",
-		"40 40 30045",
+		"4 4 30001",
+		"40 40 30013",
 		"41 41 14",
 		"42 42 14",
-		"43 43 30046",
+		"43 43 30014",
 		"44 44 15",
 		"45 45 15",
-		"46 46 30047",
+		"46 46 30015",
 		"47 47 16",
 		"48 48 16",
-		"49 49 30048",
+		"49 49 30016",
 		"5 5 2",
 		"50 50 17",
 		"51 51 17",
-		"52 52 30049",
+		"52 52 30017",
 		"53 53 18",
 		"54 54 18",
-		"55 55 30050",
+		"55 55 30018",
 		"56 56 19",
 		"57 57 19",
-		"58 58 30051",
+		"58 58 30019",
 		"59 59 20",
 		"6 6 2",
 		"60 60 20",
-		"61 61 30052",
+		"61 61 30020",
 		"62 62 21",
 		"63 63 21",
-		"64 64 30053",
+		"64 64 30021",
 		"65 65 22",
 		"66 66 22",
-		"67 67 30054",
+		"67 67 30022",
 		"68 68 23",
 		"69 69 23",
-		"7 7 30034",
-		"70 70 30055",
+		"7 7 30002",
+		"70 70 30023",
 		"71 71 24",
 		"72 72 24",
-		"73 73 30056",
+		"73 73 30024",
 		"74 74 25",
 		"75 75 25",
-		"76 76 30057",
+		"76 76 30025",
 		"77 77 26",
 		"78 78 26",
-		"79 79 30058",
+		"79 79 30026",
 		"8 8 3",
 		"80 80 27",
 		"81 81 27",
-		"82 82 30059",
+		"82 82 30027",
 		"83 83 28",
 		"84 84 28",
-		"85 85 30060",
+		"85 85 30028",
 		"86 86 29",
 		"87 87 29",
-		"88 88 30061",
+		"88 88 30029",
 		"89 89 30",
 		"9 9 3",
 		"90 90 30",
-		"91 91 30062",
+		"91 91 30030",
 		"92 92 31",
 		"93 93 31",
-		"94 94 30063",
+		"94 94 30031",
 		"95 95 32",
 		"96 96 32",
-		"97 97 30064",
+		"97 97 30032",
 		"98 98 33",
 		"99 99 33"))
 }
@@ -2739,7 +2591,7 @@ func TestBackfillConcurrentDMLRange(t *testing.T) {
 			require.FailNow(t, "unexpected schema state: %v", job.SchemaState)
 		}
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillNonClustered", func(vals []byte) {
+	callback := func(vals []byte) {
 		// TODO: Also start a transaction that will fail due to conflict with the backfill?
 		// TODO: Also use INSERT and DELETE and INSERT IGNORE and INSERT ON DUPLICATE KEY UPDATE
 		// probably have to continue in another failpoint hook?
@@ -2771,7 +2623,9 @@ func TestBackfillConcurrentDMLRange(t *testing.T) {
 			tk2.MustExec("use test")
 			tk2.MustExec(fmt.Sprintf("update t set b = b + 300 where a = %d", col1))
 		}
-	})
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillNonClusteredNoCheck", callback)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillNonClusteredCheck", callback)
 	tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows(""+
 		"1 1 1",
 		"10 10 10",
