@@ -351,8 +351,9 @@ func BuildHistAndTopN(
 		// case 1, this value is equal to the last one: current count++
 		if bytes.Equal(cur, sampleBytes) {
 			curCnt++
-			if i == sampleNum-1 {
-				// If this is the last sample, we need to ensure we count this last value.
+			//if i == sampleNum || i == 0 {
+			if i == 0 {
+				// If this is the first or last sample, we need to ensure we count this value.
 				sampleNDV++
 			}
 			continue
